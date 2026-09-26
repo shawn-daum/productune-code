@@ -136,8 +136,8 @@
   --status-in-progress: var(--accent);
   --status-review:      #E0B040;
   --status-done:        #60B860;
-  --status-blocked:     #E04040;
-  --status-abandoned:   #6A6A6A;
+  --status-blocked:     #F87171;
+  --status-abandoned:   #8C8C8C;
 
   /* Health / Feedback (§2.8) */
   --health-info:    #38BDF8;
@@ -230,36 +230,36 @@
   :root:not(.theme-dark) {
     --brand-accent: #7C3AED;   /* ← SWAP POINT (light). violet → #1E84FF for Anchor blue */
 
-    --bg-base:            #F4F5F7;
-    --bg-surface-base:    #FFFFFF;
-    --bg-surface-on:      #F4F5F7;
-    --bg-surface-onlayer: #FFFFFF;
-    --bg-layer-popup:     #FFFFFF;
-    --bg-layer-sheet:     #F4F5F7;
+    --bg-base:            #F1F0EE;
+    --bg-surface-base:    #FAFAF9;
+    --bg-surface-on:      #F1F0EE;
+    --bg-surface-onlayer: #FAFAF9;
+    --bg-layer-popup:     #FAFAF9;
+    --bg-layer-sheet:     #F1F0EE;
     --bg-layer-snackbar:  #303233;
     --bg-state-hover:     rgba(0, 0, 0, 0.04);
-    --bg-interaction-neutral: #E4E6E8;
-    --bg-interaction-subtle:  #F4F5F7;
+    --bg-interaction-neutral: #E2E0DC;
+    --bg-interaction-subtle:  #F1F0EE;
     --bg-overlay:         rgba(0, 0, 0, 0.48);
 
-    --text-primary:    #000000;
-    --text-secondary:  rgba(0, 0, 0, 0.88);
-    --text-tertiary:   rgba(0, 0, 0, 0.72);
-    --text-quaternary: rgba(0, 0, 0, 0.64);
+    --text-primary:    #1F1F22;
+    --text-secondary:  #3F3F46;
+    --text-tertiary:   #57575E;
+    --text-quaternary: #6B6B73;
     --text-disabled:   rgba(0, 0, 0, 0.32);
     --text-ghost:      rgba(0, 0, 0, 0.16);
     --text-inverse:    #FFFFFF;
     --text-static-white: #FFFFFF;
 
-    --border-item:    rgba(0, 0, 0, 0.04);
-    --border-section: rgba(0, 0, 0, 0.08);
-    --border-inline:  rgba(0, 0, 0, 0.16);
-    --border-hover:   rgba(0, 0, 0, 0.32);
+    --border-item:    #ECEBE8;
+    --border-section: #E2E0DC;
+    --border-inline:  #CFCCC6;
+    --border-hover:   #BDB9B2;
     --border-input:   rgba(0, 0, 0, 0.10);
 
-    --icon-primary:   #000000;
-    --icon-secondary: rgba(0, 0, 0, 0.88);
-    --icon-tertiary:  rgba(0, 0, 0, 0.64);
+    --icon-primary:   #1F1F22;
+    --icon-secondary: #3F3F46;
+    --icon-tertiary:  #6B6B73;
     --icon-subtle:    rgba(0, 0, 0, 0.32);
     --icon-subtlest:  rgba(0, 0, 0, 0.16);
 
@@ -268,26 +268,26 @@
 
     --persona-designer: #C2410C;
     --persona-dev:      #0B66C2;
-    --persona-qa:       #0E8F63;
+    --persona-qa:       #0A7A54;
 
     --prdt-stage-define: #C2410C;
     --prdt-stage-build:  #0B66C2;
     --prdt-stage-ship:   #BE185D;
-    --prdt-stage-retro:  #0E8F63;
+    --prdt-stage-retro:  #0A7A54;
 
     --stage-prd:    #C2410C;
     --stage-design: #BE185D;
     --stage-build:  #0B66C2;
 
-    --status-todo:        #6B7280;
-    --status-review:      #B45309;
-    --status-done:        #16A34A;
-    --status-blocked:     #DC2626;
-    --status-abandoned:   #9CA3AF;
+    --status-todo:        #5F6672;
+    --status-review:      #A14A08;
+    --status-done:        #147A3C;
+    --status-blocked:     #C62828;
+    --status-abandoned:   #6B6B73;
 
     --health-info:    #0B66C2;
-    --health-success: #0E8F63;
-    --health-warn:    #B45309;
+    --health-success: #0A7A54;
+    --health-warn:    #A14A08;
     --health-error:   #C62828;
 
     --brand-mint: #0E8F63;
@@ -310,36 +310,36 @@
 :root.theme-light {
   --brand-accent: #7C3AED;   /* ← SWAP POINT (light). violet → #1E84FF for Anchor blue */
 
-  --bg-base:            #F4F5F7;
-  --bg-surface-base:    #FFFFFF;
-  --bg-surface-on:      #F4F5F7;
-  --bg-surface-onlayer: #FFFFFF;
-  --bg-layer-popup:     #FFFFFF;
-  --bg-layer-sheet:     #F4F5F7;
+  --bg-base:            #F1F0EE;
+  --bg-surface-base:    #FAFAF9;
+  --bg-surface-on:      #F1F0EE;
+  --bg-surface-onlayer: #FAFAF9;
+  --bg-layer-popup:     #FAFAF9;
+  --bg-layer-sheet:     #F1F0EE;
   --bg-layer-snackbar:  #303233;
   --bg-state-hover:     rgba(0, 0, 0, 0.04);
-  --bg-interaction-neutral: #E4E6E8;
-  --bg-interaction-subtle:  #F4F5F7;
+  --bg-interaction-neutral: #E2E0DC;
+  --bg-interaction-subtle:  #F1F0EE;
   --bg-overlay:         rgba(0, 0, 0, 0.48);
 
-  --text-primary:    #000000;
-  --text-secondary:  rgba(0, 0, 0, 0.88);
-  --text-tertiary:   rgba(0, 0, 0, 0.72);
-  --text-quaternary: rgba(0, 0, 0, 0.64);
+  --text-primary:    #1F1F22;
+  --text-secondary:  #3F3F46;
+  --text-tertiary:   #57575E;
+  --text-quaternary: #6B6B73;
   --text-disabled:   rgba(0, 0, 0, 0.32);
   --text-ghost:      rgba(0, 0, 0, 0.16);
   --text-inverse:    #FFFFFF;
   --text-static-white: #FFFFFF;
 
-  --border-item:    rgba(0, 0, 0, 0.04);
-  --border-section: rgba(0, 0, 0, 0.08);
-  --border-inline:  rgba(0, 0, 0, 0.16);
-  --border-hover:   rgba(0, 0, 0, 0.32);
+  --border-item:    #ECEBE8;
+  --border-section: #E2E0DC;
+  --border-inline:  #CFCCC6;
+  --border-hover:   #BDB9B2;
   --border-input:   rgba(0, 0, 0, 0.10);
 
-  --icon-primary:   #000000;
-  --icon-secondary: rgba(0, 0, 0, 0.88);
-  --icon-tertiary:  rgba(0, 0, 0, 0.64);
+  --icon-primary:   #1F1F22;
+  --icon-secondary: #3F3F46;
+  --icon-tertiary:  #6B6B73;
   --icon-subtle:    rgba(0, 0, 0, 0.32);
   --icon-subtlest:  rgba(0, 0, 0, 0.16);
 
@@ -348,26 +348,26 @@
 
   --persona-designer: #C2410C;
   --persona-dev:      #0B66C2;
-  --persona-qa:       #0E8F63;
+  --persona-qa:       #0A7A54;
 
   --prdt-stage-define: #C2410C;
   --prdt-stage-build:  #0B66C2;
   --prdt-stage-ship:   #BE185D;
-  --prdt-stage-retro:  #0E8F63;
+  --prdt-stage-retro:  #0A7A54;
 
   --stage-prd:    #C2410C;
   --stage-design: #BE185D;
   --stage-build:  #0B66C2;
 
-  --status-todo:        #6B7280;
-  --status-review:      #B45309;
-  --status-done:        #16A34A;
-  --status-blocked:     #DC2626;
-  --status-abandoned:   #9CA3AF;
+  --status-todo:        #5F6672;
+  --status-review:      #A14A08;
+  --status-done:        #147A3C;
+  --status-blocked:     #C62828;
+  --status-abandoned:   #6B6B73;
 
   --health-info:    #0B66C2;
-  --health-success: #0E8F63;
-  --health-warn:    #B45309;
+  --health-success: #0A7A54;
+  --health-warn:    #A14A08;
   --health-error:   #C62828;
 
   --brand-mint: #0E8F63;
@@ -445,8 +445,8 @@
   --status-todo:        #909090;
   --status-review:      #E0B040;
   --status-done:        #60B860;
-  --status-blocked:     #E04040;
-  --status-abandoned:   #6A6A6A;
+  --status-blocked:     #F87171;
+  --status-abandoned:   #8C8C8C;
 
   --health-info:    #38BDF8;
   --health-success: #34D399;
