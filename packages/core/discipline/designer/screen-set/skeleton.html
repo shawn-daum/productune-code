@@ -30,6 +30,13 @@
   Real repository text rendered inside a screen: wrap it in data-content="repo" (sweep excludes).
   DESCRIPTION: DESCRIPTIONS[key] = struct + the fixed categories (DESC_ORDER), one short line each (≤120 chars),
   a category with nothing to say omitted; background · provenance · history under `background` (folded).
+  LABELS: a string the label table owns renders through data-label="<key>" from <script id="labels"> — {key: text},
+  or {lang: {key: text}} picked by <html lang>; textContent is replaced on load, the inline text is the no-JS fallback.
+  A value from data (count · id · date · a square row) carries data-value="<source>" instead and never edits.
+  EDIT (the bar bottom right, spec layer, its script copied verbatim into every artifact): editing on → labels edit in
+  place (click → input · Enter/blur commit · Esc cancel · one key, every element), values are marked and locked.
+  Edits live in this browser (localStorage) until the change list is downloaded or reset; the page never writes the
+  repo. Change list = {artifact, lang, changes:[{key, old, new}]} — apply it to the labels table where `old` still matches.
 -->
 <title>ID — vN.m</title>
 <style>
@@ -39,10 +46,12 @@
   --spec-text:#1A1A18; --spec-muted:#6B6A64; --spec-current:#1A1A18; --spec-current-text:#FBFAF8;
   --spec-font:'Pretendard Variable','Pretendard',-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Segoe UI',sans-serif;
   --spec-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --edit-label:#0B6FD1; --edit-label-bg:rgba(11,111,209,.10); --edit-value:#7A5AF8; --edit-value-bg:rgba(122,90,248,.14);
 }
 @media (prefers-color-scheme: dark){
   :root{ --spec-bg:#1C1B18; --spec-panel:#242320; --spec-border:rgba(255,255,255,.12);
-    --spec-text:#EDEBE4; --spec-muted:#9C9A92; --spec-current:#EDEBE4; --spec-current-text:#1C1B18; }
+    --spec-text:#EDEBE4; --spec-muted:#9C9A92; --spec-current:#EDEBE4; --spec-current-text:#1C1B18;
+    --edit-label:#63B3FF; --edit-label-bg:rgba(99,179,255,.16); --edit-value:#B7A4FF; --edit-value-bg:rgba(183,164,255,.18); }
 }
 /* ---------- product DS tokens — paste from docs/design.md; scope them to .frame ---------- */
 .frame{
@@ -99,7 +108,7 @@ code,.mono{font-family:var(--spec-mono);}
 /* ---------- set block: list · ONE screen · description ---------- */
 .spec-set{display:grid; grid-template-columns:240px minmax(0,1fr) 300px; gap:14px; align-items:start;}
 .spec-roster,.spec-desc{background:var(--spec-panel); border:1px solid var(--spec-border); border-radius:14px;
-  position:sticky; top:12px; max-height:calc(100vh - 24px); overflow-y:auto;}   /* sticks, scrolls itself when taller than the viewport */
+  position:sticky; top:12px; max-height:calc(100vh - 72px); overflow-y:auto;}   /* sticks, scrolls itself when taller than the viewport; 72 = 24 + the edit bar */
 .spec-roster{padding:10px;}
 .spec-roster h2{margin:6px 8px 6px;}
 .spec-group{margin-bottom:6px;}
@@ -133,9 +142,29 @@ code,.mono{font-family:var(--spec-mono);}
 .desc-cat ul{margin:0; padding-left:14px;}
 .desc-cat li{font-size:12.5px; line-height:1.5; margin:0 0 3px;}
 
+/* ---------- label edit: labels edit in place, values from data do not — marks show only while editing ---------- */
+.spec-edit{position:fixed; right:16px; bottom:16px; z-index:30; display:flex; align-items:center; gap:8px; flex-wrap:wrap; max-width:calc(100vw - 32px);
+  background:var(--spec-panel); border:1px solid var(--spec-border); border-radius:100px; padding:6px 8px; font-size:12px; box-shadow:0 6px 24px rgba(0,0,0,.10);}
+.spec-edit button{font:inherit; font-size:12px; font-weight:700; color:inherit; background:none; border:1px solid var(--spec-border); border-radius:100px; padding:4px 10px; cursor:pointer;}
+.spec-edit button[aria-pressed="true"]{background:var(--edit-label); color:#fff; border-color:var(--edit-label);}
+.spec-edit button:disabled{opacity:.4; cursor:default;}
+.spec-edit-n{font-family:var(--spec-mono); font-size:11px; color:var(--spec-muted);}
+.spec-edit-key{display:none; align-items:center; gap:6px; color:var(--spec-muted);}
+body.editing .spec-edit-key{display:inline-flex;}
+.spec-edit-key .sw{display:inline-block; width:11px; height:11px; border-radius:2px; margin:0 2px 0 6px;}
+.spec-edit-key .sw-label{outline:1px dashed var(--edit-label); outline-offset:1px; background:var(--edit-label-bg);}
+.spec-edit-key .sw-value{outline:1px dotted var(--edit-value); outline-offset:1px; background:repeating-linear-gradient(135deg, var(--edit-value-bg) 0 2px, transparent 2px 5px);}
+body.editing [data-label]{outline:1px dashed var(--edit-label); outline-offset:2px; border-radius:2px; cursor:text;}
+body.editing [data-label]:hover{outline-width:2px; background:var(--edit-label-bg);}
+body.editing [data-label].is-edited{outline-style:solid; background:var(--edit-label-bg);}
+body.editing [data-value],body.editing [data-value] *{cursor:not-allowed;}
+body.editing [data-value]{outline:1px dotted var(--edit-value); outline-offset:2px; border-radius:2px; background:repeating-linear-gradient(135deg, var(--edit-value-bg) 0 3px, transparent 3px 7px);}
+.spec-edit-input{position:absolute; z-index:40; box-sizing:border-box; color:var(--spec-text); background:var(--spec-bg); border:2px solid var(--edit-label); border-radius:4px; padding:2px 6px; outline:none; box-shadow:0 8px 24px rgba(0,0,0,.18);}
+
 /* ---------- phone width: one column; the list becomes a sticky strip ---------- */
 @media (max-width:900px){
-  .spec-page{padding:16px 16px 48px;}
+  .spec-page{padding:16px 16px 96px;}   /* room under the edit bar */
+  .spec-edit{left:8px; right:8px; bottom:8px; justify-content:center; border-radius:14px;}
   .spec-set{grid-template-columns:1fr;}
   .spec-roster{top:0; max-height:none; display:flex; overflow-x:auto; overflow-y:hidden; gap:4px; padding:8px; border-radius:0 0 12px 12px; z-index:2;}
   .spec-roster h2{display:none;}
@@ -204,8 +233,10 @@ code,.mono{font-family:var(--spec-mono);}
       <div class="frame" id="frame">
         <section class="screen" id="screen-example-a">
           <div class="cond-view" data-cond="default">
-            <!-- product screen, DS tokens only. A control that leads elsewhere: data-open="example-b" -->
-            <button data-open="example-b">Open</button>
+            <!-- product screen, DS tokens only. A string the label table owns: data-label="<key>" · a value from data: data-value="<source>".
+                 A control that leads elsewhere: data-open="example-b" -->
+            <p><span data-label="a.rows">rows</span> <span data-value="count(rows)">12</span></p>
+            <button data-open="example-b" data-label="a.open">Open</button>
           </div>
           <div class="cond-view" data-cond="empty">
             <!-- the same screen, empty state -->
@@ -213,7 +244,7 @@ code,.mono{font-family:var(--spec-mono);}
         </section>
         <section class="screen" id="screen-example-b">
           <div class="cond-view" data-cond="default">
-            <button data-open="example-a">Back</button>
+            <button data-open="example-a" data-label="b.back">Back</button>
           </div>
         </section>
       </div>
@@ -235,6 +266,113 @@ code,.mono{font-family:var(--spec-mono);}
 </details>
 
 </div>
+
+<!-- ================= label layer: key → text. Strings render from here through data-label; values from data carry data-value ================= -->
+<script id="labels" type="application/json">{"a.rows":"행","a.open":"열기","b.back":"뒤로"}</script>
+
+<!-- ================= label edit bar (spec layer, fixed): editing on · change list download · reset — the page never writes the repo ================= -->
+<div class="spec-edit" id="label-edit" role="toolbar" aria-label="문구 편집">
+  <button type="button" data-edit="toggle" aria-pressed="false">문구 편집</button>
+  <span class="spec-edit-key"><i class="sw sw-label"></i>문구 — 눌러 고침<i class="sw sw-value"></i>값 — 데이터, 고정</span>
+  <span class="spec-edit-n" data-edit="count">고친 문구 0</span>
+  <button type="button" data-edit="download" disabled>변경 목록 내려받기</button>
+  <button type="button" data-edit="reset" disabled>되돌리기</button>
+</div>
+
+<script>
+/* ---------- label edit — skeleton-owned, copied verbatim into every artifact; artifact scripts read window.LABELS and call applyLabels() ---------- */
+(function () {
+  const src = document.getElementById('labels');
+  let raw = {};
+  try { raw = src ? JSON.parse(src.textContent) : {}; } catch (e) { raw = {}; }
+  const lang = document.documentElement.lang || '';
+  const base = (raw[lang] && typeof raw[lang] === 'object') ? raw[lang] : raw;   /* {key: text}, or per-language tables picked by <html lang> */
+  document.querySelectorAll('[data-label]').forEach(el => { const k = el.dataset.label; if (base[k] === undefined) base[k] = el.textContent; });   /* key the table lacks: inline text is the original */
+  const STORE = 'prdt.labels:' + location.pathname, MODE = STORE + ':editing';
+  const read = k => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
+  const write = (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+  let edits = read(STORE) || {};
+  const table = window.LABELS = Object.assign({}, base, edits);
+  const bar = document.getElementById('label-edit');
+  const q = s => bar && bar.querySelector(`[data-edit="${s}"]`);
+
+  function apply() {
+    document.querySelectorAll('[data-label]').forEach(el => {
+      const k = el.dataset.label;
+      if (table[k] !== undefined) el.textContent = table[k];
+      el.classList.toggle('is-edited', k in edits);
+    });
+    if (!bar) return;
+    const n = Object.keys(edits).length;
+    q('count').textContent = `고친 문구 ${n}`;
+    q('download').disabled = q('reset').disabled = n === 0;
+  }
+  window.applyLabels = apply;
+
+  function set(k, text) {
+    if (text === base[k]) { delete edits[k]; table[k] = base[k]; } else { edits[k] = text; table[k] = text; }
+    write(STORE, Object.keys(edits).length ? edits : null);
+    apply();
+  }
+  function clear() { edits = {}; Object.keys(table).forEach(k => { table[k] = base[k]; }); write(STORE, null); apply(); }
+
+  /* the editor: an input laid over the label — Enter/blur commit, Esc cancel; one key → every element carrying it */
+  let editor = null;
+  function open(el) {
+    close(false);
+    const k = el.dataset.label, r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    editor = document.createElement('input');
+    editor.className = 'spec-edit-input'; editor.value = table[k] ?? el.textContent; editor.title = k; editor.dataset.key = k;
+    editor.style.cssText = `left:${r.left + scrollX - 6}px; top:${r.top + scrollY - 3}px; width:${Math.max(r.width + 28, 160)}px;` +
+      `font-family:${cs.fontFamily}; font-size:${cs.fontSize}; font-weight:${cs.fontWeight}; line-height:${cs.lineHeight};`;
+    editor.addEventListener('keydown', ev => { if (ev.key === 'Enter') close(true); else if (ev.key === 'Escape') close(false); });
+    editor.addEventListener('blur', () => close(true));
+    document.body.appendChild(editor); editor.focus(); editor.select();
+  }
+  function close(commit) {
+    if (!editor) return;
+    const e = editor; editor = null;
+    if (commit) set(e.dataset.key, e.value);
+    e.remove();
+  }
+  function setMode(on) {
+    document.body.classList.toggle('editing', on);
+    if (bar) q('toggle').setAttribute('aria-pressed', String(on));
+    write(MODE, on ? true : null);
+    if (!on) close(true);
+  }
+
+  document.addEventListener('click', ev => {
+    if (!document.body.classList.contains('editing') || ev.target.closest('.spec-edit-input')) return;
+    const el = ev.target.closest('[data-label]');
+    if (!el || (bar && bar.contains(el))) return;
+    ev.preventDefault(); ev.stopPropagation(); open(el);
+  }, true);
+
+  if (bar) bar.addEventListener('click', ev => {
+    const b = ev.target.closest('[data-edit]'); if (!b) return;
+    if (b.dataset.edit === 'toggle') setMode(!document.body.classList.contains('editing'));
+    else if (b.dataset.edit === 'reset') { if (confirm('고친 문구를 모두 원문으로 되돌릴까요?')) clear(); }
+    else if (b.dataset.edit === 'download') {
+      const changes = Object.keys(edits).map(k => ({ key: k, old: base[k], new: edits[k] }));
+      const file = decodeURIComponent(location.pathname.split('/').pop() || 'artifact.html');
+      const out = { artifact: file, title: document.title, lang, exported_at: new Date().toISOString(),
+        apply: 'In this artifact\'s <script id="labels"> JSON — the `lang` table when it has language tables, else the root — each key must still equal `old`; set it to `new`. The repo changes only this way; the rendered text follows on load.',
+        changes };
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' }));
+      a.download = file.replace(/\.html?$/, '') + '.label-changes.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      clear();   /* downloaded = handed over: the page returns to the table's text */
+      q('count').textContent = `내려받음 ${changes.length}건 — 페이지는 원문으로`;
+    }
+  });
+
+  apply();
+  if (read(MODE) === true) setMode(true);
+})();
+</script>
 
 <script>
 /* Description categories, fixed order (Mode C spec sheet, adapted). Labels in [ctx].user_lang — one table to swap. */
