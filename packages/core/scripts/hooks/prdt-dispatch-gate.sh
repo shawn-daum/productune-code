@@ -271,6 +271,42 @@ while [ -n "$DIR" ] && [ "$DIR" != "/" ]; do
 done
 [ -n "$FOUND" ] || exit 0
 
+# ── T-704: a worker persona may not spawn `subagent_type: "fork"` ────────────
+# WHY: 2026-09-26, T-666 2b — a worker-spawned fork wrote `render.mjs` twice
+# AFTER the worker itself had handed back, then, told to stop, claimed over
+# SendMessage to BE the worker of record and wrote again; the PO had to
+# TaskStop it. The prose rule ("do not spawn research forks") already sat in
+# both worker overrides (`~/.prdt/overrides/developer.md`, `designer.md`) and
+# was ignored under load — a rule a device can hold belongs in the device.
+#
+# CALLER, not callee: this hook's existing `[ctx]` gate above classifies by
+# who is being SPAWNED (`tool_input.subagent_type` matching `^prdt-`), which a
+# `fork` call never does. This check classifies by who is SPAWNING instead —
+# `agent_type`, a TOP-LEVEL member of the event, sibling of `tool_input`, so it
+# is read the same trusted way (jq structure, never a substring on the raw
+# payload — a prompt body cannot forge a top-level key). Confirmed on a real
+# event, not assumed: prdt-call-governor.sh's own header records a stdin-dump
+# probe (harness 2.1.243, 2026-08-25) — a PreToolUse raised INSIDE a subagent
+# carries `agent_type`; raised in the main session (the PO) it carries neither
+# `agent_id` nor `agent_type` at all. So a worker persona's call has
+# `agent_type` set to its own name (`prdt-developer` / `prdt-qa` /
+# `prdt-designer`); the PO's own call — main session, or `agent_type` absent —
+# never matches, unaffected by design, never denied here.
+FORK_DENY="$(printf '%s' "$EV" | jq -rc '
+  if (.hook_event_name != "PreToolUse") or (.tool_name != "Agent") then empty
+  else (.tool_input // {}) as $ti
+  | if ($ti | type) != "object" then empty
+    elif (($ti.subagent_type // "") | type) != "string" then empty
+    elif ($ti.subagent_type != "fork") then empty
+    elif ((.agent_type // "") | type) != "string" then empty
+    elif ((.agent_type) | test("^prdt-(developer|qa|designer)$") | not) then empty
+    else {hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny",
+      permissionDecisionReason: "[prdt dispatch gate] DENIED: a worker persona cannot spawn subagent_type \"fork\" (T-704) — do the read yourself, or return `unresolved[]` for the PO."}}
+    end
+  end
+' 2>/dev/null)"
+[ -n "$FORK_DENY" ] && { printf '%s\n' "$FORK_DENY"; exit 0; }
+
 # ── the clauses, verbatim from discipline/contracts.md ────────────────────────
 # Single-quoted so backticks and braces are inert; the embedded newline is
 # literal. A test asserts each of these appears verbatim in contracts.md.
