@@ -414,6 +414,53 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
     }
   }, 30_000)
 
+  // T-708 결함 5: the group-switch handler used to write the raw
+  // `data-group-select` KEY into the breadcrumb ('progress', 'backlog', a
+  // version/bucket key) instead of the label the reader already sees on the
+  // pressed button — reproduced by re-clicking an ALREADY-active button
+  // (docs/artifacts/v1.10/viewer-home-2000-breadcrumb-bug.png), so the
+  // pre-click breadcrumb (server-rendered, always correct — see this
+  // ticket's outcome) can't hide the bug. Pins: after that click, the
+  // breadcrumb reads the button's own visible label text, never the key.
+  test('re-clicking the already-active sidebar group keeps the breadcrumb on its label, never the raw group key @window', async () => {
+    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+    const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+    try {
+      await page.click('.activity-btn[data-store="home"]', { force: true })
+      const activeBtn = page.locator('#store-home [data-group-select].active').first()
+      const key = await activeBtn.getAttribute('data-group-select')
+      const labelText = await activeBtn.locator('span').first().innerText()
+      expect(key).toBeTruthy()
+      expect(labelText.length).toBeGreaterThan(0)
+
+      await activeBtn.click({ force: true })
+      const crumbText = await page.locator('#store-home .js-group-label').innerText()
+      expect(crumbText).toBe(labelText)
+      expect(crumbText).not.toBe(key)
+    } finally {
+      await page.close()
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await browser.close().catch(() => {})
+    }
+  }, 30_000)
+
+  // T-708 결함 4: the approved mockup's frame starts directly at the activity
+  // bar — no title bar, no build-fact banner. Pins both halves: no <header>
+  // element anywhere in the rendered page, and the activity bar is the
+  // app-shell's own first thing a reader's eye reaches.
+  test('the rendered page draws no <header> banner @window', async () => {
+    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+    const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+    try {
+      await expect(page.locator('header')).toHaveCount(0)
+      await expect(page.locator('.app-shell .activity').first()).toBeVisible()
+    } finally {
+      await page.close()
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await browser.close().catch(() => {})
+    }
+  }, 30_000)
+
   // T-666 slice 1b: wiki/feature/artifact/PRD now share the SAME
   // sidebar-group → list → detail-panel model the ticket store proved in
   // slice 1a (acceptance line 1). One real-browser row-open per store —

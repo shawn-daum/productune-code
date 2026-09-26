@@ -34,6 +34,7 @@ import {
   ARTIFACT,
   PRD,
   FILE_HREF_NOTE,
+  noGroupLabel,
 } from './labels.mjs'
 
 function escapeHtml(str) {
@@ -364,20 +365,35 @@ function ticketSection(tickets, currentVersion) {
 // default-active group (mirrors ticketStoreInner's current-version-first
 // convention). PRD's "open" group is the one intentional content nuance,
 // not a structural one — see prdStoreInner below.
-function groupedStore({ sidebarSubLabel, crumbLabel, groups }) {
-  const sidebarButtons = groups
-    .map((g, i) => {
-      const active = i === 0 ? ' active' : ''
-      // T-666 slice 2a: `count` is optional (home's "진행 상황" group is not a
-      // list and carries no count — the mockup's own sidebar leaves that one
-      // button's badge off, per docs/artifacts/v1.10/define-screen-set.html
-      // ~line 628) and may be a non-numeric label (home's "PRD" row badges
-      // with the version string, matching every other store's own PRD-nav
-      // convention) rather than always a bare integer.
-      const countHtml = g.count === undefined || g.count === null ? '' : `<span class="nav-item-count">${escapeHtml(String(g.count))}</span>`
-      return `<button type="button" class="nav-item nav-item-clickable${active}" data-group-select="${escapeHtml(g.key)}"><span>${escapeHtml(g.label)}</span>${countHtml}</button>`
-    })
-    .join('\n')
+//
+// T-708 결함 7: a store with exactly one group (feature, today — any other
+// store lands here too the moment its own data collapses to one group) has
+// nothing to switch between, so it draws no button at all — a static line
+// instead, copied byte-for-byte from the approved mockup
+// (docs/artifacts/v1.10/define-screen-set.html ~line 4181: `<div
+// class="nav-item" style="color:var(--text-tertiary); font-style:italic;">그룹
+// 없음 · 전체 3개</div>`) — no `nav-item-clickable`, no `active`, no
+// `data-group-select`, so INTERACTION_SCRIPT's `[data-group-select]` handler
+// simply never matches it. `noGroupUnit` is the caller's own count-unit word
+// (e.g. FEATURE.countUnit) — groupedStore has no store-specific vocabulary of
+// its own, so it cannot guess one.
+function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '' }) {
+  const singleGroup = groups.length === 1
+  const sidebarButtons = singleGroup
+    ? `<div class="nav-item" style="color:var(--text-tertiary); font-style:italic;">${escapeHtml(noGroupLabel(groups[0].count ?? 0, noGroupUnit))}</div>`
+    : groups
+        .map((g, i) => {
+          const active = i === 0 ? ' active' : ''
+          // T-666 slice 2a: `count` is optional (home's "진행 상황" group is not a
+          // list and carries no count — the mockup's own sidebar leaves that one
+          // button's badge off, per docs/artifacts/v1.10/define-screen-set.html
+          // ~line 628) and may be a non-numeric label (home's "PRD" row badges
+          // with the version string, matching every other store's own PRD-nav
+          // convention) rather than always a bare integer.
+          const countHtml = g.count === undefined || g.count === null ? '' : `<span class="nav-item-count">${escapeHtml(String(g.count))}</span>`
+          return `<button type="button" class="nav-item nav-item-clickable${active}" data-group-select="${escapeHtml(g.key)}"><span>${escapeHtml(g.label)}</span>${countHtml}</button>`
+        })
+        .join('\n')
   const sidebar = `<nav class="sidebar">
 <div class="sidebar-title">productune</div>
 <div class="sidebar-sub">${escapeHtml(sidebarSubLabel)}</div>
@@ -471,7 +487,7 @@ function wikiStoreInner(pages) {
     const label = wikiGroupLabel(key)
     return { key, label, count: items.length, bodyHtml: countBadge(label, items.length, WIKI.countUnit) + wikiRowsTable(items) }
   })
-  return groupedStore({ sidebarSubLabel: WIKI.sidebarLabel, crumbLabel: WIKI.sidebarLabel, groups })
+  return groupedStore({ sidebarSubLabel: WIKI.sidebarLabel, crumbLabel: WIKI.sidebarLabel, groups, noGroupUnit: WIKI.countUnit })
 }
 
 /** The detail-data JSON blob's "wiki" bucket — same construction discipline as `ticketDetailEntries`: keyed by the same id `wikiRowsTable` renders, from the same input list. */
@@ -523,7 +539,7 @@ function featureStoreInner(pages) {
       bodyHtml: countBadge(FEATURE.sidebarLabel, pages.length, FEATURE.countUnit) + featureRowsTable(pages),
     },
   ]
-  return groupedStore({ sidebarSubLabel: STORE_LABEL.feature, crumbLabel: STORE_LABEL.feature, groups })
+  return groupedStore({ sidebarSubLabel: STORE_LABEL.feature, crumbLabel: STORE_LABEL.feature, groups, noGroupUnit: FEATURE.countUnit })
 }
 
 function featureDetailEntries(pages, repoRootHref) {
@@ -659,7 +675,7 @@ function artifactStoreInner(artifacts, currentVersion) {
     const badgeLabel = `${key}${ARTIFACT.bucketSuffix}`
     return { key, label: key, count: items.length, bodyHtml: countBadge(badgeLabel, items.length, ARTIFACT.countUnit) + artifactRowsTable(items) }
   })
-  return groupedStore({ sidebarSubLabel: STORE_LABEL.artifact, crumbLabel: STORE_LABEL.artifact, groups })
+  return groupedStore({ sidebarSubLabel: STORE_LABEL.artifact, crumbLabel: STORE_LABEL.artifact, groups, noGroupUnit: ARTIFACT.countUnit })
 }
 
 /**
@@ -889,18 +905,6 @@ body {
   display: flex;
   flex-direction: column;
 }
-header {
-  flex: 0 0 auto;
-  padding: var(--space-16) var(--space-24);
-  background: var(--bg-surface-base);
-  border-bottom: 1px solid var(--border-section);
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-16);
-  flex-wrap: wrap;
-}
-header h1 { font-size: 1.1rem; margin: 0; }
-header p { margin: 0; color: var(--text-tertiary); font-size: 0.8rem; }
 code { font-family: var(--font-mono); font-size: 0.9em; }
 
 /* ---------- app shell (T-666 slice 1a) — activity bar | sidebar | main | detail panel ---------- */
@@ -921,7 +925,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .store-section.active { display: flex; }
 
 .sidebar {
-  width: 220px; flex: 0 0 220px; background: var(--bg-surface-on); border-right: 1px solid var(--border-item);
+  width: 250px; flex: 0 0 250px; background: var(--bg-surface-on); border-right: 1px solid var(--border-item);
   padding: var(--space-16) var(--space-12); overflow-y: auto;
 }
 .sidebar-title { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-quaternary); margin: 0 0 var(--space-4); }
@@ -950,8 +954,14 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 }
 .topstrip-crumb { font-size: 12px; color: var(--text-tertiary); }
 .topstrip-crumb b { color: var(--text-primary); font-weight: 600; }
-.frame-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-24) var(--space-32); }
+.frame-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-32) var(--space-40); }
 .main-inner { max-width: 1040px; margin: 0 auto; }
+/* T-708 결함 1: home is the one dashboard-card screen (progress stats +
+   matrix, table-shaped data with no paragraph-readability reason for a cap)
+   — every other store keeps the 1040px narrative cap above. Scoped by
+   data-store, not a second .main-inner variant class, since main-inner is
+   shared markup across every groupedStore()/ticketStoreInner() call. */
+.store-section[data-store="home"] .main-inner { max-width: none; }
 .section-meta { margin-bottom: var(--space-12); }
 .count-badge { display: inline-block; font-size: 11.5px; background: var(--bg-interaction-neutral); color: var(--text-secondary); padding: 3px 10px; border-radius: var(--radius-100); }
 
@@ -1017,7 +1027,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .stage-line { font-size: 11px; color: var(--text-secondary); margin-bottom: var(--space-12); }
 .stage-overall { display: flex; align-items: center; gap: var(--space-8); margin-bottom: var(--space-12); padding-bottom: var(--space-10); border-bottom: 1px solid var(--border-item); }
 .stage-overall .stage-matrix-label { font-weight: 700; color: var(--text-primary); flex: 0 0 auto; }
-.stage-overall .stage-matrix-count { font-weight: 700; color: var(--text-primary); margin-left: auto; }
+.stage-overall .stage-matrix-count { font-weight: 700; color: var(--text-primary); }
 .stage-matrix-sq-wrap.stage-overall-sq-wrap { flex-wrap: nowrap; gap: 2px; }
 .stage-overall-sq-wrap .stage-sq { width: 6px; height: 6px; }
 .stage-overall-sq-wrap .stage-sq-svg { width: 6px; height: 6px; }
@@ -1156,7 +1166,16 @@ const INTERACTION_SCRIPT = `
       section.querySelectorAll('.nav-item-clickable').forEach(function (b) { b.classList.toggle('active', b === groupBtn); });
       section.querySelectorAll('.view-pane').forEach(function (v) { v.classList.toggle('active', v.dataset.group === group); });
       var label = section.querySelector('.js-group-label');
-      if (label) label.textContent = group;
+      if (label) {
+        // T-708 결함 5: breadcrumb showed the raw data-group-select key
+        // (an internal id — 'progress', 'backlog', a version/bucket key),
+        // never a translated label of its own. Reads the SAME text the
+        // pressed button is already showing (its first <span>, the label —
+        // see groupedStore()/ticketStoreInner() below, where that span is
+        // always the button's label, never the count) instead of the key.
+        var btnLabelSpan = groupBtn.querySelector('span');
+        label.textContent = btnLabelSpan ? btnLabelSpan.textContent : group;
+      }
       closeDetailPanel(section);
       return;
     }
@@ -1227,10 +1246,7 @@ ${emitThemeVarBlock('v-light', light)}
 </style>
 </head>
 <body class="v-dark">
-<header>
-<h1>${PAGE.h1}</h1>
-<p>${COMMON.tokenHashCaption} <code>${escapeHtml(tokensSha256)}</code></p>
-</header>
+<!-- sha256:${escapeHtml(tokensSha256)} -->
 <div class="app-shell">
 ${activityBar('home')}
 ${homeSection(data, repoRootHref)}
