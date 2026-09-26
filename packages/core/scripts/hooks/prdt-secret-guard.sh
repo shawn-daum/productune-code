@@ -6,9 +6,9 @@
 #
 # WHY (T-677): repeated real incidents — a worker cats/heads/seds a `.env*`
 # file to check whether a key is set, and the value rides onto the screen and
-# into the session transcript. contracts.md §Secrets only reaches PRODUCTION
-# secrets and treats a bare `.env` as local; the actual gap is that there was
-# no VALUE-FREE way to check "is the key set" until T-677 S1 landed
+# into the session transcript. contracts.md §Secrets bars any credential
+# VALUE, in any environment, `.env.local` included — the actual gap was that
+# there was no VALUE-FREE way to check "is the key set" until T-677 S1 landed
 # `prdt env check <file> [KEY]` (packages/core/scripts/prdt `cmd_env`, exit
 # 0/1/2/3, never a character of the value). This hook is the enforcement half:
 # deny the print, name the probe.

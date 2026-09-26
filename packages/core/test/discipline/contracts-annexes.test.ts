@@ -168,7 +168,14 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
   })
 
   test('the floor did not move: Secrets, carve-outs, Overrides are whole sections in contracts.md', () => {
-    expect(CONTRACTS).toContain('## Secrets — production credentials never enter agent context (EVERY persona, PO included)')
+    // T-679: pinned as the heading SHAPE, not the old literal — the old pin
+    // ('## Secrets — production credentials never enter agent context (EVERY
+    // persona, PO included)') broke the moment §Secrets widened from
+    // production-only to every credential value. The property this protects
+    // is "a §Secrets heading exists, still scoped to EVERY persona, PO
+    // included" — the clause after the em dash is free to reword without
+    // re-breaking this test.
+    expect(CONTRACTS).toMatch(/^## Secrets — .+\(EVERY persona, PO included\)$/m)
     expect(CONTRACTS).toContain('## Overrides — precedence and the non-overridable floor')
     expect(CONTRACTS).toContain('- Carve-out: `~/.prdt/plan-tier` is PO-writable')
     // T-613: re-pinned to the current wording. T-586 added the playbook-scoped
