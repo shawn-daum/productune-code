@@ -117,7 +117,15 @@ function cliHooksBlock(home: string): any {
       { matcher: 'startup|resume|clear', hooks: disciplineEntry },
       { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), ...partSlots, ...injectors] },
     ],
-    SubagentStart: [{ matcher: '^prdt-', hooks: disciplineEntry }],
+    // T-682 slice 3: prdt-post-dispatch.sh rides SubagentStart too (the
+    // mode-independent START of a dispatch — its in-flight marker), as its OWN
+    // second `^prdt-` entry: the discipline entry's shape (16 commands, project
+    // overrides LAST) stays untouched, and one settings entry per manifest
+    // registration is what both derivations emit.
+    SubagentStart: [
+      { matcher: '^prdt-', hooks: disciplineEntry },
+      { matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh')] },
+    ],
     SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh'), h('prdt-return-check.sh')] }],
     PostToolUse: [
       { matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] },
