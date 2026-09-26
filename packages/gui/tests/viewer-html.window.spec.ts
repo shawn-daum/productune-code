@@ -423,6 +423,42 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
     }, 30_000)
   }
 
+  // T-666 slice 2a: home is now a `groupedStore()` workspace (progress /
+  // ticket / artifact / prd), not a flat summary table — proving the sidebar
+  // switch and the detail panel in a real browser, per the slice 1a lesson
+  // that markup-string tests alone once passed while clicks were dead.
+  test("home's sidebar rows switch its own main pane, and opening a ticket row from home opens home's own detail panel @window", async () => {
+    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+    const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+    try {
+      await expect(page.locator('#store-home')).toHaveClass(/active/)
+      await expect(page.locator('#store-home .view-pane[data-group="progress"]')).toHaveClass(/active/)
+
+      for (const group of ['ticket', 'artifact', 'prd', 'progress']) {
+        await page.click(`#store-home [data-group-select="${group}"]`)
+        await expect(page.locator(`#store-home .view-pane[data-group="${group}"]`)).toHaveClass(/active/)
+      }
+
+      await page.click('#store-home [data-group-select="ticket"]')
+      const rows = page.locator('#store-home .detail-row[data-detail-kind="ticket"]')
+      await expect(rows.first()).toBeVisible()
+      await rows.first().click()
+      await expect(page.locator('#store-home .detail-panel.active')).toHaveCount(1)
+      // Scoped to home's OWN panel — the ticket store's sibling section must
+      // stay untouched (each `.store-section` carries its own `.detail-panel`).
+      await expect(page.locator('#store-ticket .detail-panel.active')).toHaveCount(0)
+      const bodyText = await page.locator('#store-home .detail-panel-body').innerText()
+      expect(bodyText.length).toBeGreaterThan(0)
+
+      await page.keyboard.press('Escape')
+      await expect(page.locator('#store-home .detail-panel.active')).toHaveCount(0)
+    } finally {
+      await page.close()
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await browser.close().catch(() => {})
+    }
+  }, 30_000)
+
   test('clicking a PRD closed-round row (after switching to the closed group) opens its detail panel; outside click closes it @window', async () => {
     const html = fs.readFileSync(VIEWER_HTML, 'utf8')
     const { browser, page, tmp } = await openInteractivePage(cdpBase, html)

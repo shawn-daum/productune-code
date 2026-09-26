@@ -16,7 +16,7 @@ const fixtureData = {
       {
         bucket: 'v1.10',
         rel: 'docs/tickets/v1.10/T-901.md',
-        frontmatter: { id: 'T-901', slug: 'fixture-one', type: 'impl', status: 'open', assignee: 'developer' },
+        frontmatter: { id: 'T-901', slug: 'fixture-one', type: 'impl', status: 'open', assignee: 'developer', prd_item: 'v1.10#viewer' },
         body: '# Title one\n\n## Section two\n\n### Sub three\n\n#### Deep four\n\nprose.',
       },
       {
@@ -183,5 +183,87 @@ describe('viewer/lib/render.mjs — every wiki/feature/artifact row resolves to 
     expect(html).toContain('data-detail-kind="prd" data-detail-id="v1.1"')
     const data = detailData(html)
     expect(data.prd['v1.1'].body).toBeTruthy()
+  })
+})
+
+// T-666 slice 2a: home is now the current version's workspace on the SAME
+// `groupedStore()` model every other simple store already uses — its four
+// sidebar rows (progress/ticket/artifact/prd) switch which `.view-pane` is
+// shown inside `#store-home`, exactly like wiki/feature/artifact/PRD already
+// do (slice 1b), and it is version-scoped by construction (both filtered on
+// `data.currentVersion` at build time, never a control that reaches backlog
+// or a closed round).
+describe('viewer/lib/render.mjs — home is the shared-model, version-scoped workspace (T-666 slice 2a)', () => {
+  function render() {
+    return renderPage({ data: fixtureData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+  }
+
+  it('home carries the same four sidebar groups the mockup approved, each scoped to the current version', () => {
+    const html = render()
+    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    expect(homeMatch).not.toBeNull()
+    const home = homeMatch[0]
+    for (const group of ['progress', 'ticket', 'artifact', 'prd']) {
+      expect(home, `home is missing the "${group}" sidebar group`).toContain(`data-group-select="${group}"`)
+      expect(home, `home is missing the "${group}" view-pane`).toContain(`data-group="${group}"`)
+    }
+    // Never a backlog tab, never a closed-round list, never another
+    // artifact bucket — those stay reachable only via the ticket/PRD/
+    // artifact stores proper (the activity bar), never a home control.
+    expect(home).not.toContain('data-group-select="backlog"')
+    expect(home).not.toContain('data-group-select="closed"')
+  })
+
+  it('a ticket row inside home resolves against the SAME global ticket detail-data the ticket store itself uses — no duplicated data', () => {
+    const html = render()
+    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    expect(homeMatch![0]).toContain('data-detail-kind="ticket" data-detail-id="T-901"')
+    const blobMatch = /<script id="detail-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)
+    const data = JSON.parse(blobMatch![1])
+    expect(data.ticket['T-901']).toBeDefined()
+  })
+
+  it('the T-675 progress matrix places a fixture ticket in its prd_item row and assignee column', () => {
+    const html = render()
+    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    const home = homeMatch![0]
+    // T-901: prd_item v1.10#viewer, assignee developer, status open — its row
+    // must carry a non-empty (not "–") cell somewhere (the exact column
+    // isn't re-derived here; progressCell's own emptiness rule is what's
+    // under test — see the non-vacuous control below for the failure mode).
+    expect(home).toContain('stage-matrix')
+    expect(home).toContain('stage-sq') // at least one square drawn (fixture is non-vacuous)
+  })
+
+  // Non-vacuous control: an empty cell really does render "–", so the
+  // assertion above (a non-empty cell exists) is capable of failing.
+  it('checker fixture: a version with zero tickets renders every matrix cell empty ("–"), never a bare square', () => {
+    const emptyData = { ...fixtureData, currentVersion: 'v1.11', tickets: { included: [], omitted: [] } }
+    const html = renderPage({ data: emptyData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    const home = homeMatch![0]
+    expect(home).not.toContain('stage-sq"') // no bare `<span class="stage-sq">` anywhere
+    expect(home).toContain('stage-matrix-cell-empty')
+  })
+
+  it('home carries no fact about the viewer\'s own build (what it collected/inlined) — a product screen only says what the tickets/artifacts/PRD themselves say', () => {
+    const html = render()
+    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    const home = homeMatch![0]
+    // "인라인" (inlined) names THIS GENERATOR's own embed-vs-link decision
+    // (viewer/lib/collect.mjs) — never a fact the tickets/artifacts/PRD
+    // themselves carry. The pre-slice-2a home rendered "산출물 N건 (인라인
+    // M건)" here; this line fails against that shape and passes against the
+    // matrix-based home this slice builds instead.
+    expect(home).not.toContain('인라인')
+  })
+
+  // Non-vacuous control: the "인라인" check above must be able to catch a
+  // real leak, or it could be passing only because no code path emits that
+  // word anywhere any more (a different, weaker claim than "home doesn't").
+  it('checker fixture: a store-section containing the old inlined-count phrase is caught', () => {
+    const fakeHtml = '<section class="store-section" data-store="home">산출물 3건 (인라인 2건)</section>'
+    const m = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(fakeHtml)
+    expect(m![0]).toContain('인라인')
   })
 })
