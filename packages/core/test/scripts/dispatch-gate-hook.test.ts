@@ -792,8 +792,16 @@ describe('T-561: whitespace never silences the gate', () => {
     })
 
     test(`${label} → a well-formed dispatch is still passed in silence`, () => {
+      // A well-formed dispatch clears the `[ctx]` verdict, so this is the one
+      // case in this describe that actually reaches the T-695 machine-resource
+      // cap check (the other three either fail the `[ctx]` verdict first — an
+      // early exit, printed before the cap is ever read — or never match
+      // `applies` at all). Unshimmed, this asserted on the REAL host's load —
+      // observed failing under a concurrent full-suite run (load ratio ~5 over
+      // the 1.5 cap), which prints "WAITING — the machine is over cap" instead
+      // of silence. Same shim every other cap-sensitive case in this file uses.
       const o: EventOpts = { cwd: makeProject() }
-      const res = spawnSync('bash', [HOOK], { input: format(o), encoding: 'utf8' })
+      const res = spawnSync('bash', [HOOK], { input: format(o), encoding: 'utf8', env: envFor().env })
       expect(res.stderr).toBe('')
       expect(res.stdout).toBe('')
     })

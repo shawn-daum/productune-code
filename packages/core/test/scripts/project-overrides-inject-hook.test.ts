@@ -173,7 +173,9 @@ describe('precedence text — the carrier of the layer ranking, not the position
     // completion order, so the machine block can arrive after the project one
     // (measured, T-445), and only the wording keeps the layers ranked.
     expect(ctx).toMatch(/PROJECT override block/)
-    expect(ctx).toMatch(/outranks this layer/)
+    // S2 (T-702) reworded "outranks this layer" → "outranks this one" (the
+    // antecedent, "this [machine override] layer", is unchanged) — same claim.
+    expect(ctx).toMatch(/outranks this (layer|one)/)
   })
 
   test.skipIf(!hasJq())('session-start payload no longer says machine overrides beat everything', () => {
@@ -181,7 +183,15 @@ describe('precedence text — the carrier of the layer ranking, not the position
     const proj = makeProject({ projectBody: PROJECT_BODY })
     const ctx = additionalContextOf(runHook(SESSION_START_HOOK, { prdtHome, cwd: proj }))
     expect(ctx).not.toContain('those take priority over everything here')
-    expect(ctx).toMatch(/project/i)
+    // S1 (T-702) generalized the part-1 header from naming "machine, project"
+    // explicitly to "override blocks … outrank all of this" — a deliberate
+    // move, not a loss: which LAYER wins is now stated once, by each override
+    // block's OWN header at the moment it renders (asserted by the two tests
+    // above and by project-overrides-inject-hook.test.ts's other cases), never
+    // by session-start's generic header. The property this test still has to
+    // hold — no layer, machine included, gets an unconditional priority grant
+    // baked into session-start's OWN text — is what these two assertions pin.
+    expect(ctx).toMatch(/override blocks? arrive as their own hook outputs? and outrank all of this/i)
     expect(ctx).toContain('floor')
   })
 })

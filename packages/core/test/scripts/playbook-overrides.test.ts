@@ -90,7 +90,10 @@ describe.skipIf(!hasJq())("the index names which of this persona's playbooks hav
     const home = makeHome({ personaBody: PERSONA_BODY, store: { implement: HOSTILE, refactor: '- r\n' } })
     const ctx = ctxOf(runHook(home))
     expect(ctx).toContain('----- END overrides -----\n\n[prdt discipline — playbook overrides for prdt-developer]')
-    expect(ctx).toContain('these developer playbooks: implement · refactor.')
+    // S2 (T-702) re-pinned: "these developer playbooks: …" → "Playbook
+    // overrides on this machine for developer: … — index only." (pure re-pin,
+    // confirmed by QA against 1faf917 — same claim, index-only wording upfront).
+    expect(ctx).toContain('Playbook overrides on this machine for developer: implement · refactor — index only.')
     expect(ctx).toContain(`bash ${HOOK} --playbook <name>`)
     expect(ctx).not.toContain('--maxWorkers=1')
     // the persona block itself is unchanged by the appended index
@@ -104,7 +107,7 @@ describe.skipIf(!hasJq())("the index names which of this persona's playbooks hav
     const ctx = ctxOf(runHook(makeHome({ store: { bugfix: '- b\n' } })))
     expect(ctx.startsWith('[prdt discipline — playbook overrides for prdt-developer]')).toBe(true)
     expect(ctx).not.toContain('BEGIN overrides')
-    expect(ctx).toContain('these developer playbooks: bugfix.')
+    expect(ctx).toContain('Playbook overrides on this machine for developer: bugfix — index only.')
   })
   test('an empty (0 B) store file counts as absent', () => {
     expect(runHook(makeHome({ store: { bugfix: '' } }))).toBe('')

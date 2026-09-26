@@ -74,19 +74,21 @@ function additionalContextOf(stdout: string): string {
 // already show why that breaks the tree the moment the tail prose is
 // reworded without the underlying rule changing). Pin the rule instead: (a)
 // tagged `[prdt register]`, (b) names the non-default keys verbatim, (c)
-// states which surface it governs, (d) the tail says whether a body already
-// arrived at session start ("Binding only …") or none exists ("No body is in
-// force …") — never both, never neither.
+// states which surface it governs, (d) when a body already arrived at session
+// start the line ends right there (S7-b, T-702, dropped the "Binding only"
+// tail — the whole point of §Fixed paths' Register row already says the same
+// thing) — when none exists, a "No body is in force …" tail still follows —
+// never both.
 function assertBindingLineShape(line: string, opts: { keys: string; governs: string; bodyArrived: boolean }): void {
   expect(line.startsWith('[prdt register] ')).toBe(true)
   expect(line).toContain(opts.keys)
   expect(line).toContain(`governs ${opts.governs}`)
   if (opts.bodyArrived) {
-    expect(line).toMatch(/binding only/i)
+    expect(line.endsWith(`governs ${opts.governs}.`)).toBe(true)
     expect(line).not.toMatch(/no body is in force/i)
   } else {
     expect(line).toMatch(/no body is in force/i)
-    expect(line).not.toMatch(/binding only/i)
+    expect(line.endsWith(`governs ${opts.governs}.`)).toBe(false)
   }
 }
 
@@ -237,8 +239,8 @@ describe('the operator register — every key in force (this machine after migra
     const noGoverns = line.replace('governs user-chat', 'governs nothing')
     expect(() => assertBindingLineShape(noGoverns, opts)).toThrow()
 
-    const noTail = line.replace('Binding only', 'zzzzzzzzzz')
-    expect(() => assertBindingLineShape(noTail, opts)).toThrow()
+    const spuriousTail = `${line} Binding only; extra.`
+    expect(() => assertBindingLineShape(spuriousTail, opts)).toThrow()
   })
 
   test.skipIf(!hasJq())('stale mirror without a body file → that key emits nothing, the rest still arrives, no broken JSON', () => {
