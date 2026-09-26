@@ -54,23 +54,25 @@ export async function generate({ repoRoot = REPO_ROOT } = {}) {
 
   const data = collectAll(repoRoot)
 
-  // T-666 slice 1b: a non-inlined artifact (.html/.json) links back to the
-  // real file on disk — the relative path from OUTPUT_PATH's own directory
-  // to `docs/artifacts/`. Only this module knows where OUTPUT_PATH lives, so
-  // it is computed once here rather than hardcoded inside render.mjs.
-  const artifactsBaseHref = path
-    .relative(path.dirname(OUTPUT_PATH), path.join(repoRoot, 'docs/artifacts'))
-    .split(path.sep)
-    .join('/')
+  // T-666 slice 2b: the path from the generated page's own directory back to
+  // the repo root — every relative link inside a rendered document body
+  // (render.mjs's `resolveDocLink`) is rewritten onto this, rather than
+  // being left to resolve against OUTPUT_PATH's own folder. Only this module
+  // knows where OUTPUT_PATH lives on disk, so it is computed once here.
+  // `artifactsBaseHref` (T-666 slice 1b) is exactly `${repoRootHref}/docs/artifacts`
+  // — derived from the SAME relative-path computation rather than a second
+  // one (doctrine #2).
+  const repoRootHref = path.relative(path.dirname(OUTPUT_PATH), repoRoot).split(path.sep).join('/') || '.'
+  const artifactsBaseHref = `${repoRootHref}/docs/artifacts`
 
-  const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256, artifactsBaseHref })
+  const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256, artifactsBaseHref, repoRootHref })
   const usedText = collectUsedChars(draft)
 
   const regularBuffer = fs.readFileSync(REGULAR_WOFF2)
   const semiboldBuffer = fs.readFileSync(SEMIBOLD_WOFF2)
   const fontFaceCss = await buildPretendardFontFaceCss({ regularBuffer, semiboldBuffer, usedText })
 
-  const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref })
+  const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref })
   return { html }
 }
 

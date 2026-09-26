@@ -482,4 +482,61 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
       await browser.close().catch(() => {})
     }
   }, 30_000)
+
+  // T-666 slice 2b: home's stage line (all four lifecycle stages, always
+  // rendered) and the progress matrix's trailing "항목 밖" row (a ticket with
+  // no prd_item never disappears) — driven against the REAL generated page's
+  // real ticket data, not a fixture, per this file's own reason for being
+  // (slice 1a's lesson: markup-string tests alone once passed while the real
+  // interaction was dead).
+  test("home's progress pane always shows all four TYPE_TO_STAGE stages and a trailing row for a ticket with no prd_item @window", async () => {
+    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+    const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+    try {
+      await expect(page.locator('#store-home .view-pane[data-group="progress"]')).toHaveClass(/active/)
+      const stageLineText = await page.locator('#store-home .stage-line').innerText()
+      for (const stage of ['define', 'build', 'ship', 'retro']) {
+        expect(stageLineText, `stage line "${stageLineText}" is missing "${stage}"`).toContain(stage)
+      }
+
+      const rows = page.locator('#store-home .stage-matrix-row:not(.stage-matrix-head)')
+      const rowCount = await rows.count()
+      let trailingRowText: string | null = null
+      for (let i = 0; i < rowCount; i++) {
+        const text = await rows.nth(i).innerText()
+        if (text.includes('항목 밖')) trailingRowText = text
+      }
+      expect(trailingRowText, 'no "항목 밖" trailing row found in the real matrix').not.toBeNull()
+    } finally {
+      await page.close()
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await browser.close().catch(() => {})
+    }
+  }, 30_000)
+
+  // T-666 slice 2b acceptance line 3: a relative document link inside a
+  // rendered body resolves against the REAL viewer.html's own on-disk
+  // directory, never leaving it to be treated as "next to viewer.html" (its
+  // pre-fix behavior). Checked against the filesystem directly — the
+  // strongest form of "points to the real file" this suite can assert.
+  test('a relative document link inside a rendered body resolves to a real file on disk, not against viewer.html\'s own folder @window', async () => {
+    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+    const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+    try {
+      await page.click('.activity-btn[data-store="prd"]')
+      const links = page.locator('#store-prd .view-pane[data-group="open"] a[href]')
+      await expect(links.first()).toBeVisible()
+      const href = await links.first().getAttribute('href')
+      expect(href).toBeTruthy()
+      const targetAttr = await links.first().getAttribute('target')
+      expect(targetAttr).toBe('_blank')
+      const pathPart = decodeURI(href!.split('#')[0])
+      const resolved = path.resolve(path.dirname(VIEWER_HTML), pathPart)
+      expect(fs.existsSync(resolved), `relative link "${href}" does not resolve to a real file at ${resolved}`).toBe(true)
+    } finally {
+      await page.close()
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await browser.close().catch(() => {})
+    }
+  }, 30_000)
 })
