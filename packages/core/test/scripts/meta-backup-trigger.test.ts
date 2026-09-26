@@ -203,11 +203,17 @@ describe.skipIf(!PYTHON3 || !NODE)('prdt CLI main — detached backup tick (T-50
     // its generic FAILED line always suggested `prdt meta push {remote}` even
     // while the very next line already named the real fix (rename/repoint).
     // The FAILED line must now say nothing about a manual push for this
-    // reason; the fix stays sourced from that one other line only.
+    // reason — T-699 last piece: it reuses `_meta_backup_fail_hint` (the same
+    // function the CLI notice above calls), so the FAILED line itself now
+    // names both fixes too, word for word with the CLI. The other, older
+    // "auto not in remotes" line still fires alongside it (a different,
+    // config-vs-remotes check) and is unaffected.
     const d2 = runPrdt(['doctor'], { PRDT_META_BACKUP: '0' })
     expect(d2.stdout).toMatch(/meta: automatic backup push FAILED at 2026-09-11T04:05Z .*names no remote of the meta repo \(have: vault\)/)
     expect(d2.stdout).not.toContain('prdt meta push backup`')
-    // the fix is still said, just by the one line that already carried it
+    expect(d2.stdout).toContain('meta.backup_remote 를 위에 나열된 원격 중 하나로 바꾸거나') // fix 1, same wording as the CLI
+    expect(d2.stdout).toContain('prdt meta remote add backup <url>')                     // fix 2, same wording as the CLI
+    // the older config-vs-remotes line still fires too (unaffected by this change)
     expect(d2.stdout).toMatch(/meta: `meta\.backup_remote` = 'backup' names a remote the meta repo does not have \(have: vault\)/)
     fs.rmSync(bare, { recursive: true, force: true })
   })
