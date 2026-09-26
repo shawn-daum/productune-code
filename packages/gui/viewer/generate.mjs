@@ -54,14 +54,23 @@ export async function generate({ repoRoot = REPO_ROOT } = {}) {
 
   const data = collectAll(repoRoot)
 
-  const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256 })
+  // T-666 slice 1b: a non-inlined artifact (.html/.json) links back to the
+  // real file on disk — the relative path from OUTPUT_PATH's own directory
+  // to `docs/artifacts/`. Only this module knows where OUTPUT_PATH lives, so
+  // it is computed once here rather than hardcoded inside render.mjs.
+  const artifactsBaseHref = path
+    .relative(path.dirname(OUTPUT_PATH), path.join(repoRoot, 'docs/artifacts'))
+    .split(path.sep)
+    .join('/')
+
+  const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256, artifactsBaseHref })
   const usedText = collectUsedChars(draft)
 
   const regularBuffer = fs.readFileSync(REGULAR_WOFF2)
   const semiboldBuffer = fs.readFileSync(SEMIBOLD_WOFF2)
   const fontFaceCss = await buildPretendardFontFaceCss({ regularBuffer, semiboldBuffer, usedText })
 
-  const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256 })
+  const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref })
   return { html }
 }
 
