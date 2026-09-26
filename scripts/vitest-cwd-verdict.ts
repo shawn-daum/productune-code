@@ -12,6 +12,20 @@
  * Plain `require()`, not an ESM import of the `.cjs` — same choice
  * `real-home-tripwire.ts` makes for the same module, and for the same reason:
  * no second copy of the logic behind a typed re-export this narrow needs.
+ *
+ * F1 (T-703 slice 3, grill high): `verifyTripwire()` is hardened (see
+ * vitest-cwd-tripwire.cjs) to fail closed rather than throw on a probe error.
+ * The `try/catch` below is defense in depth on top of that, for the one
+ * property this teardown must hold regardless of what the `.cjs` does: it must
+ * never let an exception escape. vitest 4.1.9's `_teardownGlobalSetup` runs
+ * every globalSetup's teardown in REVERSE array order with NO per-item
+ * try/catch (observed by the grill) — this module is currently LAST in
+ * `vitest.config.ts`'s `globalSetup` array, so its teardown runs FIRST; an
+ * uncaught throw here would abort the loop before the T-450 $HOME verdict
+ * (first in the array, so last in teardown order) ever runs, and — separately
+ * — a throw from a globalSetup teardown prints "error during close" but still
+ * exits 0 (measured, see the home verdict's own header), so the failure would
+ * have been invisible on both counts at once.
  */
 /* eslint-disable @typescript-eslint/no-var-requires */
 type VerifyResult = { ok: boolean; report: string; drift: string[] }
@@ -23,7 +37,22 @@ export default function setup(): () => void {
   // Nothing to do on the way in: the baseline is already armed at config module
   // scope, deliberately earlier than this function runs.
   return function teardown(): void {
-    const result = verifyTripwire()
+    let result: VerifyResult
+    try {
+      result = verifyTripwire()
+    } catch (err) {
+      // F1 — see the header. This must never happen given the hardening in
+      // vitest-cwd-tripwire.cjs, but this teardown's own no-throw guarantee
+      // does not get to depend on that module never regressing.
+      process.stdout.write(
+        `\nT-703 CWD TRIPWIRE TEARDOWN THREW: ${err instanceof Error ? err.message : String(err)}\n` +
+          'Failing the run rather than letting this propagate — an uncaught throw here\n' +
+          "would abort vitest's reverse globalSetup teardown loop and skip the $HOME\n" +
+          'verdict (F1).\n',
+      )
+      process.exitCode = 1
+      return
+    }
     if (result.ok) return
     process.stdout.write(result.report)
     process.stdout.write(
