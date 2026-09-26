@@ -301,7 +301,7 @@ fi
 if [ -n "$INDEX" ]; then
   HOOK_SELF="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/${0##*/}"
   INDEX_BLOCK="[prdt discipline — playbook overrides for $AGENT_TYPE]
-This machine holds an override scoped to these $PERSONA playbooks: $INDEX. Index only — a body renders when you select its playbook: at that moment run \`bash $(safe_path "$HOOK_SELF") --playbook <name>\`, never a bare cat (the render gutters the body and names its scope and layer). While that playbook runs its block outranks the playbook body and this machine's persona override, still under the project layer and the floor (contracts §Overrides)."
+This machine holds an override scoped to these $PERSONA playbooks: $INDEX. Index only — a body renders when you select its playbook: at that moment run \`bash $(safe_path "$HOOK_SELF") --playbook <name>\`, never a bare cat (the render gutters the body and names its scope and layer). While that playbook runs its block outranks the playbook body and this machine's persona override, still under the project layer and the floor (contracts §Overrides). That command denied by the permission layer (a denial — not the silence of an absent or empty file, which renders nothing) → run the playbook WITHOUT its override and say so in \`playbooks_run[]{name,why}\`, never silently."
   PAYLOAD="${PAYLOAD:+$PAYLOAD
 
 }$INDEX_BLOCK"
