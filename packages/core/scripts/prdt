@@ -91,7 +91,40 @@ PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
 # ≤8,000 B per hook output — two bodies at 2,000 B stay under half of it.
 CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 64, "worker_habit": 40,
         "playbook_body": 80, "menu": 15, "override": 20, "machine_wiki_pages": 15,
-        "register_body_bytes": 2000, "agent_stub_bytes": 2000}
+        "register_body_bytes": 2000, "agent_stub_bytes": 2000,
+        "doctrine_bytes": 1400, "contracts_bytes": 21500, "po_habit_bytes": 17600,
+        "worker_habit_bytes": 6000, "menu_bytes": 1400,
+        "persona_total_bytes": {"po": 45000, "designer": 27500, "developer": 26500, "qa": 29500}}
+# T-701: a BYTE budget beside every line cap above that the session-start hook
+# actually injects (doctrine.md · contracts.md · each persona's habit.md · each
+# persona's playbook menu) — `discipline_byte_caps` GATES on these (a real
+# violation, unlike the line counts below, which stayed advisory after T-577).
+# Basis for every number here is the SAME measurement, one pass (2026-09-26,
+# `wc -c` against the bound discipline tree): doctrine.md 1,202 B · contracts.md
+# 21,072 B (T-700 §evidence: 16,391 B on 2026-08-20 → 19,745 B on 09-05 →
+# 21,072 B today, ungated the whole way) · po/habit.md 17,330 B · worker_habit
+# (shared by designer/developer/qa, same as its line cap) at its largest member,
+# qa/habit.md 5,832 B (designer 3,344 B · developer 2,584 B) · menu at its
+# largest member, po's 1,287 B (designer 1,192 B · developer 803 B · qa 753 B).
+# Each budget is that measured size plus a small (≤5%) rounding margin for the
+# ordinary edit already in flight — NOT room for a new paragraph: a fixture one
+# byte over its budget must still fail (T-701 acceptance). T-702, the injection
+# diet, lands later in this same version and is expected to LOWER every number
+# here — this round only stops further growth from landing unnoticed, per
+# T-700's decision (option B: guard now, diet now, in the same version).
+# `persona_total_bytes`: the sum of documents this persona's session-start hook
+# actually carries — `_plan_docs_bytes` on `prdt-session-start.sh --plan
+# <persona>`, the same figure `discipline delivery`/`discipline delivery
+# summary` already read, checked here as its own gate rather than only printed.
+# Basis: measured via that same `--plan` call against the bound tree
+# (2026-09-26) — po 43,632 B · designer 26,806 B · developer 25,657 B · qa
+# 28,855 B — each budget that figure plus the same small margin. This is the
+# DOCS total (content only); it is smaller than the per-persona SessionStart
+# figures T-653 measured on this machine (po 69,498 · developer 39,218 ·
+# designer 39,317 · qa 45,656 B) because those also carry machine-local
+# overrides/wiki content that `prdt doctor` cannot see or reproduce — this gate
+# covers the tree-content subset doctor can actually check the same way
+# everywhere it runs.
 # `agent_stub_bytes` (T-578): the second BYTE cap — an agent stub is the
 # persona's base prompt, read whole by the harness with no part delivery, so
 # lines say nothing about it. Basis: the stubs measure 1,404–1,515 B after the
@@ -9650,6 +9683,55 @@ def discipline_line_caps(droot):
     return Advisory(lines)
 
 
+def discipline_byte_caps(droot):
+    """T-701: the byte-budget counterpart to `discipline_line_caps` above — a
+    GATE (a plain list, counted as violations), not an Advisory. T-472/T-577
+    already found the exact hole this closes: folding growth into an existing
+    line adds bytes with no line-count signal, so a line-only cap can watch a
+    document nearly double (contracts.md 16,391 B → 21,072 B, T-700 §evidence)
+    and report nothing. Each per-document budget lives at `CAPS['<key>_bytes']`
+    next to its line cap, basis written at the constant; `persona_total_bytes`
+    covers the sum a persona's session-start hook actually carries, checked the
+    same way, basis also at the constant."""
+    if not droot:
+        return Skipped("no discipline root — see `discipline menus`")
+    violations = []
+
+    def over(path, budget_key, label):
+        if not path.exists():
+            return
+        size = path.stat().st_size
+        budget = CAPS[budget_key]
+        if size > budget:
+            violations.append(f"discipline: {label} is {size:,} B — over its {budget:,} B budget "
+                               f"(CAPS['{budget_key}']) — curate down or split (T-701)")
+
+    for cand in (droot.parent / "doctrine.md", droot / "doctrine.md"):
+        if cand.exists():
+            over(cand, "doctrine_bytes", "doctrine.md")
+            break
+    over(droot / "contracts.md", "contracts_bytes", "contracts.md")
+    for persona in DISCIPLINE_PERSONAS:
+        key = "po_habit_bytes" if persona == "po" else "worker_habit_bytes"
+        over(droot / persona / "habit.md", key, f"{persona}/habit.md")
+        idx = droot / persona / "playbooks" / "_index.md"
+        over(idx, "menu_bytes", f"{persona} menu ({persona}/playbooks/_index.md)")
+
+    if _session_start_hook_path() is not None:
+        totals = CAPS.get("persona_total_bytes") or {}
+        for persona in DISCIPLINE_PERSONAS:
+            plan = discipline_delivery_plan(droot, persona)
+            if not plan or plan.get("legacy"):
+                continue
+            total = _plan_docs_bytes(plan)
+            budget = totals.get(persona)
+            if total and budget and total > budget:
+                violations.append(f"discipline: {persona} session-start total is {total:,} B of documents — "
+                                   f"over its {budget:,} B budget (CAPS['persona_total_bytes'][\"{persona}\"]) "
+                                   f"— the sum this persona's hook actually carries (T-701)")
+    return violations
+
+
 def discipline_caps_warnings(droot):
     """Menu freshness on the discipline tree that is actually BOUND on this
     machine. No root at all is a violation, not a skip: nothing is binding any
@@ -10710,6 +10792,10 @@ def cmd_doctor(_args):
         ("discipline menus", FAMILY_DE, lambda: discipline_caps_warnings(droot)),
         # line caps are an editorial guide (advisory) since T-577 — bytes gate delivery
         ("discipline line caps (editorial)", FAMILY_DE, lambda: discipline_line_caps(droot)),
+        # byte budgets beside those line caps — a real gate (T-701): closes the
+        # exact hole T-577 named (growth folded inside a line passes the line
+        # cap unseen) by checking bytes directly, per document and per persona.
+        ("discipline byte caps", FAMILY_DE, lambda: discipline_byte_caps(droot)),
         # what actually reaches a session: parts needed vs hook slots registered (T-577)
         ("discipline delivery", FAMILY_DE, lambda: discipline_delivery_warnings(droot)),
         ("discipline delivery headroom", FAMILY_DE, lambda: discipline_delivery_headroom(droot)),
