@@ -8,17 +8,17 @@ when: "writing or reading a ticket body — any key · raising a fork to the use
 Continues `contracts.md` §Tickets; binds every persona the same way, loaded on demand at the moment `when` names.
 
 ## The frame — H2 keys, this order, nothing else at H2
-| key | holds | writer | required |
-|---|---|---|---|
-| `problem` | `As-is` · `To-be` · the analysis | PO | always |
-| `options` | one table — columns the options, rows `pros` · `cons` · `trade-off` · `recommend` (one cell per fork, with its 1-line why) | PO | `type: decision`; else optional |
-| `related` | hand-written: stakeholders · purpose · out-of-scope. Version position and feature map are DRAWN by the viewer from `prd_item` · `feature` · `deps` — never written | PO | optional |
-| `acceptance` | the target; later additions as `###` | PO | always |
-| `evidence` | verbatim quotes · measurements | PO · designer | optional |
-| `outcome` | the result; one `###` per slice | worker | `status: done` |
-| `log` | one dated line per entry | anyone | optional |
+| key | holds | writer |
+|---|---|---|
+| `problem` | `As-is` · `To-be` · the analysis | PO |
+| `options` | the scaffolded table filled — one cell per fork per row, `recommend` with its 1-line why | PO |
+| `related` | hand-written: stakeholders · purpose · out-of-scope. Version position and feature map are DRAWN by the viewer from `prd_item` · `feature` · `deps` — never written | PO |
+| `acceptance` | the target; later additions as `###` | PO |
+| `evidence` | verbatim quotes · measurements | PO · designer |
+| `outcome` | the result; one `###` per slice | worker |
+| `log` | one dated line per entry | anyone |
 - No `## status`, no fold line in the file: the viewer draws both from frontmatter and key order.
-- Binds tickets created after it landed; an older ticket keeps its headings as written — the viewer's alias table renders them.
+- `prdt tickets new --type <type> --slug <slug>` writes the frame (frontmatter · keys in order · the `options` table for `decision`); `prdt tickets fmt <id…> --check` names every violation — order · spelling · alias · a missing required key — and bare `fmt` rewrites headings only. Both skip a ticket created before 2026-09-24: an older ticket keeps its headings as written — the viewer's alias table renders them.
 - Labels live outside the ticket: the file carries keys, the viewer holds the words (one label table); a ticket names roles (`user` · `po` · `designer` · `developer` · `qa`), never a person.
 
 ## Purpose · out-of-scope · unobserved — three rows, three slots

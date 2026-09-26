@@ -180,6 +180,7 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
       '- Carve-out: `~/.prdt/overrides/<persona>.md`',
       '`~/.prdt/overrides/playbooks/<name>.md`',
       '`~/.prdt/wiki/`',
+      '`~/.prdt/resource-stop.json`',
       '`~/.prdt/register` are PO-writable',
     ])
       pin(CONTRACTS, p, {
