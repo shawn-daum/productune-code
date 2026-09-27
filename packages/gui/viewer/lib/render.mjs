@@ -20,6 +20,7 @@
 // rendered-in-Chrome page — evidence, not an argument from the script being
 // absent.
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { marked, Renderer } from 'marked'
 import {
   STORE_LABEL,
@@ -181,7 +182,47 @@ export function resolveDocLink(href, sourceDirRel, repoRootHref) {
   if (!pathPart) return null
   const resolved = path.posix.normalize(path.posix.join(sourceDirRel, pathPart))
   if (resolved === '..' || resolved.startsWith('../')) return null
-  return encodeURI(`${repoRootHref}/${resolved}${hashPart}`)
+  return safeEncodeURI(`${repoRootHref}/${resolved}${hashPart}`)
+}
+
+/**
+ * `encodeURI`, but leaves an already-valid percent-encoded byte pair
+ * (`%20`, `%C3%A9`, …) intact instead of re-escaping its leading `%` into
+ * `%25` (T-711 C3/acceptance "a rewritten relative href keeps an already
+ * %-encoded path intact, no %25") — `encodeURI` alone always escapes a
+ * literal `%` (it is not in its unreserved set), so a SOURCE markdown link
+ * that is already percent-encoded (e.g. a filename with a space written
+ * `%20`) would otherwise come out double-encoded (`%2520`).
+ * @param {string} str
+ */
+export function safeEncodeURI(str) {
+  return str.replace(/%[0-9a-fA-F]{2}|[^%]+|%/g, (chunk) => (/^%[0-9a-fA-F]{2}$/.test(chunk) ? chunk : encodeURI(chunk)))
+}
+
+// ---------- link/image scheme allowlist (T-711 F1/F4) ----------
+// marked's default renderer passes ANY href straight into `href="…"`/`src="…"`
+// verbatim (measured: `javascript:`, `JaVaScRiPt:`, `data:`, `vbscript:`, an
+// autolink `<javascript:…>`, `file://`, a protocol-relative `//host`, and a
+// site-absolute `/etc/passwd` all survive unchanged into a real, clickable
+// anchor — the ticket's C1/F1/F4). Only these three schemes, plus a
+// same-document `#anchor`, are ever safe to keep as a REAL link exactly as
+// written; a repo-relative link instead goes through `resolveDocLink` above.
+// Anything else renders as plain text below — never a live anchor, never
+// silently dropped.
+const ALLOWED_LINK_SCHEMES = new Set(['http:', 'https:', 'mailto:'])
+
+/** @param {string} href */
+function schemeOf(href) {
+  const m = /^([a-z][a-z0-9+.-]*):/i.exec(href || '')
+  return m ? `${m[1].toLowerCase()}:` : null
+}
+
+/** `href` is safe to render as a real `<a href>` AS-IS (never rewritten): an allowed scheme, or a same-document `#anchor`. */
+function isAllowedRawHref(href) {
+  if (!href) return false
+  if (href.startsWith('#')) return true
+  const scheme = schemeOf(href)
+  return scheme !== null && ALLOWED_LINK_SCHEMES.has(scheme)
 }
 
 // marked.parse() gives its renderer no way to receive extra per-call
@@ -191,18 +232,43 @@ export function resolveDocLink(href, sourceDirRel, repoRootHref) {
 // another starts).
 let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF }
 
-// Captured BEFORE hardenedRenderer.link is overridden below, so every link
-// this override chooses not to rewrite (anchor/scheme/absolute/escaping)
-// still gets marked's own real default rendering — never a second,
-// hand-rolled copy of it.
-const defaultLinkRenderer = new Renderer().link
-
 hardenedRenderer.link = function ({ href, title, tokens }) {
-  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref)
-  if (rewritten === null) return defaultLinkRenderer.call(this, { href, title, tokens })
   const text = this.parser.parseInline(tokens)
+  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref)
+  if (rewritten !== null) {
+    const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
+    return `<a href="${escapeHtml(rewritten)}" target="_blank" rel="noopener"${titleAttr}>${text}</a>`
+  }
+  if (isAllowedRawHref(href)) {
+    const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
+    const isAnchor = href.startsWith('#')
+    return `<a href="${escapeHtml(href)}"${isAnchor ? '' : ' target="_blank" rel="noopener"'}${titleAttr}>${text}</a>`
+  }
+  // Disallowed scheme (javascript:/data:/vbscript:/…, an autolink included),
+  // a site-absolute path, a protocol-relative //host, or a relative path
+  // escaping the repo root (F1/F4) — never a live anchor; the link text
+  // still renders, as plain prose.
+  return text
+}
+
+// T-711 acceptance line 1: "a relative image either resolves like a
+// rewritten doc link or renders as its alt text" — marked's own default
+// image renderer (i) passes ANY href straight into `src="…"` (an external
+// `https://…` fires a real network request on load — F2/C1 — and it does
+// not even escape `alt`/`title`, so `![x" onerror=alert(1)](http://e)` broke
+// out of the attribute — MEASURED against this repo's installed marked).
+// Only a href `resolveDocLink` can rewrite onto a real repo-root-relative
+// path is ever allowed to become a live `<img src>`; anything else (any
+// remote URL, an absolute/protocol-relative path, or a relative path
+// escaping the repo root) renders as its (escaped) alt text instead — never
+// a request, never an unescaped attribute.
+hardenedRenderer.image = function ({ href, title, text, tokens }) {
+  const altSource = tokens ? this.parser.parseInline(tokens, this.parser.textRenderer) : text
+  const alt = escapeHtml(altSource)
+  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref)
+  if (rewritten === null) return alt
   const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
-  return `<a href="${escapeHtml(rewritten)}" target="_blank" rel="noopener"${titleAttr}>${text}</a>`
+  return `<img src="${escapeHtml(rewritten)}" alt="${alt}"${titleAttr}>`
 }
 
 /**
@@ -424,7 +490,7 @@ function ticketDetailEntries(tickets, repoRootHref) {
         status: fm.status || '',
         assignee: fm.assignee || '',
         path: t.rel,
-        fileHref: encodeURI(`${repoRootHref}/${t.rel}`),
+        fileHref: safeEncodeURI(`${repoRootHref}/${t.rel}`),
       }
     }
   }
@@ -764,7 +830,7 @@ function artifactDetailEntries(artifacts, artifactsBaseHref, repoRootHref) {
       created: f.added_at || '',
       path: e.diskRel,
       body: e.inlined ? md(e.body, path.dirname(e.diskRel), repoRootHref) : undefined,
-      fileHref: e.inlined ? undefined : encodeURI(`${artifactsBaseHref}/${f.bucket}/${f.path}`),
+      fileHref: e.inlined ? undefined : safeEncodeURI(`${artifactsBaseHref}/${f.bucket}/${f.path}`),
     }
   }
   return entries
@@ -1284,9 +1350,50 @@ const INTERACTION_SCRIPT = `
 })();
 `
 
-/** Embeds `obj` as a same-document JSON blob — defends against a body string that happens to contain the literal bytes "</script" (none of `md()`'s own output can produce it, since it escapes raw HTML tokens, but a foreign document's escaped text is not this generator's to fully predict). */
-function detailDataScript(obj) {
-  const json = JSON.stringify(obj).replace(/<\/script/gi, '<\\/script')
+// T-711 F6: a strict Content-Security-Policy meta tag. `default-src 'none'`
+// closes every directive this policy does not name (connect-src included —
+// there is no fetch/XHR anywhere on this page, so none should ever be
+// allowed to start). The one inline `<script>` (INTERACTION_SCRIPT) is
+// allowed ONLY by its exact content hash — never `'unsafe-inline'` — so an
+// attacker-controlled script reaching the page some other way still could
+// not execute; the hash is computed from the SAME literal string embedded
+// below (`<script>${INTERACTION_SCRIPT}</script>`), so it can never drift
+// from what is actually shipped. `style-src 'unsafe-inline'` covers both the
+// one `<style>` block and this generator's own few inline `style="…"`
+// attributes — both are generator-authored CSS (tokens + this template),
+// never document prose, so this carries no injection surface a hash would
+// close that `'unsafe-inline'` does not already. `img-src 'self' data:`
+// covers a rewritten repo-relative image (acceptance line 1); no remote
+// scheme is listed, so a remote image URL could not load even if some future
+// bug let one reach `src=`. `<script id="detail-data"
+// type="application/json">` is inert data (never a JavaScript MIME type), so
+// CSP's script-src does not gate it at all — same pattern as, e.g., a
+// Next.js `__NEXT_DATA__` block.
+const INTERACTION_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT, 'utf8').digest('base64')
+const CSP_CONTENT = [
+  "default-src 'none'",
+  `script-src 'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}'`,
+  "style-src 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src data:",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join('; ')
+
+/**
+ * Embeds `obj` as a same-document JSON blob. Escapes EVERY `<` as `<`
+ * — not only a literal "</script" (T-711 F3): a frontmatter value containing
+ * the bytes `<!--<script` used to survive a bare "</script" replace intact,
+ * pushing the HTML parser into its "script data double escaped" state (the
+ * spec's own nested-`<script>`-inside-a-comment rule), where the parser stops
+ * treating the NEXT real `</script>` — this element's own closing tag — as a
+ * closing tag at all: the whole rest of the document (the interaction
+ * `<script>` included) got swallowed as inert text, silently killing every
+ * click handler on the page. No literal `<` left in the blob removes the
+ * whole class of parser-state tricks, not only the one shape already caught.
+ */
+export function detailDataScript(obj) {
+  const json = JSON.stringify(obj).replace(/</g, '\\u003c')
   return `<script id="detail-data" type="application/json">${json}</script>`
 }
 
@@ -1323,6 +1430,7 @@ export function renderPage({
 <html lang="ko">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${CSP_CONTENT}">
 <title>${PAGE.title}</title>
 <style>
 ${fontFaceCss}
