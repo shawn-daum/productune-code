@@ -37,6 +37,14 @@ TICKET_FRAME_REQUIRED = {"problem": "always", "options": "decision", "related": 
 # never touches it and `--check` never flags it. String-compares against a
 # plain `YYYY-MM-DD` `created:` value, same shape every ticket already writes.
 TICKET_FRAME_LANDING_DATE = "2026-09-24"
+# `created:` shape every scaffolded ticket actually writes (`tickets new`
+# above uses this exact `strftime`) — the ONLY string this compares against
+# TICKET_FRAME_LANDING_DATE as an ordered date; anything else (missing key,
+# a non-string YAML shape, empty, garbled text) is malformed and must never
+# be silently read as "old enough to skip" (T-715: coercing a malformed
+# value to "" sorted before every real date and took the pre-frame skip with
+# no line printed at all).
+TICKET_CREATED_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # Headings `fmt` folds into a frame key without asking — the legacy English
 # frame (`Request`/`Acceptance`/`Outcome`, pre-T-685) plus the user-authored
 # Korean labels (docs/prd/PRD.md §ticket-frame, 2026-09-18). Lookup is
@@ -283,12 +291,15 @@ def atomic_write_text(path, text, mode=0o644):
     the temp or nothing — a symlink (or stale leftover) already at that name
     loses the race and is unlinked (removed, never followed) rather than
     opened — and os.replace renames ONTO the destination without following a
-    link on either side. `mode` is passed straight to the O_CREAT open (still
-    subject to umask, exactly like the `Path.write_text()` calls this
-    replaces); callers that need a specific bit pattern regardless of umask
-    (e.g. an executable hook) pass one explicitly. One helper, not eleven
-    copies of the same three lines — this is exactly the recurring shape T-656
-    ratchets against."""
+    link on either side. `mode` is the EXACT permission bits the file ends up
+    with, regardless of the calling process's umask (T-715): os.open()'s own
+    `mode` argument is masked by umask like `Path.write_text()`'s, so an
+    `fchmod` right after open re-asserts the requested bits — a caller that
+    passes `mode=0o755` for an executable hook, or `mode=0o600` for a
+    secret-bearing file, gets that exact pattern even under a restrictive
+    umask (e.g. 0o077 would otherwise strip a hook down to 0o700). One
+    helper, not eleven copies of the same three lines — this is exactly the
+    recurring shape T-656 ratchets against."""
     path = Path(path)
     tmp = path.with_name(path.name + ".tmp")
     for attempt in (0, 1):
@@ -299,6 +310,7 @@ def atomic_write_text(path, text, mode=0o644):
             if attempt:
                 raise
             os.unlink(tmp)  # our own leftover from a killed run, or a planted link — gone unopened either way
+    os.fchmod(fd, mode)  # os.open()'s mode is masked by umask — force the exact bits requested
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
     os.replace(tmp, path)
@@ -4005,10 +4017,15 @@ def cmd_tickets_fmt(args, root):
         path = root / hit[tid]
         text = path.read_text(encoding="utf-8")
         fm, _ = parse_frontmatter(path)
-        created = fm.get("created") if isinstance(fm.get("created"), str) else ""
-        if created < TICKET_FRAME_LANDING_DATE:
-            print(f"{tid}: skipped (pre-frame ticket, created {created or '?'})")
+        created_raw = fm.get("created")
+        created_valid = isinstance(created_raw, str) and bool(TICKET_CREATED_DATE_RE.match(created_raw))
+        if created_valid and created_raw < TICKET_FRAME_LANDING_DATE:
+            print(f"{tid}: skipped (pre-frame ticket, created {created_raw})")
             continue
+        # created_valid is False here for a missing/malformed `created` — that
+        # ticket is NEVER silently skipped (T-715): fall through and check it
+        # against the frame like any current ticket, and surface the bad
+        # `created` itself as its own finding below.
         header, body = split_ticket_header_body(text)
         new_body, violations = fmt_ticket_body(body, fm.get("type"), fm.get("status"))
         new_text = header + new_body
@@ -4019,9 +4036,13 @@ def cmd_tickets_fmt(args, root):
             print(out if out else f"{tid}: no change")
             continue
         if args.check:
-            if violations:
+            check_violations = list(violations)
+            if not created_valid:
+                check_violations.append(f"created is missing or malformed ({created_raw!r}) — "
+                                         f"cannot verify pre-frame status, checked against the frame")
+            if check_violations:
                 any_violation = True
-                for v in violations:
+                for v in check_violations:
                     print(f"{tid}: {v}")
             else:
                 print(f"{tid}: ok")
@@ -7972,11 +7993,17 @@ def ticket_frame_warnings(root, tickets):
     that binding is only prospective — "an older ticket keeps its headings as
     written" — so a pre-landing ticket is skipped here exactly as `fmt` skips
     it, in total silence (no line at all, not even a skipped-note): older
-    tickets were never promised to conform."""
+    tickets were never promised to conform. A ticket whose `created` is
+    missing or not a plain `YYYY-MM-DD` string is a DIFFERENT case, never
+    silently folded into "pre-landing" (T-715: coercing it to "" sorted
+    before every real date and took the skip above with no warning at all) —
+    it is checked against the frame like a current ticket, plus its own
+    warning line for the bad `created`."""
     warns = []
     for r in sorted(tickets, key=lambda r: r["id"]):
-        created = r.get("created") if isinstance(r.get("created"), str) else ""
-        if created < TICKET_FRAME_LANDING_DATE:
+        created_raw = r.get("created")
+        created_valid = isinstance(created_raw, str) and bool(TICKET_CREATED_DATE_RE.match(created_raw))
+        if created_valid and created_raw < TICKET_FRAME_LANDING_DATE:
             continue
         path = root / r["path"]
         try:
@@ -7985,6 +8012,8 @@ def ticket_frame_warnings(root, tickets):
             continue
         _header, body = split_ticket_header_body(text)
         _new_body, violations = fmt_ticket_body(body, r.get("type"), r.get("status"))
+        if not created_valid:
+            violations = list(violations) + [f"created is missing or malformed ({created_raw!r})"]
         for v in violations:
             warns.append(f"ticket frame: {r['id']} ({r['path']}): {v}")
     return Advisory(warns)
@@ -11587,15 +11616,27 @@ def _env_parse_file(p):
         key, value = parsed
         if value and value[0] in ("'", '"'):
             quote = value[0]
-            if len(value) >= 2 and value[-1] == quote:
-                value = value[1:-1]
+            # T-715: search for the closing quote ANYWHERE after the opener,
+            # not only at the line's last byte — `KEY="v" # note` closes at
+            # the quote right after `v`; trailing bytes (whitespace, a `#
+            # comment`) sit outside the quoted value and are never counted
+            # (a quote that closes is unambiguous, unlike the bare/unquoted
+            # trailing-comment case documented on _env_parse_line). Requiring
+            # the quote to be the line's last char was the bug: it read a
+            # closed `"v" # note` as an open quote and swallowed every
+            # following line as continuation, so those keys never got parsed
+            # (reported `absent` even though present).
+            close_idx = value.find(quote, 1)
+            if close_idx != -1:
+                value = value[1:close_idx]
             else:
                 parts = [value[1:]]
                 while i < n:
                     cont = _env_strip_cr(lines[i])
                     i += 1
-                    if cont.endswith(quote):
-                        parts.append(cont[:-1])
+                    close_idx = cont.find(quote)
+                    if close_idx != -1:
+                        parts.append(cont[:close_idx])
                         break
                     parts.append(cont)
                 value = "\n".join(parts)
