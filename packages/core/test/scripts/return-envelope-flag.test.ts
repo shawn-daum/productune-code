@@ -346,6 +346,20 @@ describe.skipIf(!READY)('detection — what gets flagged', () => {
     }))).toBeNull()
   })
 
+  // T-728: a return using the new body field — a valid results[] plus a
+  // one-line summary — passes without a re-ask, exactly like any other
+  // conditional key (contracts §Return envelope).
+  test('a return using results[]{item,verdict,evidence} with a one-line summary passes clean', () => {
+    const root = makeProject()
+    expect(codesFor(root, envelope({
+      results: [
+        { item: 'gate keeps task<=80/summary<=200 caps', verdict: 'pass', evidence: 'over-cap fires at 81/201, not before' },
+        { item: 're-ask names results[]', verdict: 'pass', evidence: 'block_reason contains the literal field name' },
+        { item: 'unknown keys stay allowed', verdict: 'pass', evidence: 'a results[]-bearing return is never flagged' },
+      ],
+    }))).toBeNull()
+  })
+
   test('the Hangul ratio is computed PER FIELD: a Korean task alone flags task alone', () => {
     const root = makeProject()
     expect(codesFor(root, envelope({ task: '반환측 어드바이저리 착지' }))).toEqual(['hangul:task'])
@@ -457,6 +471,17 @@ describe.skipIf(!READY)('the gate — block once while the worker lives, let the
     expect(reason).toContain('`summary` (≤200 chars')
     expect(reason).toContain('`confidence` (a JSON number 0..1)')
     expect(reason).toContain('unknown extra keys are allowed')
+  })
+
+  // T-728: the re-ask names WHERE the overflow goes, not just the cap — the
+  // observed slip (14+ times in v1.10) was a worker stuffing per-acceptance
+  // rows into `summary` past its cap instead of using the body field.
+  test('the reason points overflow at results[]{item,verdict,evidence} — never just "shorten it"', () => {
+    const root = makeProject()
+    const reason = gateFirst(root, envelope({ summary: 'y'.repeat(233) }))!.reason
+    expect(reason).toContain('results[]{item,verdict,evidence}')
+    const restated = gateFirst(root, 'prose')!.reason
+    expect(restated).toContain('results[]{item,verdict,evidence}')
   })
 
   test('the re-fire is the cap: still malformed → no block, no output, flag queued with the reask marker', () => {
