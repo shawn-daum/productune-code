@@ -80,14 +80,14 @@ export const TICKET = {
   tableHeaders: ['ID', '제목(slug)', '유형', '상태', '담당'],
   sidebarLabel: '티켓',
   backlogLabel: 'backlog', // §A keep — 목업도 영문 소문자 그대로
+  // T-709 결정 1: the current-version sidebar row's label tag —
+  // `${currentVersion} · 현재` (e.g. "v1.10 · 현재"). Every other bucket row
+  // (including backlog) shows its own bucket id plainly, no status word.
+  currentTag: '현재',
   // §A keep — 목업 실측 문안 그대로(둘째 줄 포함, 개시 조건 있는 실제 사례).
   empty: '아직 티켓이 없어요.<br><span style="font-size:11px;">PO 가 첫 티켓을 만들면 여기 나타나요.</span>',
   // T-705 §B: raw fm.status(open/done/dropped)를 그대로 찍던 것 → 한글 텍스트.
   statusText: { open: '진행 중', done: '완료', dropped: '중단' },
-  // T-705 §C 제안 교체 문구 그대로.
-  omittedNote:
-    '지금은 이 두 묶음만 보여요 — 진행 중인 버전과, 아직 배정 안 된 백로그예요. 닫힌 라운드는 여기 없지만 아래 경로에 그대로 있어요:',
-  omittedTableHeaders: ['묶음', '티켓 수', '용량', '경로'],
   countUnit: '건',
 }
 
@@ -141,16 +141,13 @@ export const ARTIFACT = {
 }
 
 // ---------- PRD store ----------
+// T-709 결정 2: the "닫힌 버전" combined list→detail group (`closedLabel` /
+// `tableHeaders` / `empty`) is gone — every closed round is now its own
+// sidebar row, labeled with its own version id, rendering its own body
+// directly (no title extraction, no table, no empty-state copy needed: a
+// zero-closed-round repo just has fewer rows, never an empty list to caption).
 export const PRD = {
   openLabelPrefix: '열린 섹션 · ',
-  closedLabel: '닫힌 버전',
-  // T-705 §G: '제목' 열 추가 — closed round title from the document, falling
-  // back to its first line (render.mjs's extractTitle).
-  tableHeaders: ['버전', '제목'],
-  // T-705 §E: 원문 '닫힌 버전이 없다.'를 해요체로. 둘째 줄은 T-707 확정.
-  empty:
-    '닫힌 버전이 없어요.<br><span style="font-size:11px;">버전이 닫히면 여기 나타나요.</span>',
-  countUnit: '개',
 }
 
 // ---------- interaction script strings (embedded into the browser-side JS

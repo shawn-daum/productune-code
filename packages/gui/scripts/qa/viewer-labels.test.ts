@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { renderPage } from '../../viewer/lib/render.mjs'
 import { OUTPUT_PATH } from '../../viewer/generate.mjs'
-import { WIKI, FEATURE, PRD } from '../../viewer/lib/labels.mjs'
+import { WIKI, FEATURE } from '../../viewer/lib/labels.mjs'
 
 const RENDER_MJS_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../viewer/lib/render.mjs')
 
@@ -201,18 +201,30 @@ describe('viewer/lib/render.mjs — T-705 §G structures the approved mockup sho
     expect(html).toContain('<td class="num-col">2.0 KB</td>')
   })
 
-  it('PRD closed-round table shows the round\'s real title, read from its own heading', () => {
+  // T-709 결정 2: no more closed-round TABLE / separate title extraction —
+  // each round is now its own sidebar row (labeled by its version id),
+  // newest round first, whose pane renders that round's body DIRECTLY; the
+  // round's own first heading (or, for a stub, its first line) shows up
+  // through that body's own markdown rendering, never a second, separately
+  // extracted title column.
+  it('each closed PRD round is its own sidebar group, labeled by version id, newest first', () => {
     const html = renderStructureFixture()
-    expect(html).toContain('<th>제목</th>')
-    expect(html).toContain('<td>v1.9 real heading</td>')
+    expect(html).toContain('data-group-select="v1.9"')
+    expect(html).toContain('data-group-select="v1.1"')
+    expect(html.indexOf('data-group-select="v1.9"')).toBeLessThan(html.indexOf('data-group-select="v1.1"'))
   })
 
-  it('a closed round with no heading falls back to its first non-empty line', () => {
+  it("a closed round's own heading renders inline in its own pane, read from its own body", () => {
     const html = renderStructureFixture()
-    expect(html).toContain('<td>stub round first line</td>')
+    expect(html).toContain('<h2 class="pill pill-heading-2">v1.9 real heading</h2>')
   })
 
-  it('wiki/feature/artifact/PRD-closed main panes each carry a count badge (T-705 §G: only ticket/home had one before)', () => {
+  it('a closed round with no heading still renders its first non-empty line as prose in its own pane', () => {
+    const html = renderStructureFixture()
+    expect(html).toContain('<p>stub round first line</p>')
+  })
+
+  it('wiki/feature/artifact main panes each carry a count badge (T-705 §G: only ticket/home had one before); PRD closed rounds carry none (T-709 결정 2 — every round is "1 document", a constant count worth no badge)', () => {
     const html = renderStructureFixture()
     // wiki: one group ("decision (decision)") with 2 pages, unit 장
     expect(html).toMatch(/class="count-badge">결정 \(decision\) · <b>2<\/b>장/)
@@ -220,8 +232,6 @@ describe('viewer/lib/render.mjs — T-705 §G structures the approved mockup sho
     expect(html).toMatch(/class="count-badge">기능 · <b>1<\/b>개/)
     // artifact: bucket "v1.10", suffix " 버킷", 1 entry, unit 건
     expect(html).toMatch(/class="count-badge">v1\.10 버킷 · <b>1<\/b>건/)
-    // PRD closed: 2 rounds, unit 개
-    expect(html).toMatch(/class="count-badge">닫힌 버전 · <b>2<\/b>개/)
   })
 
   it('holds for the real generated viewer.html, not only the fixture', () => {
@@ -256,11 +266,17 @@ describe('viewer/lib/render.mjs — T-707: an empty group shows the Designer\'s 
     expect(html).toContain('Designer 가 스펙 파일을 만들면 여기 나타나요')
   })
 
-  it('PRD.empty (both lines, verbatim, unescaped as HTML) renders when there are zero closed rounds', () => {
+  // T-709 결정 2: PRD.empty (the old "닫힌 버전이 없다" table caption) is
+  // gone — zero closed rounds just means the PRD store has one group ("open"
+  // only), which groupedStore's own generic single-group rule (T-708 결함 7)
+  // already renders as a static "그룹 없음" line, never a table — so there is
+  // no PRD-specific empty-state copy left to write or test.
+  it('zero closed rounds collapses the PRD store to its single "open" group (T-708 결함 7\'s generic rule — no PRD-specific empty copy)', () => {
     const html = renderEmptyGroupFixture()
-    expect(html).toContain(`<p class="v-note">${PRD.empty}</p>`)
-    expect(html).toContain('닫힌 버전이 없어요')
-    expect(html).toContain('버전이 닫히면 여기 나타나요')
+    const prdMatch = /<section[^>]*data-store="prd"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    expect(prdMatch).not.toBeNull()
+    expect(prdMatch![0]).toContain('그룹 없음')
+    expect(prdMatch![0]).not.toContain('data-group-select')
   })
 
   // WIKI.empty is NOT exercised through renderPage here: wikiStoreInner (T-706)
