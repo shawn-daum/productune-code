@@ -1218,7 +1218,8 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
    shared markup across every groupedStore()/ticketStoreInner() call. */
 .store-section[data-store="home"] .main-inner { max-width: none; }
 .section-meta { margin-bottom: var(--space-12); }
-.count-badge { display: inline-block; font-size: 11.5px; background: var(--bg-interaction-neutral); color: var(--text-secondary); padding: 3px 10px; border-radius: var(--radius-100); }
+.count-badge { font-size: 11.5px; color: var(--text-tertiary); }
+.count-badge b { color: var(--text-primary); font-weight: 600; }
 
 .detail-row { cursor: pointer; }
 .detail-row:hover td { background: var(--bg-state-hover); }
