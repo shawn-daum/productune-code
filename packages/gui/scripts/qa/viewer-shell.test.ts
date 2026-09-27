@@ -3,15 +3,22 @@
 // document kind" · "a test asserts that every ticket row resolves to a
 // detail entry" (the shell's list → detail proof, ticket store).
 import { describe, it, expect, beforeAll } from 'vitest'
-import { generate } from '../../viewer/generate.mjs'
+import { generate, missingMetaRootReason } from '../../viewer/generate.mjs'
 import { renderPage, resolveDocLink } from '../../viewer/lib/render.mjs'
 
 // T-718: the real generated page, built HERE in-process rather than read
 // back off the gitignored `viewer/viewer.html` (a fresh checkout never has
 // it on disk) — see viewer-html.test.ts's header for the full rationale.
 // Built once and reused by every test below.
+//
+// T-718 slice 2: a detached code-only checkout has no meta project beside it
+// (see viewer-html.test.ts's header) — `generate()` throws ENOENT there.
+// Checked once, up front, so only the one test below that needs `realHtml`
+// skips (with a visible reason); every fixture-based case here still runs.
+const metaMissingReason = missingMetaRootReason()
 let realHtml: string
 beforeAll(async () => {
+  if (metaMissingReason) return
   ;({ html: realHtml } = await generate())
 }, 30000)
 
@@ -155,16 +162,19 @@ describe('viewer/lib/render.mjs — every ticket row resolves to a detail entry 
     }).toThrow()
   })
 
-  it('holds for the real generated viewer.html, not only the fixture', () => {
-    const rowIds = [...realHtml.matchAll(/data-detail-kind="ticket" data-detail-id="([^"]+)"/g)].map((m) => m[1])
-    expect(rowIds.length).toBeGreaterThan(0)
-    const blobMatch = /<script id="detail-data" type="application\/json">([\s\S]*?)<\/script>/.exec(realHtml)
-    expect(blobMatch).not.toBeNull()
-    const detailData = JSON.parse(blobMatch[1])
-    for (const id of rowIds) {
-      expect(detailData.ticket[id]).toBeDefined()
-    }
-  })
+  it.skipIf(metaMissingReason)(
+    `holds for the real generated viewer.html, not only the fixture${metaMissingReason ? ` — SKIPPED: ${metaMissingReason}` : ''}`,
+    () => {
+      const rowIds = [...realHtml.matchAll(/data-detail-kind="ticket" data-detail-id="([^"]+)"/g)].map((m) => m[1])
+      expect(rowIds.length).toBeGreaterThan(0)
+      const blobMatch = /<script id="detail-data" type="application\/json">([\s\S]*?)<\/script>/.exec(realHtml)
+      expect(blobMatch).not.toBeNull()
+      const detailData = JSON.parse(blobMatch[1])
+      for (const id of rowIds) {
+        expect(detailData.ticket[id]).toBeDefined()
+      }
+    },
+  )
 })
 
 // T-666 slice 1b: wiki/feature/artifact/PRD now build their rows and their

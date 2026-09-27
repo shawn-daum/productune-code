@@ -26,15 +26,22 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { renderPage } from '../../viewer/lib/render.mjs'
-import { generate } from '../../viewer/generate.mjs'
+import { generate, missingMetaRootReason } from '../../viewer/generate.mjs'
 import { WIKI, FEATURE } from '../../viewer/lib/labels.mjs'
 
 // T-718: the real generated page, built HERE in-process rather than read
 // back off the gitignored `viewer/viewer.html` (a fresh checkout never has
 // it on disk) — see viewer-html.test.ts's header for the full rationale.
 // Built once and reused by every test below.
+//
+// T-718 slice 2: a detached code-only checkout has no meta project beside it
+// (see viewer-html.test.ts's header) — `generate()` throws ENOENT there.
+// Checked once, up front, so only the one test below that needs `realHtml`
+// skips (with a visible reason); every fixture-based case here still runs.
+const metaMissingReason = missingMetaRootReason()
 let realHtml: string
 beforeAll(async () => {
+  if (metaMissingReason) return
   ;({ html: realHtml } = await generate())
 }, 30000)
 
@@ -243,11 +250,14 @@ describe('viewer/lib/render.mjs — T-705 §G structures the approved mockup sho
     expect(html).toMatch(/class="count-badge">v1\.10 버킷 · <b>1<\/b>건/)
   })
 
-  it('holds for the real generated viewer.html, not only the fixture', () => {
-    expect(realHtml).toContain('<th>크기</th>')
-    expect(realHtml).toContain('<th>제목</th>')
-    expect(realHtml).toMatch(/class="count-badge">/)
-  })
+  it.skipIf(metaMissingReason)(
+    `holds for the real generated viewer.html, not only the fixture${metaMissingReason ? ` — SKIPPED: ${metaMissingReason}` : ''}`,
+    () => {
+      expect(realHtml).toContain('<th>크기</th>')
+      expect(realHtml).toContain('<th>제목</th>')
+      expect(realHtml).toMatch(/class="count-badge">/)
+    },
+  )
 })
 
 // ---------- T-707: WIKI.empty / FEATURE.empty / PRD.empty second lines ----------
