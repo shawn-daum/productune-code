@@ -63,7 +63,12 @@ print(os.path.realpath(sys.argv[1]))
 PYEOF
 }
 TMP=""
-cleanup() { [ -n "${TMP:-}" ] || return 0; rm -f "$TMP"; }
+BUILD_LOCK=""  # §1b's mkdir-mutex around the bridge build — released here so a
+                # `die` mid-build (or the script's own exit) never leaves it locked
+cleanup() {
+  [ -z "${TMP:-}" ] || rm -f "$TMP"
+  [ -z "${BUILD_LOCK:-}" ] || rmdir "$BUILD_LOCK" 2>/dev/null || true
+}
 trap cleanup EXIT
 
 command -v jq >/dev/null 2>&1 || die "jq is required"
@@ -232,6 +237,71 @@ EOF
 # menus are derived — regenerate against the installed mirror
 PRDT_DISCIPLINE="$PRDT_HOME/discipline" "$PRDT_HOME/bin/prdt" menus >/dev/null
 say "   mirrored (discipline + doctrine + hooks + bin, menus regenerated)"
+
+# 1b. build the node bridge (dist/bin/meta-cli.cjs) — T-731.
+#     WHY: the bridge is a BUILD ARTIFACT of $ROOT/src (tsc + esbuild, per
+#     $ROOT/package.json's `build` script), `dist/` is gitignored, and until now
+#     nothing in the install/update path ever ran that build — a fix committed to
+#     packages/core/src bound nothing until someone rebuilt the bridge BY HAND.
+#     OBSERVED (T-731): T-686's lock fix (d9404460) was committed and "installed"
+#     (install.sh re-run via `prdt update`) on 2026-09-26, yet the bug it fixed
+#     recurred the next day — the bridge running was still the 2026-09-22 build,
+#     missing that commit and two more.
+#
+#     Only when $ROOT is a real source checkout: install-fail-loud.test.ts /
+#     install-fixture-contract.test.ts run this exact script against a payload
+#     that copies discipline/ + agents/ + scripts/ + doctrine.md ONLY — no
+#     src/, no package.json, no node_modules — and must still exit 0 with
+#     nothing built. Same posture as PRDT_REPO-less machines elsewhere in this
+#     script: "no source tree here" is silence, never a failure.
+BRIDGE="$ROOT/dist/bin/meta-cli.cjs"
+SRC_ENTRY="$ROOT/src/bin/meta-cli.ts"
+if [ -f "$ROOT/package.json" ] && [ -f "$SRC_ENTRY" ]; then
+  bridge_stale() {
+    [ -f "$BRIDGE" ] || return 0
+    [ -n "$(find "$ROOT/src" -type f -newer "$BRIDGE" -print -quit 2>/dev/null)" ]
+  }
+  if bridge_stale; then
+    if ! command -v npm >/dev/null 2>&1; then
+      say "1b) node bridge NOT rebuilt — npm not on PATH; $BRIDGE may be stale (\`prdt doctor\` will say so)"
+    else
+      # mkdir is atomic (POSIX) — a portable mutex without depending on
+      # `flock` (not on macOS by default). Several installs racing on the
+      # SAME repo (e.g. this suite's shared install-fixture, run from several
+      # parallel test files) must never invoke the compiler concurrently on
+      # the same $ROOT/dist — this fix exists BECAUSE a concurrency bug in
+      # the thing the bridge builds went unnoticed; it does not get to
+      # introduce one of its own in building it.
+      LOCK="$ROOT/dist/.build.lock"
+      mkdir -p "$ROOT/dist"
+      LOCKED=false
+      WAITED=0
+      while [ "$WAITED" -lt 150 ]; do   # ~30s ceiling — never hang the install
+        if mkdir "$LOCK" 2>/dev/null; then LOCKED=true; break; fi
+        WAITED=$((WAITED + 1))
+        sleep 0.2
+      done
+      if [ "$LOCKED" = false ]; then
+        say "1b) node bridge build lock busy 30s+ — skipping this run's rebuild (another install is building it); \`prdt doctor\` will report if it's still stale"
+      else
+        BUILD_LOCK="$LOCK"
+        if bridge_stale; then  # re-check: another run may have just finished while we waited
+          say "1b) Building node bridge (source changed since last build) — npm run build"
+          if BUILD_OUT="$(cd "$ROOT" && npm run build 2>&1)"; then
+            say "   built $BRIDGE"
+          else
+            say "   node bridge build FAILED — $BRIDGE left as is; \`prdt doctor\` will warn until it's fixed (\`cd $ROOT && npm run build\`). Build output:"
+            printf '%s\n' "$BUILD_OUT" | tail -20 >&2
+          fi
+        else
+          say "1b) node bridge already up to date (built by another install while this one waited)"
+        fi
+        rmdir "$LOCK" 2>/dev/null || true
+        BUILD_LOCK=""
+      fi
+    fi
+  fi
+fi
 
 # 2. prdt.env (잠정 확정 — 열린 항목 ①: 미니멀 계승)
 ENV_FILE="$PRDT_HOME/prdt.env"
