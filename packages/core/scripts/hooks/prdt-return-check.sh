@@ -353,7 +353,8 @@ def block_reason(violations):
         "message when you do not hand back — as ONE JSON object and nothing else — first "
         "character `{`, no code fence, no prose before or after it — with `persona` "
         "(" + "|".join(RETURN_PERSONAS) + ") · `task` (≤80 chars) · `summary` (≤200 chars, "
-        "the machine outcome) · `confidence` (a JSON number 0..1); keep every other field "
+        "the one-line outcome — per-acceptance rows go to `results[]{item,verdict,evidence}`, "
+        "never into `summary`) · `confidence` (a JSON number 0..1); keep every other field "
         "you already had — unknown extra keys are allowed."
     )
 

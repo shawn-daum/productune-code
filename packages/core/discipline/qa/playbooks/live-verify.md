@@ -21,5 +21,5 @@ Local green proves nothing about production. Verify the REAL environment the use
 - A live-only bug is EXPECTED, not a process failure: report the fail row; the PO patches within Ship (`stage:"ship"` holds).
 
 ## Verdict
-- Verdict per habit; `summary` names what you hit and observed on live.
+- Verdict per habit; `results[]` rows carry what you hit and observed on live.
 - Every live-caught bug → one `memory_notes[]` line incl. *why local green didn't catch it* (the PO turns it into a `learning--` page).
