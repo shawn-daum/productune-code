@@ -180,8 +180,31 @@ export function resolveDocLink(href, sourceDirRel, repoRootHref) {
   const pathPart = hashIdx === -1 ? href : href.slice(0, hashIdx)
   const hashPart = hashIdx === -1 ? '' : href.slice(hashIdx)
   if (!pathPart) return null
+  // T-711 slice 2 B1: containment is judged on the DECODED, per-segment path
+  // — the URL Standard's own "double-dot URL path segment" rule treats
+  // `%2e%2e`, `.%2e`, `%2e.` (any case) as a real ".." the same as a literal
+  // one, so a REAL BROWSER resolving this same relative href climbs past the
+  // repo root exactly like a literal `../` would, even though
+  // path.posix.normalize (which knows nothing about %-encoding) sees
+  // `%2e%2e` as an opaque, un-collapsible name and never flags it (QA
+  // repro, ed31cb7 re-pass: `./%2e%2e/%2e%2e/…/OUTSIDE-IMG.png` loaded on
+  // page load). Decoding is for THIS CHECK ONLY — the href actually emitted
+  // below is still built from the raw, still-encoded `pathPart`, so an
+  // already-%-encoded in-repo path (e.g. a literal `%20` space) keeps its
+  // encoding, never double-encoded (acceptance: "no %25 regression").
+  const decodedPathPart = pathPart
+    .split('/')
+    .map((seg) => {
+      try {
+        return decodeURIComponent(seg)
+      } catch {
+        return seg // malformed escape — left as a literal segment, still checked below
+      }
+    })
+    .join('/')
+  const resolvedForCheck = path.posix.normalize(path.posix.join(sourceDirRel, decodedPathPart))
+  if (resolvedForCheck === '..' || resolvedForCheck.startsWith('../')) return null
   const resolved = path.posix.normalize(path.posix.join(sourceDirRel, pathPart))
-  if (resolved === '..' || resolved.startsWith('../')) return null
   return safeEncodeURI(`${repoRootHref}/${resolved}${hashPart}`)
 }
 
