@@ -2,10 +2,18 @@
 // "section headings render as chips by one shared rule across every
 // document kind" · "a test asserts that every ticket row resolves to a
 // detail entry" (the shell's list → detail proof, ticket store).
-import { describe, it, expect } from 'vitest'
-import fs from 'node:fs'
-import { OUTPUT_PATH } from '../../viewer/generate.mjs'
+import { describe, it, expect, beforeAll } from 'vitest'
+import { generate } from '../../viewer/generate.mjs'
 import { renderPage, resolveDocLink } from '../../viewer/lib/render.mjs'
+
+// T-718: the real generated page, built HERE in-process rather than read
+// back off the gitignored `viewer/viewer.html` (a fresh checkout never has
+// it on disk) — see viewer-html.test.ts's header for the full rationale.
+// Built once and reused by every test below.
+let realHtml: string
+beforeAll(async () => {
+  ;({ html: realHtml } = await generate())
+}, 30000)
 
 const fixtureData = {
   poState: { stage: 'build', version: 'v1.10', current_task: null },
@@ -148,11 +156,9 @@ describe('viewer/lib/render.mjs — every ticket row resolves to a detail entry 
   })
 
   it('holds for the real generated viewer.html, not only the fixture', () => {
-    expect(fs.existsSync(OUTPUT_PATH), `${OUTPUT_PATH} does not exist — run \`pnpm --filter @productune/gui viewer\` first`).toBe(true)
-    const html = fs.readFileSync(OUTPUT_PATH, 'utf8')
-    const rowIds = [...html.matchAll(/data-detail-kind="ticket" data-detail-id="([^"]+)"/g)].map((m) => m[1])
+    const rowIds = [...realHtml.matchAll(/data-detail-kind="ticket" data-detail-id="([^"]+)"/g)].map((m) => m[1])
     expect(rowIds.length).toBeGreaterThan(0)
-    const blobMatch = /<script id="detail-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)
+    const blobMatch = /<script id="detail-data" type="application\/json">([\s\S]*?)<\/script>/.exec(realHtml)
     expect(blobMatch).not.toBeNull()
     const detailData = JSON.parse(blobMatch[1])
     for (const id of rowIds) {

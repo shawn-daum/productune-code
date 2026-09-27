@@ -20,15 +20,23 @@
 // and CSS `url(http...)`. A prose URL sitting in body text, inside an `<a
 // href>` (never auto-fetched), or inside a `<code>`/`<pre>` span is not any
 // of those and is correctly left alone.
-import { describe, it, expect } from 'vitest'
-import fs from 'node:fs'
-import { OUTPUT_PATH } from '../../viewer/generate.mjs'
+import { describe, it, expect, beforeAll } from 'vitest'
+import { generate } from '../../viewer/generate.mjs'
 import { renderPage } from '../../viewer/lib/render.mjs'
 
-// OUTPUT_PATH is already absolute (resolved from generate.mjs's own __dirname) —
-// reused rather than a second literal, so this test can never point at a
-// different file than the one `viewer` actually writes.
-const VIEWER_HTML = OUTPUT_PATH
+// T-718: the real generated page is now built HERE, in-process (`generate()`
+// — the same function `pnpm --filter @productune/gui viewer` itself calls),
+// never read back off disk. `viewer/viewer.html` is gitignored (a build
+// artifact) — a fresh checkout (a `git worktree add --detach`, in
+// particular) never has it on disk until something runs `pnpm viewer`
+// first, which this test suite must not require as a precondition. Built
+// ONCE in `beforeAll` and reused by every test in this file (doctrine:
+// expensive shared setup is built once per file, never per test case).
+let realHtml: string
+
+beforeAll(async () => {
+  ;({ html: realHtml } = await generate())
+}, 30000)
 
 /**
  * Every load-time external-resource reference in `html`: a `src`/`href`
@@ -60,16 +68,8 @@ export function findLoadTimeExternalResources(html: string): string[] {
 }
 
 describe('viewer/viewer.html — no load-time external resource (static)', () => {
-  it('exists', () => {
-    expect(
-      fs.existsSync(VIEWER_HTML),
-      `${VIEWER_HTML} does not exist — run \`pnpm --filter @productune/gui viewer\` first`,
-    ).toBe(true)
-  })
-
   it('references no load-time external resource', () => {
-    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
-    expect(findLoadTimeExternalResources(html)).toEqual([])
+    expect(findLoadTimeExternalResources(realHtml)).toEqual([])
   })
 
   // Non-vacuous: a prose URL — exactly the shape real ticket/wiki bodies

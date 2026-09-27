@@ -20,14 +20,23 @@
 // (`head` + each `templateSpans[i].literal`) are recovered correctly however
 // deeply they nest — doctrine #2, don't hand-roll a lexer this repo already
 // ships one of.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { renderPage } from '../../viewer/lib/render.mjs'
-import { OUTPUT_PATH } from '../../viewer/generate.mjs'
+import { generate } from '../../viewer/generate.mjs'
 import { WIKI, FEATURE } from '../../viewer/lib/labels.mjs'
+
+// T-718: the real generated page, built HERE in-process rather than read
+// back off the gitignored `viewer/viewer.html` (a fresh checkout never has
+// it on disk) — see viewer-html.test.ts's header for the full rationale.
+// Built once and reused by every test below.
+let realHtml: string
+beforeAll(async () => {
+  ;({ html: realHtml } = await generate())
+}, 30000)
 
 const RENDER_MJS_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../viewer/lib/render.mjs')
 
@@ -235,11 +244,9 @@ describe('viewer/lib/render.mjs — T-705 §G structures the approved mockup sho
   })
 
   it('holds for the real generated viewer.html, not only the fixture', () => {
-    expect(fs.existsSync(OUTPUT_PATH), `${OUTPUT_PATH} does not exist — run \`pnpm --filter @productune/gui viewer\` first`).toBe(true)
-    const html = fs.readFileSync(OUTPUT_PATH, 'utf8')
-    expect(html).toContain('<th>크기</th>')
-    expect(html).toContain('<th>제목</th>')
-    expect(html).toMatch(/class="count-badge">/)
+    expect(realHtml).toContain('<th>크기</th>')
+    expect(realHtml).toContain('<th>제목</th>')
+    expect(realHtml).toMatch(/class="count-badge">/)
   })
 })
 
@@ -279,21 +286,34 @@ describe('viewer/lib/render.mjs — T-707: an empty group shows the Designer\'s 
     expect(prdMatch![0]).not.toContain('data-group-select')
   })
 
-  // WIKI.empty is NOT exercised through renderPage here: wikiStoreInner (T-706)
-  // builds its sidebar groups only from frontmatter `type` values actually
-  // present in `pages` (byType), so an entirely-empty wiki store produces
-  // ZERO groups rather than one empty group — wikiRowsTable (and so
-  // WIKI.empty) is never invoked. Confirmed by inspection: with `wiki: []`,
-  // `#store-wiki`'s main-inner is `''`, no `v-note` at all. That reachability
-  // gap predates T-707 (T-707's scope is the three RHS string values only,
-  // per its ticket's own "developer 반영 지점" note) — reported to the PO as
-  // an out-of-scope find (see this dispatch's `unresolved[]`), not patched
-  // here. This asserts what IS in scope: the constant itself carries the
-  // Designer's exact two-line verbatim value, ready for whenever a group-
-  // level empty wiki path exists.
   it('WIKI.empty itself carries the Designer\'s exact two-line value (verbatim, T-707 §outcome)', () => {
     expect(WIKI.empty).toBe(
       '이 묶음에는 위키 문서가 없어요.<br><span style="font-size:11px;">이 분류로 문서가 하나라도 쓰이면 여기 나타나요.</span>',
     )
+  })
+
+  // T-713: closes the reachability gap the comment above used to document —
+  // wikiStoreInner (T-706) built its sidebar groups only from frontmatter
+  // `type` values actually present in `pages`, so an entirely-empty wiki
+  // store produced ZERO groups rather than one empty group, and WIKI.empty
+  // was never reached. Fixed: one synthetic all-store group renders when
+  // `wiki: []`.
+  it('an entirely empty wiki store still renders one group carrying WIKI.empty', () => {
+    const html = renderEmptyGroupFixture()
+    const storeMatch = /<section[^>]*data-store="wiki"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    expect(storeMatch).not.toBeNull()
+    expect(storeMatch![0]).toContain(`<p class="v-note">${WIKI.empty}</p>`)
+    expect(storeMatch![0]).toContain('이 묶음에는 위키 문서가 없어요')
+  })
+
+  // T-713: same reachability gap, same fix, for the artifact store — a
+  // missing manifest.json (collect.mjs's own zero-entries case) or a
+  // version with no artifacts yet leaves `artifacts.entries` empty, which
+  // used to build zero manifest-bucket groups.
+  it('an entirely empty artifact store still renders one group carrying ARTIFACT.empty', () => {
+    const html = renderEmptyGroupFixture()
+    const storeMatch = /<section[^>]*data-store="artifact"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    expect(storeMatch).not.toBeNull()
+    expect(storeMatch![0]).toContain('아직 산출물이 없어요')
   })
 })

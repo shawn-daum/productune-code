@@ -349,6 +349,41 @@ function compareVersionIdsDesc(a, b) {
   return 0
 }
 
+// T-713: the SAME numeric comparison, as an equality test — contracts
+// §Fixed-paths "`v1` ≡ `v1.0.0`": a ticket bucket directory (or a `prd_item`
+// prefix) spelled differently from po-state's own version string (`v1.10.0`
+// on disk vs `v1.10` in `.prdt/po-state.json`) is still the SAME version.
+// Exported so collect.mjs's `isCurrent` bucket check reuses this one rule
+// rather than a second string-equality copy of its own.
+export function sameVersion(a, b) {
+  return compareVersionIdsDesc(a, b) === 0
+}
+
+/** Every current-version ticket (any status) in `tickets.included`, matched by `sameVersion` rather than string equality (T-713) — a bucket dir spelled differently from po-state's own version string is still "current". `backlog` is excluded — it is never a version at all. */
+function currentVersionTickets(tickets, currentVersion) {
+  return tickets.included.filter((t) => t.bucket !== 'backlog' && sameVersion(t.bucket, currentVersion))
+}
+
+/**
+ * A ticket's `prd_item` (`"<version>#<key>"`) resolved against `currentVersion`
+ * by the SAME numeric equality (T-713), rather than a literal string-prefix
+ * check — a ticket written against its own bucket's directory spelling
+ * (`v1.10.0#viewer`) still resolves to its PRD-item row even when that
+ * spelling differs textually from po-state's version string (`v1.10`).
+ * `null` when there is no `#`, or the version part is not the current
+ * version — same "trailing row" fallback as before.
+ * @param {string} prdItem
+ * @param {string} currentVersion
+ * @returns {string|null}
+ */
+function prdItemKey(prdItem, currentVersion) {
+  const hashIdx = prdItem.indexOf('#')
+  if (hashIdx === -1) return null
+  const versionPart = prdItem.slice(0, hashIdx)
+  if (!sameVersion(versionPart, currentVersion)) return null
+  return prdItem.slice(hashIdx + 1)
+}
+
 function statusPillClass(status) {
   if (status === 'done') return 'done'
   if (status === 'dropped') return 'abandoned'
@@ -405,13 +440,25 @@ function ticketRowsTable(tickets) {
  * roadmap dir like v2.0/v1.11 is not "closed", just not the current round,
  * hence no status word on its label — see T-709.md 결정 1); `backlog` is not
  * a version, so it is excluded from that sort and pinned last, matching the
- * approved mockup's own placement. `defaultKey: currentVersion` keeps the
+ * approved mockup's own placement. `defaultKey: currentBucketKey` keeps the
  * reader landing on "now" even though the current version is no longer at
  * array index 0.
+ *
+ * T-713: the current-version row's own KEY is the REAL bucket directory name
+ * (e.g. `v1.10.0`) when any current-version ticket exists, never the literal
+ * `currentVersion` po-state string — `currentVersionTickets` already matches
+ * that directory by numeric equality (`sameVersion`), so a bucket spelled
+ * differently from po-state's own version string still lands here rather
+ * than being mistaken for a closed/roadmap bucket. Falls back to
+ * `currentVersion` itself only when the current version has no tickets yet
+ * (an empty bucket carries no directory name to observe). The row's own
+ * LABEL still reads po-state's `currentVersion` string (`${currentVersion} ·
+ * 현재`) — that is the canonical "now" wording, unchanged.
  */
 function ticketStoreInner(tickets, currentVersion) {
-  const currentTickets = tickets.included.filter((t) => t.bucket === currentVersion)
+  const currentTickets = currentVersionTickets(tickets, currentVersion)
   const backlogTickets = tickets.included.filter((t) => t.bucket === 'backlog')
+  const currentBucketKey = currentTickets[0]?.bucket ?? currentVersion
 
   // The current version's own row is a version bucket like any other — it
   // must be sorted INTO the same numeric-descending run as `tickets.omitted`
@@ -419,13 +466,13 @@ function ticketStoreInner(tickets, currentVersion) {
   // than the current version — T-709 결정 1), never pinned to array index 0
   // structurally. Only `backlog` (not a version at all) sits outside this
   // sort, pinned last.
-  const versionBuckets = [currentVersion, ...tickets.omitted.map((o) => o.bucket)].sort(compareVersionIdsDesc)
+  const versionBuckets = [currentBucketKey, ...tickets.omitted.map((o) => o.bucket)].sort(compareVersionIdsDesc)
 
   const groups = [
     ...versionBuckets.map((bucket) => {
-      if (bucket === currentVersion) {
+      if (bucket === currentBucketKey) {
         return {
-          key: currentVersion,
+          key: currentBucketKey,
           label: `${currentVersion} · ${TICKET.currentTag}`,
           count: currentTickets.length,
           bodyHtml: countBadge(currentVersion, currentTickets.length, TICKET.countUnit) + ticketRowsTable(currentTickets),
@@ -452,7 +499,7 @@ function ticketStoreInner(tickets, currentVersion) {
     crumbLabel: TICKET.sidebarLabel,
     groups,
     noGroupUnit: TICKET.countUnit,
-    defaultKey: currentVersion,
+    defaultKey: currentBucketKey,
   })
 }
 
@@ -623,8 +670,12 @@ function countBadge(label, count, unit) {
   return `<div class="section-meta"><span class="count-badge">${escapeHtml(label)} · <b>${count}</b>${escapeHtml(unit)}</span></div>\n`
 }
 
-/** Wiki store: sidebar groups by the RAW frontmatter `type` value, keyed internally by that raw value (never shown) but LABELED per T-705 §F's final Korean mapping. */
+/** Wiki store: sidebar groups by the RAW frontmatter `type` value, keyed internally by that raw value (never shown) but LABELED per T-705 §F's final Korean mapping. T-713: a wholly empty store (`docs/wiki` has zero pages once `index.md` is excluded) has no `type` key to group by at all — grouping "by data present" would then build ZERO groups, so `groupedStore` never has anything to draw and `WIKI.empty` (a table-body note) is never reached. One synthetic all-store group, same shape every other empty-but-populated group already renders (`wikiRowsTable([])`), same as `featureStoreInner`'s own single, always-present group below. */
 function wikiStoreInner(pages) {
+  if (pages.length === 0) {
+    const groups = [{ key: 'all', label: WIKI.sidebarLabel, count: 0, bodyHtml: countBadge(WIKI.sidebarLabel, 0, WIKI.countUnit) + wikiRowsTable([]) }]
+    return groupedStore({ sidebarSubLabel: WIKI.sidebarLabel, crumbLabel: WIKI.sidebarLabel, groups, noGroupUnit: WIKI.countUnit })
+  }
   const byType = new Map()
   for (const p of pages) {
     const key = p.frontmatter.type || WIKI_UNCLASSIFIED
@@ -787,8 +838,12 @@ function artifactRowsTable(entries) {
   return html
 }
 
-/** Artifact store: one group per manifest bucket (version) — the current version's bucket (if it has any entries) opens by default, else the first bucket, so the reader lands on "now" the same way the ticket store's sidebar defaults to the current version. */
+/** Artifact store: one group per manifest bucket (version) — the current version's bucket (if it has any entries) opens by default, else the first bucket, so the reader lands on "now" the same way the ticket store's sidebar defaults to the current version. T-713: zero manifest entries at all (a missing `manifest.json`, collect.mjs's own zero-entries case, or a version with no artifacts yet) has no bucket to group by, so the same zero-groups gap as `wikiStoreInner`'s applies — one synthetic all-store group instead, `ARTIFACT.empty` reachable through the same `artifactRowsTable([])` every populated-but-empty bucket already renders. */
 function artifactStoreInner(artifacts, currentVersion) {
+  if (artifacts.entries.length === 0) {
+    const groups = [{ key: 'all', label: STORE_LABEL.artifact, count: 0, bodyHtml: countBadge(STORE_LABEL.artifact, 0, ARTIFACT.countUnit) + artifactRowsTable([]) }]
+    return groupedStore({ sidebarSubLabel: STORE_LABEL.artifact, crumbLabel: STORE_LABEL.artifact, groups, noGroupUnit: ARTIFACT.countUnit })
+  }
   const byBucket = new Map()
   for (const e of artifacts.entries) {
     const bucket = e.fields.bucket
@@ -996,13 +1051,11 @@ const PROGRESS_LEGEND = `<div class="stage-matrix-legend"><span class="stage-mat
 
 /** The "진행 상황" pane: T-666 slice 2b's own TYPE_TO_STAGE stage line, above T-675's assignee x PRD-item matrix (a trailing "항목 밖" row included) — two different questions ("which lifecycle stage" vs "which PRD item"), not the same component, per this ticket's two separate acceptance lines. */
 function homeProgressBody(data) {
-  const currentTickets = data.tickets.included.filter((t) => t.bucket === data.currentVersion)
+  const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   const byItem = new Map(PROGRESS_ITEM_ORDER.map((k) => [k, []]))
   const outOfScope = []
   for (const t of currentTickets) {
-    const prdItem = t.frontmatter.prd_item || ''
-    const prefix = `${data.currentVersion}#`
-    const key = prdItem.startsWith(prefix) ? prdItem.slice(prefix.length) : null
+    const key = prdItemKey(t.frontmatter.prd_item || '', data.currentVersion)
     if (key && byItem.has(key)) byItem.get(key).push(t)
     else outOfScope.push(t) // no prd_item, or one this version's §What items don't name — the trailing row
   }
@@ -1017,7 +1070,12 @@ ${PROGRESS_LEGEND}
 }
 
 function homeSection(data, repoRootHref) {
-  const currentTickets = data.tickets.included.filter((t) => t.bucket === data.currentVersion)
+  const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
+  // T-713 scope note: `e.fields.bucket` matching stays literal (never
+  // `sameVersion`) — this ticket's acceptance line names ticket buckets and
+  // `prd_item` prefixes only; an artifact-manifest bucket spelled
+  // differently from po-state's version string is the same latent bug class
+  // but out of scope here (see this dispatch's `unresolved[]`).
   const currentArtifacts = data.artifacts.entries.filter((e) => e.fields.bucket === data.currentVersion)
   const groups = [
     { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },

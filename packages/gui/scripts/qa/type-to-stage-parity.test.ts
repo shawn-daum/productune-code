@@ -7,10 +7,17 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { REPO_ROOT } from '../../viewer/generate.mjs'
+import { GUI_ROOT } from '../../viewer/generate.mjs'
 import { TYPE_TO_STAGE } from '../../viewer/lib/render.mjs'
 
-const STATUSLINE_PATH = path.join(REPO_ROOT, 'code/packages/core/scripts/statusline-prdt.sh')
+// T-718: statusline-prdt.sh lives at `packages/core/scripts/…` — a SIBLING of
+// this package (`packages/gui`) under `packages/`, found relative to
+// `GUI_ROOT` (never `REPO_ROOT + 'code/…'`, which assumed the checked-out
+// repo root's own child directory was literally named "code" — true only by
+// coincidence in the day-to-day checkout, and false the moment a fresh
+// `git worktree add --detach <scratchpad>/x <sha>` names that checkout
+// anything else, e.g. "x" — PO-observed failure, 2026-09-27).
+const STATUSLINE_PATH = path.join(GUI_ROOT, '../core/scripts/statusline-prdt.sh')
 
 /** Parses `TYPE_TO_STAGE = { "k": "v", ... }` out of the shell script's embedded Python — every quoted `"key": "value"` pair inside the dict's own braces, comments (which carry no quoted colon pairs) ignored by construction. */
 function parseShellTypeToStage(source) {

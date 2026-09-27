@@ -18,7 +18,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { renderPage, resolveDocLink, safeEncodeURI, detailDataScript } from '../../viewer/lib/render.mjs'
-import { collectArtifacts, isContainedArtifactPath } from '../../viewer/lib/collect.mjs'
+import { collectArtifacts, isContainedArtifactPath, collectTickets, collectWiki } from '../../viewer/lib/collect.mjs'
 
 // ---------- shared fixture plumbing ----------
 
@@ -269,6 +269,82 @@ describe('collect.mjs — collectArtifacts refuses a manifest bucket/path resolv
       fs.writeFileSync(path.join(repoRoot, 'docs/artifacts/manifest.json'), JSON.stringify(manifest))
       const { entries } = collectArtifacts(repoRoot)
       expect(entries.length).toBe(0)
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+    }
+  })
+})
+
+// ---------- T-713: empty stores + numeric version equivalence ----------
+
+describe('collect.mjs — T-713 fixtures', () => {
+  function buildRepo() {
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-t713-fixture-'))
+  }
+
+  it('collectArtifacts: a missing manifest.json is zero entries, not a throw', () => {
+    const repoRoot = buildRepo()
+    try {
+      fs.mkdirSync(path.join(repoRoot, 'docs/artifacts'), { recursive: true })
+      // No manifest.json written at all.
+      expect(() => collectArtifacts(repoRoot)).not.toThrow()
+      expect(collectArtifacts(repoRoot)).toEqual({ entries: [] })
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('collectWiki: docs/wiki with only index.md (or nothing) collects zero pages, never a throw', () => {
+    const repoRoot = buildRepo()
+    try {
+      fs.mkdirSync(path.join(repoRoot, 'docs/wiki'), { recursive: true })
+      fs.writeFileSync(path.join(repoRoot, 'docs/wiki/index.md'), '# index')
+      expect(collectWiki(repoRoot)).toEqual([])
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  // T-713: contracts §Fixed-paths "`v1` ≡ `v1.0.0`" — a ticket bucket
+  // directory spelled `v1.10.0` on disk is the SAME version as po-state's own
+  // `v1.10` string, and must land in `included` (full body), never in
+  // `omitted` (frontmatter-only) as if it were some other, non-current round.
+  it('collectTickets: a `v1.10.0` bucket directory matches po-state version `v1.10` (numeric equality, not string equality)', () => {
+    const repoRoot = buildRepo()
+    try {
+      fs.mkdirSync(path.join(repoRoot, 'docs/tickets/v1.10.0'), { recursive: true })
+      fs.writeFileSync(
+        path.join(repoRoot, 'docs/tickets/v1.10.0/T-1.md'),
+        '---\nid: T-1\nslug: fixture\ntype: impl\nstatus: open\nassignee: developer\n---\n\n## problem\n',
+      )
+      const { included, omitted } = collectTickets(repoRoot, 'v1.10')
+      expect(omitted).toEqual([])
+      expect(included.length).toBe(1)
+      expect(included[0].bucket).toBe('v1.10.0')
+      expect(included[0].frontmatter.id).toBe('T-1')
+      expect(included[0].body).toBeDefined() // full body — never frontmatter-only, which `ticketLite` never attaches
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  // Non-vacuous control: a bucket that really is a DIFFERENT version (not
+  // just a different spelling of the same one) must still land in `omitted`
+  // — or the numeric-equality fix above could be passing only because
+  // everything is now (wrongly) treated as current.
+  it('checker fixture: a genuinely different version bucket (v1.11) still lands in `omitted`, not `included`', () => {
+    const repoRoot = buildRepo()
+    try {
+      fs.mkdirSync(path.join(repoRoot, 'docs/tickets/v1.11'), { recursive: true })
+      fs.writeFileSync(
+        path.join(repoRoot, 'docs/tickets/v1.11/T-2.md'),
+        '---\nid: T-2\nslug: fixture-2\ntype: impl\nstatus: open\nassignee: developer\n---\n\n## problem\n',
+      )
+      const { included, omitted } = collectTickets(repoRoot, 'v1.10')
+      expect(included).toEqual([])
+      expect(omitted.length).toBe(1)
+      expect(omitted[0].bucket).toBe('v1.11')
+      expect(omitted[0].tickets[0].frontmatter.id).toBe('T-2')
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true })
     }

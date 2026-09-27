@@ -44,6 +44,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { parseFrontmatter } from './frontmatter.mjs'
+// T-713: reuse render.mjs's own numeric version-equality rule (contracts
+// §Fixed-paths "`v1` ≡ `v1.0.0`") rather than a second string-equality copy —
+// a ticket bucket directory spelled differently from po-state's own version
+// string (`v1.10.0` on disk vs `v1.10` in `.prdt/po-state.json`) is still the
+// same version. No cycle: render.mjs never imports collect.mjs.
+import { sameVersion } from './render.mjs'
 
 function readJson(p) {
   return JSON.parse(fs.readFileSync(p, 'utf8'))
@@ -99,7 +105,7 @@ export function collectTickets(repoRoot, currentVersion) {
       .filter((e) => e.isFile() && /^T-.+\.md$/.test(e.name))
       .map((e) => e.name)
       .sort()
-    const isCurrent = bucket === currentVersion || bucket === 'backlog'
+    const isCurrent = sameVersion(bucket, currentVersion) || bucket === 'backlog'
     if (isCurrent) {
       for (const f of files) {
         const doc = readDoc(repoRoot, path.join(bucketDir, f))
@@ -178,6 +184,11 @@ export function isContainedArtifactPath(repoRoot, bucket, relPath) {
  */
 export function collectArtifacts(repoRoot) {
   const manifestPath = path.join(repoRoot, ARTIFACTS_ROOT_REL, 'manifest.json')
+  // T-713: a version with no artifacts yet (ARTIFACT.empty's own second line —
+  // "버전이 열리면 이 버킷에 manifest.json 이 생겨요" — states this as the
+  // NORMAL pre-manifest state, not an error) has no manifest.json on disk at
+  // all; treat it as zero entries rather than throwing `readJson`'s ENOENT.
+  if (!fs.existsSync(manifestPath)) return { entries: [] }
   const manifest = readJson(manifestPath)
   const entries = []
   for (const fields of manifest.entries || []) {
