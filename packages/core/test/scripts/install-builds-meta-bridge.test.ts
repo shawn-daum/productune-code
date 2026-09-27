@@ -93,6 +93,35 @@ describe.skipIf(!hasJq() || !hasNpm())('install.sh rebuilds the node bridge (T-7
     expect(afterMtime / 1000).toBeGreaterThanOrEqual(now - 1)
   }, 180000) // runInstallSettling may retry past several ~30s "busy" ceilings
 
+  // T-734 (review finding 3, install half): staleness used to be judged by
+  // src/ alone — a commit touching ONLY package.json (an esbuild flag) or
+  // tsconfig.json rebinds the build's OWN inputs without ever touching a
+  // file under src/, so the old check called that bridge fresh forever.
+  test.each([
+    ['package.json', path.join(CORE_ROOT, 'package.json')],
+    ['tsconfig.json', path.join(CORE_ROOT, 'tsconfig.json')],
+  ])('a %s change alone (no src/ edit) makes install rebuild the bridge', (_label, buildInput) => {
+    const sb0 = makeSandbox('core-install-bridge-prime3-')
+    runInstall(sb0)
+    fs.rmSync(sb0.root, { recursive: true, force: true })
+    expect(fs.existsSync(BRIDGE), 'priming install did not produce a bridge').toBe(true)
+
+    const beforeMtime = fs.statSync(BRIDGE).mtimeMs
+    const past = (Date.now() - 60_000) / 1000
+    fs.utimesSync(BRIDGE, past, past)
+    const now = Date.now() / 1000
+    fs.utimesSync(buildInput, now, now) // the ONLY thing touched — src/ stays as primed
+
+    const sb = makeSandbox('core-install-bridge-input-')
+    const r = runInstallSettling(sb.env)
+    fs.rmSync(sb.root, { recursive: true, force: true })
+
+    expect(r).toMatch(/Building node bridge|node bridge already up to date \(built by another install/)
+    const afterMtime = fs.statSync(BRIDGE).mtimeMs
+    expect(afterMtime).toBeGreaterThan(beforeMtime)
+    expect(afterMtime / 1000).toBeGreaterThanOrEqual(now - 1)
+  }, 180000)
+
   test('a bridge already newer than every src file is left untouched (no rebuild)', () => {
     const sb0 = makeSandbox('core-install-bridge-prime2-')
     runInstall(sb0)
