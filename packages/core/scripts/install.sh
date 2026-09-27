@@ -63,7 +63,29 @@ print(os.path.realpath(sys.argv[1]))
 PYEOF
 }
 TMP=""
-cleanup() { [ -n "${TMP:-}" ] || return 0; rm -f "$TMP"; }
+BUILD_LOCK=""  # §1b's mkdir-mutex around the bridge build
+BUILD_PID=""   # the npm child §1b started, while it's still running
+BUILD_LOG=""   # its captured output, until printed on failure
+cleanup() {
+  [ -z "${TMP:-}" ] || rm -f "$TMP"
+  [ -z "${BUILD_LOG:-}" ] || rm -f "$BUILD_LOG"
+  if [ -n "${BUILD_LOCK:-}" ]; then
+    # T-732: a `die` mid-build, or the script's own signaled exit (SIGTERM),
+    # used to release the lock here unconditionally — but the npm child §1b
+    # backgrounded is a SEPARATE process; killing/exiting THIS script does
+    # not touch it, so it keeps building after the lock is gone, and a
+    # second install racing in right after would start a CONCURRENT build
+    # against the same dist/. Release the lock only once nothing is still
+    # building under it: if the recorded child is still alive, leave the
+    # lock (and its pid file) standing so another install reads it as
+    # busy — never abandoned — until that child actually exits.
+    if [ -n "${BUILD_PID:-}" ] && kill -0 "$BUILD_PID" 2>/dev/null; then
+      :
+    else
+      rm -rf "$BUILD_LOCK" 2>/dev/null || true
+    fi
+  fi
+}
 trap cleanup EXIT
 
 command -v jq >/dev/null 2>&1 || die "jq is required"
@@ -232,6 +254,204 @@ EOF
 # menus are derived — regenerate against the installed mirror
 PRDT_DISCIPLINE="$PRDT_HOME/discipline" "$PRDT_HOME/bin/prdt" menus >/dev/null
 say "   mirrored (discipline + doctrine + hooks + bin, menus regenerated)"
+
+# 1b. build the node bridge (dist/bin/meta-cli.cjs) — T-731.
+#     WHY: the bridge is a BUILD ARTIFACT of $ROOT/src (tsc + esbuild, per
+#     $ROOT/package.json's `build` script), `dist/` is gitignored, and until now
+#     nothing in the install/update path ever ran that build — a fix committed to
+#     packages/core/src bound nothing until someone rebuilt the bridge BY HAND.
+#     OBSERVED (T-731): T-686's lock fix (d9404460) was committed and "installed"
+#     (install.sh re-run via `prdt update`) on 2026-09-26, yet the bug it fixed
+#     recurred the next day — the bridge running was still the 2026-09-22 build,
+#     missing that commit and two more.
+#
+#     Only when $ROOT is a real source checkout: install-fail-loud.test.ts /
+#     install-fixture-contract.test.ts run this exact script against a payload
+#     that copies discipline/ + agents/ + scripts/ + doctrine.md ONLY — no
+#     src/, no package.json, no node_modules — and must still exit 0 with
+#     nothing built. Same posture as PRDT_REPO-less machines elsewhere in this
+#     script: "no source tree here" is silence, never a failure.
+BRIDGE="$ROOT/dist/bin/meta-cli.cjs"
+SRC_ENTRY="$ROOT/src/bin/meta-cli.ts"
+if [ -f "$ROOT/package.json" ] && [ -f "$SRC_ENTRY" ]; then
+  # T-734 (review finding 3, install half): `src/` alone used to be the whole
+  # staleness input — a commit touching ONLY package.json (an esbuild flag) or
+  # tsconfig.json rebinds the build's OWN inputs without ever touching a file
+  # under src/, so the old check called that bridge fresh forever. package.json
+  # and tsconfig.json are each checked by direct mtime compare (`-nt`, a bash
+  # builtin) rather than folded into the `find`, since there's exactly one of
+  # each and no subtree to walk.
+  bridge_stale() {
+    [ -f "$BRIDGE" ] || return 0
+    [ -n "$(find "$ROOT/src" -type f -newer "$BRIDGE" -print -quit 2>/dev/null)" ] && return 0
+    [ -f "$ROOT/package.json" ] && [ "$ROOT/package.json" -nt "$BRIDGE" ] && return 0
+    [ -f "$ROOT/tsconfig.json" ] && [ "$ROOT/tsconfig.json" -nt "$BRIDGE" ] && return 0
+    return 1
+  }
+  if bridge_stale; then
+    if ! command -v npm >/dev/null 2>&1; then
+      say "1b) node bridge NOT rebuilt — npm not on PATH; $BRIDGE may be stale (\`prdt doctor\` will say so)"
+    else
+      # mkdir is atomic (POSIX) — a portable mutex without depending on
+      # `flock` (not on macOS by default). Several installs racing on the
+      # SAME repo (e.g. this suite's shared install-fixture, run from several
+      # parallel test files) must never invoke the compiler concurrently on
+      # the same $ROOT/dist — this fix exists BECAUSE a concurrency bug in
+      # the thing the bridge builds went unnoticed; it does not get to
+      # introduce one of its own in building it.
+      #
+      # T-732: the holder writes the npm child's OWN pid into "$LOCK/pid"
+      # right after starting it (below) — the one fact that tells a waiter
+      # apart an ABANDONED lock (holder's install died — SIGKILL never runs
+      # its cleanup trap — but nothing is building any more) from a BUSY one
+      # (the recorded pid is still alive, still writing to dist/). Without
+      # this, a lock a killed install left behind blocked every later
+      # install's rebuild forever — the exact "bridge stays stale" symptom
+      # T-731 exists to remove, reproduced by a lock instead of by a missing
+      # build step.
+      LOCK="$ROOT/dist/.build.lock"
+      mkdir -p "$ROOT/dist"
+      lock_abandoned() {
+        [ -d "$LOCK" ] || return 1
+        HOLDER_PID="$(cat "$LOCK/pid" 2>/dev/null || true)"
+        [ -n "$HOLDER_PID" ] && ! kill -0 "$HOLDER_PID" 2>/dev/null
+      }
+      # T-734 (review finding 2): `lock_abandoned && rm -rf "$LOCK"` was
+      # check-THEN-act — two waiters can both see the SAME abandoned lock as
+      # abandoned, and a slower waiter's `rm -rf` then runs AFTER a faster
+      # waiter already recreated the lock for itself (mkdir'd it fresh,
+      # about to become the real holder). The slow waiter deletes that live,
+      # just-created directory out from under its owner: either both waiters
+      # now see a missing lock and both `mkdir` it (two builds at once), or
+      # the fast waiter's own `printf … > "$LOCK/pid"` a moment later hits a
+      # directory that no longer exists (ENOENT) and, unguarded by an `&&`/
+      # `||`, aborts the WHOLE install under `set -e`.
+      #   Fix: never `rm -rf "$LOCK"` on say-so alone. Rename it out of the
+      # way first (`mv`, a single atomic rename) — of several racers doing
+      # this at once, exactly one `mv` can ever see the source and succeed;
+      # every other racer's `mv` fails (ENOENT, source already gone) and
+      # touches nothing. Only the winner's OWN uniquely-named copy
+      # ($LOCK.stale.$$) is ever `rm -rf`'d, so a live lock some OTHER
+      # process just created can never be deleted by a late decision made
+      # against stale information.
+      # T-734 (ship-entry review finding 2, follow-up): the atomic-rename fix
+      # above stops several waiters from all deleting the SAME abandoned
+      # lock, but QA found a second shape of the same defect — a THIRD
+      # install's stale verdict. `lock_abandoned` is a snapshot read; by the
+      # time a waiter's `steal_abandoned_lock` actually runs, a DIFFERENT
+      # install can already have stolen that very lock, `mkdir`'d a fresh
+      # one for itself, and be genuinely building under it (its own pid
+      # written — or not yet; a real holder writes it within its first
+      # instant, but not the same instant it calls `mkdir`). `mv` only
+      # guarantees a single racer renames whatever CURRENTLY sits at $LOCK —
+      # it has no idea whether that content is still the dead lock a waiter
+      # judged abandoned a moment (or several loop iterations) ago. So:
+      # re-examine what actually got renamed away, after the rename, before
+      # ever discarding it. A live pid, or no pid file at all (the fresh
+      # holder hasn't reached its own `printf > "$LOCK/pid"` yet), means
+      # this steal grabbed a live/about-to-be-live lock on stale
+      # information — hand it straight back (a plain rename; this process
+      # holds the only copy, so no one else can be racing THIS one) and
+      # report the steal as lost, never discarded.
+      #   `mode=grace` is for the one call site with independent
+      # corroboration strong enough to treat "no pid file" itself as proof
+      # of abandonment: the ~30s-ceiling block below, reached only once the
+      # SAME lock has sat the whole wait with no pid ever appearing — a real
+      # holder never takes anywhere near that long to write one, so absence
+      # there is decisive, not a one-instant snapshot.
+      steal_abandoned_lock() {
+        local mode="${1:-strict}"
+        local steal="$LOCK.stale.$$"
+        mv "$LOCK" "$steal" 2>/dev/null || return 1
+        local pid
+        pid="$(cat "$steal/pid" 2>/dev/null || true)"
+        if { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; } \
+           || { [ -z "$pid" ] && [ "$mode" != "grace" ]; }; then
+          if [ -e "$LOCK" ]; then
+            # Something else already occupies $LOCK again (an extremely
+            # rare compound race) — our renamed-away copy has nowhere safe
+            # to go back to; discard our OWN copy only, never what is now
+            # standing at $LOCK.
+            rm -rf "$steal" 2>/dev/null || true
+          else
+            mv "$steal" "$LOCK" 2>/dev/null || rm -rf "$steal" 2>/dev/null || true
+          fi
+          return 1
+        fi
+        rm -rf "$steal" 2>/dev/null || true
+      }
+      LOCKED=false
+      WAITED=0
+      while [ "$WAITED" -lt 150 ]; do   # ~30s ceiling — never hang the install
+        if mkdir "$LOCK" 2>/dev/null; then LOCKED=true; break; fi
+        if lock_abandoned; then
+          # Test-only seam (T-734): lets a test pause here, between judging
+          # this lock abandoned and actually stealing it, to force a
+          # deterministic interleaving with a different install recreating
+          # the lock in between. No-op unless a test sets it.
+          [ -z "${PRDT_TEST_STEAL_HOOK:-}" ] || "$PRDT_TEST_STEAL_HOOK" || true
+          steal_abandoned_lock || true   # lost the steal race — fine, retry mkdir below: either it's gone (someone else won) or it's live/being-set-up now, handed back untouched (we'll wait normally next pass)
+          continue  # retry mkdir now — no reason to sit out the ceiling too
+        fi
+        WAITED=$((WAITED + 1))
+        sleep 0.2
+      done
+      if [ "$LOCKED" = false ]; then
+        # Ran out the full ~30s without ever seeing a live holder's pid — the
+        # lock existed the whole time but nothing wrote (or renewed) a pid
+        # into it, which a genuine builder does within its first instant.
+        # Treat that as abandoned too rather than reporting "busy" forever.
+        if lock_abandoned || [ ! -e "$LOCK/pid" ]; then
+          steal_abandoned_lock grace || true
+          mkdir "$LOCK" 2>/dev/null && LOCKED=true
+        fi
+      fi
+      if [ "$LOCKED" = false ]; then
+        say "1b) node bridge build lock ($LOCK) busy 30s+ — skipping this run's rebuild (another install is building it); \`prdt doctor\` will report if it's still stale"
+      else
+        BUILD_LOCK="$LOCK"
+        if bridge_stale; then  # re-check: another run may have just finished while we waited
+          say "1b) Building node bridge (source changed since last build) — npm run build"
+          BUILD_LOG="$(mktemp)"
+          # Backgrounded so its pid is known (and recorded) WHILE it runs, not
+          # only after it finishes — a command-substitution `$(...)` hides
+          # that pid until the command returns, which is too late for a
+          # concurrent waiter to tell "still building" from "abandoned".
+          (cd "$ROOT" && npm run build) >"$BUILD_LOG" 2>&1 &
+          BUILD_PID=$!
+          printf '%s\n' "$BUILD_PID" > "$LOCK/pid"
+          if wait "$BUILD_PID"; then BUILD_OK=true; else BUILD_OK=false; fi
+          BUILD_PID=""
+          BUILD_OUT="$(cat "$BUILD_LOG" 2>/dev/null || true)"
+          rm -f "$BUILD_LOG"; BUILD_LOG=""
+          if [ "$BUILD_OK" = true ]; then
+            say "   built $BRIDGE"
+          else
+            # T-732: node_modules absent (fresh clone) fails `npm run build`
+            # for a reason `npm run build` itself can never fix — pointing
+            # the remedy at the same command that just failed sends whoever
+            # reads this in a circle. Name the fix that actually works.
+            if [ -d "$ROOT/node_modules" ]; then
+              REMEDY="npm run build"
+            else
+              # T-734 (review finding 4): this repo is a pnpm workspace
+              # (packageManager: pnpm@…, pnpm-lock.yaml, no package-lock.json)
+              # — pointing the dependency-install remedy at `npm install`
+              # names the wrong package manager for this repo.
+              REMEDY="pnpm install (dependencies are not installed — \`npm run build\` alone fails the same way) && npm run build"
+            fi
+            say "   node bridge build FAILED — $BRIDGE left as is; \`prdt doctor\` will warn until it's fixed (\`cd $ROOT && $REMEDY\`). Build output:"
+            printf '%s\n' "$BUILD_OUT" | tail -20 >&2
+          fi
+        else
+          say "1b) node bridge already up to date (built by another install while this one waited)"
+        fi
+        rm -rf "$LOCK" 2>/dev/null || true
+        BUILD_LOCK=""
+      fi
+    fi
+  fi
+fi
 
 # 2. prdt.env (잠정 확정 — 열린 항목 ①: 미니멀 계승)
 ENV_FILE="$PRDT_HOME/prdt.env"

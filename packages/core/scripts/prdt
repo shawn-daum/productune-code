@@ -5687,7 +5687,7 @@ def cmd_meta_bootstrap(root, args):
 
 # ── doctor ────────────────────────────────────────────────────────────────────
 
-def _repo_root_candidates():
+def _repo_root_candidates(prefer_prdt_repo=False):
     """Repo-checkout roots worth trying as the comparand for the three
     mirror↔repo drift checks below, in priority order:
 
@@ -5705,12 +5705,29 @@ def _repo_root_candidates():
          permanently unable to find a repo to compare against, from any cwd,
          on every machine that ever ran `install.sh` (T-576).
 
+    `prefer_prdt_repo=True` reverses that order — PRDT_REPO first,
+    self-reference as fallback. Only `meta_bridge_staleness_warnings` passes
+    it (T-734 review finding 1): unlike the three mirror-drift checks below,
+    where self-reference and PRDT_REPO are interchangeable comparands (both
+    just need to carry the same committed bytes to compare against), the
+    bridge check's answer must match the ONE bridge every consumer actually
+    EXECUTES — `_meta_bridge()` (the `prdt` CLI's own meta commands) and both
+    `hooks/prdt-session-start.sh` / `hooks/prdt-post-dispatch.sh` resolve the
+    bridge from `PRDT_REPO` alone, never from self-reference. A dev running
+    doctor from a checkout that differs from the installed `PRDT_REPO`
+    checkout used to get self-reference's verdict on a bridge nothing ever
+    runs, while the bridge every hook and the CLI actually invoke (PRDT_REPO's)
+    went unjudged.
+
     Each candidate is validated the same way regardless of which produced
     it: `scripts/prdt` must exist there as a file — "is this actually a
     prdt repo", not merely "is this a directory". `PRDT_REPO` missing, or
     naming a path that isn't a prdt checkout, simply drops that candidate;
     it never yields a bogus path for a caller to compare against."""
-    for base in (Path(__file__).resolve().parent.parent, prdt_repo_from_env()):
+    self_ref = Path(__file__).resolve().parent.parent
+    env_repo = prdt_repo_from_env()
+    ordered = (env_repo, self_ref) if prefer_prdt_repo else (self_ref, env_repo)
+    for base in ordered:
         if base is None:
             continue
         base = Path(base)
@@ -6018,6 +6035,88 @@ def prdt_script_drift_warnings():
             f"differs from {repo} with no matching commit in the repo's history; promote it "
             f"into the repo (`cp {mirror} {repo}` then commit), or discard it instead with "
             f"the same resync the behind case uses: `{sync_cmd}` ({bootstrap_note})"]
+
+
+def meta_bridge_staleness_warnings():
+    """T-731 (dogfood 2026-09-27, following T-686): `dist/bin/meta-cli.cjs` is a
+    BUILD ARTIFACT of `packages/core/src` (tsc + esbuild), `dist/` is gitignored,
+    and until install.sh grew a build step (this same ticket), nothing in the
+    install/update path ever produced it — a fix committed to core/src bound
+    nothing until someone ran `npm run build` by hand. OBSERVED BY RUNNING:
+    T-686's lock fix (d9404460) was committed and "installed" (`prdt update`) on
+    2026-09-26, yet the bug it fixed recurred the next day — the bridge running
+    was still the 2026-09-22 build, missing that commit and two more
+    (`grep -c prdt-backup.lock` on it returned 0).
+
+    Repo-root discovery: `_repo_root_candidates(prefer_prdt_repo=True)` —
+    PRDT_REPO first, self-reference only as fallback (T-734 review finding
+    1). The three mirror-drift checks above keep self-reference first
+    (interchangeable comparands there); this check does not, because its
+    verdict must be about the bridge every consumer actually EXECUTES — the
+    `prdt` CLI's own meta commands and both `prdt-session-start.sh` /
+    `prdt-post-dispatch.sh` hooks resolve `dist/bin/meta-cli.cjs` from
+    PRDT_REPO alone. The first candidate carrying `src/bin/meta-cli.ts` is
+    the source tree this bridge is meant to be built from. No such candidate
+    (an installed-only machine with no nearby checkout) is silence, same
+    posture as those checks' "no repo to compare against" — this check can
+    only ever fire from a machine that also has the source, since a build
+    artifact needs a build INPUT to be stale against."""
+    for base in _repo_root_candidates(prefer_prdt_repo=True):
+        src_dir = base / "src"
+        if not (src_dir / "bin" / "meta-cli.ts").is_file():
+            continue
+        bridge = base / "dist" / "bin" / "meta-cli.cjs"
+        build_cmd = f"cd {base} && npm run build"
+        if not bridge.is_file():
+            return [f"discipline: meta-cli bridge MISSING — {bridge} has never been built "
+                    f"from {src_dir}; the standard install (`bash {base}/scripts/install.sh`) "
+                    f"builds it now (T-731), or build it directly: `{build_cmd}`"]
+        try:
+            bridge_mtime = bridge.stat().st_mtime
+        except OSError as e:
+            return Skipped(f"could not stat {bridge} ({e.__class__.__name__})")
+        newest_mtime, newest_path = None, None
+        # T-734 (review finding 3, doctor half): package.json (esbuild flags)
+        # and tsconfig.json rebind the build's OWN inputs without ever
+        # touching a file under src/ — a commit touching only one of them
+        # used to leave this check silent forever. Checked the same way
+        # install.sh's own `bridge_stale()` does (same ticket, install half:
+        # direct mtime compare, no subtree walk — there's exactly one of
+        # each).
+        for extra in (base / "package.json", base / "tsconfig.json"):
+            if not extra.is_file():
+                continue
+            try:
+                m = extra.stat().st_mtime
+            except OSError:
+                continue
+            if newest_mtime is None or m > newest_mtime:
+                newest_mtime, newest_path = m, extra
+        for p in src_dir.rglob("*"):
+            if not p.is_file():
+                continue
+            # T-734 (review finding 3, doctor half): the filesystem's / an
+            # editor's own bookkeeping under src/ (.DS_Store, `foo.ts.swp`,
+            # `foo.ts~`, …) is not a build input — same junk filter the
+            # discipline/hooks drift trees use (`_is_junk_rel`), so a
+            # Finder-dropped .DS_Store never reads as "newest source" and
+            # never trips a false STALE.
+            rel = p.relative_to(src_dir).as_posix()
+            if _is_junk_rel(rel):
+                continue
+            try:
+                m = p.stat().st_mtime
+            except OSError:
+                continue
+            if newest_mtime is None or m > newest_mtime:
+                newest_mtime, newest_path = m, p
+        if newest_mtime is not None and newest_mtime > bridge_mtime:
+            return [f"discipline: meta-cli bridge STALE — {bridge} predates {newest_path} "
+                    f"(src changed after the last build); the standard install "
+                    f"(`bash {base}/scripts/install.sh`) rebuilds it (T-731), or rebuild "
+                    f"directly: `{build_cmd}`"]
+        return []
+    return Skipped("no source tree nearby carrying src/bin/meta-cli.ts to compare the bridge against")
 
 
 def _hooks_repo_path():
@@ -10809,6 +10908,11 @@ def cmd_doctor(_args):
         # prdt script mirror↔repo drift (T-507 follow-up) — independent of whether a
         # discipline mirror exists at all.
         ("prdt script mirror drift", FAMILY_DE, lambda: prdt_script_drift_warnings()),
+        # meta-cli bridge (dist/bin/meta-cli.cjs) behind packages/core/src (T-731) —
+        # a BUILD staleness, not a mirror-content diff like the three checks
+        # around it, but the same family: a committed fix binds nothing until
+        # something rebuilds the artifact that actually runs.
+        ("meta-cli bridge staleness", FAMILY_DE, lambda: meta_bridge_staleness_warnings()),
         # hook mirror↔repo drift (T-532) — same independence from droot: the hooks
         # mirror lives at a fixed prdt_home()/hooks path, not behind
         # discipline_root()'s mirror-vs-repo-fallback preference.
