@@ -164,6 +164,73 @@ function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch { return false }
 }
 
+/**
+ * T-734 (ship-entry review finding 2): breaking an abandoned lock used to be
+ * check-THEN-act (`lock_abandoned && rm -rf "$LOCK"`) — several waiters can
+ * all judge the SAME abandoned lock abandoned, and a slower one's `rm -rf`
+ * then runs after a faster one already recreated the lock for itself,
+ * deleting a live directory out from under its new owner: either two waiters
+ * both `mkdir` a now-missing lock (a concurrent double build) or the fast
+ * waiter's own pid write (`printf … > "$LOCK/pid"`) hits a directory that no
+ * longer exists and aborts the whole install (ENOENT, unguarded, `set -e`).
+ * The fix races several installs against ONE pre-seeded abandoned lock
+ * (dead holder pid) at once — with the fix, breaking it is a single atomic
+ * `mv` (rename), so at most one racer can ever win it, by construction, not
+ * by luck; several racers make the window likelier to be hit if the fix ever
+ * regresses back to check-then-act.
+ */
+describe.skipIf(!hasJq())('T-734: breaking an abandoned lock has a single winner', () => {
+  test('several installs racing on one abandoned lock produce exactly one build and none aborts', async () => {
+    const sbx = makeSandbox()
+    const lockPath = path.join(sbx.root, 'dist', '.build.lock')
+    fs.mkdirSync(path.join(sbx.root, 'dist'), { recursive: true })
+    fs.mkdirSync(lockPath)
+    // A definitely-dead pid: spawnSync blocks until the child has already
+    // exited, so this pid is gone before it's ever read as a "holder".
+    const dead = spawnSync(process.execPath, ['-e', ''])
+    fs.writeFileSync(path.join(lockPath, 'pid'), String(dead.pid))
+
+    const marker = path.join(sbx.sb, 'npm-started')
+    const log = path.join(sbx.sb, 'npm-invocations.log')
+    const bridge = path.join(sbx.root, 'dist', 'bin', 'meta-cli.cjs')
+    const npmPath = withFakeNpm()
+
+    const RACERS = 8
+    const homes = Array.from({ length: RACERS }, (_, i) => {
+      const home = path.join(sbx.sb, `home${i}`)
+      const prdtHome = path.join(sbx.sb, `prdt${i}`)
+      const claudeDir = path.join(sbx.sb, `claude${i}`)
+      for (const d of [home, prdtHome, claudeDir]) fs.mkdirSync(d, { recursive: true })
+      return { home, prdtHome, claudeDir }
+    })
+
+    // All share sbx.root (so the SAME dist/.build.lock), each with its own
+    // HOME/PRDT_HOME/CLAUDE_DIR (so the mirror/settings.json writes unrelated
+    // to the lock don't collide with each other).
+    const children = homes.map(h => spawn('bash', [installSh(sbx)], {
+      env: {
+        ...process.env, HOME: h.home, PRDT_HOME: h.prdtHome, CLAUDE_DIR: h.claudeDir,
+        PATH: npmPath, FAKE_NPM_LOG: log, FAKE_NPM_MARKER: marker, FAKE_NPM_SLEEP: '1', FAKE_NPM_BRIDGE: bridge,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }))
+
+    const results = await Promise.all(children.map(c => new Promise<{ code: number | null; out: string }>(resolve => {
+      let out = ''
+      c.stdout?.on('data', d => { out += d })
+      c.stderr?.on('data', d => { out += d })
+      c.on('exit', code => resolve({ code, out }))
+    })))
+
+    for (const r of results) {
+      expect(r.code, `an install aborted instead of finishing cleanly:\n${r.out}`).toBe(0)
+    }
+    expect(fs.existsSync(bridge), 'the bridge must end up built').toBe(true)
+    const invocations = fs.readFileSync(log, 'utf8').split('\n').filter(l => l.trim()).length
+    expect(invocations, 'exactly one racer must have actually built — never a concurrent double build').toBe(1)
+  }, 45000)
+})
+
 describe.skipIf(!hasJq())('T-732: abandoned build lock', () => {
   test('a lock left by an install SIGKILLed mid-build is judged abandoned — a later install rebuilds, fast', async () => {
     const sbx = makeSandbox()

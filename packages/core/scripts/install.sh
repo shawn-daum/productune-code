@@ -274,9 +274,19 @@ say "   mirrored (discipline + doctrine + hooks + bin, menus regenerated)"
 BRIDGE="$ROOT/dist/bin/meta-cli.cjs"
 SRC_ENTRY="$ROOT/src/bin/meta-cli.ts"
 if [ -f "$ROOT/package.json" ] && [ -f "$SRC_ENTRY" ]; then
+  # T-734 (review finding 3, install half): `src/` alone used to be the whole
+  # staleness input — a commit touching ONLY package.json (an esbuild flag) or
+  # tsconfig.json rebinds the build's OWN inputs without ever touching a file
+  # under src/, so the old check called that bridge fresh forever. package.json
+  # and tsconfig.json are each checked by direct mtime compare (`-nt`, a bash
+  # builtin) rather than folded into the `find`, since there's exactly one of
+  # each and no subtree to walk.
   bridge_stale() {
     [ -f "$BRIDGE" ] || return 0
-    [ -n "$(find "$ROOT/src" -type f -newer "$BRIDGE" -print -quit 2>/dev/null)" ]
+    [ -n "$(find "$ROOT/src" -type f -newer "$BRIDGE" -print -quit 2>/dev/null)" ] && return 0
+    [ -f "$ROOT/package.json" ] && [ "$ROOT/package.json" -nt "$BRIDGE" ] && return 0
+    [ -f "$ROOT/tsconfig.json" ] && [ "$ROOT/tsconfig.json" -nt "$BRIDGE" ] && return 0
+    return 1
   }
   if bridge_stale; then
     if ! command -v npm >/dev/null 2>&1; then
@@ -306,11 +316,35 @@ if [ -f "$ROOT/package.json" ] && [ -f "$SRC_ENTRY" ]; then
         HOLDER_PID="$(cat "$LOCK/pid" 2>/dev/null || true)"
         [ -n "$HOLDER_PID" ] && ! kill -0 "$HOLDER_PID" 2>/dev/null
       }
+      # T-734 (review finding 2): `lock_abandoned && rm -rf "$LOCK"` was
+      # check-THEN-act — two waiters can both see the SAME abandoned lock as
+      # abandoned, and a slower waiter's `rm -rf` then runs AFTER a faster
+      # waiter already recreated the lock for itself (mkdir'd it fresh,
+      # about to become the real holder). The slow waiter deletes that live,
+      # just-created directory out from under its owner: either both waiters
+      # now see a missing lock and both `mkdir` it (two builds at once), or
+      # the fast waiter's own `printf … > "$LOCK/pid"` a moment later hits a
+      # directory that no longer exists (ENOENT) and, unguarded by an `&&`/
+      # `||`, aborts the WHOLE install under `set -e`.
+      #   Fix: never `rm -rf "$LOCK"` on say-so alone. Rename it out of the
+      # way first (`mv`, a single atomic rename) — of several racers doing
+      # this at once, exactly one `mv` can ever see the source and succeed;
+      # every other racer's `mv` fails (ENOENT, source already gone) and
+      # touches nothing. Only the winner's OWN uniquely-named copy
+      # ($LOCK.stale.$$) is ever `rm -rf`'d, so a live lock some OTHER
+      # process just created can never be deleted by a late decision made
+      # against stale information.
+      steal_abandoned_lock() {
+        local steal="$LOCK.stale.$$"
+        mv "$LOCK" "$steal" 2>/dev/null || return 1
+        rm -rf "$steal" 2>/dev/null || true
+      }
       LOCKED=false
       WAITED=0
       while [ "$WAITED" -lt 150 ]; do   # ~30s ceiling — never hang the install
         if mkdir "$LOCK" 2>/dev/null; then LOCKED=true; break; fi
-        if lock_abandoned && rm -rf "$LOCK" 2>/dev/null; then
+        if lock_abandoned; then
+          steal_abandoned_lock || true   # lost the steal race — fine, retry mkdir below: either it's gone (someone else won) or it's live now (we'll wait normally next pass)
           continue  # retry mkdir now — no reason to sit out the ceiling too
         fi
         WAITED=$((WAITED + 1))
@@ -322,7 +356,7 @@ if [ -f "$ROOT/package.json" ] && [ -f "$SRC_ENTRY" ]; then
         # into it, which a genuine builder does within its first instant.
         # Treat that as abandoned too rather than reporting "busy" forever.
         if lock_abandoned || [ ! -e "$LOCK/pid" ]; then
-          rm -rf "$LOCK" 2>/dev/null || true
+          steal_abandoned_lock || true
           mkdir "$LOCK" 2>/dev/null && LOCKED=true
         fi
       fi
@@ -354,7 +388,11 @@ if [ -f "$ROOT/package.json" ] && [ -f "$SRC_ENTRY" ]; then
             if [ -d "$ROOT/node_modules" ]; then
               REMEDY="npm run build"
             else
-              REMEDY="npm install (dependencies are not installed — \`npm run build\` alone fails the same way) && npm run build"
+              # T-734 (review finding 4): this repo is a pnpm workspace
+              # (packageManager: pnpm@…, pnpm-lock.yaml, no package-lock.json)
+              # — pointing the dependency-install remedy at `npm install`
+              # names the wrong package manager for this repo.
+              REMEDY="pnpm install (dependencies are not installed — \`npm run build\` alone fails the same way) && npm run build"
             fi
             say "   node bridge build FAILED — $BRIDGE left as is; \`prdt doctor\` will warn until it's fixed (\`cd $ROOT && $REMEDY\`). Build output:"
             printf '%s\n' "$BUILD_OUT" | tail -20 >&2
