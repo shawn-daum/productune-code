@@ -56,11 +56,11 @@ prdt update                 # repo pull --ff-only + 재설치
 .prdt/                      # po-state.json · config.json · meta.git(메타 저장소) · index.db(파생)
 docs/
 ├── prd/PRD.md              # PRD 작업 문서 = 상주 head + 열린 버전 섹션 하나 (경로 고정)
-│   └── history.md          # 닫힌 버전 섹션 — close 때 바이트 그대로 이동 (T-602)
-├── artifacts/<slug>.<ext>  # 사용자 리뷰 산출물
+│   └── versions/v<N>.<m>.md    # 닫힌 버전 섹션 — close 때 파일 하나로 물러남 (T-657)
+├── artifacts/<version>/<slug>.<ext>  # 사용자 리뷰 산출물, 버킷마다 root manifest.json 1개
 ├── tickets/<version>/T-NNN.md   # ticket-lite (전역 id · 3값 status)
 │   └── backlog/            # backlog = version 없는 ticket (승격 = git mv)
-└── wiki/                   # decision-- · fact-- · learning-- · feature-- · retro--v*
+└── wiki/                   # decision-- · fact-- · learning-- · feature-- · term-- · retro--v*
 ```
 
 ## 개발 (이 repo)
