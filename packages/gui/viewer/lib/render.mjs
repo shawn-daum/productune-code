@@ -122,6 +122,24 @@ hardenedRenderer.heading = function ({ tokens, depth }) {
   return `<h${depth} class="pill pill-heading-${level}">${text}</h${depth}>\n`
 }
 
+// marked 16.4.2's own paragraph tokenizer only strips a single trailing
+// newline, never the CommonMark-required "remove initial and final
+// whitespace" from a paragraph's raw content (verified against this repo's
+// installed marked: marked.lexer('  x \n\n') keeps the leading two spaces
+// and the trailing space in the paragraph token's own text). T-709 결정 2
+// surfaced this: a closed PRD round with no heading renders its first
+// non-empty line directly as prose (no more separately-extracted/trimmed
+// title column), so a stray leading/trailing space a stub round's source
+// file happens to carry must not leak into the rendered `<p>`. Trimming the
+// assembled inline HTML at the paragraph boundary (never touching interior
+// whitespace, so a real hard-break `<br>` from a trailing double-space
+// elsewhere in the paragraph is untouched) is a general CommonMark-
+// compliance fix, not PRD-specific — every document kind flows through this
+// same `hardenedRenderer` via `md()`.
+hardenedRenderer.paragraph = function ({ tokens }) {
+  return `<p>${this.parser.parseInline(tokens).trim()}</p>\n`
+}
+
 // T-666 slice 2b acceptance line 3: "relative document links inside rendered
 // bodies either open the linked document inside the viewer or point to the
 // real file — none resolves against viewer.html's own folder." Every body
@@ -246,6 +264,25 @@ function storeSection(key, { active = false, innerHtml }) {
   return `<section class="store-section${active ? ' active' : ''}" data-store="${key}" id="store-${key}">\n${innerHtml}\n</section>`
 }
 
+// Numeric version-id compare, NEWEST FIRST (descending) — contracts
+// §Fixed-paths "Version id" rule: fill a missing component with 0 and compare
+// component-by-component; NEVER a string/localeCompare (which would sort
+// "v1.10" before "v1.9"). One rule, two call sites (T-709 결정 1/2): the
+// ticket sidebar's per-bucket rows and the PRD store's closed-round rows.
+function versionNumericParts(id) {
+  return (id.match(/\d+/g) || []).map(Number)
+}
+function compareVersionIdsDesc(a, b) {
+  const pa = versionNumericParts(a)
+  const pb = versionNumericParts(b)
+  const len = Math.max(pa.length, pb.length)
+  for (let i = 0; i < len; i++) {
+    const diff = (pb[i] || 0) - (pa[i] || 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
 function statusPillClass(status) {
   if (status === 'done') return 'done'
   if (status === 'dropped') return 'abandoned'
@@ -268,7 +305,7 @@ function ticketRolePill(assignee) {
   return `<span class="pill ${pillClass}">${escapeHtml(assignee || '')}</span>`
 }
 
-/** One <table> of ticket rows for one group (current version, or backlog) — every row is a detail-row keyed for the embedded JSON blob below, so "every row resolves to a detail entry" is true by construction (same loop builds both). */
+/** One <table> of ticket rows for one group (current version, backlog, or a frontmatter-only bucket — T-709 결정 1: same shape, `t.frontmatter` is all this needs, whether or not the row's own entry carries a `body`) — every row is a detail-row keyed for the embedded JSON blob below, so "every row resolves to a detail entry" is true by construction (same loop builds both). */
 function ticketRowsTable(tickets) {
   if (tickets.length === 0) {
     return `<p class="v-note">${TICKET.empty}</p>`
@@ -289,46 +326,79 @@ function ticketRowsTable(tickets) {
   return html
 }
 
-/** The ticket store: sidebar group (current version / backlog) → list → detail panel. Slice 1a's proof case (acceptance line 1). */
+/**
+ * The ticket store: one sidebar row per `docs/tickets/` bucket directory
+ * (T-709 결정 1 — today 17: current version + backlog + 15 others), routed
+ * through the shared `groupedStore()` shell rather than bespoke markup (the
+ * T-666 slice 1b comment's claim that every store already did this was never
+ * actually true of the ticket store — closed here). Current version + backlog
+ * keep their full-body rows unchanged; every other bucket (`tickets.omitted`)
+ * renders the SAME `ticketRowsTable`, fed frontmatter-only rows instead —
+ * shape is identical, so no second table renderer is needed. Rows sort
+ * NEWEST VERSION FIRST (`compareVersionIdsDesc`, never string order — a
+ * roadmap dir like v2.0/v1.11 is not "closed", just not the current round,
+ * hence no status word on its label — see T-709.md 결정 1); `backlog` is not
+ * a version, so it is excluded from that sort and pinned last, matching the
+ * approved mockup's own placement. `defaultKey: currentVersion` keeps the
+ * reader landing on "now" even though the current version is no longer at
+ * array index 0.
+ */
 function ticketStoreInner(tickets, currentVersion) {
   const currentTickets = tickets.included.filter((t) => t.bucket === currentVersion)
   const backlogTickets = tickets.included.filter((t) => t.bucket === 'backlog')
 
-  const sidebar = `<nav class="sidebar">
-<div class="sidebar-title">productune · ${escapeHtml(currentVersion)}</div>
-<div class="sidebar-sub">${TICKET.sidebarLabel}</div>
-<button type="button" class="nav-item nav-item-clickable active" data-group-select="${escapeHtml(currentVersion)}"><span>${escapeHtml(currentVersion)}</span><span class="nav-item-count">${currentTickets.length}</span></button>
-<button type="button" class="nav-item nav-item-clickable" data-group-select="backlog"><span>${escapeHtml(TICKET.backlogLabel)}</span><span class="nav-item-count">${backlogTickets.length}</span></button>
-</nav>`
+  // The current version's own row is a version bucket like any other — it
+  // must be sorted INTO the same numeric-descending run as `tickets.omitted`
+  // (a bucket like v1.11/v2.0 is a not-yet-current roadmap dir, still newer
+  // than the current version — T-709 결정 1), never pinned to array index 0
+  // structurally. Only `backlog` (not a version at all) sits outside this
+  // sort, pinned last.
+  const versionBuckets = [currentVersion, ...tickets.omitted.map((o) => o.bucket)].sort(compareVersionIdsDesc)
 
-  let omittedHtml = ''
-  if (tickets.omitted.length > 0) {
-    omittedHtml = `<p class="v-note">${escapeHtml(TICKET.omittedNote)}</p>\n`
-    omittedHtml += `<table class="v-omitted"><thead><tr>${TICKET.omittedTableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
-    for (const o of tickets.omitted) {
-      omittedHtml += `<tr><td><code>${escapeHtml(o.bucket)}</code></td><td>${o.count}</td><td>${fmtBytes(o.bytes)}</td><td><code>docs/tickets/${escapeHtml(o.bucket)}/</code></td></tr>\n`
-    }
-    omittedHtml += '</tbody></table>\n'
-  }
+  const groups = [
+    ...versionBuckets.map((bucket) => {
+      if (bucket === currentVersion) {
+        return {
+          key: currentVersion,
+          label: `${currentVersion} · ${TICKET.currentTag}`,
+          count: currentTickets.length,
+          bodyHtml: countBadge(currentVersion, currentTickets.length, TICKET.countUnit) + ticketRowsTable(currentTickets),
+        }
+      }
+      const o = tickets.omitted.find((b) => b.bucket === bucket)
+      return {
+        key: o.bucket,
+        label: o.bucket,
+        count: o.tickets.length,
+        bodyHtml: countBadge(o.bucket, o.tickets.length, TICKET.countUnit) + ticketRowsTable(o.tickets),
+      }
+    }),
+    {
+      key: 'backlog',
+      label: TICKET.backlogLabel,
+      count: backlogTickets.length,
+      bodyHtml: countBadge(TICKET.backlogLabel, backlogTickets.length, TICKET.countUnit) + ticketRowsTable(backlogTickets),
+    },
+  ]
 
-  const body = `<div class="section-meta"><span class="count-badge">${TICKET.sidebarLabel} <b>${currentTickets.length + backlogTickets.length}</b>${TICKET.countUnit}</span></div>
-<div class="view-pane active" data-group="${escapeHtml(currentVersion)}">${ticketRowsTable(currentTickets)}</div>
-<div class="view-pane" data-group="backlog">${ticketRowsTable(backlogTickets)}</div>
-${omittedHtml}`
-
-  const mainCol = `<div class="frame-main-col">
-<div class="topstrip"><span class="topstrip-crumb"><b>${TICKET.sidebarLabel} · <span class="js-group-label">${escapeHtml(currentVersion)}</span></b></span></div>
-<div class="frame-body"><div class="main-inner">${body}</div></div>
-<div class="detail-panel" role="dialog" aria-label="${COMMON.detailPanel}">
-<div class="detail-panel-header"><span class="detail-panel-title"></span><button type="button" class="detail-panel-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 14)}</button></div>
-<div class="detail-panel-body"></div>
-</div>
-</div>`
-
-  return sidebar + '\n' + mainCol
+  return groupedStore({
+    sidebarSubLabel: TICKET.sidebarLabel,
+    crumbLabel: TICKET.sidebarLabel,
+    groups,
+    noGroupUnit: TICKET.countUnit,
+    defaultKey: currentVersion,
+  })
 }
 
-/** The detail-data JSON blob's "ticket" bucket — one entry per row `ticketRowsTable` drew, same loop's inputs, so no row can point at a missing entry. */
+/**
+ * The detail-data JSON blob's "ticket" bucket — one entry per row every
+ * `ticketRowsTable` call draws: current/backlog tickets get a real rendered
+ * `body`; every other bucket's tickets (T-709 결정 1) get NO `body` (the
+ * lightweight `collect.mjs` entry has none to render) and a `fileHref`
+ * instead — the client script already knows this shape (no `fields.body` +
+ * `fields.fileHref` present → `FILE_HREF_NOTE` + a real-file link, see
+ * `INTERACTION_SCRIPT` below), so nothing there changes for this.
+ */
 function ticketDetailEntries(tickets, repoRootHref) {
   const entries = {}
   for (const t of tickets.included) {
@@ -342,6 +412,20 @@ function ticketDetailEntries(tickets, repoRootHref) {
       created: fm.created || '',
       path: t.rel,
       body: md(t.body, path.dirname(t.rel), repoRootHref),
+    }
+  }
+  for (const bucket of tickets.omitted) {
+    for (const t of bucket.tickets) {
+      const fm = t.frontmatter
+      const id = fm.id || t.rel
+      entries[id] = {
+        title: fm.slug || id,
+        type: fm.type || '',
+        status: fm.status || '',
+        assignee: fm.assignee || '',
+        path: t.rel,
+        fileHref: encodeURI(`${repoRootHref}/${t.rel}`),
+      }
     }
   }
   return entries
@@ -362,9 +446,12 @@ function ticketSection(tickets, currentVersion) {
 // interaction shape literally cannot drift between stores (it is not
 // re-authored per store). `groups` is `[{ key, label, count?, bodyHtml }]`
 // (`count` optional — see the badge note inline below); index 0 is the
-// default-active group (mirrors ticketStoreInner's current-version-first
-// convention). PRD's "open" group is the one intentional content nuance,
-// not a structural one — see prdStoreInner below.
+// default-active group UNLESS `defaultKey` is given (T-709 결정 1: the ticket
+// store's array order is now newest-version-first, so the current version is
+// not always at index 0 — `defaultKey: currentVersion` keeps the reader
+// landing on "now" regardless of where it sits in that order; falls back to
+// index 0 if no group's `key` matches). PRD's "open" group is the one
+// intentional content nuance, not a structural one — see prdStoreInner below.
 //
 // T-708 결함 7: a store with exactly one group (feature, today — any other
 // store lands here too the moment its own data collapses to one group) has
@@ -377,13 +464,14 @@ function ticketSection(tickets, currentVersion) {
 // simply never matches it. `noGroupUnit` is the caller's own count-unit word
 // (e.g. FEATURE.countUnit) — groupedStore has no store-specific vocabulary of
 // its own, so it cannot guess one.
-function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '' }) {
+function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey }) {
   const singleGroup = groups.length === 1
+  const defaultIndex = defaultKey === undefined ? 0 : Math.max(0, groups.findIndex((g) => g.key === defaultKey))
   const sidebarButtons = singleGroup
     ? `<div class="nav-item" style="color:var(--text-tertiary); font-style:italic;">${escapeHtml(noGroupLabel(groups[0].count ?? 0, noGroupUnit))}</div>`
     : groups
         .map((g, i) => {
-          const active = i === 0 ? ' active' : ''
+          const active = i === defaultIndex ? ' active' : ''
           // T-666 slice 2a: `count` is optional (home's "진행 상황" group is not a
           // list and carries no count — the mockup's own sidebar leaves that one
           // button's badge off, per docs/artifacts/v1.10/define-screen-set.html
@@ -401,10 +489,10 @@ ${sidebarButtons}
 </nav>`
 
   const panes = groups
-    .map((g, i) => `<div class="view-pane${i === 0 ? ' active' : ''}" data-group="${escapeHtml(g.key)}">${g.bodyHtml}</div>`)
+    .map((g, i) => `<div class="view-pane${i === defaultIndex ? ' active' : ''}" data-group="${escapeHtml(g.key)}">${g.bodyHtml}</div>`)
     .join('\n')
 
-  const defaultLabel = groups.length > 0 ? groups[0].label : ''
+  const defaultLabel = groups.length > 0 ? groups[defaultIndex].label : ''
   const mainCol = `<div class="frame-main-col">
 <div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)} · <span class="js-group-label">${escapeHtml(defaultLabel)}</span></b></span></div>
 <div class="frame-body"><div class="main-inner">${panes}</div></div>
@@ -572,56 +660,30 @@ function prdOpenBody(prd, repoRootHref) {
 }
 
 /**
- * T-705 §G: the closed-round table's 2nd column used to show the raw file
- * path; the mockup's own column is the round's actual TITLE instead. Reads
- * the document's own first `#`/`##`/… heading (its text, `#` markers
- * stripped); a stub file with no heading (docs/prd/versions/v1.1.md,
- * v1.2.1.md — measured 2026-09-26) falls back to its first non-empty line,
- * per acceptance line 3 ("falling back to its first line").
- * @param {string} body
+ * T-709 결정 2: every closed round is now its own sidebar row/group, newest
+ * round first (`compareVersionIdsDesc` — same rule as the ticket sidebar),
+ * rendering its own body DIRECTLY in its own pane — a document per version,
+ * so "row" and "document" are the same thing here (never a list→detail
+ * indirection, unlike ticket/wiki/feature/artifact, which hold many per
+ * group). No count badge (every row is "1 document", a constant that would
+ * carry no information) and no title extraction: the round's own first
+ * heading (or, for a stub with none — docs/prd/versions/v1.1.md,
+ * v1.2.1.md — its first line) already renders inline via `md()`'s own
+ * heading-chip rule, so a second, separately-extracted copy of that same
+ * text was never needed as a list column once the row IS the document.
  */
-export function extractTitle(body) {
-  const headingMatch = /^#{1,6}\s+(.+)$/m.exec(body || '')
-  if (headingMatch) return headingMatch[1].trim()
-  const firstLine = (body || '').split('\n').find((l) => l.trim() !== '')
-  return firstLine ? firstLine.trim() : ''
-}
-
-function prdClosedRowsTable(closed) {
-  if (closed.length === 0) return `<p class="v-note">${PRD.empty}</p>`
-  let html = `<div class="table-wrap"><table><thead><tr>${PRD.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
-  for (const c of closed) {
-    const id = c.name.replace(/\.md$/, '')
-    html += `<tr class="detail-row" data-detail-kind="prd" data-detail-id="${escapeHtml(id)}">`
-    html += `<td class="id-col">${escapeHtml(id)}</td>`
-    html += `<td>${escapeHtml(extractTitle(c.body))}</td>`
-    html += '</tr>\n'
-  }
-  html += '</tbody></table></div>\n'
-  return html
-}
-
 function prdStoreInner(prd, currentVersion, repoRootHref) {
+  const closedRounds = [...prd.closed].sort((a, b) =>
+    compareVersionIdsDesc(a.name.replace(/\.md$/, ''), b.name.replace(/\.md$/, '')),
+  )
   const groups = [
     { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref) },
-    {
-      key: 'closed',
-      label: PRD.closedLabel,
-      count: prd.closed.length,
-      bodyHtml: countBadge(PRD.closedLabel, prd.closed.length, PRD.countUnit) + prdClosedRowsTable(prd.closed),
-    },
+    ...closedRounds.map((c) => {
+      const id = c.name.replace(/\.md$/, '')
+      return { key: id, label: id, bodyHtml: `<div class="v-body">${md(c.body, path.dirname(c.rel), repoRootHref)}</div>` }
+    }),
   ]
   return groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups })
-}
-
-/** Closed-round entries only — the open section is not a detail-row (see prdStoreInner); a closed round's id is its filename minus `.md` (e.g. "v1.1", "v1.2.1"). A stub file with no `##` heading (docs/prd/versions/v1.1.md, v1.2.1.md — measured 2026-09-26) still produces a non-empty `md()` body (a plain paragraph), so it still lists and opens (acceptance line 3). */
-function prdDetailEntries(prd, repoRootHref) {
-  const entries = {}
-  for (const c of prd.closed) {
-    const id = c.name.replace(/\.md$/, '')
-    entries[id] = { title: id, path: c.rel, body: md(c.body, path.dirname(c.rel), repoRootHref) }
-  }
-  return entries
 }
 
 function prdSection(prd, currentVersion, repoRootHref) {
@@ -1252,7 +1314,9 @@ export function renderPage({
     wiki: wikiDetailEntries(data.wiki, repoRootHref),
     feature: featureDetailEntries(data.features, repoRootHref),
     artifact: artifactDetailEntries(data.artifacts, artifactsBaseHref, repoRootHref),
-    prd: prdDetailEntries(data.prd, repoRootHref),
+    // No "prd" bucket (T-709 결정 2): a closed PRD round is no longer a
+    // detail-row — its body renders directly in its own sidebar group's pane
+    // (prdStoreInner) — so DETAIL_DATA never needs one.
   }
 
   return `<!doctype html>

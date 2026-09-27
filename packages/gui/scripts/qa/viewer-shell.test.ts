@@ -196,11 +196,18 @@ describe('viewer/lib/render.mjs — every wiki/feature/artifact row resolves to 
     expect(html).toContain('data-group-select="UNCLASSIFIED"')
   })
 
+  // T-709 결정 2: a closed PRD round is no longer a list row that opens a
+  // shared detail-panel — it is its own sidebar group whose pane renders its
+  // body directly. "still lists and opens" now means: a `data-group-select`
+  // button for the round exists, and its own `.view-pane` carries the stub
+  // body text (never a `data-detail-kind="prd"` row / detail-data entry —
+  // that mechanism is gone).
   it('a closed PRD round with no ## heading (a one-line stub) still lists and opens', () => {
     const html = renderPage({ data: fixtureDataWithPrdStub, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
-    expect(html).toContain('data-detail-kind="prd" data-detail-id="v1.1"')
-    const data = detailData(html)
-    expect(data.prd['v1.1'].body).toBeTruthy()
+    expect(html).toContain('data-group-select="v1.1"')
+    const paneMatch = /<div class="view-pane[^"]*" data-group="v1\.1">([\s\S]*?)<\/div>\s*(?:<div class="view-pane|<\/div>\s*<div class="detail-panel)/.exec(html)
+    expect(paneMatch, 'no .view-pane for the "v1.1" closed round').not.toBeNull()
+    expect(paneMatch![1]).toContain('no PRD section — stub round.')
   })
 })
 
@@ -324,6 +331,72 @@ describe('viewer/lib/render.mjs — home is the shared-model, version-scoped wor
     // T-903 (assignee: user, status: open) draws a real square in this row
     // — never all "–", or the ticket would still be effectively invisible.
     expect(rowMatch![1]).toContain('stage-sq')
+  })
+})
+
+// T-709 결정 1: the ticket sidebar now has one row per docs/tickets/ bucket
+// directory, sorted NEWEST VERSION FIRST — never string order, which would
+// wrongly place "v1.10" before "v1.9". Also proves a frontmatter-only
+// (non-current/non-backlog) bucket's row opens the REAL FILE (no inline
+// body — collect.mjs never gives it one) rather than a rendered body.
+describe('viewer/lib/render.mjs — ticket sidebar orders buckets by NUMERIC version, newest first (T-709 결정 1)', () => {
+  const versionOrderingData = {
+    ...fixtureData,
+    currentVersion: 'v1.10',
+    tickets: {
+      included: [
+        { bucket: 'v1.10', rel: 'docs/tickets/v1.10/T-950.md', frontmatter: { id: 'T-950', slug: 'current', type: 'impl', status: 'open', assignee: 'developer' }, body: 'current body' },
+      ],
+      omitted: [
+        {
+          bucket: 'v1.9',
+          count: 1,
+          bytes: 10,
+          tickets: [{ rel: 'docs/tickets/v1.9/T-800.md', frontmatter: { id: 'T-800', slug: 'closed-round', type: 'impl', status: 'done', assignee: 'developer' } }],
+        },
+        {
+          bucket: 'v1.11',
+          count: 1,
+          bytes: 10,
+          tickets: [{ rel: 'docs/tickets/v1.11/T-970.md', frontmatter: { id: 'T-970', slug: 'roadmap', type: 'design', status: 'open', assignee: 'designer' } }],
+        },
+      ],
+    },
+  }
+
+  it('sorts numerically, never as strings: v1.11 before v1.10(current) before v1.9, backlog pinned last', () => {
+    const html = renderPage({ data: versionOrderingData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const ticketSectionMatch = /<section[^>]*data-store="ticket"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    expect(ticketSectionMatch).not.toBeNull()
+    const section = ticketSectionMatch![0]
+    const idx = (needle: string) => section.indexOf(needle)
+    expect(idx('data-group-select="v1.11"')).toBeGreaterThanOrEqual(0)
+    expect(idx('data-group-select="v1.10"')).toBeGreaterThanOrEqual(0)
+    expect(idx('data-group-select="v1.9"')).toBeGreaterThanOrEqual(0)
+    expect(idx('data-group-select="backlog"')).toBeGreaterThanOrEqual(0)
+    // Non-vacuous against a string sort: "v1.10" would sort BEFORE "v1.9"
+    // lexicographically, which is exactly the bug this rule guards against.
+    expect(idx('data-group-select="v1.11"')).toBeLessThan(idx('data-group-select="v1.10"'))
+    expect(idx('data-group-select="v1.10"')).toBeLessThan(idx('data-group-select="v1.9"'))
+    expect(idx('data-group-select="v1.9"')).toBeLessThan(idx('data-group-select="backlog"'))
+  })
+
+  it('the current version stays the default-active pane even though it is no longer array index 0', () => {
+    const html = renderPage({ data: versionOrderingData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const ticketSectionMatch = /<section[^>]*data-store="ticket"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    const section = ticketSectionMatch![0]
+    expect(section).toMatch(/<button type="button" class="nav-item nav-item-clickable active" data-group-select="v1\.10"/)
+    expect(section).toMatch(/<div class="view-pane active" data-group="v1\.10">/)
+  })
+
+  it('a closed-bucket row (v1.9) has no inline body and opens the real file instead', () => {
+    const html = renderPage({ data: versionOrderingData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    expect(html).toContain('data-detail-kind="ticket" data-detail-id="T-800"')
+    const blobMatch = /<script id="detail-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)
+    expect(blobMatch).not.toBeNull()
+    const data = JSON.parse(blobMatch![1])
+    expect(data.ticket['T-800'].body).toBeUndefined()
+    expect(data.ticket['T-800'].fileHref).toBe('../../../../docs/tickets/v1.9/T-800.md')
   })
 })
 
