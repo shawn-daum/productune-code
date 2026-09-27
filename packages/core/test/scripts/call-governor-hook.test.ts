@@ -38,6 +38,7 @@ import fs from 'fs'
 import os from 'os'
 import { spawnSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-call-governor.sh')
@@ -71,6 +72,8 @@ interface EventOpts {
   toolResponseRaw?: string
   /** RAW JSON text spliced in as the `effort` object value. */
   effortRaw?: string
+  /** PreToolUse only: the tool_name this call carries. Defaults to 'Bash'. */
+  toolName?: string
 }
 
 /**
@@ -122,7 +125,7 @@ function eventJson(event: string, o: EventOpts): string {
         `"tool_use_id":"toolu_01aaaaaaaaaaaaaaaaaaaaaa","tool_response":${tr}}]`,
     )
   } else {
-    parts.push('"tool_name":"Bash"')
+    parts.push(`"tool_name":${JSON.stringify(o.toolName ?? 'Bash')}`)
     parts.push(`"tool_input":${ti}`)
     parts.push('"tool_use_id":"toolu_01aaaaaaaaaaaaaaaaaaaaaa"')
   }
@@ -136,7 +139,7 @@ function run(prdtHome: string, event: string, o: EventOpts): string {
     input: eventJson(event, o),
     encoding: 'utf8',
     env: { ...process.env, PRDT_HOME: prdtHome },
-    timeout: 10000,
+    timeout: subprocessTimeout('hook'),
   })
   expect(res.signal).toBeNull()
   expect(res.stderr).toBe('')
@@ -249,11 +252,11 @@ describe('prdt-developer — enforced', () => {
     expect(out.hookSpecificOutput.hookEventName).toBe('PreToolUse')
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
     const reason = out.hookSpecificOutput.permissionDecisionReason as string
-    // returning is not a tool — the deny must say so, or the worker sits there
-    // retrying tools it can never get.
+    // the report path (SubagentHandback) is open — the deny must say so, or the
+    // worker sits there retrying tools it can never get (T-710).
     expect(reason).toContain('summary')
     expect(reason).toContain('unresolved')
-    expect(reason.toLowerCase()).toContain('not a tool')
+    expect(reason).toContain('SubagentHandback')
   })
 
   test('the deny repeats on every subsequent call (no one-shot escape)', () => {
@@ -265,6 +268,71 @@ describe('prdt-developer — enforced', () => {
       const out = JSON.parse(run(home, 'PreToolUse', w))
       expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
     }
+  })
+})
+
+// ── T-710: a hard stop never blocks the SubagentHandback report ─────────────
+//
+// Four developer workers ended with no report after 67-76 tool calls: this
+// hook's deny fires on EVERY tool call with no matcher, so once it fires the
+// worker's own report — now a SubagentHandback TOOL CALL, not a plain
+// message — was denied identically to every other tool, while the deny text
+// itself claimed "returning is NOT a tool call" (true before SubagentHandback
+// existed, false since). SubagentHandback is the one exemption; every other
+// tool_name must still be denied, however long the worker keeps trying it.
+
+describe('T-710: SubagentHandback survives both hard stops, nothing else does', () => {
+  test('past the deny threshold, SubagentHandback is let through with no interference', () => {
+    const home = tmp('prdt-t710-home-')
+    const proj = makeProject()
+    const w = worker(proj, 'prdt-developer')
+    turns(home, 60, w)
+    expect(run(home, 'PreToolUse', { ...w, toolName: 'SubagentHandback' })).toBe('')
+  })
+
+  test('past the deny threshold, every other tool is still denied — not just Bash', () => {
+    const home = tmp('prdt-t710-home-')
+    const proj = makeProject()
+    const w = worker(proj, 'prdt-developer')
+    turns(home, 60, w)
+    for (const tool of ['Bash', 'Read', 'Edit', 'Write', 'Artifact']) {
+      const out = JSON.parse(run(home, 'PreToolUse', { ...w, toolName: tool }))
+      expect(out.hookSpecificOutput.permissionDecision, `${tool} must still be denied`).toBe('deny')
+    }
+  })
+
+  test('the deny keeps denying non-SubagentHandback calls after a SubagentHandback slipped through', () => {
+    // The exemption must not consume or reset anything — a worker that calls
+    // SubagentHandback and then (mistakenly) tries another tool is still denied.
+    const home = tmp('prdt-t710-home-')
+    const proj = makeProject()
+    const w = worker(proj, 'prdt-developer')
+    turns(home, 60, w)
+    expect(run(home, 'PreToolUse', { ...w, toolName: 'SubagentHandback' })).toBe('')
+    const out = JSON.parse(run(home, 'PreToolUse', { ...w, toolName: 'Bash' }))
+    expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
+  })
+
+  test('a tampered counter also lets SubagentHandback through, not just the turn-limit deny', () => {
+    const home = tmp('prdt-t710-home-')
+    const proj = makeProject()
+    const w = worker(proj, 'prdt-developer')
+    turns(home, 5, w)
+    fs.rmSync(path.join(runDir(home), `${SID}.${w.agentId}`))
+    // rm alone is TAMPER (T-567), not a fresh N=0 — confirm the ordinary deny still fires for Bash
+    expect(
+      JSON.parse(run(home, 'PreToolUse', { ...w, toolName: 'Bash' })).hookSpecificOutput.permissionDecision,
+    ).toBe('deny')
+    expect(run(home, 'PreToolUse', { ...w, toolName: 'SubagentHandback' })).toBe('')
+  })
+
+  test('a warn-only persona was never blocked either way — SubagentHandback changes nothing for it', () => {
+    const home = tmp('prdt-t710-home-')
+    const proj = makeProject()
+    const w = worker(proj, 'prdt-qa')
+    turns(home, 131, w)
+    const out = run(home, 'PreToolUse', { ...w, toolName: 'Bash' })
+    if (out !== '') expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBeUndefined()
   })
 })
 
@@ -493,7 +561,7 @@ describe('a poisoned counter path fails closed, not open (T-519)', () => {
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
     // the deny must route the worker to its envelope, like the over-turn deny
     expect(out.hookSpecificOutput.permissionDecisionReason).toContain('summary')
-    expect(out.hookSpecificOutput.permissionDecisionReason.toLowerCase()).toContain('not a tool')
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain('SubagentHandback')
   })
 
   test('the append side of a poisoned counter never leaks a byte to stderr', () => {
@@ -567,7 +635,7 @@ describe('relative cwd: fails open instead of spinning (T-491 R2-1)', () => {
       input: eventJson('PostToolBatch', worker('relative/path/no/leading/slash', 'prdt-developer')),
       encoding: 'utf8',
       env: { ...process.env, PRDT_HOME: home },
-      timeout: 3000, // the bug hangs to the 60s hook timeout; 3s is generous slack
+      timeout: subprocessTimeout('quick'), // the bug hangs to the 60s hook timeout; the quick tier is generous slack
     })
     expect(res.signal).toBeNull() // null signal ⇒ it exited on its own, not killed by the timeout
     expect(res.stderr).toBe('')
@@ -584,7 +652,7 @@ describe('relative cwd: fails open instead of spinning (T-491 R2-1)', () => {
       input: eventJson('PostToolBatch', worker('bare', 'prdt-developer')),
       encoding: 'utf8',
       env: { ...process.env, PRDT_HOME: home },
-      timeout: 3000,
+      timeout: subprocessTimeout('quick'),
     })
     expect(res.signal).toBeNull()
     expect(res.status).toBe(0)
@@ -609,7 +677,7 @@ describe('malformed payloads fail open', () => {
         input,
         encoding: 'utf8',
         env: { ...process.env, PRDT_HOME: home },
-        timeout: 3000,
+        timeout: subprocessTimeout('quick'),
       })
       expect(res.signal).toBeNull()
       expect(res.stderr).toBe('')
@@ -725,7 +793,7 @@ describe('T-561: whitespace never silences the governor', () => {
       input: format(eventJson(event, o)),
       encoding: 'utf8',
       env: { ...process.env, PRDT_HOME: prdtHome },
-      timeout: 10000,
+      timeout: subprocessTimeout('hook'),
     })
     expect(res.signal).toBeNull()
     expect(res.stderr).toBe('')
@@ -742,7 +810,7 @@ describe('T-561: whitespace never silences the governor', () => {
       expect(out, 'silent no-op — the governor vanished on whitespace alone').not.toBe('')
       const h = JSON.parse(out).hookSpecificOutput
       expect(h.permissionDecision).toBe('deny')
-      expect((h.permissionDecisionReason as string).toLowerCase()).toContain('not a tool')
+      expect(h.permissionDecisionReason as string).toContain('SubagentHandback')
     })
 
     test(`${label} → a turn is still COUNTED, not dropped`, () => {
@@ -850,7 +918,7 @@ describe('counter tamper: rm, truncate, symlink (T-567)', () => {
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
     // the deny routes to the envelope, exactly like the over-limit one
     expect(out.hookSpecificOutput.permissionDecisionReason).toContain('summary')
-    expect(out.hookSpecificOutput.permissionDecisionReason.toLowerCase()).toContain('not a tool')
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain('SubagentHandback')
   })
 
   test('truncating a saturated counter does not restore the budget', () => {

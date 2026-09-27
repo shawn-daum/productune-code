@@ -468,7 +468,10 @@ describe('an ordinary path is untouched — the guard withholds, it does not man
       const proj = makeProject(component, { overrideBody: '- 정상 규칙 하나' })
       const file = path.join(proj, '.prdt', 'overrides', 'developer.md')
       const payload = runHook(PROJECT_HOOK, { prdtHome: makePrdtHome('home'), cwd: proj })
-      expect(payload).toContain(`This project's overrides (${file}).`)
+      // S2 (T-702) shortened the header's punctuation ("." → ":") but kept both
+      // interpolation sites this suite exists to watch — the prose line and the
+      // BEGIN delimiter both still carry the path, so both are still checked.
+      expect(payload).toContain(`This project's overrides (${file}):`)
       expect(payload).toContain(`----- BEGIN project overrides (${file}) -----`)
       expect(payload).not.toContain('<path withheld')
     })

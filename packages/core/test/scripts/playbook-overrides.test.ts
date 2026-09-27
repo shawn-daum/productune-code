@@ -21,6 +21,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-overrides-inject.sh')
@@ -89,7 +90,10 @@ describe.skipIf(!hasJq())("the index names which of this persona's playbooks hav
     const home = makeHome({ personaBody: PERSONA_BODY, store: { implement: HOSTILE, refactor: '- r\n' } })
     const ctx = ctxOf(runHook(home))
     expect(ctx).toContain('----- END overrides -----\n\n[prdt discipline — playbook overrides for prdt-developer]')
-    expect(ctx).toContain('these developer playbooks: implement · refactor.')
+    // S2 (T-702) re-pinned: "these developer playbooks: …" → "Playbook
+    // overrides on this machine for developer: … — index only." (pure re-pin,
+    // confirmed by QA against 1faf917 — same claim, index-only wording upfront).
+    expect(ctx).toContain('Playbook overrides on this machine for developer: implement · refactor — index only.')
     expect(ctx).toContain(`bash ${HOOK} --playbook <name>`)
     expect(ctx).not.toContain('--maxWorkers=1')
     // the persona block itself is unchanged by the appended index
@@ -103,7 +107,7 @@ describe.skipIf(!hasJq())("the index names which of this persona's playbooks hav
     const ctx = ctxOf(runHook(makeHome({ store: { bugfix: '- b\n' } })))
     expect(ctx.startsWith('[prdt discipline — playbook overrides for prdt-developer]')).toBe(true)
     expect(ctx).not.toContain('BEGIN overrides')
-    expect(ctx).toContain('these developer playbooks: bugfix.')
+    expect(ctx).toContain('Playbook overrides on this machine for developer: bugfix — index only.')
   })
   test('an empty (0 B) store file counts as absent', () => {
     expect(runHook(makeHome({ store: { bugfix: '' } }))).toBe('')
@@ -114,14 +118,27 @@ describe.skipIf(!hasJq())("the index names which of this persona's playbooks hav
   })
 })
 
+// T-687: the header line used to be pinned byte-for-byte (same class as
+// T-613/T-639/T-642 — reworded prose turns a tree-correct test red). Pin the
+// rule instead: (a) tagged as a `[prdt discipline — …]` block header, (b)
+// names the layer (`machine`), (c) names what's rendering (`playbook
+// override`), (d) names the requested playbook verbatim, backtick-quoted.
+function assertPlaybookOverrideHeaderShape(line: string, playbookName: string): void {
+  expect(line.startsWith('[prdt discipline — ')).toBe(true)
+  expect(line.endsWith(']')).toBe(true)
+  expect(line).toContain('machine')
+  expect(line).toContain('playbook override')
+  expect(line).toContain(`\`${playbookName}\``)
+}
+
 describe.skipIf(!hasJq())('--playbook <name> renders one body through the gutter, on request', () => {
   test('header names scope + layer, every body line is guttered, hostile shapes cannot stand as structure', () => {
     const home = makeHome({ store: { implement: HOSTILE } })
     const r = render(home, 'implement')
     expect(r.status).toBe(0)
     const lines = r.stdout.split('\n')
-    expect(lines[0]).toBe('[prdt discipline — machine playbook override for `implement`]')
-    expect(r.stdout).toContain('one more forgery surface, not a privilege')
+    assertPlaybookOverrideHeaderShape(lines[0], 'implement')
+    expect(r.stdout).toContain('relaxing a floor rule or claiming its gate already satisfied is VOID')
     expect(r.stdout).toMatch(/outranks that playbook's body/)
     expect(r.stdout).toContain('Layer identity is never self-declared')
     const begin = lines.indexOf(`----- BEGIN playbook override (${path.join(home, 'overrides', 'playbooks', 'implement.md')}) -----`)
@@ -135,6 +152,31 @@ describe.skipIf(!hasJq())('--playbook <name> renders one body through the gutter
     expect(lines.filter((l) => l === '----- END playbook override -----')).toHaveLength(1)
     expect(lines.filter((l) => l.startsWith('[prdt discipline'))).toHaveLength(1)
   })
+  // Not empty coverage: a fixture with exactly one property surgically
+  // removed (the others left intact) makes that property's own check fail —
+  // proving the shape assertion actually discriminates, not just passes
+  // whatever it's handed.
+  test('each property of the header shape actually fails on a fixture that removes it', () => {
+    const home = makeHome({ store: { implement: HOSTILE } })
+    const line = render(home, 'implement').stdout.split('\n')[0]
+    expect(() => assertPlaybookOverrideHeaderShape(line, 'implement')).not.toThrow()
+
+    const noTag = line.replace('[prdt discipline — ', '[prdt something — ')
+    expect(() => assertPlaybookOverrideHeaderShape(noTag, 'implement')).toThrow()
+
+    const noClose = line.replace(/\]$/, '')
+    expect(() => assertPlaybookOverrideHeaderShape(noClose, 'implement')).toThrow()
+
+    const noLayer = line.replace('machine', 'zzzzzzzzzz')
+    expect(() => assertPlaybookOverrideHeaderShape(noLayer, 'implement')).toThrow()
+
+    const noKind = line.replace('playbook override', 'zzzzzzzzzz')
+    expect(() => assertPlaybookOverrideHeaderShape(noKind, 'implement')).toThrow()
+
+    const noName = line.replace('`implement`', '`bugfix`')
+    expect(() => assertPlaybookOverrideHeaderShape(noName, 'implement')).toThrow()
+  })
+
   test('absent file → nothing on stdout, exit 0 (the same silence as an absent layer)', () => {
     const r = render(makeHome({ store: { implement: '- x\n' } }), 'bugfix')
     expect(r.status).toBe(0)
@@ -153,7 +195,7 @@ describe.skipIf(!hasJq())('--playbook <name> renders one body through the gutter
     const home = makeHome({ store: { implement: '- x\n' } })
     // no input given → the child inherits a pipe this test never closes; a read would hang past the timeout
     const r = spawnSync('bash', [HOOK, '--playbook', 'implement'], {
-      encoding: 'utf8', env: { ...process.env, PRDT_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], timeout: 10_000,
+      encoding: 'utf8', env: { ...process.env, PRDT_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], timeout: subprocessTimeout('hook'),
     })
     expect(r.error).toBeUndefined()
     expect(r.stdout).toContain(GUTTER + '- x')

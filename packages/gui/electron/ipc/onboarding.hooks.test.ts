@@ -42,9 +42,25 @@ const fail = (detail: string) => ({ ok: false, detail })
 // exact drift class T-445 was about.
 const PRDT_HOOKS: readonly string[] = hookManifest.basenames
 
+/** One {event, matcher?, hooks[]} entry of hook-manifest.json's `registrations`
+ *  — mirrors the interface onboarding.ts casts the same JSON import to. */
+interface HookRegistration {
+  event: string
+  matcher?: string
+  hooks: readonly string[]
+}
+const REGISTRATIONS = hookManifest.registrations as unknown as readonly HookRegistration[]
+
 /** Throwaway HOME fixture. `withMirror` seeds ~/.prdt/hooks/* + bin/statusline. */
 function makeHome(withMirror = true): string {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-a6-home-'))
+  // T-670: realpath'd immediately — installPrdtHooks now resolves its homeDir
+  // to a physical path before building any hook command (parity with
+  // install.sh's resolve_path), so an unresolved fixture home (macOS
+  // os.tmpdir() sits under the symlink /var -> /private/var) would make every
+  // "expected" path this file hand-builds from `home` differ textually from
+  // what installClaudeHooks actually writes. Resolving here once keeps this
+  // whole file's literal path-building consistent with the code under test.
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-a6-home-')))
   if (withMirror) {
     const hooksDir = path.join(home, '.prdt', 'hooks')
     fs.mkdirSync(hooksDir, { recursive: true })
@@ -110,7 +126,15 @@ function cliHooksBlock(home: string): any {
       { matcher: 'startup|resume|clear', hooks: disciplineEntry },
       { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), ...partSlots, ...injectors] },
     ],
-    SubagentStart: [{ matcher: '^prdt-', hooks: disciplineEntry }],
+    // T-682 slice 3: prdt-post-dispatch.sh rides SubagentStart too (the
+    // mode-independent START of a dispatch — its in-flight marker), as its OWN
+    // second `^prdt-` entry: the discipline entry's shape (16 commands, project
+    // overrides LAST) stays untouched, and one settings entry per manifest
+    // registration is what both derivations emit.
+    SubagentStart: [
+      { matcher: '^prdt-', hooks: disciplineEntry },
+      { matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh')] },
+    ],
     SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh'), h('prdt-return-check.sh')] }],
     PostToolUse: [
       { matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] },
@@ -124,10 +148,15 @@ function cliHooksBlock(home: string): any {
     // the matcher-less governor entry (manifest registration order: the
     // unconditional hook, then the narrowed one).
     PostToolBatch: [{ hooks: [h('prdt-call-governor.sh')] }],
-    PreToolUse: [
-      { hooks: [h('prdt-call-governor.sh')] },
-      { matcher: 'Agent', hooks: [h('prdt-dispatch-gate.sh')] },
-    ],
+    // PreToolUse entries: derived from the manifest's own PreToolUse
+    // registrations, in order — never hand-copied (T-491/T-445's drift class):
+    // matcher-less governor, `Agent`-matched dispatch gate, T-688 개정 1's
+    // `SubagentHandback`-matched return-check (the handback-side half of the
+    // gate — see prdt-return-check.sh), then `Read|Bash`-matched secret-guard
+    // (T-677), same manifest registration order as every other entry above.
+    PreToolUse: REGISTRATIONS
+      .filter(r => r.event === 'PreToolUse')
+      .map(r => ({ ...(r.matcher !== undefined ? { matcher: r.matcher } : {}), hooks: r.hooks.map(h) })),
   }
 }
 

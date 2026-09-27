@@ -215,7 +215,7 @@
   --text-muted:        #57575E; /* list marker/metadata — 7.1:1 AAA */
   --text-faint:        #6B6B73; /* comment/placeholder — 5.0:1 AA */
   --accent:            #7C3AED; /* link/inline accent — 4.9:1 AA */
-  --health-success:    #0E8F63; /* sx-string — 4.6:1 vs light code bg */
+  --health-success:    #0A7A54; /* sx-string — 4.69:1 vs light code bg (T-692; old #0E8F63 measured 3.59, not the 4.6 this comment previously said) */
   --health-error:      #C62828; /* error tone — 5.4:1 AA */
 }
 
@@ -421,11 +421,12 @@
 .sx-number   { color: var(--text-primary); }
 .sx-punct    { color: var(--text-muted); }
 
-/* sx-string light override (T-PATCH-185): the light block re-declares
- * --health-success to #0E8F63 (also used by other health tones), but that
- * measures only 3.60:1 on the light code-block bg (#F1F0EE) — below AA. Scope
- * a darker green to .sx-string under light WITHOUT touching --health-success
- * (so health/error tones elsewhere keep their values). #0A7A54 = 4.70:1 AA. */
+/* sx-string light override (T-PATCH-185, T-692): the light block's
+ * --health-success is now #0A7A54 (T-692 merge — was #0E8F63, measured only
+ * 3.59:1 on the light code-block bg #F1F0EE, below AA). This scoped rule pins
+ * the same darker green explicitly, independent of any future --health-success
+ * value, so it is currently byte-identical to the base --health-success but
+ * kept for that isolation. #0A7A54 = 4.69:1 AA. */
 .md-doc.md-light .sx-string { color: #0A7A54; }
 
 /* ── md-link-* per-type link colors (T-PATCH-185) ─────────────────────────────

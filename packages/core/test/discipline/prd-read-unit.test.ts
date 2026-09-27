@@ -69,33 +69,38 @@ describe('contracts.md — prd_path is a fragment, not the whole file', () => {
   })
 })
 
-describe('contracts.md — PRD split: working document + history (T-602)', () => {
+describe('contracts.md — PRD split: working document + one file per closed version (T-602 → T-657)', () => {
   const row = () =>
     read(CONTRACTS).split('\n').find((l) => l.startsWith('| PRD (working document + history) |'))!
 
   // The user's requirement is sight: opening the working document shows the
-  // current version only. The row must therefore name BOTH files and say the
-  // move is a move (byte-identical, immutable record) — not a copy, which §Git
-  // bans, and not per-version files, which v1.10 would have to fold back.
-  test('the row names history.md and the byte-identical move', () => {
+  // current version only. The row must therefore name the working file and the
+  // per-version home and say the move is a move (byte-identical, immutable
+  // record) — not a copy, which §Git bans. T-657 (user, 2026-09-18) reversed
+  // the 2026-09-10 one-lump history: a lump has no index, and three rounds
+  // with no PRD section went unseen in it — so the row names one file per
+  // closed version and no shared history file anywhere.
+  test('the row names the per-version file and the byte-identical move', () => {
     const r = row()
     expect(r).toContain('`docs/prd/PRD.md` = the standing head + the ONE open `## v<N>.<m>` section')
-    expect(r).toContain('MOVES its section byte-identical into `docs/prd/history.md`')
-    // The row must not restate an anchor the annex owns and states differently.
-    expect(r).not.toContain('to the end of `docs/prd/history.md`')
-    expect(r).toContain('never a per-version file, never a copy')
+    expect(r).toContain('MOVES its section byte-identical into `docs/prd/versions/v<N>.<m>.md`')
+    expect(r).toContain('never a copy')
+    expect(r).not.toContain('never a per-version file')
+    // No discipline text names the retired lump as the close target.
+    expect(read(CONTRACTS)).not.toContain('history.md')
+    expect(read(FIXED_PATHS_ANNEX)).not.toContain('history.md')
   })
 
   // Two prd_path forms. A dispatch always works the OPEN version, and the
   // dispatch-gate hook pins `docs/prd/PRD.md#v<N>.<m>` by regex — so the closed
   // form is a citation form only, and the row has to say so or a PO will type
-  // `history.md#v1.3` into a dispatch and be denied by the gate.
+  // `versions/v1.3.md` into a dispatch and be denied by the gate.
   test('the row gives the closed-section citation form and keeps it out of dispatch prd_path', () => {
     const r = row()
-    expect(r).toContain('`docs/prd/history.md#v<N>.<m>`')
+    expect(r).toContain('cited `docs/prd/versions/v<N>.<m>.md`')
     expect(r).toContain('a form a dispatch `prd_path` never takes')
     expect(read(CONTRACTS)).toContain('`[ctx].prd_path` = `docs/prd/PRD.md#v<N>.<m>`')
-    expect(read(CONTRACTS)).not.toMatch(/"prd_path":"docs\/prd\/history\.md/)
+    expect(read(CONTRACTS)).not.toMatch(/"prd_path":"docs\/prd\/versions\//)
   })
 
   // T-611 slice 4: the git bullet no longer restates the move — the PRD row is
@@ -109,25 +114,31 @@ describe('contracts.md — PRD split: working document + history (T-602)', () =>
     expect(row()).toContain('never a copy')
   })
 
-  // A PRD resolver takes the FIRST match over three candidate paths; a history
+  // A PRD resolver takes the FIRST match over three candidate paths; a version
   // file named PRD.md on any of them would be served as the current PRD with no
   // error. The annex has to carry that constraint.
   test('the annex carries the close procedure and the candidate-path constraint', () => {
     const annex = read(FIXED_PATHS_ANNEX)
     expect(annex).toContain('## PRD — closing a `## v<N>.<m>` version section')
-    expect(annex).toContain('append it verbatim after the LAST `## v` section of `history.md`')
-    expect(annex).toContain('never named `PRD.md` and never sits on a path a PRD resolver would try')
+    expect(annex).toContain('write it verbatim as the ENTIRE body of `docs/prd/versions/v<N>.<m>.md`')
+    expect(annex).toContain('No file under `docs/prd/versions/` is named `PRD.md`')
     expect(annex).toContain('`docs/prd/PRD.md` · `docs/PRD.md` · `PRD.md`')
     expect(annex).toMatch(/^when: .*closing a PRD `## v<N>\.<m>` version section/m)
   })
 
-  // A close appends; the version run must stay contiguous even in a history file
-  // that carries trailing non-version matter, so "the end of the file" is the
-  // wrong anchor and the annex must not say it.
-  test('the close appends after the last version section, not at EOF', () => {
+  // A registered absence (a tickets-only round, by decision) is a one-line stub
+  // at the same path with NO `## ` heading — the check tells stub from section
+  // by the heading alone, so the annex has to fix both halves: one line, no
+  // heading. Under directory-per-version a missing file reads as a mistake and
+  // gets re-litigated at every audit (ntf-pm, 2026-09-18) — the stub is the ONE
+  // home, and the standing head never lists absent rounds.
+  test('the annex gives the one-line, heading-free stub as the ONE home for a registered absence', () => {
     const annex = read(FIXED_PATHS_ANNEX)
-    expect(annex).toContain('ahead of any trailing non-version matter')
-    expect(annex).not.toContain('append it verbatim to the end of `history.md`')
+    expect(annex).toContain('whose whole body is ONE line')
+    expect(annex).toContain('`no PRD section — ')
+    expect(annex).toContain('never a `## ` heading')
+    expect(annex).toContain('the ONE home for a registered absence; the standing head never lists absent rounds')
+    expect(annex).toMatch(/^when: .*a round that wrote no section/m)
   })
 
   // The byte compare is the proof the move was a move. It has to say which side
@@ -135,23 +146,24 @@ describe('contracts.md — PRD split: working document + history (T-602)', () =>
   test('the byte compare names the separator convention', () => {
     const annex = read(FIXED_PATHS_ANNEX)
     expect(annex).toContain('each side rstripped')
-    expect(annex).toContain('belongs to the FILE, not to either block')
+    expect(annex).toContain('belongs to the FILE, not to the block')
   })
 
   // This annex is mirrored into EVERY prdt project. A sentence stating one
   // project's version history or a sibling project's name is false everywhere
-  // else, so the contract states the RULE and the project's own file heads
-  // state its facts.
+  // else, so the contract states the RULE (a pre-section snapshot stays as its
+  // regime left it, named from the standing head) and the project's own
+  // standing head states its facts.
   test('the shared annex states no project-private fact', () => {
     const annex = read(FIXED_PATHS_ANNEX)
     expect(annex).not.toMatch(/v0\.\d/)
     expect(annex).not.toContain('versions/v0.4.md')
     expect(annex).not.toContain('ntf-pm')
-    expect(annex).toContain('belongs to the two file heads, never to this contract')
+    expect(annex).toContain('stays the file that regime left, named from the standing head')
   })
 
-  test('the auto-open hook documents that history.md is deliberately not a light-open match', () => {
-    expect(read(AUTO_OPEN_HOOK)).toContain('NOT docs/prd/history.md')
+  test('the auto-open hook documents that a closed-version file is deliberately not a light-open match', () => {
+    expect(read(AUTO_OPEN_HOOK)).toContain('NOT docs/prd/versions/v<N>.<m>.md')
   })
 })
 

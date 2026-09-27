@@ -235,12 +235,13 @@ describe('classification — unmatched → silent, open never invoked', () => {
 })
 
 describe('scope guards', () => {
-  // T-602: closed PRD sections live in docs/prd/history.md. It is written only
-  // by a close-time move, never as a deliverable to look at — so the basename
-  // allowlist (PRD.md) must NOT widen to it. Pinned, because the obvious
-  // "PRD*.md" generalisation would start popping the 1,200-line lump.
-  test.skipIf(!hasJq())('docs/prd/history.md → no open call (not a review deliverable)', () => {
-    const p = makeNestedFile('docs/prd', 'history.md')
+  // T-602/T-657: closed PRD sections live in docs/prd/versions/v<N>.<m>.md, one
+  // file per version, each written only by a close-time move, never as a
+  // deliverable to look at — so the basename allowlist (PRD.md) must NOT widen
+  // to them. Pinned, because a "docs/prd/*.md" generalisation would start
+  // popping a 270-line closed record on every close.
+  test.skipIf(!hasJq())('docs/prd/versions/v1.9.md → no open call (not a review deliverable)', () => {
+    const p = makeNestedFile('docs/prd/versions', 'v1.9.md')
     const { stdout, log } = run({ filePath: p })
     expect(stdout).toBe('{}')
     expect(readLog(log)).toBe('')

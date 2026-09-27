@@ -14,6 +14,11 @@
  *    stage push consumes the day, nothing ahead means no network attempt.
  *  - failure: an unreachable remote is recorded (state file, error text), and
  *    the next attempt backs off; success clears the failure.
+ *  - concurrency (T-686): two ticks against the SAME meta git-dir at once
+ *    serialize on a file lock — exactly one push lands, the other defers
+ *    quietly (`reason: 'concurrent'`), and neither ever reports a failure
+ *    for content the remote already holds; a crashed holder's stale lock is
+ *    stolen rather than wedging every future tick.
  *
  * Fixtures are LOCAL bare repos only — the real backup remote is never touched.
  */
@@ -32,7 +37,11 @@ import {
   metaBackupStatePath,
   metaBackupRemoteName,
   isValidRemoteName,
+  acquireBackupLock,
+  releaseBackupLock,
   BACKUP_RETRY_BACKOFF_MS,
+  BACKUP_LOCK_FILE,
+  BACKUP_LOCK_STALE_MS,
   type MetaBackupState,
 } from '../../src/git-workflow/meta-backup'
 
@@ -131,6 +140,22 @@ describe('decideBackup — stage boundary + once daily, no double fire', () => {
     const st: MetaBackupState = { last_pushed_stage: 'build', last_push_date: '2026-09-10', last_ok: false, last_attempt_at: failedAt }
     expect(decideBackup(st, { stage: 'build', todayUtc: day1, nowMs: t0 + 5 * 60_000, aheadCount: 2 }).reason).toBe('backoff')
     expect(decideBackup(st, { stage: 'build', todayUtc: day1, nowMs: t0 + BACKUP_RETRY_BACKOFF_MS + 1, aheadCount: 2 }).push).toBe(true)
+  })
+
+  // T-643: the backup became current by another route (a manual `prdt meta
+  // push`, another session, a direct terminal push — all land on the SAME
+  // shared tracking ref this repo reads) while a past attempt is still
+  // latched as failed. Nothing ahead of the remote means whatever that
+  // attempt was trying to land is already there, so the latch clears.
+  test('nothing ahead but the latch says failed → clears too (the thing that was failing already resolved)', () => {
+    const st: MetaBackupState = { last_pushed_stage: 'build', last_push_date: '2026-09-10', last_ok: false, last_attempt_at: new Date(t0).toISOString(), last_error: 'boom' }
+    expect(decideBackup(st, { stage: 'build', todayUtc: day1, nowMs: t0, aheadCount: 0 })).toEqual({ push: false, reason: 'up-to-date', clearsFailure: true })
+  })
+
+  test('nothing ahead and no failure latched → clearsFailure is absent (nothing to clear)', () => {
+    expect(decideBackup({}, { stage: 'build', todayUtc: day1, nowMs: t0, aheadCount: 0 }).clearsFailure).toBeUndefined()
+    const ok: MetaBackupState = { last_ok: true }
+    expect(decideBackup(ok, { stage: 'build', todayUtc: day1, nowMs: t0, aheadCount: 0 }).clearsFailure).toBeUndefined()
   })
 })
 
@@ -401,6 +426,38 @@ test('failure: unreachable remote is recorded with git\'s words, backs off, and 
   expect(st2.last_error).toBeUndefined()
 })
 
+test('T-643: nothing ahead but the latch says failed → clears without a network attempt (backup became current by another route)', async () => {
+  const backup = makeBare('backup')
+  metaGitSync(['remote', 'add', 'backup', backup])
+  expect((await metaBackupTick(projectDir, { now: new Date('2026-09-21T02:00:00Z') })).pushed).toBe(true)
+  const goodState = readMetaBackupState(projectDir)
+
+  // Latch a failure as if a prior tick had raced another push (through this
+  // same git-dir: a manual `prdt meta push`, another session, a direct
+  // terminal push) and lost — the ticket's own repro. The tracking ref is
+  // already current (the fixture never diverged it), matching the "nothing
+  // ahead" fixture the acceptance calls for.
+  fs.writeFileSync(metaBackupStatePath(projectDir), JSON.stringify({
+    ...goodState,
+    last_attempt_at: '2026-09-21T07:30:00.000Z',
+    last_ok: false,
+    last_error: "remote rejected main -> main (cannot lock ref 'refs/heads/main': is at deadbeef but expected c0ffee00)",
+  }))
+
+  const tick = await metaBackupTick(projectDir, { now: new Date('2026-09-21T09:00:00Z') })
+  expect(tick).toMatchObject({ attempted: false, reason: 'up-to-date', ahead: 0 })
+
+  const st = readMetaBackupState(projectDir)
+  expect(st.last_ok).toBe(true)
+  expect(st.last_error).toBeUndefined()
+  // Not a push this tick — the last actual push's own bookkeeping is
+  // untouched, which is what still lets `last_pushed_sha` (vs the current
+  // tracking ref) tell "we pushed it" apart from "it became current some
+  // other way"; no separate field earns its keep for that.
+  expect(st.last_push_at).toBe(goodState.last_push_at)
+  expect(st.last_pushed_sha).toBe(goodState.last_pushed_sha)
+})
+
 test('never force: a diverged backup remote rejects the push and keeps its own history', async () => {
   const backup = makeBare('backup')
   metaGitSync(['remote', 'add', 'backup', backup])
@@ -426,4 +483,136 @@ test('never force: a diverged backup remote rejects the push and keeps its own h
   expect(res.error).toMatch(/rejected|non-fast-forward|fetch first|failed to push/i)
   expect(bareHead(backup, branch)).toBe(remoteHead) // remote history intact
   expect(readMetaBackupState(projectDir).last_ok).toBe(false)
+})
+
+// ── T-686: concurrent ticks against the SAME meta git-dir ────────────────────
+
+describe('T-686 — two prdt processes triggering the auto-backup at once', () => {
+  test('lock unit: acquire excludes a second acquire; release frees it; a stale lock is stolen, not left wedged', () => {
+    const t0 = Date.parse('2026-09-26T02:10:00Z')
+    const lock1 = acquireBackupLock(projectDir, t0)
+    expect(lock1).not.toBeNull()
+    expect(fs.existsSync(path.join(metaGitDir(projectDir), BACKUP_LOCK_FILE))).toBe(true)
+
+    // Held, not stale → busy for a second holder, whatever "now" it passes,
+    // as long as it is inside the stale window.
+    expect(acquireBackupLock(projectDir, t0 + 5_000)).toBeNull()
+    expect(acquireBackupLock(projectDir, t0 + BACKUP_LOCK_STALE_MS)).toBeNull()
+
+    releaseBackupLock(lock1!)
+    expect(fs.existsSync(path.join(metaGitDir(projectDir), BACKUP_LOCK_FILE))).toBe(false)
+
+    // Freed → a new acquire succeeds again.
+    const lock2 = acquireBackupLock(projectDir, t0 + BACKUP_LOCK_STALE_MS + 1)
+    expect(lock2).not.toBeNull()
+
+    // A crashed holder's lock (old enough to be past the stale window) is
+    // stolen rather than left blocking every future tick forever.
+    releaseBackupLock(lock2!)
+    fs.writeFileSync(
+      path.join(metaGitDir(projectDir), BACKUP_LOCK_FILE),
+      JSON.stringify({ pid: 999999, acquired_at: t0, token: 'dead-holder' }),
+    )
+    const revived = acquireBackupLock(projectDir, t0 + BACKUP_LOCK_STALE_MS + 1)
+    expect(revived).not.toBeNull()
+    expect(revived!.token).not.toBe('dead-holder')
+
+    // release only ever removes a lock file that still holds ITS OWN token —
+    // a handle from a holder that was since stolen from must never delete
+    // the new holder's lock.
+    fs.writeFileSync(
+      path.join(metaGitDir(projectDir), BACKUP_LOCK_FILE),
+      JSON.stringify({ pid: 1, acquired_at: t0, token: 'someone-else' }),
+    )
+    releaseBackupLock(revived!)
+    expect(fs.existsSync(path.join(metaGitDir(projectDir), BACKUP_LOCK_FILE))).toBe(true)
+    expect(JSON.parse(fs.readFileSync(path.join(metaGitDir(projectDir), BACKUP_LOCK_FILE), 'utf-8')).token).toBe('someone-else')
+  })
+
+  test('a held (non-stale) lock makes a concurrent tick defer quietly — no push attempted, nothing latched as failed', async () => {
+    const backup = makeBare('backup')
+    metaGitSync(['remote', 'add', 'backup', backup])
+    const t = new Date('2026-09-26T02:10:00Z')
+    const held = acquireBackupLock(projectDir, t.getTime())
+    expect(held).not.toBeNull()
+    try {
+      const res = await metaBackupTick(projectDir, { now: t })
+      expect(res).toEqual({ attempted: false, pushed: false, reason: 'concurrent', remote: 'backup', branch: expect.any(String) })
+      expect(fs.existsSync(metaBackupStatePath(projectDir))).toBe(false) // quiet — nothing written
+      expect(bareRefs(backup)).toEqual([]) // no push even attempted
+    } finally {
+      releaseBackupLock(held!)
+    }
+  })
+
+  // The ticket's own repro (2026-09-26): two `prdt` processes on this machine
+  // spawn their own detached backup tick against the SAME meta git-dir at the
+  // same instant. Both would, pre-fix, read "ahead > 0" off the same tracking
+  // ref and race the remote's own ref-transaction lock — the loser reporting
+  // a failure for content the winner had already landed. Driving two REAL
+  // `metaBackupTick` calls concurrently (via `Promise.all`, real git
+  // subprocesses underneath) reproduces exactly that race; the lock must
+  // still leave exactly one push landed and NEITHER call reporting a failure.
+  test('two concurrent metaBackupTick calls on the same meta git-dir: exactly one push lands, neither reports a failure', async () => {
+    const backup = makeBare('backup')
+    metaGitSync(['remote', 'add', 'backup', backup])
+    const t = new Date('2026-09-26T02:10:00Z')
+
+    const [a, b] = await Promise.all([metaBackupTick(projectDir, { now: t }), metaBackupTick(projectDir, { now: t })])
+
+    // Neither call ever surfaces an error — the ticket's false-failure symptom.
+    expect(a.error).toBeUndefined()
+    expect(b.error).toBeUndefined()
+
+    // Exactly one of the two actually pushed; the other deferred (lock busy)
+    // or found nothing left to do (it acquired the lock after the winner).
+    const pushedCount = [a, b].filter((r) => r.pushed).length
+    expect(pushedCount).toBe(1)
+    const loser = a.pushed ? b : a
+    expect(loser.pushed).toBe(false)
+    expect(['concurrent', 'up-to-date', 'already-today']).toContain(loser.reason)
+
+    // The remote holds exactly the local tip — the acceptance's own words.
+    const branch = metaGitSync(['symbolic-ref', '--short', 'HEAD'])
+    expect(bareHead(backup, branch)).toBe(metaGitSync(['rev-parse', 'HEAD']))
+    expect(bareRefs(backup)).toEqual([`refs/heads/${branch}`]) // one push, one ref — not two divergent attempts
+
+    // No failure latched by either process.
+    const st = readMetaBackupState(projectDir)
+    expect(st.last_ok).toBe(true)
+    expect(st.last_error).toBeUndefined()
+
+    // The lock itself is released — a third tick right after is not wedged.
+    expect(fs.existsSync(path.join(metaGitDir(projectDir), BACKUP_LOCK_FILE))).toBe(false)
+  })
+
+  // A real failure (genuinely diverged, not a same-instant self-race) must
+  // still report as such — the lock only removes the FALSE-failure race, it
+  // never masks or force-resolves an actual divergence.
+  test('a real failure under concurrency still reports: the lock serializes, it does not paper over a genuine divergence', async () => {
+    const backup = makeBare('backup')
+    metaGitSync(['remote', 'add', 'backup', backup])
+    expect((await metaBackupTick(projectDir, { now: new Date('2026-09-26T02:00:00Z') })).pushed).toBe(true)
+    const branch = metaGitSync(['symbolic-ref', '--short', 'HEAD'])
+
+    // A genuinely different actor (a second machine) advances the remote
+    // independently — this is real divergence, not this machine's own race.
+    const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-bk-clone-'))
+    tmpDirs.push(clone)
+    git(['clone', '-q', backup, clone], clone)
+    git(['config', 'user.email', 'b@test'], clone)
+    git(['config', 'user.name', 'b'], clone)
+    fs.writeFileSync(path.join(clone, 'remote-only.md'), 'remote side\n')
+    git(['add', 'remote-only.md'], clone)
+    git(['commit', '-qm', 'remote side'], clone)
+    git(['push', '-q', 'origin', branch], clone)
+
+    await metaCommit('local side, diverged')
+    writePoState('retro') // a boundary → decision is push
+    const res = await metaBackupTick(projectDir, { now: new Date('2026-09-26T03:00:00Z') })
+    expect(res).toMatchObject({ attempted: true, pushed: false })
+    expect(res.error).toMatch(/rejected|non-fast-forward|fetch first|failed to push/i)
+    expect(readMetaBackupState(projectDir).last_ok).toBe(false)
+    expect(fs.existsSync(path.join(metaGitDir(projectDir), BACKUP_LOCK_FILE))).toBe(false) // still released
+  })
 })

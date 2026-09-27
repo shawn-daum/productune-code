@@ -17,6 +17,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -34,7 +35,7 @@ function projectAt(name: string): string {
   fs.mkdirSync(dir, { recursive: true })
   execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', name, '--yes'], {
     cwd: dir, env: { ...process.env, PRDT_HOME: machineHome },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
   return dir
 }
@@ -42,7 +43,7 @@ function projectAt(name: string): string {
 function runPrdt(cwd: string, args: string[]): string {
   return execFileSync('python3', [PRDT_CLI, ...args], {
     cwd, env: { ...process.env, PRDT_HOME: machineHome },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { VERSION_RE, countTicketStatuses, parseOutcomeBlock, resolveClosedVersionPrdPath, PRD_MASTER_REL, PRD_HISTORY_REL } from './historyData'
+import { VERSION_RE, countTicketStatuses, parseOutcomeBlock, resolveClosedVersionPrdPath, PRD_MASTER_REL, PRD_VERSIONS_DIR_REL } from './historyData'
 
 describe('VERSION_RE', () => {
   it('matches version-shaped ids', () => {
@@ -8,7 +8,10 @@ describe('VERSION_RE', () => {
     }
   })
   it('rejects non-version dir names', () => {
-    for (const v of ['backlog', 'v', 'version1', '1.0', 'v1.0-rc', 'vNext']) {
+    // `v1.2.3.4`: major · minor · patch is the whole ladder (contracts §Fixed
+    // paths §Version id) — a fourth component names no round, and the CLI's
+    // VERSION_ID_RE rejects it too (T-657).
+    for (const v of ['backlog', 'v', 'version1', '1.0', 'v1.0-rc', 'vNext', 'v1.2.3.4']) {
       expect(VERSION_RE.test(v)).toBe(false)
     }
   })
@@ -55,25 +58,27 @@ describe('parseOutcomeBlock', () => {
   })
 })
 
-describe('resolveClosedVersionPrdPath (T-546 follow-up regression pin, re-pinned by T-602)', () => {
-  // T-602 moved every closed section out of PRD.md into history.md. Before the
-  // split this helper returned PRD.md for prdt; after it, PRD.md holds only the
-  // head + the OPEN section, so that answer would open a file that does not
-  // contain the version — the "renders empty" defect class this ticket names.
-  it('prdt mode resolves the history lump for a closed version, never PRD.md and never the versions/ snapshot', () => {
-    expect(resolveClosedVersionPrdPath(true, 'v0.5')).toBe(PRD_HISTORY_REL)
-    expect(resolveClosedVersionPrdPath(true, 'v0.5')).toBe('docs/prd/history.md')
+describe('resolveClosedVersionPrdPath (T-546 follow-up regression pin, re-pinned by T-602, then T-657)', () => {
+  // T-657: every closed section is its own docs/prd/versions/v<N>.<m>.md. The
+  // T-602 answer (docs/prd/history.md) names a file that no longer exists, and
+  // PRD.md holds only the head + the OPEN section — either would open a file
+  // that does not contain the version: the "renders empty" defect class.
+  it('prdt mode resolves the per-version file for a closed version, never PRD.md and never history.md', () => {
+    expect(resolveClosedVersionPrdPath(true, 'v0.5')).toBe('docs/prd/versions/v0.5.md')
+    expect(resolveClosedVersionPrdPath(true, 'v1.8')).toBe(`${PRD_VERSIONS_DIR_REL}/v1.8.md`)
     expect(resolveClosedVersionPrdPath(true, 'v1.8')).not.toBe(PRD_MASTER_REL)
+    expect(resolveClosedVersionPrdPath(true, 'v1.8')).not.toBe('docs/prd/history.md')
   })
-  it('prdt mode resolves history.md even for a version whose snapshot WOULD exist under legacy — prdt never probes versions/ at all', () => {
-    expect(resolveClosedVersionPrdPath(true, 'v0.4')).toBe(PRD_HISTORY_REL)
+  it('prdt mode resolves a patch round to its own file too (v<N>.<m>.<p>.md)', () => {
+    expect(resolveClosedVersionPrdPath(true, 'v1.2.1')).toBe('docs/prd/versions/v1.2.1.md')
   })
   // ntf-pm's portfolio pipe picks the current PRD by FIRST MATCH over
-  // docs/prd/PRD.md · docs/PRD.md · PRD.md. A history file with basename PRD.md
+  // docs/prd/PRD.md · docs/PRD.md · PRD.md. A closed record with basename PRD.md
   // on any of those would be served as the current PRD, silently.
-  it('the history path never collides with a PRD.md candidate path', () => {
-    expect(PRD_HISTORY_REL.split('/').pop()).not.toBe('PRD.md')
-    expect(['docs/prd/PRD.md', 'docs/PRD.md', 'PRD.md']).not.toContain(PRD_HISTORY_REL)
+  it('a closed-version path never collides with a PRD.md candidate path', () => {
+    const p = resolveClosedVersionPrdPath(true, 'v1.9')
+    expect(p.split('/').pop()).not.toBe('PRD.md')
+    expect(['docs/prd/PRD.md', 'docs/PRD.md', 'PRD.md']).not.toContain(p)
     expect(PRD_MASTER_REL).toBe('docs/prd/PRD.md')
   })
   it('legacy mode keeps resolving the per-version snapshot path, unchanged', () => {

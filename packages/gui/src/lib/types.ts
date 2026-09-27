@@ -180,7 +180,8 @@ export interface Ticket {
   started_at?: string | null
   completed_at?: string | null
   duration_min?: number | null
-  /** Body-derived (parsed from ticket md `## Request` first paragraph). */
+  /** Body-derived (parsed from ticket md `## problem` first paragraph — new
+   *  frame — falling back to `## Request` for a ticket written before it). */
   request_summary?: string
   /** Filesystem path of the source ticket md (relative or absolute). */
   path?: string

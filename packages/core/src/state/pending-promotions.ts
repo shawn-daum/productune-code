@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { stateDir } from './project-kind'
+import { atomicWriteFileSync } from '../fs/atomic-write'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 //
@@ -57,9 +58,7 @@ function readState(statePath: string): Record<string, unknown> {
 function writeStateAtomic(filePath: string, state: Record<string, unknown>): void {
   const dir = path.dirname(filePath)
   fs.mkdirSync(dir, { recursive: true })
-  const tmp = filePath + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 })
-  fs.renameSync(tmp, filePath)
+  atomicWriteFileSync(filePath, JSON.stringify(state, null, 2), { mode: 0o600 })
 }
 
 function getPromotions(state: Record<string, unknown>): PendingPromotion[] {

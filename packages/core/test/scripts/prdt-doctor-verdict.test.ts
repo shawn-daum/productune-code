@@ -33,6 +33,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -48,6 +49,29 @@ let machineHome: string
 let claudeDir: string
 let projectDir: string
 let disciplineDir: string
+let binDir: string
+
+/** T-668/T-676: doctor's own "resident machine resources" check (T-592)
+ * shells out to the REAL `uptime` — on THIS machine, whenever host load
+ * happens to sit at/above LOAD_AVG_WARN (10.0), it adds a `⚠ machine:
+ * docker-stack …` line, counted into `violations` under FAMILY_DE. That line
+ * is not fixtured here and its live load number moves between two
+ * back-to-back `verdict()` calls whenever the real load crosses the
+ * threshold in either direction meanwhile — exactly the "violations went
+ * DOWN between two calls" PO measured (T-676). `resident_resource_lines()`
+ * gates on load before it ever reads docker/lume state, so faking only
+ * `uptime` (fixed, low) silences the whole check deterministically — same
+ * technique `prdt-doctor-resident-resources.test.ts` uses via FAKE_LOAD, and
+ * `prdt-doctor-meta-drift.test.ts` / `prdt-doctor-duplicate-ticket-id.test.ts`
+ * / `prdt-prepush-hook.test.ts` (T-668) apply the same way. */
+function fakeUptimeBinDir(dir: string): string {
+  const bin = path.join(dir, 'bin')
+  fs.mkdirSync(bin, { recursive: true })
+  fs.writeFileSync(path.join(bin, 'uptime'),
+    '#!/bin/sh\necho "12:00  up 1 day, 2 users, load averages: 1.00 1.00 1.00"\n')
+  fs.chmodSync(path.join(bin, 'uptime'), 0o755)
+  return bin
+}
 
 type Verdict = {
   line: string
@@ -62,8 +86,11 @@ type Verdict = {
 function runDoctor(): string {
   return execFileSync('python3', [PRDT_CLI, 'doctor'], {
     cwd: projectDir,
-    env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir, CLAUDE_DIR: claudeDir },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000,
+    env: {
+      ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir, CLAUDE_DIR: claudeDir,
+      PATH: `${binDir}:${process.env.PATH}`,
+    },
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('doctor'),
   })
 }
 
@@ -99,6 +126,7 @@ function poStatePath(): string { return path.join(projectDir, '.prdt', 'po-state
 
 beforeEach(() => {
   sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-verdict-'))
+  binDir = fakeUptimeBinDir(sandbox)
   disciplineDir = path.join(sandbox, 'discipline')
   fs.cpSync(REPO_DISCIPLINE, disciplineDir, { recursive: true })
   machineHome = path.join(sandbox, 'prdt-home')
@@ -114,7 +142,7 @@ beforeEach(() => {
   execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
 })
 
@@ -287,7 +315,7 @@ assert "answered" in att[0] and "ran=1" in att[0] and "attested=1" in att[0], at
 assert "all 1 check(s) ran" in clean[0], clean
 print("ok")
 `
-    const out = execFileSync('python3', ['-c', probe], { encoding: 'utf-8', timeout: 30000 })
+    const out = execFileSync('python3', ['-c', probe], { encoding: 'utf-8', timeout: subprocessTimeout('cli') })
     expect(out.trim()).toBe('ok')
   })
 })

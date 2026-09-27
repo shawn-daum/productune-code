@@ -19,6 +19,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -40,7 +41,7 @@ function doctor(): string {
       // pin the discipline scope to the repo checkout so the caps this test does
       // NOT assert about stay deterministic
       env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: REPO_DISCIPLINE },
-      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000,
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
     })
   } catch (e: any) {
     throw new Error(`prdt doctor failed: ${e.stderr || e.message}`)
@@ -81,7 +82,7 @@ beforeEach(() => {
   fs.mkdirSync(projectDir, { recursive: true })
   execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
     cwd: projectDir, env: { ...process.env, PRDT_HOME: machineHome },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
 })
 
@@ -167,7 +168,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — machine wiki page budget (T-446)', ()
     expect(doctor()).toMatch(/machine wiki: index\.md missing — run `prdt wiki reindex`/)
     execFileSync('python3', [PRDT_CLI, 'wiki', 'reindex'], {
       cwd: projectDir, env: { ...process.env, PRDT_HOME: machineHome },
-      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000,
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
     })
     expect(doctor()).not.toMatch(/machine wiki: index\.md/)
     writeMachinePages(3)

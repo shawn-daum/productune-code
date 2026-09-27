@@ -129,11 +129,12 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     'Meta/code split test = coupling, never "is it a doc"',
     // §Tickets: the enum and the body shape
     '`status` is the whole enum.',
-    '- Body = `## Request` / `## Why` / `## Acceptance` / `## Outcome`.',
+    '- Body = the frame: H2 = its keys in its order, nothing else',
     // T-638: the two literal triggers stay hot — the PO must recognize them at its own act
-    '`## Why` exists only on two triggers',
+    'an `acceptance` line changes after first dispatch',
+    '`feature:` names a spec file',
     // restored from the annex by T-586 slice 2A — slice 1's own audit named it the weakest-reachability move
-    '- An access-control Acceptance line (gate / hide / restrict / limit) names its exact target — page, asset, API route, or field; a bare verb with no named target is not acceptance-complete.',
+    '- An access-control `acceptance` line (gate / hide / restrict / limit) names its exact target — page, asset, API route, or field; a bare verb with no named target is not acceptance-complete.',
     // §DoD: the check itself
     '- Not done until: build green · lint clean · typecheck clean · relevant tests green · acceptance verified against the ticket.',
     // §Git: residence + hard rule + every-commit rules + the consent gate (floor)
@@ -167,7 +168,14 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
   })
 
   test('the floor did not move: Secrets, carve-outs, Overrides are whole sections in contracts.md', () => {
-    expect(CONTRACTS).toContain('## Secrets — production credentials never enter agent context (EVERY persona, PO included)')
+    // T-679: pinned as the heading SHAPE, not the old literal — the old pin
+    // ('## Secrets — production credentials never enter agent context (EVERY
+    // persona, PO included)') broke the moment §Secrets widened from
+    // production-only to every credential value. The property this protects
+    // is "a §Secrets heading exists, still scoped to EVERY persona, PO
+    // included" — the clause after the em dash is free to reword without
+    // re-breaking this test.
+    expect(CONTRACTS).toMatch(/^## Secrets — .+\(EVERY persona, PO included\)$/m)
     expect(CONTRACTS).toContain('## Overrides — precedence and the non-overridable floor')
     expect(CONTRACTS).toContain('- Carve-out: `~/.prdt/plan-tier` is PO-writable')
     // T-613: re-pinned to the current wording. T-586 added the playbook-scoped
@@ -179,6 +187,7 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
       '- Carve-out: `~/.prdt/overrides/<persona>.md`',
       '`~/.prdt/overrides/playbooks/<name>.md`',
       '`~/.prdt/wiki/`',
+      '`~/.prdt/resource-stop.json`',
       '`~/.prdt/register` are PO-writable',
     ])
       pin(CONTRACTS, p, {
@@ -316,7 +325,7 @@ describe.skipIf(!READY)('delivery — the hook plan of THIS tree', () => {
       input: JSON.stringify({ hook_event_name: 'SubagentStart', agent_type: 'prdt-developer', cwd: os.tmpdir() }),
       encoding: 'utf8', env: { ...process.env, PRDT_HOME: home },
     })
-    expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain('Playbook bodies and `contracts/*.md` annexes load on demand via Bash cat under')
+    expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain('Playbook bodies · `contracts/*.md` annexes: Read on the absolute path under')
   })
 
   for (const persona of ['po', 'developer', 'qa', 'designer']) {

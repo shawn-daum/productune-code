@@ -26,6 +26,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const REAL_PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -92,7 +93,7 @@ function buildTemplate(root: string) {
   execFileSync('python3', [path.join(core, 'scripts', 'prdt'), 'init', '--json', '--slug', 'proj', '--yes'], {
     cwd: path.join(root, 'proj'),
     env: { ...process.env, PRDT_HOME: path.join(root, 'prdt-home') },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
 }
 
@@ -111,7 +112,7 @@ function doctor(): Run {
   const raw = execFileSync('python3', [cliCopy, 'doctor'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome, CLAUDE_DIR: claudeDir, PRDT_DISCIPLINE: disciplineDir },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
   const lines = raw.split('\n')
   const verdict = lines.find((l) => l.includes('[verdict='))

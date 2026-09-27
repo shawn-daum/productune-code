@@ -5,7 +5,7 @@ import os from 'os'
 import { execFile, spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
-import { setUiLanguage, setAudienceMode } from '@productune/core'
+import { setUiLanguage, setAudienceMode, atomicWriteFileSync } from '@productune/core'
 import type { UiLanguage, AudienceMode } from '@productune/core'
 import { withLoginShellPath, resetLoginShellPathCache } from '../surface-runner'
 import { installClaudeCli, resolveClaudeCli } from '../claude-installer'
@@ -277,10 +277,8 @@ function readSettings(settingsPath: string): any {
  * atomic on the same POSIX filesystem, so there is no torn-read window.
  */
 function writeSettingsAtomic(settingsPath: string, settings: any): void {
-  const tmp = settingsPath + '.tmp'
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
-  fs.writeFileSync(tmp, JSON.stringify(settings, null, 2))
-  fs.renameSync(tmp, settingsPath)
+  atomicWriteFileSync(settingsPath, JSON.stringify(settings, null, 2))
 }
 
 /**
@@ -313,13 +311,25 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
  * (po-runner canSpawnClaude), so install.sh runs first either way.
  */
 export function installPrdtHooks(settingsPath: string, homeDir: string): void {
-  const prdtHome = path.join(homeDir, '.prdt')
-  const hooksDir = path.join(prdtHome, 'hooks')
-  const missing = PRDT_HOOK_BASENAMES.filter(b => !fs.existsSync(path.join(hooksDir, b)))
+  const prdtHomeRaw = path.join(homeDir, '.prdt')
+  const hooksDirRaw = path.join(prdtHomeRaw, 'hooks')
+  const missing = PRDT_HOOK_BASENAMES.filter(b => !fs.existsSync(path.join(hooksDirRaw, b)))
   if (missing.length > 0) {
-    console.warn(`[onboarding] prdt hook mirror incomplete (${missing.join(', ')} not in ${hooksDir}) — run install.sh first; skipping hook registration`)
+    console.warn(`[onboarding] prdt hook mirror incomplete (${missing.join(', ')} not in ${hooksDirRaw}) — run install.sh first; skipping hook registration`)
     return
   }
+  // T-670: install.sh resolves PRDT_HOME to its physical path (resolve_path,
+  // python3 os.path.realpath) before building any hook command it registers —
+  // a symlinked path component (macOS /var -> /private/var; a symlinked
+  // ~/.prdt; T-450's firmlink note) must not make this run's registered
+  // command strings differ textually from install.sh's for the identical
+  // physical mirror. The mirror's existence was just confirmed above, so
+  // resolving here is safe (T-645 already made the strip/dedup predicate
+  // basename-only on both sides, so this resolution is for cross-installer
+  // TEXTUAL parity, not for idempotency — that no longer depends on path
+  // spelling on either side).
+  const prdtHome = fs.realpathSync(prdtHomeRaw)
+  const hooksDir = path.join(prdtHome, 'hooks')
 
   const settings = readSettings(settingsPath)
 

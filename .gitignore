@@ -33,3 +33,8 @@ packages/*/dist-electron/
 
 # prdt derived index (rebuildable — design §2)
 .prdt/index.db
+
+# T-665: the one-page repo viewer is regenerated from live repo state
+# (`pnpm --filter @productune/gui viewer`) and carries docs/ content into a
+# code-side file — it must not ride the code repo (PO decision, T-665 slice 2).
+packages/gui/viewer/viewer.html

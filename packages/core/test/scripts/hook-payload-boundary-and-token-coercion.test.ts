@@ -152,14 +152,44 @@ describe('a legitimate po-state renders byte-identically to pre-T-471', () => {
       .toBe('[prdt state] stage=build · version=v1.6 · current_task=T-471(developer)')
   })
 
-  test('stage-guard line included, verbatim', () => {
-    expect(stateContext(LEGIT, '배포 완료')).toBe(
-      '[prdt state] stage=build · version=v1.6 · current_task=none\n' +
-      '[prdt stage guard] deploy-shaped request while stage=build — deploy belongs to ship. ' +
-      'Ship entry is due FIRST: readiness pass (readiness-dispatch playbook) + po-state stage write, ' +
-      'or an explicit N/A-skip line in docs/wiki/log.md. Raise it before doing the deploy work ' +
-      '(PO habit — Lifecycle judgment).',
-    )
+  // T-642: this test used to pin the stage-guard line's exact wording
+  // byte-for-byte (T-669 already shows why that breaks the tree for no
+  // reason — the prose was reworded, T-633/T-634, "deploy-shaped request …
+  // deploy belongs to ship" -> "confirm before acting: …", while the guard's
+  // actual behavior did not change). Third instance of the same class
+  // (T-613, T-639): pin the RULE, not the sentence carrying it. The rule the
+  // acceptance names is three properties — (a) tagged as a stage guard line,
+  // (b) names the turn's stage, (c) says ship entry precedes the deploy work
+  // — never the sentence's exact bytes.
+  function assertStageGuardShape(line: string, stage: string): void {
+    expect(line.startsWith('[prdt stage guard]')).toBe(true)
+    expect(line).toContain(`stage=${stage}`)
+    expect(line).toMatch(/ship entry[\s\S]*before[\s\S]*deploy/i)
+  }
+
+  test("stage-guard line: tagged, names the turn's stage, says ship entry precedes deploy", () => {
+    const ctx = stateContext(LEGIT, '배포 완료')
+    const lines = ctx.split('\n')
+    expect(lines).toHaveLength(2) // state line + one guard line
+    assertStageGuardShape(lines[1], LEGIT.stage)
+  })
+
+  // Not empty coverage: a fixture with exactly one property surgically
+  // removed (the other two left intact) makes that property's own check fail
+  // — proving the assertion function actually discriminates, not just passes
+  // whatever it's handed.
+  test('each property actually fails on a fixture that removes it', () => {
+    const ctx = stateContext(LEGIT, '배포 완료')
+    const guardLine = ctx.split('\n')[1]
+
+    const noTag = guardLine.replace('[prdt stage guard]', '[prdt something else]')
+    expect(() => assertStageGuardShape(noTag, LEGIT.stage)).toThrow()
+
+    const noStage = guardLine.replace(`stage=${LEGIT.stage}`, 'stage=???')
+    expect(() => assertStageGuardShape(noStage, LEGIT.stage)).toThrow()
+
+    const noOrder = guardLine.replace('ship entry', 'zzzzzzzzzz')
+    expect(() => assertStageGuardShape(noOrder, LEGIT.stage)).toThrow()
   })
 
   test('absent fields keep today’s `?` placeholder (not a withheld notice)', () => {
@@ -276,7 +306,7 @@ describe('every block boundary in the session-start payload owns its line', () =
 
   test.skipIf(!hasJq())('blocks stay separated by exactly one blank line, and the trailing prose survives', () => {
     const payload = sessionPayload('prdt-developer')
-    expect(payload).toMatch(/----- END doctrine -----\n\n----- BEGIN contracts \(/)
+    expect(payload).toMatch(/----- END doctrine -----\n\n----- BEGIN contracts -----/)
     expect(payload).toMatch(/----- END developer playbook menu -----\nAct per the discipline above\./)
   })
 })

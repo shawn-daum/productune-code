@@ -80,15 +80,25 @@ function parseFrontmatter(content: string): Record<string, any> {
   return out
 }
 
+// New ticket frame (contracts/tickets.md): `## problem` (lowercase — the frame's
+// H2 key literal, contracts/tickets.md §"The frame") replaces `## Request` as
+// the H2 that opens the body. Tried first so a new-frame ticket reads its own
+// heading; an older ticket on disk keeps its `## Request` heading verbatim
+// (contracts: "an older ticket keeps its headings as written"), so the fallback
+// stays required rather than becoming dead code.
+const SUMMARY_HEADINGS = [/^##\s+problem\b/, /^##\s+Request\b/]
+
 function extractRequestSummary(content: string): string | undefined {
-  // Find `## Request` heading and return first non-empty paragraph after it.
+  // Try each heading in priority order (new frame, then old) over the WHOLE
+  // file per heading, rather than a single mixed scan — a ticket carries one
+  // frame or the other, but this keeps `## problem` authoritative even in the
+  // pathological case where a `## Request` line also appears (e.g. quoted in
+  // `## Related`/`## Log` prose) before the real `## problem` heading.
   const lines = content.split('\n')
   let startIdx = -1
-  for (let i = 0; i < lines.length; i++) {
-    if (/^##\s+Request\b/.test(lines[i])) {
-      startIdx = i + 1
-      break
-    }
+  for (const re of SUMMARY_HEADINGS) {
+    const hit = lines.findIndex((l) => re.test(l))
+    if (hit >= 0) { startIdx = hit + 1; break }
   }
   if (startIdx < 0) return undefined
   const buf: string[] = []

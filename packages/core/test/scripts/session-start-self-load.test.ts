@@ -15,6 +15,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawnSync, spawn } from 'child_process'
 import { test, expect, describe } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const HOOKS = path.join(CORE_ROOT, 'scripts', 'hooks')
@@ -281,7 +282,7 @@ describe('stale (pre-T-578) mirror hook: the stub survives it (T-578 grill fix)'
     const hookPath = writeFixtureHook(home)
     const cmd = stubSelfLoadCommand(hookPath)
     expect(cmd).toContain('</dev/null')   // the fix under test: the stub itself closes stdin
-    const r = spawnSync('bash', ['-c', cmd], { encoding: 'utf8', timeout: 5000 })
+    const r = spawnSync('bash', ['-c', cmd], { encoding: 'utf8', timeout: subprocessTimeout('quick') })
     expect(r.signal).toBeNull()           // finished on its own — the 5s guard never had to fire
     expect(r.status).toBe(0)
     // Not literally "[prdt discipline — MISSING]" — this pre-T-578 hook has no idea

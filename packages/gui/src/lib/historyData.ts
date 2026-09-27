@@ -6,49 +6,61 @@
  * components are thin glue over them.
  */
 
-/** A version id like v1, v1.0, v1.2.3. Excludes `backlog` and other dirs. */
-export const VERSION_RE = /^v\d+(\.\d+)*$/
+/**
+ * A version id: one, two or three numeric components — `v1` · `v1.1` · `v1.1.0`,
+ * the third a patch round (contracts §Fixed paths §Version id). Excludes
+ * `backlog` and other dirs, and a fourth component: major · minor · patch is
+ * the whole ladder, so `v1.2.3.4` names no round.
+ *
+ * ONE definition, two readers (T-657): this pattern and `VERSION_ID_RE` in
+ * packages/core/scripts/prdt are the same, and
+ * packages/core/test/scripts/prdt-doctor-prd-shape.test.ts reads this literal
+ * out of this file and answers the same corpus through the real CLI, so
+ * narrowing either side alone turns that test red. They were NOT the same
+ * until T-657 (measured 2026-09-22): the CLI required a dot and this did not,
+ * so `v1` was illegal to one reader and ordinary to the other.
+ */
+export const VERSION_RE = /^v\d+(\.\d+){0,2}$/
 
 /** The PRD working document (prdt mode): standing head + the ONE open version
  * section. PrdSection imports this — one definition, two readers. */
 export const PRD_MASTER_REL = 'docs/prd/PRD.md'
 
 /**
- * T-602: the PRD history — every CLOSED `## v<N>.<m>` section, moved out of
- * PRD.md byte-identical at close (contracts §Fixed paths). One human-read lump,
- * never per-version files, and deliberately NOT named `PRD.md`: ntf-pm's
+ * T-657: the closed-version records — every CLOSED `## v<N>.<m>` section is
+ * the ENTIRE body of `docs/prd/versions/v<N>.<m>.md`, moved out of PRD.md
+ * byte-identical at close (contracts §Fixed paths); a tickets-only round has a
+ * one-line `no PRD section — <decision>` stub at the same path. `ls` is the
+ * index. T-602's one-lump `docs/prd/history.md` is gone — the user reversed it
+ * on 2026-09-18 because a lump has no index and three rounds with no PRD
+ * section went unseen in it. No file here is named `PRD.md`: ntf-pm's
  * portfolio pipe resolves the current PRD by first match over
- * `docs/prd/PRD.md` · `docs/PRD.md` · `PRD.md`, so a `PRD.md` basename on any of
- * those paths could serve history as the current PRD without an error.
+ * `docs/prd/PRD.md` · `docs/PRD.md` · `PRD.md`.
  */
-export const PRD_HISTORY_REL = 'docs/prd/history.md'
+export const PRD_VERSIONS_DIR_REL = 'docs/prd/versions'
 
 /**
  * Resolve the PRD path for a CLOSED version's History-detail row (T-546
  * follow-up: HistoryDetailView hardcoded `docs/prd/versions/<v>.md` with no
- * prdt branch, so a real closed version — e.g. a `v0.5` git tag — pointed at
- * a file prdt never writes and rendered the "no PRD" placeholder instead of
- * the actual PRD).
+ * prdt branch, so a real closed version pointed at a file prdt never wrote and
+ * rendered the "no PRD" placeholder instead of the actual PRD).
  *
  * HistoryDetailView only ever renders CLOSED versions (HistoryPane excludes
  * the in-progress version from its list), so — unlike PrdSection, which also
- * distinguishes the OPEN/current version — the only branch that matters here
- * is prdt vs legacy:
- *   - prdt (isPrdt=true)  → ALWAYS docs/prd/history.md (T-602), regardless of
- *     whether a `docs/prd/versions/<versionId>.md` file happens to exist on
- *     disk. prdt abolished the per-version snapshot (T-291, adapter A8), and
- *     since T-602 a closed section no longer lives in PRD.md either — PRD.md is
- *     head + the open section only, so resolving it here would render a file
- *     that does not contain this version. The reader gets the whole history
- *     lump (no `#v` anchor scroll in the md tab yet).
- *   - legacy (isPrdt=false) → ALWAYS `docs/prd/versions/<versionId>.md`,
- *     unchanged. A legacy snapshot file is not necessarily 1:1 with a version:
- *     `v0.4.md` can be the record for v0.1~v0.4 together, so this branch never
- *     stops reading `versions/` — it only stops being reached at all once a
- *     project is prdt.
+ * distinguishes the OPEN/current version — only the closed record matters:
+ *   - prdt (isPrdt=true)  → `docs/prd/versions/<versionId>.md` (T-657): the
+ *     closed section (or its stub) IS that file. Between T-602 and T-657 this
+ *     branch answered `docs/prd/history.md`; that file no longer exists, so
+ *     the old answer would render the placeholder for every closed version.
+ *   - legacy (isPrdt=false) → `docs/prd/versions/<versionId>.md`, unchanged.
+ *     A legacy snapshot file is not necessarily 1:1 with a version: `v0.4.md`
+ *     can be the record for v0.1~v0.4 together — the helper only names the
+ *     path; existence is the component's concern (IPC readFile → placeholder).
+ * Both branches now name the same path. The parameter stays so the two callers
+ * keep one signature and the mode stays visible at the call site.
  */
-export function resolveClosedVersionPrdPath(isPrdt: boolean, versionId: string): string {
-  return isPrdt ? PRD_HISTORY_REL : `docs/prd/versions/${versionId}.md`
+export function resolveClosedVersionPrdPath(_isPrdt: boolean, versionId: string): string {
+  return `${PRD_VERSIONS_DIR_REL}/${versionId}.md`
 }
 
 export interface TicketCounts {

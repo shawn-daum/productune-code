@@ -2,7 +2,7 @@
 | playbook | when | floor |
 |---|---|---|
 | brand-assets | DS settled and logo/favicon/og:image missing · brand refresh (approved reversal) | sonnet/medium |
-| ds-3up | Define screen set — the DS showcase, before any prototype · no design system yet · DS overhaul (approved reversal) · user rejected the adopted DS | opus/high |
+| ds-3up | Define screen set while NO DS is settled (docs/design.md frontmatter has no ds_html:) — showcase before any prototype · DS overhaul (approved reversal) · user rejected the settled DS | opus/high |
 | ds-conformance | Ship-entry readiness DS check when the PO routes it to the Designer (producer-side conformance) | sonnet/medium |
 | hifi | Define screen set — the version's navigable prototype · user-facing screens after a DS direction is settled · new visual pattern or complex interaction to convey | sonnet/high |
 | inject-edit | edit to hook-injected text — discipline · playbook · annex · agent stub · override line · hot↔cold move · corpus sweep | fable/high |
