@@ -38,12 +38,14 @@ export const PAGE = {
   h1: 'productune — 뷰어',
 }
 
+// T-708 결함 11 (PO 결정, 사용자 축자 "티켓목록이랑 prd버튼 좌측 패널에 있는데
+// 굳이 메인페널에 있을필요없"): 카드 아래 '티켓 목록 보기'·'PRD 열기' 버튼은
+// 사이드바 '티켓'·'PRD' 행과 같은 이동이라 없앴다 — gotoTickets/openPrd 라벨도
+// 함께 제거.
 export const HOME = {
   working: '진행 상황',
   legendMain: '담당',
   legendDerived: '검수',
-  gotoTickets: '티켓 목록 보기',
-  openPrd: 'PRD 열기',
   overall: '전체',
 }
 

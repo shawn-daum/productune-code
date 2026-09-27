@@ -821,14 +821,25 @@ function progressDashedSquare(done) {
   return `<svg class="stage-sq-svg" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1" class="stage-sq-dashed-rect${done ? ' sq-done' : ''}"></rect></svg>`
 }
 
-/** One (item, assignee) matrix cell: `–` when empty (drawn even at 0 — the fixed-column rule extends to fixed cells, never a collapsed column), else one square per ticket + a `done/total` count. */
+// T-708 결함 3 최종 결정 (Designer, T-709 겸임, 2026-09-27) — 택1 중 (b) "+N"
+// 접기: 한 칸의 정사각형 표시 상한은 폭·칸과 무관한 상수 10개. 크기를 줄이는
+// (a)안은 상한이 없어 미래 개수 증가에 못 버틴다는 이유로 기각됐다(티켓
+// outcome §결함 3 참고) — 이 상수만 바뀌면 규칙 전체가 따라온다.
+const PROGRESS_MATRIX_FOLD_LIMIT = 10
+
+/** One (item, assignee) matrix cell: `–` when empty (drawn even at 0 — the fixed-column rule extends to fixed cells, never a collapsed column), else one square per ticket + a `done/total` count. Beyond PROGRESS_MATRIX_FOLD_LIMIT squares, only the first N draw — the rest fold into one `+{count-N}` text fragment on the same line (never a second row: `.stage-matrix-sq-wrap` is `flex-wrap: nowrap` — T-708 결함 3). */
 function progressCell(solidTickets, dashedTickets) {
   const total = solidTickets.length + dashedTickets.length
   if (total === 0) return '<span class="stage-matrix-cell stage-matrix-cell-empty">–</span>'
   const isDone = (t) => t.frontmatter.status === 'done'
   const done = solidTickets.filter(isDone).length + dashedTickets.filter(isDone).length
-  const sqHtml = solidTickets.map((t) => progressSquare(isDone(t))).join('') + dashedTickets.map((t) => progressDashedSquare(isDone(t))).join('')
-  return `<span class="stage-matrix-cell"><span class="stage-matrix-sq-wrap">${sqHtml}</span><span class="stage-matrix-count mono">${done}/${total}</span></span>`
+  const squares = [...solidTickets.map((t) => progressSquare(isDone(t))), ...dashedTickets.map((t) => progressDashedSquare(isDone(t)))]
+  const shownHtml = squares.slice(0, PROGRESS_MATRIX_FOLD_LIMIT).join('')
+  const foldHtml =
+    squares.length > PROGRESS_MATRIX_FOLD_LIMIT
+      ? `<span class="stage-matrix-fold">+${squares.length - PROGRESS_MATRIX_FOLD_LIMIT}</span>`
+      : ''
+  return `<span class="stage-matrix-cell"><span class="stage-matrix-sq-wrap">${shownHtml}${foldHtml}</span><span class="stage-matrix-count mono">${done}/${total}</span></span>`
 }
 
 function progressMatrixHeadRow() {
@@ -874,10 +885,6 @@ ${homeStageLine(currentTickets)}
 ${progressOverall(currentTickets)}
 <div class="stage-matrix">${progressMatrixHeadRow()}${rows}</div>
 ${PROGRESS_LEGEND}
-<div class="dash-actions">
-<button type="button" class="btn-secondary" data-group-select="ticket">${svgIcon(STORE_ICON_PATHS.ticket, 13)} <span>${HOME.gotoTickets}</span></button>
-<button type="button" class="btn-secondary" data-group-select="prd">${svgIcon(STORE_ICON_PATHS.prd, 13)} <span>${HOME.openPrd}</span></button>
-</div>
 </div>`
 }
 
@@ -1028,12 +1035,12 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .stage-overall { display: flex; align-items: center; gap: var(--space-8); margin-bottom: var(--space-12); padding-bottom: var(--space-10); border-bottom: 1px solid var(--border-item); }
 .stage-overall .stage-matrix-label { font-weight: 700; color: var(--text-primary); flex: 0 0 auto; }
 .stage-overall .stage-matrix-count { font-weight: 700; color: var(--text-primary); }
-.stage-matrix-sq-wrap.stage-overall-sq-wrap { flex-wrap: nowrap; gap: 2px; }
-.stage-overall-sq-wrap .stage-sq { width: 6px; height: 6px; }
-.stage-overall-sq-wrap .stage-sq-svg { width: 6px; height: 6px; }
-@media (max-width: 900px) {
-  .stage-matrix-sq-wrap.stage-overall-sq-wrap { flex-wrap: wrap; }
-}
+/* T-708 결함 10 (PO 결정, 사용자 축자 "전체의 네모 크기랑 아래 배정된 네모
+   크기가 달라"): '전체' 줄 네모도 행렬과 같은 크기(10x10, gap 3px) — 아래
+   '.stage-matrix-sq-wrap'의 기본값을 그대로 물려받는다(더 이상 6px/2px로
+   덮어쓰지 않는다). 유일하게 남는 차이는 접지 않고(결함 3의 +N 규칙은 이 줄의
+   대상이 아니다) 넘치면 줄을 바꾼다는 것뿐이라 wrap 오버라이드 하나만 남긴다. */
+.stage-matrix-sq-wrap.stage-overall-sq-wrap { flex-wrap: wrap; }
 .stage-matrix { display: grid; grid-template-columns: 60px repeat(5, 1fr); column-gap: var(--space-6); row-gap: 4px; align-items: center; margin-bottom: var(--space-8); }
 .stage-matrix-row { display: contents; }
 .stage-matrix-head .stage-matrix-col { font-size: 9px; text-transform: none; letter-spacing: 0.02em; color: var(--text-quaternary);
@@ -1042,22 +1049,23 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .stage-matrix-label { display: flex; align-items: center; gap: 3px; color: var(--text-tertiary); font-size: 11px;
   text-transform: none; white-space: nowrap; overflow: hidden; }
 .stage-matrix-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 0; }
-.stage-matrix-sq-wrap { display: flex; flex-wrap: wrap; gap: 3px; justify-content: center; max-width: 100%; }
+/* T-708 결함 3: was 'flex-wrap: wrap', letting a cell with >10 tickets fold
+   onto a 2nd row and grow taller than every other cell in the same row —
+   nowrap + the 10-square cap/"+N" fold in progressCell() above keeps every
+   row at a constant single line regardless of count. */
+.stage-matrix-sq-wrap { display: flex; flex-wrap: nowrap; gap: 3px; justify-content: center; max-width: 100%; }
 .stage-sq { width: 10px; height: 10px; border-radius: 2px; background: var(--bg-interaction-neutral); border: 1px solid var(--border-inline); flex: 0 0 auto; }
 .stage-sq.sq-done { background: var(--accent); border-color: var(--accent); }
 .stage-sq-svg { width: 10px; height: 10px; flex: 0 0 auto; display: block; overflow: visible; }
 .stage-sq-dashed-rect { fill: var(--bg-interaction-neutral); stroke: var(--text-quaternary); stroke-width: 1; stroke-dasharray: 2 1.2; }
 .stage-sq-dashed-rect.sq-done { fill: var(--accent); stroke: var(--text-primary); }
 .stage-matrix-count { font-size: 9.5px; color: var(--text-secondary); font-family: var(--font-mono); }
+/* T-708 결함 3: the "+N" fold fragment — same line as the squares it follows
+   (its '.stage-matrix-sq-wrap' parent is nowrap), never its own row. */
+.stage-matrix-fold { font-size: 9.5px; color: var(--text-tertiary); font-family: var(--font-mono); white-space: nowrap; flex: 0 0 auto; }
 .stage-matrix-cell-empty { color: var(--text-disabled); font-size: 11px; }
 .stage-matrix-legend { display: flex; flex-direction: column; gap: 2px; margin: var(--space-4) 0 var(--space-2); font-size: 10px; color: var(--text-quaternary); }
 .stage-matrix-legend-item { display: flex; align-items: center; gap: 5px; }
-.dash-actions { display: flex; gap: var(--space-8); margin-top: var(--space-10); flex-wrap: wrap; }
-.btn-secondary { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-family); cursor: pointer;
-  border-radius: var(--radius-8); font-size: 12px; text-decoration: none; white-space: nowrap;
-  background: var(--bg-interaction-neutral); color: var(--text-primary); border: none; padding: var(--space-6) var(--space-12); }
-.btn-secondary:hover { background: var(--border-hover); }
-
 /* ---------- tables ---------- */
 table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-quaternary);
@@ -1068,10 +1076,24 @@ tbody tr:hover td { background: var(--bg-state-hover); }
 .id-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
 .table-wrap { border: 1px solid var(--border-item); border-radius: var(--radius-8); overflow: hidden; overflow-x: auto; }
 
-section { margin-bottom: var(--space-24); padding-bottom: var(--space-24); border-bottom: 1px solid var(--border-section); }
-section h2 { border-bottom: 1px solid var(--border-item); padding-bottom: var(--space-8); }
-article { margin-bottom: var(--space-24); padding: var(--space-16); background: var(--bg-surface-base); border: 1px solid var(--border-item); border-radius: var(--radius-8); }
-article h3 { margin-top: 0; }
+/* T-708 결함 9 root cause: T-665's old flat layout ('plainFrame', since
+   removed — see the "app shell" comment block above) drew its document
+   listings as bare '<section>'/'<article>' elements and styled them with
+   these two bare-tag rules. The ONLY '<section>' this generator emits today
+   is '.store-section' itself (storeSection(), above) — a real '<article>'
+   is emitted nowhere (both confirmed by grep) — so 'margin-bottom'/
+   'padding-bottom'/'border-bottom' here were landing on the app shell's own
+   frame, not on any document listing: PO measured (headless 2000×900)
+   '.store-section' stopping 24px short of the window bottom and its
+   sidebar/main columns a further ~25px short of that (the rule's own
+   padding-bottom + border-bottom), leaving two stacked empty bands. Dead
+   CSS with exactly one, wrong, live target — removed rather than scoped
+   around, since nothing legitimate depends on it.
+   the bare "section h2" rule's border-bottom/padding-bottom is dropped for
+   the same reason: rendered document bodies embed real '<h2>' elements (via
+   hardenedRenderer.heading → .pill-heading-2) that are themselves
+   descendants of '.store-section' — that selector reached those too,
+   doubling up on '.pill-heading-2''s own border/padding. */
 .v-path, .v-note { color: var(--text-tertiary); font-size: 0.8rem; }
 .v-note { background: var(--bg-surface-on); padding: var(--space-8) var(--space-12); border-radius: var(--radius-4); }
 table.v-fm, table.v-omitted, table.v-artifacts { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: var(--space-8) 0; }
