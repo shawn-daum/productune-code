@@ -17,7 +17,7 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { renderPage, resolveDocLink, safeEncodeURI, detailDataScript } from '../../viewer/lib/render.mjs'
+import { renderPage, resolveDocLink, safeEncodeURI, encodeFsPathHref, detailDataScript } from '../../viewer/lib/render.mjs'
 import { collectArtifacts, isContainedArtifactPath, collectTickets, collectWiki } from '../../viewer/lib/collect.mjs'
 
 // ---------- shared fixture plumbing ----------
@@ -408,6 +408,124 @@ describe('collect.mjs — collectArtifacts refuses a manifest bucket/path resolv
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true })
     }
+  })
+})
+
+// ---------- %-encoded/mixed dot-segment manifest escape (T-711 slice 3 B3) ----------
+// QA re-pass of 936baeb (fixture under os.tmpdir, headless Chrome): a
+// manifest row {bucket:'v1', path:'%2E%2E/%2e./.%2e/%2e%2e/OUTSIDE.md'} names
+// no file on disk, so realpathSync threw ENOENT inside isContainedArtifactPath
+// and it fell back to a string-only check that never understood %-encoding —
+// true. artifactDetailEntries then kept the %2e%2e segments verbatim in the
+// emitted fileHref, and a real browser decoded them as a real ".." on
+// navigation, climbing one directory above the fixture's docs/artifacts root.
+
+describe('collect.mjs — isContainedArtifactPath refuses a %-encoded/mixed dot-segment escape even when nothing exists on disk yet (T-711 slice 3 B3)', () => {
+  function buildFixtureRepo() {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-b3-fixture-'))
+    fs.mkdirSync(path.join(repoRoot, 'docs/artifacts/v1'), { recursive: true })
+    return repoRoot
+  }
+
+  it('a %-encoded/mixed dot-segment PATH is refused (QA repro form, exact fixture row)', () => {
+    const repoRoot = buildFixtureRepo()
+    try {
+      expect(isContainedArtifactPath(repoRoot, 'v1', '%2E%2E/%2e./.%2e/%2e%2e/OUTSIDE.md')).toBe(false)
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('a %-encoded/mixed dot-segment BUCKET is refused the same way', () => {
+    const repoRoot = buildFixtureRepo()
+    try {
+      expect(isContainedArtifactPath(repoRoot, '%2E%2E/%2e./.%2e/%2e%2e', 'OUTSIDE.md')).toBe(false)
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('still true for a legitimate in-repo path with no dot segment at all — no regression', () => {
+    const repoRoot = buildFixtureRepo()
+    try {
+      fs.writeFileSync(path.join(repoRoot, 'docs/artifacts/v1/ok.md'), '# ok')
+      expect(isContainedArtifactPath(repoRoot, 'v1', 'ok.md')).toBe(true)
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('collectArtifacts end-to-end: a manifest row with the %-encoded escape is dropped entirely — never inlined, never a fileHref', () => {
+    const repoRoot = buildFixtureRepo()
+    try {
+      fs.writeFileSync(path.join(repoRoot, 'docs/artifacts/v1/ok.md'), '# ok')
+      const manifest = {
+        entries: [
+          { bucket: 'v1', path: 'ok.md', kind: 'doc', status: 'approved', ticket: 'T-1', lang: 'ko', added_at: '2026-09-27' },
+          { bucket: 'v1', path: '%2E%2E/%2e./.%2e/%2e%2e/OUTSIDE.md', kind: 'doc', status: 'approved', ticket: 'T-1', lang: 'ko', added_at: '2026-09-27' },
+        ],
+      }
+      fs.writeFileSync(path.join(repoRoot, 'docs/artifacts/manifest.json'), JSON.stringify(manifest))
+      const { entries } = collectArtifacts(repoRoot)
+      expect(entries.length).toBe(1)
+      expect(entries[0].fields.path).toBe('ok.md')
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+    }
+  })
+})
+
+// ---------- fileHref: fresh per-segment encoding, never safeEncodeURI pass-through (T-711 slice 3) ----------
+// fileHref is built from a REAL FILESYSTEM PATH (a ticket/artifact rel path),
+// never authored markdown — so a literal "%" byte already in a real
+// filename (a file actually named `a%20b.html`) must itself be escaped to
+// `%25` like any other special character. safeEncodeURI's pass-through
+// (correct for resolveDocLink, where an AUTHOR may have written an
+// intentional %-escape into a markdown link) was wrong here: it left `%20`
+// untouched, so a browser decoded it back to a space on navigation and
+// opened `a b.html` — a file that does not exist.
+
+describe('render.mjs — fileHref encodes each filesystem path segment fresh (T-711 slice 3, "a%20b.html" regression)', () => {
+  it('encodeFsPathHref escapes a literal "%" so one browser-side decode round-trips back to the real filename', () => {
+    const href = encodeFsPathHref('a%20b.html')
+    expect(href).toBe('a%2520b.html')
+    expect(decodeURIComponent(href)).toBe('a%20b.html')
+  })
+
+  it('encodeFsPathHref preserves "/" as a segment separator, never escaping it to %2F', () => {
+    expect(encodeFsPathHref('sub/dir/a b.html')).toBe('sub/dir/a%20b.html')
+  })
+
+  it('artifactDetailEntries (via renderPage): a real file named a%20b.html gets a fileHref that opens itself, not "a b.html"', () => {
+    const data = fixtureFor('')
+    data.artifacts = {
+      entries: [
+        {
+          fields: { bucket: 'v1.10', path: 'a%20b.html', kind: 'doc', status: 'approved', ticket: 'T-1', lang: 'ko', added_at: '2026-09-27' },
+          diskRel: 'docs/artifacts/v1.10/a%20b.html',
+          inlined: false,
+        },
+      ],
+    }
+    const html = renderPage({ data, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const detail = extractDetailData(html)
+    const entry = detail.artifact['v1.10/a%20b.html']
+    expect(decodeURIComponent(entry.fileHref)).toMatch(/\/a%20b\.html$/)
+  })
+
+  it('ticketDetailEntries (via renderPage): an omitted-bucket ticket row whose real path segment contains a literal "%" opens itself', () => {
+    const data = fixtureFor('')
+    ;(data.tickets as any).omitted = [
+      {
+        bucket: 'v1.9',
+        count: 1,
+        bytes: 10,
+        tickets: [{ rel: 'docs/tickets/v1.9/T-1%2.md', frontmatter: { id: 'T-1', slug: 'x', type: 'impl', status: 'done', assignee: 'developer' } }],
+      },
+    ]
+    const html = renderPage({ data, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const detail = extractDetailData(html)
+    expect(decodeURIComponent(detail.ticket['T-1'].fileHref)).toMatch(/T-1%2\.md$/)
   })
 })
 
