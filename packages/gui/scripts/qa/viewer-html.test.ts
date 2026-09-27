@@ -21,7 +21,7 @@
 // href>` (never auto-fetched), or inside a `<code>`/`<pre>` span is not any
 // of those and is correctly left alone.
 import { describe, it, expect, beforeAll } from 'vitest'
-import { generate } from '../../viewer/generate.mjs'
+import { generate, missingMetaRootReason } from '../../viewer/generate.mjs'
 import { renderPage } from '../../viewer/lib/render.mjs'
 
 // T-718: the real generated page is now built HERE, in-process (`generate()`
@@ -32,9 +32,19 @@ import { renderPage } from '../../viewer/lib/render.mjs'
 // first, which this test suite must not require as a precondition. Built
 // ONCE in `beforeAll` and reused by every test in this file (doctrine:
 // expensive shared setup is built once per file, never per test case).
+//
+// T-718 slice 2: `generate()` itself reads the META project (docs/, .prdt/)
+// that normally sits beside `code/` — a detached `git worktree add --detach`
+// checkout has no meta project beside it at all, so `generate()` throws
+// ENOENT at `.prdt/po-state.json` there. Checked once, up front, so the ONE
+// test below that needs `realHtml` skips with a visible reason instead of
+// this whole file erroring out of `beforeAll` — every fixture-based case
+// here needs neither `generate()` nor a meta project and still runs.
+const metaMissingReason = missingMetaRootReason()
 let realHtml: string
 
 beforeAll(async () => {
+  if (metaMissingReason) return
   ;({ html: realHtml } = await generate())
 }, 30000)
 
@@ -68,9 +78,12 @@ export function findLoadTimeExternalResources(html: string): string[] {
 }
 
 describe('viewer/viewer.html — no load-time external resource (static)', () => {
-  it('references no load-time external resource', () => {
-    expect(findLoadTimeExternalResources(realHtml)).toEqual([])
-  })
+  it.skipIf(metaMissingReason)(
+    `references no load-time external resource${metaMissingReason ? ` — SKIPPED: ${metaMissingReason}` : ''}`,
+    () => {
+      expect(findLoadTimeExternalResources(realHtml)).toEqual([])
+    },
+  )
 
   // Non-vacuous: a prose URL — exactly the shape real ticket/wiki bodies
   // carry (T-665 outcome §미해결 names 3 such cases) — must NOT trip the

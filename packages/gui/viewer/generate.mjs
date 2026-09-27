@@ -25,6 +25,29 @@ export const GUI_ROOT = path.resolve(__dirname, '..')
 // .prdt/ live — the viewer reads the WHOLE repo, not just the gui package).
 export const REPO_ROOT = path.resolve(GUI_ROOT, '../../..')
 
+/**
+ * T-718 slice 2: whether `repoRoot` looks like a real meta project (the one
+ * `docs/` + `.prdt/` sit beside a shared checkout's `code/` — see this
+ * module's header) rather than a detached code-only checkout with no meta
+ * project beside it (`git worktree add --detach`, in particular — the
+ * checkout has no `docs/`/`.prdt/` one level up at all). `generate()` /
+ * `collectAll()` throw ENOENT reading `.prdt/po-state.json` when that's the
+ * case; a caller that wants to degrade gracefully instead (the three
+ * real-corpus viewer test files skipping their `generate()`-dependent case)
+ * checks this FIRST rather than catching that throw.
+ * @param {string} [repoRoot]
+ * @returns {string | null} null when a meta project is present, else a
+ *   human-readable reason naming the missing path — fit to show as a skipped
+ *   test's own visible reason.
+ */
+export function missingMetaRootReason(repoRoot = REPO_ROOT) {
+  const poStatePath = path.join(repoRoot, '.prdt/po-state.json')
+  if (!fs.existsSync(poStatePath)) {
+    return `no meta project beside this checkout — ${poStatePath} not found (repoRoot resolved to ${repoRoot})`
+  }
+  return null
+}
+
 const TOKENS_PATH = path.join(GUI_ROOT, 'src/styles/tokens.css')
 export const OUTPUT_PATH = path.join(__dirname, 'viewer.html')
 export const GEN_COMMAND = 'pnpm --filter @productune/gui viewer'
