@@ -263,6 +263,72 @@ describe('Bash — printer DENY (S2a)', () => {
   }
 })
 
+// ── Bash: a segment starting with a `<`/`>` redirect is judged on its
+// resolved command word + input target, not on the redirect token itself
+// (T-716). Ship-entry code review PO repro: `< .env.local cat` allowed while
+// `cat < .env.local` denied on the same tree — the command-word scan used to
+// stop dead on the leading `<` (`basename("<")` matches no printer) and never
+// reached `cat` at all. ────────────────────────────────────────────────────
+
+describe('Bash — leading redirect resolves to its real command word (T-716)', () => {
+  const denyRows: string[] = [
+    '< .env.local cat', // the PO's exact repro
+    '<.env.local cat', // same repro, no space — tokenize emits identical tokens either way
+    '< .env.local sort', // a leading redirect into one of the newly-added printers
+    '> /dev/null cat .env.local', // leading OUTPUT redirect must not derail command-word resolution either
+    'sudo < .env.local cat', // a wrapper interleaved with a leading redirect
+  ]
+  for (const command of denyRows) {
+    test(`Bash ${command}`, () => {
+      expectDeny(bashEvent(command), command)
+    })
+  }
+
+  const allowRows: string[] = [
+    '< .env.local wc -l', // wc is neither a printer nor a pattern command
+    '< ~/.prdt/prdt.env cat', // anchored-basename near-miss, same as the trailing form
+    '< .env.example cat', // .example exception applies the same way
+  ]
+  for (const command of allowRows) {
+    test(`Bash ${command}`, () => {
+      expectAllow(bashEvent(command), command)
+    })
+  }
+})
+
+// ── Bash: printer-set additions (T-716, PO decision) — sort/tac/tee/od/xxd/
+// hexdump/strings/cut/paste/column join the S2a printer set; none carry a
+// flag/position exemption of their own, so a target argument anywhere denies
+// exactly like `cat` already does. ──────────────────────────────────────────
+
+describe('Bash — printer DENY, T-716 printer-set additions', () => {
+  const rows: string[] = [
+    'sort .env.local',
+    'tac .env.prod',
+    'tee .env.local',
+    'od .env',
+    'xxd server.pem',
+    'hexdump credentials.json',
+    'strings .env.local',
+    'cut -d= -f1 .env.local',
+    'paste .env.local',
+    'column .env.local',
+  ]
+  for (const command of rows) {
+    test(`Bash ${command}`, () => {
+      expectDeny(bashEvent(command), command)
+    })
+  }
+
+  // Same names, non-target argument — no new false denies on ordinary use.
+  const allowRows: string[] = ['sort src/config.ts', 'cut -d, -f1 data.csv']
+  for (const command of allowRows) {
+    test(`Bash ${command}`, () => {
+      expectAllow(bashEvent(command), command)
+    })
+  }
+})
+
 // ── Bash: anchored-basename ALLOW rows named in the T-677 dispatch
 // (prdt.env / .envrc / .env.example) plus the redirect-destination exclusion
 // this slice's design explicitly covers ───────────────────────────────────────

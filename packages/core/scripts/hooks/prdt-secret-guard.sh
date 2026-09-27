@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # prdt — credential guard (T-677 slices S2a + S2a-fix + S2b + S2b-fix + S2b-perf
-# + script-fix).
+# + script-fix; T-716 leading-redirect fix + printer set additions).
 # Registered (S3, hook-manifest.json) as PreToolUse, matcher `Read|Bash`;
 # exercised directly by test/scripts/secret-guard-hook.test.ts spawning it.
 #
@@ -103,6 +103,24 @@
 #             scan (so `cat .env.local` is judged as its own command); a bare
 #             `script`/`script FILE` with nothing after it judges nothing (an
 #             interactive session, correctly allowed).
+#   T-716     (ship-entry code review, 2026-09-27, PO-reproduced `< .env.local
+#             cat` → ALLOW while `cat < .env.local` → DENY on the same tree)
+#             the command-word skip loop recognized VAR=/reserved-word/
+#             WRAPPERS tokens only — a segment whose FIRST token was itself a
+#             redirect operator (`< .env.local cat`, `<.env.local cat` —
+#             tokenize emits the same tokens either way) stopped the scan
+#             dead ON the operator, so `basename("<")` was judged instead of
+#             the real command word after it, and the call silently allowed.
+#             Fixed: the skip loop now also steps over a leading `<` (queuing
+#             its target into `@lead_in`, judged once the real command word
+#             is resolved — the printer/pattern check right after `$cmdbase`)
+#             and a leading output redirect (`>`/`>>`/`&>`/`N>`/`N>>`, whose
+#             destination is skipped exactly like it already was after the
+#             command word — writing, not printing). Also added sort/tac/
+#             tee/od/xxd/hexdump/strings/cut/paste/column to %PRINTERS (PO
+#             decision, same review) — none carried a flag/position exemption
+#             of their own, so each joins the plain "any target argument
+#             anywhere → deny" set.
 #
 # ACCEPTED LIMITATIONS (not fixed, by design — read before treating any of
 # these as an oversight):
@@ -153,6 +171,15 @@
 #     substitution containing a literal unbalanced paren inside its own
 #     quotes could mis-locate the boundary; no such case is in this ticket's
 #     matrix.
+#   - LEADING-REDIRECT + %PATTERN EXEMPTION (T-716): a leading `<` target
+#     feeding a %PATTERN command (grep/egrep/fgrep/rg/sed/awk) denies
+#     outright once that command's word is resolved — it does NOT re-run
+#     that command's own flag-exemption / pattern-position logic (`grep -l`,
+#     `sed -i`, an explicit `-e`), unlike the identical redirect placed AFTER
+#     the command word, which does. `< .env.local grep -l TOKEN` denies;
+#     `grep -l TOKEN .env.local` (the trailing form) allows on the `-l`
+#     exemption. Over-denial, the same safe direction as everywhere else in
+#     this file — not fixed here, no such row is in this ticket's matrix.
 #
 # PRE-FILTER (fork-0 on a miss): a raw substring `case` on the WHOLE undecoded
 # payload, deliberately broader than `is_target` (it also fires on `prdt.env`,
@@ -611,7 +638,13 @@ sub extract_substitutions {
 # commands the command-word scan sees THROUGH (M2), each consuming ITS OWN
 # flags (and, where the flag takes a value, that value too) before the scan
 # resumes looking for the real command word.
-my %PRINTERS = map { $_ => 1 } qw(cat head tail less more bat nl);
+# T-716 (PO decision) added sort/tac/tee/od/xxd/hexdump/strings/cut/paste/
+# column to the S2a original cat/head/tail/less/more/bat/nl set — a ship-entry
+# code review found each of these prints a credential file byte for byte (or
+# a reencoding of the bytes) just as directly as `cat` does, and none carried any
+# flag/position exemption of its own, so they join the plain "any target
+# argument anywhere → deny" set rather than %PATTERN.
+my %PRINTERS = map { $_ => 1 } qw(cat head tail less more bat nl sort tac tee od xxd hexdump strings cut paste column);
 my %PATTERN  = map { $_ => 1 } qw(grep egrep fgrep rg sed awk);
 my %WRAPPERS = map { $_ => 1 } qw(sudo command time nice env exec nohup timeout stdbuf watch script);
 
@@ -630,6 +663,18 @@ sub judge_command {
     my @T = tokenize($seg);
     my $ntok = @T;
     my $idx = 0;
+    # Leading input-redirect targets (T-716): a segment whose FIRST token is
+    # `<` (`< .env.local cat`, `<.env.local cat` — tokenize emits the same
+    # three tokens either way, see the `tokenize` sub, arm for `<`) used to
+    # stop the command-word scan dead at that `<` (it matches none of
+    # VAR=/reserved-word/WRAPPERS below, so the loop fell to `last` with
+    # $idx still on the `<` itself — `basename("<")` is not a printer, so the
+    # real command word after it was never reached and the whole call
+    # silently allowed). Each `<` target is queued here and judged once the
+    # real command word is resolved (below), the same over-denial-safe
+    # direction as everywhere else in this file — see the `$lead_hit` check
+    # after `$cmdbase`.
+    my @lead_in = ();
     # Skip leading `VAR=val` assignments, a leading shell reserved word /
     # grouping token (M1), and wrapper commands together with their OWN
     # flags/values (M2) — so the token left at $idx is the actual program,
@@ -729,11 +774,40 @@ sub judge_command {
         if ($idx >= $ntok) { $idx = $widx; last }
         next;
       }
+      # T-716: a leading `<` — queue its target (judged below, once the real
+      # command word is known) and keep scanning past it for the command
+      # word. A leading OUTPUT redirect (`>`/`>>`/`&>`/`N>`/`N>>`) is skipped
+      # the same way the post-command-word scans already skip one — its
+      # destination is never judged anywhere in this file (writing, not
+      # printing) — so `> /dev/null cat .env.local` still resolves `cat` as
+      # the command word instead of stopping dead on the `>`.
+      if ($t eq "<") {
+        $idx++;
+        push @lead_in, $T[$idx] if $idx < $ntok;
+        $idx++;
+        next;
+      }
+      if (is_redir_out($t)) { $idx += 2; next }
       last;
     }
     next if $idx >= $ntok;
 
     my $cmdbase = basename(strip_quotes($T[$idx]));
+
+    # T-716: a leading `<` target (queued into @lead_in above, BEFORE the
+    # command word this segment resolved to) reaches the resolved command
+    # stdin exactly the way a trailing `cmd < target` already does — judge it
+    # the same way once the command word is known, before any of the
+    # cmdbase-specific branches below run. `< .env.local cat` and
+    # `<.env.local cat` both resolve $cmdbase to `cat` (a printer) with
+    # @lead_in = (".env.local"), so this denies them. Same direction as
+    # every other over-denial choice in this file: a leading redirect feeding
+    # a printer or a grep/sed/awk family command is judged, never silently
+    # skipped because the target sat before the command word instead of
+    # after it.
+    my $lead_hit = 0;
+    for my $lt (@lead_in) { $lead_hit = 1 if is_target(basename(strip_quotes($lt))) }
+    deny() if $lead_hit && ($PRINTERS{$cmdbase} || $PATTERN{$cmdbase});
 
     # source/`.`-then-echo (S2b): sourcing a target is itself ALLOWED (the
     # loader idiom, `set -a; . <file>; set +a; <cmd>`, is the deny message
