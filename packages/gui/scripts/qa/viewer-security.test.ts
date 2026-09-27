@@ -17,8 +17,52 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { renderPage, resolveDocLink, safeEncodeURI, encodeFsPathHref, detailDataScript } from '../../viewer/lib/render.mjs'
+import { pathToFileURL } from 'node:url'
+import { renderPage, resolveDocLink, safeEncodeURI, encodeFsPathHref, detailDataScript, isHrefContained } from '../../viewer/lib/render.mjs'
 import { collectArtifacts, isContainedArtifactPath, collectTickets, collectWiki } from '../../viewer/lib/collect.mjs'
+// REPO_ROOT/OUTPUT_PATH: generate.mjs's OWN, independent path arithmetic
+// (never render.mjs's internal DEFAULT_VIEWER_ABS_PATH) — the property test
+// below (T-711 slice 4) re-derives "does this href stay inside the repo?"
+// from these via `new URL()` directly, so it is not just re-asserting
+// whatever `isHrefContained` itself already believes.
+import { REPO_ROOT, OUTPUT_PATH } from '../../viewer/generate.mjs'
+
+const REPO_ROOT_PATHNAME = pathToFileURL(REPO_ROOT).pathname.replace(/\/$/, '') + '/'
+
+/**
+ * The property T-711 slice 4 exists to guarantee, checked independently of
+ * `isHrefContained`'s own implementation: `href` resolved via the browser's
+ * OWN `new URL()` algorithm against the REAL `viewer.html` (`OUTPUT_PATH`,
+ * from `generate.mjs`) lands inside the REAL repo root (`REPO_ROOT`).
+ */
+function realBrowserPathnameInsideRepoRoot(href: string): boolean {
+  const resolved = new URL(href, pathToFileURL(OUTPUT_PATH))
+  if (resolved.protocol !== 'file:') return false
+  return resolved.pathname === REPO_ROOT_PATHNAME.slice(0, -1) || resolved.pathname.startsWith(REPO_ROOT_PATHNAME)
+}
+
+/**
+ * The GROUND TRUTH for "should `resolveDocLink(href, sourceDirRel, …)`
+ * refuse this?" — resolves the AUTHOR's ORIGINAL `href` from a virtual
+ * `file://` URL standing in for the source document's own real repo
+ * location (`REPO_ROOT/sourceDirRel/doc.md`), via `new URL()` alone, and
+ * asks whether the result still lands inside `REPO_ROOT`. Never touches
+ * `render.mjs` — a second, wholly independent resolution of the exact same
+ * question `isHrefContained` answers, so the property test below is not
+ * just re-asserting what the implementation already believes about itself.
+ */
+function hrefEscapesRepoFromItsDoc(href: string, sourceDirRel: string): boolean {
+  const virtualDocUrl = pathToFileURL(path.join(REPO_ROOT, sourceDirRel, 'doc.md'))
+  let target: URL
+  try {
+    target = new URL(href, virtualDocUrl)
+  } catch {
+    return true
+  }
+  if (target.protocol !== 'file:') return true
+  const inside = target.pathname === REPO_ROOT_PATHNAME.slice(0, -1) || target.pathname.startsWith(REPO_ROOT_PATHNAME)
+  return !inside
+}
 
 // ---------- shared fixture plumbing ----------
 
@@ -261,9 +305,26 @@ describe('render.mjs — resolveDocLink refuses a percent-encoded/mixed dot-segm
     expect(resolveDocLink('./%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/OUTSIDE.png', 'docs/tickets/v1.10', '../../../..')).toBeNull()
   })
 
-  it('`..%2f` (already safe before this fix — ERR_INVALID_URL) is unaffected: still refused', () => {
+  // T-711 slice 4 correction: slice 2's decode-based check refused this one
+  // by ACCIDENT — decodePathSegments treated the whole opaque, slash-free
+  // string as ONE segment and ran decodeURIComponent on it, which happened
+  // to unescape %2f into a REAL '/' too (JS's decodeURIComponent does not
+  // distinguish "reserved" bytes), so the resulting string then read as a
+  // genuine multi-level "../../…" to path.posix.normalize even though
+  // nothing in the ORIGINAL href was a real path separator. A REAL BROWSER
+  // never does this: `new URL()` keeps `%2f`/`%2F` percent-encoded and inert
+  // in a path segment (MEASURED: `new URL('a%2fb', base).pathname` stays
+  // `a%2fb`, one segment — RFC 3986/WHATWG deliberately keep it opaque, the
+  // documented defense against exactly this class of path-separator
+  // confusion). So this href resolves to one harmless, oddly-named FILE
+  // inside `docs/tickets/v1.10/` — same directory as the doc, never
+  // escaping it — and `isHrefContained` (T-711 slice 4, judged the same way
+  // a browser does) correctly allows it, same as any other in-repo path
+  // with real %-encoded characters in its name.
+  it('`..%2f` is one opaque in-repo filename to a real browser (%2f is never a path separator) — resolves, does not escape', () => {
     const { bodyHtml } = renderTicketBody('![P1](..%2f..%2f..%2f..%2f..%2f..%2fOUTSIDE-IMG.png)')
-    expect(bodyHtml).not.toContain('<img')
+    expect(bodyHtml).toContain('<img')
+    expect(bodyHtml).toContain('docs/tickets/v1.10/..%2f..%2f..%2f..%2f..%2f..%2fOUTSIDE-IMG.png')
   })
 
   it('an already-%-encoded in-repo path with no dot segment at all still keeps its own encoding — no %25 regression from this fix', () => {
@@ -275,6 +336,162 @@ describe('render.mjs — resolveDocLink refuses a percent-encoded/mixed dot-segm
   it('a real relative link with a literal single dot segment (./sibling.md) still resolves exactly as before', () => {
     const { bodyHtml } = renderTicketBody('[sibling](./sibling.md)')
     expect(bodyHtml).toContain('<a href="../../../../docs/tickets/v1.10/sibling.md" target="_blank" rel="noopener">sibling</a>')
+  })
+})
+
+// ---------- a trailing `..?x`/`..#x` segment escapes past repo root (T-711 slice 4 B4) ----------
+// QA re-pass (4th round, ed31cb7 lineage → T-722 결정 a): `path.posix.normalize`
+// does not know `?`/`#` start a query/fragment, so a trailing segment like
+// `..?a` reads as ONE opaque, un-collapsible filename to it — but a REAL
+// BROWSER splits at the first unescaped `?`/`#` BEFORE collapsing dot
+// segments, so it sees one more real ".." than this generator's own
+// construction logic ever accounted for, climbing one directory above the
+// repo root (`file:///<parent-of-repo>/?a`). Closed by judging containment
+// on the FINAL candidate href via `new URL()` (`isHrefContained`) instead of
+// re-deriving the browser's own splitting/collapsing rules by hand.
+describe('render.mjs — resolveDocLink refuses a trailing `..?x`/`..#x` escape (T-711 slice 4 B4)', () => {
+  const cases = [
+    ['[q](../../../..?a)', 'link'],
+    ['[q](../../../..#a)', 'link'],
+    ['![q](../../../%2e%2e?b)', 'image'],
+    ['![q](../../../%2e%2e#b)', 'image'],
+    ['[q](../../../.%2E?w)', 'link'],
+    ['![q](../../../%2E.?w)', 'image'],
+  ] as const
+
+  for (const [md, kind] of cases) {
+    it(`${JSON.stringify(md)} renders as plain text/alt, never a live ${kind === 'image' ? '<img>' : 'anchor'}`, () => {
+      const { bodyHtml } = renderTicketBody(md)
+      if (kind === 'image') {
+        expect(bodyHtml).not.toContain('<img')
+      } else {
+        expect(bodyHtml).not.toContain('<a ')
+      }
+      expect(bodyHtml).toContain('q')
+    })
+  }
+
+  it('resolveDocLink itself returns null for the exact QA repro forms (unit-level)', () => {
+    expect(resolveDocLink('../../../..?a', 'docs/tickets/v1.10', '../../../..')).toBeNull()
+    expect(resolveDocLink('../../../%2e%2e?b', 'docs/tickets/v1.10', '../../../..')).toBeNull()
+  })
+
+  // The PRD's own image path — QA's exact repro shape, a DIFFERENT
+  // sourceDirRel ('docs/prd', 2 segments, not 'docs/tickets/v1.10', 3).
+  it('a PRD image with a mixed dot + query suffix (QA repro shape) is refused too, regardless of sourceDirRel depth', () => {
+    expect(resolveDocLink('../%2e%2e/.%2E?w', 'docs/prd', '../../../..')).toBeNull()
+  })
+
+  it('the same literal-dot depth WITHOUT a query/hash suffix still resolves normally (only the suffix shape is the bug — no over-eager rejection)', () => {
+    // Exactly 3 "../" cancels docs/tickets/v1.10 entirely, landing (still
+    // inside the repo) at its root — same depth as the B4 cases above, minus
+    // the `?`/`#` suffix that hides the extra level.
+    expect(resolveDocLink('../../../OUTSIDE.png', 'docs/tickets/v1.10', '../../../..')).not.toBeNull()
+  })
+})
+
+// ---------- property test: every emitted href, judged the browser's own way (T-711 slice 4) ----------
+// Not a reimplementation of the containment rule — `realBrowserPathnameInsideRepoRoot`
+// (this file's own helper, above) calls `new URL()` directly against the
+// REAL `viewer.html`/repo root (`generate.mjs`'s `OUTPUT_PATH`/`REPO_ROOT`,
+// computed independently of anything `render.mjs` believes about itself).
+// For every generated dot-segment/encoding × `?`/`#`/none suffix combination,
+// at a boundary depth (3 = lands exactly at repo root, still contained; 4 =
+// one level past it, must escape), `resolveDocLink`'s decision is checked
+// against what a real browser would actually do with the SAME string —
+// never against this generator's own opinion of what its normalize step
+// meant.
+describe('render.mjs — property: every resolveDocLink decision matches the browser\'s own new URL() resolution (T-711 slice 4)', () => {
+  const SOURCE_DIR_REL = 'docs/tickets/v1.10' // 3 segments
+  const REPO_ROOT_HREF = '../../../..'
+  const DOT_ENCODINGS = ['..', '%2e%2e', '%2E%2E', '.%2e', '%2e.', '.%2E', '%2E.']
+  const SUFFIXES = ['', '?tail', '#tail', '?q#f']
+  const DEPTHS = [3, 4] as const // 3 = exactly at repo root (contained); 4 = one past it (escaped)
+
+  for (const depth of DEPTHS) {
+    for (const dot of DOT_ENCODINGS) {
+      for (const suffix of SUFFIXES) {
+        const href = `${Array(depth).fill(dot).join('/')}${suffix}`
+        it(`depth=${depth} dot=${JSON.stringify(dot)} suffix=${JSON.stringify(suffix)} — href ${JSON.stringify(href)}`, () => {
+          const rewritten = resolveDocLink(href, SOURCE_DIR_REL, REPO_ROOT_HREF)
+          // Ground truth, computed twice, both times via `new URL()` alone —
+          // never a reimplementation of it: (1) does the AUTHOR's original
+          // href, resolved from the document's own real repo location,
+          // escape the repo? That decides whether `resolveDocLink` should
+          // have refused it at all. (2) if it DID emit something, does THAT
+          // exact string, resolved from the real viewer.html, still land
+          // inside the repo? (defense in depth on the emitted value itself).
+          const shouldEscape = hrefEscapesRepoFromItsDoc(href, SOURCE_DIR_REL)
+          if (shouldEscape) {
+            expect(rewritten).toBeNull()
+          } else {
+            expect(rewritten).not.toBeNull()
+            expect(realBrowserPathnameInsideRepoRoot(rewritten as string)).toBe(true)
+          }
+        })
+      }
+    }
+  }
+})
+
+// ---------- isHrefContained itself, and the ticket/artifact fileHref channels it also gates (T-711 slice 4) ----------
+describe('render.mjs — isHrefContained is the one check every emitted href is judged by', () => {
+  it('true for a plain in-repo relative href, false once it climbs one level past repoRootHref', () => {
+    expect(isHrefContained('../../../../docs/tickets/v1.10/T-1.md', { repoRootHref: '../../../..' })).toBe(true)
+    expect(isHrefContained('../../../../../docs/tickets/v1.10/T-1.md', { repoRootHref: '../../../..' })).toBe(false)
+  })
+
+  it('rootSubpath narrows the allowed root (docs/ for a fileHref) without widening past repoRootHref', () => {
+    expect(isHrefContained('../../../../docs/tickets/v1.10/T-1.md', { repoRootHref: '../../../..', rootSubpath: 'docs' })).toBe(true)
+    // Still inside the repo root, but NOT inside docs/ — refused when a
+    // fileHref channel asks for the narrower root.
+    expect(isHrefContained('../../../../package.json', { repoRootHref: '../../../..', rootSubpath: 'docs' })).toBe(false)
+  })
+
+  it('the B4 QA-repro shape (trailing `..?x`) is refused by this same function directly', () => {
+    expect(isHrefContained('../../../../..?a', { repoRootHref: '../../../..' })).toBe(false)
+  })
+
+  it('a real file:// URL is what it actually resolves against — verified against generate.mjs\'s own REPO_ROOT/OUTPUT_PATH', () => {
+    const href = '../../../../docs/tickets/v1.10/T-1.md'
+    expect(isHrefContained(href, { repoRootHref: '../../../..' })).toBe(true)
+    expect(realBrowserPathnameInsideRepoRoot(href)).toBe(true)
+  })
+})
+
+describe('render.mjs — ticket/artifact fileHref is gated by the same containment check (T-711 slice 4)', () => {
+  it('an omitted-bucket ticket fileHref that (hypothetically) escaped docs/ would be dropped, not emitted', () => {
+    const data = fixtureFor('')
+    ;(data.tickets as any).omitted = [
+      {
+        bucket: 'v1.9',
+        count: 1,
+        bytes: 10,
+        // encodeFsPathHref never lets `rel` escape in practice (it is always
+        // a real readdir'd repo path) — this fixture exists only to prove
+        // the GATE itself would catch it if it somehow did, per acceptance
+        // line 1 ("ticket fileHref" is one of the four judged hrefs).
+        tickets: [{ rel: '../outside-repo.md', frontmatter: { id: 'T-1', slug: 'x', type: 'impl', status: 'done', assignee: 'developer' } }],
+      },
+    ]
+    const html = renderPage({ data, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const detail = extractDetailData(html)
+    expect(detail.ticket['T-1'].fileHref).toBeUndefined()
+  })
+
+  it('a normal omitted-bucket ticket fileHref (a real repo path) still comes through unchanged', () => {
+    const data = fixtureFor('')
+    ;(data.tickets as any).omitted = [
+      {
+        bucket: 'v1.9',
+        count: 1,
+        bytes: 10,
+        tickets: [{ rel: 'docs/tickets/v1.9/T-1.md', frontmatter: { id: 'T-1', slug: 'x', type: 'impl', status: 'done', assignee: 'developer' } }],
+      },
+    ]
+    const html = renderPage({ data, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const detail = extractDetailData(html)
+    expect(detail.ticket['T-1'].fileHref).toBe('../../../../docs/tickets/v1.9/T-1.md')
   })
 })
 
