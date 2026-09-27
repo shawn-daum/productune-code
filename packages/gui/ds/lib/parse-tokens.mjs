@@ -80,11 +80,25 @@ function describeMapDiff(a, b) {
  * Returns an empty Set if the marker is absent (degrades gracefully: those
  * tokens just render in their normal prefix group instead of the alias
  * section — never a generation failure).
+ *
+ * The marker text lives INSIDE the `/* … LEGACY ALIASES … *\/` comment
+ * itself, so slicing from the marker (as opposed to from the comment's own
+ * `/*` open) starts mid-comment: no opening `/*` remains in the slice for
+ * `stripComments` to match, so its closing `*\/` (and the comment prose
+ * before it) survives and fuses onto the first real declaration line,
+ * making that whole statement fail the `^--` match in `parseDeclarations`
+ * (T-712: dropped the first alias, `--surface-base`). Fix: locate the
+ * comment's OWN start/end around the marker and slice from just past its
+ * closing `*\/`, so only real declarations remain before `stripComments`.
  */
-function findLegacyAliasNames(rawCss) {
+export function findLegacyAliasNames(rawCss) {
   const idx = rawCss.indexOf('LEGACY ALIASES')
   if (idx === -1) return new Set()
-  const rest = rawCss.slice(idx)
+  const commentStart = rawCss.lastIndexOf('/*', idx)
+  if (commentStart === -1) return new Set()
+  const commentEnd = rawCss.indexOf('*/', idx)
+  if (commentEnd === -1) return new Set()
+  const rest = rawCss.slice(commentEnd + '*/'.length)
   const closeBrace = rest.indexOf('}')
   if (closeBrace === -1) return new Set()
   const block = stripComments(rest.slice(0, closeBrace))
