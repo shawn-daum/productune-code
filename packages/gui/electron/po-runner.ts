@@ -1098,6 +1098,15 @@ function extractTaskUsage(obj: any): { total_tokens?: number; tool_uses?: number
  *   - the worker's final `summary` (task_notification only) promoted to a PROSE
  *     stream line so it becomes the result panel's done-headline (AC-5/AC-6).
  * Called BEFORE complete/cancelDelegation (which delete the start-ms + persona maps).
+ *
+ * T-728: `obj` here is the raw parsed envelope (untyped `any`), so an
+ * envelope carrying `results[]{item,verdict,evidence}` passes through this
+ * function untouched — nothing here rebuilds or whitelists its keys. Only
+ * `summary` is promoted to the headline by design: `results[]` is a per-
+ * acceptance row list, and this slot is a ONE-LINE done-headline (contracts
+ * §Return envelope: "summary = the one-line outcome, never the rows"), so
+ * showing it here would restate the row list contracts says never to fold
+ * into `summary`. No reader in this file renders `results[]` today.
  */
 function forwardWorkerCompletionMeta(
   toolUseId: string,
@@ -2167,6 +2176,16 @@ export interface QaEnvelope {
     type: 'manual' | 'oauth' | 'env-var'
   } | null
   fail_reason?: string | null
+  // T-728: the return envelope's optional per-acceptance body field. Declared
+  // here so the type carries what the cast below already preserves at runtime
+  // — parseQaEnvelope returns the parsed object itself, never a field-by-field
+  // rebuild, so an envelope carrying `results[]` was never at risk of losing it.
+  // No branch in dispatchQaEnvelope reads it: that function's whole job is
+  // routing (browser-open / user-verify / loop-update / auth-todo), each a
+  // single derived value, and per-acceptance rows have no derived-value shape
+  // to route on — see forwardWorkerCompletionMeta below for the one place a
+  // return's prose actually reaches the chat surface.
+  results?: Array<{ item: string; verdict: 'pass' | 'fail' | 'unverified'; evidence: string }>
 }
 
 /**
