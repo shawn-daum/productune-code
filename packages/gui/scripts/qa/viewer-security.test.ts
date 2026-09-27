@@ -220,6 +220,142 @@ describe('detailDataScript — every "<" is escaped as \\u003c, not only "</scri
   })
 })
 
+// ---------- encoded/mixed dot-segment traversal (T-711 slice 2 B1) ----------
+// QA re-pass of ed31cb7 (hostile fixture repo under os.tmpdir, headless
+// Chromium) found that `./%2e%2e/…/OUTSIDE-IMG.png` and `[P2](./%2e%2e/…)`
+// both escaped the repo: path.posix.normalize sees `%2e%2e` as an opaque
+// name and never collapses it, but the URL Standard's "double-dot URL path
+// segment" rule (which a real browser's own href-resolution follows) treats
+// `%2e%2e` / `.%2e` / `%2e.` (any case) as a real ".." — so the browser
+// climbed past the root anyway. Fixed by judging containment on the
+// decoded path in `resolveDocLink`.
+describe('render.mjs — resolveDocLink refuses a percent-encoded/mixed dot-segment escape (T-711 slice 2 B1)', () => {
+  it('a fully percent-encoded ../ escape in an image renders alt text, never a live <img> (QA repro)', () => {
+    const { bodyHtml } = renderTicketBody('![P1](./%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/OUTSIDE-IMG.png)')
+    expect(bodyHtml).not.toContain('<img')
+    expect(bodyHtml).toContain('P1')
+  })
+
+  it('the same escape in a LINK renders as plain text, never a live anchor (QA repro)', () => {
+    const { bodyHtml } = renderTicketBody('[P2](./%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/OUTSIDE-PAGE.html)')
+    expect(bodyHtml).not.toContain('<a ')
+    expect(bodyHtml).toContain('P2')
+  })
+
+  it('an uppercase percent-encoded escape (%2E%2E) is refused the same way', () => {
+    const { bodyHtml } = renderTicketBody('![P1](./%2E%2E/%2E%2E/%2E%2E/%2E%2E/%2E%2E/OUTSIDE-IMG.png)')
+    expect(bodyHtml).not.toContain('<img')
+  })
+
+  it('a mixed literal-dot + encoded-dot escape (.%2e) is refused the same way', () => {
+    const { bodyHtml } = renderTicketBody('![P1](./.%2e/.%2e/.%2e/.%2e/.%2e/OUTSIDE-IMG.png)')
+    expect(bodyHtml).not.toContain('<img')
+  })
+
+  it('a mixed encoded-dot + literal-dot escape (%2e.) is refused the same way', () => {
+    const { bodyHtml } = renderTicketBody('![P1](./%2e./%2e./%2e./%2e./%2e./OUTSIDE-IMG.png)')
+    expect(bodyHtml).not.toContain('<img')
+  })
+
+  it('resolveDocLink itself returns null for the decoded escape directly (unit-level, not just through renderTicketBody)', () => {
+    expect(resolveDocLink('./%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/OUTSIDE.png', 'docs/tickets/v1.10', '../../../..')).toBeNull()
+  })
+
+  it('`..%2f` (already safe before this fix — ERR_INVALID_URL) is unaffected: still refused', () => {
+    const { bodyHtml } = renderTicketBody('![P1](..%2f..%2f..%2f..%2f..%2f..%2fOUTSIDE-IMG.png)')
+    expect(bodyHtml).not.toContain('<img')
+  })
+
+  it('an already-%-encoded in-repo path with no dot segment at all still keeps its own encoding — no %25 regression from this fix', () => {
+    const rewritten = resolveDocLink('my%20doc.md', 'docs/wiki', '../..')
+    expect(rewritten).not.toContain('%25')
+    expect(rewritten).toContain('%20')
+  })
+
+  it('a real relative link with a literal single dot segment (./sibling.md) still resolves exactly as before', () => {
+    const { bodyHtml } = renderTicketBody('[sibling](./sibling.md)')
+    expect(bodyHtml).toContain('<a href="../../../../docs/tickets/v1.10/sibling.md" target="_blank" rel="noopener">sibling</a>')
+  })
+})
+
+// ---------- symlink escape under docs/artifacts (T-711 slice 2 B2) ----------
+// QA re-pass: isContainedArtifactPath compared path.resolve STRINGS only, so
+// a symlink (file or directory) physically living under docs/artifacts but
+// pointing outside it still read as "contained" by string comparison alone
+// — collect.mjs then inlined the outside file's real body. Fixed by
+// resolving both sides with fs.realpathSync before the containment compare.
+describe('collect.mjs — isContainedArtifactPath refuses a symlink under docs/artifacts pointing outside it (T-711 slice 2 B2)', () => {
+  function buildSymlinkFixtureRepo() {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-symlink-fixture-'))
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-symlink-outside-'))
+    fs.mkdirSync(path.join(repoRoot, 'docs/artifacts/v1.10'), { recursive: true })
+    fs.writeFileSync(path.join(outsideDir, 'OUTSIDE-FILE.md'), '# TOP SECRET outside file — must never be read into the viewer')
+    fs.mkdirSync(path.join(outsideDir, 'outside-sub'), { recursive: true })
+    fs.writeFileSync(path.join(outsideDir, 'outside-sub', 'nested.md'), '# TOP SECRET nested outside file')
+    // A symlinked FILE, physically under docs/artifacts, pointing to a file outside the repo entirely.
+    fs.symlinkSync(path.join(outsideDir, 'OUTSIDE-FILE.md'), path.join(repoRoot, 'docs/artifacts/v1.10/evil-file.md'))
+    // A symlinked DIRECTORY, physically under docs/artifacts, pointing to a directory outside the repo.
+    fs.symlinkSync(path.join(outsideDir, 'outside-sub'), path.join(repoRoot, 'docs/artifacts/v1.10/evil-dir'))
+    // A legitimate symlink that stays INSIDE docs/artifacts (a second bucket's real file) — must still be followed.
+    fs.mkdirSync(path.join(repoRoot, 'docs/artifacts/v1.9'), { recursive: true })
+    fs.writeFileSync(path.join(repoRoot, 'docs/artifacts/v1.9/real.md'), '# a real in-repo artifact')
+    fs.symlinkSync(path.join(repoRoot, 'docs/artifacts/v1.9/real.md'), path.join(repoRoot, 'docs/artifacts/v1.10/inside-link.md'))
+    return { repoRoot, outsideDir }
+  }
+
+  it('a symlinked FILE under docs/artifacts pointing outside the repo is refused', () => {
+    const { repoRoot, outsideDir } = buildSymlinkFixtureRepo()
+    try {
+      expect(isContainedArtifactPath(repoRoot, 'v1.10', 'evil-file.md')).toBe(false)
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+      fs.rmSync(outsideDir, { recursive: true, force: true })
+    }
+  })
+
+  it('a symlinked DIRECTORY under docs/artifacts pointing outside the repo is refused for a file inside it', () => {
+    const { repoRoot, outsideDir } = buildSymlinkFixtureRepo()
+    try {
+      expect(isContainedArtifactPath(repoRoot, 'v1.10', 'evil-dir/nested.md')).toBe(false)
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+      fs.rmSync(outsideDir, { recursive: true, force: true })
+    }
+  })
+
+  it('a symlink that stays INSIDE docs/artifacts may still be followed', () => {
+    const { repoRoot, outsideDir } = buildSymlinkFixtureRepo()
+    try {
+      expect(isContainedArtifactPath(repoRoot, 'v1.10', 'inside-link.md')).toBe(true)
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+      fs.rmSync(outsideDir, { recursive: true, force: true })
+    }
+  })
+
+  it('collectArtifacts end-to-end: a manifest row through an outside-pointing symlink is dropped, never inlined; an inside-pointing one still is', () => {
+    const { repoRoot, outsideDir } = buildSymlinkFixtureRepo()
+    try {
+      const manifest = {
+        entries: [
+          { bucket: 'v1.10', path: 'evil-file.md', kind: 'doc', status: 'approved', ticket: 'T-1', lang: 'ko', added_at: '2026-09-27' },
+          { bucket: 'v1.10', path: 'evil-dir/nested.md', kind: 'doc', status: 'approved', ticket: 'T-1', lang: 'ko', added_at: '2026-09-27' },
+          { bucket: 'v1.10', path: 'inside-link.md', kind: 'doc', status: 'approved', ticket: 'T-1', lang: 'ko', added_at: '2026-09-27' },
+        ],
+      }
+      fs.writeFileSync(path.join(repoRoot, 'docs/artifacts/manifest.json'), JSON.stringify(manifest))
+      const { entries } = collectArtifacts(repoRoot)
+      expect(entries.length).toBe(1)
+      expect(entries[0].fields.path).toBe('inside-link.md')
+      expect(entries.some((e: any) => String(e.body ?? '').includes('TOP SECRET'))).toBe(false)
+      expect(entries[0].body).toContain('a real in-repo artifact')
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+      fs.rmSync(outsideDir, { recursive: true, force: true })
+    }
+  })
+})
+
 // ---------- manifest path containment (F5) ----------
 
 describe('collect.mjs — collectArtifacts refuses a manifest bucket/path resolving outside docs/artifacts (F5)', () => {

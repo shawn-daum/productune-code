@@ -176,7 +176,30 @@ const ARTIFACTS_ROOT_REL = 'docs/artifacts'
 export function isContainedArtifactPath(repoRoot, bucket, relPath) {
   const artifactsRoot = path.resolve(repoRoot, ARTIFACTS_ROOT_REL)
   const resolved = path.resolve(artifactsRoot, bucket ?? '', relPath ?? '')
-  return resolved === artifactsRoot || resolved.startsWith(artifactsRoot + path.sep)
+  if (resolved !== artifactsRoot && !resolved.startsWith(artifactsRoot + path.sep)) return false
+  // T-711 slice 2 B2: the string-level check above holds, but a SYMLINK
+  // sitting under docs/artifacts (the bucket dir itself, or the final file)
+  // can still point outside it while every path string involved still reads
+  // as "under docs/artifacts" (QA repro: a symlinked file/dir under
+  // docs/artifacts inlined an outside file's real body). realpathSync
+  // resolves every symlink in the chain, so this catches that regardless of
+  // which segment carries the link.
+  let realResolved
+  try {
+    realResolved = fs.realpathSync(resolved)
+  } catch {
+    // Nothing on disk yet at this path (a manifest row for a file not yet
+    // landed, or already removed) — no symlink to resolve, so the
+    // string-level containment check above is the whole answer.
+    return true
+  }
+  let realRoot
+  try {
+    realRoot = fs.realpathSync(artifactsRoot)
+  } catch {
+    return true // docs/artifacts itself does not exist on disk at all
+  }
+  return realResolved === realRoot || realResolved.startsWith(realRoot + path.sep)
 }
 
 /**
