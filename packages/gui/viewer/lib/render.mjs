@@ -1148,7 +1148,7 @@ function homeSection(data, repoRootHref) {
   return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups }) })
 }
 
-const TEMPLATE_CSS = `
+export const TEMPLATE_CSS = `
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
@@ -1254,13 +1254,17 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   padding: 2px 8px; border-radius: var(--radius-100); line-height: 1.5; white-space: nowrap; }
 .pill-neutral { background: var(--bg-interaction-neutral); color: var(--text-secondary); }
 .pill-type { background: var(--bg-interaction-neutral); color: var(--text-secondary); }
-.pill-status-done { background: var(--bg-interaction-neutral); color: var(--status-done); }
+.pill-error { background: color-mix(in srgb, var(--status-blocked) 14%, transparent); color: var(--status-blocked); }
+.pill-status-done { background: color-mix(in srgb, var(--status-done) 14%, transparent); color: var(--status-done); }
+.pill-status-progress { background: color-mix(in srgb, var(--status-in-progress) 14%, transparent); color: var(--status-in-progress); }
+.pill-status-review { background: color-mix(in srgb, var(--status-review) 14%, transparent); color: var(--status-review); }
+.pill-status-blocked { background: color-mix(in srgb, var(--status-blocked) 14%, transparent); color: var(--status-blocked); }
 .pill-status-todo { background: var(--bg-interaction-neutral); color: var(--text-tertiary); }
-.pill-status-abandoned { background: var(--bg-interaction-neutral); color: var(--status-abandoned); }
-.pill-role-po { background: var(--bg-interaction-neutral); color: var(--persona-po); }
-.pill-role-designer { background: var(--bg-interaction-neutral); color: var(--persona-designer); }
-.pill-role-developer { background: var(--bg-interaction-neutral); color: var(--persona-dev); }
-.pill-role-qa { background: var(--bg-interaction-neutral); color: var(--persona-qa); }
+.pill-status-abandoned { background: color-mix(in srgb, var(--status-abandoned) 20%, transparent); color: var(--text-tertiary); }
+.pill-role-po { background: color-mix(in srgb, var(--persona-po) 14%, transparent); color: var(--persona-po); }
+.pill-role-designer { background: color-mix(in srgb, var(--persona-designer) 14%, transparent); color: var(--persona-designer); }
+.pill-role-developer { background: color-mix(in srgb, var(--persona-dev) 14%, transparent); color: var(--persona-dev); }
+.pill-role-qa { background: color-mix(in srgb, var(--persona-qa) 14%, transparent); color: var(--persona-qa); }
 /* T-666: a document's own section headings become chips — one rule, every
    renderer (hardenedRenderer.heading above is the one place that emits
    these classes). Extends the ticket/type/role pill vocabulary above rather
