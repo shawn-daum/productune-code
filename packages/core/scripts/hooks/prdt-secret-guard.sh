@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # prdt — credential guard (T-677 slices S2a + S2a-fix + S2b + S2b-fix + S2b-perf
-# + script-fix; T-716 leading-redirect fix + printer set additions).
+# + script-fix; T-716 leading-redirect fix + printer set additions; T-716 s2
+# fd-dup/numbered-stdin operators + tee reclassified + printer set additions).
 # Registered (S3, hook-manifest.json) as PreToolUse, matcher `Read|Bash`;
 # exercised directly by test/scripts/secret-guard-hook.test.ts spawning it.
 #
@@ -121,6 +122,33 @@
 #             decision, same review) — none carried a flag/position exemption
 #             of their own, so each joins the plain "any target argument
 #             anywhere → deny" set.
+#   T-716 s2  (QA grill of the T-716 commit, MEDIUM findings + a follow-up PO
+#             decision) closed three gaps in the leading-redirect fix above
+#             and settled tee's status:
+#             1. fd-dup / numbered-stdin OPERATORS covered end to end —
+#                `N>&M` (`2>&1`), bare `>&M` (`>&2`), `N<&M`/bare `<&M`
+#                (`<&0`), a digit-prefixed plain input redirect (`0<`), and
+#                the combined read-write redirect `<>` are now real tokens
+#                `tokenize` emits (see its `>`/`<`/digit arms) instead of
+#                splitting into `>`+`&`+digit-word fragments that derailed the
+#                command-word skip loop onto the fragment instead of the real
+#                command (`2>&1 cat .env.local` silently allowed before this).
+#                `is_fd_dup` recognizes the SELF-CONTAINED forms (no
+#                destination token to skip, unlike `N>`/`N>>`) so the skip
+#                loop steps over exactly one token for them.
+#             2. a leading `< target` now reaches every cmdbase branch that
+#                already judges ITS OWN trailing `< target` — read/mapfile/
+#                readarray/done, eval, the bash|sh|zsh -c family, and tee
+#                (added this slice, see #3) — not only PRINTERS/PATTERN;
+#                `< .env.local read -r line` used to allow because "read"
+#                matched neither set and @lead_in was never consulted again.
+#             3. tee RECLASSIFIED (PO decision): removed from %PRINTERS (its
+#                positional args are WRITE destinations, not prints — judging
+#                them was over-denial in the wrong direction) and given its
+#                own branch that denies only when tee's OWN stdin is fed a
+#                target via `<`/`<>` (leading or trailing). base64/uniq/rev
+#                joined %PRINTERS (same reasoning as the T-716 additions —
+#                each reencodes/reorders bytes without hiding any of them).
 #
 # ACCEPTED LIMITATIONS (not fixed, by design — read before treating any of
 # these as an oversight):
@@ -130,10 +158,17 @@
 #     substring scan, from a real heredoc operator — it can misidentify where
 #     a "body" starts/ends around one · a `<<`-shaped substring living inside
 #     an already-open multi-line QUOTED string can likewise confuse the
-#     line-based tag match · file-descriptor redirects/dup tricks (`3< file`,
-#     `cmd >&3` where fd 3 was opened elsewhere, `exec 3< .env.local` followed
-#     by reads from `&3`) move the target file's bytes around without ever
-#     naming it again in a form this hook's redirect handling recognizes ·
+#     line-based tag match · MULTI-STATEMENT file-descriptor indirection —
+#     `exec 3< .env.local` in one simple command followed by reads from `&3`
+#     in a LATER, unrelated one — moves the target file's bytes around
+#     without ever naming it again in a form this hook's redirect handling
+#     recognizes anywhere near the command that actually reads them (T-716 s2
+#     closed the single-command-adjacent fd-dup/numbered-stdin forms this
+#     hook DOES see spelled out next to a real command word — `2>&1 cat
+#     .env.local`, `<&0 cat .env.local`, `0< .env.local cat`, `<> .env.local
+#     cat` — see the T-716 s2 SCOPE entry; this bullet is the narrower,
+#     still-open remainder: an fd opened or read in a DIFFERENT simple
+#     command than the one this hook is judging) ·
 #     ANSI-C quoted strings (`$'\x2eenv'` etc.) let bash construct a literal
 #     target substring at RUNTIME from bytes that never spell it out in the
 #     command string this hook actually sees. All of these require a shell
@@ -351,6 +386,15 @@ sub basename { my $x = shift; $x =~ s{\A.*/}{}s; return $x }
 # is a destination (or fd), never an argument to judge.
 sub is_redir_out { my $t = shift; return ($t eq ">" || $t eq ">>" || $t eq "&>" || $t =~ /\A[0-9]>>?\z/) ? 1 : 0 }
 
+# T-716 s2 (QA grill MEDIUM): fd-dup / numbered-stdin operators (`N>&M`,
+# `>&M`, `N<&M`, `<&M`) are SELF-CONTAINED — the "destination" is a
+# file-descriptor NUMBER spelled inside the operator token itself (by the
+# digit-prefixed and bare `>`/`<` arms of `tokenize` below), never a following
+# word, so the command-word skip loop steps over exactly ONE token for these,
+# never two the way a real `N>`/`N>>` destination-argument pair is stepped
+# over by `is_redir_out` above.
+sub is_fd_dup { my $t = shift; return ($t =~ /\A[0-9]*>&[0-9]+\z/ || $t =~ /\A[0-9]*<&[0-9]+\z/) ? 1 : 0 }
+
 # strip_quotes(t): fully unquote one token — QUOTES ANYWHERE IN THE TOKEN (M3
 # grill: a token like `./".env.local"` is quoted only from the 2nd character
 # on, so a whole-token check misses it and the trailing quote rides into the
@@ -469,12 +513,29 @@ sub tokenize {
     }
     if ($c eq ">") {
       if ($inword) { push @tok, substr($s, $ts, $i - $ts); $inword = 0 }
-      if (substr($s, $i, 2) eq ">>") { push @tok, ">>"; $i += 2 } else { push @tok, ">"; $i++ }
+      if (substr($s, $i, 2) eq ">>") { push @tok, ">>"; $i += 2 }
+      elsif (substr($s, $i, 2) eq ">&") {
+        # T-716 s2: bare fd-dup out, `>&2` — the fd number is part of the
+        # operator itself (see is_fd_dup), never a separate token.
+        my $j = $i + 2;
+        $j++ while $j < $n && substr($s, $j, 1) =~ /\A[0-9]\z/;
+        push @tok, substr($s, $i, $j - $i); $i = $j;
+      } else { push @tok, ">"; $i++ }
       next;
     }
     if ($c eq "<") {
       if ($inword) { push @tok, substr($s, $ts, $i - $ts); $inword = 0 }
-      push @tok, "<"; $i++; next;
+      if (substr($s, $i, 2) eq "<>") {
+        # T-716 s2: combined read-write redirect, `<>` — a real file target
+        # follows as its own word, judged the same way a plain `<` target is.
+        push @tok, "<>"; $i += 2;
+      } elsif (substr($s, $i, 2) eq "<&") {
+        # T-716 s2: bare fd-dup in, `<&0` — self-contained, see is_fd_dup.
+        my $j = $i + 2;
+        $j++ while $j < $n && substr($s, $j, 1) =~ /\A[0-9]\z/;
+        push @tok, substr($s, $i, $j - $i); $i = $j;
+      } else { push @tok, "<"; $i++ }
+      next;
     }
     if ($c eq "&") {
       if ($inword) { push @tok, substr($s, $ts, $i - $ts); $inword = 0 }
@@ -482,12 +543,32 @@ sub tokenize {
       next;
     }
     if ($c =~ /\A[0-9]\z/) {
-      if (!$inword && substr($s, $i + 1, 1) eq ">") {
-        if (substr($s, $i + 2, 1) eq ">") { push @tok, "$c>>"; $i += 3 } else { push @tok, "$c>"; $i += 2 }
-      } else {
-        if (!$inword) { $ts = $i; $inword = 1 }
-        $i++;
+      if (!$inword) {
+        my $nc = substr($s, $i + 1, 1);
+        if ($nc eq ">") {
+          if (substr($s, $i + 2, 1) eq ">") { push @tok, "$c>>"; $i += 3; next }
+          if (substr($s, $i + 2, 1) eq "&") {
+            # T-716 s2: numbered fd-dup out, `2>&1`.
+            my $j = $i + 3;
+            $j++ while $j < $n && substr($s, $j, 1) =~ /\A[0-9]\z/;
+            push @tok, substr($s, $i, $j - $i); $i = $j; next;
+          }
+          push @tok, "$c>"; $i += 2; next;
+        }
+        if ($nc eq "<") {
+          # T-716 s2: numbered-fd forms of the `<`/`<&`/`<>` arms above —
+          # `0<`, `N<&M`, `N<>` — same operators, a leading fd digit.
+          if (substr($s, $i + 2, 1) eq "&") {
+            my $j = $i + 3;
+            $j++ while $j < $n && substr($s, $j, 1) =~ /\A[0-9]\z/;
+            push @tok, substr($s, $i, $j - $i); $i = $j; next;
+          }
+          if (substr($s, $i + 2, 1) eq ">") { push @tok, "$c<>"; $i += 3; next }
+          push @tok, "$c<"; $i += 2; next;
+        }
       }
+      if (!$inword) { $ts = $i; $inword = 1 }
+      $i++;
       next;
     }
     if (!$inword) { $ts = $i; $inword = 1 }
@@ -644,7 +725,19 @@ sub extract_substitutions {
 # a reencoding of the bytes) just as directly as `cat` does, and none carried any
 # flag/position exemption of its own, so they join the plain "any target
 # argument anywhere → deny" set rather than %PATTERN.
-my %PRINTERS = map { $_ => 1 } qw(cat head tail less more bat nl sort tac tee od xxd hexdump strings cut paste column);
+# T-716 s2 (PO decision, grill regrill) added base64/uniq/rev — same reasoning,
+# each reencodes or reorders a credential file byte stream without hiding any
+# of it. `tee` was REMOVED here (moved to its own branch below): unlike every
+# other name in this set, the OWN positional arguments tee takes are WRITE
+# destinations (the files it copies its stdin into), not things it prints —
+# `tee .env.local` and `echo x | tee -a .env.local` overwrite/append to that
+# file, they never put its EXISTING contents on screen, so judging them here
+# was over-denial in the wrong direction (the accepted direction of this file
+# is over-denial on PRINTING, never on writing). tee only prints a credential
+# when its OWN stdin is fed from one via `<`/`<>` (`tee < .env.local out` — it
+# copies that stdin to stdout, the way any printer would) — that shape is
+# judged by the tee dedicated branch below, not this set.
+my %PRINTERS = map { $_ => 1 } qw(cat head tail less more bat nl sort tac od xxd hexdump strings cut paste column base64 uniq rev);
 my %PATTERN  = map { $_ => 1 } qw(grep egrep fgrep rg sed awk);
 my %WRAPPERS = map { $_ => 1 } qw(sudo command time nice env exec nohup timeout stdbuf watch script);
 
@@ -781,12 +874,27 @@ sub judge_command {
       # destination is never judged anywhere in this file (writing, not
       # printing) — so `> /dev/null cat .env.local` still resolves `cat` as
       # the command word instead of stopping dead on the `>`.
-      if ($t eq "<") {
+      #
+      # T-716 s2 (QA grill MEDIUM): `\A[0-9]*<\z` also matches a digit-prefixed
+      # plain input redirect (`0<`, the numbered-fd arm of tokenize) — `0< .env.local
+      # cat` is otherwise indistinguishable from `< .env.local cat` (fd 0 IS
+      # stdin) and must queue its target the same way. `<>` (combined
+      # read-write redirect) reads the target too, so it queues identically —
+      # `<> .env.local cat` denies the same way `< .env.local cat` does.
+      if ($t =~ /\A[0-9]*<\z/ || $t eq "<>") {
         $idx++;
         push @lead_in, $T[$idx] if $idx < $ntok;
         $idx++;
         next;
       }
+      # T-716 s2 (QA grill MEDIUM): a leading fd-dup (`2>&1`, `>&2`, `<&0`, …)
+      # is self-contained — no destination token follows it to skip or queue
+      # (see is_fd_dup) — so only the operator itself is stepped over. Before
+      # this, none of the checks above matched a token like `2>&1`, so the
+      # loop fell to `last` with $idx still ON it — `basename("2>&1")` is not
+      # a printer, so the real command word after it was never reached and
+      # `2>&1 cat .env.local` silently allowed.
+      if (is_fd_dup($t)) { $idx++; next }
       if (is_redir_out($t)) { $idx += 2; next }
       last;
     }
@@ -805,9 +913,24 @@ sub judge_command {
     # a printer or a grep/sed/awk family command is judged, never silently
     # skipped because the target sat before the command word instead of
     # after it.
+    #
+    # T-716 s2 (QA grill MEDIUM): a leading `< target` must reach every
+    # cmdbase branch below that ALREADY judges its OWN trailing `< target`
+    # (read/mapfile/readarray/done, eval, the bash|sh|zsh -c family, tee) —
+    # not only PRINTERS/PATTERN. Before this, `< .env.local read -r line`
+    # silently allowed: $cmdbase resolved to "read", which matched neither
+    # %PRINTERS nor %PATTERN, so the leading target was never judged, and the
+    # read/mapfile branch further down only ever looks at ITS OWN trailing
+    # tokens — it never sees @lead_in at all.
     my $lead_hit = 0;
     for my $lt (@lead_in) { $lead_hit = 1 if is_target(basename(strip_quotes($lt))) }
-    deny() if $lead_hit && ($PRINTERS{$cmdbase} || $PATTERN{$cmdbase});
+    if ($lead_hit) {
+      deny() if $PRINTERS{$cmdbase} || $PATTERN{$cmdbase};
+      deny() if $cmdbase eq "read" || $cmdbase eq "mapfile" || $cmdbase eq "readarray" || $cmdbase eq "done";
+      deny() if $cmdbase eq "eval";
+      deny() if $cmdbase eq "tee";
+      deny() if $cmdbase =~ /\A(?:bash|sh|zsh|dash|ksh)\z/;
+    }
 
     # source/`.`-then-echo (S2b): sourcing a target is itself ALLOWED (the
     # loader idiom, `set -a; . <file>; set +a; <cmd>`, is the deny message
@@ -913,6 +1036,32 @@ sub judge_command {
         }
         $jj++;
       }
+    }
+
+    # tee (T-716 s2, PO decision): the OWN positional arguments tee takes are
+    # WRITE destinations, never judged (`tee .env.local`, `echo x | tee -a
+    # .env.local`, `sudo tee /etc/ssl/private/site.key` all allow — tee
+    # copies its stdin INTO those files, it never puts their EXISTING
+    # contents on screen). tee only prints a credential when its OWN stdin is
+    # fed from one via a trailing `<`/`<>` (`tee < .env.local out.txt` copies
+    # that stdin to stdout exactly like a real printer would) — the leading
+    # form (`< .env.local tee out.txt`) is already covered by the $lead_hit
+    # check above. Same redirect-skipping shape as every other scan here
+    # (fd-dup self-contained, `>`/`>>`/`N>`/`N>>` skip a destination token).
+    if ($cmdbase eq "tee") {
+      my $jj = $idx + 1;
+      while ($jj < $ntok) {
+        my $tok = $T[$jj];
+        if (is_fd_dup($tok)) { $jj++; next }
+        if (is_redir_out($tok)) { $jj += 2; next }
+        if ($tok eq "<" || $tok eq "<>") {
+          $jj++;
+          deny() if $jj < $ntok && is_target(basename(strip_quotes($T[$jj])));
+          next;
+        }
+        $jj++;
+      }
+      next;
     }
 
     if ($PATTERN{$cmdbase}) {
