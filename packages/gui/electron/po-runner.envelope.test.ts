@@ -16,6 +16,10 @@
  *   3. A real prdt-qa QA envelope sample round-trips browser_url / verify_url /
  *      verify_description / auth_required byte-identical (parser unmodified,
  *      per the confirmed contracts decision).
+ *   4. T-728: a return carrying the optional `results[]{item,verdict,evidence}`
+ *      body field round-trips unchanged through `parseQaEnvelope` — the reader
+ *      casts the parsed object rather than rebuilding it field-by-field, so it
+ *      was never at risk of dropping an unrecognized key.
  *
  * Mirrors the framework-free case-list + vitest driver idiom of
  * electron/ipc/costArchive.test.ts.
@@ -232,6 +236,27 @@ export const ENVELOPE_CASES: readonly Case[] = [
         qaEnv.verify_url === sample.verify_url &&
         qaEnv.verify_description === sample.verify_description &&
         JSON.stringify(qaEnv.auth_required) === JSON.stringify(sample.auth_required)
+      return { ok, detail: JSON.stringify(qaEnv) }
+    },
+  },
+  // ── T-728: results[]{item,verdict,evidence} survives the QA reader ─────────
+  {
+    label: 'a return carrying results[]{item,verdict,evidence} round-trips unchanged — the reader never drops or rejects it',
+    run: () => {
+      const results = [
+        { item: 'gate keeps task<=80/summary<=200 caps', verdict: 'pass' as const, evidence: 'over-cap:task/summary still fire at 81/201' },
+        { item: 're-ask names results[]', verdict: 'pass' as const, evidence: 'block_reason contains the literal field name' },
+        { item: 'GUI/CLI readers carry it through', verdict: 'unverified' as const, evidence: 'no reader whitelists envelope keys' },
+      ]
+      const envelope = JSON.stringify({
+        persona: 'prdt-qa',
+        task: 'T-728',
+        summary: 'results[] survives every reader; gate re-ask covered',
+        confidence: 0.9,
+        results,
+      })
+      const qaEnv = parseQaEnvelope(envelope)
+      const ok = !!qaEnv && JSON.stringify(qaEnv.results) === JSON.stringify(results)
       return { ok, detail: JSON.stringify(qaEnv) }
     },
   },
