@@ -21,6 +21,7 @@
 // absent.
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { marked, Renderer } from 'marked'
 import {
   STORE_LABEL,
@@ -158,6 +159,56 @@ hardenedRenderer.paragraph = function ({ tokens }) {
 // doctrine #1, build what's needed now.
 const DEFAULT_REPO_ROOT_HREF = '../../../..'
 
+// T-711 slice 4 (T-722 결정, 사용자 verbatim "722 a"): B1 (%2e%2e), B3
+// (manifest %-encoded dot segments) and B4 (a trailing `..?x`/`..#x` segment)
+// were three rounds of the SAME defect class — a string reimplementation of
+// what a browser's own href resolution does, each fix only closing the exact
+// shape QA had reproduced so far. `isHrefContained` below replaces all of
+// that special-casing with the one check that actually matters: hand the
+// FINAL, already-assembled href to `new URL()` — the real WHATWG algorithm a
+// browser runs (`?`/`#` splitting, %-decoding of dot segments, `..`
+// collapsing, all included) — against `viewerAbsPath`'s own real `file://`
+// location, then ask only "is the resulting pathname still inside the
+// allowed root?". `viewerAbsPath` defaults to THIS module's own file's real,
+// on-disk location one directory up (`viewer/lib/render.mjs` ->
+// `viewer/viewer.html`) — computed from `import.meta.url`, never a hardcoded
+// path literal (T-718: a checkout can live anywhere) — which is always deep
+// enough on a real filesystem that no legitimate `repoRootHref` traversal
+// clamps at the OS root and gets mistaken for "still contained".
+const DEFAULT_VIEWER_ABS_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'viewer.html')
+
+/**
+ * Whether `href` — an already-assembled, `repoRootHref`-relative string, the
+ * literal value about to be written into `href="…"`/`src="…"` — resolves,
+ * via the browser's own `new URL(href, base)` resolution against
+ * `viewerAbsPath`'s real `file://` location, to a path still inside
+ * `repoRootHref`'s own resolved directory (optionally narrowed to
+ * `rootSubpath` beneath it — `'docs'` for a fileHref, which only ever needs
+ * to point inside `docs/`, never the whole repo). The "allowed root" is
+ * derived from the SAME base + the SAME `new URL()` algorithm as the href
+ * being judged, rather than a second, independent path computation that
+ * could itself drift from what a real browser does.
+ * @param {string} href
+ * @param {object} [opts]
+ * @param {string} [opts.repoRootHref]
+ * @param {string} [opts.rootSubpath]
+ * @param {string} [opts.viewerAbsPath]
+ * @returns {boolean}
+ */
+export function isHrefContained(href, { repoRootHref = DEFAULT_REPO_ROOT_HREF, rootSubpath = '', viewerAbsPath = DEFAULT_VIEWER_ABS_PATH } = {}) {
+  const viewerFileUrl = pathToFileURL(viewerAbsPath)
+  let resolved
+  let rootUrl
+  try {
+    resolved = new URL(href, viewerFileUrl)
+    rootUrl = new URL(rootSubpath ? `${repoRootHref}/${rootSubpath}/` : `${repoRootHref}/`, viewerFileUrl)
+  } catch {
+    return false
+  }
+  if (resolved.protocol !== 'file:') return false
+  return resolved.pathname === rootUrl.pathname || resolved.pathname.startsWith(rootUrl.pathname)
+}
+
 /**
  * `href` resolved against `sourceDirRel` (the source document's own
  * repo-root-relative directory) and rebased onto `repoRootHref`, or `null`
@@ -167,12 +218,17 @@ const DEFAULT_REPO_ROOT_HREF = '../../../..'
  * assumed server root this generator does not control), or a path that
  * would resolve outside the repo root entirely (`../` walking past it) —
  * "leave untouched if it escapes the repo root", never rewritten past it.
+ * `path.posix.normalize` below only builds a clean, human-inspectable
+ * candidate string — the CONTAINMENT DECISION itself is `isHrefContained`'s
+ * alone, judged on that final candidate the same way a real browser would
+ * (T-711 slice 4).
  * @param {string} href
  * @param {string} sourceDirRel
  * @param {string} repoRootHref
+ * @param {string} [viewerAbsPath]
  * @returns {string|null}
  */
-export function resolveDocLink(href, sourceDirRel, repoRootHref) {
+export function resolveDocLink(href, sourceDirRel, repoRootHref, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH) {
   if (!href) return null
   if (/^(#|\/\/|\/)/.test(href)) return null
   if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return null
@@ -180,23 +236,9 @@ export function resolveDocLink(href, sourceDirRel, repoRootHref) {
   const pathPart = hashIdx === -1 ? href : href.slice(0, hashIdx)
   const hashPart = hashIdx === -1 ? '' : href.slice(hashIdx)
   if (!pathPart) return null
-  // T-711 slice 2 B1: containment is judged on the DECODED, per-segment path
-  // — the URL Standard's own "double-dot URL path segment" rule treats
-  // `%2e%2e`, `.%2e`, `%2e.` (any case) as a real ".." the same as a literal
-  // one, so a REAL BROWSER resolving this same relative href climbs past the
-  // repo root exactly like a literal `../` would, even though
-  // path.posix.normalize (which knows nothing about %-encoding) sees
-  // `%2e%2e` as an opaque, un-collapsible name and never flags it (QA
-  // repro, ed31cb7 re-pass: `./%2e%2e/%2e%2e/…/OUTSIDE-IMG.png` loaded on
-  // page load). Decoding is for THIS CHECK ONLY — the href actually emitted
-  // below is still built from the raw, still-encoded `pathPart`, so an
-  // already-%-encoded in-repo path (e.g. a literal `%20` space) keeps its
-  // encoding, never double-encoded (acceptance: "no %25 regression").
-  const decodedPathPart = decodePathSegments(pathPart)
-  const resolvedForCheck = path.posix.normalize(path.posix.join(sourceDirRel, decodedPathPart))
-  if (resolvedForCheck === '..' || resolvedForCheck.startsWith('../')) return null
   const resolved = path.posix.normalize(path.posix.join(sourceDirRel, pathPart))
-  return safeEncodeURI(`${repoRootHref}/${resolved}${hashPart}`)
+  const candidate = safeEncodeURI(`${repoRootHref}/${resolved}${hashPart}`)
+  return isHrefContained(candidate, { repoRootHref, viewerAbsPath }) ? candidate : null
 }
 
 /**
@@ -205,11 +247,14 @@ export function resolveDocLink(href, sourceDirRel, repoRootHref) {
  * mixed dot segment (`%2e%2e`, `.%2e`, `%2e.`, any case) as a real `..` the
  * same as a literal one to a REAL BROWSER resolving an href later, even
  * though `path.resolve`/`path.posix.normalize` (which know nothing about
- * %-encoding) see `%2e%2e` as an opaque, un-collapsible segment. Shared by
- * `resolveDocLink` above (T-711 slice 2 B1) and `collect.mjs`'s
- * `isContainedArtifactPath` (T-711 slice 3 B3) — one decode rule, two
- * containment checks, never a second copy of this logic. A malformed escape
- * is left as its literal segment — still checked, never silently dropped.
+ * %-encoding) see `%2e%2e` as an opaque, un-collapsible segment. Used by
+ * `collect.mjs`'s `isContainedArtifactPath` (T-711 slice 3 B3) — a
+ * FILESYSTEM containment check (`path.resolve`, no browser or `?`/`#`
+ * delimiter involved), so it stays on this decode rule rather than
+ * `isHrefContained` above, which is specifically about how a browser
+ * resolves an HREF (T-711 slice 4: `resolveDocLink` moved onto that instead,
+ * see its own comment). A malformed escape is left as its literal segment —
+ * still checked, never silently dropped.
  * @param {string} p
  */
 export function decodePathSegments(p) {
@@ -245,6 +290,25 @@ export function encodeFsPathHref(relPath) {
     .split('/')
     .map((seg) => encodeURIComponent(seg))
     .join('/')
+}
+
+/**
+ * `candidateHref` (a `fileHref` already built from a real, on-disk relative
+ * path — `ticketDetailEntries`/`artifactDetailEntries` below, never authored
+ * markdown) if `isHrefContained` finds it still inside `docs/` (T-711 slice 4
+ * acceptance: "or docs/ for fileHref"), else `undefined` — the exact shape
+ * both callers already treat as "no fileHref" (INTERACTION_SCRIPT's own
+ * `FILE_HREF_NOTE` fallback, unchanged by this). Structurally these two
+ * candidates cannot escape `docs/` today (readdir'd disk paths, or a
+ * manifest row `collect.mjs` already vetted) — this is defense in depth, the
+ * SAME one check the markdown-link/image path above is judged by, applied
+ * here too rather than trusting the caller's own construction never to drift.
+ * @param {string} candidateHref
+ * @param {string} repoRootHref
+ * @returns {string|undefined}
+ */
+function containedFileHref(candidateHref, repoRootHref) {
+  return isHrefContained(candidateHref, { repoRootHref, rootSubpath: 'docs' }) ? candidateHref : undefined
 }
 
 /**
@@ -599,7 +663,7 @@ function ticketDetailEntries(tickets, repoRootHref) {
         status: fm.status || '',
         assignee: fm.assignee || '',
         path: t.rel,
-        fileHref: `${repoRootHref}/${encodeFsPathHref(t.rel)}`,
+        fileHref: containedFileHref(`${repoRootHref}/${encodeFsPathHref(t.rel)}`, repoRootHref),
       }
     }
   }
@@ -947,7 +1011,7 @@ function artifactDetailEntries(artifacts, artifactsBaseHref, repoRootHref) {
       created: f.added_at || '',
       path: e.diskRel,
       body: e.inlined ? md(e.body, path.dirname(e.diskRel), repoRootHref) : undefined,
-      fileHref: e.inlined ? undefined : `${artifactsBaseHref}/${encodeFsPathHref(`${f.bucket}/${f.path}`)}`,
+      fileHref: e.inlined ? undefined : containedFileHref(`${artifactsBaseHref}/${encodeFsPathHref(`${f.bucket}/${f.path}`)}`, repoRootHref),
     }
   }
   return entries
