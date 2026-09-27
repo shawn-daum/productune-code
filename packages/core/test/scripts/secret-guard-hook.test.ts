@@ -98,6 +98,7 @@
  */
 
 import path from 'path'
+import fs from 'fs'
 import { spawnSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
@@ -190,6 +191,27 @@ function expectAllow(payload: unknown, sourceText: string) {
   const out = run(payload)
   expect(out, `expected silence (allow) for: ${sourceText}`).toBe('')
 }
+
+// ── the known trap (T-716 s2 dispatch): an apostrophe anywhere inside
+// PRDT_JUDGE (code OR comments) terminates the bash single-quoted literal
+// early and breaks the whole hook — a static, no-subprocess guard so a future
+// edit that reintroduces one fails CI immediately rather than needing a
+// syntax-error hunt. ──────────────────────────────────────────────────────────
+
+describe('PRDT_JUDGE single-quoted literal — no apostrophe anywhere (known trap)', () => {
+  test('the perl program text bash hands to `perl -e` contains zero apostrophe characters', () => {
+    const src = fs.readFileSync(HOOK, 'utf8')
+    const startTag = "PRDT_JUDGE='\n"
+    const start = src.indexOf(startTag)
+    expect(start, 'PRDT_JUDGE=\'  opening not found').toBeGreaterThanOrEqual(0)
+    const bodyStart = start + startTag.length
+    const end = src.indexOf("\n'\n", bodyStart)
+    expect(end, 'closing single-quote line not found').toBeGreaterThanOrEqual(0)
+    const body = src.slice(bodyStart, end)
+    const apostropheCount = (body.match(/'/g) || []).length
+    expect(apostropheCount).toBe(0)
+  })
+})
 
 // ── Read: every DENY row ──────────────────────────────────────────────────────
 
@@ -296,16 +318,58 @@ describe('Bash — leading redirect resolves to its real command word (T-716)', 
   }
 })
 
-// ── Bash: printer-set additions (T-716, PO decision) — sort/tac/tee/od/xxd/
+// ── Bash: fd-dup / numbered-stdin operator spellings, every operator this
+// slice covers (T-716 s2, QA grill MEDIUM) — before this fix, none of these
+// tokenized into a single self-contained operator, so the command-word skip
+// loop derailed onto the stray fragment and never reached the real command.
+
+describe('Bash — fd-dup / numbered-stdin operators resolve to the real command word (T-716 s2)', () => {
+  const denyRows: string[] = [
+    '2>&1 cat .env.local',
+    '>&2 cat .env.local',
+    '1>&2 cat .env.local',
+    '<&0 cat .env.local',
+    '0< .env.local cat',
+    '<> .env.local cat',
+    'cat <> .env.local',
+  ]
+  for (const command of denyRows) {
+    test(`Bash ${command}`, () => {
+      expectDeny(bashEvent(command), command)
+    })
+  }
+})
+
+// ── Bash: a leading `< target` reaches every cmdbase branch that already
+// judges its OWN trailing `< target` — read/mapfile/readarray/eval/the
+// bash|sh|zsh -c family — not only PRINTERS/PATTERN (T-716 s2, QA grill
+// MEDIUM). Before this, `< .env.local read -r line` allowed: "read" matched
+// neither set, so the leading-redirect check never fired.
+
+describe('Bash — leading < target reaches read/mapfile/eval/-c (T-716 s2)', () => {
+  const denyRows: string[] = [
+    '< .env.local read -r line; echo "$line"',
+    '< .env.local mapfile -t arr',
+    '< .env.local eval cat',
+    '< .env.local bash -c cat',
+  ]
+  for (const command of denyRows) {
+    test(`Bash ${command}`, () => {
+      expectDeny(bashEvent(command), command)
+    })
+  }
+})
+
+// ── Bash: printer-set additions (T-716, PO decision) — sort/tac/od/xxd/
 // hexdump/strings/cut/paste/column join the S2a printer set; none carry a
 // flag/position exemption of their own, so a target argument anywhere denies
-// exactly like `cat` already does. ──────────────────────────────────────────
+// exactly like `cat` already does. `tee` is NOT here — T-716 s2 reclassified
+// it, see its own describe block below. ──────────────────────────────────────
 
 describe('Bash — printer DENY, T-716 printer-set additions', () => {
   const rows: string[] = [
     'sort .env.local',
     'tac .env.prod',
-    'tee .env.local',
     'od .env',
     'xxd server.pem',
     'hexdump credentials.json',
@@ -325,6 +389,48 @@ describe('Bash — printer DENY, T-716 printer-set additions', () => {
   for (const command of allowRows) {
     test(`Bash ${command}`, () => {
       expectAllow(bashEvent(command), command)
+    })
+  }
+})
+
+// ── Bash: T-716 s2 printer-set additions — base64/uniq/rev join %PRINTERS ──
+
+describe('Bash — printer DENY, T-716 s2 printer-set additions', () => {
+  const rows: string[] = ['base64 .env.local', 'uniq .env.prod', 'rev credentials.json']
+  for (const command of rows) {
+    test(`Bash ${command}`, () => {
+      expectDeny(bashEvent(command), command)
+    })
+  }
+  test('base64 src/config.ts allows (not a target)', () => {
+    expectAllow(bashEvent('base64 src/config.ts'), 'base64 src/config.ts')
+  })
+})
+
+// ── Bash: T-716 s2 PO decision — tee's own positional arguments are WRITE
+// destinations (the files it copies its stdin into), never judged; tee only
+// prints a credential when its OWN stdin is fed one via `<`/`<>`. ──────────
+
+describe('Bash — tee reclassified: write destination, not a printer (T-716 s2)', () => {
+  const allowRows: string[] = [
+    'tee .env.local', // was denied under T-716 s1's blanket PRINTERS membership; PO reversed this
+    'echo x | tee -a .env.local',
+    'echo x | sudo tee /etc/ssl/private/site.key',
+  ]
+  for (const command of allowRows) {
+    test(`Bash ${command}`, () => {
+      expectAllow(bashEvent(command), command)
+    })
+  }
+
+  const denyRows: string[] = [
+    'tee < .env.local out.txt', // tee's OWN stdin fed a target via `<` — it prints that stdin to stdout
+    '< .env.local tee out.txt', // same shape, leading redirect form
+    'tee <> .env.local', // combined read-write redirect also feeds tee's stdin
+  ]
+  for (const command of denyRows) {
+    test(`Bash ${command}`, () => {
+      expectDeny(bashEvent(command), command)
     })
   }
 })
