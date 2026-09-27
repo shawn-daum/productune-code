@@ -6020,6 +6020,58 @@ def prdt_script_drift_warnings():
             f"the same resync the behind case uses: `{sync_cmd}` ({bootstrap_note})"]
 
 
+def meta_bridge_staleness_warnings():
+    """T-731 (dogfood 2026-09-27, following T-686): `dist/bin/meta-cli.cjs` is a
+    BUILD ARTIFACT of `packages/core/src` (tsc + esbuild), `dist/` is gitignored,
+    and until install.sh grew a build step (this same ticket), nothing in the
+    install/update path ever produced it — a fix committed to core/src bound
+    nothing until someone ran `npm run build` by hand. OBSERVED BY RUNNING:
+    T-686's lock fix (d9404460) was committed and "installed" (`prdt update`) on
+    2026-09-26, yet the bug it fixed recurred the next day — the bridge running
+    was still the 2026-09-22 build, missing that commit and two more
+    (`grep -c prdt-backup.lock` on it returned 0).
+
+    Same repo-root discovery the three mirror-drift checks above use
+    (`_repo_root_candidates`, self-reference then `PRDT_REPO`): the first
+    candidate carrying `src/bin/meta-cli.ts` is the source tree this bridge is
+    meant to be built from. No such candidate (an installed-only machine with
+    no nearby checkout) is silence, same posture as those checks' "no repo to
+    compare against" — this check can only ever fire from a machine that also
+    has the source, since a build artifact needs a build INPUT to be stale
+    against."""
+    for base in _repo_root_candidates():
+        src_dir = base / "src"
+        if not (src_dir / "bin" / "meta-cli.ts").is_file():
+            continue
+        bridge = base / "dist" / "bin" / "meta-cli.cjs"
+        build_cmd = f"cd {base} && npm run build"
+        if not bridge.is_file():
+            return [f"discipline: meta-cli bridge MISSING — {bridge} has never been built "
+                    f"from {src_dir}; the standard install (`bash {base}/scripts/install.sh`) "
+                    f"builds it now (T-731), or build it directly: `{build_cmd}`"]
+        try:
+            bridge_mtime = bridge.stat().st_mtime
+        except OSError as e:
+            return Skipped(f"could not stat {bridge} ({e.__class__.__name__})")
+        newest_mtime, newest_path = None, None
+        for p in src_dir.rglob("*"):
+            if not p.is_file():
+                continue
+            try:
+                m = p.stat().st_mtime
+            except OSError:
+                continue
+            if newest_mtime is None or m > newest_mtime:
+                newest_mtime, newest_path = m, p
+        if newest_mtime is not None and newest_mtime > bridge_mtime:
+            return [f"discipline: meta-cli bridge STALE — {bridge} predates {newest_path} "
+                    f"(src changed after the last build); the standard install "
+                    f"(`bash {base}/scripts/install.sh`) rebuilds it (T-731), or rebuild "
+                    f"directly: `{build_cmd}`"]
+        return []
+    return Skipped("no source tree nearby carrying src/bin/meta-cli.ts to compare the bridge against")
+
+
 def _hooks_repo_path():
     """The repo-checkout path for packages/core/scripts/hooks/ — the first
     candidate from `_repo_root_candidates()` (self-reference, then
@@ -10809,6 +10861,11 @@ def cmd_doctor(_args):
         # prdt script mirror↔repo drift (T-507 follow-up) — independent of whether a
         # discipline mirror exists at all.
         ("prdt script mirror drift", FAMILY_DE, lambda: prdt_script_drift_warnings()),
+        # meta-cli bridge (dist/bin/meta-cli.cjs) behind packages/core/src (T-731) —
+        # a BUILD staleness, not a mirror-content diff like the three checks
+        # around it, but the same family: a committed fix binds nothing until
+        # something rebuilds the artifact that actually runs.
+        ("meta-cli bridge staleness", FAMILY_DE, lambda: meta_bridge_staleness_warnings()),
         # hook mirror↔repo drift (T-532) — same independence from droot: the hooks
         # mirror lives at a fixed prdt_home()/hooks path, not behind
         # discipline_root()'s mirror-vs-repo-fallback preference.
