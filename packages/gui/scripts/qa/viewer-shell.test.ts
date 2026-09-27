@@ -381,3 +381,69 @@ describe("viewer/lib/render.mjs — relative document links resolve against the 
     expect(body).toContain('href="../../custom/docs/prd/versions/v1.1.md"')
   })
 })
+
+// T-708 slice 2 결함 3/11: the 10-square fold cap (a real logic branch, not
+// pure markup) and the removed dash-actions buttons. Real-browser layout
+// (nowrap never producing a 2nd row, the overall row's square size/gap
+// matching the matrix's, the frame filling the viewport) is asserted in
+// tests/viewer-html.window.spec.ts instead — vitest has no layout engine.
+describe('viewer/lib/render.mjs — home progress matrix folds beyond 10 squares (T-708 결함 3)', () => {
+  function fixtureWithCellCount(n) {
+    const included = Array.from({ length: n }, (_, i) => ({
+      bucket: 'v1.10',
+      rel: `docs/tickets/v1.10/T-fold-${i}.md`,
+      frontmatter: { id: `T-fold-${i}`, slug: `fold-${i}`, type: 'impl', status: 'open', assignee: 'developer', prd_item: 'v1.10#viewer' },
+      body: 'x',
+    }))
+    return { ...fixtureData, tickets: { included, omitted: [] } }
+  }
+
+  function homeSectionHtml(n) {
+    const html = renderPage({ data: fixtureWithCellCount(n), dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    return /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)![0]
+  }
+
+  it('a cell with exactly 10 tickets draws 10 squares and no fold fragment (boundary — not yet over the cap)', () => {
+    const home = homeSectionHtml(10)
+    const cellMatch = /<span class="stage-matrix-sq-wrap">((?:<span class="stage-sq[^>]*><\/span>)+)<\/span>/.exec(home)
+    expect(cellMatch).not.toBeNull()
+    expect((cellMatch![1].match(/class="stage-sq/g) ?? []).length).toBe(10)
+    expect(home).not.toContain('stage-matrix-fold')
+  })
+
+  it('a cell with 15 tickets draws only 10 squares plus one "+5" fold fragment, same wrap, and the done/total count still counts all 15', () => {
+    const home = homeSectionHtml(15)
+    const cellMatch = /<span class="stage-matrix-sq-wrap">([\s\S]*?)<\/span><span class="stage-matrix-count mono">(\d+)\/(\d+)<\/span>/.exec(home)
+    expect(cellMatch).not.toBeNull()
+    const [, sqWrapInner, done, total] = cellMatch!
+    expect((sqWrapInner.match(/class="stage-sq/g) ?? []).length).toBe(10)
+    expect(sqWrapInner).toContain('<span class="stage-matrix-fold">+5</span>')
+    expect(total).toBe('15')
+    expect(Number(done)).toBeLessThanOrEqual(15)
+  })
+
+  // Non-vacuous control: a cell that should NOT fold (5 tickets) really
+  // produces no fold fragment, or the "not.toContain" assertion above could
+  // be passing for the wrong reason (e.g. a typo in the class name checked).
+  it('checker fixture: a cell with fewer than 10 tickets never gets a fold fragment', () => {
+    const home = homeSectionHtml(5)
+    expect(home).not.toContain('stage-matrix-fold')
+  })
+
+  it("the overall progress line never folds even with far more than 10 tickets — only the per-item matrix cells do", () => {
+    const html = renderPage({ data: fixtureWithCellCount(15), dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const overallMatch = /<div class="stage-overall">[\s\S]*?<\/div>/.exec(html)
+    expect(overallMatch).not.toBeNull()
+    expect(overallMatch![0]).not.toContain('stage-matrix-fold')
+    expect((overallMatch![0].match(/class="stage-sq/g) ?? []).length).toBe(15)
+  })
+})
+
+describe('viewer/lib/render.mjs — home no longer carries the redundant 티켓/PRD shortcut buttons (T-708 결함 11)', () => {
+  it('the rendered home card has no dash-actions block and no btn-secondary button', () => {
+    const html = renderPage({ data: fixtureData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const home = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)![0]
+    expect(home).not.toContain('dash-actions')
+    expect(home).not.toContain('btn-secondary')
+  })
+})

@@ -461,6 +461,120 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
     }
   }, 30_000)
 
+  // T-708 슬라이스 2 결함 9 (PO 실측, headless 2000×900): .store-section 이
+  // 900 이 아니라 876 에서 끝나고 사이드바/본문 열은 851 에서 끝나 두 개의 빈
+  // 띠가 남았다 — root cause: T-665's retired flat layout's bare
+  // `section {margin-bottom/padding-bottom/border-bottom}` rule still
+  // matched `.store-section` (a real `<section>`), the only element that
+  // selector could still reach. Pins the fix at the SAME viewport PO used.
+  test('the frame fills the viewport height — no empty band below the sidebar/main columns or at the bottom of the window @window', async () => {
+    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+    const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+    try {
+      await page.setViewportSize({ width: 2000, height: 900 })
+      const rects = await page.evaluate(() => {
+        const r = (el: Element | null) => (el ? el.getBoundingClientRect() : null)
+        return {
+          innerHeight: window.innerHeight,
+          storeSection: r(document.querySelector('.store-section.active')),
+          sidebar: r(document.querySelector('.store-section.active .sidebar')),
+          mainCol: r(document.querySelector('.store-section.active .frame-main-col')),
+        }
+      })
+      expect(rects.storeSection!.bottom).toBe(rects.innerHeight)
+      expect(rects.sidebar!.bottom).toBe(rects.innerHeight)
+      expect(rects.mainCol!.bottom).toBe(rects.innerHeight)
+    } finally {
+      await page.close()
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await browser.close().catch(() => {})
+    }
+  }, 30_000)
+
+  // T-708 슬라이스 2 결함 10 (PO 결정, 사용자 축자 "전체의 네모 크기랑 아래
+  // 배정된 네모 크기가 달라"): '전체' 줄 네모(과거 6×6/gap 2px)가 행렬 네모
+  // (10×10/gap 3px)와 같은 크기가 됐는지 실제 렌더에서 확인 — 결함 3 은 행렬
+  // 칸만 접고(nowrap+10개 cap), '전체' 줄은 접지 않되 넘치면 줄을 바꾼다.
+  test("the overall progress row's squares match the matrix's own size/gap, never fold, and may wrap onto a 2nd line @window", async () => {
+    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+    const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+    try {
+      const sizes = await page.evaluate(() => {
+        const overallSq = document.querySelector('.stage-overall-sq-wrap .stage-sq')
+        const matrixSq = document.querySelector('.stage-matrix .stage-sq')
+        const wrap = document.querySelector('.stage-overall-sq-wrap')
+        const overallRect = overallSq!.getBoundingClientRect()
+        const matrixRect = matrixSq!.getBoundingClientRect()
+        return {
+          overall: { width: overallRect.width, height: overallRect.height },
+          matrix: { width: matrixRect.width, height: matrixRect.height },
+          wrapFlexWrap: getComputedStyle(wrap!).flexWrap,
+          wrapGap: getComputedStyle(wrap!).gap,
+        }
+      })
+      expect(sizes.overall).toEqual(sizes.matrix)
+      expect(sizes.overall.width).toBe(10)
+      expect(sizes.wrapFlexWrap).toBe('wrap')
+      await expect(page.locator('.stage-overall .stage-matrix-fold')).toHaveCount(0)
+
+      // "may wrap": force the sq-wrap to a width narrower than its real
+      // 61-square line and confirm it actually spans more than one visual
+      // row (distinct top offsets among the squares) — proves `wrap` isn't
+      // a dead value that never triggers in practice.
+      const wraps = await page.evaluate(() => {
+        const wrap = document.querySelector('.stage-overall-sq-wrap') as HTMLElement
+        wrap.style.width = '200px'
+        const tops = new Set(Array.from(wrap.querySelectorAll('.stage-sq')).map((el) => Math.round(el.getBoundingClientRect().top)))
+        return tops.size
+      })
+      expect(wraps).toBeGreaterThan(1)
+    } finally {
+      await page.close()
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await browser.close().catch(() => {})
+    }
+  }, 30_000)
+
+  // T-708 슬라이스 2 결함 3: the matrix's own fold cap in the REAL generated
+  // page (developer × 항목 밖 = 15 tickets today — measured 2026-09-27),
+  // never a 2nd row for any matrix cell.
+  test('a real matrix cell over 10 tickets shows exactly 10 squares plus a "+N" fold, all on one line — no matrix row ever wraps @window', async () => {
+    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+    const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+    try {
+      const fold = page.locator('#store-home .stage-matrix .stage-matrix-fold').first()
+      await expect(fold).toHaveCount(1)
+      const cell = page.locator('#store-home .stage-matrix .stage-matrix-fold').first().locator('xpath=ancestor::span[contains(@class,"stage-matrix-sq-wrap")]')
+      const info = await cell.evaluate((el) => {
+        const squares = Array.from(el.querySelectorAll('.stage-sq, .stage-sq-svg'))
+        const tops = new Set(squares.map((s) => Math.round(s.getBoundingClientRect().top)))
+        return { squareCount: squares.length, distinctRows: tops.size, flexWrap: getComputedStyle(el).flexWrap }
+      })
+      expect(info.squareCount).toBe(10)
+      expect(info.distinctRows).toBe(1)
+      expect(info.flexWrap).toBe('nowrap')
+    } finally {
+      await page.close()
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await browser.close().catch(() => {})
+    }
+  }, 30_000)
+
+  // T-708 슬라이스 2 결함 11: the buttons under the progress card are gone —
+  // the sidebar's own 티켓/PRD rows are the only way to reach those stores.
+  test('home carries no "티켓 목록 보기"/"PRD 열기" shortcut buttons under the progress card @window', async () => {
+    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+    const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+    try {
+      await expect(page.locator('#store-home .dash-actions')).toHaveCount(0)
+      await expect(page.locator('#store-home .btn-secondary')).toHaveCount(0)
+    } finally {
+      await page.close()
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await browser.close().catch(() => {})
+    }
+  }, 30_000)
+
   // T-666 slice 1b: wiki/feature/artifact/PRD now share the SAME
   // sidebar-group → list → detail-panel model the ticket store proved in
   // slice 1a (acceptance line 1). One real-browser row-open per store —
