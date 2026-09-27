@@ -12,6 +12,17 @@ Version-by-version release notes for this project.
 >   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
 > - Everything above the first `## ` heading is preamble and is ignored by the parser.
 
+## v1.10.1 — v1.10 회고 규율 반영 · 반환 봉투 결과 칸 (2026-09-27)
+
+> 패치 릴리스입니다. v1.10 회고에서 닫힌 티켓 세 건(T-725·T-726·T-728)을 반영합니다.
+> 적용: `prdt update` 또는 `packages/core/scripts/install.sh` 재실행.
+
+### Added
+- **반환 봉투에 합격 기준별 결과 칸이 생겼습니다** — `results[]{item,verdict,evidence}`. `summary`(≤200자)는 결과 한 줄로 남고, 합격 기준마다 결과·근거를 적는 워커(QA 등)는 이 칸에 담습니다. 반환 게이트의 되묻기 문구가 이 칸을 가리키고, `task`≤80·`summary`≤200 캡은 그대로입니다. GUI `QaEnvelope` 타입이 이 필드를 선언하고, 게이트 되묻기 문구와 이 필드를 쓴 반환의 왕복을 테스트가 고정합니다.
+
+### Changed
+- **v1.10 회고에서 세 번 이상 반복 관측된 다섯 가지가 정본 규율에 반영됐습니다.** contracts §Language 말투 줄이 "새 낱말을 만들지 않는다"와 "라벨·제목은 의문문으로 쓰지 않는다"를 명시적으로 포함하도록 늘었고("문제 · 개선 효과" — "뭐가 문제인가 고치면 뭐가 나아지나?"는 위반), contracts §Git 은 `git stash`/`git stash pop`을 bare 로 쓰지 말고(WIP 커밋 또는 이름 붙은 `stash push -u -m <tag>`) 스크래치 삭제는 이 디스패치가 만든 이름 붙은 대상만 지우도록(글롭 금지) 못박았습니다. PO habit 은 사용자의 화면·레이아웃 모양 지시를 산문이 아니라 ASCII 스케치로 되읽는 절차를 얻었습니다.
+
 ## v1.10 — PRD·티켓·위키 구조 통합 · 정적 뷰어 · major 1 북극성 첫 관측 (2026-09-27)
 
 > CLI 아티팩트 단독 릴리스입니다. GUI(.dmg)는 이 버전에 포함되지 않습니다 — GUI 유예는 major 1 전체에 걸리고 그 근거는 [[fact--gui-deferral]] 한 곳에 있습니다.
