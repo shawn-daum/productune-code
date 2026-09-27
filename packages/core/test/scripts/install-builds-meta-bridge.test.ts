@@ -29,6 +29,29 @@ function hasNpm(): boolean {
   try { execFileSync('npm', ['--version'], { stdio: 'ignore' }); return true } catch { return false }
 }
 
+/**
+ * T-734 (review finding 5, test flake): CORE_ROOT/dist/.build.lock is shared
+ * with every OTHER file's install.sh calls running concurrently under the
+ * full parallel suite. install.sh's own ~30s wait ceiling means a single
+ * invocation here can legitimately print "busy 30s+ — skipping" when another
+ * file's build is still holding the lock past that ceiling — a correct
+ * outcome of the mutex, not a defect in the install run THIS test made, and
+ * not evidence the bridge is stale. Re-running install.sh picks it back up:
+ * either the other build has finished by then (bridge already fresh —
+ * "already up to date") or this run wins the lock itself ("Building node
+ * bridge"). Looping past "busy" here is what makes this test assert on the
+ * bridge's actual end state instead of on which install happened to observe
+ * lock contention.
+ */
+function runInstallSettling(env: NodeJS.ProcessEnv, maxAttempts = 5): string {
+  let r = ''
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    r = execFileSync('bash', [path.join(CORE_ROOT, 'scripts', 'install.sh')], { env, encoding: 'utf8' })
+    if (!/busy 30s\+/.test(r)) return r
+  }
+  return r // exhausted retries — let the assertions below fail with a readable diff
+}
+
 describe.skipIf(!hasJq() || !hasNpm())('install.sh rebuilds the node bridge (T-731)', () => {
   test('a bridge older than the newest src file is rebuilt newer by install', () => {
     // Bring the bridge to a KNOWN-fresh state first (skip if this machine
@@ -49,9 +72,7 @@ describe.skipIf(!hasJq() || !hasNpm())('install.sh rebuilds the node bridge (T-7
     fs.utimesSync(SRC_ENTRY, now, now)
 
     const sb = makeSandbox('core-install-bridge-')
-    const r = execFileSync('bash', [path.join(CORE_ROOT, 'scripts', 'install.sh')], {
-      env: sb.env, encoding: 'utf8',
-    })
+    const r = runInstallSettling(sb.env)
     fs.rmSync(sb.root, { recursive: true, force: true })
 
     // CORE_ROOT (and its dist/.build.lock) is the real repo checkout, shared
@@ -65,11 +86,12 @@ describe.skipIf(!hasJq() || !hasNpm())('install.sh rebuilds the node bridge (T-7
     // bridge" pins the happy, uncontended path; the mtime assertions below
     // are what actually pins the behavior under test — the bridge ends up
     // rebuilt after the source touch regardless of which install did it.
+    // (runInstallSettling already retries past a transient "busy 30s+".)
     expect(r).toMatch(/Building node bridge|node bridge already up to date \(built by another install/)
     const afterMtime = fs.statSync(BRIDGE).mtimeMs
     expect(afterMtime).toBeGreaterThan(beforeMtime)
     expect(afterMtime / 1000).toBeGreaterThanOrEqual(now - 1)
-  }, 60000)
+  }, 180000) // runInstallSettling may retry past several ~30s "busy" ceilings
 
   test('a bridge already newer than every src file is left untouched (no rebuild)', () => {
     const sb0 = makeSandbox('core-install-bridge-prime2-')
