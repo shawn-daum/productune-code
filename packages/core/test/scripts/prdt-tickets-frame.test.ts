@@ -284,6 +284,36 @@ describe.skipIf(!PYTHON3)('prdt tickets fmt', () => {
     expect(r3.out).not.toMatch(/recommend/)
   })
 
+  // ── T-715 ③: a missing/malformed `created` used to coerce to `""`, which
+  // always sorts before TICKET_FRAME_LANDING_DATE — the ticket silently took
+  // the "older ticket, skip" branch with no line printed at all, so
+  // `--check` reported nothing and exited 0 on a ticket whose frame was
+  // never actually checked.
+
+  test('a ticket with no `created` key at all is reported by --check, never silently skipped', () => {
+    const res = runInit()
+    const dir = path.join(projectDir, 'docs', 'tickets', res.version)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(ticketPath(res.version, 'T-710'), [
+      '---', 'id: T-710', 'slug: fixture-t-710', 'type: impl',
+      'status: open', 'assignee: developer', '---', '',
+      '## Request\nx\n\n## Acceptance\ny\n',
+    ].join('\n'))
+    const { out, status } = runPrdtAllowFail(['tickets', 'fmt', 'T-710', '--check'])
+    expect(status).not.toBe(0)
+    expect(out).toMatch(/T-710:.*created is missing or malformed/)
+    // it is ALSO checked against the frame like a current ticket, not merely reported
+    expect(out).toMatch(/T-710:.*`Request`.*`problem`/)
+  })
+
+  test('a ticket whose `created` is not a plain YYYY-MM-DD string (malformed) is reported by --check', () => {
+    const res = runInit()
+    writeTicket(res.version, 'T-711', { created: 'not-a-date', body: '## problem\nx\n\n## acceptance\ny\n' })
+    const { out, status } = runPrdtAllowFail(['tickets', 'fmt', 'T-711', '--check'])
+    expect(status).not.toBe(0)
+    expect(out).toMatch(/T-711:.*created is missing or malformed/)
+  })
+
   test('older tickets (created before the frame landing date) pass untouched', () => {
     const res = runInit()
     writeTicket(res.version, 'T-709', { created: '2026-09-01', body: '## Request\nold frame\n\n## Acceptance\nx\n' })

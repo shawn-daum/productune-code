@@ -255,6 +255,32 @@ describe.skipIf(!PYTHON3)('prdt env check (T-677 S1)', () => {
     assertNoValueLeak(out)
   })
 
+  // ── T-715 ①: a closed quote followed by trailing text (comment or not) is
+  // not open-quote continuation — the reviewer-observed repro (PO):
+  // `A="xyz" # note\nB=1\nC=hello\n` → `env check f B C` reported both
+  // `absent`, exit 1, because the closing quote had to be the line's LAST
+  // byte or the whole rest of the file got swallowed as A's continuation.
+
+  test('a double-quoted value followed by a trailing `# comment` closes on the same line; later keys still parse', () => {
+    const file = writeFixture('.env.trailing-dq', `A="${DQUOTE_VALUE}" # note\nB=1\nC=hello\n`)
+    const { out, code } = run(['env', 'check', file, 'A', 'B', 'C'])
+    expect(code).toBe(0)
+    expect(out).toContain(`A  set  len=${DQUOTE_VALUE.length}`)
+    expect(out).toContain('B  set  len=1')
+    expect(out).toContain('C  set  len=5')
+    assertNoValueLeak(out)
+  })
+
+  test('a single-quoted value followed by trailing text closes on the same line; later keys still parse', () => {
+    const file = writeFixture('.env.trailing-sq', `A='${SQUOTE_VALUE}' # note\nB=1\nC=hello\n`)
+    const { out, code } = run(['env', 'check', file, 'A', 'B', 'C'])
+    expect(code).toBe(0)
+    expect(out).toContain(`A  set  len=${SQUOTE_VALUE.length}`)
+    expect(out).toContain('B  set  len=1')
+    expect(out).toContain('C  set  len=5')
+    assertNoValueLeak(out)
+  })
+
   test('a PEM-shaped multi-line value (base64 line ending in `=`) is not re-parsed as its own KEY=', () => {
     const file = writeFixture(
       '.env.pem',
