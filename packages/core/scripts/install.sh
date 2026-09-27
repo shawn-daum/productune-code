@@ -63,11 +63,28 @@ print(os.path.realpath(sys.argv[1]))
 PYEOF
 }
 TMP=""
-BUILD_LOCK=""  # §1b's mkdir-mutex around the bridge build — released here so a
-                # `die` mid-build (or the script's own exit) never leaves it locked
+BUILD_LOCK=""  # §1b's mkdir-mutex around the bridge build
+BUILD_PID=""   # the npm child §1b started, while it's still running
+BUILD_LOG=""   # its captured output, until printed on failure
 cleanup() {
   [ -z "${TMP:-}" ] || rm -f "$TMP"
-  [ -z "${BUILD_LOCK:-}" ] || rmdir "$BUILD_LOCK" 2>/dev/null || true
+  [ -z "${BUILD_LOG:-}" ] || rm -f "$BUILD_LOG"
+  if [ -n "${BUILD_LOCK:-}" ]; then
+    # T-732: a `die` mid-build, or the script's own signaled exit (SIGTERM),
+    # used to release the lock here unconditionally — but the npm child §1b
+    # backgrounded is a SEPARATE process; killing/exiting THIS script does
+    # not touch it, so it keeps building after the lock is gone, and a
+    # second install racing in right after would start a CONCURRENT build
+    # against the same dist/. Release the lock only once nothing is still
+    # building under it: if the recorded child is still alive, leave the
+    # lock (and its pid file) standing so another install reads it as
+    # busy — never abandoned — until that child actually exits.
+    if [ -n "${BUILD_PID:-}" ] && kill -0 "$BUILD_PID" 2>/dev/null; then
+      :
+    else
+      rm -rf "$BUILD_LOCK" 2>/dev/null || true
+    fi
+  fi
 }
 trap cleanup EXIT
 
@@ -272,31 +289,80 @@ if [ -f "$ROOT/package.json" ] && [ -f "$SRC_ENTRY" ]; then
       # the same $ROOT/dist — this fix exists BECAUSE a concurrency bug in
       # the thing the bridge builds went unnoticed; it does not get to
       # introduce one of its own in building it.
+      #
+      # T-732: the holder writes the npm child's OWN pid into "$LOCK/pid"
+      # right after starting it (below) — the one fact that tells a waiter
+      # apart an ABANDONED lock (holder's install died — SIGKILL never runs
+      # its cleanup trap — but nothing is building any more) from a BUSY one
+      # (the recorded pid is still alive, still writing to dist/). Without
+      # this, a lock a killed install left behind blocked every later
+      # install's rebuild forever — the exact "bridge stays stale" symptom
+      # T-731 exists to remove, reproduced by a lock instead of by a missing
+      # build step.
       LOCK="$ROOT/dist/.build.lock"
       mkdir -p "$ROOT/dist"
+      lock_abandoned() {
+        [ -d "$LOCK" ] || return 1
+        HOLDER_PID="$(cat "$LOCK/pid" 2>/dev/null || true)"
+        [ -n "$HOLDER_PID" ] && ! kill -0 "$HOLDER_PID" 2>/dev/null
+      }
       LOCKED=false
       WAITED=0
       while [ "$WAITED" -lt 150 ]; do   # ~30s ceiling — never hang the install
         if mkdir "$LOCK" 2>/dev/null; then LOCKED=true; break; fi
+        if lock_abandoned && rm -rf "$LOCK" 2>/dev/null; then
+          continue  # retry mkdir now — no reason to sit out the ceiling too
+        fi
         WAITED=$((WAITED + 1))
         sleep 0.2
       done
       if [ "$LOCKED" = false ]; then
-        say "1b) node bridge build lock busy 30s+ — skipping this run's rebuild (another install is building it); \`prdt doctor\` will report if it's still stale"
+        # Ran out the full ~30s without ever seeing a live holder's pid — the
+        # lock existed the whole time but nothing wrote (or renewed) a pid
+        # into it, which a genuine builder does within its first instant.
+        # Treat that as abandoned too rather than reporting "busy" forever.
+        if lock_abandoned || [ ! -e "$LOCK/pid" ]; then
+          rm -rf "$LOCK" 2>/dev/null || true
+          mkdir "$LOCK" 2>/dev/null && LOCKED=true
+        fi
+      fi
+      if [ "$LOCKED" = false ]; then
+        say "1b) node bridge build lock ($LOCK) busy 30s+ — skipping this run's rebuild (another install is building it); \`prdt doctor\` will report if it's still stale"
       else
         BUILD_LOCK="$LOCK"
         if bridge_stale; then  # re-check: another run may have just finished while we waited
           say "1b) Building node bridge (source changed since last build) — npm run build"
-          if BUILD_OUT="$(cd "$ROOT" && npm run build 2>&1)"; then
+          BUILD_LOG="$(mktemp)"
+          # Backgrounded so its pid is known (and recorded) WHILE it runs, not
+          # only after it finishes — a command-substitution `$(...)` hides
+          # that pid until the command returns, which is too late for a
+          # concurrent waiter to tell "still building" from "abandoned".
+          (cd "$ROOT" && npm run build) >"$BUILD_LOG" 2>&1 &
+          BUILD_PID=$!
+          printf '%s\n' "$BUILD_PID" > "$LOCK/pid"
+          if wait "$BUILD_PID"; then BUILD_OK=true; else BUILD_OK=false; fi
+          BUILD_PID=""
+          BUILD_OUT="$(cat "$BUILD_LOG" 2>/dev/null || true)"
+          rm -f "$BUILD_LOG"; BUILD_LOG=""
+          if [ "$BUILD_OK" = true ]; then
             say "   built $BRIDGE"
           else
-            say "   node bridge build FAILED — $BRIDGE left as is; \`prdt doctor\` will warn until it's fixed (\`cd $ROOT && npm run build\`). Build output:"
+            # T-732: node_modules absent (fresh clone) fails `npm run build`
+            # for a reason `npm run build` itself can never fix — pointing
+            # the remedy at the same command that just failed sends whoever
+            # reads this in a circle. Name the fix that actually works.
+            if [ -d "$ROOT/node_modules" ]; then
+              REMEDY="npm run build"
+            else
+              REMEDY="npm install (dependencies are not installed — \`npm run build\` alone fails the same way) && npm run build"
+            fi
+            say "   node bridge build FAILED — $BRIDGE left as is; \`prdt doctor\` will warn until it's fixed (\`cd $ROOT && $REMEDY\`). Build output:"
             printf '%s\n' "$BUILD_OUT" | tail -20 >&2
           fi
         else
           say "1b) node bridge already up to date (built by another install while this one waited)"
         fi
-        rmdir "$LOCK" 2>/dev/null || true
+        rm -rf "$LOCK" 2>/dev/null || true
         BUILD_LOCK=""
       fi
     fi
