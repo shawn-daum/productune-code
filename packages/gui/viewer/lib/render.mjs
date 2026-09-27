@@ -192,20 +192,59 @@ export function resolveDocLink(href, sourceDirRel, repoRootHref) {
   // below is still built from the raw, still-encoded `pathPart`, so an
   // already-%-encoded in-repo path (e.g. a literal `%20` space) keeps its
   // encoding, never double-encoded (acceptance: "no %25 regression").
-  const decodedPathPart = pathPart
+  const decodedPathPart = decodePathSegments(pathPart)
+  const resolvedForCheck = path.posix.normalize(path.posix.join(sourceDirRel, decodedPathPart))
+  if (resolvedForCheck === '..' || resolvedForCheck.startsWith('../')) return null
+  const resolved = path.posix.normalize(path.posix.join(sourceDirRel, pathPart))
+  return safeEncodeURI(`${repoRootHref}/${resolved}${hashPart}`)
+}
+
+/**
+ * Decodes EACH `/`-separated segment of `p` independently — the URL
+ * Standard's own "double-dot URL path segment" rule treats a %-encoded or
+ * mixed dot segment (`%2e%2e`, `.%2e`, `%2e.`, any case) as a real `..` the
+ * same as a literal one to a REAL BROWSER resolving an href later, even
+ * though `path.resolve`/`path.posix.normalize` (which know nothing about
+ * %-encoding) see `%2e%2e` as an opaque, un-collapsible segment. Shared by
+ * `resolveDocLink` above (T-711 slice 2 B1) and `collect.mjs`'s
+ * `isContainedArtifactPath` (T-711 slice 3 B3) — one decode rule, two
+ * containment checks, never a second copy of this logic. A malformed escape
+ * is left as its literal segment — still checked, never silently dropped.
+ * @param {string} p
+ */
+export function decodePathSegments(p) {
+  return (p ?? '')
     .split('/')
     .map((seg) => {
       try {
         return decodeURIComponent(seg)
       } catch {
-        return seg // malformed escape — left as a literal segment, still checked below
+        return seg
       }
     })
     .join('/')
-  const resolvedForCheck = path.posix.normalize(path.posix.join(sourceDirRel, decodedPathPart))
-  if (resolvedForCheck === '..' || resolvedForCheck.startsWith('../')) return null
-  const resolved = path.posix.normalize(path.posix.join(sourceDirRel, pathPart))
-  return safeEncodeURI(`${repoRootHref}/${resolved}${hashPart}`)
+}
+
+/**
+ * Builds an href segment-by-segment from `relPath`, a REAL FILESYSTEM PATH
+ * (a ticket/artifact rel path collect.mjs read off disk or a manifest row —
+ * never authored markdown prose), encoding EACH `/`-separated segment fresh
+ * with `encodeURIComponent` rather than `safeEncodeURI`'s pass-through.
+ * `safeEncodeURI` exists to respect an AUTHOR's own intentional %-escape in
+ * a hand-written markdown link (T-711 C3) — wrong here, where a literal `%`
+ * byte already in a real filename (a file actually named `a%20b.html`) must
+ * itself be escaped to `%25` like any other special character. Passed
+ * through instead, a browser decodes that `%20` back into a space on
+ * navigation and opens `a b.html`, a file that does not exist (T-711 slice 3
+ * acceptance line 2). `/` segment separators are preserved, never escaped to
+ * `%2F`.
+ * @param {string} relPath
+ */
+export function encodeFsPathHref(relPath) {
+  return String(relPath ?? '')
+    .split('/')
+    .map((seg) => encodeURIComponent(seg))
+    .join('/')
 }
 
 /**
@@ -560,7 +599,7 @@ function ticketDetailEntries(tickets, repoRootHref) {
         status: fm.status || '',
         assignee: fm.assignee || '',
         path: t.rel,
-        fileHref: safeEncodeURI(`${repoRootHref}/${t.rel}`),
+        fileHref: `${repoRootHref}/${encodeFsPathHref(t.rel)}`,
       }
     }
   }
@@ -908,7 +947,7 @@ function artifactDetailEntries(artifacts, artifactsBaseHref, repoRootHref) {
       created: f.added_at || '',
       path: e.diskRel,
       body: e.inlined ? md(e.body, path.dirname(e.diskRel), repoRootHref) : undefined,
-      fileHref: e.inlined ? undefined : safeEncodeURI(`${artifactsBaseHref}/${f.bucket}/${f.path}`),
+      fileHref: e.inlined ? undefined : `${artifactsBaseHref}/${encodeFsPathHref(`${f.bucket}/${f.path}`)}`,
     }
   }
   return entries

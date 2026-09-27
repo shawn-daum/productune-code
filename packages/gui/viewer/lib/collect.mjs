@@ -49,7 +49,7 @@ import { parseFrontmatter } from './frontmatter.mjs'
 // a ticket bucket directory spelled differently from po-state's own version
 // string (`v1.10.0` on disk vs `v1.10` in `.prdt/po-state.json`) is still the
 // same version. No cycle: render.mjs never imports collect.mjs.
-import { sameVersion } from './render.mjs'
+import { sameVersion, decodePathSegments } from './render.mjs'
 
 function readJson(p) {
   return JSON.parse(fs.readFileSync(p, 'utf8'))
@@ -177,6 +177,19 @@ export function isContainedArtifactPath(repoRoot, bucket, relPath) {
   const artifactsRoot = path.resolve(repoRoot, ARTIFACTS_ROOT_REL)
   const resolved = path.resolve(artifactsRoot, bucket ?? '', relPath ?? '')
   if (resolved !== artifactsRoot && !resolved.startsWith(artifactsRoot + path.sep)) return false
+  // T-711 slice 3 B3: the string check above is judged on the RAW bucket/path
+  // — path.resolve knows nothing about %-encoding, so it sees a row like
+  // {bucket:'v1', path:'%2E%2E/%2e./.%2e/%2e%2e/OUTSIDE.md'} as an opaque,
+  // un-collapsible name and lets it through (QA re-pass of 936baeb: the file
+  // named no path on disk, so the realpathSync check below threw ENOENT and
+  // fell back to "true" on this same raw check — the fileHref this row went
+  // on to build then kept the %2e%2e segments verbatim, and a REAL BROWSER
+  // decodes them as a real ".." on navigation, climbing one directory above
+  // docs/artifacts). Judging the DECODED, per-segment form too (same rule as
+  // resolveDocLink's own B1 fix, shared via `decodePathSegments`) catches
+  // this regardless of whether the target exists on disk yet.
+  const decodedResolved = path.resolve(artifactsRoot, decodePathSegments(bucket ?? ''), decodePathSegments(relPath ?? ''))
+  if (decodedResolved !== artifactsRoot && !decodedResolved.startsWith(artifactsRoot + path.sep)) return false
   // T-711 slice 2 B2: the string-level check above holds, but a SYMLINK
   // sitting under docs/artifacts (the bucket dir itself, or the final file)
   // can still point outside it while every path string involved still reads
