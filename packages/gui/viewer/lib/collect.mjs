@@ -155,15 +155,39 @@ export function collectPrd(repoRoot) {
   return { current, closed }
 }
 
+const ARTIFACTS_ROOT_REL = 'docs/artifacts'
+
+/**
+ * True when `bucket`/`relPath` (exactly as one manifest row names them)
+ * resolves to a real path still INSIDE `docs/artifacts` — never a `../`
+ * (in either field) walking out of it (T-711 F5: collect.mjs never checked
+ * this, so a manifest row like `{bucket:"v1.10", path:"../../../etc/passwd"}`
+ * would have its arbitrary target read straight into the page).
+ * @param {string} repoRoot
+ * @param {string} bucket
+ * @param {string} relPath
+ */
+export function isContainedArtifactPath(repoRoot, bucket, relPath) {
+  const artifactsRoot = path.resolve(repoRoot, ARTIFACTS_ROOT_REL)
+  const resolved = path.resolve(artifactsRoot, bucket ?? '', relPath ?? '')
+  return resolved === artifactsRoot || resolved.startsWith(artifactsRoot + path.sep)
+}
+
 /**
  * @returns {{ entries: Array<{fields:object, inlined:boolean, body?:string}> }}
  */
 export function collectArtifacts(repoRoot) {
-  const manifestPath = path.join(repoRoot, 'docs/artifacts/manifest.json')
+  const manifestPath = path.join(repoRoot, ARTIFACTS_ROOT_REL, 'manifest.json')
   const manifest = readJson(manifestPath)
-  const entries = (manifest.entries || []).map((fields) => {
+  const entries = []
+  for (const fields of manifest.entries || []) {
     const bucket = fields.bucket
-    const relFsPath = path.join(repoRoot, 'docs/artifacts', bucket, fields.path)
+    // T-711 F5: a row whose bucket/path resolves outside docs/artifacts is
+    // refused wholesale — never inlined, never linked, never counted — rather
+    // than building a fileHref that points at an arbitrary file on the
+    // machine that ran `pnpm viewer`.
+    if (!isContainedArtifactPath(repoRoot, bucket, fields.path)) continue
+    const relFsPath = path.join(repoRoot, ARTIFACTS_ROOT_REL, bucket, fields.path)
     const isMd = fields.path.toLowerCase().endsWith('.md')
     let body
     let bytes
@@ -171,14 +195,14 @@ export function collectArtifacts(repoRoot) {
       bytes = fs.statSync(relFsPath).size
       if (isMd) body = fs.readFileSync(relFsPath, 'utf8')
     }
-    return {
+    entries.push({
       fields,
-      diskRel: `docs/artifacts/${bucket}/${fields.path}`,
+      diskRel: `${ARTIFACTS_ROOT_REL}/${bucket}/${fields.path}`,
       inlined: isMd && body !== undefined,
       bytes,
       body,
-    }
-  })
+    })
+  }
   return { entries }
 }
 
