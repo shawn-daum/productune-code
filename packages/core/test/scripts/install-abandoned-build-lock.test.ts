@@ -231,6 +231,174 @@ describe.skipIf(!hasJq())('T-734: breaking an abandoned lock has a single winner
   }, 45000)
 })
 
+/**
+ * T-734 (ship-entry review finding 2, follow-up): the single-`mv`-winner fix
+ * above stops two waiters from both deleting the SAME abandoned lock, but a
+ * THIRD install's stale verdict slips past it: `lock_abandoned` is judged
+ * once, and by the time that waiter's `steal_abandoned_lock` actually runs,
+ * a DIFFERENT install can already have stolen the same dead lock, `mkdir`'d
+ * a fresh one for itself, and be genuinely building under it. `mv` only
+ * guarantees a single racer renames whatever CURRENTLY sits at $LOCK — it
+ * says nothing about whether that content is still the lock a waiter judged
+ * abandoned a moment ago. This test forces exactly that interleaving,
+ * deterministically, via install.sh's test-only `PRDT_TEST_STEAL_HOOK` seam
+ * (a script the installer calls, and blocks on, right after judging a lock
+ * abandoned but before stealing it) rather than hoping real scheduling
+ * happens to hit a race that would otherwise last a few CPU instructions.
+ */
+describe.skipIf(!hasJq())('T-734: a stale abandoned-verdict never displaces a lock recreated by someone else', () => {
+  test('install A pauses right after judging a dead lock abandoned; install B recreates a live one in the meantime; A must hand it back untouched', async () => {
+    const sbx = makeSandbox()
+    const lockPath = path.join(sbx.root, 'dist', '.build.lock')
+    fs.mkdirSync(path.join(sbx.root, 'dist'), { recursive: true })
+    fs.mkdirSync(lockPath)
+    const dead = spawnSync(process.execPath, ['-e', ''])
+    fs.writeFileSync(path.join(lockPath, 'pid'), String(dead.pid))
+
+    // The hook install A calls the instant it has judged the lock above
+    // abandoned: signal "judged" and block until told to proceed, so the
+    // test controls exactly when A's OWN steal attempt actually runs.
+    const judged = path.join(sbx.sb, 'a-judged')
+    const go = path.join(sbx.sb, 'a-go')
+    const hook = path.join(sbx.sb, 'steal-hook.sh')
+    fs.writeFileSync(hook, [
+      '#!/usr/bin/env bash',
+      `touch '${judged}'`,
+      `while [ ! -e '${go}' ]; do sleep 0.05; done`,
+      '',
+    ].join('\n'))
+    fs.chmodSync(hook, 0o755)
+
+    const markerB = path.join(sbx.sb, 'npm-started-b')
+    const logB = path.join(sbx.sb, 'npm-invocations-b.log')
+    const bridge = path.join(sbx.root, 'dist', 'bin', 'meta-cli.cjs')
+    const npmPath = withFakeNpm()
+
+    const homeA = { home: path.join(sbx.sb, 'homeA'), prdtHome: path.join(sbx.sb, 'prdtA'), claudeDir: path.join(sbx.sb, 'claudeA') }
+    const homeB = { home: path.join(sbx.sb, 'homeB'), prdtHome: path.join(sbx.sb, 'prdtB'), claudeDir: path.join(sbx.sb, 'claudeB') }
+    for (const h of [homeA, homeB]) for (const d of [h.home, h.prdtHome, h.claudeDir]) fs.mkdirSync(d, { recursive: true })
+
+    // A: reaches the pre-seeded dead-pid lock first and parks in the hook,
+    // holding a verdict ("abandoned") it never gets to act on yet.
+    const childA = spawn('bash', [installSh(sbx)], {
+      env: {
+        ...process.env, HOME: homeA.home, PRDT_HOME: homeA.prdtHome, CLAUDE_DIR: homeA.claudeDir,
+        PATH: npmPath, PRDT_TEST_STEAL_HOOK: hook,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let outA = ''
+    childA.stdout?.on('data', d => { outA += d }); childA.stderr?.on('data', d => { outA += d })
+
+    const deadline1 = Date.now() + 10000
+    while (!fs.existsSync(judged) && Date.now() < deadline1) await sleep(20)
+    expect(fs.existsSync(judged), 'install A never reached the steal hook').toBe(true)
+
+    // B: a different install, unaware of A, finds the same lock still
+    // sitting there (A has not stolen it yet), steals it for real, and
+    // starts a genuine (slow) build under a FRESH, live lock of its own.
+    const childB = spawn('bash', [installSh(sbx)], {
+      env: {
+        ...process.env, HOME: homeB.home, PRDT_HOME: homeB.prdtHome, CLAUDE_DIR: homeB.claudeDir,
+        PATH: npmPath, FAKE_NPM_MARKER: markerB, FAKE_NPM_LOG: logB, FAKE_NPM_SLEEP: '2', FAKE_NPM_BRIDGE: bridge,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let outB = ''
+    childB.stdout?.on('data', d => { outB += d }); childB.stderr?.on('data', d => { outB += d })
+
+    const deadline2 = Date.now() + 10000
+    while (!fs.existsSync(markerB) && Date.now() < deadline2) await sleep(20)
+    expect(fs.existsSync(markerB), 'install B never started its (live) build').toBe(true)
+    // The pid install.sh's own lock actually records is the BACKGROUNDED
+    // subshell's pid (`$!` on `(cd "$ROOT" && npm run build) &`), not fake
+    // npm's own `$$` (a child the subshell forks to run "npm") — read it
+    // from the lock itself, the exact value our fix's post-mv check reads.
+    const lockPidFile = path.join(lockPath, 'pid')
+    while (!fs.existsSync(lockPidFile) && Date.now() < deadline2) await sleep(20)
+    expect(fs.existsSync(lockPidFile), 'B never wrote a pid into its fresh lock').toBe(true)
+    const pidB = Number(fs.readFileSync(lockPidFile, 'utf8').trim())
+    expect(isAlive(pidB), 'install B\'s build must genuinely be running').toBe(true)
+    expect(fs.existsSync(lockPath), 'B must hold a fresh, live lock at this point').toBe(true)
+
+    // Release A: its stale verdict now acts on a lock that has since
+    // become someone else's live build. It must hand it back untouched.
+    fs.writeFileSync(go, '')
+    await sleep(500)
+    expect(isAlive(pidB), 'B\'s build must still be running — never displaced by A\'s stale steal').toBe(true)
+    expect(fs.existsSync(lockPath), 'A must never have discarded B\'s live lock').toBe(true)
+    expect(fs.readFileSync(path.join(lockPath, 'pid'), 'utf8').trim(),
+      'the lock content must still be exactly B\'s, unchanged by A\'s failed steal').toBe(String(pidB))
+
+    const [resultA, resultB] = await Promise.all([
+      new Promise<{ code: number | null }>(resolve => childA.on('exit', code => resolve({ code }))),
+      new Promise<{ code: number | null }>(resolve => childB.on('exit', code => resolve({ code }))),
+    ])
+    expect(resultA.code, `install A aborted instead of finishing cleanly:\n${outA}`).toBe(0)
+    expect(resultB.code, `install B aborted instead of finishing cleanly:\n${outB}`).toBe(0)
+    expect(fs.existsSync(bridge), 'the bridge must end up built (by B)').toBe(true)
+    const invocations = fs.readFileSync(logB, 'utf8').split('\n').filter(l => l.trim()).length
+    expect(invocations, 'exactly one build must have happened — A never got to run one').toBe(1)
+  }, 30000)
+
+  test('install A pauses right after judging a dead lock abandoned; install B recreates the lock but has not yet written its pid; A must hand it back untouched', async () => {
+    const sbx = makeSandbox()
+    const lockPath = path.join(sbx.root, 'dist', '.build.lock')
+    fs.mkdirSync(path.join(sbx.root, 'dist'), { recursive: true })
+    fs.mkdirSync(lockPath)
+    const dead = spawnSync(process.execPath, ['-e', ''])
+    fs.writeFileSync(path.join(lockPath, 'pid'), String(dead.pid))
+
+    const judged = path.join(sbx.sb, 'a-judged')
+    const go = path.join(sbx.sb, 'a-go')
+    const hook = path.join(sbx.sb, 'steal-hook.sh')
+    fs.writeFileSync(hook, [
+      '#!/usr/bin/env bash',
+      `touch '${judged}'`,
+      `while [ ! -e '${go}' ]; do sleep 0.05; done`,
+      '',
+    ].join('\n'))
+    fs.chmodSync(hook, 0o755)
+
+    const homeA = { home: path.join(sbx.sb, 'homeA'), prdtHome: path.join(sbx.sb, 'prdtA'), claudeDir: path.join(sbx.sb, 'claudeA') }
+    for (const d of [homeA.home, homeA.prdtHome, homeA.claudeDir]) fs.mkdirSync(d, { recursive: true })
+
+    const childA = spawn('bash', [installSh(sbx)], {
+      env: {
+        ...process.env, HOME: homeA.home, PRDT_HOME: homeA.prdtHome, CLAUDE_DIR: homeA.claudeDir,
+        PATH: withFakeNpm(), PRDT_TEST_STEAL_HOOK: hook,
+      },
+      stdio: 'ignore',
+    })
+
+    const deadline1 = Date.now() + 10000
+    while (!fs.existsSync(judged) && Date.now() < deadline1) await sleep(20)
+    expect(fs.existsSync(judged), 'install A never reached the steal hook').toBe(true)
+
+    // Simulate B directly: it steals the same dead lock for real (rename +
+    // discard, exactly what install.sh's own steal does) and mkdir's a
+    // fresh one of its own — but has not yet reached its own pid write.
+    execFileSync('mv', [lockPath, `${lockPath}.stale.b`])
+    fs.rmSync(`${lockPath}.stale.b`, { recursive: true, force: true })
+    fs.mkdirSync(lockPath)
+
+    fs.writeFileSync(go, '')
+    await sleep(500)
+    // A's failed steal must have handed the empty (pid-not-yet-written)
+    // lock back rather than discarding it out from under B.
+    expect(fs.existsSync(lockPath), 'A must never have discarded B\'s not-yet-written lock').toBe(true)
+    expect(fs.existsSync(path.join(lockPath, 'pid')), 'no pid was ever written by this test\'s stand-in for B').toBe(false)
+
+    // The assertions above are the whole point of this test; A itself now
+    // has nothing left to prove (with no pid ever appearing, it would sit
+    // out the full ~30s ceiling before treating the lock as abandoned on
+    // its own, independent corroboration — a different, already-covered
+    // path). Stop it here rather than pay that ceiling in every run.
+    killTree(childA.pid!)
+    await new Promise<void>(res => childA.on('exit', () => res()))
+  }, 20000)
+})
+
 describe.skipIf(!hasJq())('T-732: abandoned build lock', () => {
   test('a lock left by an install SIGKILLed mid-build is judged abandoned — a later install rebuilds, fast', async () => {
     const sbx = makeSandbox()
