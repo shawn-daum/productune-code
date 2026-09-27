@@ -30,7 +30,7 @@ lifecycle:  Define → Build → Ship → Retro → idle   (gate 없음 — PO �
 요구사항: [Claude Code](https://claude.com/claude-code) CLI, `jq`, `python3`.
 
 ```bash
-packages/core/scripts/install.sh     # idempotent — discipline을 ~/.prdt로 미러, agents·hooks 등록
+packages/core/scripts/install.sh     # idempotent — discipline을 ~/.prdt로 미러, agents·hooks 등록, 소스가 바뀌었으면 node bridge(dist/bin/meta-cli.cjs) 재빌드
 ```
 
 ## 사용
