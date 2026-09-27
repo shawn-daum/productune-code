@@ -362,7 +362,14 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
     const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
     try {
       await page.click('.activity-btn[data-store="ticket"]', { force: true })
-      const rows = page.locator('#store-ticket .detail-row')
+      // T-709 결정 1: sidebar groups now sort newest-version-first (e.g.
+      // v2.0/v1.11 ahead of the current v1.10), and every bucket's rows
+      // share the same `.detail-row` class (`ticketRowsTable` is reused for
+      // frontmatter-only buckets too) — so the DOM's first `.detail-row`
+      // can belong to a non-active bucket pane, hidden via `.view-pane`
+      // without `.active`. Scope to the active pane (the current version,
+      // via `defaultKey`) so `.first()` resolves to a visible row.
+      const rows = page.locator('#store-ticket .view-pane.active .detail-row')
       await expect(rows.first()).toBeVisible()
 
       await rows.nth(0).click({ force: true })
@@ -396,8 +403,22 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
     const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
     try {
       await page.click('.activity-btn[data-store="ticket"]', { force: true })
-      const currentGroup = await page.locator('#store-ticket [data-group-select]').first().getAttribute('data-group-select')
+      // T-709 결정 1: sidebar order is newest-version-first now, so the
+      // first `[data-group-select]` button in DOM order is a roadmap
+      // bucket (e.g. v2.0), not the default-active one — the current
+      // version keeps its `.active` class via `defaultKey` regardless of
+      // where it sits in that order (`groupedStore`'s `defaultIndex`).
+      // Select by `.active`, not DOM position (same pattern as the
+      // breadcrumb test above).
+      const activeBtn = page.locator('#store-ticket [data-group-select].active').first()
+      const currentGroup = await activeBtn.getAttribute('data-group-select')
       expect(currentGroup).toBeTruthy()
+      // Pin: the default-active group really is the current version (its
+      // label carries the "· 현재" tag) — not merely "whichever bucket
+      // happened to land first" (T-709.md 결정 1 `TICKET.currentTag`),
+      // the exact viewer-bug shape this fix could otherwise have masked.
+      const activeLabel = await activeBtn.locator('span').first().innerText()
+      expect(activeLabel).toContain('현재')
       await expect(page.locator(`#store-ticket .view-pane[data-group="${currentGroup}"]`)).toHaveClass(/active/)
 
       await page.click('#store-ticket [data-group-select="backlog"]', { force: true })
@@ -645,23 +666,36 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
     }
   }, 30_000)
 
-  test('clicking a PRD closed-round row (after switching to the closed group) opens its detail panel; outside click closes it @window', async () => {
+  // T-709 결정 2: PRD no longer has one shared "closed" group listing every
+  // closed round as a row that opens a detail panel — each closed round is
+  // now its OWN sidebar group, rendered straight into its own `.view-pane`
+  // body (no list → detail-panel indirection at all; a PRD version is
+  // exactly one document, so "row" and "document" are the same thing —
+  // T-709.md 결정 2). This replaces the old `data-group-select="closed"` +
+  // `.detail-row` + `.detail-panel` flow that mechanism disproves.
+  test("clicking a closed PRD round's sidebar group shows that round's body directly in its own pane @window", async () => {
     const html = fs.readFileSync(VIEWER_HTML, 'utf8')
     const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
     try {
       await page.click('.activity-btn[data-store="prd"]', { force: true })
-      await page.click('#store-prd [data-group-select="closed"]', { force: true })
-      await expect(page.locator('#store-prd .view-pane[data-group="closed"]')).toHaveClass(/active/)
+      const groupButtons = page.locator('#store-prd [data-group-select]')
+      const groupCount = await groupButtons.count()
+      // Group 0 is always "open" (the current version); decision 2 appends
+      // one group per closed round after it — this repo has 13+ (measured,
+      // T-709.md slice 2), so there is always at least one more.
+      expect(groupCount).toBeGreaterThan(1)
+      const closedKey = await groupButtons.nth(1).getAttribute('data-group-select')
+      expect(closedKey).toBeTruthy()
+      expect(closedKey).not.toBe('open')
 
-      const rows = page.locator('#store-prd .detail-row')
-      await expect(rows.first()).toBeVisible()
-      await rows.first().click({ force: true })
-      await expect(page.locator('#store-prd .detail-panel.active')).toHaveCount(1)
-      const bodyText = await page.locator('#store-prd .detail-panel-body').innerText()
-      expect(bodyText.length).toBeGreaterThan(0)
-
-      await page.click('#store-prd .topstrip', { force: true })
+      await groupButtons.nth(1).click({ force: true })
+      const pane = page.locator(`#store-prd .view-pane[data-group="${closedKey}"]`)
+      await expect(pane).toHaveClass(/active/)
+      // No detail-row/detail-panel indirection left for this content.
+      await expect(pane.locator('.detail-row')).toHaveCount(0)
       await expect(page.locator('#store-prd .detail-panel.active')).toHaveCount(0)
+      const bodyText = await pane.innerText()
+      expect(bodyText.length).toBeGreaterThan(0)
     } finally {
       await page.close()
       fs.rmSync(tmp, { recursive: true, force: true })
