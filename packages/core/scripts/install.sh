@@ -334,9 +334,50 @@ if [ -f "$ROOT/package.json" ] && [ -f "$SRC_ENTRY" ]; then
       # ($LOCK.stale.$$) is ever `rm -rf`'d, so a live lock some OTHER
       # process just created can never be deleted by a late decision made
       # against stale information.
+      # T-734 (ship-entry review finding 2, follow-up): the atomic-rename fix
+      # above stops several waiters from all deleting the SAME abandoned
+      # lock, but QA found a second shape of the same defect — a THIRD
+      # install's stale verdict. `lock_abandoned` is a snapshot read; by the
+      # time a waiter's `steal_abandoned_lock` actually runs, a DIFFERENT
+      # install can already have stolen that very lock, `mkdir`'d a fresh
+      # one for itself, and be genuinely building under it (its own pid
+      # written — or not yet; a real holder writes it within its first
+      # instant, but not the same instant it calls `mkdir`). `mv` only
+      # guarantees a single racer renames whatever CURRENTLY sits at $LOCK —
+      # it has no idea whether that content is still the dead lock a waiter
+      # judged abandoned a moment (or several loop iterations) ago. So:
+      # re-examine what actually got renamed away, after the rename, before
+      # ever discarding it. A live pid, or no pid file at all (the fresh
+      # holder hasn't reached its own `printf > "$LOCK/pid"` yet), means
+      # this steal grabbed a live/about-to-be-live lock on stale
+      # information — hand it straight back (a plain rename; this process
+      # holds the only copy, so no one else can be racing THIS one) and
+      # report the steal as lost, never discarded.
+      #   `mode=grace` is for the one call site with independent
+      # corroboration strong enough to treat "no pid file" itself as proof
+      # of abandonment: the ~30s-ceiling block below, reached only once the
+      # SAME lock has sat the whole wait with no pid ever appearing — a real
+      # holder never takes anywhere near that long to write one, so absence
+      # there is decisive, not a one-instant snapshot.
       steal_abandoned_lock() {
+        local mode="${1:-strict}"
         local steal="$LOCK.stale.$$"
         mv "$LOCK" "$steal" 2>/dev/null || return 1
+        local pid
+        pid="$(cat "$steal/pid" 2>/dev/null || true)"
+        if { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; } \
+           || { [ -z "$pid" ] && [ "$mode" != "grace" ]; }; then
+          if [ -e "$LOCK" ]; then
+            # Something else already occupies $LOCK again (an extremely
+            # rare compound race) — our renamed-away copy has nowhere safe
+            # to go back to; discard our OWN copy only, never what is now
+            # standing at $LOCK.
+            rm -rf "$steal" 2>/dev/null || true
+          else
+            mv "$steal" "$LOCK" 2>/dev/null || rm -rf "$steal" 2>/dev/null || true
+          fi
+          return 1
+        fi
         rm -rf "$steal" 2>/dev/null || true
       }
       LOCKED=false
@@ -344,7 +385,12 @@ if [ -f "$ROOT/package.json" ] && [ -f "$SRC_ENTRY" ]; then
       while [ "$WAITED" -lt 150 ]; do   # ~30s ceiling — never hang the install
         if mkdir "$LOCK" 2>/dev/null; then LOCKED=true; break; fi
         if lock_abandoned; then
-          steal_abandoned_lock || true   # lost the steal race — fine, retry mkdir below: either it's gone (someone else won) or it's live now (we'll wait normally next pass)
+          # Test-only seam (T-734): lets a test pause here, between judging
+          # this lock abandoned and actually stealing it, to force a
+          # deterministic interleaving with a different install recreating
+          # the lock in between. No-op unless a test sets it.
+          [ -z "${PRDT_TEST_STEAL_HOOK:-}" ] || "$PRDT_TEST_STEAL_HOOK" || true
+          steal_abandoned_lock || true   # lost the steal race — fine, retry mkdir below: either it's gone (someone else won) or it's live/being-set-up now, handed back untouched (we'll wait normally next pass)
           continue  # retry mkdir now — no reason to sit out the ceiling too
         fi
         WAITED=$((WAITED + 1))
@@ -356,7 +402,7 @@ if [ -f "$ROOT/package.json" ] && [ -f "$SRC_ENTRY" ]; then
         # into it, which a genuine builder does within its first instant.
         # Treat that as abandoned too rather than reporting "busy" forever.
         if lock_abandoned || [ ! -e "$LOCK/pid" ]; then
-          steal_abandoned_lock || true
+          steal_abandoned_lock grace || true
           mkdir "$LOCK" 2>/dev/null && LOCKED=true
         fi
       fi
