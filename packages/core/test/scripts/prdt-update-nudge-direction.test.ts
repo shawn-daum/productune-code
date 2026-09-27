@@ -24,6 +24,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -100,7 +101,7 @@ m = importlib.util.module_from_spec(spec)
 loader.exec_module(m)
 print(json.dumps(${expr}))
 `
-  return JSON.parse(execFileSync('python3', ['-c', script], { encoding: 'utf-8', cwd, timeout: 30000 }))
+  return JSON.parse(execFileSync('python3', ['-c', script], { encoding: 'utf-8', cwd, timeout: subprocessTimeout('cli') }))
 }
 
 const aheadOf = (clone: string) => py(`m.remote_ahead(${JSON.stringify(clone)})`)
@@ -251,7 +252,7 @@ m.maybe_prompt_update("status")
     return execFileSync('python3', ['-c', script], {
       encoding: 'utf-8',
       cwd: tmpRoot,
-      timeout: 30000,
+      timeout: subprocessTimeout('cli'),
       env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, CI: '' },
     })
   }
@@ -295,7 +296,7 @@ loader.exec_module(m)
 m.maybe_prompt_update("status")   # stdout is a pipe here → not a tty
 `
     const run = (env: NodeJS.ProcessEnv) =>
-      execFileSync('python3', ['-c', script], { encoding: 'utf-8', cwd: tmpRoot, timeout: 30000, env })
+      execFileSync('python3', ['-c', script], { encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'), env })
     expect(run({ ...process.env, HOME: home, CI: '' })).toBe('')          // non-tty
     expect(run({ ...process.env, HOME: home, CI: '1' })).toBe('')         // CI
     // neither path may consume the once-a-day slot
@@ -325,7 +326,7 @@ m.maybe_prompt_update("status")
     // PATH holds neither gum nor fzf (nor anything else) — python3 is reached by
     // absolute path so the case tests the tool check, not the interpreter lookup.
     const out = execFileSync(PYTHON3 as string, ['-c', script], {
-      encoding: 'utf-8', cwd: tmpRoot, timeout: 30000,
+      encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
       env: { ...process.env, HOME: home, PATH: emptyBin, CI: '' },
     })
     expect(out).toBe('')
@@ -351,7 +352,7 @@ sys.stdin, sys.stdout = Tty(sys.stdin), Tty(sys.stdout)
 m.maybe_prompt_update("update")
 `
     expect(execFileSync('python3', ['-c', script], {
-      encoding: 'utf-8', cwd: tmpRoot, timeout: 30000,
+      encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
       env: { ...process.env, HOME: home, CI: '' },
     })).toBe('')
   })

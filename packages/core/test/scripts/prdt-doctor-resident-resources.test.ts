@@ -16,6 +16,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -114,7 +115,7 @@ function runDoctor(env: Record<string, string> = {}, pathOverride?: string): { o
     const out = execFileSync(PYTHON3 as string, [PRDT_CLI, 'doctor'], {
       cwd: projectDir,
       env: { ...process.env, PRDT_HOME: machineHome, PATH: pathOverride || `${binDir}:${process.env.PATH}`, ...env },
-      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
     })
     return { out, code: 0 }
   } catch (e: any) {
@@ -131,7 +132,7 @@ beforeEach(() => {
   execFileSync(PYTHON3 as string, [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
   binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-fakebin-'))
   writeFakeBin('lume', FAKE_LUME)

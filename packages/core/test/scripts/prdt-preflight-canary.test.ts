@@ -24,6 +24,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -105,7 +106,7 @@ function preflight(args: string[], env: Record<string, string> = {}): Verdict {
     cwd: sandbox,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 20000,
+    timeout: subprocessTimeout('cli'),
     env: {
       ...process.env,
       PRDT_HOME: prdtHome,

@@ -22,6 +22,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -38,7 +39,7 @@ function runInit(args: string[] = []): any {
     cwd: projectDir,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 15000,
+    timeout: subprocessTimeout('cli'),
   })
   return JSON.parse(out)
 }
@@ -53,7 +54,7 @@ m = importlib.util.module_from_spec(spec)
 loader.exec_module(m)
 print(json.dumps(${expr}))
 `
-  return JSON.parse(execFileSync('python3', ['-c', script], { encoding: 'utf-8', cwd, timeout: 30000 }))
+  return JSON.parse(execFileSync('python3', ['-c', script], { encoding: 'utf-8', cwd, timeout: subprocessTimeout('cli') }))
 }
 
 const RELEASES_REL = path.join('docs', 'RELEASES.md')

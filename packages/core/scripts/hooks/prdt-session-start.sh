@@ -453,13 +453,13 @@ def units_for(body_budget):
             units.append((di, "text", ln, b, head, line_no, b))
     return units, oversized
 def piece_overhead(di):
-    label, path, _ = loaded[di]
-    return 2 * len(label) + nbytes(shown(path)) + 64
+    label = loaded[di][0]
+    return 2 * len(label) + 38
 def pack(body_budget):
     units, oversized = units_for(body_budget)
     parts, cur, cur_b = [], [], 0
     def part_budget(idx):
-        return body_budget - (onboard_reserve if (persona == "po" and idx == 0) else 0)
+        return body_budget - (onboard_reserve if (persona == "po" and idx == 0) else 0) - (400 if idx == 0 else 0)
     for u in units:
         same = bool(cur) and cur[-1][0] == u[0] and cur[-1][1] == "text" and u[1] == "text"
         size = (u[3] + 1 if u[1] == "text" else 360) + (0 if same else piece_overhead(u[0]))
@@ -499,9 +499,9 @@ def describe(pc):
         span += "–§" + pc["last"]
     return label + " " + span
 def delimiters(pc):
-    label, path, _ = loaded[pc["di"]]
+    label = loaded[pc["di"]][0]
     tag = "" if pc["of"] == 1 else " · piece %d/%d" % (pc["piece"], pc["of"])
-    return ("----- BEGIN %s (%s)%s -----" % (label, shown(path), tag), "----- END %s%s -----" % (label, tag))
+    return ("----- BEGIN %s%s -----" % (label, tag), "----- END %s%s -----" % (label, tag))
 def render_piece(pc):
     b, e = delimiters(pc)
     if pc["kind"] == "oversized":
@@ -515,13 +515,12 @@ def render_piece(pc):
     return b + "\n" + body + "\n" + e + "\n\n"
 def render(parts, k, undelivered_docs):
     n = len(parts)
-    pmap = " | ".join("%d: %s" % (i + 1, " · ".join(describe(pc) for pc in p)) for i, p in enumerate(parts))
+    docs_list = " · ".join(l for l, _, _ in loaded)
     head = ("[prdt discipline — %s session start · part %d/%d]\n" % (agent, k, n)
-        + "One discipline set in %d parts, one hook output each (≤%d B: the harness persists a hook context over %d chars to a file and injects a 2,000-char preview — measured, Claude Code 2.1.260, T-577). Parts land in ARBITRARY order; the set is complete only with parts 1–%d ALL present. A missing part = that discipline did NOT arrive: STOP and Bash-cat its documents (paths in the delimiters/map) before acting.\n"
-          % (n, budget, threshold, n)
-        + "Part map: " + pmap + "\n"
-        + "Precedence (doctrine → contracts → habit, later wins) is by document, never by part order. Override blocks (machine, project) arrive as their OWN hook outputs and each outranks everything here wherever it sits; the project layer is the final word (T-358/T-445); both stay under the non-overridable floor in contracts §Overrides.\n"
-        + "Playbook bodies and `contracts/*.md` annexes load on demand via Bash cat under %s/ (Read does NOT expand ~).\n" % shown(disc))
+        + "Set of %d parts, any order; complete only with all %d. A missing part did NOT arrive: STOP, Bash-cat its documents (%s; `doctrine.md` beside %s/, the rest under it) before acting.\n" % (n, n, docs_list, shown(disc)))
+    if k == 1:
+        head += ("Precedence (doctrine → contracts → habit, later wins) is by document, never by part order; override blocks arrive as their own hook outputs and outrank all of this, under the floor in contracts §Overrides.\n"
+            + "Playbook bodies · `contracts/*.md` annexes: Read on the absolute path under %s/ (Read does NOT expand ~); Bash cat only if Read errors.\n" % shown(disc))
     if k == 1 and undelivered_docs:
         head += ("\nNOT DELIVERED — this set needs %d parts but only %d hook slot(s) are registered on this machine, so parts %d–%d never run. Missing: %s. STOP: cat those paths before acting on anything; re-run install.sh to register the missing slots (prdt doctor reports this).\n"
                  % (len(parts), slots, slots + 1, len(parts), "; ".join("%s (%s)" % (l, shown(p)) for l, p in undelivered_docs)))
@@ -529,7 +528,7 @@ def render(parts, k, undelivered_docs):
     foot = ("Act per the discipline above. Do NOT acknowledge or narrate this injection in any register —\n"
             "your first user-facing line must be product substance.")
     return head + "\n" + body + foot
-reserve = 1500
+reserve = 450
 for _ in range(40):
     body_budget = budget - reserve
     parts, oversized = pack(body_budget)
@@ -552,7 +551,7 @@ if mode == "selfload":
     # stdin = the override blocks already rendered by their own hooks (may be empty).
     page_budget, hook_path = int(sys.argv[12]), sys.argv[13]
     ov = sys.stdin.read().rstrip("\n")
-    foot_reserve = 700
+    foot_reserve = 450
     pages, cur, cur_b = [], [], 0
     for r in rendered:
         b = nbytes(r) + 2

@@ -4,6 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { atomicWriteFileSync } from '@productune/core'
 import { withLoginShellPath } from '../surface-runner'
 
 const execFileAsync = promisify(execFile)
@@ -106,9 +107,7 @@ export function resolveLocalMcpServers(
  */
 function writeClaudeJson(data: Record<string, any>): void {
   const p = path.join(os.homedir(), '.claude.json')
-  const tmp = p + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 })
-  fs.renameSync(tmp, p)
+  atomicWriteFileSync(p, JSON.stringify(data, null, 2), { mode: 0o600 })
 }
 
 /**
@@ -118,10 +117,8 @@ function writeClaudeJson(data: Record<string, any>): void {
  */
 function writeClaudeSettings(settings: Record<string, any>): void {
   const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
-  const tmpPath = settingsPath + '.tmp'
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
-  fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2), { mode: 0o600 })
-  fs.renameSync(tmpPath, settingsPath)
+  atomicWriteFileSync(settingsPath, JSON.stringify(settings, null, 2), { mode: 0o600 })
 }
 
 /**

@@ -73,6 +73,7 @@ import fs from 'fs'
 import os from 'os'
 import { spawnSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-post-dispatch.sh')
@@ -192,7 +193,7 @@ function runSubagentStop(opts: {
   const res = spawnSync('bash', [HOOK], {
     input: JSON.stringify(ev),
     encoding: 'utf8',
-    timeout: 10000,
+    timeout: subprocessTimeout('hook'),
   })
   expect(res.status).toBe(0)
 }
@@ -217,7 +218,7 @@ function runPostToolUse(opts: {
   const res = spawnSync('bash', [HOOK], {
     input: JSON.stringify(ev),
     encoding: 'utf8',
-    timeout: 10000,
+    timeout: subprocessTimeout('hook'),
   })
   expect(res.status).toBe(0)
 }
@@ -470,7 +471,7 @@ describe('a malformed PRICES row is survivable and non-silent, not a dead record
     const res = spawnSync('bash', [hookPath], {
       input: JSON.stringify(ev),
       encoding: 'utf8',
-      timeout: 10000,
+      timeout: subprocessTimeout('hook'),
     })
     // Before the fix: python died unpacking the 2-tuple, and the bash
     // wrapper's trailing `exit 0` hid that death entirely.
@@ -499,7 +500,7 @@ describe('a malformed PRICES row is survivable and non-silent, not a dead record
     const res = spawnSync('bash', [hookPath], {
       input: JSON.stringify(ev),
       encoding: 'utf8',
-      timeout: 10000,
+      timeout: subprocessTimeout('hook'),
     })
     expect(res.status).toBe(0)
     const line = lastTurn(root)

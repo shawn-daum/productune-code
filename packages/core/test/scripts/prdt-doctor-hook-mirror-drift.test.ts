@@ -36,6 +36,7 @@ import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { freshInstall, hasJq } from '../helpers/install-fixture'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const REAL_PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -74,7 +75,7 @@ function doctor(env: Record<string, string> = {}): string[] {
   const out = execFileSync('python3', [cliCopy, 'doctor'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome, ...env },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
   return out.split('\n').filter((l) => l.includes('hooks: mirror'))
 }
@@ -118,7 +119,7 @@ function buildRepoHistory(root: string) {
     'init', '--json', '--slug', 'proj', '--yes'], {
     cwd: path.join(root, 'proj'),
     env: { ...process.env, PRDT_HOME: path.join(root, 'prdt-home') },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
 }
 
@@ -279,7 +280,7 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — hook mirror↔repo drift (T-5
     execFileSync('python3', [cliCopy, 'init', '--json', '--slug', 'proj', '--yes'], {
       cwd: projectDir,
       env: { ...process.env, PRDT_HOME: machineHome },
-      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
     })
     mirrorHook('prdt-hook-a.sh', '#!/usr/bin/env bash\necho anything\n')
     // Reachability: the branch this test means to exercise is `_hooks_repo_path()`
@@ -359,7 +360,7 @@ function runPrintedRepair(cmd: string) {
     cwd: scriptsDir,
     env: { ...process.env, HOME: installHome, PRDT_HOME: machineHome, CLAUDE_DIR: installClaude,
            PATH: `${scriptsDir}:${process.env.PATH}` },
-    stdio: 'ignore', timeout: 30000,
+    stdio: 'ignore', timeout: subprocessTimeout('cli'),
   })
 }
 
@@ -426,10 +427,10 @@ describe.skipIf(!PYTHON3 || !hasJq())('prdt doctor — hook mirror AHEAD orphan 
     const projDir = path.join(sb.root, 'proj')
     fs.mkdirSync(projDir, { recursive: true })
     execFileSync('python3', [REAL_PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
-      cwd: projDir, env: sb.env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+      cwd: projDir, env: sb.env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
     })
     const doctorLines = () => execFileSync('python3', [REAL_PRDT_CLI, 'doctor'], {
-      cwd: projDir, env: sb.env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+      cwd: projDir, env: sb.env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
     }).split('\n').filter((l) => l.includes('hooks: mirror'))
 
     const before = doctorLines()
@@ -441,7 +442,7 @@ describe.skipIf(!PYTHON3 || !hasJq())('prdt doctor — hook mirror AHEAD orphan 
     const match = before[0].match(/`([^`]+)`\s*$/)
     expect(match).not.toBeNull()
     expect(match![1]).not.toContain('install.sh') // rm-only: install.sh's copy loop could never clear this alone
-    execFileSync('bash', ['-c', match![1]], { cwd: sb.root, env: sb.env, stdio: 'ignore', timeout: 30000 })
+    execFileSync('bash', ['-c', match![1]], { cwd: sb.root, env: sb.env, stdio: 'ignore', timeout: subprocessTimeout('cli') })
 
     expect(doctorLines()).toEqual([])
     expect(fs.existsSync(path.join(sb.prdtHome, 'hooks', orphan))).toBe(false)
@@ -473,7 +474,7 @@ function disciplineDoctor(env: Record<string, string> = {}): string[] {
   const out = execFileSync('python3', [cliCopy, 'doctor'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: '', ...env },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
   return out.split('\n').filter((l) => l.includes('discipline: mirror'))
 }
@@ -619,7 +620,7 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — installed copy finds the repo
     execFileSync('python3', [installedCli, 'init', '--json', '--slug', 'proj', '--yes'], {
       cwd: otherProjectDir,
       env: { ...process.env, PRDT_HOME: installedHome },
-      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
     })
   })
 
@@ -629,7 +630,7 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — installed copy finds the repo
     return execFileSync('python3', [installedCli, 'doctor'], {
       cwd: otherProjectDir,
       env: { ...process.env, PRDT_HOME: installedHome },
-      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
     })
   }
 

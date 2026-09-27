@@ -37,6 +37,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -116,7 +117,7 @@ function doctor(): string[] {
   const out = execFileSync('python3', [PRDT_CLI, 'doctor'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir, CLAUDE_DIR: claudeDir },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
   // Excludes `hooks: mirror …` lines (T-532's hook_mirror_drift_warnings):
   // this file's synthetic mirror content/roster never matches the REAL repo
@@ -139,7 +140,7 @@ beforeEach(() => {
   execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
 })
 
@@ -169,6 +170,29 @@ describe.skipIf(!PYTHON3)('prdt doctor — hook roster', () => {
     mirror('prdt-session-start.sh')
     register({ SessionStart: ['prdt-session-start.sh'], PostToolUse: ['prdt-deleted-hook.sh'] })
     expect(doctor().join('\n')).toContain('prdt-deleted-hook.sh')
+  })
+})
+
+describe.skipIf(!PYTHON3)('prdt doctor — the secret guard joins the checked roster automatically (T-677 S3)', () => {
+  // No doctor code changed for this hook — the existing mirror↔registration
+  // check already reads the mirror by NAME (fs walk) and settings.json by
+  // NAME, so a new manifest entry is covered the moment it is mirrored and/or
+  // registered, same as every other hook on the roster. These two cases prove
+  // that "automatic" claim rather than assume it.
+  const GUARD = 'prdt-secret-guard.sh'
+
+  test('the guard mirrored but absent from settings.json is reported', () => {
+    mirror('prdt-session-start.sh', GUARD)
+    register({ SessionStart: ['prdt-session-start.sh'] })
+    const out = doctor().join('\n')
+    expect(out).toContain(GUARD)
+    expect(out).toContain('install.sh')
+  })
+
+  test('the guard mirrored and registered on PreToolUse stays silent', () => {
+    mirror('prdt-session-start.sh', GUARD)
+    register({ SessionStart: ['prdt-session-start.sh'], PreToolUse: [GUARD] })
+    expect(doctor()).toEqual([])
   })
 })
 

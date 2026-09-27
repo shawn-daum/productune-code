@@ -27,6 +27,7 @@ import os from 'os'
 import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { atomicWriteFileSync } from '../fs/atomic-write'
 import {
   stateDir,
   STATE_DIR_NAME,
@@ -112,6 +113,32 @@ export const DEFAULT_META_ALLOWLIST: string[] = [
  * (gui-bootstrap.json, update-state.json) that always resolves under the HOME
  * `.prdt`, never a project's — excluding them here is defense-in-depth for the
  * degenerate case where a project root coincides with home.
+ *
+ * T-655 (the three return-gate state files prdt-return-check.sh writes under
+ * `.prdt`, left unclassified since T-634): a per-file verdict, not one answer
+ * for all three —
+ *  - `.return-gate-pending.json` — EXCLUDED (added below). Same class as
+ *    `.return-flags.json` above: a cross-invocation bridge (remember_block /
+ *    recall_block) keyed by `agent_id`, capped (RETURN_GATE_PENDING_CAP), and
+ *    POPPED on read — an entry never outlives the second SubagentStop firing
+ *    it bridges to, so unlike the two entries below there is no history here
+ *    to lose, only hook-to-hook plumbing.
+ *  - `.return-gate-schema.json` — NOT excluded (deliberately absent below,
+ *    unlike its sibling above). A one-time boundary marker
+ *    (`repaired_codes_since`, written once via O_CREAT|O_EXCL and never
+ *    rewritten) that a reader of `.return-gate.jsonl` needs to tell which
+ *    `repaired` rows carry class-level codes (T-634) from which predate that
+ *    change — it has no meaning on its own, so it travels WITH the log it
+ *    annotates and takes the log's verdict, not `.return-flags.json`'s.
+ *  - `.return-gate.jsonl` — NOT excluded (deliberately absent below). The one
+ *    entry in this whole list that is not derived/replaceable state but
+ *    append-only HISTORY: the re-ask/repair-rate analysis T-553/T-622/T-634
+ *    read is reconstructed from exactly this file, so silently excluding it
+ *    would make that analysis unreconstructable once a machine's local copy
+ *    is gone — the opposite failure mode from the noise this list otherwise
+ *    guards against. It stays low-volume (one row per gate EVENT, never per
+ *    turn, unlike `turns.jsonl`), so keeping it does not turn the backup into
+ *    the noise problem `scratch/` above was added to stop.
  */
 export const DEFAULT_META_EXCLUDE: string[] = [
   'meta.git/',
@@ -121,6 +148,7 @@ export const DEFAULT_META_EXCLUDE: string[] = [
   '.cost-*.json',
   '.subagent-gate.json',
   '.return-flags.json',
+  '.return-gate-pending.json',
   'scratch/',
   'po.lock',
   'gui-bootstrap.json',
@@ -281,9 +309,7 @@ export function writeMetaAllowlist(projectDir: string, allowlist: string[]): voi
 
   const fp = configPath(projectDir)
   fs.mkdirSync(path.dirname(fp), { recursive: true })
-  const tmp = fp + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: 0o600 })
-  fs.renameSync(tmp, fp)
+  atomicWriteFileSync(fp, JSON.stringify(cfg, null, 2), { mode: 0o600 })
 }
 
 // ── info/exclude propagation ──────────────────────────────────────────────────

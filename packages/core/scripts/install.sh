@@ -188,9 +188,10 @@ if [ -f "$PRDT_HOME/audience-mode" ]; then
   if [ ! -f "$PRDT_HOME/register" ]; then
     case "$OLD_MODE" in
       planner|developer)
-        printf 'audience=%s\n' "$OLD_MODE" > "$PRDT_HOME/register.tmp"
-        chmod 0600 "$PRDT_HOME/register.tmp"
-        mv "$PRDT_HOME/register.tmp" "$PRDT_HOME/register"
+        REG_TMP="$(mktemp "$PRDT_HOME/register.XXXXXX")"
+        printf 'audience=%s\n' "$OLD_MODE" > "$REG_TMP"
+        chmod 0600 "$REG_TMP"
+        mv "$REG_TMP" "$PRDT_HOME/register"
         say "   audience-mode=$OLD_MODE → register (audience=$OLD_MODE); audience-mode removed" ;;
       *)
         say "   audience-mode=$OLD_MODE is outside audience's domain (planner|developer) — dropped; audience resolves to its default (planner); audience-mode removed" ;;

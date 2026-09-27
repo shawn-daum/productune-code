@@ -78,14 +78,16 @@ function allParts(home: string, persona: Persona): string[] {
   return parts
 }
 
-/** Every `----- BEGIN <label> (<path>) … -----` … `----- END <label> … -----` body, in
- *  order of appearance, keyed by label. A split document contributes one entry per piece. */
+/** Every `----- BEGIN <label> … -----` … `----- END <label> … -----` body, in
+ *  order of appearance, keyed by label (S1: the delimiter no longer carries the
+ *  source path — that's named once in the docs list + path rule instead).
+ *  A split document contributes one entry per piece. */
 function bodiesByLabel(text: string): Map<string, string[]> {
   const out = new Map<string, string[]>()
-  const re = /^----- BEGIN (.+?) \((.+?)\)(?: · piece (\d+)\/(\d+))? -----\n([\s\S]*?)\n----- END \1(?: · piece \3\/\4)? -----$/gm
+  const re = /^----- BEGIN (.+?)(?: · piece (\d+)\/(\d+))? -----\n([\s\S]*?)\n----- END \1(?: · piece \2\/\3)? -----$/gm
   for (const m of text.matchAll(re)) {
     const arr = out.get(m[1]) ?? []
-    arr.push(m[5])
+    arr.push(m[4])
     out.set(m[1], arr)
   }
   return out
@@ -138,7 +140,7 @@ describe.skipIf(!READY)('nothing is lost across the split', () => {
     })
   }
 
-  test('the plan names every part with what it carries, so a reader can tell a missing part', () => {
+  test('every part names the full document set, so a reader can tell a missing part (S1: no more per-part N: doc map — piece k/N + the doc list recover it)', () => {
     const home = realHome()
     const p = plan(home, 'po')
     expect(p.threshold_chars).toBe(THRESHOLD_CHARS)
@@ -147,9 +149,16 @@ describe.skipIf(!READY)('nothing is lost across the split', () => {
     expect(p.parts_needed).toBe(p.parts.length)
     expect(p.undelivered).toEqual([])
     expect(p.oversized).toEqual([])
-    // the map printed in every part header names the same set
-    const part2 = runPart(home, 'po', 2)
-    for (const part of p.parts) expect(part2).toContain(`${part.n}: `)
+    // every part's header names the same full document list + the path rule —
+    // not just part 1 — so ANY single delivered part is enough to know what to cat
+    for (const n of [2, p.parts.length]) {
+      const part = runPart(home, 'po', n)
+      expect(part).toContain('Bash-cat its documents (')
+      expect(part).toContain('doctrine.md` beside')
+      for (const doc of ['doctrine', 'contracts', 'po habit', 'po playbook menu', 'designer playbook menu', 'developer playbook menu', 'qa playbook menu']) {
+        expect(part, `part ${n} names ${doc}`).toContain(doc)
+      }
+    }
   })
 
   for (const persona of PERSONAS) {

@@ -24,6 +24,7 @@ import os from 'os'
 import crypto from 'crypto'
 import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -73,6 +74,24 @@ let remote: string
 let projectRoot: string
 let codeRoot: string
 
+/** T-668: `prdt doctor`'s "resident machine resources" check (T-592) is
+ * registered under FAMILY_DE and returns a plain warning list (never wrapped
+ * in `Advisory`), so under THIS machine's own load its `⚠ machine:
+ * docker-stack …` line counts toward the verdict tail's `violations=` like
+ * any real discipline↔execution mismatch — exactly the untracked contributor
+ * to the `violations` assertion this file pins. `resident_resource_lines()`
+ * gates on load before it ever reads docker/lume state, so faking only
+ * `uptime` (fixed, low) silences the whole check deterministically — same
+ * technique `prdt-doctor-resident-resources.test.ts` uses via FAKE_LOAD. */
+function fakeUptimeBinDir(dir: string): string {
+  const binDir = path.join(dir, 'bin')
+  fs.mkdirSync(binDir, { recursive: true })
+  fs.writeFileSync(path.join(binDir, 'uptime'),
+    '#!/bin/sh\necho "12:00  up 1 day, 2 users, load averages: 1.00 1.00 1.00"\n')
+  fs.chmodSync(path.join(binDir, 'uptime'), 0o755)
+  return binDir
+}
+
 /** Sandbox HOME (no user gitconfig, no real ~/.prdt) + a bare remote + a project
  *  whose code root is a genuine `git clone` — i.e. carrying no hooks, exactly
  *  what a teammate has. */
@@ -82,12 +101,14 @@ function makeFixture(): void {
   fs.mkdirSync(home, { recursive: true })
   fs.writeFileSync(path.join(home, '.gitconfig'),
     '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n')
+  const binDir = fakeUptimeBinDir(sandbox)
   env = {
     ...process.env,
     HOME: home,
     PRDT_HOME: path.join(home, '.prdt'),
     PRDT_DISCIPLINE: path.join(CORE_ROOT, 'discipline'),
     GIT_CONFIG_NOSYSTEM: '1',
+    PATH: `${binDir}:${process.env.PATH}`,
   }
   remote = path.join(sandbox, 'origin.git')
   git(['init', '-q', '--bare', remote], sandbox)
@@ -128,7 +149,7 @@ function pushMain(extraEnv: NodeJS.ProcessEnv = {}): { code: number; out: string
 
 /** `prdt doctor` from the CODE root (a session's usual cwd). */
 function doctor(): string {
-  return execFileSync('python3', [PRDT_CLI, 'doctor'], { cwd: codeRoot, encoding: 'utf8', env, timeout: 60000 })
+  return execFileSync('python3', [PRDT_CLI, 'doctor'], { cwd: codeRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
 }
 
 const hookFile = () => path.join(codeRoot, '.git', 'hooks', 'pre-push')
@@ -336,7 +357,7 @@ describe.skipIf(!CAN_RUN || !!SYSTEM_HOOKSPATH)('managed pre-push hook (T-481)',
     const fresh = path.join(sandbox, 'fresh')
     fs.mkdirSync(fresh)
     const out = execFileSync('python3', [PRDT_CLI, 'init', '--yes', '--json'],
-      { cwd: fresh, encoding: 'utf8', env, timeout: 60000 })
+      { cwd: fresh, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
     const res = JSON.parse(out)
     expect(res.status).toBe('created')
     expect(res.prepush).toBe('installed')
@@ -379,7 +400,7 @@ ${ORG_HOOK.replace(/^#!.*\n/, '')}`
 
   function attest(args: string[]): { code: number; out: string } {
     const r = spawnSync('python3', [PRDT_CLI, 'attest', 'prepush', ...args],
-      { cwd: codeRoot, encoding: 'utf8', env, timeout: 60000 })
+      { cwd: codeRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
     return { code: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` }
   }
 
@@ -632,7 +653,7 @@ ${ORG_HOOK.replace(/^#!.*\n/, '')}`
     fs.writeFileSync(path.join(orgDir, 'pre-push'), Buffer.from([0xca, 0xfe, 0xba, 0xbe, 0x00, 0xff]), { mode: 0o755 })
     git(['config', 'core.hooksPath', '.githooks'], codeRoot)
 
-    const d = spawnSync('python3', [PRDT_CLI, 'doctor'], { cwd: codeRoot, encoding: 'utf8', env, timeout: 60000 })
+    const d = spawnSync('python3', [PRDT_CLI, 'doctor'], { cwd: codeRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
     expect(d.status, `${d.stdout}${d.stderr}`).toBe(0)
     expect(`${d.stdout}`).toContain('main-push block UNVERIFIED')
     expect(`${d.stdout}${d.stderr}`).not.toContain('Traceback')
@@ -666,7 +687,7 @@ describe.skipIf(!CAN_RUN || !!SYSTEM_HOOKSPATH)('attest and a config.json it did
   const cfgPath = () => path.join(legacy, '.prdt', 'config.json')
   const attestIn = (cwd: string) => spawnSync('python3',
     [PRDT_CLI, 'attest', 'prepush', '--blocks-main', 'yes', '--hotfix-escape', 'yes', '--reason', 'read it'],
-    { cwd, encoding: 'utf8', env, timeout: 60000 })
+    { cwd, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
 
   beforeEach(() => {
     legacy = path.join(sandbox, 'legacy')

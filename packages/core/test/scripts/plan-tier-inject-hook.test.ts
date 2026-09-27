@@ -54,9 +54,12 @@ describe('unset (no stored answer) → ask-once instruction, never a silent defa
   test.skipIf(!hasJq())('no plan-tier file → unset payload, no eligibility claimed', () => {
     const home = makePrdtHome()
     const ctx = additionalContextOf(runHook(PLAN_TIER_HOOK, home, 'prdt-po'))
+    // S3 (T-702) reworded the payload's prose (lowercase "ask", "never
+    // re-asked once written" instead of "do not ask again") without touching
+    // the rule it states — ask once, persist, device-scoped, never re-asked.
     expect(ctx).toContain('plan-tier: unset')
-    expect(ctx).toContain('Ask the user ONCE')
-    expect(ctx).toContain('do not ask again')
+    expect(ctx).toContain('ask the user ONCE')
+    expect(ctx).toContain('never re-asked once written')
   })
 
   test.skipIf(!hasJq())('corrupt content → same unset payload (never crashes)', () => {

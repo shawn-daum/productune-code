@@ -11,10 +11,23 @@
  * that fires `PostToolUse(Agent)` or `SubagentStop` would fill it.
  *
  * Each scenario below runs the SAME event twice against the SAME planted
- * symlink: once against the pre-fix hook (fetched from `git show HEAD`, this
- * repo's own last commit — the fix below is uncommitted working-tree state),
- * proving the outside target really is clobbered by today's code, then again
- * against the working-tree (fixed) hook, proving it is not.
+ * symlink: once against the PRE-FIX hook (a byte-identical snapshot of
+ * `eb491d3~1`, the commit immediately before T-647's fix — kept as a static
+ * fixture under `test/fixtures/`, same convention as
+ * `pre-t578-session-start.sh`), proving the vulnerability this suite guards
+ * against is real, then again against the working-tree (fixed) hook, proving
+ * it is not.
+ *
+ * T-669 correction: this originally fetched the "pre-fix" body via
+ * `git show HEAD:<path>` on the theory that the fix was still uncommitted
+ * working-tree state when the test was written. True at authoring time, but
+ * eb491d3 committed the test and the fix TOGETHER — so the moment that
+ * commit landed, `git show HEAD:<path>` started returning the FIXED body
+ * (HEAD *is* eb491d3), and every "today's code (HEAD) clobbers …" case began
+ * asserting that the fixed hook clobbers the victim file. It never did; the
+ * control was mislabeled, not the property it guards. Static fixtures pinned
+ * to the actual pre-fix commit — never `HEAD` — restore a control that stays
+ * a control regardless of what HEAD moves to next.
  *
  * Fixture-only, per the ticket's boundary: everything lives under a per-test
  * mkdtemp directory, never `~/.claude` or `~/.prdt`.
@@ -23,13 +36,16 @@
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { execFileSync, spawnSync } from 'child_process'
+import { spawnSync } from 'child_process'
 import { test, expect, describe, beforeAll } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
-const REPO_ROOT = path.resolve(CORE_ROOT, '..', '..')
 const POST_DISPATCH_FIXED = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-post-dispatch.sh')
 const RETURN_CHECK_FIXED = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-return-check.sh')
+const FIXTURES = path.join(CORE_ROOT, 'test', 'fixtures')
+const PRE_T647_POST_DISPATCH_FIXTURE = path.join(FIXTURES, 'pre-t647-post-dispatch.sh')
+const PRE_T647_RETURN_CHECK_FIXTURE = path.join(FIXTURES, 'pre-t647-return-check.sh')
 
 function tmp(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix))
@@ -46,13 +62,15 @@ function makeProject(): string {
   return root
 }
 
-/** The pre-fix hook body, fetched from this repo's own last commit (the fix
- *  made by this ticket is still uncommitted working-tree state), written to a
- *  private temp copy so running it never mutates the file under test. */
-function preFixHook(relPath: string, dir: string): string {
-  const body = execFileSync('git', ['show', `HEAD:${relPath}`], { cwd: REPO_ROOT, encoding: 'utf8' })
-  const p = path.join(dir, path.basename(relPath))
-  fs.writeFileSync(p, body)
+/** The pre-fix hook body — a static fixture pinned to `eb491d3~1` (the commit
+ *  immediately before T-647's fix landed), copied to a private temp path so
+ *  running it never mutates the fixture itself. Pinned to a specific past
+ *  commit, deliberately never `HEAD`: see the T-669 note atop this file for
+ *  why a live `HEAD` reference silently stopped being "pre-fix" the moment
+ *  the fix was committed. */
+function preFixHook(fixture: string, dir: string): string {
+  const p = path.join(dir, path.basename(fixture))
+  fs.copyFileSync(fixture, p)
   return p
 }
 
@@ -78,7 +96,7 @@ function run(hook: string, cwd: string, event: Record<string, unknown>): { statu
     input: JSON.stringify(event),
     encoding: 'utf8',
     cwd,
-    timeout: 10_000,
+    timeout: subprocessTimeout('hook'),
   })
   return { status: res.status, stdout: res.stdout, stderr: res.stderr }
 }
@@ -102,8 +120,8 @@ describe('atomic_write / append symlink guard (T-647)', () => {
       }
     }
 
-    test('today\'s code (HEAD) clobbers the outside file the symlink points at', () => {
-      const hook = preFixHook('packages/core/scripts/hooks/prdt-post-dispatch.sh', preFixDir)
+    test('the pre-T-647 hook (control) clobbers the outside file the symlink points at', () => {
+      const hook = preFixHook(PRE_T647_POST_DISPATCH_FIXTURE, preFixDir)
       const project = makeProject()
       const victim = path.join(project, 'victim-sessions.txt')
       fs.writeFileSync(victim, SENTINEL)
@@ -162,8 +180,8 @@ describe('atomic_write / append symlink guard (T-647)', () => {
       }
     }
 
-    test('today\'s code (HEAD) appends the record onto the outside file the symlink points at', () => {
-      const hook = preFixHook('packages/core/scripts/hooks/prdt-post-dispatch.sh', preFixDir)
+    test('the pre-T-647 hook (control) appends the record onto the outside file the symlink points at', () => {
+      const hook = preFixHook(PRE_T647_POST_DISPATCH_FIXTURE, preFixDir)
       const project = makeProject()
       const victim = path.join(project, 'victim-turns.txt')
       fs.writeFileSync(victim, SENTINEL)
@@ -207,8 +225,8 @@ describe('atomic_write / append symlink guard (T-647)', () => {
       }
     }
 
-    test('today\'s code (HEAD) clobbers both outside files', () => {
-      const hook = preFixHook('packages/core/scripts/hooks/prdt-return-check.sh', preFixDir)
+    test('the pre-T-647 hook (control) clobbers both outside files', () => {
+      const hook = preFixHook(PRE_T647_RETURN_CHECK_FIXTURE, preFixDir)
       const project = makeProject()
       const victimTmp = path.join(project, 'victim-pending.txt')
       const victimAppend = path.join(project, 'victim-gate.txt')

@@ -60,7 +60,15 @@ function unsanitizedCopy(): string {
       'stage = st.get("stage") or "?"'],
     ['version = token(st.get("version"), lambda v: VERSION_RE.match(v) is not None)',
       'version = st.get("version") or ""'],
-    ['print(clean(" | ".join(parts), cap=200, bar=True))', 'print(" | ".join(parts))'],
+    // T-682 slice 1 split the old one-line `print(clean(...))` into an
+    // assignment (`line = clean(...)`) followed by the OSC 8 wrap step and a
+    // separate `print(wrap_links(line, links))` — the literal this control
+    // copy undoes moved with it. Unsanitizing the assignment has the same
+    // effect on this suite's fixtures: none of them populate a running/waiting
+    // marker, so `links` stays `{}` and `wrap_links(line, {})` is a no-op —
+    // `print(wrap_links(line, links))` prints exactly `line` either way.
+    // Slice 3 named the cap (`cap=LINE_CAP`); the literal follows it.
+    ['line = clean(" | ".join(parts), cap=LINE_CAP, bar=True)', 'line = " | ".join(parts)'],
   ] as const) {
     expect(weak, `the production line must exist to be undone: ${from.slice(0, 40)}`).toContain(from)
     weak = weak.replace(from, to)

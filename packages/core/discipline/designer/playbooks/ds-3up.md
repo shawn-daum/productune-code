@@ -1,7 +1,7 @@
 ---
 name: ds-3up
 persona: designer
-when: "Define screen set — the DS showcase, before any prototype · no design system yet · DS overhaul (approved reversal) · user rejected the adopted DS"
+when: "Define screen set while NO DS is settled (docs/design.md frontmatter has no ds_html:) — showcase before any prototype · DS overhaul (approved reversal) · user rejected the settled DS"
 model_floor: opus
 effort: high
 ---
@@ -21,11 +21,11 @@ Non-developers can't tell text token-specs apart. Surface RENDERED HTML design-s
 - **Divergence rule**: any two of the three differ on ≥2 of the 4 mood labels (`light|dark · minimal|rich · playful|serious · editorial|chrome`) AND visibly differ in font, component shape, layout.
 
 ## Render requirements
-- `docs/artifacts/<version>/<slug>-ds-{a,b,c}.html` (one page with 3 sections is fine) — a real showcase: tokens / type / spacing / core components visibly applied, not prose. Components carry real product copy in the proposal's register — empty · error · confirm/destructive states — never lorem.
-- Named fonts actually load (webfont/@font-face) — Pretendard leads UI text for a bare `-apple-system` stack. Anti-default pass (`style-library/anti-default.md`) + `style-library/ux-principles.md` bound. Render-verify (screenshot yourself) before returning — undecidable render = not done.
+- `docs/artifacts/<version>/<slug>-ds.html`, tabs A · B · C (habit Artifacts) — a real showcase: tokens / type / spacing / core components visibly applied, not prose. Components carry real product copy in the proposal's register — empty · error · confirm/destructive states — never lorem.
+- Named fonts actually load (webfont/@font-face) — Pretendard leads UI text for a bare `-apple-system` stack. Anti-default pass (`style-library/anti-default.md`) + `style-library/ux-principles.md` bound. Render-verify (screenshot yourself) before returning — undecidable render = not done. Page top = the decide line: pick A · B · C, recommendation on it (habit Artifacts).
 - Per proposal, one provenance line: A·B `anchor: <slug> — why this mood fits · what was adapted`; C `searched: <what> — how it diverges`.
 
 ## On the user's pick / rejection
-- **Pick** → write the settled system into `docs/design.md` (tokens · core components · rationale · anchor line · voice: register values · per shape the form to write, paired with the literal it displaces · one line per surface — microcopy · empty · error/failure · confirm/destructive · legal) — the single living DS. Written → the version's navigable prototype renders from it (`hifi` §Define screen set); this playbook renders no prototype.
+- **Pick** → write the settled system into `docs/design.md` (tokens · core components · rationale · anchor line · voice: register values · per shape the form to write, paired with the literal it displaces · one line per surface — microcopy · empty · error/failure · confirm/destructive · legal) — the single living DS. The settled DS then exists as ONE rendered HTML generated from the token file — the pick alone, never this 3-up page — and `docs/design.md` names its path; from then on Define shows that file (`build-entry` §Screen set 1) and this playbook runs only on its `when`. Written → the version's navigable prototype renders from it (`hifi` §Define screen set); this playbook renders no prototype.
 - **Rejection** → the PO interviews and re-dispatches: rejected anchors + their mood labels join this version's ban-list; C re-diverges on a fresh search — unless the interview says the direction was right (keep it, fix execution).
 - Durable direction decisions (picked + rejected-why) → `memory_notes[]`.

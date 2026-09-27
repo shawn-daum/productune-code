@@ -178,11 +178,15 @@ function buildVersionArtifacts(
 
 // ── prdt (v1) artifacts — adapter A8 (T-291) ────────────────────────────────────
 //
-// prdt abolished the per-version manifest.json + version-subdirectory tree
-// (docs/artifacts/<v>/…). Its artifacts live under docs/artifacts/ with no
-// registry, so there is nothing to key a manifest scan on. Fall back to a plain
-// recursive directory listing of docs/artifacts/ (mirrors design.ts's walk):
-// every allowed-ext file becomes a flat entry, no manifest meta, no archive split.
+// prdt projects keep version buckets (docs/artifacts/<v>/, archive/ inside) and
+// ONE registry at the root, docs/artifacts/manifest.json, each entry carrying
+// its `bucket` (T-661 — before that, T-512 wrote one manifest.json per bucket;
+// this branch read neither). This walk stays a plain recursive listing of
+// docs/artifacts/ (mirrors design.ts's walk): every allowed-ext file becomes a
+// flat entry, no manifest meta, no archive split — and any `manifest.json`, at
+// the root or left inside a bucket, is skipped by name so the registry never
+// surfaces as an artifact. The root manifest is the v1.10 viewer's input, not
+// this adapter's.
 function walkArtifactsDir(dir: string, projectDir: string, out: ArtifactEntry[], depth: number): void {
   if (depth > 6) return // guard against pathological nesting / symlink loops
   let entries: fs.Dirent[]
@@ -197,8 +201,8 @@ function walkArtifactsDir(dir: string, projectDir: string, out: ArtifactEntry[],
     if (e.isDirectory()) {
       walkArtifactsDir(full, projectDir, out, depth + 1)
     } else if (e.isFile()) {
-      // manifest.json is the legacy registry, not an artifact (QA fix — mirrors
-      // scanDir's exclusion; transitional prdt trees may still carry leftovers).
+      // manifest.json is the registry (root since T-661, per-bucket before), not
+      // an artifact (QA fix — mirrors scanDir's exclusion).
       if (e.name === 'manifest.json') continue
       const ext = path.extname(e.name).toLowerCase()
       if (!ALLOWED_EXTS.has(ext)) continue

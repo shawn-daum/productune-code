@@ -54,21 +54,10 @@ esac
 
 if [ "$TIER" = "unset" ]; then
   PAYLOAD="[prdt plan-tier: unset — fable gate]
-No stored answer at $PRDT_HOME/plan-tier. Ask the user ONCE this session which
-plan they're on — Max x20 / Team Premium (fable-eligible) or another/unsure
-plan (not eligible) — then persist their answer as a single token + newline to
-$PRDT_HOME/plan-tier (atomic tmp+rename: write plan-tier.tmp, then mv over
-plan-tier — the same atomic write `prdt register set` makes to ~/.prdt/register) using EXACTLY one of: max-x20 |
-team-premium | other. This is a device-scoped answer, not a session one — once
-written, do not ask again in any future session; the value persists until the
-user changes it (GUI Settings or a direct file edit). Until answered, every
-fable floor resolves to opus at the same effort (the safe default)."
+No stored answer at $PRDT_HOME/plan-tier: ask the user ONCE this session and persist the answer per PO habit §Route (Fable plan gate) — one of max-x20 | team-premium | other; device-scoped, never re-asked once written. Until answered, every fable floor resolves to opus at the same effort."
 else
   PAYLOAD="[prdt plan-tier: $TIER — fable gate]
-Stored answer at $PRDT_HOME/plan-tier: $ELIGIBLE. Do not re-ask the user this
-session or any future session — device-scoped, not session-scoped. A plan
-change is the user's own responsibility to update (GUI Settings or a direct
-file edit)."
+Stored at $PRDT_HOME/plan-tier: $ELIGIBLE. Never re-ask, this session or any later one — device-scoped; a plan change is the user's to raise (GUI Settings or a direct file edit)."
 fi
 
 printf '%s' "$PAYLOAD" | jq -Rs --arg ev "$EVENT_NAME" '{hookSpecificOutput:{hookEventName:$ev,additionalContext:.}}'

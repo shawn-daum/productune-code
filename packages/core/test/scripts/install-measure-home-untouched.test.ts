@@ -22,6 +22,7 @@ import os from 'os'
 import crypto from 'crypto'
 import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe, afterEach, afterAll } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const MANIFEST_SRC = path.join(CORE_ROOT, 'scripts', 'hook-manifest.json')
@@ -122,7 +123,7 @@ function run(f: Fixture, script: string, args: string[], env: Record<string, str
   delete base.PRDT_HOME; delete base.CLAUDE_DIR; delete base.PRDT_DISCIPLINE
   const r = spawnSync('bash', [path.join(f.payload, 'scripts', script), ...args], {
     env: { ...base, ...env } as NodeJS.ProcessEnv, cwd,
-    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000,
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('doctor'),
   })
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }

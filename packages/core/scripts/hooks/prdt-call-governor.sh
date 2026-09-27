@@ -205,7 +205,7 @@ case "$SCAN" in
   *) exit 0 ;;               # not an object: nothing to classify, stay silent
 esac
 
-EVENT=""; DIR=""; SID=""; AID=""; ATYPE=""
+EVENT=""; DIR=""; SID=""; AID=""; ATYPE=""; TNAME=""
 
 # EVERY first-byte test below is preceded by ws_skip — that is the whole of the
 # T-561 fix, and the five calls are not optional decoration: each one guards one
@@ -220,10 +220,14 @@ while :; do
   case "$SCAN" in ':'*) SCAN="${SCAN:1}" ;; *) break ;; esac
 
   # Belt and braces with the cut above: if a payload ever arrives with the tool
-  # body ahead of the identity keys, stop rather than walk it. A nested forgery
+  # BODY ahead of the identity keys, stop rather than walk it. A nested forgery
   # is invisible to a top-level walk either way — this is about cost, not trust.
+  # `tool_name` is deliberately NOT in this list (T-710): its value is a short
+  # top-level string, exactly like `hook_event_name`, never the body this guard
+  # exists to skip — capturing it is what lets PreToolUse tell the one tool a
+  # denied worker must still reach (SubagentHandback) from every other tool.
   case "$K" in
-    tool_input|tool_calls|tool_name|tool_response|tool_use_id) break ;;
+    tool_input|tool_calls|tool_response|tool_use_id) break ;;
   esac
 
   ws_skip                                 # after `:`, before the value
@@ -236,6 +240,7 @@ while :; do
         agent_id)        AID="$STR" ;;
         agent_type)      ATYPE="$STR" ;;
         hook_event_name) EVENT="$STR" ;;
+        tool_name)       TNAME="$STR" ;;
       esac
       ;;
     '{'*|'['*)
@@ -457,17 +462,31 @@ fi
 # path may end in a plain exit 0 (T-567): a silent pass here is what made the
 # reset evasions invisible for a whole round.
 if [ -n "$TAMPER" ]; then
-  if [ -n "$ENFORCE" ]; then
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[prdt call governor] Hard stop: the turn counter for this worker cannot be trusted — %s (T-491/T-519/T-567). Enforcement fails CLOSED here rather than granting untracked turns; restoring the count is not something a worker does for itself.\\nReturn your envelope NOW — `summary` (what landed, plus `files_written[]`) and `unresolved[]`, one line per remaining item, written so a fresh worker can pick it up cold. Returning is NOT a tool call; retrying a tool only earns another deny.\\nIf you did not touch this path, say so in `unresolved[]` and let the PO run `prdt doctor` — it reports this state."}}' "$TAMPER"
-  else
+  # T-710: the report path stays open even through a hard stop this worker did
+  # not cause. SubagentHandback is the ONLY exemption — every other tool is
+  # still denied below, unconditionally.
+  if [ -n "$ENFORCE" ] && [ "$TNAME" != "SubagentHandback" ]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[prdt call governor] Hard stop: the turn counter for this worker cannot be trusted — %s (T-491/T-519/T-567). Enforcement fails CLOSED here rather than granting untracked turns; restoring the count is not something a worker does for itself.\\nEvery tool call is denied except `SubagentHandback` — call it NOW with `summary` (+ `files_written[]`) and `unresolved[]`, one line per remaining item, readable cold by a fresh worker. Any other tool only earns another deny.\\nIf you did not touch this path, say so in `unresolved[]` and let the PO run `prdt doctor` — it reports this state."}}' "$TAMPER"
+  elif [ -z "$ENFORCE" ]; then
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"[prdt call governor] The turn counter for this worker cannot be trusted — %s (T-567). Your persona is never denied, so nothing here stops you; the count for this dispatch is simply no longer accountable.\\nIf you did not touch this path, name it in your return and let the PO run `prdt doctor` — it reports this state."}}' "$TAMPER"
   fi
   exit 0
 fi
 
 # The count is of COMPLETED turns: the PreToolUse of turn n sees n-1.
+#
+# T-710: four developer workers ended with no report after 67-76 tool calls —
+# this deny fired on every tool INCLUDING the SubagentHandback call that would
+# have delivered the envelope, while its own text claimed "returning is NOT a
+# tool call" (true before SubagentHandback existed, false since). The fix is
+# the single exemption below: SubagentHandback is let through with no
+# hookSpecificOutput at all (an ordinary unblocked call), and it is the ONLY
+# tool this branch ever lets through — every other tool_name still gets the
+# deny, unconditionally, however long the worker keeps calling it.
 if [ -n "$ENFORCE" ] && [ "$N" -ge "$DENY_AT" ]; then
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[prdt call governor] Hard stop: this worker has accumulated %s API turns in this session (limit %s, T-491 — a resume inherits the count, it does not reset). Every tool call from here on is denied.\\nReturn your envelope NOW — `summary` (what landed, plus `files_written[]`) and `unresolved[]` with one line per remaining item, written so a fresh worker can pick it up cold.\\nReturning is NOT a tool call, so it is always available to you; retrying a tool only earns another deny. Do not report finished what you did not verify — name it in `unresolved[]` instead."}}' "$N" "$DENY_AT"
+  if [ "$TNAME" != "SubagentHandback" ]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[prdt call governor] Hard stop: this worker has accumulated %s API turns in this session (limit %s, T-491 — a resume inherits the count, it does not reset). Every tool call is denied except `SubagentHandback`.\\nCall SubagentHandback NOW with `summary` (+ `files_written[]`) and `unresolved[]` — one line per remaining item, readable cold by a fresh worker. Any other tool only earns another deny; do not report unverified work as done — say it in `unresolved[]` instead."}}' "$N" "$DENY_AT"
+  fi
   exit 0
 fi
 

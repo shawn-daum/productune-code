@@ -17,6 +17,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -40,7 +41,7 @@ function doctor(): string {
     return execFileSync('python3', [PRDT_CLI, 'doctor'], {
       cwd: projectDir,
       env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir },
-      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000,
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('doctor'),
     })
   } catch (e: any) {
     throw new Error(`prdt doctor failed: ${e.stderr || e.message}`)
@@ -54,7 +55,7 @@ function doctorAtHome(home: string): string {
   delete (env as any).PRDT_DISCIPLINE
   try {
     return execFileSync('python3', [PRDT_CLI, 'doctor'], {
-      cwd: projectDir, env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000,
+      cwd: projectDir, env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('doctor'),
     })
   } catch (e: any) {
     throw new Error(`prdt doctor failed: ${e.stderr || e.message}`)
@@ -83,7 +84,7 @@ function emitPart(home: string, cmd: string, persona: Persona): string {
   delete (env as any).PRDT_DISCIPLINE
   const out = execFileSync('bash', [cmd], {
     input: JSON.stringify({ hook_event_name: 'SubagentStart', agent_type: `prdt-${persona}`, cwd: projectDir }),
-    encoding: 'utf8', env, timeout: 30000,
+    encoding: 'utf8', env, timeout: subprocessTimeout('cli'),
   })
   if (!out.trim()) return ''
   return JSON.parse(out).hookSpecificOutput.additionalContext as string
@@ -121,7 +122,7 @@ beforeEach(() => {
   execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 20000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
 })
 
