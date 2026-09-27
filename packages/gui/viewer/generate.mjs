@@ -15,7 +15,12 @@ import { collectAll } from './lib/collect.mjs'
 import { renderPage, templateGuardErrors } from './lib/render.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const GUI_ROOT = path.resolve(__dirname, '..')
+// T-718: computed relative to THIS file's own location, never from a
+// hardcoded directory-name literal — a fresh checkout can land at any path
+// (a detached `git worktree add` names it whatever the caller passed), so
+// nothing downstream may assume the checkout root itself is named "code" (or
+// any other literal).
+export const GUI_ROOT = path.resolve(__dirname, '..')
 // code/packages/gui -> code -> productune (repo root, where docs/ and
 // .prdt/ live — the viewer reads the WHOLE repo, not just the gui package).
 export const REPO_ROOT = path.resolve(GUI_ROOT, '../../..')
