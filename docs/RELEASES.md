@@ -12,6 +12,18 @@ Version-by-version release notes for this project.
 >   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
 > - Everything above the first `## ` heading is preamble and is ignored by the parser.
 
+## v1.10.2 — core 수정이 설치만으로 node bridge 에 실림 (2026-09-28)
+
+> 패치 릴리스입니다. T-731 · T-732 · T-734 를 반영합니다.
+> 적용: `prdt update` 또는 `packages/core/scripts/install.sh` 재실행 — 이번부터 이 한 번으로 node bridge 도 새로 빌드됩니다.
+
+### Fixed
+- **v1.10 에서 고친 메타 자동 백업의 거짓 실패(`cannot lock ref … is at X but expected Y`)가 계속 나던 문제.** 원인은 수정 코드가 아니라 배포 경로였습니다: prdt CLI 와 훅이 실행하는 `packages/core/dist/bin/meta-cli.cjs` 는 gitignore 대상이고 설치가 이를 빌드하지 않아, 2026-09-22 이후 core 수정(T-686 동시 push 락 포함)이 실행되지 않았습니다. 이제 설치·업데이트가 `src/` · `package.json` · `tsconfig.json` 이 브리지보다 새로우면 다시 빌드합니다. 빌드할 수 없는 환경(npm 없음 · 빌드 실패)에서도 설치의 나머지는 끝까지 진행하고 그 사실을 알립니다. 의존성이 없을 때 안내는 `pnpm install` 입니다.
+- **빌드 락이 브리지 갱신을 영구히 막지 않습니다.** 빌드 중 강제 종료로 남은 락은 빌드 프로세스 pid 로 버려짐을 판정해 다음 설치가 바로 다시 빌드하고, 종료 신호를 받아도 빌드가 아직 돌면 락을 유지해 동시 빌드가 생기지 않습니다. 버려진 락을 여러 설치가 동시에 치워도 빌드는 한 번이며, 그 사이 다른 설치가 새로 잡은 락은 건드리지 않습니다. 락 때문에 건너뛸 때는 락 경로를 출력합니다.
+
+### Added
+- **`prdt doctor` 가 낡은 node bridge 를 경고합니다** — 브리지가 없거나 빌드 입력보다 오래되면 경로와 가장 최근에 바뀐 파일을 이름으로 알립니다. CLI·훅이 실제로 실행하는 `PRDT_REPO` 쪽 브리지를 판정하고, `src/` 안의 `.DS_Store` · 편집기 임시 파일은 무시합니다.
+
 ## v1.10.1 — v1.10 회고 규율 반영 · 반환 봉투 결과 칸 (2026-09-27)
 
 > 패치 릴리스입니다. v1.10 회고에서 닫힌 티켓 세 건(T-725·T-726·T-728)을 반영합니다.

@@ -588,6 +588,28 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — installed copy finds the repo
     fs.writeFileSync(path.join(scriptsDir, 'hooks', 'prdt-hook-a.sh'), '#!/usr/bin/env bash\necho v2\n')
     fs.writeFileSync(path.join(repo, 'packages', 'core', 'discipline', 'developer', 'habit.md'),
       '# habit\n\nrepo version\n')
+    // T-731: `meta_bridge_staleness_warnings()` joined the same drift roster
+    // this describe block exercises, walking the same `_repo_root_candidates()`
+    // path as the three checks above — but it only accepts a candidate that
+    // carries `src/bin/meta-cli.ts`. Without one, this fixture's PRDT_REPO
+    // candidate (real for the other three) falls through to that check's own
+    // "no source tree nearby" skip, which prints regardless of the other
+    // three checks' verdicts and trips this suite's `not.toContain('no source
+    // tree nearby')` — a case this ticket exists to close, not open a new one
+    // for. A source file plus an already-current build artifact gives the
+    // check a real comparand and a real (clean) verdict, exactly the
+    // production shape this suite otherwise recreates.
+    const metaCliSrcDir = path.join(repo, 'packages', 'core', 'src', 'bin')
+    fs.mkdirSync(metaCliSrcDir, { recursive: true })
+    fs.writeFileSync(path.join(metaCliSrcDir, 'meta-cli.ts'), '// meta-cli source (T-731 fixture)\n')
+    const metaCliDistDir = path.join(repo, 'packages', 'core', 'dist', 'bin')
+    fs.mkdirSync(metaCliDistDir, { recursive: true })
+    fs.writeFileSync(path.join(metaCliDistDir, 'meta-cli.cjs'), '// built meta-cli bridge (T-731 fixture)\n')
+    // Bridge must read as newer than the source it was "built" from, or the
+    // check reports it STALE instead of clean — back-date the source so
+    // ordinary filesystem mtime resolution can't make them tie.
+    const past = new Date(Date.now() - 60_000)
+    fs.utimesSync(path.join(metaCliSrcDir, 'meta-cli.ts'), past, past)
     execFileSync('git', ['init', '-q'], { cwd: repo })
     git(['add', '-A'], repo)
     git(['commit', '-q', '-m', 'seed'], repo)
@@ -634,12 +656,18 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — installed copy finds the repo
     })
   }
 
-  test('all three drift checks compare for real (not Skipped) via PRDT_REPO, from a cwd outside the repo', () => {
+  test('all four drift checks compare for real (not Skipped) via PRDT_REPO, from a cwd outside the repo', () => {
     const out = installedDoctor()
     expect(out).toContain('hooks: mirror')
     expect(out).toContain('discipline: mirror')
     expect(out).toContain('discipline: prdt script mirror')
-    // None of the three took the "no source tree nearby" / "installed-copy
+    // T-731's meta-cli bridge staleness check rides the same PRDT_REPO
+    // candidate: it neither skipped (no "could not look" line naming it) nor
+    // warned (the fixture's bridge is fresher than its source).
+    expect(out).not.toContain('meta-cli bridge staleness')
+    expect(out).not.toContain('meta-cli bridge MISSING')
+    expect(out).not.toContain('meta-cli bridge STALE')
+    // None of the four took the "no source tree nearby" / "installed-copy
     // coincidence" skip this ticket exists to eliminate.
     expect(out).not.toContain('no source tree nearby')
     expect(out).not.toContain('installed-copy coincidence')
