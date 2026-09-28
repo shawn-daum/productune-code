@@ -26,6 +26,11 @@
 #         own deny; a non-prdt dispatch and a cwd outside a prdt project stay
 #         fork-free and silent). See "T-695: machine resource cap" below for
 #         the five axes, their measurement, the defaults and the override file.
+#   RECORD + WARN  ⑤ (T-773) every dispatch that passed ①–④ appends one row to
+#         `<project>/.prdt/schedule.jsonl` against the critical path of that
+#         moment; one off `prdt schedule`'s top row with no
+#         `[ctx].schedule_reason` also WARNS. Never a deny (T-765, user
+#         decision) — see "T-773: the schedule record" below.
 #   NOT HERE — the return/envelope side (slice 3), and the three binary
 #         candidates held under doctrine #5 for zero observed violations
 #         (AskUserQuestion in a worker · worker↔worker calls · discipline-path
@@ -768,10 +773,51 @@ RES="$(jq -rn \
   --argjson stale_h "$STALE_H" --argjson idle_min "$IDLE_MIN" --argjson grace "$GRACE_S" \
   --arg want_model "$WANT_MODEL" \
   "$RPROG" 2>/dev/null)"
+
+# ── T-773: the schedule record — one `dispatch` row per dispatch that passed ──
+# Reached only once every check above passed (a deny above never records: that
+# dispatch never left). `prdt schedule record` reads THIS event on stdin,
+# computes `prdt schedule` for the project at this moment, appends one row to
+# `<project>/.prdt/schedule.jsonl` (ticket · critical path · top row · class
+# followed/deviated/continuation/off-graph · `[ctx].schedule_reason` ·
+# `[ctx].worktree`) and prints ONE warning line when the dispatch is off the
+# top row with no `schedule_reason` — a WARNING, never a deny (T-765, user
+# decision). The CLI is the sibling mirror copy (`~/.prdt/bin/prdt` beside
+# `~/.prdt/hooks/`), or `scripts/prdt` beside `scripts/hooks/` in the repo.
+# PRDT_META_BACKUP=0: contracts §Git never lets a per-turn hook trigger the
+# meta backup push (the CLI also skips it for `record` on its own). Any
+# failure — no CLI, no python3, a crash — is silence: the record fails open
+# exactly like every other part of this hook, and the dispatch still goes.
+schedule_record() {
+  local hd="${BASH_SOURCE[0]%/*}" cli
+  [ "$hd" = "${BASH_SOURCE[0]}" ] && hd="."
+  cli="$hd/../bin/prdt"
+  [ -f "$cli" ] || cli="$hd/../prdt"
+  [ -f "$cli" ] || return 0
+  printf '%s' "$EV" | PRDT_META_BACKUP=0 python3 "$cli" schedule record 2>/dev/null
+}
+
+# Merge extra advisory lines into the `[ctx]` verdict (a warn object or empty)
+# as one PreToolUse additionalContext, then exit.
+emit() {
+  local extra="$1" out=""
+  if [ -z "$extra" ]; then
+    [ -n "$GATE" ] && printf '%s\n' "$GATE"
+    exit 0
+  fi
+  if [ -n "$GATE" ]; then
+    out="$(printf '%s' "$GATE" | jq -c --arg n "$extra" '.hookSpecificOutput.additionalContext += "\n" + $n' 2>/dev/null)"
+  else
+    out="$(jq -nc --arg n "$extra" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $n}}' 2>/dev/null)"
+  fi
+  [ -n "$out" ] || out="$GATE"
+  [ -n "$out" ] && printf '%s\n' "$out"
+  exit 0
+}
+
 if [ -z "$RES" ]; then
   # The resource program itself failed: fail OPEN, keep the `[ctx]` verdict.
-  [ -n "$GATE" ] && printf '%s\n' "$GATE"
-  exit 0
+  emit "$(schedule_record)"
 fi
 UNM="${RES%%$'\n'*}"; REST="${RES#*$'\n'}"
 DENY="${REST%%$'\n'*}"; REST="${REST#*$'\n'}"
@@ -781,6 +827,7 @@ if [ -n "$DENY" ]; then
   printf '%s\n' "$DENY"
   exit 0
 fi
+SCHED_WARN="$(schedule_record)"
 
 # Unmeasured: say it once per session. The session id is a file-name token
 # only — anything outside [A-Za-z0-9._-] collapses to `nosession`.
@@ -799,15 +846,8 @@ if [ -n "$UNM" ]; then
   fi
 fi
 
-if [ -z "$NOTE" ]; then
-  [ -n "$GATE" ] && printf '%s\n' "$GATE"
-  exit 0
+EXTRA="$NOTE"
+if [ -n "$SCHED_WARN" ]; then
+  if [ -n "$EXTRA" ]; then EXTRA="$EXTRA"$'\n'"$SCHED_WARN"; else EXTRA="$SCHED_WARN"; fi
 fi
-if [ -n "$GATE" ]; then
-  OUT="$(printf '%s' "$GATE" | jq -c --arg n "$NOTE" '.hookSpecificOutput.additionalContext += "\n" + $n' 2>/dev/null)"
-else
-  OUT="$(jq -nc --arg n "$NOTE" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $n}}' 2>/dev/null)"
-fi
-[ -n "$OUT" ] || OUT="$GATE"
-[ -n "$OUT" ] && printf '%s\n' "$OUT"
-exit 0
+emit "$EXTRA"

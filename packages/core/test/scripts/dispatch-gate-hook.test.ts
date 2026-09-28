@@ -331,12 +331,18 @@ describe('silence outside its scope', () => {
     expect(run({ cwd: makeProject() })).toBe('')
   })
 
-  test('the gate writes nothing anywhere — it has no state', () => {
+  // T-773: a dispatch that PASSES now leaves exactly one state file — its row
+  // in `.prdt/schedule.jsonl` (prdt-schedule-record.test.ts owns its content);
+  // a denied one still writes nothing at all.
+  test('a denied dispatch writes nothing; a passed one writes only its schedule row', () => {
     const proj = makeProject()
     const before = fs.readdirSync(path.join(proj, '.prdt')).sort()
     run({ cwd: proj, prompt: 'no ctx line' })
-    run({ cwd: proj })
     expect(fs.readdirSync(path.join(proj, '.prdt')).sort()).toEqual(before)
+    run({ cwd: proj })
+    expect(fs.readdirSync(path.join(proj, '.prdt')).sort()).toEqual([...before, 'schedule.jsonl'].sort())
+    const rows = fs.readFileSync(path.join(proj, '.prdt', 'schedule.jsonl'), 'utf8').trim().split('\n')
+    expect(rows).toHaveLength(1)
   })
 })
 
