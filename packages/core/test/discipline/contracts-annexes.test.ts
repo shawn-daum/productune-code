@@ -94,12 +94,22 @@ const MOVED: ReadonlyArray<readonly [(typeof ANNEXES)[number], string]> = [
   ['fixed-paths', '`prdt doctor` watches the seam: orphan spec files · promotion candidates (done tickets in ≥2 version dirs, unjudged)'],
   ['fixed-paths', 'A design/token contract or build pipeline the code imports or builds from (e.g. `tokens.json` → a token build script) is code no matter the subject matter'],
   ['tickets', "Redeploys append to the version's single `ops` ticket, not new tickets."],
-  ['tickets', '`deps` is dispatch-order judgment material + query index only — never machine-enforced.'],
+  ['tickets', '`deps` is the one precedence source: `prdt schedule` computes the critical path from it, and a PRD precedence row lands as a `deps` entry, never a second list — it ranks dispatches, never blocks one.'],
   ['definition-of-done', '`discipline_root()` prefers `~/.prdt/discipline` over the repo, so it binds no persona until that mirror is resynced'],
   ['git', "whether that merge lands locally or through a pull request is the REPOSITORY's policy"],
   ['git', 'The mechanical block is a per-clone pre-push hook that `prdt init` / `prdt doctor` writes into the code repo\'s own `.git/hooks`'],
   ['git', '**Remote default branch = `main`, always** (GitHub repo setting).'],
-  ['git', 'Isolation (branch + worktree, Agent-native option) only on three triggers'],
+  ['git', 'Isolation (branch + worktree) only on three triggers'],
+  // T-770 hot→cold split: the whole Fixed-paths table + the ticket
+  // frontmatter/body rules moved off contracts.md into their annexes
+  // (contracts.md now only points at them) — these five were HOT-list pins
+  // before the split and are MOVED-list pins after it, the clause itself
+  // never weakened.
+  ['fixed-paths', 'Meta/code split test = coupling, never "is it a doc"'],
+  ['tickets', '- Body = the frame: H2 = its keys in its order, nothing else'],
+  ['tickets', 'an `acceptance` line changes after first dispatch'],
+  ['tickets', '`feature:` names a spec file'],
+  ['tickets', '- An access-control `acceptance` line (gate / hide / restrict / limit) names its exact target'],
 ]
 
 describe('moved clauses are verbatim in the cold document and gone from the hot text', () => {
@@ -126,15 +136,8 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     // (the validity-tag vocabulary is NOT here any more — see the designer-habit
     // test below: it is spec-AUTHORING vocabulary and moved with the rest of it)
     'read it FIRST, before touching that feature',
-    'Meta/code split test = coupling, never "is it a doc"',
     // §Tickets: the enum and the body shape
     '`status` is the whole enum.',
-    '- Body = the frame: H2 = its keys in its order, nothing else',
-    // T-638: the two literal triggers stay hot — the PO must recognize them at its own act
-    'an `acceptance` line changes after first dispatch',
-    '`feature:` names a spec file',
-    // restored from the annex by T-586 slice 2A — slice 1's own audit named it the weakest-reachability move
-    '- An access-control `acceptance` line (gate / hide / restrict / limit) names its exact target — page, asset, API route, or field; a bare verb with no named target is not acceptance-complete.',
     // §DoD: the check itself
     '- Not done until: build green · lint clean · typecheck clean · relevant tests green · acceptance verified against the ticket.',
     // §Git: residence + hard rule + every-commit rules + the consent gate (floor)
@@ -177,7 +180,7 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     // re-breaking this test.
     expect(CONTRACTS).toMatch(/^## Secrets — .+\(EVERY persona, PO included\)$/m)
     expect(CONTRACTS).toContain('## Overrides — precedence and the non-overridable floor')
-    expect(CONTRACTS).toContain('- Carve-out: `~/.prdt/plan-tier` is PO-writable')
+    expect(CONTRACTS).toContain('- Carve-out: `~/.prdt/register` · `auto-open` · `plan-tier` (keys `register.*` · `viewer.auto-open` · `plan.tier`) are PO-writable only via `prdt settings set|unset <key>`')
     // T-613: re-pinned to the current wording. T-586 added the playbook-scoped
     // override path to this carve-out; the carve-out clause is floor text, so
     // the test follows contracts.md, never the reverse. Every path the line
@@ -188,7 +191,7 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
       '`~/.prdt/overrides/playbooks/<name>.md`',
       '`~/.prdt/wiki/`',
       '`~/.prdt/resource-stop.json`',
-      '`~/.prdt/register` are PO-writable',
+      '`~/.prdt/register` · `auto-open` · `plan-tier` (keys `register.*` · `viewer.auto-open` · `plan.tier`)',
     ])
       pin(CONTRACTS, p, {
         file: 'discipline/contracts.md',
@@ -296,11 +299,13 @@ describe('worker habits point at the annex where their own act needs it', () => 
           file: where,
           protects: 'the validity-window tag vocabulary — without it a spec file states a contract with no idea when it was true, and an invalidated fact gets deleted instead of annotated',
         })
-    const row = CONTRACTS.split('\n').find((l) => l.startsWith('|') && l.includes('`docs/features/<feature>.md`'))!
-    pinAbsent(row, '`(vX~', { file: 'discipline/contracts.md (the Fixed paths feature-spec row)', protects: 'no dual text — authoring vocabulary lives at the authoring site only' })
+    // T-770 hot→cold split: the whole Fixed-paths table, this row included,
+    // moved off contracts.md into the fixed-paths annex.
+    const row = annex('fixed-paths').split('\n').find((l) => l.startsWith('|') && l.includes('`docs/features/<feature>.md`'))!
+    pinAbsent(row, '`(vX~', { file: 'discipline/contracts/fixed-paths.md (the Fixed paths feature-spec row)', protects: 'no dual text — authoring vocabulary lives at the authoring site only' })
   })
   test('po habit: isolation triggers pointer', () => {
-    expect(HABITS.po).toContain('Worktree isolation only on the three contract triggers (`contracts/git.md`)')
+    expect(HABITS.po).toContain('Worktree isolation only on the three contract triggers, through `prdt track` (`contracts/git.md`)')
   })
 })
 
