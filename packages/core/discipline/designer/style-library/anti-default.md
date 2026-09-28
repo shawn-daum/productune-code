@@ -18,7 +18,8 @@ Unmotivated default = fix. Motivated, brief-fit choice = keep, and say why.
 - **Color** — indigo/violet/purple gradients (`from-indigo-* to-purple-*`), default
   `blue-600` primary, blanket `text-gray-600` body. Pick a palette with intent instead.
 - **Shape** — `rounded-2xl` + `shadow-lg/xl` card spam, `border-gray-200` everywhere,
-  every section wrapped in a card. Not all content is a card.
+  every section wrapped in a card, a left accent stripe (`border-left` in the accent) on
+  cards/banners/callouts — a tell even in a DS component. Not all content is a card.
 - **Layout** — `max-w-7xl mx-auto px-4`, the icon+title+blurb 3-up feature grid, uniform
   `gap-4` listing with no rhythm. Vary density; create hierarchy of space.
 - **Hero** — big headline + gradient text + (primary + ghost) two-button row, the
