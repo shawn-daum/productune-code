@@ -36,6 +36,7 @@ import {
   ARTIFACT,
   PRD,
   FILE_HREF_NOTE,
+  HASH_NOTICE,
   noGroupLabel,
 } from './labels.mjs'
 
@@ -308,7 +309,7 @@ export function encodeFsPathHref(relPath) {
  * @returns {string|undefined}
  */
 function containedFileHref(candidateHref, repoRootHref) {
-  return isHrefContained(candidateHref, { repoRootHref, rootSubpath: 'docs' }) ? candidateHref : undefined
+  return isHrefContained(candidateHref, { repoRootHref, rootSubpath: 'docs', viewerAbsPath: pageViewerAbsPath }) ? candidateHref : undefined
 }
 
 /**
@@ -357,10 +358,16 @@ function isAllowedRawHref(href) {
 // is single-threaded and synchronous (no md() call is ever in flight while
 // another starts).
 let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF }
+// T-746: where the page being rendered will live on disk — every containment
+// check below judges an href against THIS location (the installed `prdt`
+// writes a project's viewer under its own `.prdt/scratch/viewer/`, not next
+// to this module). Set once per `renderPage` call; same single-threaded,
+// synchronous-generation reasoning as `linkContext` above.
+let pageViewerAbsPath = DEFAULT_VIEWER_ABS_PATH
 
 hardenedRenderer.link = function ({ href, title, tokens }) {
   const text = this.parser.parseInline(tokens)
-  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref)
+  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath)
   if (rewritten !== null) {
     const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
     return `<a href="${escapeHtml(rewritten)}" target="_blank" rel="noopener"${titleAttr}>${text}</a>`
@@ -391,7 +398,7 @@ hardenedRenderer.link = function ({ href, title, tokens }) {
 hardenedRenderer.image = function ({ href, title, text, tokens }) {
   const altSource = tokens ? this.parser.parseInline(tokens, this.parser.textRenderer) : text
   const alt = escapeHtml(altSource)
-  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref)
+  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath)
   if (rewritten === null) return alt
   const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
   return `<img src="${escapeHtml(rewritten)}" alt="${alt}"${titleAttr}>`
@@ -483,6 +490,11 @@ function compareVersionIdsDesc(a, b) {
 // rather than a second string-equality copy of its own.
 export function sameVersion(a, b) {
   return compareVersionIdsDesc(a, b) === 0
+}
+
+/** The ticket store's current-version sidebar group key — see `ticketStoreInner` (T-713). One function, so the `#id` anchor table (T-746) names the same group the sidebar draws. */
+function currentTicketBucketKey(tickets, currentVersion) {
+  return currentVersionTickets(tickets, currentVersion)[0]?.bucket ?? currentVersion
 }
 
 /** Every current-version ticket (any status) in `tickets.included`, matched by `sameVersion` rather than string equality (T-713) — a bucket dir spelled differently from po-state's own version string is still "current". `backlog` is excluded — it is never a version at all. */
@@ -584,7 +596,7 @@ function ticketRowsTable(tickets) {
 function ticketStoreInner(tickets, currentVersion) {
   const currentTickets = currentVersionTickets(tickets, currentVersion)
   const backlogTickets = tickets.included.filter((t) => t.bucket === 'backlog')
-  const currentBucketKey = currentTickets[0]?.bucket ?? currentVersion
+  const currentBucketKey = currentTicketBucketKey(tickets, currentVersion)
 
   // The current version's own row is a version bucket like any other — it
   // must be sorted INTO the same numeric-descending run as `tickets.omitted`
@@ -703,7 +715,7 @@ function ticketSection(tickets, currentVersion) {
 // simply never matches it. `noGroupUnit` is the caller's own count-unit word
 // (e.g. FEATURE.countUnit) — groupedStore has no store-specific vocabulary of
 // its own, so it cannot guess one.
-function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey }) {
+function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey, topHtml = '' }) {
   const singleGroup = groups.length === 1
   const defaultIndex = defaultKey === undefined ? 0 : Math.max(0, groups.findIndex((g) => g.key === defaultKey))
   const sidebarButtons = singleGroup
@@ -733,8 +745,8 @@ ${sidebarButtons}
 
   const defaultLabel = groups.length > 0 ? groups[defaultIndex].label : ''
   const mainCol = `<div class="frame-main-col">
-<div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)} · <span class="js-group-label">${escapeHtml(defaultLabel)}</span></b></span></div>
-<div class="frame-body"><div class="main-inner">${panes}</div></div>
+<div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)} · <span class="js-group-label">${escapeHtml(defaultLabel)}</span></b></span><span class="topstrip-key js-hash-key" hidden></span></div>
+<div class="frame-body"><div class="main-inner">${topHtml}${panes}</div></div>
 <div class="detail-panel" role="dialog" aria-label="${COMMON.detailPanel}">
 <div class="detail-panel-header"><span class="detail-panel-title"></span><button type="button" class="detail-panel-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 14)}</button></div>
 <div class="detail-panel-body"></div>
@@ -1017,6 +1029,82 @@ function artifactDetailEntries(artifacts, artifactsBaseHref, repoRootHref) {
   return entries
 }
 
+// ---------- `#id` deep links (T-746) ----------
+// `viewer.html#<id>` opens the page with that item selected — the hand-off
+// links `prdt tickets --link` / `prdt viewer` print, and what the auto-open
+// hook opens. The anchor table maps every addressable id to where it lives:
+// `s` store · `g` sidebar group key · `k`/`i` detail kind + id (absent for a
+// PRD round, whose pane IS the document). Keys, one namespace:
+//   - a ticket id (`T-746`) — every ticket the page lists, a closed round's
+//     frontmatter-only row included
+//   - a wiki page's slug (`decision--define-screen-set`) and its repo path
+//   - the repo path of every other document the page holds: `docs/prd/PRD.md`
+//     (also `PRD`), `docs/prd/versions/<v>.md`, `docs/features/<f>.md`,
+//     `docs/artifacts/<bucket>/<file>` (an `.md` one inlined, any other kind
+//     its summary row)
+// Built from the SAME inputs and the SAME group-key rules as the sidebar
+// (`currentTicketBucketKey`, the wiki `type` grouping, the artifact bucket),
+// so an anchor can never name a group the page does not draw.
+export function buildAnchors(data) {
+  const anchors = {}
+  const put = (key, entry) => {
+    if (key && !Object.prototype.hasOwnProperty.call(anchors, key)) anchors[key] = entry
+  }
+  const currentKey = currentTicketBucketKey(data.tickets, data.currentVersion)
+  for (const t of data.tickets.included) {
+    const id = t.frontmatter.id || t.rel
+    put(id, { s: 'ticket', g: t.bucket === 'backlog' ? 'backlog' : currentKey, k: 'ticket', i: id })
+  }
+  for (const bucket of data.tickets.omitted) {
+    for (const t of bucket.tickets) {
+      const id = t.frontmatter.id || t.rel
+      put(id, { s: 'ticket', g: bucket.bucket, k: 'ticket', i: id })
+    }
+  }
+  for (const p of data.wiki) {
+    const file = p.rel.split('/').pop()
+    const entry = { s: 'wiki', g: p.frontmatter.type || WIKI_UNCLASSIFIED, k: 'wiki', i: file }
+    put(file.replace(/\.md$/, ''), entry)
+    put(p.rel, entry)
+  }
+  for (const p of data.features) {
+    put(p.rel, { s: 'feature', g: 'all', k: 'feature', i: p.rel.split('/').pop() })
+  }
+  put('docs/prd/PRD.md', { s: 'prd', g: 'open' })
+  put('PRD', { s: 'prd', g: 'open' })
+  for (const c of data.prd.closed) {
+    put(c.rel, { s: 'prd', g: c.name.replace(/\.md$/, '') })
+  }
+  for (const e of data.artifacts.entries) {
+    const f = e.fields
+    put(e.diskRel, { s: 'artifact', g: f.bucket, k: 'artifact', i: `${f.bucket}/${f.path}` })
+  }
+  return anchors
+}
+
+/** Highest ticket number the page lists — an absent `#T-<n>` at or below it names a ticket that existed once (ids are one global counter, contracts §Tickets), i.e. moved or removed since generation: the `stale` notice rather than `unknown`. */
+export function maxTicketNumber(data) {
+  let max = 0
+  const see = (id) => {
+    const m = /^T-(\d+)$/.exec(id || '')
+    if (m) max = Math.max(max, Number(m[1]))
+  }
+  for (const t of data.tickets.included) see(t.frontmatter.id)
+  for (const b of data.tickets.omitted) for (const t of b.tickets) see(t.frontmatter.id)
+  return max
+}
+
+const INFO_ICON_SVG =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>'
+
+/** docs/design.md §8.4 Banner (no side stripe, T-756) — hidden until the page is opened at an `#id` it cannot show; the script fills in the id and the text. */
+const HASH_NOTICE_HTML = `<div class="notice" id="hash-notice" role="status" hidden>
+<span class="notice-icon">${INFO_ICON_SVG}</span>
+<span class="notice-body"><b class="js-notice-id"></b> — <span class="js-notice-text"></span></span>
+<button type="button" class="notice-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 13)}</button>
+</div>
+`
+
 function artifactsSection(artifacts, currentVersion) {
   return storeSection('artifact', { innerHtml: artifactStoreInner(artifacts, currentVersion) })
 }
@@ -1206,7 +1294,7 @@ function homeSection(data, repoRootHref) {
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref) },
   ]
-  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups }) })
+  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups, topHtml: HASH_NOTICE_HTML }) })
 }
 
 export const TEMPLATE_CSS = `
@@ -1422,6 +1510,24 @@ table.v-omitted th, table.v-artifacts th { color: var(--text-secondary); border-
 .v-body table th, .v-body table td { border: 1px solid var(--border-item); padding: var(--space-4) var(--space-8); }
 details.v-fold summary { cursor: pointer; color: var(--icon-tertiary); padding: var(--space-8) 0; }
 details.v-fold[open] summary { color: var(--text-primary); }
+
+/* ---------- '#id' deep links (T-746) ---------- */
+.topstrip-key { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-quaternary); background: var(--bg-interaction-neutral);
+  padding: 2px 7px; border-radius: var(--radius-4); margin-left: auto; }
+.topstrip-key[hidden] { display: none; }
+/* docs/design.md 8.4 Banner: severity tint + a full 1px border, no side stripe (T-756). */
+.notice { display: flex; gap: 10px; align-items: flex-start; position: relative;
+  background: color-mix(in srgb, var(--health-info) 10%, var(--bg-surface-onlayer));
+  border: 1px solid color-mix(in srgb, var(--health-info) 35%, var(--border-section));
+  border-radius: var(--radius-8); padding: 12px 14px; margin: 0 0 16px; }
+.notice[hidden] { display: none; }
+.notice-icon { color: var(--health-info); flex: 0 0 auto; margin-top: 1px; display: flex; }
+.notice-body { font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; padding-right: 20px; }
+.notice-body b { color: var(--text-primary); }
+.notice-close { position: absolute; right: 8px; top: 8px; width: 22px; height: 22px; border: none; background: none; padding: 0;
+  color: var(--text-tertiary); cursor: pointer; border-radius: var(--radius-4); display: flex; align-items: center; justify-content: center; }
+.notice-close:hover { background: var(--bg-state-hover); color: var(--text-primary); }
+.detail-row.hash-target td { background: var(--bg-state-hover); }
 `
 
 /**
@@ -1435,6 +1541,7 @@ const INTERACTION_SCRIPT = `
 (function () {
   var DETAIL_DATA = JSON.parse(document.getElementById('detail-data').textContent);
   var DETAIL_FIELD_LABELS = ${JSON.stringify(DETAIL_FIELD_LABELS)};
+  var HASH_NOTICE = ${JSON.stringify(HASH_NOTICE)};
 
   function closeDetailPanel(section) {
     if (!section) return;
@@ -1473,6 +1580,82 @@ const INTERACTION_SCRIPT = `
     panel.classList.add('active');
   }
 
+  function selectStore(key) {
+    document.querySelectorAll('.activity-btn').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-store') === key); });
+    document.querySelectorAll('.store-section').forEach(function (s) { s.classList.toggle('active', s.dataset.store === key); });
+    return document.querySelector('.store-section[data-store="' + key + '"]');
+  }
+
+  function selectGroup(section, group) {
+    var groupBtn = null;
+    section.querySelectorAll('[data-group-select]').forEach(function (b) {
+      if (b.getAttribute('data-group-select') === group) groupBtn = b;
+    });
+    section.querySelectorAll('.nav-item-clickable').forEach(function (b) { b.classList.toggle('active', b === groupBtn); });
+    section.querySelectorAll('.view-pane').forEach(function (v) { v.classList.toggle('active', v.dataset.group === group); });
+    var label = section.querySelector('.js-group-label');
+    if (label && groupBtn) {
+      // T-708 결함 5: breadcrumb showed the raw data-group-select key
+      // (an internal id — 'progress', 'backlog', a version/bucket key),
+      // never a translated label of its own. Reads the SAME text the
+      // pressed button is already showing (its first <span>, the label —
+      // see groupedStore()/ticketStoreInner() below, where that span is
+      // always the button's label, never the count) instead of the key.
+      var btnLabelSpan = groupBtn.querySelector('span');
+      label.textContent = btnLabelSpan ? btnLabelSpan.textContent : group;
+    }
+    closeDetailPanel(section);
+  }
+
+  // T-746: viewer.html#<id> selects that item on load (and whenever the hash
+  // changes). An id the page cannot show lands on home with the notice,
+  // never a blank page.
+  function clearHashMarks() {
+    document.querySelectorAll('.js-hash-key').forEach(function (k) { k.hidden = true; k.textContent = ''; });
+    document.querySelectorAll('.detail-row.hash-target').forEach(function (r) { r.classList.remove('hash-target'); });
+  }
+
+  function showHashNotice(raw) {
+    var notice = document.getElementById('hash-notice');
+    if (!notice) return;
+    var m = /^T-([0-9]+)$/.exec(raw);
+    var stale = (m !== null && Number(m[1]) <= DETAIL_DATA.maxTicket) || raw.indexOf('docs/') === 0;
+    notice.querySelector('.js-notice-id').textContent = '#' + raw;
+    notice.querySelector('.js-notice-text').textContent = stale ? HASH_NOTICE.stale : HASH_NOTICE.unknown;
+    notice.hidden = false;
+  }
+
+  function routeHash() {
+    var rawHash = location.hash.replace(/^#/, '');
+    if (!rawHash) return;
+    var raw;
+    try { raw = decodeURIComponent(rawHash); } catch (e) { raw = rawHash; }
+    clearHashMarks();
+    var notice = document.getElementById('hash-notice');
+    if (notice) notice.hidden = true;
+    var a = Object.prototype.hasOwnProperty.call(DETAIL_DATA.anchors, raw) ? DETAIL_DATA.anchors[raw] : null;
+    var section = a ? document.querySelector('.store-section[data-store="' + a.s + '"]') : null;
+    if (!section) {
+      var home = selectStore('home');
+      if (home) selectGroup(home, 'progress');
+      showHashNotice(raw);
+      return;
+    }
+    selectStore(a.s);
+    selectGroup(section, a.g);
+    var key = section.querySelector('.js-hash-key');
+    if (key) { key.textContent = '#' + raw; key.hidden = false; }
+    if (a.k) {
+      section.querySelectorAll('.view-pane.active [data-detail-kind]').forEach(function (r) {
+        if (r.getAttribute('data-detail-kind') === a.k && r.getAttribute('data-detail-id') === a.i) {
+          r.classList.add('hash-target');
+          if (r.scrollIntoView) r.scrollIntoView({ block: 'center' });
+        }
+      });
+      openDetailPanel(section, a.k, a.i);
+    }
+  }
+
   document.addEventListener('click', function (ev) {
     var stalePanel = document.querySelector('.detail-panel.active');
     if (stalePanel && !stalePanel.contains(ev.target)) {
@@ -1487,9 +1670,8 @@ const INTERACTION_SCRIPT = `
     var storeBtn = ev.target.closest('.activity-btn[data-store]');
     if (storeBtn) {
       ev.preventDefault();
-      var key = storeBtn.getAttribute('data-store');
-      document.querySelectorAll('.activity-btn').forEach(function (b) { b.classList.toggle('active', b === storeBtn); });
-      document.querySelectorAll('.store-section').forEach(function (s) { s.classList.toggle('active', s.dataset.store === key); });
+      selectStore(storeBtn.getAttribute('data-store'));
+      clearHashMarks();
       return;
     }
 
@@ -1498,21 +1680,16 @@ const INTERACTION_SCRIPT = `
       ev.preventDefault();
       var section = groupBtn.closest('.store-section');
       if (!section) return;
-      var group = groupBtn.getAttribute('data-group-select');
-      section.querySelectorAll('.nav-item-clickable').forEach(function (b) { b.classList.toggle('active', b === groupBtn); });
-      section.querySelectorAll('.view-pane').forEach(function (v) { v.classList.toggle('active', v.dataset.group === group); });
-      var label = section.querySelector('.js-group-label');
-      if (label) {
-        // T-708 결함 5: breadcrumb showed the raw data-group-select key
-        // (an internal id — 'progress', 'backlog', a version/bucket key),
-        // never a translated label of its own. Reads the SAME text the
-        // pressed button is already showing (its first <span>, the label —
-        // see groupedStore()/ticketStoreInner() below, where that span is
-        // always the button's label, never the count) instead of the key.
-        var btnLabelSpan = groupBtn.querySelector('span');
-        label.textContent = btnLabelSpan ? btnLabelSpan.textContent : group;
-      }
-      closeDetailPanel(section);
+      selectGroup(section, groupBtn.getAttribute('data-group-select'));
+      clearHashMarks();
+      return;
+    }
+
+    var noticeClose = ev.target.closest('.notice-close');
+    if (noticeClose) {
+      ev.preventDefault();
+      var notice = noticeClose.closest('.notice');
+      if (notice) notice.hidden = true;
       return;
     }
 
@@ -1533,6 +1710,9 @@ const INTERACTION_SCRIPT = `
       if (openPanel) closeDetailPanel(openPanel.closest('.store-section'));
     }
   });
+
+  window.addEventListener('hashchange', routeHash);
+  routeHash();
 })();
 `
 
@@ -1601,7 +1781,9 @@ export function renderPage({
   tokensSha256,
   artifactsBaseHref = '../../../../docs/artifacts',
   repoRootHref = DEFAULT_REPO_ROOT_HREF,
+  viewerAbsPath = DEFAULT_VIEWER_ABS_PATH,
 }) {
+  pageViewerAbsPath = viewerAbsPath
   const detailData = {
     ticket: ticketDetailEntries(data.tickets, repoRootHref),
     wiki: wikiDetailEntries(data.wiki, repoRootHref),
@@ -1610,6 +1792,8 @@ export function renderPage({
     // No "prd" bucket (T-709 결정 2): a closed PRD round is no longer a
     // detail-row — its body renders directly in its own sidebar group's pane
     // (prdStoreInner) — so DETAIL_DATA never needs one.
+    anchors: buildAnchors(data),
+    maxTicket: maxTicketNumber(data),
   }
 
   return `<!doctype html>
