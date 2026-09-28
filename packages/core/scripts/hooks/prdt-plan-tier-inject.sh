@@ -57,7 +57,7 @@ if [ "$TIER" = "unset" ]; then
 No stored answer at $PRDT_HOME/plan-tier: ask the user ONCE this session and persist the answer per PO habit §Route (Fable plan gate) — one of max-x20 | team-premium | other; device-scoped, never re-asked once written. Until answered, every fable floor resolves to opus at the same effort."
 else
   PAYLOAD="[prdt plan-tier: $TIER — fable gate]
-Stored at $PRDT_HOME/plan-tier: $ELIGIBLE. Never re-ask, this session or any later one — device-scoped; a plan change is the user's to raise (GUI Settings or a direct file edit)."
+Stored at $PRDT_HOME/plan-tier: $ELIGIBLE. Never re-ask, this session or any later one — device-scoped; a plan change is the user's to raise (GUI Settings or \`prdt settings set plan.tier\`)."
 fi
 
 printf '%s' "$PAYLOAD" | jq -Rs --arg ev "$EVENT_NAME" '{hookSpecificOutput:{hookEventName:$ev,additionalContext:.}}'

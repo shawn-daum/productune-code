@@ -3810,17 +3810,25 @@ def cmd_register(args):
 # hand edits). Keys are dot-scoped `<area>.<key>` (T-759). A new setting is ONE
 # more entry in `settings_entries()` plus its catalog lines — never a new
 # subcommand. Every line this command prints comes from `prdt-messages.json`
-# (T-757); the language is `PRDT_LANG` (ko | en), default ko.
+# (T-757); the language is `PRDT_LANG` when set (ko | en), else the persisted
+# `cli.lang` setting (default ko, T-767) — OS `LANG` is never read.
 
 MESSAGES_FILE = "prdt-messages.json"
 AUTO_OPEN_DOMAIN = ("on", "off")
 # the legal set prdt-plan-tier-inject.sh's `case` and settings/plan-tier.ts accept
 PLAN_TIER_DOMAIN = ("max-x20", "team-premium", "other")
+CLI_LANG_DOMAIN = ("ko", "en")
 
 
 def cli_lang():
-    lang = (os.environ.get("PRDT_LANG") or "").strip().lower()
-    return "en" if lang.startswith("en") else "ko"
+    env = (os.environ.get("PRDT_LANG") or "").strip().lower()
+    if env.startswith("en"):
+        return "en"
+    if env.startswith("ko"):
+        return "ko"
+    # T-767: no PRDT_LANG override — the device-persisted choice, default ko.
+    # OS `LANG` is deliberately never consulted here.
+    return "en" if _read_token("cli-lang") == "en" else "ko"
 
 
 def load_messages(lang=None):
@@ -3904,6 +3912,14 @@ def settings_entries(droot):
         "get": lambda: (lambda t: t if t in PLAN_TIER_DOMAIN else None)(_read_token("plan-tier")),
         "put": lambda v: _write_token("plan-tier", v),
     })
+    # T-767: the catalog language this CLI prints in, when PRDT_LANG is unset —
+    # `cli_lang()` reads this same token; default ko, never unset in the UI.
+    entries.append({
+        "key": "cli.lang", "kind": "enum", "domain": list(CLI_LANG_DOMAIN),
+        "check": lambda v: None if v in CLI_LANG_DOMAIN else "domain",
+        "get": lambda: "en" if _read_token("cli-lang") == "en" else "ko",
+        "put": lambda v: _write_token("cli-lang", v),
+    })
     return entries
 
 
@@ -3924,6 +3940,11 @@ def cmd_settings(args):
     shown = lambda v: none if v is None else v
     action = args.action or "list"
     rest = list(args.rest or [])
+    if action not in ("list", "set", "unset"):
+        # argparse `choices` used to reject this itself, in English, before
+        # cmd_settings ever ran (T-750 QA grill) — the parser now accepts any
+        # token here and this is the catalog-driven refusal instead.
+        sys.exit(msg(m, "settings.error.usage"))
     if action == "list":
         if rest:
             sys.exit(msg(m, "settings.error.usage"))
@@ -12126,7 +12147,12 @@ def main():
                                         "set <key> <value> · unset <key> — keys register.audience · register.form · "
                                         "register.structure · register.address · viewer.auto-open · plan.tier; "
                                         "lines from prdt-messages.json, language PRDT_LANG=ko|en (default ko)")
-    p.add_argument("action", nargs="?", choices=("list", "set", "unset"))
+    # No `choices=` here (unlike the subparsers around it): an out-of-domain
+    # action must fall through to cmd_settings's own catalog-driven refusal
+    # (settings.error.usage, selected language) rather than argparse's own
+    # English "invalid choice" — same reason `-h`/`--help` on this subcommand
+    # is intercepted before parse_args() below (T-750 QA grill).
+    p.add_argument("action", nargs="?")
     p.add_argument("rest", nargs="*", help="set: <key> <value> · unset: <key>")
     p.add_argument("--json", action="store_true", help="machine mode (list)")
     p.set_defaults(fn=cmd_settings)
@@ -12173,6 +12199,12 @@ def main():
     p.add_argument("file")
     p.add_argument("keys", nargs="*", metavar="KEY")
     p.set_defaults(fn=cmd_env)
+    # `prdt settings -h`/`--help`: argparse's own subparser help is English
+    # and bypasses the message catalog (T-750 QA grill) — answer from the
+    # catalog, in the selected language, before parse_args() ever sees it.
+    if len(sys.argv) >= 2 and sys.argv[1] == "settings" and any(a in ("-h", "--help") for a in sys.argv[2:]):
+        print(msg(load_messages(), "settings.error.usage"))
+        sys.exit(0)
     args = ap.parse_args()
     maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
     maybe_meta_backup(args.cmd)    # T-504: detached meta backup tick (stage boundary / once daily; never blocks)
