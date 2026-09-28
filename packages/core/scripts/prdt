@@ -4379,7 +4379,6 @@ def cmd_tickets_fmt(args, root):
 # current without the user running anything.
 VIEWER_REL = Path(".prdt") / "scratch" / "viewer"
 VIEWER_JUMP_DIR = "at"
-VIEWER_OPEN_MSG = "viewer.html#{key} 을 엽니다…"
 
 
 def _viewer_generator():
@@ -4470,39 +4469,20 @@ def viewer_jump(viewer_html, key):
     return page
 
 
-def viewer_auto_open(path, msg=None):
-    """Open `path` the way the auto-open hook would (`~/.prdt/auto-open` off →
-    nothing; never cold-starts the browser, T-571): the hook's `--open` mode is
-    the one place that policy lives. Silent on any failure — an open is a
-    convenience, the printed link stays the hand-off."""
-    if os.environ.get("PRDT_GUI_SESSION"):
-        return False
-    if _read_token("auto-open") == "off":
-        return False
-    hook = None
-    for cand in [prdt_home() / "hooks" / "prdt-auto-open.sh",
-                 Path(__file__).resolve().parent / "hooks" / "prdt-auto-open.sh"]:
-        if cand.is_file():
-            hook = cand
-            break
-    if hook is None:
-        return False
-    if msg:
-        print(msg, file=sys.stderr)
-    try:
-        subprocess.run(["bash", str(hook), "--open", str(path)], stdin=subprocess.DEVNULL,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return True
-
-
-def viewer_links(root, targets, auto_open=True, labels=None):
+def viewer_links(root, targets, labels=None):
     """Resolve each target to a paste-ready `[label](file://…)` line: a viewer
     link at the item when the viewer shows it, the file itself otherwise (and
     whenever the viewer cannot be generated). `labels[target]` overrides the
-    fallback file path (tickets: the md path from the index). Opens each link
-    through `viewer_auto_open` when `auto_open`."""
+    fallback file path (tickets: the md path from the index).
+
+    T-794: this never opens anything itself — the CLI has no way to tell a
+    worker's call from the PO's own (the discriminator, `agent_type` on the
+    Claude Code event, exists only to a registered hook, never to a plain
+    subprocess). Printing the link is the whole job here; a main-session-only
+    PostToolUse(Bash) hook (prdt-auto-open.sh) reads a completed `prdt` Bash
+    call's own printed stdout for this exact `[label](file://…)` shape and
+    opens it — never firing for a worker's identical call, and honouring a
+    literal `--no-open` on that same command line."""
     labels = labels or {}
     keys = {t: viewer_anchor(root, t) for t in targets}
     viewer = viewer_regenerate(root) if any(keys.values()) else None
@@ -4516,26 +4496,25 @@ def viewer_links(root, targets, auto_open=True, labels=None):
             dest = dest if dest.is_absolute() else (Path.cwd() / dest).resolve()
             label = t
         lines.append(f"[{label}](file://{dest})")
-        if auto_open and dest.is_file():
-            viewer_auto_open(dest, VIEWER_OPEN_MSG.format(key=key) if key and viewer else None)
     return lines
 
 
 def cmd_viewer(args):
     """`prdt viewer [TARGET…] [--no-open]` — regenerate this project's viewer
     and print a link per target (ticket id or document path) at that item;
-    no target → the viewer home. Opens each unless `--no-open` (and
-    `~/.prdt/auto-open` = off still wins)."""
+    no target → the viewer home. Never opens anything itself (T-794): the
+    printed link is picked up by a main-session-only hook, which opens it for
+    the PO's own run and stays silent for a worker's identical one; `--no-open`
+    on this same command line still suppresses that (`~/.prdt/auto-open` = off
+    still wins too)."""
     root = require_root()
     if not args.targets:
         viewer = viewer_regenerate(root)
         if viewer is None:
             sys.exit("prdt viewer: 뷰어를 만들지 못했어요 — node 와 prdt 체크아웃의 packages/gui 의존성이 필요해요 (`prdt doctor`).")
         print(f"[viewer](file://{viewer})")
-        if not args.no_open:
-            viewer_auto_open(viewer)
         return
-    for line in viewer_links(root, args.targets, auto_open=not args.no_open):
+    for line in viewer_links(root, args.targets):
         print(line)
 
 
@@ -4559,10 +4538,11 @@ def cmd_tickets(args):
             "SELECT id, path FROM tickets WHERE id IN (%s)" % ",".join("?" * len(args.link)),
             args.link).fetchall())
         # T-746: a found ticket's link opens the viewer with it selected (the
-        # md path only when the viewer cannot be generated), and is opened
-        # right away unless `--no-open` / `~/.prdt/auto-open` = off.
+        # md path only when the viewer cannot be generated). T-794: printing
+        # is all this does now — the main-session-only hook opens it, unless
+        # `--no-open` is on this same command line or `~/.prdt/auto-open` = off.
         found = [tid for tid in args.link if tid in hit]
-        links = dict(zip(found, viewer_links(root, found, auto_open=not args.no_open,
+        links = dict(zip(found, viewer_links(root, found,
                                              labels={t: str(root / hit[t]) for t in found})))
         for tid in args.link:
             print(links[tid] if tid in hit else f"{tid} (not found)")
@@ -13583,10 +13563,14 @@ def main():
     p.set_defaults(fn=cmd_shared_state_guard)
     p = sub.add_parser("viewer", help="regenerate this project's static viewer and print a link per TARGET "
                                       "(ticket id or document path) that opens it at that item — an .html/image "
-                                      "the viewer only summarizes links to the file itself; opens each unless "
-                                      "--no-open (`~/.prdt/auto-open` = off still wins) (T-746)")
+                                      "the viewer only summarizes links to the file itself; never opens anything "
+                                      "itself (T-794) — a main-session-only hook opens it for the PO's own run, "
+                                      "never for a worker's, unless --no-open (`~/.prdt/auto-open` = off still "
+                                      "wins too) (T-746)")
     p.add_argument("targets", nargs="*", metavar="TARGET")
-    p.add_argument("--no-open", action="store_true", help="print the links only, open nothing")
+    p.add_argument("--no-open", action="store_true",
+                   help="the PO's own run: suppress the main-session hook's open too (T-794); a worker's run "
+                        "never opens regardless")
     p.set_defaults(fn=cmd_viewer)
     p = sub.add_parser("tickets", help="list tickets (--version --feature --status --assignee --ready --backlog) "
                                        "· --link T-NNN … prints paste-ready file:// links "
@@ -13606,8 +13590,11 @@ def main():
     p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true")
     p.add_argument("--link", nargs="+", metavar="ID",
                    help="resolve ticket ids to `[T-NNN](file://…)` links that open the viewer with that ticket "
-                        "selected (T-746), and open them unless --no-open")
-    p.add_argument("--no-open", action="store_true", help="--link: print the links only, open nothing")
+                        "selected (T-746); never opens itself (T-794) — a main-session-only hook opens it for "
+                        "the PO's own run, never for a worker's, unless --no-open")
+    p.add_argument("--no-open", action="store_true",
+                   help="--link: the PO's own run: suppress the main-session hook's open too (T-794); a "
+                        "worker's run never opens regardless")
     p.add_argument("--type", choices=TICKET_TYPES, help="new: the ticket's `type` (required)")
     p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
     p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value (v<N>.<m>#<key>)")

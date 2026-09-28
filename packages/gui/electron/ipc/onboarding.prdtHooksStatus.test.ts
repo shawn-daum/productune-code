@@ -126,6 +126,9 @@ export const CASES: readonly Case[] = [
           PostToolUse: [
             { matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] },
             { matcher: 'Write', hooks: [h('prdt-auto-open.sh')] },
+            // T-794: a second registration of the same script — main-session-only
+            // relay for the CLI's own hand-offs, off the Bash tool's stdout.
+            { matcher: 'Bash', hooks: [h('prdt-auto-open.sh')] },
           ],
           UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
           PostToolBatch: [{ hooks: [h('prdt-call-governor.sh')] }],

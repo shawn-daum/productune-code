@@ -85,6 +85,19 @@ function writeEvent(filePath: string): string {
   return JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { file_path: filePath } })
 }
 
+/** T-794: a Bash PostToolUse event — `command` is what the caller typed,
+ *  `stdout` is what the (real or stubbed) `prdt` invocation printed.
+ *  `agentType` present mirrors a worker's call (T-559's own discriminator,
+ *  applied here to Bash instead of Write); absent mirrors the main session. */
+function writeBashEvent(command: string, stdout: string, agentType?: string): string {
+  const event: Record<string, unknown> = {
+    hook_event_name: 'PostToolUse', tool_name: 'Bash',
+    tool_input: { command }, tool_response: { stdout },
+  }
+  if (agentType !== undefined) event.agent_type = agentType
+  return JSON.stringify(event)
+}
+
 describe('hook — viewer-routed documents', () => {
   test.skipIf(!hasJq())('a wiki / feature spec / artifact .md write opens the forwarding page, not the file', () => {
     for (const rel of ['docs/wiki/fact--x.md', 'docs/features/f.md', 'docs/artifacts/v1.0/notes.md', 'docs/prd/PRD.md']) {
@@ -193,6 +206,73 @@ describe('hook — --open hand-off mode', () => {
   })
 })
 
+// T-794: the CLI never opens its own hand-offs any more — this is the ONLY
+// place an open still happens: a genuine PostToolUse(Bash) hook event, which
+// (unlike a plain subprocess) carries `agent_type` when a worker made the
+// call and omits it for the main session (same discriminator T-559 proved for
+// Write, applied here to Bash).
+describe('hook — Bash relay: only the PO`s own hand-off opens (T-794)', () => {
+  test.skipIf(!hasJq())('main session (no agent_type): a printed prdt link opens', () => {
+    const s = sandbox()
+    const f = path.join(s.dir, 'T-001.html')
+    fs.writeFileSync(f, 'x')
+    execFileSync('bash', [HOOK], { env: s.env, input: writeBashEvent('prdt tickets --link T-001', `[T-001](file://${f})\n`) })
+    expect(readLog(s.log)).toBe(f)
+  })
+
+  test.skipIf(!hasJq())('worker call (agent_type present): the identical printed link opens nothing', () => {
+    const s = sandbox()
+    const f = path.join(s.dir, 'T-001.html')
+    fs.writeFileSync(f, 'x')
+    execFileSync('bash', [HOOK], { env: s.env, input: writeBashEvent('prdt tickets --link T-001', `[T-001](file://${f})\n`, 'developer') })
+    expect(readLog(s.log)).toBe('')
+  })
+
+  test.skipIf(!hasJq())('--no-open on the same command line suppresses the open even for the main session', () => {
+    const s = sandbox()
+    const f = path.join(s.dir, 'v.html')
+    fs.writeFileSync(f, 'x')
+    execFileSync('bash', [HOOK], { env: s.env, input: writeBashEvent('prdt viewer --no-open', `[viewer](file://${f})\n`) })
+    expect(readLog(s.log)).toBe('')
+  })
+
+  test.skipIf(!hasJq())('a command that never invoked prdt is never relayed, even if its stdout happens to match the link shape', () => {
+    const s = sandbox()
+    const f = path.join(s.dir, 'v.html')
+    fs.writeFileSync(f, 'x')
+    execFileSync('bash', [HOOK], { env: s.env, input: writeBashEvent('cat notes.txt', `[x](file://${f})\n`) })
+    expect(readLog(s.log)).toBe('')
+  })
+
+  test.skipIf(!hasJq())('auto-open=off still suppresses the Bash relay, same gate as Write/--open', () => {
+    const s = sandbox()
+    fs.writeFileSync(path.join(s.prdtHome, 'auto-open'), 'off\n')
+    const f = path.join(s.dir, 'T-001.html')
+    fs.writeFileSync(f, 'x')
+    execFileSync('bash', [HOOK], { env: s.env, input: writeBashEvent('prdt tickets --link T-001', `[T-001](file://${f})\n`) })
+    expect(readLog(s.log)).toBe('')
+  })
+
+  test.skipIf(!hasJq())('a non-Bash tool (e.g. Read) is never relayed', () => {
+    const s = sandbox()
+    const f = path.join(s.dir, 'T-001.html')
+    fs.writeFileSync(f, 'x')
+    const ev = JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: { command: 'prdt tickets --link T-001' }, tool_response: { stdout: `[T-001](file://${f})\n` } })
+    execFileSync('bash', [HOOK], { env: s.env, input: ev })
+    expect(readLog(s.log)).toBe('')
+  })
+
+  test.skipIf(!hasJq())('two links printed by one prdt call each open once', () => {
+    const s = sandbox()
+    const f1 = path.join(s.dir, 'a.html')
+    const f2 = path.join(s.dir, 'b.html')
+    fs.writeFileSync(f1, 'x')
+    fs.writeFileSync(f2, 'x')
+    execFileSync('bash', [HOOK], { env: s.env, input: writeBashEvent('prdt tickets --link T-001 T-002', `[T-001](file://${f1})\n[T-002](file://${f2})\n`) })
+    expect(readLog(s.log).split('\n').sort()).toEqual([f1, f2].sort())
+  })
+})
+
 // T-785 code review #6: viewer_anchor's docs/artifacts/ branch must key off
 // docs/artifacts/manifest.json — the SAME source the page's own anchor table
 // (render.mjs buildAnchors) reads — instead of re-deriving "looks like an
@@ -247,8 +327,8 @@ print(json.dumps(m.viewer_anchor(m.Path(${JSON.stringify(root)}), ${JSON.stringi
   })
 })
 
-describe('CLI — links open the viewer (real generator, project with no code checkout)', () => {
-  test.skipIf(!hasJq() || !HAS_GENERATOR)('tickets --link prints a forwarding link to viewer.html#T-001 and opens it; unknown ids unchanged', () => {
+describe('CLI — links are printed only; the CLI never opens by itself (T-794)', () => {
+  test.skipIf(!hasJq() || !HAS_GENERATOR)('tickets --link prints a forwarding link to viewer.html#T-001; unknown ids unchanged; nothing opens (only a hook can, T-794)', () => {
     const s = sandbox()
     const root = fs.realpathSync(project(s.dir))
     fs.mkdirSync(path.join(s.prdtHome, 'hooks'))
@@ -258,7 +338,10 @@ describe('CLI — links open the viewer (real generator, project with no code ch
     expect(out).toBe(`[T-001](file://${jump})\nT-404 (not found)\n`)
     expect(fs.readFileSync(jump, 'utf8')).toContain('url=../viewer.html#T-001')
     expect(fs.existsSync(path.join(root, '.prdt', 'scratch', 'viewer', 'viewer.html'))).toBe(true)
-    expect(readLog(s.log)).toBe(jump)
+    // T-794: the CLI itself never shells out to `open` any more — a plain
+    // subprocess has no way to tell a worker's run from the PO's own. Only the
+    // PostToolUse(Bash) relay (see the describe block below) opens anything.
+    expect(readLog(s.log)).toBe('')
   }, 60000)
 
   test.skipIf(!hasJq() || !HAS_GENERATOR)('viewer --no-open: wiki → slug, PRD → path, .html → the file itself; nothing opened', () => {

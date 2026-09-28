@@ -121,6 +121,32 @@
 #  - .html mockups, images, pdf and installers keep opening as the file
 #    itself — the viewer only summarizes those.
 
+# T-794 — main-session-only relay for the CLI's OWN hand-offs (`prdt viewer`,
+# `prdt tickets --link`, any future `prdt` command that prints a paste-ready
+# `[label](file://…)` line). Before this, `viewer_auto_open()` in the CLI shelled
+# out to this same script's `--open` mode directly from whatever process ran
+# `prdt` — a worker persona running the identical command got the identical
+# open, because a plain subprocess has no way to see who invoked it (the
+# `agent_type` discriminator above exists only on a Claude Code hook event, not
+# on argv/env reaching a Bash-spawned child). The CLI no longer calls `--open`
+# at all; the only remaining caller of `--open` is registered on PostToolUse
+# with matcher "Bash", where a genuine hook event again carries `agent_type`
+# (or not) exactly the way the Write registration above already relies on.
+#  - agent_type present → a worker ran it → silent, no matter what it printed.
+#  - agent_type absent (main session) → read `tool_input.command`; not a
+#    `prdt …` invocation (word-bounded, so `sprdt`/`prdthing` don't match) →
+#    silent (this hook only ever relays prdt's own hand-off, never generic
+#    Bash output that happens to look like one). A literal `--no-open` token
+#    on that SAME command line → silent (the PO's own suppression still
+#    works, now read off the command instead of an argparse value the CLI
+#    itself no longer acts on).
+#  - Otherwise: `tool_response.stdout` is scanned line by line for the exact
+#    `[label](file://path)` shape `viewer_links()`/`cmd_viewer` print, and each
+#    path found is handed to THIS SAME script's `--open <path>` mode — one
+#    recursive invocation per link, so every guard already proven for `--open`
+#    (GUI session, auto-open=off, the extension allowlist, T-571's warm-
+#    handler check) applies unchanged and only once each, per path.
+
 set +e
 
 OPEN_MODE=""
@@ -143,6 +169,28 @@ fi
 command -v jq >/dev/null 2>&1 || { printf '{}'; exit 0; }
 
 TOOL_NAME="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_name // ""' 2>/dev/null)"
+
+# T-794 relay (see header): a real Bash PostToolUse event, never the synthetic
+# one `--open` builds above (OPEN_MODE is unset here on purpose — an `--open`
+# call is never itself re-relayed).
+if [ -z "$OPEN_MODE" ] && [ "$TOOL_NAME" = "Bash" ]; then
+  HAS_AGENT_TYPE="$(printf '%s' "$EVENT_JSON" | jq -r 'has("agent_type")' 2>/dev/null)"
+  JQ_AGENT_STATUS=$?
+  if [ "$JQ_AGENT_STATUS" -eq 0 ] && [ "$HAS_AGENT_TYPE" = "false" ]; then
+    COMMAND="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_input.command // ""' 2>/dev/null)"
+    if printf '%s' "$COMMAND" | grep -Eq '(^|[/[:space:];&|(])prdt([[:space:]]|$)' \
+      && ! printf '%s' "$COMMAND" | grep -Eq '(^|[[:space:]])--no-open([[:space:]]|$)'; then
+      STDOUT="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_response.stdout // ""' 2>/dev/null)"
+      printf '%s\n' "$STDOUT" | while IFS= read -r LINE; do
+        FP="$(printf '%s' "$LINE" | sed -n 's/^\[[^]]*\](file:\/\/\(.*\))$/\1/p')"
+        [ -n "$FP" ] && bash "$0" --open "$FP"
+      done
+    fi
+  fi
+  printf '{}'
+  exit 0
+fi
+
 [ "$TOOL_NAME" = "Write" ] || { printf '{}'; exit 0; }
 
 if [ -n "$OPEN_MODE" ]; then
