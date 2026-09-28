@@ -46,7 +46,7 @@ function prdt(lang: 'ko' | 'en', ...args: string[]) {
 }
 const file = (name: string) => path.join(prdtHome, name)
 const read = (name: string) => (fs.existsSync(file(name)) ? fs.readFileSync(file(name), 'utf8') : null)
-const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.address', 'viewer.auto-open', 'plan.tier']
+const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang']
 
 describe('message catalog', () => {
   test('ko and en carry the same keys, none empty', () => {
@@ -79,6 +79,22 @@ describe.skipIf(!READY)('prdt settings — list', () => {
     expect(val['viewer.auto-open']).toBe('on')
     expect(val['plan.tier']).toBeNull()
     expect(val['register.form']).toBe('prose')
+    expect(val['cli.lang']).toBe('ko')
+  })
+  test('cli.lang set/unset and PRDT_LANG override (T-767)', () => {
+    expect(prdt('en', 'settings', 'set', 'cli.lang', 'en').status).toBe(0)
+    expect(read('cli-lang')).toBe('en\n')
+    // no PRDT_LANG in this spawn: cli_lang() falls back to the persisted token
+    const r = spawnSync('python3', [PRDT_CLI, 'settings', 'set', 'viewer.auto-open', 'on'], {
+      cwd: prdtHome, encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: '' },
+    })
+    expect(r.stdout.trim()).toBe('From now on, files handed over by PO open automatically.')
+    // PRDT_LANG=ko still wins over the persisted en
+    expect(prdt('ko', 'settings', 'set', 'viewer.auto-open', 'off').out.trim())
+      .toBe('이제부터 PO가 건네는 파일이 자동으로 열리지 않아요.')
+    expect(prdt('en', 'settings', 'unset', 'cli.lang').status).toBe(0)
+    expect(read('cli-lang')).toBeNull()
   })
   test('ko table matches the approved screen', () => {
     fs.writeFileSync(file('register'), 'audience=developer\nform=outline\nstructure=planner-tables\n')
