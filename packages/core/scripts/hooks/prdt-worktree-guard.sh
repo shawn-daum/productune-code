@@ -49,20 +49,39 @@
 #   also checks its SOURCE operand(s), since removing a file from the shared
 #   checkout is itself a write — `rm` `rmdir` `mkdir` `touch` `truncate`
 #   `unlink` `chmod` `chown` operands, `find … -delete`'s search path(s),
-#   `dd of=`, `curl -o`/`--output`, and a mutating `git` subcommand run in the
-#   shared checkout (`-C DIR` / `--work-tree DIR` or the effective cwd). `cd`,
-#   `pushd`/`popd` and a `( … )` subshell (scoped: a `cd` inside one does not
-#   leak out) move the effective cwd; `bash -c`/`sh -c`/`zsh -c` recurse into
-#   their script argument (capped at 4 levels); `xargs CMD …` is unwrapped
-#   like a prefix so a literal target on xargs's OWN command line is seen. A
-#   path spelled `$PWD/…` / `${PWD}/…` resolves against the effective cwd.
-#   Paths differing only in case are folded before comparing, but only where
-#   `sys.platform == "darwin"` (APFS default: case-insensitive) — never on a
-#   case-sensitive filesystem, to avoid a false deny there.
+#   `dd of=`, `curl -o`/`--output`, a mutating `git` subcommand run in the
+#   shared checkout (`-C DIR` / `--work-tree DIR` or the effective cwd),
+#   `tar`'s `-C`/`--directory` destination (only in an extract/append mode —
+#   `x`/`r`/`u`/`A` or `--extract`/`--get`/`--append`/`--update`/
+#   `--concatenate`/`--catenate`; a plain `-c` create is a read of that
+#   directory, left silent like `cat`), `patch`'s `-d`/`--directory` and
+#   `unzip`'s `-d` destination, and `npm`'s `--prefix` destination (T-786:
+#   F5). `eval`'s body recurses like `bash -c` (T-786: F5). `cd`, `pushd`/
+#   `popd` and a `( … )` subshell (scoped: a `cd` inside one does not leak
+#   out) move the effective cwd — a bare `cd` (no operand) goes to `$HOME`,
+#   matching real bash (T-786: code review #3 — it used to leave the
+#   effective cwd unchanged, which could land a later relative path back
+#   inside the checkout and false-deny it); `bash -c`/`sh -c`/`zsh -c` recurse
+#   into their script argument (capped at 4 levels); `xargs CMD …` is
+#   unwrapped like a prefix so a literal target on xargs's OWN command line
+#   is seen. A path spelled `$PWD/…` / `${PWD}/…` resolves against the
+#   effective cwd. Paths differing only in case are folded before comparing,
+#   but only where `sys.platform == "darwin"` (APFS default: case-
+#   insensitive) — never on a case-sensitive filesystem, to avoid a false
+#   deny there.
 #   Still NOT recognised — accepted gaps: an interpreter writing a file from
 #   inside its own source (python -c, node -e); a target reaching `xargs` or
 #   `find -exec` only via stdin / found paths, never literal on the command
-#   line; a `case … esac` pattern boundary is not specially parsed.
+#   line; a `case … esac` pattern boundary is not specially parsed; a target
+#   STARTING WITH an unresolved `$VAR` (any variable other than `$PWD`/
+#   `${PWD}`) or a command substitution (`$(…)` or backtick) is left unknown
+#   rather than guessed, since that leading segment is what decides which
+#   directory the path resolves under — guessed as a plain relative path, it
+#   could resolve to the wrong directory entirely and false-deny a legacy-
+#   layout write that never touches the checkout (T-786: code review #3,
+#   `$TMPDIR/x` · `$S/x`). A reference elsewhere in the path (`code/$f`)
+#   still resolves literally, unchanged. Backtick substitution is one more
+#   shape this gap covers, not parsed.
 #
 # Fails OPEN everywhere: python3 missing, unparsable JSON, no project, an
 # unreadable config — exit 0, no output.
@@ -238,9 +257,29 @@ def expand_pwd(path, base):
     return path
 
 
+def has_unresolved_ref(path):
+    """T-786 (code review #3): a target STARTING WITH a `$VAR` other than
+    `$PWD`/`${PWD}`, or a command substitution (`$(…)` / backtick) — the
+    segment that decides which directory the path resolves under is itself
+    unknown. Guessing there — joining it as a plain relative path against the
+    effective cwd — can land it inside the shared checkout by accident (in
+    the legacy layout, code_abs == root, so almost any relative-looking text
+    resolves "under" it) and false-deny a write that never touches the
+    checkout at all (`$TMPDIR/x`, `$S/x`). Unknown, so left silent — an
+    accepted gap, not a guess. A reference elsewhere in the path (`code/$f`)
+    names an interior segment only, not the directory it resolves under, so
+    it stays on the existing (literal-path) handling."""
+    for pre in ("${PWD}", "$PWD"):
+        if path == pre or path.startswith(pre + "/"):
+            return False
+    return path.startswith("$") or path.startswith("`")
+
+
 def shared(path, base):
     """The realpath of `path` if it is a guarded shared-checkout path, else None."""
     if not isinstance(path, str) or not path:
+        return None
+    if has_unresolved_ref(path):
         return None
     path = os.path.expanduser(expand_pwd(path, base))
     if not path.startswith("/"):
@@ -493,9 +532,11 @@ def run_command(raw_cmd, base_cwd, depth):
         name, args = os.path.basename(words[0]), words[1:]
         ops = [a for a in args if not a.startswith("-")]
         if name == "cd":
-            if ops:
-                nd = os.path.expanduser(ops[0])
-                ecwd = nd if nd.startswith("/") else (os.path.join(ecwd, nd) if ecwd else None)
+            # T-786 (code review #3): bare `cd` (no operand) goes to $HOME,
+            # same as real bash — leaving ecwd unchanged let a later relative
+            # write resolve against the OLD cwd and false-deny inside it.
+            nd = os.path.expanduser(ops[0]) if ops else os.path.expanduser("~")
+            ecwd = nd if nd.startswith("/") else (os.path.join(ecwd, nd) if ecwd else None)
             continue
         if name == "pushd":
             if ops:
@@ -511,6 +552,13 @@ def run_command(raw_cmd, base_cwd, depth):
             ci = args.index("-c")
             if ci + 1 < len(args):
                 run_command(args[ci + 1], ecwd, depth + 1)
+            continue
+        if name == "eval":
+            # T-786 (F5): `eval "echo x > code/a"` hides its redirect inside a
+            # single quoted token, invisible to the outer redirect scan —
+            # recurse into the reassembled body like `bash -c` does.
+            if args:
+                run_command(" ".join(args), ecwd, depth + 1)
             continue
         if name == "tee":
             for a in ops:
@@ -606,6 +654,58 @@ def run_command(raw_cmd, base_cwd, depth):
                     continue
                 if a.startswith("--output="):
                     check(a.split("=", 1)[1], "Bash curl -o")
+                j += 1
+        elif name == "tar":
+            # T-786 (F5): -C/--directory is a write target only in an
+            # extract/append mode — a plain create (-c) only READS that
+            # directory, same as `cat`, and stays silent.
+            TAR_WRITE_LONG = {"--extract", "--get", "--append", "--update", "--concatenate", "--catenate"}
+            write = any(
+                (a.startswith("--") and a in TAR_WRITE_LONG)
+                or (a.startswith("-") and not a.startswith("--") and a != "-" and any(ch in a[1:] for ch in "xruA"))
+                for a in args
+            )
+            if write:
+                j = 0
+                while j < len(args):
+                    a = args[j]
+                    if a in ("-C", "--directory") and j + 1 < len(args):
+                        check(args[j + 1], "Bash tar -C")
+                        j += 2
+                        continue
+                    if a.startswith("--directory="):
+                        check(a.split("=", 1)[1], "Bash tar -C")
+                    j += 1
+        elif name == "patch":
+            j = 0
+            while j < len(args):
+                a = args[j]
+                if a in ("-d", "--directory") and j + 1 < len(args):
+                    check(args[j + 1], "Bash patch -d")
+                    j += 2
+                    continue
+                if a.startswith("--directory="):
+                    check(a.split("=", 1)[1], "Bash patch -d")
+                j += 1
+        elif name == "unzip":
+            j = 0
+            while j < len(args):
+                a = args[j]
+                if a == "-d" and j + 1 < len(args):
+                    check(args[j + 1], "Bash unzip -d")
+                    j += 2
+                    continue
+                j += 1
+        elif name == "npm":
+            j = 0
+            while j < len(args):
+                a = args[j]
+                if a == "--prefix" and j + 1 < len(args):
+                    check(args[j + 1], "Bash npm --prefix")
+                    j += 2
+                    continue
+                if a.startswith("--prefix="):
+                    check(a.split("=", 1)[1], "Bash npm --prefix")
                 j += 1
         elif name == "git":
             repo, j = ecwd, 0
