@@ -266,11 +266,15 @@ def _append_line(path, text):
 # start; SubagentStop the mode-independent end:
 #   SubagentStart  → marker written (or REVIVED for a known agent_id: a resume
 #                    keeps the ticket id of its original dispatch), `since`=now,
-#                    no `stopped_at`.
+#                    no `stopped_at`. T-774: also carries `model` — the dispatch
+#                    gate's per-model-tier in-flight cap reads this same field
+#                    off every OTHER open marker (see prdt-dispatch-gate.sh);
+#                    see MODEL_TIERS/norm_model above for what it holds.
 #   PostToolUse    → pairing refinement only: the response carries `agentId`
 #                    and the input carries the `[ctx]` prompt, so an EXISTING
-#                    marker's ticket_id/dispatch_id are corrected from the
-#                    authoritative source. Never revives a stopped marker. It
+#                    marker's ticket_id/dispatch_id (and, T-774, `model`) are
+#                    corrected from the authoritative source. Never revives a
+#                    stopped marker. It
 #                    CREATES one only when none exists AND the response says
 #                    `status:"async_launched"` (a background launch, still
 #                    running) — the fallback that keeps background dispatches
@@ -309,6 +313,22 @@ MARKER_RETENTION_HOURS = 24
 # `T-682`, `d-T682-s3-…` (the PO's dispatch_id convention has no hyphen), never
 # the `T-4` inside `GPT-4` (F9: left boundary) nor `T-68` inside `T-6829`.
 TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T-?([0-9]{1,5})(?![0-9])")
+
+# T-774: the marker's `model` field is the TIER a dispatch runs at, never a
+# versioned model id — the Agent tool's own `model` parameter is restricted to
+# exactly these four values (its enum), and `prdt-dispatch-gate.sh` normalizes
+# its own read of `tool_input.model` to the same set (T-774, same ticket) so
+# the two sides compare literally. A call that carries no override resolves to
+# whatever the harness/agent-definition default is — this hook cannot see that
+# resolution from here, so it is recorded as the literal "default" bucket
+# rather than guessed at. A value outside the four (a stale fixture, a future
+# enum member this copy predates) also falls into "default" — never invented,
+# never silently dropped.
+MODEL_TIERS = {"sonnet", "opus", "haiku", "fable"}
+
+
+def norm_model(v):
+    return v if isinstance(v, str) and v in MODEL_TIERS else "default"
 
 
 def marker_dir():
@@ -366,7 +386,9 @@ def ticket_from_ctx(ctx_obj):
 
 def pending_agent_calls(transcript_path, agent_type, tail_bytes=4 * 1024 * 1024):
     """Agent tool_use blocks of `agent_type` in the parent transcript's tail
-    that have no tool_result yet, oldest first: [(tool_use_id, prompt)]."""
+    that have no tool_result yet, oldest first: [(tool_use_id, prompt, model)].
+    `model` is the call's raw `input.model` (T-774) — un-normalized here, the
+    caller runs it through `norm_model()`."""
     if not (isinstance(transcript_path, str) and os.path.isfile(transcript_path)):
         return []
     try:
@@ -395,10 +417,10 @@ def pending_agent_calls(transcript_path, agent_type, tail_bytes=4 * 1024 * 1024)
             if blk.get("type") == "tool_use" and blk.get("name") == "Agent":
                 tin_ = blk.get("input") or {}
                 if isinstance(tin_, dict) and tin_.get("subagent_type") == agent_type and isinstance(blk.get("id"), str):
-                    calls.append((blk["id"], tin_.get("prompt")))
+                    calls.append((blk["id"], tin_.get("prompt"), tin_.get("model")))
             elif blk.get("type") == "tool_result" and isinstance(blk.get("tool_use_id"), str):
                 resolved.add(blk["tool_use_id"])
-    return [(tid, prompt) for tid, prompt in calls if tid not in resolved]
+    return [(tid, prompt, model) for tid, prompt, model in calls if tid not in resolved]
 
 
 def claimed_tool_use_ids():
@@ -451,37 +473,49 @@ def marker_start(aid):
     prior = marker_load(aid)
     data = {
         "agent_id": aid, "persona": persona, "dispatch_id": None, "ticket_id": None,
-        "tool_use_id": None, "project_root": root, "since": now,
+        "tool_use_id": None, "model": None, "project_root": root, "since": now,
         "session_id": ev.get("session_id") if isinstance(ev.get("session_id"), str) else None,
         "transcript": agent_transcript_path(aid),
     }
     if prior:
         for k in ("dispatch_id", "ticket_id", "tool_use_id"):
             data[k] = prior.get(k) if isinstance(prior.get(k), str) else None
+        # T-774: a resume is the SAME logical dispatch continuing, never a new
+        # tier pick — carry the prior marker's model forward (a legacy marker
+        # from before this ticket has none; norm_model() below falls back to
+        # "default" for it exactly as a fresh, tier-less marker would).
+        data["model"] = norm_model(prior.get("model")) if prior.get("model") is not None else None
         data["resumed_from"] = prior.get("since") if isinstance(prior.get("since"), str) else None
     if not data["ticket_id"]:
         claimed = claimed_tool_use_ids()
-        for tuid, prompt in pending_agent_calls(ev.get("transcript_path"), sub):
+        for tuid, prompt, model in pending_agent_calls(ev.get("transcript_path"), sub):
             if tuid in claimed:
                 continue
             data["dispatch_id"], data["ticket_id"] = ticket_from_ctx(ctx_from_prompt(prompt))
             data["tool_use_id"] = tuid
+            data["model"] = norm_model(model)
             break
     if not data["ticket_id"]:
         data["ticket_id"] = po_state_ticket()
+    if data["model"] is None:
+        data["model"] = "default"
     marker_save(data)
 
 
-def marker_refine(aid, ctx_obj, tool_use_id, launched_async):
+def marker_refine(aid, ctx_obj, tool_use_id, launched_async, model=None):
     """PostToolUse:Agent: correct an existing marker's pairing; create one only
-    for a still-running background launch that has none (see LIFECYCLE)."""
+    for a still-running background launch that has none (see LIFECYCLE). T-774:
+    `model` is corrected from the same authoritative (agentId ↔ tool_input)
+    source as `ticket_id`/`dispatch_id` above it — same rationale, same call
+    site already has it at zero extra cost."""
     dispatch_id, ticket_id = ticket_from_ctx(ctx_obj)
+    nmodel = norm_model(model) if model is not None else None
     data = marker_load(aid)
     if data is None:
         if not launched_async:
             return
         data = {"agent_id": aid, "persona": persona, "dispatch_id": None, "ticket_id": None,
-                "tool_use_id": None, "project_root": root, "since": now,
+                "tool_use_id": None, "model": nmodel or "default", "project_root": root, "since": now,
                 "session_id": ev.get("session_id") if isinstance(ev.get("session_id"), str) else None,
                 "transcript": agent_transcript_path(aid)}
     if ticket_id:
@@ -490,6 +524,8 @@ def marker_refine(aid, ctx_obj, tool_use_id, launched_async):
         data["dispatch_id"] = dispatch_id
     if isinstance(tool_use_id, str):
         data["tool_use_id"] = tool_use_id
+    if nmodel is not None:
+        data["model"] = nmodel
     marker_save(data)
 
 
@@ -570,7 +606,7 @@ atomic_write(sess_path, sess)
 if event != "SubagentStop" and agent_id:
     try:
         marker_refine(agent_id, ctx_from_prompt(tin.get("prompt")), ev.get("tool_use_id"),
-                      resp_obj.get("status") == "async_launched")
+                      resp_obj.get("status") == "async_launched", tin.get("model"))
     except Exception:
         pass
     try:
