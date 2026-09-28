@@ -1055,14 +1055,24 @@ describe('T-695: the machine resource cap', () => {
       const home = tmp('prdt-t774-home-')
       // inflight_max raised so the machine-wide dispatches axis (which counts every
       // tier together) stays under its own cap at 6 — isolating the assertion to the
-      // per-tier axis, which keeps its own default (5) since only opus is overridden.
-      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 10 }))
+      // per-tier axis, whose own key is set to 5 (an absent tier key follows
+      // inflight_max — see the regression test below).
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 10, inflight_opus_max: 5 }))
       for (let i = 0; i < 6; i++) marker(home, `o${i}`, 60 * i, false, 'live', 45, false, 'opus')
       const d = denyReason({ cwd: proj, model: 'opus' }, { home })
       expect(d).toContain('in-flight dispatches on model tier "opus" 6 machine-wide (cap 5')
       expect(d).toContain('\nover cap: model_tier\n')
       expect(d).toContain('frees it: wait for a worker on the same model tier to return, or dispatch on a different tier')
       expect(d).not.toContain('over cap: dispatches')
+    })
+
+    test('regression: a raised inflight_max with no tier key is not re-capped at 5 by the tier axis', () => {
+      // QA grill of T-774: caps {inflight_max: 10}, 6 live markers with no model
+      // override — the pre-T-774 hook admits this dispatch, so the tier axis must too.
+      const home = tmp('prdt-t774-home-')
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 10 }))
+      for (let i = 0; i < 6; i++) marker(home, `d${i}`, 60 * i)
+      expect(run({ cwd: proj }, { home })).toBe('')
     })
 
     test('no `model` override: this dispatch and legacy (no-`model`) markers both fall into the "default" bucket', () => {

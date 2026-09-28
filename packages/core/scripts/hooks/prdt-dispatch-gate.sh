@@ -517,12 +517,13 @@ esac
 #                         that broke both 09-23 and 09-26.
 #   vms_max          2    — two VM processes (16 GiB, 44% of RAM) still admit;
 #                         one leftover process must not stall every dispatch.
-#   inflight_sonnet_max   } 5 each — T-774 has no incident of its own to size
-#   inflight_opus_max     } these from (the designer's own note: unobserved
-#   inflight_haiku_max    } whether a quota limit is even per-model), so each
-#   inflight_fable_max    } defaults to the SAME value as `inflight_max`: the
-#   inflight_default_max  } per-tier cap never binds tighter than the existing
-#                           machine-wide one until the user tunes it here.
+#   inflight_sonnet_max   } = the EFFECTIVE `inflight_max` each (its default 5,
+#   inflight_opus_max     } or the user's raised value) — T-774 has no incident
+#   inflight_haiku_max    } of its own to size these from (the designer's own
+#   inflight_fable_max    } note: unobserved whether a quota limit is even
+#   inflight_default_max  } per-model), so a per-tier cap never binds tighter
+#                           than the machine-wide one until the user sets that
+#                           tier's own key here.
 #
 # A measurement that fails (tool missing, output unparsed) makes that axis
 # `unmeasured`: it never denies, and the failure is said ONCE per session — the
@@ -693,9 +694,13 @@ def num: try (tonumber | select(. >= 0)) catch null;
 def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
   permissionDecision: "deny", permissionDecisionReason: $why}};
 
-({load_ratio: 1.5, mem_free_pct_min: 15, inflight_max: 5, suites_max: 1, vms_max: 2,
-  inflight_sonnet_max: 5, inflight_opus_max: 5, inflight_haiku_max: 5, inflight_fable_max: 5,
-  inflight_default_max: 5} + $caps) as $cap
+({load_ratio: 1.5, mem_free_pct_min: 15, inflight_max: 5, suites_max: 1, vms_max: 2} + $caps) as $cap0
+# A tier key absent from dispatch-caps.json defaults to the EFFECTIVE
+# inflight_max (QA grill of T-774): a literal 5 re-capped a machine that had
+# raised inflight_max, denying a dispatch the pre-T-774 hook admitted.
+| ({inflight_sonnet_max: $cap0.inflight_max, inflight_opus_max: $cap0.inflight_max,
+    inflight_haiku_max: $cap0.inflight_max, inflight_fable_max: $cap0.inflight_max,
+    inflight_default_max: $cap0.inflight_max} + $cap0) as $cap
 | $cap["inflight_\($want_model)_max"] as $tier_cap
 | ([$loadavg | scan("[0-9]+\\.[0-9]+")] | first | if . == null then null else num end) as $load1
 | ($ncpu | num | if . == 0 then null else . end) as $ncpu
