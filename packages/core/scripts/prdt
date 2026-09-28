@@ -2328,9 +2328,27 @@ def cmd_index(args):
           (f", {len(v)} ticket violations (see `prdt doctor`)" if v else ""))
 
 
+def cmd_shared_state_guard(args):
+    """`prdt _shared-state-guard <label>` — install.sh's own seam onto
+    `live_dispatch_warning` (T-601). Not a project command (no `require_root`):
+    install.sh's mirror write is machine-scoped (PRDT_HOME), not project-scoped,
+    and runs from the repo checkout before any project directory is assumed.
+    Single source of truth stays in `live_dispatch_warning`/
+    `SHARED_DERIVED_STATE_WRITERS` — this is a thin CLI wrapper so a bash
+    script (no forks allowed in the call-governor hook itself, but install.sh
+    already hard-depends on python3) can reuse it instead of re-deriving the
+    threshold or the counter filename shape a second time."""
+    w = live_dispatch_warning(args.label)
+    if w:
+        print(w, file=sys.stderr)
+
+
 def cmd_wiki(args):
     root = require_root()
     if args.action == "reindex":
+        w = live_dispatch_warning("wiki reindex")
+        if w:
+            print(w, file=sys.stderr)
         _con, v, pages, mpages = rebuild_index(root)
         mdir = machine_wiki_root()
         if mdir.is_dir():
@@ -2756,6 +2774,93 @@ GOVERNOR_WITNESS_PREFIX = ".hw-"
 # quiet weekend (Fri→Mon is 3 days) so a normal gap in usage doesn't page
 # a false alarm.
 GOVERNOR_STALE_DAYS = 7
+
+
+# ── shared-derived-state CLI guard (T-601) ────────────────────────────────────
+# Single source of truth for "which prdt-side write rewrites state shared across
+# every session/worktree on this machine, not one dispatch's own scratch" — the
+# acceptance's own requirement, so a future writer of shared state has one place
+# to add itself rather than a prose rule to remember. PO-observed 2026-09-10,
+# same cause 3x same day: the PO ran `prdt wiki reindex` from their own session
+# while a worker's own test suite (packages/core, unrelated PRDT_HOME — workers
+# run sandboxed, T-450) was mid-run; ~/.prdt/wiki/index.md's mtime moved under
+# it and the suite's own real-home tripwire read that as contamination and
+# failed a run that was otherwise fine.
+SHARED_DERIVED_STATE_WRITERS = {
+    "wiki reindex": (".prdt/index.db", "docs/wiki/index.md", "$PRDT_HOME/wiki/index.md"),
+    "artifacts sync": ("docs/artifacts/manifest.json",),
+    "install.sh mirror write": ("$PRDT_HOME/discipline/", "$PRDT_HOME/hooks/",
+                                 "$PRDT_HOME/bin/prdt", "$PRDT_HOME/doctrine.md"),
+}
+
+# Freshness threshold (seconds) for "does a dispatch look live right now".
+# Measured (docs/wiki/fact--test-suite.md, T-649/656/668/703/718): the core
+# suite alone runs ~456s single-worker and up to ~10 min (600s) in a detached
+# worktree under load 6-8. The signal below (a call-governor counter's mtime)
+# advances once per ASSISTANT TURN, not per wall-clock second, so a live
+# dispatch mid-way through one long verification Bash call — the exact shape
+# all 3 T-601 observations were — can leave that mtime up to a whole tool
+# timeout old while still very much running. Set above the slowest measured
+# gap rather than at it: this guard only WARNS (acceptance line 3; same
+# direction as T-765's precedent — warn+record over refuse when refusing can
+# stop legitimate work and there is no observation yet that refusing would
+# have done better), so a false POSITIVE costs one printed line the PO can
+# read and ignore, while a false NEGATIVE silently reproduces the exact
+# incident this ticket exists to catch. That asymmetry is why this leans
+# generous rather than tight.
+LIVE_DISPATCH_FRESH_S = 900  # 15 min — 1.5x the slowest measured single-tool gap
+
+# Counter filename shape, byte-identical in spirit to RE_SID/RE_AID in
+# prdt-call-governor.sh (that hook is bash-only, no forks allowed on its hot
+# path, so it cannot import this — the T-561 "deliberate copy" class; a test
+# pins the two shapes against each other). Exactly one `.`, no leading dot:
+# matches `<sid>.<aid>` only and excludes `.fired-<event>` (fires on EVERY
+# session's every tool call in EVERY prdt project on the machine — far too
+# broad a signal, see GOVERNOR_STALE_DAYS above), `.hw-<sid>.<aid>` (witness,
+# leading dot) and `<sid>.<aid>.w<band>` (band marker, two dots). The counter
+# itself only ever advances for prdt-developer/-qa/-designer dispatches
+# (call-governor's own persona scope) — exactly "a worker is running", never
+# the PO's or main session's own tool calls.
+_RUN_COUNTER_RE = re.compile(r'^[A-Za-z0-9_-]{8,64}\.[A-Za-z0-9_-]{4,64}$')
+
+
+def live_dispatch_warning(label):
+    """Read-only (contracts §Return: run/ is never written or cleared here,
+    T-514 owns cleanup) — `label` names the calling command for the printed
+    line. Returns a warning string, or None when nothing under
+    run/call-governor looks live within LIVE_DISPATCH_FRESH_S."""
+    run_dir = prdt_home() / "run" / "call-governor"
+    if not run_dir.is_dir():
+        return None
+    newest = None
+    try:
+        entries = list(run_dir.iterdir())
+    except OSError:
+        return None
+    for p in entries:
+        if not _RUN_COUNTER_RE.match(p.name):
+            continue
+        try:
+            if not p.is_file():
+                continue
+            mt = p.stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or mt > newest:
+            newest = mt
+    if newest is None:
+        return None
+    age_s = (datetime.now(timezone.utc)
+              - datetime.fromtimestamp(newest, tz=timezone.utc)).total_seconds()
+    if age_s > LIVE_DISPATCH_FRESH_S:
+        return None
+    return (f"⚠ prdt {label}: a dispatch looks live on this machine (worker activity "
+            f"~{int(age_s)}s ago, {run_dir}) — this command rewrites shared derived "
+            f"state ({', '.join(SHARED_DERIVED_STATE_WRITERS.get(label, ()))}) a "
+            f"running worker may read mid-write (T-601, PO-observed 2026-09-10: this "
+            f"exact shape killed a running worker's test 3x same day). Proceeding "
+            f"anyway — this is a warning, not a block; check `ListAgents` first if "
+            f"you are not sure what is running.")
 
 
 def claude_settings_path():
@@ -4262,6 +4367,165 @@ def cmd_tickets_fmt(args, root):
         sys.exit(1)
 
 
+# ── T-746: hand-offs open the static viewer at the item ──────────────────────
+# The viewer generator lives in the prdt CHECKOUT (`packages/gui/viewer/`),
+# never in the project: found the same way the drift checks find their repo
+# (self-reference first, then PRDT_REPO), so a project with no code checkout
+# of its own still gets a viewer. Output is a derived cache under the
+# project's `.prdt/scratch/viewer/` — `scratch/` is already in both meta
+# exclude lists (META_EXCLUDE_DEFAULT · core DEFAULT_META_EXCLUDE), so the
+# regenerated page never reaches the meta backup. Regenerated on every
+# hand-off/open (~1.2 s on this repo's corpus, 2026-09-28), so what opens is
+# current without the user running anything.
+VIEWER_REL = Path(".prdt") / "scratch" / "viewer"
+VIEWER_JUMP_DIR = "at"
+VIEWER_OPEN_MSG = "viewer.html#{key} 을 엽니다…"
+
+
+def _viewer_generator():
+    for base in _repo_root_candidates():
+        cli = base.parent / "gui" / "viewer" / "cli.mjs"
+        if cli.is_file() and (base.parent / "gui" / "node_modules").is_dir():
+            return cli
+    return None
+
+
+def viewer_regenerate(root):
+    """Regenerate `<root>/.prdt/scratch/viewer/viewer.html`; the page's path,
+    or None when there is no generator / node, or generation failed."""
+    cli = _viewer_generator()
+    node = shutil.which("node")
+    if cli is None or node is None:
+        return None
+    out = Path(root) / VIEWER_REL / "viewer.html"
+    try:
+        r = subprocess.run([node, str(cli), "--repo-root", str(root), "--out", str(out)],
+                           capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return out if r.returncode == 0 and out.is_file() else None
+
+
+def viewer_anchor(root, target):
+    """The viewer `#id` for `target` (a ticket id or a file path), or None when
+    the viewer only summarizes that file (an `.html` mockup, an image, …) —
+    the caller then opens the file itself. Keys mirror the page's own anchor
+    table (render.mjs `buildAnchors`): ticket → its id, wiki page → its slug,
+    any other document → its repo-relative path."""
+    if re.fullmatch(r"T-\d+", target):
+        return target
+    p = Path(target)
+    p = (p if p.is_absolute() else Path.cwd() / p).resolve()
+    try:
+        rel = p.relative_to(Path(root).resolve()).as_posix()
+    except ValueError:
+        return None
+    if not rel.endswith(".md"):
+        return None
+    if rel.startswith("docs/tickets/"):
+        fm = parse_frontmatter(p) if p.is_file() else None
+        fm = fm[0] if isinstance(fm, tuple) else fm
+        return str((fm if isinstance(fm, dict) else {}).get("id") or p.stem)
+    if rel.startswith("docs/wiki/") and rel.count("/") == 2:
+        return p.stem
+    if rel == "docs/prd/PRD.md" or re.fullmatch(r"docs/prd/versions/[^/]+\.md", rel) \
+            or re.fullmatch(r"docs/features/[^/]+\.md", rel) or rel.startswith("docs/artifacts/"):
+        return rel
+    return None
+
+
+def viewer_jump(viewer_html, key):
+    """A tiny page next to the viewer that forwards to `viewer.html#<key>`.
+    Links and `open` point at THIS file, not at `viewer.html#…` directly: a
+    `file://` URL handed to macOS `open` (or clicked in a terminal) goes
+    through LaunchServices as a document path, and the fragment is not
+    guaranteed to survive that trip."""
+    import html, urllib.parse
+    jdir = Path(viewer_html).parent / VIEWER_JUMP_DIR
+    jdir.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", key)
+    if safe != key:
+        safe += "-" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
+    frag = urllib.parse.quote(key, safe="/-._~")
+    page = jdir / f"{safe}.html"
+    body = ('<!doctype html><meta charset="utf-8">'
+            f'<meta http-equiv="refresh" content="0;url=../viewer.html#{html.escape(frag)}">'
+            f'<a href="../viewer.html#{html.escape(frag)}">viewer.html#{html.escape(key)}</a>\n')
+    tmp = page.with_suffix(".tmp")
+    tmp.write_text(body, encoding="utf-8")
+    tmp.replace(page)
+    return page
+
+
+def viewer_auto_open(path, msg=None):
+    """Open `path` the way the auto-open hook would (`~/.prdt/auto-open` off →
+    nothing; never cold-starts the browser, T-571): the hook's `--open` mode is
+    the one place that policy lives. Silent on any failure — an open is a
+    convenience, the printed link stays the hand-off."""
+    if os.environ.get("PRDT_GUI_SESSION"):
+        return False
+    if _read_token("auto-open") == "off":
+        return False
+    hook = None
+    for cand in [prdt_home() / "hooks" / "prdt-auto-open.sh",
+                 Path(__file__).resolve().parent / "hooks" / "prdt-auto-open.sh"]:
+        if cand.is_file():
+            hook = cand
+            break
+    if hook is None:
+        return False
+    if msg:
+        print(msg, file=sys.stderr)
+    try:
+        subprocess.run(["bash", str(hook), "--open", str(path)], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return True
+
+
+def viewer_links(root, targets, auto_open=True, labels=None):
+    """Resolve each target to a paste-ready `[label](file://…)` line: a viewer
+    link at the item when the viewer shows it, the file itself otherwise (and
+    whenever the viewer cannot be generated). `labels[target]` overrides the
+    fallback file path (tickets: the md path from the index). Opens each link
+    through `viewer_auto_open` when `auto_open`."""
+    labels = labels or {}
+    keys = {t: viewer_anchor(root, t) for t in targets}
+    viewer = viewer_regenerate(root) if any(keys.values()) else None
+    lines = []
+    for t in targets:
+        key = keys[t]
+        if key and viewer:
+            dest, label = viewer_jump(viewer, key), key
+        else:
+            dest = Path(labels.get(t) or t)
+            dest = dest if dest.is_absolute() else (Path.cwd() / dest).resolve()
+            label = t
+        lines.append(f"[{label}](file://{dest})")
+        if auto_open and dest.is_file():
+            viewer_auto_open(dest, VIEWER_OPEN_MSG.format(key=key) if key and viewer else None)
+    return lines
+
+
+def cmd_viewer(args):
+    """`prdt viewer [TARGET…] [--no-open]` — regenerate this project's viewer
+    and print a link per target (ticket id or document path) at that item;
+    no target → the viewer home. Opens each unless `--no-open` (and
+    `~/.prdt/auto-open` = off still wins)."""
+    root = require_root()
+    if not args.targets:
+        viewer = viewer_regenerate(root)
+        if viewer is None:
+            sys.exit("prdt viewer: 뷰어를 만들지 못했어요 — node 와 prdt 체크아웃의 packages/gui 의존성이 필요해요 (`prdt doctor`).")
+        print(f"[viewer](file://{viewer})")
+        if not args.no_open:
+            viewer_auto_open(viewer)
+        return
+    for line in viewer_links(root, args.targets, auto_open=not args.no_open):
+        print(line)
+
+
 def cmd_tickets(args):
     root = require_root()
     if getattr(args, "action", None) == "new":
@@ -4281,8 +4545,14 @@ def cmd_tickets(args):
         hit = dict(con.execute(
             "SELECT id, path FROM tickets WHERE id IN (%s)" % ",".join("?" * len(args.link)),
             args.link).fetchall())
+        # T-746: a found ticket's link opens the viewer with it selected (the
+        # md path only when the viewer cannot be generated), and is opened
+        # right away unless `--no-open` / `~/.prdt/auto-open` = off.
+        found = [tid for tid in args.link if tid in hit]
+        links = dict(zip(found, viewer_links(root, found, auto_open=not args.no_open,
+                                             labels={t: str(root / hit[t]) for t in found})))
         for tid in args.link:
-            print(f"[{tid}](file://{root / hit[tid]})" if tid in hit else f"{tid} (not found)")
+            print(links[tid] if tid in hit else f"{tid} (not found)")
         return
     q, params = "SELECT id, slug, type, status, assignee, version, deps FROM tickets", []
     conds = []
@@ -8037,6 +8307,9 @@ def cmd_artifacts(args):
             print(l)
         sys.exit(code)
     # sync — write the ONE root manifest from disk; report what sits outside a bucket.
+    w = live_dispatch_warning("artifacts sync")
+    if w:
+        print(w, file=sys.stderr)
     legacy = legacy_bucket_manifests(root)
     if legacy:
         for mp in legacy:
@@ -10434,7 +10707,7 @@ def _track_setup_cmd(root, wt):
     if isinstance(s, str) and s.strip():
         return s
     if (wt / "pnpm-lock.yaml").is_file():
-        return "pnpm install"
+        return "pnpm install --frozen-lockfile"
     if (wt / "package-lock.json").is_file():
         return "npm ci"
     if (wt / "yarn.lock").is_file():
@@ -10477,16 +10750,8 @@ def _track_require_open(code, wt, branch, tid):
         _track_die(f"branch {branch} does not exist in the code repo")
 
 
-def _track_exclude(code, root):
-    """Legacy (unsplit) layout: code root == meta root, so `tracks/` sits inside
-    the code work tree — keep it out of `git status` via info/exclude."""
-    if Path(code).resolve() != Path(root).resolve():
-        return
-    r = _tgit(["rev-parse", "--git-common-dir"], code)
-    if r.returncode != 0:
-        return
-    gd = Path(r.stdout.strip())
-    gd = gd if gd.is_absolute() else Path(code) / gd
+def _exclude_add(gd):
+    """Append `/tracks/` to <gd>/info/exclude, once, best-effort (never raises)."""
     ex = gd / "info" / "exclude"
     try:
         cur = ex.read_text(encoding="utf-8") if ex.is_file() else ""
@@ -10496,6 +10761,27 @@ def _track_exclude(code, root):
                 f.write(("" if cur == "" or cur.endswith("\n") else "\n") + "/tracks/\n")
     except OSError:
         pass
+
+
+def _track_exclude(code, root):
+    """`tracks/` sits under the PROJECT (meta) root in every layout, split or
+    legacy — its work tree is always projectRoot — so the meta repo's own
+    `git status` sees it unless excluded there too (T-778: previously only
+    the legacy branch below ran, so a split project's meta `git status` kept
+    showing `?? tracks/`). Legacy (code root == meta root) ALSO physically
+    nests `tracks/` inside the code work tree, so that repo's own
+    info/exclude needs the same line."""
+    gd_meta = meta_git_dir(root)
+    if gd_meta.is_dir():
+        _exclude_add(gd_meta)
+    if Path(code).resolve() != Path(root).resolve():
+        return
+    r = _tgit(["rev-parse", "--git-common-dir"], code)
+    if r.returncode != 0:
+        return
+    gd = Path(r.stdout.strip())
+    gd = gd if gd.is_absolute() else Path(code) / gd
+    _exclude_add(gd)
 
 
 def cmd_track_open(args):
@@ -10684,6 +10970,11 @@ def cmd_track_land(args):
         if _track_run(test, wt, "tests on the merged tree") != 0:
             _track_die(f"tests failed on the merged tree — {base} is unchanged; {branch} keeps the merge, "
                        f"fix it there and land again")
+        dirty = _tgit(["status", "--porcelain"], wt)
+        if dirty.returncode != 0 or dirty.stdout.strip():
+            left = [ln[3:] if len(ln) > 3 else ln for ln in dirty.stdout.splitlines() if ln]
+            _track_die(f"tests left the merged tree dirty ({', '.join(left) or '?'}) — {base} is unchanged; "
+                       f"{branch} keeps the merge, clean it up there and land again")
         new = _tgit(["rev-parse", branch], code).stdout.strip()
         if _tgit(["merge-base", "--is-ancestor", f"refs/heads/{base}", new], code).returncode != 0:
             _track_die(f"{base} moved during the land — land again")
@@ -10709,13 +11000,41 @@ def cmd_track_land(args):
             pass
     r = _tgit(["worktree", "remove", str(wt)], code)
     print(f"worktree {wt} removed" if r.returncode == 0 else f"worktree remove failed: {r.stderr.strip()}")
-    r = _tgit(["branch", "-d", branch], code)
-    print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -d failed: {r.stderr.strip()}")
+    # `git branch -d` checks mergedness against the CODE checkout's own HEAD,
+    # not the land target — with `--base main` and `dev` checked out in `code`
+    # (the common case) that refuses forever and leaves the branch behind
+    # (T-775 grill). We just fast-forwarded `base` to `branch`'s own tip, so
+    # `branch` is provably contained in `base`: check that directly and delete
+    # accordingly, never against whatever `code` happens to have checked out.
+    if _tgit(["merge-base", "--is-ancestor", branch, f"refs/heads/{base}"], code).returncode == 0:
+        r = _tgit(["branch", "-D", branch], code)
+        print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
+    else:
+        print(f"branch {branch} kept — not merged into {base} (unexpected after land)")
     print(f"landed {tid} — tests `{test}` green; nothing pushed")
 
 
+def cmd_track_drop(args):
+    root, code, tid, wt, branch = _track_ctx(args)
+    _track_require_open(code, wt, branch, tid)
+    if not args.force:
+        on_dev = _tgit(["merge-base", "--is-ancestor", branch, "refs/heads/dev"], code).returncode == 0
+        on_main = _tgit(["merge-base", "--is-ancestor", branch, "refs/heads/main"], code).returncode == 0
+        if not (on_dev or on_main):
+            _track_die(f"branch {branch} holds commits not on dev or main — `prdt track drop {tid} --force` "
+                       f"to drop it anyway, or `prdt track land {tid}` to keep them")
+    r = _tgit(["worktree", "remove", "--force", str(wt)], code)
+    if r.returncode != 0:
+        _track_die("git worktree remove failed: " + (r.stderr.strip() or r.stdout.strip()))
+    print(f"worktree {wt} removed")
+    r = _tgit(["branch", "-D", branch], code)
+    print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
+    print(f"dropped {tid} — nothing landed, nothing pushed")
+
+
 def cmd_track(args):
-    {"open": cmd_track_open, "review": cmd_track_review, "land": cmd_track_land}[args.action](args)
+    {"open": cmd_track_open, "review": cmd_track_review, "land": cmd_track_land,
+     "drop": cmd_track_drop}[args.action](args)
 
 
 
@@ -13189,6 +13508,17 @@ def main():
                                      "never hand-maintained")
     p.add_argument("action", choices=["rebuild"])
     p.set_defaults(fn=cmd_index)
+    p = sub.add_parser("_shared-state-guard",
+                        help=argparse.SUPPRESS)  # install.sh's own seam (T-601), not a user command
+    p.add_argument("label", choices=sorted(SHARED_DERIVED_STATE_WRITERS))
+    p.set_defaults(fn=cmd_shared_state_guard)
+    p = sub.add_parser("viewer", help="regenerate this project's static viewer and print a link per TARGET "
+                                      "(ticket id or document path) that opens it at that item — an .html/image "
+                                      "the viewer only summarizes links to the file itself; opens each unless "
+                                      "--no-open (`~/.prdt/auto-open` = off still wins) (T-746)")
+    p.add_argument("targets", nargs="*", metavar="TARGET")
+    p.add_argument("--no-open", action="store_true", help="print the links only, open nothing")
+    p.set_defaults(fn=cmd_viewer)
     p = sub.add_parser("tickets", help="list tickets (--version --feature --status --assignee --ready --backlog) "
                                        "· --link T-NNN … prints paste-ready file:// links "
                                        "· new --type <design|impl|qa|ops|decision> --slug <slug> "
@@ -13205,7 +13535,10 @@ def main():
                         "matches both spellings) · new: this ticket's `assignee` (default `po`; `decision` "
                         "always forces `user`)")
     p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true")
-    p.add_argument("--link", nargs="+", metavar="ID", help="resolve ticket ids to `[T-NNN](file://<abs>)`")
+    p.add_argument("--link", nargs="+", metavar="ID",
+                   help="resolve ticket ids to `[T-NNN](file://…)` links that open the viewer with that ticket "
+                        "selected (T-746), and open them unless --no-open")
+    p.add_argument("--no-open", action="store_true", help="--link: print the links only, open nothing")
     p.add_argument("--type", choices=TICKET_TYPES, help="new: the ticket's `type` (required)")
     p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
     p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value (v<N>.<m>#<key>)")
@@ -13319,15 +13652,18 @@ def main():
     p.add_argument("--json", action="store_true", help="the same rows, machine-readable")
     p.set_defaults(fn=cmd_schedule)
     p = sub.add_parser("track", help="parallel track worktree (T-775): open <T-NNN> [--base dev|main] · "
-                                     "review <T-NNN> · land <T-NNN> [--test CMD] — the worktree is "
-                                     "<project>/tracks/<T-NNN> on branch track/<T-NNN> of the code repo; "
-                                     "land merges the base in, runs the tests on the merged tree and "
-                                     "fast-forwards the base; never pushes")
-    p.add_argument("action", choices=("open", "review", "land"))
+                                     "review <T-NNN> · land <T-NNN> [--test CMD] · drop <T-NNN> [--force] — "
+                                     "the worktree is <project>/tracks/<T-NNN> on branch track/<T-NNN> of "
+                                     "the code repo; land merges the base in, runs the tests on the merged "
+                                     "tree and fast-forwards the base; drop discards the worktree and "
+                                     "branch instead; neither pushes")
+    p.add_argument("action", choices=("open", "review", "land", "drop"))
     p.add_argument("ticket", help="T-NNN")
     p.add_argument("--base", choices=TRACK_BASES, help="open: the branch to cut from (default dev)")
     p.add_argument("--test", help="land: the test command (default: .prdt/config.json track.test, "
                                   "else the package.json test script)")
+    p.add_argument("--force", action="store_true",
+                   help="drop: also discard a branch that holds commits not on dev or main")
     p.set_defaults(fn=cmd_track)
     p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591/T-680): "
                                         "up <name> --dispatch <id> · down <name> --dispatch <id> · "

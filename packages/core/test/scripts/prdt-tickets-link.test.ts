@@ -54,11 +54,6 @@ function writeTicket(version: string, id: string) {
   return path.join(dir, `${id}.md`)
 }
 
-/** The CLI resolves its root with Path.resolve() — /var vs /private/var on macOS. */
-function realProjectDir(): string {
-  return fs.realpathSync(projectDir)
-}
-
 /** Parses `[T-NNN](file:///abs/path)` lines into a map; non-link lines land under `raw`. */
 function parseLinks(out: string): { links: Record<string, string>; lines: string[] } {
   const lines = out.trim().split('\n').filter(Boolean)
@@ -68,6 +63,42 @@ function parseLinks(out: string): { links: Record<string, string>; lines: string
     if (m) links[m[1]] = m[2]
   }
   return { links, lines }
+}
+
+/** The `<script id="detail-data" type="application/json">` blob a generated
+ *  viewer.html embeds — `anchors[id].g` is the sidebar group (bucket) it
+ *  placed a ticket under (render.mjs `buildAnchors`). */
+function readViewerAnchors(root: string): Record<string, { s: string; g: string }> {
+  const html = fs.readFileSync(path.join(fs.realpathSync(root), '.prdt', 'scratch', 'viewer', 'viewer.html'), 'utf-8')
+  const m = html.match(/<script id="detail-data" type="application\/json">([\s\S]*?)<\/script>/)
+  if (!m) throw new Error('viewer.html: no detail-data blob')
+  return JSON.parse(m[1]).anchors
+}
+
+/**
+ * T-746/T-781: `--link`'s target moved from a bare md path to a viewer
+ * forwarding page — this asserts the underlying claim T-451 exists to prove
+ * either way: `id` resolves to `dir` (its actual `docs/tickets/<dir>/`),
+ * never a guessed path.
+ *
+ * When the viewer could be generated, `dest` is the forwarding page under
+ * `.prdt/scratch/viewer/at/<id>.html`; it redirects to `viewer.html#<id>`,
+ * and viewer.html's own anchor table (`buildAnchors`, keyed off each
+ * ticket's real bucket on disk) says which group — dir — it filed `id`
+ * under. When there is no viewer (no node / no generator in this
+ * environment), `viewer_links` falls back to the plain md path, which is
+ * then the direct, still-legible proof.
+ */
+function expectResolvesToDir(root: string, id: string, dir: string, dest: string) {
+  const jump = path.join(fs.realpathSync(root), '.prdt', 'scratch', 'viewer', 'at', `${id}.html`)
+  expect(fs.existsSync(dest)).toBe(true)
+  if (dest === jump) {
+    expect(fs.readFileSync(dest, 'utf-8')).toContain(`url=../viewer.html#${id}`)
+    expect(readViewerAnchors(root)[id]).toMatchObject({ s: 'ticket', g: dir })
+  } else {
+    expect(dest).toBe(path.join(fs.realpathSync(root), 'docs', 'tickets', dir, `${id}.md`))
+    expect(fs.readFileSync(dest, 'utf-8')).toContain(`id: ${id}`)
+  }
 }
 
 beforeEach(() => {
@@ -89,16 +120,13 @@ describe.skipIf(!PYTHON3)('prdt tickets --link (T-451)', () => {
     const { links, lines } = parseLinks(runPrdt(['tickets', '--link', 'T-901', 'T-902', 'T-903']))
     expect(lines).toHaveLength(3)
 
-    expect(links['T-901']).toBe(path.join(realProjectDir(), 'docs', 'tickets', res.version, 'T-901.md'))
-    expect(links['T-902']).toBe(path.join(realProjectDir(), 'docs', 'tickets', 'v0.1', 'T-902.md'))
-    expect(links['T-903']).toBe(path.join(realProjectDir(), 'docs', 'tickets', 'backlog', 'T-903.md'))
-
-    // "opening it lands on the right file" — every emitted target exists and is that ticket.
-    for (const [id, p] of Object.entries(links)) {
-      expect(path.isAbsolute(p)).toBe(true)
-      expect(fs.existsSync(p)).toBe(true)
-      expect(fs.readFileSync(p, 'utf-8')).toContain(`id: ${id}`)
-    }
+    // "opening it lands on the right file" — every emitted target is an abs
+    // path that exists and resolves to that ticket's actual dir (T-746: a
+    // viewer forwarding page grouped by bucket, or — no viewer — the md path).
+    for (const p of Object.values(links)) expect(path.isAbsolute(p)).toBe(true)
+    expectResolvesToDir(projectDir, 'T-901', res.version, links['T-901'])
+    expectResolvesToDir(projectDir, 'T-902', 'v0.1', links['T-902'])
+    expectResolvesToDir(projectDir, 'T-903', 'backlog', links['T-903'])
   })
 
   test('one line per requested id, in the order asked', () => {
@@ -114,16 +142,16 @@ describe.skipIf(!PYTHON3)('prdt tickets --link (T-451)', () => {
   test('a ticket promoted between dirs resolves to where it is now', () => {
     const res = runInit()
     const before = writeTicket('backlog', 'T-904')
-    expect(parseLinks(runPrdt(['tickets', '--link', 'T-904'])).links['T-904'])
-      .toBe(path.join(realProjectDir(), 'docs', 'tickets', 'backlog', 'T-904.md'))
+    expectResolvesToDir(projectDir, 'T-904', 'backlog',
+      parseLinks(runPrdt(['tickets', '--link', 'T-904'])).links['T-904'])
 
     // backlog promotion = `git mv` into the current version dir (contracts).
     const verDir = path.join(projectDir, 'docs', 'tickets', res.version)
     fs.mkdirSync(verDir, { recursive: true })
     fs.renameSync(before, path.join(verDir, 'T-904.md'))
 
-    expect(parseLinks(runPrdt(['tickets', '--link', 'T-904'])).links['T-904'])
-      .toBe(path.join(realProjectDir(), 'docs', 'tickets', res.version, 'T-904.md'))
+    expectResolvesToDir(projectDir, 'T-904', res.version,
+      parseLinks(runPrdt(['tickets', '--link', 'T-904'])).links['T-904'])
   })
 
   test('an unknown id says so instead of emitting a guessed path', () => {
@@ -136,10 +164,10 @@ describe.skipIf(!PYTHON3)('prdt tickets --link (T-451)', () => {
   test('found and unknown ids in one call: each keeps its own line', () => {
     const res = runInit()
     writeTicket(res.version, 'T-905')
-    const lines = runPrdt(['tickets', '--link', 'T-905', 'T-999']).trim().split('\n')
+    const { links, lines } = parseLinks(runPrdt(['tickets', '--link', 'T-905', 'T-999']))
     expect(lines).toHaveLength(2)
-    expect(lines[0]).toContain(`docs/tickets/${res.version}/T-905.md`)
     expect(lines[1]).toBe('T-999 (not found)')
+    expectResolvesToDir(projectDir, 'T-905', res.version, links['T-905'])
   })
 
   test('--link does not disturb the plain listing output', () => {
