@@ -64,9 +64,21 @@ function commit(repo: string, msg: string): void {
   git(repo, 'commit', '-q', '-m', msg)
 }
 
+/** A no-op `scripts/install.sh` that only marks it ran (`.install-ran`) — T-749b
+ * "answer 1" coverage needs the run-time path to actually be able to install. */
+function writeInstallSh(repo: string): void {
+  fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true })
+  fs.writeFileSync(
+    path.join(repo, 'scripts', 'install.sh'),
+    '#!/bin/sh\ntouch "$(dirname "$0")/../.install-ran"\nexit 0\n',
+  )
+  fs.chmodSync(path.join(repo, 'scripts', 'install.sh'), 0o755)
+}
+
 /**
- * A bare `origin` on branch `dev` with one commit + RELEASES.md at v1.5, and a
- * clone of it. Returns both paths; callers move either side to shape the case.
+ * A bare `origin` on branch `dev` with one commit + RELEASES.md at v1.5 + a
+ * no-op install.sh, and a clone of it. Returns both paths; callers move either
+ * side to shape the case.
  */
 function makeRemoteAndClone(): { origin: string; clone: string } {
   const base = fs.mkdtempSync(path.join(tmpRoot, 'case-'))
@@ -74,6 +86,7 @@ function makeRemoteAndClone(): { origin: string; clone: string } {
   fs.mkdirSync(seed)
   git(seed, 'init', '-q', '-b', 'dev')
   writeReleases(seed, ['v1.5'])
+  writeInstallSh(seed)
   commit(seed, 'seed')
   const origin = path.join(base, 'origin.git')
   git(base, 'clone', '-q', '--bare', seed, origin)
@@ -428,5 +441,102 @@ m.maybe_prompt_update("update")
       encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
       env: { ...process.env, HOME: home, CI: '' },
     })).toBe('')
+  })
+
+  // T-749b (QA grill finding #1): `maybe_prompt_update`'s "update" branch used to
+  // call `cmd_update(None)`, which re-ran the WHOLE version check and rendered the
+  // same box + question a second time. `os.execv` is stubbed so the process isn't
+  // actually replaced (it would leave nothing to assert on) — the stub prints a
+  // marker instead, proving the real call would have re-run the original command.
+  test('run-time check, "1" → installs once, box+question shown only once, then re-execs', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, ['v1.6', 'v1.5'])
+    const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
+    fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
+    const script = `
+import importlib.util, importlib.machinery, sys, io
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+class Tty:
+    def __init__(self, s): self._s = s
+    def isatty(self): return True
+    def __getattr__(self, n): return getattr(self._s, n)
+sys.stdin = Tty(io.StringIO("1\\n"))
+sys.stdout = Tty(sys.stdout)
+def fake_execv(path, argv):
+    print("EXECV_CALLED")
+m.os.execv = fake_execv
+m.maybe_prompt_update("status")
+`
+    const out = execFileSync('python3', ['-c', script], {
+      encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: home, CI: '' },
+    })
+    // the box + question render exactly once — no second `cmd_update(None)` re-entry
+    expect((out.match(/설치됨 v1\.5 → 새 버전 v1\.6/g) || []).length).toBe(1)
+    expect((out.match(/1\. update/g) || []).length).toBe(1)
+    expect(out).toContain('업데이트 완료: v1.5 → v1.6')
+    expect(out).toContain('EXECV_CALLED')
+    expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(true)
+    expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(git(origin, 'rev-parse', 'HEAD').trim())
+  })
+
+  // T-749b (QA grill finding #4): EOF used to leave the cursor sitting right after
+  // the prompt text with no newline, so the skip line ran on directly after it
+  // ("번호를 고르세요 [1/2]: 건너뜁니다 …") instead of starting its own line.
+  test('EOF (Ctrl-D) at the run-time prompt → the skip line prints on its own fresh line', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, ['v1.6', 'v1.5'])
+    const out = runNudge(clone, '') // empty stdin → EOFError on the first input()
+    const promptLine = '번호를 고르세요 [1/2]: '
+    expect(out).toContain(promptLine + '\n')
+    expect(out).not.toContain(promptLine + '건너뜁니다')
+    expect(out).toContain('건너뜁니다 — 오늘은 다시 묻지 않아요.')
+    expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(false)
+  })
+
+  // T-749b (QA grill finding #3): Ctrl-C used to propagate as an uncaught
+  // KeyboardInterrupt out of `main()` — a traceback, AND it took the ORIGINAL
+  // command (the one this nudge interrupted) down with it, since the process
+  // died before ever falling through to dispatch it.
+  test('Ctrl-C at the run-time prompt → one catalog line, no traceback, nothing installs, original command still runs', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin)
+    const before = git(clone, 'rev-parse', 'HEAD').trim()
+    const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
+    fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
+    const script = `
+import importlib.util, importlib.machinery, sys, io, builtins
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+class Tty:
+    def __init__(self, s): self._s = s
+    def isatty(self): return True
+    def __getattr__(self, n): return getattr(self._s, n)
+sys.stdin = Tty(io.StringIO(""))
+sys.stdout = Tty(sys.stdout)
+def raise_kbi(prompt=""):
+    sys.stdout.write(prompt)
+    raise KeyboardInterrupt()
+builtins.input = raise_kbi
+m.maybe_prompt_update("status")
+print("ORIGINAL_COMMAND_RAN")   # stands in for main()'s dispatch, which resumes after the nudge
+`
+    const out = execFileSync('python3', ['-c', script], {
+      encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: home, CI: '' },
+    })
+    expect(out).not.toContain('Traceback')
+    expect((out.match(/취소했어요/g) || []).length).toBe(1)
+    expect(out).not.toContain('건너뜁니다') // no second, contradictory "skip" line
+    expect(out).toContain('ORIGINAL_COMMAND_RAN')
+    expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before)
+    expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(false)
   })
 })

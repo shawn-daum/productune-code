@@ -125,12 +125,16 @@ beforeEach(() => { tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(
 afterEach(() => { fs.rmSync(tmpRoot, { recursive: true, force: true }) })
 
 describe.skipIf(!PYTHON3)('T-749 · prdt update — nothing installs before the answer', () => {
-  test('already up to date → one line, no prompt, no pull', () => {
+  test('already up to date → one line, no prompt, no pull, but install.sh still re-runs (T-749b mirror refresh)', () => {
     const { clone } = makeRemoteAndClone()
     const before = git(clone, 'rev-parse', 'HEAD').trim()
     const out = runCmdUpdate(clone, { tty: true, stdinAnswer: '1\n' }) // even a "1" answer must never be reached
     expect(out.trim()).toBe('지금 버전이 최신이에요 (v1.5) — 업데이트할 것이 없어요.')
     expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before)
+    // T-749b: GUI settings (settings.ts:192,220) and both READMEs point at
+    // `prdt update` always re-running install.sh to refresh the mirror/menu,
+    // even with nothing new to pull — the pre-T-749 contract, restored.
+    expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(true)
   })
 
   test('non-interactive (no tty) with a pending update → one line naming it, no install', () => {
@@ -187,5 +191,92 @@ describe.skipIf(!PYTHON3)('T-749 · prdt update — nothing installs before the 
     expect(out).toContain('원격 전용 제목')
     // the local RELEASES.md on disk never got this text (nothing was pulled)
     expect(fs.readFileSync(path.join(clone, 'docs', 'RELEASES.md'), 'utf-8')).not.toContain('원격 전용 제목')
+  })
+
+  // T-749b (QA grill finding #2): origin ahead in git with NO qualifying RELEASES.md
+  // section still has to ask — the pre-T-749 contract was "always pull+install", and
+  // silently doing that again (no prompt at all) would install unreviewed commits.
+  function pushWithoutReleaseSection(origin: string): void {
+    const scratch = fs.mkdtempSync(path.join(tmpRoot, 'norelnotes-'))
+    const wc = path.join(scratch, 'wc')
+    git(scratch, 'clone', '-q', origin, wc)
+    fs.writeFileSync(path.join(wc, 'unrelated.txt'), 'x')
+    commit(wc, 'unrelated change, no release notes')
+    git(wc, 'push', '-q', 'origin', 'dev')
+  }
+
+  test('ahead in git but no new RELEASES.md section → still asks, "no release notes" line, "1" pulls+installs', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    pushWithoutReleaseSection(origin)
+    const out = runCmdUpdate(clone, { tty: true, stdinAnswer: '1\n' })
+    expect(out).toContain('설치됨 v1.5 →')
+    expect(out).toContain('이 사이에 새 커밋은 있지만 릴리즈 노트는 없어요.')
+    expect(out).toContain('1. update')
+    expect(out).toContain('2. skip')
+    expect(out).toContain('업데이트 완료:')
+    expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(git(origin, 'rev-parse', 'HEAD').trim())
+    expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(true)
+  })
+
+  test('ahead in git but no new RELEASES.md section, "2" → nothing pulls without a 1', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    pushWithoutReleaseSection(origin)
+    const before = git(clone, 'rev-parse', 'HEAD').trim()
+    const out = runCmdUpdate(clone, { tty: true, stdinAnswer: '2\n' })
+    expect(out).toContain('이 사이에 새 커밋은 있지만 릴리즈 노트는 없어요.')
+    expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before)
+    expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(false)
+  })
+
+  // T-749b (QA grill finding #4): EOF used to leave the cursor on the prompt's own
+  // line with no trailing newline, so whatever printed next ran on directly after it.
+  test('EOF (Ctrl-D) at the prompt → prints on a fresh line, installs nothing', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, ['v1.6', 'v1.5'])
+    const before = git(clone, 'rev-parse', 'HEAD').trim()
+    const out = runCmdUpdate(clone, { tty: true }) // no stdinAnswer → empty stdin → EOFError
+    expect(out.endsWith('번호를 고르세요 [1/2]: \n')).toBe(true)
+    expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before)
+    expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(false)
+  })
+
+  // T-749b (QA grill finding #3): Ctrl-C used to propagate as an uncaught
+  // KeyboardInterrupt — a Python traceback on stderr, nothing installed, but the
+  // process itself died (fatal on the explicit `prdt update` path).
+  test('Ctrl-C at the prompt → one catalog line, no traceback, installs nothing', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, ['v1.6', 'v1.5'])
+    const before = git(clone, 'rev-parse', 'HEAD').trim()
+    const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
+    fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
+    const script = `
+import importlib.util, importlib.machinery, sys, io, builtins
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+class Tty:
+    def __init__(self, s): self._s = s
+    def isatty(self): return True
+    def __getattr__(self, n): return getattr(self._s, n)
+sys.stdin = Tty(io.StringIO(""))
+sys.stdout = Tty(sys.stdout)
+def raise_kbi(prompt=""):
+    sys.stdout.write(prompt)
+    raise KeyboardInterrupt()
+builtins.input = raise_kbi
+m.cmd_update(None)
+print("AFTER_CMD_UPDATE")
+`
+    const out = execFileSync('python3', ['-c', script], {
+      encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: home },
+    })
+    expect(out).not.toContain('Traceback')
+    expect(out.match(/취소했어요/g) || []).toHaveLength(1)
+    expect(out).toContain('AFTER_CMD_UPDATE') // cmd_update returned normally, no crash
+    expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before)
+    expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(false)
   })
 })
