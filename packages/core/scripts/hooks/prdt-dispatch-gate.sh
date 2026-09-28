@@ -31,6 +31,16 @@
 #         moment; one off `prdt schedule`'s top row with no
 #         `[ctx].schedule_reason` also WARNS. Never a deny (T-765, user
 #         decision) — see "T-773: the schedule record" below.
+#   DENY  ⑥ (T-775) a `prdt-developer` / `prdt-qa` dispatch into a checkout
+#         (`[ctx].worktree`, else the shared code checkout) that already has a
+#         LIVE developer/qa dispatch of the same project — contracts/git.md
+#         isolation trigger ① (one checkout, two impl tracks running suites)
+#         enforced by machine, whether or not the files overlap. Live = the
+#         same marker liveness the dispatches axis uses; each marker's
+#         `checkout` is written by prdt-post-dispatch.sh from its `[ctx]`. A
+#         marker with no `checkout` (older than T-775, or no `[ctx]` paired)
+#         never matches, and an unmeasured liveness never denies — fail open.
+#         Checked with ④ and outranks it: the fix differs (`prdt track open`).
 #   NOT HERE — the return/envelope side (slice 3), and the three binary
 #         candidates held under doctrine #5 for zero observed violations
 #         (AskUserQuestion in a worker · worker↔worker calls · discipline-path
@@ -394,6 +404,24 @@ end;
 # the Agent tool's own `model` enum {sonnet,opus,haiku,fable}; anything else
 # (a malformed payload, a future enum member this copy predates) also falls
 # into "default" rather than being trusted as a cap-lookup key.
+# T-775: the persona the checkout rule binds ("" for every other one) and this
+# dispatch's raw `[ctx].worktree` ("" when absent = the shared code checkout);
+# control characters dropped so the value can ride a TAB-separated line. It is
+# compared, never echoed.
+def want_persona:
+  ((.tool_input.subagent_type // "")) as $s
+  | if ($s | type) == "string" and ($s | test("^prdt-(developer|qa)$")) then ($s | sub("^prdt-"; "")) else "" end;
+def want_checkout:
+  ((.tool_input.prompt // "")) as $p
+  | if ($p | type) != "string" then "" else
+      ([$p | split("\n")[] | select(test("^\\[ctx\\] \\{"))] | first) as $l
+      | if $l == null then "" else
+          (try ($l | sub("^\\[ctx\\] "; "") | fromjson) catch null) as $c
+          | if ($c | type) == "object" and (($c.worktree // null) | type) == "string"
+            then ($c.worktree | gsub("[\u0000-\u001f\u007f]"; "") | sub("^\\s+"; "") | sub("\\s+$"; ""))
+            else "" end
+        end
+    end;
 def want_model:
   ((.tool_input.model // "") ) as $m
   | if ($m | type) == "string" and ($m | test("^(sonnet|opus|haiku|fable)$")) then $m else "default" end;
@@ -407,8 +435,8 @@ def want_model:
 {applies: (if (.hook_event_name == "PreToolUse") and (.tool_name == "Agent") and ((.tool_input // {}) | type) == "object"
               and (((.tool_input // {}).subagent_type // "") | type) == "string"
            then ((.tool_input // {}).subagent_type // "") | test("^prdt-") else false end),
- out: ([gate] | first), model: want_model}
-| "\(.applies)\t\(.model)\n\(if .out == null then "" else (.out | tojson) end)"
+ out: ([gate] | first), model: want_model, persona: want_persona, checkout: want_checkout}
+| "\(.applies)\t\(.model)\t\(.persona)\t\(.checkout)\n\(if .out == null then "" else (.out | tojson) end)"
 JQ
 
 RAW="$(printf '%s' "$EV" | jq -r \
@@ -429,6 +457,10 @@ GATE="${RAW#*$'\n'}"
 APPLIES="${LINE1%%$'\t'*}"
 WANT_MODEL="${LINE1#*$'\t'}"
 [ "$WANT_MODEL" = "$LINE1" ] && WANT_MODEL="default"   # no tab: fail-safe, never reached in practice
+L1REST="${WANT_MODEL#*$'\t'}"; [ "$L1REST" = "$WANT_MODEL" ] && L1REST=""
+WANT_MODEL="${WANT_MODEL%%$'\t'*}"
+WANT_PERSONA="${L1REST%%$'\t'*}"
+WANT_CO="${L1REST#*$'\t'}"; [ "$WANT_CO" = "$L1REST" ] && WANT_CO=""
 if [ "$APPLIES" != "true" ]; then
   [ -n "$GATE" ] && printf '%s\n' "$GATE"
   exit 0
@@ -626,9 +658,13 @@ if [ -z "$MARK_BAD" ] && [ ${#MARK_FILES[@]} -gt 0 ]; then
         | ((.since // "") | try fromdate catch null) as $s
         | select($s != null and ($now - $s) < ($stale_h * 3600))
         | {id: ((.agent_id // "") | tostring), t: ((.transcript // "") | tostring), age: ($now - $s),
+           persona: ((.persona // "") | tostring), root: ((.project_root // "") | tostring),
+           co: (if (.checkout | type) == "string" then .checkout else "" end),
+           ticket: ((.ticket_id // "") | tostring | if test("^T-[0-9]{1,5}$") then . else "" end),
            model: (((.model // "default") | tostring) as $mm
                    | if ($mm | test("^(sonnet|opus|haiku|fable)$")) then $mm else "default" end)})) as $c
-| "\($bad)", ($c[] | "\(.id | gsub("[\u001f\n]"; ""))\u001f\(.t | gsub("[\u001f\n]"; ""))\u001f\(.age)\u001f\(.model | gsub("[\u001f\n]"; ""))")
+| "\($bad)", ($c[] | [.id, .t, (.age | tostring), .model, .persona, .root, .co, .ticket]
+    | map(gsub("[\u0000-\u001f]"; "")) | join("\u001f"))
 JQ
   MOUT="$(printf '%s' "$MARK_RAW" | jq -r -R -s --argjson stale_h "$STALE_H" "$MPROG" 2>/dev/null)"
   if [ -z "$MOUT" ]; then
@@ -642,7 +678,7 @@ JQ
       # Legacy markers (no `transcript`): one `find` for all of them. Zero forks
       # once every open marker carries its path.
       FIND_ARGS=(); FOUND=""
-      while IFS=$US read -r id t age model; do
+      while IFS=$US read -r id t age model rest; do
         [ -n "$id" ] || continue
         case "$t" in /*) continue ;; esac
         case "$id" in *[!A-Za-z0-9_-]*) continue ;; esac
@@ -654,7 +690,7 @@ JQ
       fi
       # Resolve every candidate to a path (or none); collect the paths that exist.
       EXIST=()
-      while IFS=$US read -r id t age model; do
+      while IFS=$US read -r id t age model rest; do
         [ -n "$id" ] || continue
         case "$t" in /*) ;; *) t="" ;; esac
         if [ -z "$t" ] && [ -n "$FOUND" ]; then
@@ -665,7 +701,7 @@ JQ
           esac
         fi
         [ -n "$t" ] && [ -f "$t" ] && EXIST+=("$t")
-        MARK_CANDS="$MARK_CANDS$id$US$t$US$age$US$model"$'\n'
+        MARK_CANDS="$MARK_CANDS$id$US$t$US$age$US$model$US$rest"$'\n'
       done <<< "$CANDS"
       if [ ${#EXIST[@]} -gt 0 ]; then
         # macOS stat first, GNU second; `/dev/null` forces tail's per-file
@@ -680,6 +716,16 @@ JQ
   fi
 fi
 
+# T-775: the project (physical path — the post-dispatch hook stores markers'
+# `project_root` realpath'd) and its code checkout, for the checkout rule.
+PROJ_ROOT="$(cd -P -- "$DIR" 2>/dev/null && pwd)"
+[ -n "$PROJ_ROOT" ] || PROJ_ROOT="$DIR"
+CODE_ABS="$PROJ_ROOT"
+if [ -n "$WANT_PERSONA" ]; then
+  CODE_DIR="$(jq -r '(.code.dir // "") | strings' "$DIR/.prdt/config.json" 2>/dev/null)"
+  case "$CODE_DIR" in ""|/*|*..*) ;; *) CODE_ABS="$PROJ_ROOT/${CODE_DIR%/}" ;; esac
+fi
+
 CAPSF="$PRDT_ROOT/dispatch-caps.json"
 CAPS='{}'
 CAPS_BAD=""
@@ -690,6 +736,13 @@ fi
 
 IFS= read -r -d '' RPROG <<'JQ'
 def r2: (. * 100 | round) / 100;
+# T-775: a checkout's identity — "code" for the shared code checkout (spelled
+# `code`, or its absolute path), else the absolute worktree path, trailing
+# slashes dropped; a relative path is taken from the project root.
+def norm_co($root; $code_abs):
+  if . == "" then "" elif . == "code" then "code"
+  else ((if startswith("/") then . else $root + "/" + . end) | sub("/+$"; "")) as $a
+    | if $a == $code_abs then "code" else $a end end;
 def num: try (tonumber | select(. >= 0)) catch null;
 def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
   permissionDecision: "deny", permissionDecisionReason: $why}};
@@ -718,7 +771,8 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
        | (reduce ($tails | split("\n"))[] as $l ({cur: "", last: {}};
             if ($l | test("^==> .* <==$")) then .cur = ($l | capture("^==> (?<p>.*) <==$").p)
             elif $l == "" or .cur == "" then . else .last[.cur] = $l end)).last as $last
-       | [$cands | split("\n")[] | select(length > 0) | split("\u001f") | {id: .[0], t: .[1], age: (.[2] | tonumber), model: (.[3] // "default")}]
+       | [$cands | split("\n")[] | select(length > 0) | split("\u001f") | {id: .[0], t: .[1], age: (.[2] | tonumber), model: (.[3] // "default"),
+           persona: (.[4] // ""), root: (.[5] // ""), co: (.[6] // ""), ticket: (.[7] // "")}]
        | map(. + {live: (if .t == "" or ($mt[.t] // null) == null then (.age < $grace)
              elif (($last[.t] // "") | contains("\"model\":\"<synthetic>\"")) then false
              elif (now - $mt[.t]) > ($idle_min * 60) then false
@@ -761,6 +815,19 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
      + " — a measurement failed (tool missing or output unparsed), so that axis never blocks a dispatch; said once per session."
      + (if $caps_bad == "1" then " `dispatch-caps.json` is not a JSON object of numbers — defaults in force." else "" end) end) as $note
 | ($axes | map(select(.over))) as $over
+| (if $want_persona == "" or $live_cands == null then [] else
+     (if $want_co == "" then "code" else ($want_co | norm_co($proj_root; $code_abs)) end) as $mine
+     | $live_cands | map(select(.live and (.persona == "developer" or .persona == "qa")
+         and .root == $proj_root and .co != "" and (.co | norm_co($proj_root; $code_abs)) == $mine))
+   end) as $co_hits
+| (if ($co_hits | length) == 0 then "" else
+     ($co_hits | first) as $h
+     | deny("[prdt dispatch gate] DENIED before the worker spawned: "
+          + (if ($want_co == "" or ($want_co | norm_co($proj_root; $code_abs)) == "code") then "the shared code checkout" else "this dispatch's `[ctx].worktree` checkout" end)
+          + " already has a live \($h.persona) dispatch (" + (if $h.ticket == "" then "ticket unresolved" else $h.ticket end)
+          + ") — one live developer/qa dispatch per checkout (T-775): two tracks in one checkout share its working tree and its test runs, whether or not their files overlap."
+          + "\nOpen a track for this dispatch's ticket — `prdt track open <T-NNN>` — and set `[ctx].worktree` to the path it prints, or wait for that dispatch to return (`prdt dispatch ls`)."
+          + "\nNothing was spawned and no dispatch tokens were spent.") | tojson end) as $co_deny
 | (if ($over | length) == 0 then "" else
      deny("[prdt dispatch gate] WAITING — the machine is over cap; nothing was spawned and no dispatch tokens were spent."
           + "\nmeasured: " + ($axes | map(.text) | join(" · "))
@@ -768,7 +835,7 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
           + "\nfrees it: " + ($over | map(.free) | join("; "))
           + " — then re-dispatch the same prompt. Caps: defaults in prdt-dispatch-gate.sh, machine override `$PRDT_HOME/dispatch-caps.json` (keys load_ratio · mem_free_pct_min · inflight_max · suites_max · vms_max · inflight_sonnet_max · inflight_opus_max · inflight_haiku_max · inflight_fable_max · inflight_default_max, numbers only)."
           + (if $note == "" then "" else "\n" + $note end)) | tojson end) as $deny
-| "\($unm | join(","))\n\($deny)\n\($note)\nend"
+| "\($unm | join(","))\n\(if $co_deny != "" then $co_deny else $deny end)\n\($note)\nend"
 JQ
 
 RES="$(jq -rn \
@@ -777,6 +844,7 @@ RES="$(jq -rn \
   --arg mark_bad "$MARK_BAD" --arg cands "$MARK_CANDS" --arg mtimes "$MTIMES" --arg tails "$TAILS" \
   --argjson stale_h "$STALE_H" --argjson idle_min "$IDLE_MIN" --argjson grace "$GRACE_S" \
   --arg want_model "$WANT_MODEL" \
+  --arg want_persona "$WANT_PERSONA" --arg want_co "$WANT_CO" --arg proj_root "$PROJ_ROOT" --arg code_abs "$CODE_ABS" \
   "$RPROG" 2>/dev/null)"
 
 # ── T-773: the schedule record — one `dispatch` row per dispatch that passed ──
