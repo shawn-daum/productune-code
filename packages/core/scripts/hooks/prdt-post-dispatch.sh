@@ -614,7 +614,21 @@ def marker_refine(aid, ctx_obj, tool_use_id, launched_async, model=None):
     for a still-running background launch that has none (see LIFECYCLE). T-774:
     `model` is corrected from the same authoritative (agentId ↔ tool_input)
     source as `ticket_id`/`dispatch_id` above it — same rationale, same call
-    site already has it at zero extra cost."""
+    site already has it at zero extra cost.
+
+    T-780 round 2 (QA grill): `ctx_obj` is THIS event's own tool_input — the
+    (agentId ↔ tool_input) pair PostToolUse:Agent hands us is authoritative by
+    construction (both sides come off the SAME tool call), never a FIFO guess.
+    The prior `elif dispatch_id and not data.get("dispatch_id")` only wrote
+    dispatch_id when the marker had none yet, so a marker that already carried
+    a WRONG FIFO-guessed dispatch_id from SubagentStart, and whose slug/goal
+    never resolves a ticket (ticket_id stays None), kept that wrong id forever
+    — while `pairing` was stamped "confirmed" unconditionally below anyway.
+    QA measured 13 of 20 concurrent-start rounds landing exactly there: two
+    markers left holding the SAME dispatch_id, both marked confirmed.
+    dispatch_id/ticket_id are therefore ALWAYS overwritten from this event's
+    own ctx_obj — ticket_id to whatever resolves (or None), never preserved
+    from a stale guess — before pairing is stamped confirmed."""
     dispatch_id, ticket_id = ticket_from_ctx(ctx_obj)
     nmodel = norm_model(model) if model is not None else None
     data = marker_load(aid)
@@ -628,10 +642,7 @@ def marker_refine(aid, ctx_obj, tool_use_id, launched_async, model=None):
     co = checkout_from_ctx(ctx_obj)
     if co is not None:
         data["checkout"] = co
-    if ticket_id:
-        data["ticket_id"], data["dispatch_id"] = ticket_id, dispatch_id
-    elif dispatch_id and not data.get("dispatch_id"):
-        data["dispatch_id"] = dispatch_id
+    data["ticket_id"], data["dispatch_id"] = ticket_id, dispatch_id
     if isinstance(tool_use_id, str):
         data["tool_use_id"] = tool_use_id
     if nmodel is not None:
