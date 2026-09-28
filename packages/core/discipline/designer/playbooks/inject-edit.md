@@ -2,10 +2,12 @@
 name: inject-edit
 persona: designer
 when: "edit to hook-injected text — discipline · playbook · annex · agent stub · override line · hot↔cold move · corpus sweep"
-model_floor: fable
+model_floor: opus
 effort: high
 ---
 # Inject edit — one pen for injected text
+
+Floor opus = temporary stand-in for fable until T-737 configurable routing.
 
 One editor, one pass, four verdicts judged per RULE, bytes reported. Form is compressed English: operators, identifiers, numbers, conditions kept; filler cut. This file obeys itself.
 

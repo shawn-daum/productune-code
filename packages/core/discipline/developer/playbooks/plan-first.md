@@ -2,10 +2,12 @@
 name: plan-first
 persona: developer
 when: "cross-cutting or architectural change · risk_flags present · many files · genuinely open solution shape · structural uncertainty in process/thread boundaries, isolation guarantees, or concurrency not yet pinned down"
-model_floor: fable
+model_floor: opus
 effort: high
 ---
 # Plan first — think before touching code
+
+Floor opus = temporary stand-in for fable until T-737 configurable routing.
 
 For work where a wrong first move is expensive. Return the plan; write NO code in this return.
 

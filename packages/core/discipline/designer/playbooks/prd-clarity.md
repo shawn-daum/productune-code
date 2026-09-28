@@ -2,10 +2,12 @@
 name: prd-clarity
 persona: designer
 when: "Define entry · net-new or changed product scope · PRD refinement"
-model_floor: fable
+model_floor: opus
 effort: high
 ---
 # PRD clarity loop — converge, don't one-shot
+
+Floor opus = temporary stand-in for fable until T-737 configurable routing.
 
 Author/refine `docs/prd/PRD.md` (fixed path, in place, `[ctx].user_lang`) as a convergence loop. You compute the score and carry `A` in `summary`; a stop instruction — the user's call, relayed in a resume, no fixed word — ends the loop at any value.
 
