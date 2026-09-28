@@ -10599,7 +10599,7 @@ def _track_setup_cmd(root, wt):
     if isinstance(s, str) and s.strip():
         return s
     if (wt / "pnpm-lock.yaml").is_file():
-        return "pnpm install"
+        return "pnpm install --frozen-lockfile"
     if (wt / "package-lock.json").is_file():
         return "npm ci"
     if (wt / "yarn.lock").is_file():
@@ -10642,16 +10642,8 @@ def _track_require_open(code, wt, branch, tid):
         _track_die(f"branch {branch} does not exist in the code repo")
 
 
-def _track_exclude(code, root):
-    """Legacy (unsplit) layout: code root == meta root, so `tracks/` sits inside
-    the code work tree — keep it out of `git status` via info/exclude."""
-    if Path(code).resolve() != Path(root).resolve():
-        return
-    r = _tgit(["rev-parse", "--git-common-dir"], code)
-    if r.returncode != 0:
-        return
-    gd = Path(r.stdout.strip())
-    gd = gd if gd.is_absolute() else Path(code) / gd
+def _exclude_add(gd):
+    """Append `/tracks/` to <gd>/info/exclude, once, best-effort (never raises)."""
     ex = gd / "info" / "exclude"
     try:
         cur = ex.read_text(encoding="utf-8") if ex.is_file() else ""
@@ -10661,6 +10653,27 @@ def _track_exclude(code, root):
                 f.write(("" if cur == "" or cur.endswith("\n") else "\n") + "/tracks/\n")
     except OSError:
         pass
+
+
+def _track_exclude(code, root):
+    """`tracks/` sits under the PROJECT (meta) root in every layout, split or
+    legacy — its work tree is always projectRoot — so the meta repo's own
+    `git status` sees it unless excluded there too (T-778: previously only
+    the legacy branch below ran, so a split project's meta `git status` kept
+    showing `?? tracks/`). Legacy (code root == meta root) ALSO physically
+    nests `tracks/` inside the code work tree, so that repo's own
+    info/exclude needs the same line."""
+    gd_meta = meta_git_dir(root)
+    if gd_meta.is_dir():
+        _exclude_add(gd_meta)
+    if Path(code).resolve() != Path(root).resolve():
+        return
+    r = _tgit(["rev-parse", "--git-common-dir"], code)
+    if r.returncode != 0:
+        return
+    gd = Path(r.stdout.strip())
+    gd = gd if gd.is_absolute() else Path(code) / gd
+    _exclude_add(gd)
 
 
 def cmd_track_open(args):
@@ -10849,6 +10862,11 @@ def cmd_track_land(args):
         if _track_run(test, wt, "tests on the merged tree") != 0:
             _track_die(f"tests failed on the merged tree — {base} is unchanged; {branch} keeps the merge, "
                        f"fix it there and land again")
+        dirty = _tgit(["status", "--porcelain"], wt)
+        if dirty.returncode != 0 or dirty.stdout.strip():
+            left = [ln[3:] if len(ln) > 3 else ln for ln in dirty.stdout.splitlines() if ln]
+            _track_die(f"tests left the merged tree dirty ({', '.join(left) or '?'}) — {base} is unchanged; "
+                       f"{branch} keeps the merge, clean it up there and land again")
         new = _tgit(["rev-parse", branch], code).stdout.strip()
         if _tgit(["merge-base", "--is-ancestor", f"refs/heads/{base}", new], code).returncode != 0:
             _track_die(f"{base} moved during the land — land again")
@@ -10874,13 +10892,41 @@ def cmd_track_land(args):
             pass
     r = _tgit(["worktree", "remove", str(wt)], code)
     print(f"worktree {wt} removed" if r.returncode == 0 else f"worktree remove failed: {r.stderr.strip()}")
-    r = _tgit(["branch", "-d", branch], code)
-    print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -d failed: {r.stderr.strip()}")
+    # `git branch -d` checks mergedness against the CODE checkout's own HEAD,
+    # not the land target — with `--base main` and `dev` checked out in `code`
+    # (the common case) that refuses forever and leaves the branch behind
+    # (T-775 grill). We just fast-forwarded `base` to `branch`'s own tip, so
+    # `branch` is provably contained in `base`: check that directly and delete
+    # accordingly, never against whatever `code` happens to have checked out.
+    if _tgit(["merge-base", "--is-ancestor", branch, f"refs/heads/{base}"], code).returncode == 0:
+        r = _tgit(["branch", "-D", branch], code)
+        print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
+    else:
+        print(f"branch {branch} kept — not merged into {base} (unexpected after land)")
     print(f"landed {tid} — tests `{test}` green; nothing pushed")
 
 
+def cmd_track_drop(args):
+    root, code, tid, wt, branch = _track_ctx(args)
+    _track_require_open(code, wt, branch, tid)
+    if not args.force:
+        on_dev = _tgit(["merge-base", "--is-ancestor", branch, "refs/heads/dev"], code).returncode == 0
+        on_main = _tgit(["merge-base", "--is-ancestor", branch, "refs/heads/main"], code).returncode == 0
+        if not (on_dev or on_main):
+            _track_die(f"branch {branch} holds commits not on dev or main — `prdt track drop {tid} --force` "
+                       f"to drop it anyway, or `prdt track land {tid}` to keep them")
+    r = _tgit(["worktree", "remove", "--force", str(wt)], code)
+    if r.returncode != 0:
+        _track_die("git worktree remove failed: " + (r.stderr.strip() or r.stdout.strip()))
+    print(f"worktree {wt} removed")
+    r = _tgit(["branch", "-D", branch], code)
+    print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
+    print(f"dropped {tid} — nothing landed, nothing pushed")
+
+
 def cmd_track(args):
-    {"open": cmd_track_open, "review": cmd_track_review, "land": cmd_track_land}[args.action](args)
+    {"open": cmd_track_open, "review": cmd_track_review, "land": cmd_track_land,
+     "drop": cmd_track_drop}[args.action](args)
 
 
 
@@ -13494,15 +13540,18 @@ def main():
     p.add_argument("--json", action="store_true", help="the same rows, machine-readable")
     p.set_defaults(fn=cmd_schedule)
     p = sub.add_parser("track", help="parallel track worktree (T-775): open <T-NNN> [--base dev|main] · "
-                                     "review <T-NNN> · land <T-NNN> [--test CMD] — the worktree is "
-                                     "<project>/tracks/<T-NNN> on branch track/<T-NNN> of the code repo; "
-                                     "land merges the base in, runs the tests on the merged tree and "
-                                     "fast-forwards the base; never pushes")
-    p.add_argument("action", choices=("open", "review", "land"))
+                                     "review <T-NNN> · land <T-NNN> [--test CMD] · drop <T-NNN> [--force] — "
+                                     "the worktree is <project>/tracks/<T-NNN> on branch track/<T-NNN> of "
+                                     "the code repo; land merges the base in, runs the tests on the merged "
+                                     "tree and fast-forwards the base; drop discards the worktree and "
+                                     "branch instead; neither pushes")
+    p.add_argument("action", choices=("open", "review", "land", "drop"))
     p.add_argument("ticket", help="T-NNN")
     p.add_argument("--base", choices=TRACK_BASES, help="open: the branch to cut from (default dev)")
     p.add_argument("--test", help="land: the test command (default: .prdt/config.json track.test, "
                                   "else the package.json test script)")
+    p.add_argument("--force", action="store_true",
+                   help="drop: also discard a branch that holds commits not on dev or main")
     p.set_defaults(fn=cmd_track)
     p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591/T-680): "
                                         "up <name> --dispatch <id> · down <name> --dispatch <id> · "
