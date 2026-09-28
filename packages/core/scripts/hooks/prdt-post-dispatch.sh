@@ -367,15 +367,69 @@ def ctx_from_prompt(prompt):
     return None
 
 
+_SLUG_TICKETS = None
+
+
+def ticket_by_slug(slug):
+    """T-773: the id of the ticket md whose frontmatter `slug` equals `slug`
+    (an open ticket first, then the highest id) — the PO's `[ctx].slug` IS the
+    ticket slug, but carries no `T-NNN`, so every marker used to land with
+    `ticket_id: null` and `prdt schedule` could not show in-flight rows. Same
+    rule as `schedule_ticket_for_ctx` in scripts/prdt (the gate's schedule
+    record). A frontmatter-only line scan of docs/tickets/**/T-*.md, cached for
+    this one hook run; any read failure is just no match."""
+    global _SLUG_TICKETS
+    if not (isinstance(slug, str) and slug.strip()):
+        return None
+    if _SLUG_TICKETS is None:
+        _SLUG_TICKETS = {}
+        tdir = os.path.join(root, "docs", "tickets")
+        for dp, _dn, fns in os.walk(tdir):
+            for fn in fns:
+                if not (fn.startswith("T-") and fn.endswith(".md")):
+                    continue
+                fm = {}
+                try:
+                    with open(os.path.join(dp, fn), encoding="utf-8") as f:
+                        if f.readline().rstrip("\n") != "---":
+                            continue
+                        for _ in range(60):
+                            ln = f.readline()
+                            if not ln or ln.rstrip("\n") == "---":
+                                break
+                            k, sep, v = ln.partition(":")
+                            if sep and k.strip() in ("id", "slug", "status"):
+                                fm[k.strip()] = v.strip().strip("'\"")
+                except Exception:
+                    continue
+                tid = fm.get("id") or fn[:-3]
+                m = re.match(r"\AT-([0-9]{1,5})\Z", tid)
+                if not (m and fm.get("slug")):
+                    continue
+                cand = (fm.get("status") == "open", int(m.group(1)), tid)
+                prev = _SLUG_TICKETS.get(fm["slug"])
+                if prev is None or cand > prev:
+                    _SLUG_TICKETS[fm["slug"]] = cand
+    hit = _SLUG_TICKETS.get(slug.strip())
+    return hit[2] if hit else None
+
+
 def ticket_from_ctx(ctx_obj):
-    """(dispatch_id, ticket_id) — the ticket id is a documented heuristic, not a
-    contract field: `[ctx]` has no `ticket_id` (contracts §Dispatch). Checked in
-    dispatch_id, then goal, then slug; the digits are always re-assembled as
-    `T-<digits>`, the shape the read side's TICKET_RE requires."""
+    """(dispatch_id, ticket_id) — `[ctx]` has no `ticket_id` (contracts
+    §Dispatch). T-773: the ticket whose md slug equals `[ctx].slug` first;
+    else the documented heuristic — a `T-NNN` token in dispatch_id, then goal,
+    then slug; the digits are always re-assembled as `T-<digits>`, the shape
+    the read side's TICKET_RE requires."""
     if not isinstance(ctx_obj, dict):
         return None, None
     did = ctx_obj.get("dispatch_id")
     dispatch_id = did if isinstance(did, str) and did.strip() else None
+    try:
+        by_slug = ticket_by_slug(ctx_obj.get("slug"))
+    except Exception:
+        by_slug = None
+    if by_slug:
+        return dispatch_id, by_slug
     for field in (dispatch_id, ctx_obj.get("goal"), ctx_obj.get("slug")):
         if isinstance(field, str):
             m = TICKET_TOKEN_RE.search(field)
@@ -567,6 +621,74 @@ def marker_prune():
                 os.unlink(fp)
             except Exception:
                 pass
+
+
+# ── T-773: the `stop` row of .prdt/schedule.jsonl ────────────────────────────
+# The dispatch gate appends a `dispatch` row per dispatch (`prdt schedule
+# record`); this hook appends its `stop` row at SubagentStop — outcome ·
+# duration_s, joined to it by `tool_use_id` (else `dispatch_id`). Written only
+# when a matching `dispatch` row exists, so a dispatch from before the record
+# landed (or one the gate never saw) adds nothing. duration_s is one run
+# segment (`since` → now; a resume revives `since`, so each resumed segment
+# gets its own row); these are the samples v1.12's time weights come from
+# (T-764). outcome: `quota-killed` when the worker transcript's last record
+# is the harness's `<synthetic>` placeholder, `returned` when the final
+# message opens with `{` (the envelope shape), else `no-envelope`. A 429-killed
+# run that never reaches SubagentStop has no stop row — `prdt schedule report`
+# shows its duration as unrecorded.
+def schedule_stop(aid):
+    if not aid:
+        return
+    data = marker_load(aid)
+    if data is None:
+        return
+    log = os.path.join(state_dir, "schedule.jsonl")
+    tuid, did = data.get("tool_use_id"), data.get("dispatch_id")
+    if not (isinstance(tuid, str) and tuid) and not (isinstance(did, str) and did):
+        return
+    try:
+        with open(log, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return
+    match = False
+    for ln in lines:
+        try:
+            r = json.loads(ln)
+        except Exception:
+            continue
+        if not (isinstance(r, dict) and r.get("kind") == "dispatch"):
+            continue
+        if (tuid and r.get("tool_use_id") == tuid) or (did and not r.get("tool_use_id") and r.get("dispatch_id") == did):
+            match = True
+            break
+    if not match:
+        return
+    dur = None
+    try:
+        t0 = datetime.strptime(data.get("since"), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        t1 = datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        dur = max(0, int((t1 - t0).total_seconds()))
+    except Exception:
+        pass
+    outcome = None
+    atp = ev.get("agent_transcript_path") or data.get("transcript")
+    try:
+        if isinstance(atp, str) and os.path.isfile(atp):
+            with open(atp, "rb") as f:
+                f.seek(max(0, os.path.getsize(atp) - 8000))
+                tail = [x for x in f.read().decode("utf-8", "replace").split("\n") if x.strip()]
+            if tail and '"model":"<synthetic>"' in tail[-1]:
+                outcome = "quota-killed"
+    except Exception:
+        pass
+    if outcome is None:
+        lam = ev.get("last_assistant_message")
+        outcome = "returned" if isinstance(lam, str) and lam.lstrip().startswith("{") else "no-envelope"
+    row = {"kind": "stop", "ts": now, "dispatch_id": did if isinstance(did, str) else None,
+           "tool_use_id": tuid if isinstance(tuid, str) else None, "agent_id": aid,
+           "persona": persona, "ticket": data.get("ticket_id"), "outcome": outcome, "duration_s": dur}
+    _append_line(log, json.dumps(row, ensure_ascii=False) + "\n")
 
 
 if event == "SubagentStart":
@@ -1075,6 +1197,10 @@ if event == "SubagentStop":
     # already-recorded sync dispatch. Best-effort: a missing/corrupt marker is
     # not an error.
     marker_stop(agent_id)
+    try:
+        schedule_stop(agent_id)
+    except Exception:
+        pass
     try:
         marker_prune()
     except Exception:

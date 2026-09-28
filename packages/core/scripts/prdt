@@ -10589,15 +10589,23 @@ def _schedule_in_flight(root):
     return hits
 
 
-def compute_schedule(root):
-    """The schedule as one dict (the `--json` shape; text renders from it)."""
+def _schedule_tickets(root):
+    """{id: (row, path)} over every ticket md — first file wins per id."""
+    tickets = {}
+    for row, p, _probs in scan_tickets(Path(root)):
+        tickets.setdefault(row["id"], (row, p))
+    return tickets
+
+
+def compute_schedule(root, tickets=None):
+    """The schedule as one dict (the `--json` shape; text renders from it).
+    `tickets` = a `_schedule_tickets()` result the caller already holds."""
     import graphlib
     root = Path(root)
     st = read_json(root / ".prdt" / "po-state.json") or {}
     version = st.get("version") if isinstance(st.get("version"), str) else None
-    tickets = {}
-    for row, p, _probs in scan_tickets(root):
-        tickets.setdefault(row["id"], (row, p))
+    if tickets is None:
+        tickets = _schedule_tickets(root)
     out = {"version": version, "cycle": None, "critical_path": [], "cp_length": 0,
            "rows": [], "missing_deps": []}
 
@@ -10698,7 +10706,12 @@ def compute_schedule(root):
 
 
 def cmd_schedule(args):
-    """`prdt schedule [--json]` — next dispatch order by critical path (T-772)."""
+    """`prdt schedule [--json]` — next dispatch order by critical path (T-772);
+    `prdt schedule report` / `record` (T-773) below."""
+    if getattr(args, "action", None) == "record":
+        return cmd_schedule_record(args)
+    if getattr(args, "action", None) == "report":
+        return cmd_schedule_report(args)
     root = require_root()
     s = compute_schedule(root)
     if args.json:
@@ -10741,6 +10754,312 @@ def cmd_schedule(args):
     for state, title in (("waiting-user", "waiting on user"), ("po", "PO work"), ("in-flight", "in flight")):
         ids = [lab(r["id"]) for r in rows if r["state"] == state]
         print(f"{title}: {' '.join(ids) if ids else '(none)'}")
+
+
+# ── T-773 (T-681 S2): the dispatch schedule record + `prdt schedule report` ──
+# Design SoT: docs/artifacts/v1.11/critical-path.html, tab 「발주 기록」.
+# `.prdt/schedule.jsonl` gets one `dispatch` row per prdt dispatch that passed
+# every dispatch-gate check (written by `prdt schedule record`, which ONLY the
+# gate calls, with the PreToolUse event on stdin) and one `stop` row per
+# SubagentStop of such a dispatch (prdt-post-dispatch.sh). Append-only, never
+# pruned — unlike run/dispatches (24 h) it is the round's observation record,
+# and `.prdt/` is inside the meta allowlist so it rides the meta repo.
+# Off-path dispatches are WARNED and recorded, never denied (T-765).
+SCHEDULE_LOG = "schedule.jsonl"
+SCHEDULE_CLASSES = ("followed", "deviated", "continuation", "off-graph")
+SCHEDULE_MODEL_TIERS = ("sonnet", "opus", "haiku", "fable")
+# Same token rule as prdt-post-dispatch.sh's TICKET_TOKEN_RE (`T-682`,
+# `d-T682-…`; never the `T-4` of `GPT-4`, never `T-68` inside `T-6829`).
+SCHEDULE_TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T-?([0-9]{1,5})(?![0-9])")
+SCHEDULE_ID_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+SCHEDULE_REPORT_BEGIN = "<!-- prdt:schedule-report:begin — `prdt schedule report` 가 이 구간을 다시 쓴다. 손으로 고치지 않는다. -->"
+SCHEDULE_REPORT_END = "<!-- prdt:schedule-report:end -->"
+# The PO-habit clause the off-path warning quotes — a test pins it verbatim
+# against discipline/po/habit.md.
+SCHEDULE_HABIT_CLAUSE = "**Next dispatch** = `prdt schedule`'s top row; another ticket → `[ctx].schedule_reason`."
+
+
+def _ctx_from_prompt(prompt):
+    if not isinstance(prompt, str):
+        return None
+    for line in prompt.split("\n"):
+        if line.startswith("[ctx] {"):
+            try:
+                obj = json.loads(line[len("[ctx] "):])
+            except ValueError:
+                return None
+            return obj if isinstance(obj, dict) else None
+    return None
+
+
+def schedule_ticket_for_ctx(ctx, tickets):
+    """(ticket_id, source) for a dispatch's `[ctx]`: the ticket whose md `slug`
+    equals `[ctx].slug` (an open one first, then the highest id) → else a
+    `T-NNN` token in dispatch_id · goal · slug (the marker's old heuristic) →
+    else (None, None). Twin of prdt-post-dispatch.sh's ticket_from_ctx()."""
+    if not isinstance(ctx, dict):
+        return None, None
+    slug = ctx.get("slug")
+    if isinstance(slug, str) and slug.strip():
+        hits = [(r["status"] == "open", _ticket_num_key(t), t) for t, (r, _p) in tickets.items()
+                if r.get("slug") == slug.strip()]
+        if hits:
+            return max(hits)[2], "slug"
+    for field in (ctx.get("dispatch_id"), ctx.get("goal"), slug):
+        if isinstance(field, str):
+            m = SCHEDULE_TICKET_TOKEN_RE.search(field)
+            if m:
+                return f"T-{m.group(1)}", "token"
+    return None, None
+
+
+def _schedule_log_path(root):
+    return Path(root) / ".prdt" / SCHEDULE_LOG
+
+
+def read_schedule_log(root):
+    """(rows, bad_line_count) — every parseable object line of schedule.jsonl."""
+    rows, bad = [], 0
+    try:
+        text = _schedule_log_path(root).read_text(encoding="utf-8")
+    except OSError:
+        return rows, bad
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            bad += 1
+            continue
+        if isinstance(obj, dict):
+            rows.append(obj)
+        else:
+            bad += 1
+    return rows, bad
+
+
+def append_schedule_row(root, row):
+    """Symlink-proof append (T-647 primitive: O_NOFOLLOW) of one JSON line."""
+    p = _schedule_log_path(root)
+    fd = os.open(str(p), os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def schedule_top(rows):
+    """The dispatchable rows at the best rank — every ready row sharing the
+    first ready row's (slack, blocks, PRD H4 order); the id is only the
+    printed tie-break, so tickets equal on all three are all 'the top row'."""
+    ready = [r for r in rows if r["state"] == "ready"]
+    if not ready:
+        return []
+    key = lambda r: (r["slack"], -r["blocks"], r["prd_order"] if r["prd_order"] is not None else math.inf)
+    best = key(ready[0])
+    return [r["id"] for r in ready if key(r) == best]
+
+
+def schedule_classify(ticket, sched, prior_tickets, top):
+    """followed · deviated · continuation · off-graph (design 「class 정의」).
+    off-graph: no ticket resolved, or it is not a node of this round's graph
+    (done · dropped · another version's ticket nothing here depends on).
+    continuation: an earlier recorded dispatch of the same ticket, or a live
+    marker already on it (auto QA · re-dispatch — resumes never reach the gate).
+    followed: in the top row. deviated: any other node (ready below the top,
+    blocked on deps, or a waiting/PO row)."""
+    by_id = {r["id"]: r for r in sched["rows"]}
+    if ticket is None or ticket not in by_id:
+        return "off-graph"
+    if ticket in prior_tickets or by_id[ticket]["state"] == "in-flight":
+        return "continuation"
+    return "followed" if ticket in top else "deviated"
+
+
+def _safe_ids(ids):
+    return [t if isinstance(t, str) and SCHEDULE_ID_RE.match(t) else "?" for t in ids]
+
+
+def schedule_record(ev, now=None):
+    """Build + append the `dispatch` row for one gate-passed PreToolUse:Agent
+    event; return (row, warning-or-None). Raises nothing the caller must
+    handle beyond OSError on the append (the gate fails open on any error)."""
+    if not isinstance(ev, dict):
+        return None, None
+    ti = ev.get("tool_input") if isinstance(ev.get("tool_input"), dict) else {}
+    sub = ti.get("subagent_type")
+    if not (isinstance(sub, str) and sub.startswith("prdt-")):
+        return None, None
+    cwd = ev.get("cwd")
+    root = find_project_root(Path(cwd)) if isinstance(cwd, str) and cwd.startswith("/") else None
+    if root is None:
+        return None, None
+    ctx = _ctx_from_prompt(ti.get("prompt")) or {}
+    tickets = _schedule_tickets(root)
+    sched = compute_schedule(root, tickets)
+    ticket, source = schedule_ticket_for_ctx(ctx, tickets)
+    prior, _bad = read_schedule_log(root)
+    prior_tickets = {r.get("ticket") for r in prior if r.get("kind") == "dispatch" and r.get("ticket")}
+    top = schedule_top(sched["rows"])
+    cls = schedule_classify(ticket, sched, prior_tickets, top)
+    by_id = {r["id"]: r for r in sched["rows"]}
+    reason = ctx.get("schedule_reason")
+    reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
+    wt = ctx.get("worktree")
+    cm = ctx.get("change_meta") if isinstance(ctx.get("change_meta"), dict) else {}
+    files = [f for f in (cm.get("files") or []) if isinstance(f, str)] if isinstance(cm.get("files"), list) else []
+    model = ti.get("model") if ti.get("model") in SCHEDULE_MODEL_TIERS else "default"
+    str_or_none = lambda v: v if isinstance(v, str) and v else None
+    row = {"kind": "dispatch", "ts": now or now_iso(),
+           "dispatch_id": str_or_none(ctx.get("dispatch_id")),
+           "tool_use_id": str_or_none(ev.get("tool_use_id")),
+           "session_id": str_or_none(ev.get("session_id")),
+           "persona": sub[len("prdt-"):], "model": model, "version": sched["version"],
+           "ticket": ticket, "ticket_source": source, "slug": str_or_none(ctx.get("slug")),
+           "critical_path": sched["critical_path"], "cp_length": sched["cp_length"], "top": top,
+           "sent_slack": by_id[ticket]["slack"] if ticket in by_id else None,
+           "sent_state": by_id[ticket]["state"] if ticket in by_id else None,
+           "class": cls, "reason": reason,
+           "checkout": wt if isinstance(wt, str) and wt.strip() else "code", "files": files}
+    if sched["cycle"] is not None:
+        row["cycle"] = sched["cycle"]
+    append_schedule_row(root, row)
+    warning = None
+    if cls == "deviated" and reason is None:
+        sent = _safe_ids([ticket])[0]
+        top_s = ", ".join(_safe_ids(top)) if top else "(none dispatchable)"
+        cp = " → ".join(_safe_ids(sched["critical_path"])) or "(none)"
+        warning = (f"[prdt dispatch gate] off the critical path: this dispatch sends {sent}, not "
+                   f"`prdt schedule`'s top row ({top_s}; critical path {cp}), and `[ctx].schedule_reason` "
+                   f"is empty — recorded in .prdt/{SCHEDULE_LOG} with reason null. Warning only, this "
+                   f"dispatch proceeds (T-765). PO habit, verbatim: \"{SCHEDULE_HABIT_CLAUSE}\"")
+    return row, warning
+
+
+def _md_cell(v, limit=200):
+    s = " ".join(str(v).split())
+    if len(s) > limit:
+        s = s[:limit - 1] + "…"
+    return s.replace("\\", "\\\\").replace("|", "\\|").replace("<", "&lt;")
+
+
+def _fmt_duration(sec):
+    sec = int(round(sec))
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}시간 {m}분"
+    if m:
+        return f"{m}분 {s}초" if s else f"{m}분"
+    return f"{s}초"
+
+
+def _fmt_local(ts):
+    try:
+        t = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone()
+    except (TypeError, ValueError):
+        return _md_cell(ts or "-")
+    return t.strftime("%Y-%m-%d %H:%M %Z").strip()
+
+
+def schedule_report_text(rows, version):
+    """The generated section (markers included) for `version`'s dispatch rows."""
+    want = _version_id_canon(version)
+    disp = [r for r in rows if r.get("kind") == "dispatch" and isinstance(r.get("version"), str)
+            and _version_id_canon(r["version"]) == want]
+    stops = [r for r in rows if r.get("kind") == "stop"]
+    label = {"followed": "따름", "deviated": "벗어남", "continuation": "이어서 (같은 티켓)",
+             "off-graph": "그래프 밖"}
+    out = [SCHEDULE_REPORT_BEGIN, "",
+           f"`.prdt/{SCHEDULE_LOG}` 의 {version} 발주 {len(disp)}건. "
+           "critical path 는 그 발주 순간 `prdt schedule` 이 티켓 `deps` 로 계산한 값이다.", "",
+           "| 시각 | 발주 | 그 시점의 critical path | 실제로 보낸 작업 | 따랐는가 | 벗어났다면 이유 | 소요 시간 |",
+           "|---|---|---|---|---|---|---|"]
+    counts = {c: 0 for c in SCHEDULE_CLASSES}
+    for r in disp:
+        cls = r.get("class") if r.get("class") in SCHEDULE_CLASSES else None
+        if cls:
+            counts[cls] += 1
+        mine = [s for s in stops
+                if (r.get("tool_use_id") and s.get("tool_use_id") == r.get("tool_use_id"))
+                or (not r.get("tool_use_id") and r.get("dispatch_id") and s.get("dispatch_id") == r.get("dispatch_id"))]
+        durs = [s["duration_s"] for s in mine if isinstance(s.get("duration_s"), (int, float))]
+        dur = _fmt_duration(sum(durs)) if durs else "기록 없음"
+        who = _md_cell(r.get("persona") or "-")
+        if r.get("dispatch_id"):
+            who += f" · `{_md_cell(r['dispatch_id'], 60)}`"
+        cp = " → ".join(_md_cell(t, 20) for t in (r.get("critical_path") or [])) or "(없음)"
+        top = [_md_cell(t, 20) for t in (r.get("top") or [])]
+        cp += f" (최상위 {', '.join(top)})" if top else " (발주 가능 없음)"
+        sent = _md_cell(r["ticket"], 20) if r.get("ticket") else "티켓 없음"
+        if r.get("slug"):
+            sent += f" `{_md_cell(r['slug'], 80)}`"
+        reason = r.get("reason")
+        if cls == "deviated":
+            why = _md_cell(reason) if reason else "이유 없음"
+        else:
+            why = _md_cell(reason) if reason else "—"
+        out.append(f"| {_fmt_local(r.get('ts'))} | {who} | {cp} | {sent} | "
+                   f"{label.get(cls, _md_cell(r.get('class') or '-'))} | {why} | {dur} |")
+    f, d = counts["followed"], counts["deviated"]
+    ratio = f"{f / (f + d) * 100:.0f}%" if (f + d) else "측정 불가 (분모 0)"
+    out += ["", f"측정 5 — critical path 를 따른 발주 비율: 따름 {f} ÷ (따름 {f} + 벗어남 {d}) = {ratio}. "
+                f"이어서 {counts['continuation']}건 · 그래프 밖 {counts['off-graph']}건은 분모에 넣지 않는다.",
+            "", SCHEDULE_REPORT_END]
+    return "\n".join(out) + "\n", len(disp)
+
+
+def schedule_report(root, version):
+    """Rewrite the generated section of docs/artifacts/<version>/schedule-
+    observation.md (create the file when absent; append the section when the
+    file has none). Text outside the markers — measures 1–4, which the PO
+    writes at close — is never touched. Returns (path, row_count, bad_lines)."""
+    rows, bad = read_schedule_log(root)
+    block, n = schedule_report_text(rows, version)
+    p = Path(root) / "docs" / "artifacts" / version / "schedule-observation.md"
+    try:
+        cur = p.read_text(encoding="utf-8")
+    except OSError:
+        cur = None
+    if cur is None:
+        text = f"# 발주 관측 기록 — {version}\n\n" + block
+    else:
+        b, e = cur.find(SCHEDULE_REPORT_BEGIN), cur.find(SCHEDULE_REPORT_END)
+        if b != -1 and e != -1 and e > b:
+            tail = cur[e + len(SCHEDULE_REPORT_END):]
+            text = cur[:b] + block.rstrip("\n") + tail
+        else:
+            text = cur.rstrip("\n") + "\n\n" + block
+    p.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(p, text)
+    return p, n, bad
+
+
+def cmd_schedule_record(_args):
+    """Internal — the dispatch gate's call (stdin = the PreToolUse event).
+    Prints the off-path warning line when there is one, else nothing; never
+    exits non-zero on a bad event (the gate fails open anyway)."""
+    try:
+        ev = json.loads(sys.stdin.read() or "null")
+        _row, warning = schedule_record(ev)
+    except Exception:
+        return
+    if warning:
+        print(warning)
+
+
+def cmd_schedule_report(args):
+    root = require_root()
+    version = args.version
+    if not version:
+        st = read_json(root / ".prdt" / "po-state.json") or {}
+        version = st.get("version") if isinstance(st.get("version"), str) else None
+    if not version or _version_id_canon(version) is None or "/" in version:
+        sys.exit("prdt schedule report: no version — pass --version v<N>.<m> (po-state.json has none)")
+    p, n, bad = schedule_report(root, version)
+    print(f"schedule report: {p.relative_to(root)} — {n} dispatch row(s) for {version}")
+    if bad:
+        print(f"note: {bad} unparseable line(s) in .prdt/{SCHEDULE_LOG} skipped")
+    print("next: fill measures 1–4 outside the generated section at close, then `prdt artifacts sync`")
 
 
 def cmd_resource(args):
@@ -12490,6 +12809,11 @@ def main():
                                         "blocked-count, PRD H4 order, id — edges from `deps` only, every "
                                         "ticket weighs 1; reads md, writes nothing; a dependency cycle is "
                                         "named and exits 1")
+    p.add_argument("action", nargs="?", choices=("report", "record"),
+                   help="report (T-773): rewrite docs/artifacts/<version>/schedule-observation.md's generated "
+                        "section from .prdt/schedule.jsonl · record: internal, the dispatch gate's call "
+                        "(PreToolUse event on stdin)")
+    p.add_argument("--version", help="report: the version bucket (default: po-state.json version)")
     p.add_argument("--json", action="store_true", help="the same rows, machine-readable")
     p.set_defaults(fn=cmd_schedule)
     p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591/T-680): "
@@ -12535,8 +12859,13 @@ def main():
         print(msg(load_messages(), "settings.error.usage"))
         sys.exit(0)
     args = ap.parse_args()
-    maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
-    maybe_meta_backup(args.cmd)    # T-504: detached meta backup tick (stage boundary / once daily; never blocks)
+    # T-773: `schedule record` is the dispatch gate's (a per-turn hook's) call —
+    # contracts §Git names no per-turn hook as a meta-backup trigger, and a hook
+    # has no terminal to prompt on.
+    hook_call = args.cmd == "schedule" and getattr(args, "action", None) == "record"
+    if not hook_call:
+        maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
+        maybe_meta_backup(args.cmd)    # T-504: detached meta backup tick (stage boundary / once daily; never blocks)
     if not args.cmd:
         # bare `prdt` = 구 productune UX 계승: init(필요 시 §10 3항목) → PO 대화 진입
         cmd_po(argparse.Namespace(rest=[]))
