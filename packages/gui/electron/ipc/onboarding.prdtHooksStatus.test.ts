@@ -139,6 +139,8 @@ export const CASES: readonly Case[] = [
             { hooks: [h('prdt-call-governor.sh')] },
             { matcher: 'Agent', hooks: [h('prdt-dispatch-gate.sh')] },
             { matcher: 'Read|Bash', hooks: [h('prdt-secret-guard.sh')] },
+            // T-779: prdt-worktree-guard.sh, a FOURTH PreToolUse entry (the write-shaped tools).
+            { matcher: 'Edit|Write|MultiEdit|NotebookEdit|Bash', hooks: [h('prdt-worktree-guard.sh')] },
           ],
         },
       }))
