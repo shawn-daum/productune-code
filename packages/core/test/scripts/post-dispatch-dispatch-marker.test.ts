@@ -473,3 +473,105 @@ describe('T-682 — the marker is best-effort: a failing write/stamp never break
     expect(fs.statSync(mp).isDirectory()).toBe(true) // left as-is, never force-removed
   })
 })
+
+describe('T-780 — each concurrent same-persona start ends up with the marker of its OWN dispatch', () => {
+  // Two same-persona Agent calls in one assistant message. The harness decides
+  // which agent_id runs which call; SubagentStart cannot see it and the worker
+  // transcript does not exist yet when it fires (file created ~2 s after, measured
+  // 2026-09-28). So the start pairing is provisional (`pairing: "unconfirmed"`)
+  // and the next event re-pairs from each worker's own first prompt.
+  const A = { slug: 'first', goal: 'g', dispatch_id: 'd-T701-a', worktree: '/p/tracks/T-701' }
+  const B = { slug: 'second', goal: 'g', dispatch_id: 'd-T702-b', worktree: '/p/tracks/T-702' }
+  function fanOut(): string {
+    return writeTranscript([
+      { toolUse: 'toolu_a', ctx: A, model: 'opus' },
+      { toolUse: 'toolu_b', ctx: B, model: 'sonnet' },
+    ])
+  }
+  /** The worker transcript the harness writes once the worker runs: first record = its prompt. */
+  function workerWrites(agentId: string, c: Record<string, unknown>): void {
+    const dir = path.join(root, 'sess-1', 'subagents')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, `agent-${agentId}.jsonl`),
+      JSON.stringify({ type: 'user', agentId, message: { role: 'user', content: ctxPrompt(c) } }) + '\n')
+  }
+  const own = (c: typeof A, tuid: string, model: string) =>
+    ({ dispatch_id: c.dispatch_id, ticket_id: c.dispatch_id === A.dispatch_id ? 'T-701' : 'T-702', checkout: c.worktree, tool_use_id: tuid, model, pairing: 'confirmed' })
+  const OWN_A = own(A, 'toolu_a', 'opus')
+  const OWN_B = own(B, 'toolu_b', 'sonnet')
+
+  // agent-x runs call A, agent-y runs call B; `order` is the order their starts arrive.
+  for (const order of [['agent-x', 'agent-y'], ['agent-y', 'agent-x']]) {
+    test(`FOREGROUND, starts ${order.join(' then ')}: re-paired at the next event, before either dispatch ends`, () => {
+      const t = fanOut()
+      for (const aid of order) expectSilent(subagentStart({ agentId: aid, transcriptPath: t }))
+      // provisional: two candidates, so neither start is confirmed
+      expect(readMarker(prdtHome, 'agent-x')).toMatchObject({ pairing: 'unconfirmed' })
+      expect(readMarker(prdtHome, 'agent-y')).toMatchObject({ pairing: 'unconfirmed' })
+      workerWrites('agent-x', A); workerWrites('agent-y', B)
+      // the next dispatch event (here: a third, unrelated persona start) — no PostToolUse yet
+      runHook({ session_id: 'sess-1', cwd: root, agent_id: 'agent-z', agent_type: 'prdt-designer', hook_event_name: 'SubagentStart', transcript_path: t }, prdtHome)
+      expect(readMarker(prdtHome, 'agent-x')).toMatchObject(OWN_A)
+      expect(readMarker(prdtHome, 'agent-y')).toMatchObject(OWN_B)
+      expect(readMarker(prdtHome, 'agent-x').stopped_at).toBeUndefined()
+    })
+
+    test(`FOREGROUND, starts ${order.join(' then ')}: a SubagentStop re-pairs before it stamps, so its stop row joins its own dispatch row`, () => {
+      const t = fanOut()
+      fs.writeFileSync(path.join(root, '.prdt', 'schedule.jsonl'),
+        [JSON.stringify({ kind: 'dispatch', tool_use_id: 'toolu_a', dispatch_id: A.dispatch_id }),
+         JSON.stringify({ kind: 'dispatch', tool_use_id: 'toolu_b', dispatch_id: B.dispatch_id })].join('\n') + '\n')
+      for (const aid of order) expectSilent(subagentStart({ agentId: aid, transcriptPath: t }))
+      workerWrites('agent-x', A); workerWrites('agent-y', B)
+      subagentStop({ agentId: 'agent-y' })
+      expect(readMarker(prdtHome, 'agent-y')).toMatchObject({ ...OWN_B, stopped_at: expect.any(String) })
+      expect(readMarker(prdtHome, 'agent-x')).toMatchObject(OWN_A)
+      const stops = fs.readFileSync(path.join(root, '.prdt', 'schedule.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.kind === 'stop')
+      expect(stops).toMatchObject([{ agent_id: 'agent-y', tool_use_id: 'toolu_b', dispatch_id: B.dispatch_id }])
+    })
+
+    test(`BACKGROUND, starts ${order.join(' then ')}: PostToolUse:Agent confirms each from the authoritative pair`, () => {
+      const t = fanOut()
+      for (const aid of order) expectSilent(subagentStart({ agentId: aid, transcriptPath: t }))
+      postToolUseAgent({ agentId: 'agent-x', ctx: A, status: 'async_launched', toolUseId: 'toolu_a', model: 'opus' })
+      postToolUseAgent({ agentId: 'agent-y', ctx: B, status: 'async_launched', toolUseId: 'toolu_b', model: 'sonnet' })
+      expect(readMarker(prdtHome, 'agent-x')).toMatchObject(OWN_A)
+      expect(readMarker(prdtHome, 'agent-y')).toMatchObject(OWN_B)
+    })
+  }
+
+  test('truly concurrent starts (two hook processes at once, 5 rounds): after the workers write, both markers are their own', async () => {
+    const { spawn } = await import('child_process')
+    const start = (aid: string, t: string) => new Promise<void>((resolve) => {
+      const c = spawn('bash', [HOOK], { env: { ...process.env, PRDT_HOME: prdtHome } })
+      c.on('close', () => resolve())
+      c.stdin.end(JSON.stringify({ session_id: 'sess-1', cwd: root, agent_id: aid, agent_type: PERSONA_TYPE, hook_event_name: 'SubagentStart', transcript_path: t }))
+    })
+    for (let i = 0; i < 5; i++) {
+      fs.rmSync(path.join(prdtHome, 'run'), { recursive: true, force: true })
+      fs.rmSync(path.join(root, 'sess-1'), { recursive: true, force: true })
+      const t = fanOut()
+      await Promise.all([start('agent-y', t), start('agent-x', t)])
+      for (const aid of ['agent-x', 'agent-y']) expect(readMarker(prdtHome, aid).pairing).toBe('unconfirmed')
+      workerWrites('agent-x', A); workerWrites('agent-y', B)
+      subagentStop({ agentId: 'agent-x' })
+      expect(readMarker(prdtHome, 'agent-x')).toMatchObject({ ...OWN_A, stopped_at: expect.any(String) })
+      expect(readMarker(prdtHome, 'agent-y')).toMatchObject(OWN_B)
+    }
+  }, 120_000)
+
+  test('one pending call of the persona is provably this worker\'s: confirmed at SubagentStart; a worker prompt matching no call stays unconfirmed', () => {
+    const t = writeTranscript([{ toolUse: 'toolu_a', ctx: A, model: 'opus' }])
+    expectSilent(subagentStart({ agentId: 'agent-x', transcriptPath: t }))
+    expect(readMarker(prdtHome, 'agent-x')).toMatchObject(OWN_A)
+
+    const t2 = fanOut()
+    expectSilent(subagentStart({ agentId: 'agent-q', transcriptPath: t2 }))  // toolu_a is held by a CONFIRMED marker, so toolu_b is the one call left: confirmed
+    expect(readMarker(prdtHome, 'agent-q')).toMatchObject({ tool_use_id: 'toolu_b', pairing: 'confirmed' })
+    // a start whose worker prompt is in no parent call is never guessed into "confirmed"
+    expectSilent(subagentStart({ agentId: 'agent-r', transcriptPath: writeTranscript([], 'empty.jsonl') }))
+    workerWrites('agent-r', { slug: 'nowhere', goal: 'g', dispatch_id: 'd-T999-n' })
+    subagentStop({ agentId: 'agent-q' })
+    expect(readMarker(prdtHome, 'agent-r')).toMatchObject({ pairing: 'unconfirmed', checkout: null })
+  })
+})

@@ -288,7 +288,7 @@ function marker(name: string, m: Record<string, unknown>) {
   fs.writeFileSync(t, REAL_LAST + '\n')
   const since = new Date(Date.now() - 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
   fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify({
-    agent_id: name, persona: 'developer', ticket_id: 'T-7', since, transcript: t, project_root: proj, model: 'default', ...m,
+    agent_id: name, persona: 'developer', ticket_id: 'T-7', since, transcript: t, project_root: proj, model: 'default', pairing: 'confirmed', ...m,
   }))
 }
 
@@ -361,5 +361,69 @@ describe('post-dispatch: the marker records its checkout', () => {
   test('`[ctx].worktree` verbatim, "code" when absent', () => {
     expect(start(ctx({ worktree: wt('T-1') }), 'agA').checkout).toBe(wt('T-1'))
     expect(start(ctx(), 'agB').checkout).toBe('code')
+  })
+})
+
+describe('T-780: no gate deny rests on a marker whose pairing is unconfirmed', () => {
+  beforeEach(() => makeProject())
+
+  /** The worker transcript's FIRST record is the worker's own prompt. */
+  function workerPrompt(name: string, c: Record<string, unknown>) {
+    const t = path.join(home, 'transcripts', 'subagents', `agent-${name}.jsonl`)
+    fs.writeFileSync(t, JSON.stringify({ type: 'user', message: { role: 'user', content: `[ctx] ${JSON.stringify(c)}\n\nGo.` } }) + '\n' + REAL_LAST + '\n')
+  }
+
+  test('unconfirmed with no readable worker prompt: its checkout never denies', () => {
+    marker('ag1', { checkout: 'code', pairing: 'unconfirmed', dispatch_id: 'd-1' })
+    marker('ag2', { checkout: 'code', dispatch_id: 'd-2', pairing: undefined })  // pre-T-780 marker: no pairing field
+    expect(denied(gate(ctx()))).toBeNull()
+  })
+
+  test('unconfirmed, worker prompt carries the marker\'s own dispatch_id: the pairing is confirmed and denies as before', () => {
+    marker('ag1', { checkout: wt('T-1'), pairing: 'unconfirmed', dispatch_id: 'd-1' })
+    workerPrompt('ag1', ctx({ dispatch_id: 'd-1', worktree: wt('T-1') }))
+    expect(denied(gate(ctx({ worktree: wt('T-1') })))).toContain('already has a live developer dispatch (T-7)')
+  })
+
+  test('mispaired (a sibling\'s call): the checkout comes from the worker\'s own prompt, never the marker; ticket unresolved', () => {
+    // the marker claims the shared code checkout, but this worker was dispatched into tracks/T-2
+    marker('ag1', { checkout: 'code', pairing: 'unconfirmed', dispatch_id: 'd-sibling' })
+    workerPrompt('ag1', ctx({ dispatch_id: 'd-1', worktree: wt('T-2') }))
+    expect(denied(gate(ctx()))).toBeNull()
+    expect(denied(gate(ctx({ worktree: wt('T-2') })))).toContain('already has a live developer dispatch (ticket unresolved)')
+  })
+
+  test('end to end: a reversed fan-out start swaps the provisional markers; the gate judges each by its own worker, and the next event repairs the files', () => {
+    const A = ctx({ slug: 'a', dispatch_id: 'd-T701-a', worktree: wt('T-1') })
+    const B = ctx({ slug: 'b', dispatch_id: 'd-T702-b', worktree: wt('T-2') })
+    const tp = path.join(proj, 'parent.jsonl')
+    const call = (id: string, c: Record<string, unknown>, model: string) => JSON.stringify({ type: 'assistant', message: { content: [
+      { type: 'tool_use', name: 'Agent', id, input: { subagent_type: 'prdt-developer', model, prompt: `[ctx] ${JSON.stringify(c)}\n\nGo.` } }] } })
+    fs.writeFileSync(tp, call('tu-a', A, 'opus') + '\n' + call('tu-b', B, 'sonnet') + '\n')
+    const post = (ev: Record<string, unknown>) => {
+      const r = spawnSync('bash', [POST], { input: JSON.stringify({ session_id: 'sess-1', cwd: proj, transcript_path: tp, ...ev }), encoding: 'utf8', env: env(), timeout: subprocessTimeout('hook') })
+      expect(r.status).toBe(0)
+    }
+    const dir = path.join(home, 'run', 'dispatches')
+    const markers = () => Object.fromEntries(fs.readdirSync(dir).map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))).map((m) => [m.agent_id, m]))
+    // agB runs call B but starts FIRST: FIFO hands it call A — the swap QA reproduced
+    post({ hook_event_name: 'SubagentStart', agent_id: 'agB', agent_type: 'prdt-developer' })
+    post({ hook_event_name: 'SubagentStart', agent_id: 'agA', agent_type: 'prdt-developer' })
+    expect(markers().agB).toMatchObject({ checkout: wt('T-1'), pairing: 'unconfirmed' })
+    // before the workers write anything, the swapped markers deny nothing
+    expect(denied(gate(ctx({ worktree: wt('T-1') })))).toBeNull()
+    expect(denied(gate(ctx({ worktree: wt('T-2') })))).toBeNull()
+    // the workers start writing: each one's first record is its own prompt
+    const sub = path.join(proj, 'sess-1', 'subagents')
+    fs.mkdirSync(sub, { recursive: true })
+    fs.writeFileSync(path.join(sub, 'agent-agA.jsonl'), JSON.stringify({ type: 'user', message: { role: 'user', content: `[ctx] ${JSON.stringify(A)}\n\nGo.` } }) + '\n')
+    fs.writeFileSync(path.join(sub, 'agent-agB.jsonl'), JSON.stringify({ type: 'user', message: { role: 'user', content: `[ctx] ${JSON.stringify(B)}\n\nGo.` } }) + '\n')
+    // the gate, still reading the swapped files, denies T-1 because of agA's OWN worker — not agB's marker
+    expect(denied(gate(ctx({ worktree: wt('T-1') })))).toContain('(ticket unresolved)')
+    // the next dispatch event repairs both files
+    post({ hook_event_name: 'SubagentStart', agent_id: 'agD', agent_type: 'prdt-designer' })
+    expect(markers().agA).toMatchObject({ dispatch_id: 'd-T701-a', checkout: wt('T-1'), tool_use_id: 'tu-a', model: 'opus', pairing: 'confirmed' })
+    expect(markers().agB).toMatchObject({ dispatch_id: 'd-T702-b', checkout: wt('T-2'), tool_use_id: 'tu-b', model: 'sonnet', pairing: 'confirmed' })
+    expect(denied(gate(ctx({ worktree: wt('T-2') })))).toContain('already has a live developer dispatch (T-702)')
   })
 })
