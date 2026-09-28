@@ -97,9 +97,37 @@
 #    instead of relying on mtime so tests can seed exact ages without
 #    sleeping). Window is $PRDT_AUTO_OPEN_DEBOUNCE_SECS, default 30s.
 
+# T-746 — the static viewer instead of the raw file:
+#  - A PO Write of a document the viewer shows (docs/prd/PRD.md, a top-level
+#    docs/wiki/*.md, docs/features/*.md, an .md under docs/artifacts/) opens
+#    the project's viewer AT that document: `prdt viewer --no-open <file>`
+#    regenerates it (so what opens is current) and prints a link to a small
+#    forwarding page (`.prdt/scratch/viewer/at/<id>.html` → viewer.html#<id>),
+#    which is what gets opened — through the SAME warm-handler + debounce path
+#    as any other light open below. No viewer (no node, no generator, a
+#    failed generation) → PRD.md falls back to opening the file itself, the
+#    other documents stay silent, as before T-746.
+#  - `prdt-auto-open.sh --open <file>` is the hand-off mode `prdt tickets
+#    --link` / `prdt viewer` call to open a link they just printed: no stdin
+#    event, no Write classification, no debounce (one explicit hand-off, one
+#    open) — but the GUI-session, auto-open=off and never-cold-start (T-571)
+#    rules below apply exactly as for a Write, so the policy lives here once.
+#  - .html mockups, images, pdf and installers keep opening as the file
+#    itself — the viewer only summarizes those.
+
 set +e
 
-EVENT_JSON="$(cat 2>/dev/null || true)"
+OPEN_MODE=""
+if [ "${1:-}" = "--open" ]; then
+  OPEN_MODE="yes"
+  [ -n "${2:-}" ] && [ -f "$2" ] || exit 0
+fi
+
+if [ -n "$OPEN_MODE" ]; then
+  EVENT_JSON='{"tool_name":"Write"}'
+else
+  EVENT_JSON="$(cat 2>/dev/null || true)"
+fi
 [ -z "$EVENT_JSON" ] && { printf '{}'; exit 0; }
 
 # GUI po-runner spawns set this (T-409) — CLI-only feature, GUI already surfaces
@@ -111,8 +139,14 @@ command -v jq >/dev/null 2>&1 || { printf '{}'; exit 0; }
 TOOL_NAME="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_name // ""' 2>/dev/null)"
 [ "$TOOL_NAME" = "Write" ] || { printf '{}'; exit 0; }
 
-FILE_PATH="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_input.file_path // ""' 2>/dev/null)"
+if [ -n "$OPEN_MODE" ]; then
+  FILE_PATH="$2"
+else
+  FILE_PATH="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_input.file_path // ""' 2>/dev/null)"
+fi
 [ -n "$FILE_PATH" ] && [ -f "$FILE_PATH" ] || { printf '{}'; exit 0; }
+
+if [ -z "$OPEN_MODE" ]; then
 
 # T-559: subagent Write → silent no-op. `agent_type` is a top-level payload
 # member on subagent Writes only (see header) — jq's addressing is itself the
@@ -127,6 +161,7 @@ JQ_AGENT_STATUS=$?
 case "$FILE_PATH" in
   */.prdt/*|.prdt/*) printf '{}'; exit 0 ;;
 esac
+fi
 
 PRDT_HOME="${PRDT_HOME:-$HOME/.prdt}"
 MODE="$(cat "$PRDT_HOME/auto-open" 2>/dev/null | tr -d '[:space:]')"
@@ -137,19 +172,48 @@ command -v open >/dev/null 2>&1 || { printf '{}'; exit 0; }
 BASENAME="$(basename -- "$FILE_PATH")"
 LOWER="$(printf '%s' "$BASENAME" | tr '[:upper:]' '[:lower:]')"
 
+# The file actually handed to `open` — the written file itself, except for a
+# viewer-routed document (T-746), where it is the forwarding page. Debounce
+# stays keyed on the WRITTEN path either way.
+OPEN_PATH="$FILE_PATH"
+
 ACTION=""
+VIEWER_DOC=""
+if [ -z "$OPEN_MODE" ]; then
+  case "$FILE_PATH" in
+    */docs/prd/PRD.md|*/docs/features/*.md|*/docs/artifacts/*.md) VIEWER_DOC="yes" ;;
+    */docs/wiki/*/*) ;;
+    */docs/wiki/*.md) VIEWER_DOC="yes" ;;
+  esac
+fi
+if [ -n "$VIEWER_DOC" ]; then
+  PRDT_CLI="${PRDT_BIN:-$PRDT_HOME/bin/prdt}"
+  [ -x "$PRDT_CLI" ] || PRDT_CLI="$(command -v prdt 2>/dev/null)"
+  if [ -n "$PRDT_CLI" ]; then
+    LINK="$(cd "$(dirname -- "$FILE_PATH")" 2>/dev/null && "$PRDT_CLI" viewer --no-open "$FILE_PATH" 2>/dev/null | head -1)"
+    JUMP="$(printf '%s' "$LINK" | sed -n 's/^\[[^]]*\](file:\/\/\(.*\))$/\1/p')"
+    case "$JUMP" in
+      */.prdt/scratch/viewer/at/*.html) [ -f "$JUMP" ] && { OPEN_PATH="$JUMP"; ACTION="open"; } ;;
+    esac
+  fi
+fi
+
+if [ -n "$OPEN_MODE" ]; then
+  ACTION="open"
+elif [ -z "$ACTION" ]; then
 case "$LOWER" in
   prd.md) ACTION="open" ;;
   *.html|*.htm|*.png|*.jpg|*.jpeg|*.gif|*.svg|*.pdf) ACTION="open" ;;
   *.dmg|*.pkg|*.zip|*.tar.gz|*.tar.xz|*.tgz|*.exe|*.msi) ACTION="reveal" ;;
   *) ACTION="" ;;
 esac
+fi
 
 [ -n "$ACTION" ] || { printf '{}'; exit 0; }
 
 # Oversized light file → reveal instead of launching a viewer app on it.
 if [ "$ACTION" = "open" ]; then
-  SIZE="$(wc -c < "$FILE_PATH" 2>/dev/null | tr -d '[:space:]')"
+  SIZE="$(wc -c < "$OPEN_PATH" 2>/dev/null | tr -d '[:space:]')"
   if [ -n "$SIZE" ] && [ "$SIZE" -gt 26214400 ] 2>/dev/null; then
     ACTION="reveal"
   fi
@@ -179,7 +243,7 @@ fi
 if [ "$ACTION" = "open" ]; then
   UTI=""
   command -v mdls >/dev/null 2>&1 && \
-    UTI="$(mdls -raw -name kMDItemContentType "$FILE_PATH" 2>/dev/null)"
+    UTI="$(mdls -raw -name kMDItemContentType "$OPEN_PATH" 2>/dev/null)"
 
   HANDLER_BUNDLE=""
   LS_PLIST="$HOME/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist"
@@ -221,6 +285,7 @@ DEBOUNCE_SECS="${PRDT_AUTO_OPEN_DEBOUNCE_SECS:-30}"
 DEBOUNCE_DIR="$PRDT_HOME/.auto-open-debounce"
 mkdir -p "$DEBOUNCE_DIR" 2>/dev/null
 KEY="$(printf '%s' "$FILE_PATH" | cksum 2>/dev/null | tr -s ' ' '-')"
+[ -n "$OPEN_MODE" ] && KEY=""
 if [ -n "$KEY" ]; then
   MARKER="$DEBOUNCE_DIR/$KEY"
   NOW="$(date +%s 2>/dev/null)"
@@ -238,9 +303,9 @@ if [ -n "$KEY" ]; then
 fi
 
 if [ "$ACTION" = "reveal" ]; then
-  open -R "$FILE_PATH" >/dev/null 2>&1
+  open -R "$OPEN_PATH" >/dev/null 2>&1
 else
-  open "$FILE_PATH" >/dev/null 2>&1
+  open "$OPEN_PATH" >/dev/null 2>&1
 fi
 
 printf '{}'
