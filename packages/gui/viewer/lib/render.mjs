@@ -502,6 +502,16 @@ function currentVersionTickets(tickets, currentVersion) {
   return tickets.included.filter((t) => t.bucket !== 'backlog' && sameVersion(t.bucket, currentVersion))
 }
 
+/** Home's decision group (T-792): `decision--*` wiki pages whose `version:` is the current version. One function, so the `#id` anchor table names only the rows Home draws. */
+function currentDecisionPages(pages, currentVersion) {
+  return pages.filter((p) => p.rel.split('/').pop().startsWith('decision--') && p.frontmatter.version && sameVersion(String(p.frontmatter.version), currentVersion))
+}
+
+/** Home's artifact group — the literal bucket match home has always used (T-713 scope note in `homeSection`); shared with the anchor table (T-792). */
+function currentArtifactEntries(artifacts, currentVersion) {
+  return artifacts.entries.filter((e) => e.fields.bucket === currentVersion)
+}
+
 /**
  * A ticket's `prd_item` (`"<version>#<key>"`) resolved against `currentVersion`
  * by the SAME numeric equality (T-713), rather than a literal string-prefix
@@ -1050,6 +1060,25 @@ export function buildAnchors(data) {
   const put = (key, entry) => {
     if (key && !Object.prototype.hasOwnProperty.call(anchors, key)) anchors[key] = entry
   }
+  // T-792: a current-version item opens inside Home (the group Home draws it
+  // in); every other item opens in its own store, as T-746 built it. `put`
+  // keeps the first entry, so the Home entries go in first.
+  for (const t of currentVersionTickets(data.tickets, data.currentVersion)) {
+    const id = t.frontmatter.id || t.rel
+    put(id, { s: 'home', g: 'ticket', k: 'ticket', i: id })
+  }
+  for (const p of currentDecisionPages(data.wiki, data.currentVersion)) {
+    const file = p.rel.split('/').pop()
+    const entry = { s: 'home', g: 'decision', k: 'wiki', i: file }
+    put(file.replace(/\.md$/, ''), entry)
+    put(p.rel, entry)
+  }
+  put('docs/prd/PRD.md', { s: 'home', g: 'prd' })
+  put('PRD', { s: 'home', g: 'prd' })
+  for (const e of currentArtifactEntries(data.artifacts, data.currentVersion)) {
+    const f = e.fields
+    put(e.diskRel, { s: 'home', g: 'artifact', k: 'artifact', i: `${f.bucket}/${f.path}` })
+  }
   const currentKey = currentTicketBucketKey(data.tickets, data.currentVersion)
   for (const t of data.tickets.included) {
     const id = t.frontmatter.id || t.rel
@@ -1070,8 +1099,6 @@ export function buildAnchors(data) {
   for (const p of data.features) {
     put(p.rel, { s: 'feature', g: 'all', k: 'feature', i: p.rel.split('/').pop() })
   }
-  put('docs/prd/PRD.md', { s: 'prd', g: 'open' })
-  put('PRD', { s: 'prd', g: 'open' })
   for (const c of data.prd.closed) {
     put(c.rel, { s: 'prd', g: c.name.replace(/\.md$/, '') })
   }
@@ -1287,10 +1314,12 @@ function homeSection(data, repoRootHref) {
   // `prd_item` prefixes only; an artifact-manifest bucket spelled
   // differently from po-state's version string is the same latent bug class
   // but out of scope here (see this dispatch's `unresolved[]`).
-  const currentArtifacts = data.artifacts.entries.filter((e) => e.fields.bucket === data.currentVersion)
+  const currentArtifacts = currentArtifactEntries(data.artifacts, data.currentVersion)
+  const currentDecisions = currentDecisionPages(data.wiki, data.currentVersion)
   const groups = [
     { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
+    { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref) },
   ]

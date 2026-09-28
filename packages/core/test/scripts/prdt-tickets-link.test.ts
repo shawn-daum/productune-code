@@ -94,7 +94,9 @@ function expectResolvesToDir(root: string, id: string, dir: string, dest: string
   expect(fs.existsSync(dest)).toBe(true)
   if (dest === jump) {
     expect(fs.readFileSync(dest, 'utf-8')).toContain(`url=../viewer.html#${id}`)
-    expect(readViewerAnchors(root)[id]).toMatchObject({ s: 'ticket', g: dir })
+    // T-792: a current-version ticket opens inside Home; any other keeps its ticket-store group.
+    const current = JSON.parse(fs.readFileSync(path.join(root, '.prdt', 'po-state.json'), 'utf-8')).version
+    expect(readViewerAnchors(root)[id]).toMatchObject(dir === current ? { s: 'home', g: 'ticket' } : { s: 'ticket', g: dir })
   } else {
     expect(dest).toBe(path.join(fs.realpathSync(root), 'docs', 'tickets', dir, `${id}.md`))
     expect(fs.readFileSync(dest, 'utf-8')).toContain(`id: ${id}`)
