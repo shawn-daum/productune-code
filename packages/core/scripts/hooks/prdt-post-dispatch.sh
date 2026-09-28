@@ -736,8 +736,13 @@ def _reconcile(names):
             if call is None:
                 continue
             ctx_obj = ctx_from_prompt(prompt)
-            data["dispatch_id"], tid = ticket_from_ctx(ctx_obj)
-            data["ticket_id"] = tid or data.get("ticket_id")
+            # T-788: this event's own (agentId <-> parent Agent call) pairing is
+            # authoritative by construction (agent_call_by_prompt matched the
+            # worker's OWN first prompt against the parent transcript) — the
+            # same rationale marker_refine's T-780 fix already applies. tid is
+            # therefore ALWAYS taken as-is (None included), never falling back
+            # to a stale/FIFO-guessed ticket_id already sitting on the marker.
+            data["dispatch_id"], data["ticket_id"] = ticket_from_ctx(ctx_obj)
             data["checkout"] = checkout_from_ctx(ctx_obj)
             data["tool_use_id"], data["model"] = call[0], norm_model(call[1])
             data["pairing"] = "confirmed"

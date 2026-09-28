@@ -606,3 +606,38 @@ describe('T-780 — each concurrent same-persona start ends up with the marker o
     expect(readMarker(prdtHome, 'agent-r')).toMatchObject({ pairing: 'unconfirmed', checkout: null })
   })
 })
+
+describe('T-788 — _reconcile never keeps a guessed ticket', () => {
+  // SubagentStart's FIFO guess can land on a pending call that DOES resolve a
+  // real ticket, while the worker's own transcript later proves it is really
+  // running a DIFFERENT dispatch whose id/slug resolve none. QA: a fixture
+  // whose dispatch_id/slug resolve SOME ticket hides this bug outright — WRONG
+  // uses this project's real ticket form (uppercase `T`, `d-T701-wrong`); OWN
+  // uses the real no-ticket form (lowercase `t`, `d-v111-t701-a`), the same
+  // shape T-780's marker_refine regression test already exercises.
+  const WRONG_GUESS = { slug: 'wrong-first', goal: 'g', dispatch_id: 'd-T701-wrong', worktree: '/p/tracks/T-788' }
+  const OWN = { slug: 'v111-t701-first', goal: 'g', dispatch_id: 'd-v111-t701-a', worktree: '/p/tracks/T-788' }
+
+  test('a marker holding a resolved-but-wrong ticket_id is corrected to null once its OWN (no-ticket) call is confirmed', () => {
+    const t = writeTranscript([
+      { toolUse: 'toolu_wrong', ctx: WRONG_GUESS },
+      { toolUse: 'toolu_own', ctx: OWN },
+    ])
+    expectSilent(subagentStart({ agentId: 'agent-x', transcriptPath: t }))
+    // the FIFO guess at start: first unclaimed call, which happens to resolve a ticket
+    expect(readMarker(prdtHome, 'agent-x')).toMatchObject({ ticket_id: 'T-701', tool_use_id: 'toolu_wrong', pairing: 'unconfirmed' })
+
+    // the worker's own transcript proves it is really running the no-ticket call
+    const dir = path.join(root, 'sess-1', 'subagents')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'agent-agent-x.jsonl'),
+      JSON.stringify({ type: 'user', agentId: 'agent-x', message: { role: 'user', content: ctxPrompt(OWN) } }) + '\n')
+
+    // any subsequent dispatch event runs marker_reconcile() over every open marker
+    runHook({ session_id: 'sess-1', cwd: root, agent_id: 'agent-z', agent_type: 'prdt-designer', hook_event_name: 'SubagentStart', transcript_path: t }, prdtHome)
+
+    expect(readMarker(prdtHome, 'agent-x')).toMatchObject({
+      dispatch_id: OWN.dispatch_id, ticket_id: null, tool_use_id: 'toolu_own', pairing: 'confirmed',
+    })
+  })
+})
