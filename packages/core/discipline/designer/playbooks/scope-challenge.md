@@ -2,10 +2,12 @@
 name: scope-challenge
 persona: designer
 when: "Define entry on a net-new version whose scope arrived already complete — the PO has no fork material to put to the user"
-model_floor: fable
+model_floor: opus
 effort: high
 ---
 # Scope challenge — turn arrived scope back into a fork
+
+Floor opus = temporary stand-in for fable until T-737 configurable routing.
 
 Scope that arrives as a finished ticket bundle leaves the user nothing to choose: the only question left is "ship it as-is?". Your job is to make a real fork out of it. You run BEFORE `prd-clarity`, as your own dispatch in your own session.
 
