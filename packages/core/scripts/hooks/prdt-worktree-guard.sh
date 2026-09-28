@@ -41,14 +41,28 @@
 #
 # BASH (best effort — "the writes the hook can recognise"): a command is split
 #   into simple commands on `;` `&&` `||` `|` `&` and newlines (heredoc bodies
-#   dropped) and each is judged by shape: redirect targets (`>` `>>` `&>` `N>`),
-#   `tee` files, `sed -i` / `perl -i` files, `cp` `mv` `install` `ln` `rsync`
-#   destinations (last operand, or `-t DIR`), `rm` `rmdir` `mkdir` `touch`
-#   `truncate` `unlink` `chmod` `chown` operands, and a mutating `git`
-#   subcommand run in the shared checkout (`-C DIR` or the effective cwd). A
-#   `cd DIR` earlier in the same command moves the effective cwd. An
-#   interpreter writing a file from inside its own source (python -c, node -e)
-#   is NOT recognised — accepted gap, named in the ticket's acceptance wording.
+#   dropped, comments stripped quote-aware — a `#` only opens one at a word
+#   boundary, matching real bash) and each is judged by shape: redirect
+#   targets (`>` `>>` `&>` `N>`, but not inside `[[ … ]]`, where `>`/`<` are
+#   string comparisons), `tee` files, `sed -i` / `perl -i` files, `cp` `mv`
+#   `install` `ln` `rsync` destinations (last operand, or `-t DIR`) — `mv`
+#   also checks its SOURCE operand(s), since removing a file from the shared
+#   checkout is itself a write — `rm` `rmdir` `mkdir` `touch` `truncate`
+#   `unlink` `chmod` `chown` operands, `find … -delete`'s search path(s),
+#   `dd of=`, `curl -o`/`--output`, and a mutating `git` subcommand run in the
+#   shared checkout (`-C DIR` / `--work-tree DIR` or the effective cwd). `cd`,
+#   `pushd`/`popd` and a `( … )` subshell (scoped: a `cd` inside one does not
+#   leak out) move the effective cwd; `bash -c`/`sh -c`/`zsh -c` recurse into
+#   their script argument (capped at 4 levels); `xargs CMD …` is unwrapped
+#   like a prefix so a literal target on xargs's OWN command line is seen. A
+#   path spelled `$PWD/…` / `${PWD}/…` resolves against the effective cwd.
+#   Paths differing only in case are folded before comparing, but only where
+#   `sys.platform == "darwin"` (APFS default: case-insensitive) — never on a
+#   case-sensitive filesystem, to avoid a false deny there.
+#   Still NOT recognised — accepted gaps: an interpreter writing a file from
+#   inside its own source (python -c, node -e); a target reaching `xargs` or
+#   `find -exec` only via stdin / found paths, never literal on the command
+#   line; a `case … esac` pattern boundary is not specially parsed.
 #
 # Fails OPEN everywhere: python3 missing, unparsable JSON, no project, an
 # unreadable config — exit 0, no output.
@@ -200,19 +214,43 @@ def under(p, d):
     return p == d or p.startswith(d.rstrip("/") + "/")
 
 
+# T-783: APFS (the default macOS volume format) is case-insensitive, so
+# `.../Code/x` and `.../code/x` name the same on-disk file even though
+# os.path.realpath (pure string resolution, no filesystem case lookup)
+# leaves their case untouched — fold before comparing on this platform only,
+# so a case-sensitive filesystem elsewhere in CI is never over-matched.
+IS_DARWIN = sys.platform == "darwin"
+
+
+def fold(p):
+    return p.lower() if IS_DARWIN else p
+
+
+def under_ci(p, d):
+    return under(fold(p), fold(d))
+
+
+def expand_pwd(path, base):
+    """A literal `$PWD/…` / `${PWD}/…` prefix, as bash would expand it (T-783)."""
+    for pre in ("${PWD}", "$PWD"):
+        if path == pre or path.startswith(pre + "/"):
+            return (base or "") + path[len(pre):]
+    return path
+
+
 def shared(path, base):
     """The realpath of `path` if it is a guarded shared-checkout path, else None."""
     if not isinstance(path, str) or not path:
         return None
-    path = os.path.expanduser(path)
+    path = os.path.expanduser(expand_pwd(path, base))
     if not path.startswith("/"):
         if not base:
             return None
         path = os.path.join(base, path)
     rp = os.path.realpath(path)
-    if not under(rp, code_abs) or under(rp, wt_abs):
+    if not under_ci(rp, code_abs) or under_ci(rp, wt_abs):
         return None
-    if legacy and any(under(rp, os.path.join(root, x)) for x in ("docs", ".prdt", "tracks")):
+    if legacy and any(under_ci(rp, os.path.join(root, x)) for x in ("docs", ".prdt", "tracks")):
         return None
     return rp
 
@@ -240,13 +278,86 @@ cmd = tin.get("command")
 if not isinstance(cmd, str) or not cmd.strip():
     out_open()
 
-SEPS = {";", "&&", "||", "|", "&", "|&", "\n", "(", ")", "{", "}"}
-REDIR = (">>", ">|", "&>>", "&>", ">")
+SEPS = {";", "&&", "||", "|", "&", "|&", "\n", "{", "}"}
 WRAPPERS = {"sudo", "command", "time", "nice", "nohup", "env", "exec", "builtin"}
+# bash reserved words that can front a command word (T-783: `then rm …`,
+# `do rm …`, `else`/`elif`/`!` — a segment split on `;`/`&&`/… still starts
+# with the keyword, not the command, unless stripped first)
+KEYWORDS = {"then", "do", "else", "elif", "fi", "done", "if", "while", "until",
+            "!", "in", "case", "esac", "select", "function"}
+XARGS_VALUE_FLAGS = {"-I", "-n", "-P", "-L", "-l", "-s", "-a", "-d", "-E", "-J", "-i"}
 # subcommands that change the checkout's index or working tree (a ref-only or
 # read-only one — log, status, diff, branch, fetch, worktree — stays silent)
 GIT_MUT = {"add", "commit", "checkout", "switch", "reset", "restore", "stash", "merge", "rebase",
            "apply", "am", "cherry-pick", "revert", "rm", "mv", "clean", "pull"}
+MAX_SUBSHELL_DEPTH = 4  # `bash -c '…'` recursion cap (T-783)
+
+
+def scan_line(ln):
+    """One line → (kept-text, heredoc-terminator-words), quote-aware (T-783):
+    a `#` only opens a comment at a word boundary (real bash never treats a
+    mid-word `#`, e.g. `code/a#b.txt`, as one — plain `commenters="#"` in
+    shlex does, and also swallows every command after it on the line); a
+    `<<`/`<<-` only opens a heredoc unquoted (real bash ignores one written
+    `'a<<b'`). A `<<<` here-string is left alone (no body follows)."""
+    out, words = [], []
+    q = None
+    i, n = 0, len(ln)
+    prev_ws = True
+    while i < n:
+        c = ln[i]
+        if q:
+            out.append(c)
+            if c == q:
+                q = None
+            i += 1
+            prev_ws = False
+            continue
+        if c in ("'", '"'):
+            q = c
+            out.append(c)
+            i += 1
+            prev_ws = False
+            continue
+        if c == "\\" and i + 1 < n:
+            out.append(c)
+            out.append(ln[i + 1])
+            i += 2
+            prev_ws = False
+            continue
+        if c == "#" and prev_ws:
+            break
+        if c == "<" and i + 1 < n and ln[i + 1] == "<":
+            k = i + 2
+            if k < n and ln[k] == "<":  # here-string <<<
+                out.append("<<<")
+                i = k + 1
+                prev_ws = False
+                continue
+            if k < n and ln[k] == "-":
+                k += 1
+            while k < n and ln[k] == " ":
+                k += 1
+            w, wq = "", None
+            while k < n and (wq or ln[k] not in " \t;&|)<>"):
+                if ln[k] in ("'", '"') and not wq:
+                    wq = ln[k]
+                elif ln[k] == wq:
+                    wq = None
+                else:
+                    w += ln[k]
+                k += 1
+            w = w.strip("'\"\\")
+            if w:
+                words.append(w)
+            out.append(ln[i:k])
+            i = k
+            prev_ws = False
+            continue
+        out.append(c)
+        prev_ws = c in (" ", "\t")
+        i += 1
+    return "".join(out), words
 
 
 def strip_heredocs(s):
@@ -256,28 +367,9 @@ def strip_heredocs(s):
             if ln.strip() == pend[0]:
                 pend.pop(0)
             continue
-        out.append(ln)
-        i = 0
-        while True:
-            j = ln.find("<<", i)
-            if j < 0:
-                break
-            k = j + 2
-            if k < len(ln) and ln[k] == "<":  # here-string <<<
-                i = k + 1
-                continue
-            if k < len(ln) and ln[k] == "-":
-                k += 1
-            while k < len(ln) and ln[k] == " ":
-                k += 1
-            w = ""
-            while k < len(ln) and ln[k] not in " ;&|)<>":
-                w += ln[k]
-                k += 1
-            w = w.strip("'\"\\")
-            if w:
-                pend.append(w)
-            i = k
+        kept, words = scan_line(ln)
+        out.append(kept)
+        pend.extend(words)
     return "\n".join(out)
 
 
@@ -285,7 +377,7 @@ def tokens(s):
     lx = shlex.shlex(s, posix=True, punctuation_chars=";&|()<>")
     lx.whitespace = " \t\r"
     lx.whitespace_split = True
-    lx.commenters = "#"
+    lx.commenters = ""  # comments already stripped, quote-aware, by scan_line
     out = []
     try:
         for t in lx:
@@ -295,135 +387,257 @@ def tokens(s):
     return out
 
 
-text = strip_heredocs(cmd).replace("\\\n", " ").replace("\n", " ; ")
-toks = tokens(text)
-if toks is None:
-    out_open()
-
-# group into simple commands, splitting glued punctuation tokens like "&&" / ">>"
-segs, cur = [], []
-for t in toks:
-    if t in SEPS or (t and set(t) <= set(";&|()") and not set(t) & set("<>")):
-        if cur:
-            segs.append(cur)
-        cur = []
-    else:
-        cur.append(t)
-if cur:
-    segs.append(cur)
-
-ecwd = cwd
-
-
-def check(path, how, base=None):
-    rp = shared(path, base or ecwd)
-    if rp:
-        deny(rp, how)
+def strip_prefixes(words):
+    """Pop leading keywords / assignments / wrapper-and-its-flags, in any
+    combination (T-783: `then sudo rm …`), until the command word is first."""
+    changed = True
+    while changed and words:
+        changed = False
+        if words[0] in KEYWORDS:
+            words.pop(0)
+            changed = True
+            continue
+        if "=" in words[0] and not words[0].startswith("=") and words[0].split("=", 1)[0].isidentifier():
+            words.pop(0)
+            changed = True
+            continue
+        if words[0] in WRAPPERS:
+            words.pop(0)
+            while words and words[0].startswith("-") and words[0] != "-":
+                words.pop(0)
+            changed = True
+            continue
+    return words
 
 
-for seg in segs:
-    words, i = [], 0
-    while i < len(seg):
-        t = seg[i]
-        # redirect operators (punctuation_chars splits `2>` into "2" + ">")
-        if t in (">", ">>", ">|", "&>", "&>>") or (t and set(t) <= set("<>&|") and ">" in t):
-            if words and words[-1].isdigit() and t.startswith(">"):
-                words.pop()
-            if i + 1 < len(seg):
-                tgt = seg[i + 1]
-                if not t.endswith("&") and not tgt.startswith("&"):  # `>&2` / `2>&1` name an fd
-                    check(tgt, "Bash redirect")
+def run_command(raw_cmd, base_cwd, depth):
+    if depth > MAX_SUBSHELL_DEPTH or not isinstance(raw_cmd, str):
+        return
+    text = strip_heredocs(raw_cmd).replace("\\\n", " ").replace("\n", " ; ")
+    toks = tokens(text)
+    if toks is None:
+        return
+
+    # group into simple commands; "(" / ")" become their own marker segments
+    # so a subshell's `cd` (T-783: `(cd code) ; touch rel.txt`) scopes to it
+    segs, cur = [], []
+    for t in toks:
+        if t in ("(", ")"):
+            if cur:
+                segs.append(cur)
+                cur = []
+            segs.append([t])
+            continue
+        if t in SEPS or (t and set(t) <= set(";&|()") and not set(t) & set("<>")):
+            if cur:
+                segs.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    if cur:
+        segs.append(cur)
+
+    ecwd = base_cwd
+    paren_stack, dir_stack = [], []
+
+    def check(path, how, base=None):
+        rp = shared(path, base if base is not None else ecwd)
+        if rp:
+            deny(rp, how)
+
+    for seg in segs:
+        if seg == ["("]:
+            paren_stack.append(ecwd)
+            continue
+        if seg == [")"]:
+            if paren_stack:
+                ecwd = paren_stack.pop()
+            continue
+        if seg and seg[0] == "[[":
+            # `[[ … ]]`: `>` / `<` inside are string comparisons, not
+            # redirects (T-783: `[[ "a" > "b" ]]` is not a write to "b")
+            continue
+        words, i = [], 0
+        while i < len(seg):
+            t = seg[i]
+            # redirect operators (punctuation_chars splits `2>` into "2" + ">")
+            if t in (">", ">>", ">|", "&>", "&>>") or (t and set(t) <= set("<>&|") and ">" in t):
+                if words and words[-1].isdigit() and t.startswith(">"):
+                    words.pop()
+                if i + 1 < len(seg):
+                    tgt = seg[i + 1]
+                    if not t.endswith("&") and not tgt.startswith("&"):  # `>&2` / `2>&1` name an fd
+                        check(tgt, "Bash redirect")
+                    i += 2
+                    continue
+                i += 1
+                continue
+            if t in ("<", "<<", "<<<"):
                 i += 2
                 continue
+            words.append(t)
             i += 1
-            continue
-        if t in ("<", "<<", "<<<"):
-            i += 2
-            continue
-        words.append(t)
-        i += 1
-    while words and "=" in words[0] and not words[0].startswith("=") and words[0].split("=")[0].isidentifier():
-        words.pop(0)
-    while words and words[0] in WRAPPERS:
-        words.pop(0)
-        while words and words[0].startswith("-"):
+        words = strip_prefixes(words)
+        if words and os.path.basename(words[0]) == "xargs":
             words.pop(0)
-    if not words:
-        continue
-    name, args = os.path.basename(words[0]), words[1:]
-    ops = [a for a in args if not a.startswith("-")]
-    if name == "cd":
-        if ops:
-            nd = os.path.expanduser(ops[0])
-            ecwd = nd if nd.startswith("/") else (os.path.join(ecwd, nd) if ecwd else None)
-        continue
-    if name == "tee":
-        for a in ops:
-            check(a, "Bash tee")
-    elif name in ("rm", "rmdir", "mkdir", "touch", "truncate", "unlink", "shred"):
-        for j, a in enumerate(args):
-            if a.startswith("-"):
-                continue
-            if name == "truncate" and j > 0 and args[j - 1] in ("-s", "--size", "-r", "--reference"):
-                continue
-            check(a, f"Bash {name}")
-    elif name in ("chmod", "chown", "chgrp"):
-        for a in ops[1:]:
-            check(a, f"Bash {name}")
-    elif name in ("cp", "mv", "install", "ln", "rsync", "ditto"):
-        dest = None
-        for j, a in enumerate(args):
-            if a in ("-t", "--target-directory") and j + 1 < len(args):
-                dest = args[j + 1]
-            elif a.startswith("--target-directory="):
-                dest = a.split("=", 1)[1]
-        if dest is None and len(ops) >= 2:
-            dest = ops[-1]
-        if dest is not None:
-            check(dest, f"Bash {name}")
-    elif name in ("sed", "gsed", "perl"):
-        inplace = any(a == "--in-place" or a.startswith("--in-place=") or
-                      (a.startswith("-") and not a.startswith("--") and "i" in a[1:]) for a in args)
-        if inplace:
-            script_given = False
-            j = 0
-            files = []
-            while j < len(args):
-                a = args[j]
-                if a in ("-e", "-f", "--expression", "--file"):
-                    script_given = True
-                    j += 2
-                    continue
+            while words and words[0].startswith("-") and words[0] != "-":
+                f = words[0]
+                if f in XARGS_VALUE_FLAGS and len(words) > 1:
+                    words.pop(0)
+                    words.pop(0)
+                else:
+                    words.pop(0)
+            words = strip_prefixes(words)
+        if not words:
+            continue
+        name, args = os.path.basename(words[0]), words[1:]
+        ops = [a for a in args if not a.startswith("-")]
+        if name == "cd":
+            if ops:
+                nd = os.path.expanduser(ops[0])
+                ecwd = nd if nd.startswith("/") else (os.path.join(ecwd, nd) if ecwd else None)
+            continue
+        if name == "pushd":
+            if ops:
+                nd = os.path.expanduser(ops[0])
+                dir_stack.append(ecwd)
+                ecwd = nd if nd.startswith("/") else (os.path.join(ecwd, nd) if ecwd else None)
+            continue
+        if name == "popd":
+            if dir_stack:
+                ecwd = dir_stack.pop()
+            continue
+        if name in ("bash", "sh", "zsh") and "-c" in args:
+            ci = args.index("-c")
+            if ci + 1 < len(args):
+                run_command(args[ci + 1], ecwd, depth + 1)
+            continue
+        if name == "tee":
+            for a in ops:
+                check(a, "Bash tee")
+        elif name in ("rm", "rmdir", "mkdir", "touch", "truncate", "unlink", "shred"):
+            for j, a in enumerate(args):
                 if a.startswith("-"):
-                    if name == "perl" and a.endswith("e") and not a.startswith("--"):
+                    continue
+                if name == "truncate" and j > 0 and args[j - 1] in ("-s", "--size", "-r", "--reference"):
+                    continue
+                check(a, f"Bash {name}")
+        elif name in ("chmod", "chown", "chgrp"):
+            for a in ops[1:]:
+                check(a, f"Bash {name}")
+        elif name in ("cp", "mv", "install", "ln", "rsync", "ditto"):
+            dest, uses_target_flag = None, False
+            for j, a in enumerate(args):
+                if a in ("-t", "--target-directory") and j + 1 < len(args):
+                    dest, uses_target_flag = args[j + 1], True
+                elif a.startswith("--target-directory="):
+                    dest, uses_target_flag = a.split("=", 1)[1], True
+            if dest is None and len(ops) >= 2:
+                dest = ops[-1]
+            if dest is not None:
+                check(dest, f"Bash {name}")
+            if name == "mv":
+                # T-783: mv also WRITES its source (removes it) — a worker
+                # moving a file OUT of the shared checkout is still a write
+                srcs = ops if uses_target_flag else ops[:-1]
+                for s in srcs:
+                    check(s, "Bash mv (source)")
+        elif name in ("sed", "gsed", "perl"):
+            # T-783: perl's arg-taking flags (-m/-M module, -I include path, …)
+            # swallow the rest of that token as their OWN argument — a plain
+            # substring scan for "i" false-positives on e.g. "-mdiagnostics"
+            PERL_ARG_LETTERS = set("0CDFIMmSVx")
+
+            def has_inplace_flag(a):
+                if not (a.startswith("-") and not a.startswith("--")):
+                    return False
+                for ch in a[1:]:
+                    if ch == "i":
+                        return True
+                    if name == "perl" and ch in PERL_ARG_LETTERS:
+                        return False
+                return False
+
+            inplace = any(a == "--in-place" or a.startswith("--in-place=") or has_inplace_flag(a) for a in args)
+            if inplace:
+                script_given = False
+                j = 0
+                files = []
+                while j < len(args):
+                    a = args[j]
+                    if a in ("-e", "-f", "--expression", "--file"):
                         script_given = True
                         j += 2
                         continue
+                    if a.startswith("-"):
+                        if name == "perl" and a.endswith("e") and not a.startswith("--"):
+                            script_given = True
+                            j += 2
+                            continue
+                        j += 1
+                        continue
+                    files.append(a)
+                    j += 1
+                if not script_given and files:
+                    files = files[1:]
+                for a in files:
+                    check(a, f"Bash {name} -i")
+        elif name == "find":
+            # T-783: `find DIR … -delete` removes matches under DIR in place
+            paths = []
+            for a in args:
+                if a.startswith("-"):
+                    break
+                paths.append(a)
+            if "-delete" in args:
+                for p in paths:
+                    check(p, "Bash find -delete")
+        elif name == "dd":
+            for a in args:
+                if a.startswith("of="):
+                    check(a[3:], "Bash dd of=")
+        elif name == "curl":
+            j = 0
+            while j < len(args):
+                a = args[j]
+                if a in ("-o", "--output") and j + 1 < len(args):
+                    check(args[j + 1], "Bash curl -o")
+                    j += 2
+                    continue
+                if a.startswith("--output="):
+                    check(a.split("=", 1)[1], "Bash curl -o")
+                j += 1
+        elif name == "git":
+            repo, j = ecwd, 0
+            while j < len(args) and args[j].startswith("-"):
+                a = args[j]
+                if a == "-C" and j + 1 < len(args):
+                    d = os.path.expanduser(args[j + 1])
+                    repo = d if d.startswith("/") else (os.path.join(repo, d) if repo else None)
+                    j += 2
+                    continue
+                if a == "--work-tree" and j + 1 < len(args):
+                    d = os.path.expanduser(args[j + 1])
+                    repo = d if d.startswith("/") else (os.path.join(repo, d) if repo else None)
+                    j += 2
+                    continue
+                if a.startswith("--work-tree="):
+                    d = os.path.expanduser(a.split("=", 1)[1])
+                    repo = d if d.startswith("/") else (os.path.join(repo, d) if repo else None)
                     j += 1
                     continue
-                files.append(a)
-                j += 1
-            if not script_given and files:
-                files = files[1:]
-            for a in files:
-                check(a, f"Bash {name} -i")
-    elif name == "git":
-        repo, j = ecwd, 0
-        while j < len(args) and args[j].startswith("-"):
-            if args[j] == "-C" and j + 1 < len(args):
-                d = os.path.expanduser(args[j + 1])
-                repo = d if d.startswith("/") else (os.path.join(repo, d) if repo else None)
-                j += 2
-                continue
-            j += 2 if args[j] in ("-c", "--git-dir", "--work-tree") else 1
-        sub = args[j] if j < len(args) else ""
-        if sub == "stash" and j + 1 < len(args) and args[j + 1] in ("list", "show"):
-            sub = ""
-        if sub in GIT_MUT and repo:
-            rp = os.path.realpath(repo)
-            if under(rp, code_abs) and not under(rp, wt_abs) and not (legacy and any(
-                    under(rp, os.path.join(root, x)) for x in ("docs", ".prdt", "tracks"))):
-                deny(rp, f"Bash git {sub} in the shared checkout")
+                j += 2 if a in ("-c", "--git-dir") else 1
+            sub = args[j] if j < len(args) else ""
+            if sub == "stash" and j + 1 < len(args) and args[j + 1] in ("list", "show"):
+                sub = ""
+            if sub in GIT_MUT and repo:
+                rp = os.path.realpath(repo)
+                if under_ci(rp, code_abs) and not under_ci(rp, wt_abs) and not (legacy and any(
+                        under_ci(rp, os.path.join(root, x)) for x in ("docs", ".prdt", "tracks"))):
+                    deny(rp, f"Bash git {sub} in the shared checkout")
+
+
+run_command(cmd, cwd, 0)
 out_open()
 PYEOF
 exit 0

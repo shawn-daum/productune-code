@@ -145,6 +145,45 @@ describe.skipIf(!PY)('T-779 — a worktree-dispatched worker cannot write the sh
       expect(bash(c), c).toBe('')
     }
   })
+
+  test('T-783 — QA grill: shapes previously missed are now denied', () => {
+    for (const c of [
+      `mv code/src/a.ts ${wt}/a.ts`,
+      'if [ -f code/src/a.ts ]; then rm code/src/a.ts; fi',
+      'for f in a b; do rm code/src/$f; done',
+      'while read -r x; do touch code/src/$x; done < list.txt',
+      'bash -c "rm -rf code/src"',
+      "sh -c 'touch code/newdir/x'",
+      'xargs -I{} rm code/src/{} < /dev/null',
+      "find code/src -name '*.bak' -delete",
+      'pushd code && touch x.ts && popd',
+      'dd if=/dev/zero of=code/src/a.ts bs=1 count=1',
+      'curl -o code/src/a.ts https://example.test/f',
+      'curl --output=code/src/a.ts https://example.test/f',
+      'git --work-tree=code commit -m wip',
+      '$PWD/prdt-nonexistent-marker ; touch $PWD/code/src/a.ts',
+      'touch code/a#weird.ts',
+      "echo 'not-a-heredoc a<<b' ; rm -rf code/src",
+    ]) {
+      expect(denied(bash(c, root)), c).toContain(wt)
+    }
+  })
+
+  test('T-783 — a case-variant path of the shared checkout is denied on this (case-insensitive) filesystem', () => {
+    if (process.platform !== 'darwin') return
+    const variant = path.join(path.dirname(code), path.basename(code).toUpperCase(), 'src', 'a.ts')
+    expect(denied(run({ tool: 'Write', input: { file_path: variant, content: 'x' } })), variant).toContain(wt)
+  })
+
+  test('T-783 — the false denies QA found stay silent', () => {
+    for (const c of [
+      '(cd code) ; touch rel.txt',
+      '[[ "a" > "b" ]]',
+      'perl -mdiagnostics -e "print 1"',
+    ]) {
+      expect(bash(c, root), c).toBe('')
+    }
+  })
 })
 
 describe.skipIf(!PY)('T-779 — who the guard applies to', () => {
