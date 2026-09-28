@@ -23,7 +23,7 @@
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { execFileSync } from 'child_process'
+import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
@@ -363,7 +363,7 @@ m.maybe_prompt_update("status")
     expect(fs.existsSync(path.join(home, '.prdt', 'update-state.json'))).toBe(false)
   })
 
-  test('non-tty (piped, no CI) → one line naming the pending version, no install, no prompt (T-749)', () => {
+  test('non-tty (piped, no CI) → one line naming the pending version on STDERR, stdout stays clean (T-785 F3)', () => {
     const { origin, clone } = makeRemoteAndClone()
     advanceOrigin(origin, ['v1.6', 'v1.5'])
     const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
@@ -377,11 +377,16 @@ m = importlib.util.module_from_spec(spec)
 loader.exec_module(m)
 m.maybe_prompt_update("status")   # stdout is a pipe here → not a tty
 `
-    const out = execFileSync('python3', ['-c', script], {
+    // T-785 F3: a piped/captured stdout (the auto-open hook's own \`| head -1\`,
+    // any \`$(prdt …)\`) must never receive this line INSTEAD of the line the
+    // caller actually asked for — it now goes to stderr whenever stdout is not
+    // a real terminal, plain execFileSync (both streams piped) included.
+    const r = spawnSync('python3', ['-c', script], {
       encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
       env: { ...process.env, HOME: home, CI: '' },
     })
-    expect(out.trim()).toBe('업데이트 가능: v1.5 → v1.6 — 묻지 않아요(비대화형 실행). 설치하려면 `prdt update` 를 직접 실행하세요.')
+    expect(r.stdout.trim()).toBe('')
+    expect(r.stderr.trim()).toBe('업데이트 가능: v1.5 → v1.6 — 묻지 않아요(비대화형 실행). 설치하려면 `prdt update` 를 직접 실행하세요.')
     // the once-a-day slot IS consumed (a real network check ran) — unlike CI
     expect(fs.existsSync(path.join(home, '.prdt', 'update-state.json'))).toBe(true)
   })
@@ -538,5 +543,223 @@ print("ORIGINAL_COMMAND_RAN")   # stands in for main()'s dispatch, which resumes
     expect(out).toContain('ORIGINAL_COMMAND_RAN')
     expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before)
     expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(false)
+  })
+})
+
+// T-785 F4: a remote docs/RELEASES.md is shown on a consent screen before the
+// user has approved anything — a control character in there (cursor move,
+// alt-screen switch, an OSC/BEL sequence) must never land on the terminal
+// verbatim. `_strip_control_chars` is the one place that gets applied; these
+// tests exercise every print site fed by REMOTE text (found by a grep sweep
+// over every place `new_version`/`sections` reach a `print()` — two of the
+// four sites below were still unstripped before this pass: `cmd_update`'s own
+// non-tty line, and the "update.done" confirmation both callers print after
+// an actual install).
+// eslint-disable-next-line no-control-regex
+const HAS_RAW_CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/
+const POISON_VERSION = 'v1.6\x1b[31m\x07' // parses as v1.6 (_version_key stops at the digits), carries a raw ESC+BEL
+
+function writeReleasesRaw(repo: string, body: string): void {
+  fs.mkdirSync(path.join(repo, 'docs'), { recursive: true })
+  fs.writeFileSync(path.join(repo, 'docs', 'RELEASES.md'), body)
+}
+
+describe.skipIf(!PYTHON3)('T-785 F4 · control characters never reach the terminal', () => {
+  test('_strip_control_chars removes C0/C1/DEL, keeps tab and newline', () => {
+    const script = `
+import importlib.util, importlib.machinery, json
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+s = "a\\x00b\\x1bc\\x7fd\\x9ee\\tf\\ng"
+print(json.dumps(m._strip_control_chars(s)))
+`
+    const out = JSON.parse(execFileSync('python3', ['-c', script], { encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli') }))
+    expect(out).toBe('abcde\tf\ng')
+  })
+
+  test('_render_update_notes strips a poisoned version token and a poisoned body line', () => {
+    const script = `
+import importlib.util, importlib.machinery
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+msgs = m.load_messages()
+section = ("v1.6", "## v1.6\\x1b[2J — title\\nbody line\\x07 with BEL\\n")
+m._render_update_notes(msgs, "v1.5", ${JSON.stringify(POISON_VERSION)}, [section])
+`
+    const out = execFileSync('python3', ['-c', script], { encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli') })
+    expect(HAS_RAW_CONTROL.test(out)).toBe(false)
+    expect(out).toContain('v1.6[31m') // ESC gone, the literal bracket text it wrapped stays
+    expect(out).toContain('body line with BEL')
+  })
+
+  test('non-tty nudge line (F3 path): a poisoned remote version is stripped on stderr', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, [POISON_VERSION, 'v1.5'])
+    const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
+    fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
+    const script = `
+import importlib.util, importlib.machinery
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+m.maybe_prompt_update("status")
+`
+    const r = spawnSync('python3', ['-c', script], {
+      encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: home, PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')), CI: '' },
+    })
+    expect(HAS_RAW_CONTROL.test(r.stderr)).toBe(false)
+    expect(r.stderr).toContain('v1.6[31m')
+  })
+
+  test('cmd_update — its OWN non-tty branch (bypasses _render_update_notes entirely) strips the remote version too', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, [POISON_VERSION, 'v1.5'])
+    const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
+    fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
+    const script = `
+import importlib.util, importlib.machinery
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+m.cmd_update(None)   # stdin/stdout are real pipes here -> not a tty, hits cmd_update's own early branch
+`
+    const r = spawnSync('python3', ['-c', script], {
+      encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: home, PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')), CI: '' },
+    })
+    expect(r.status).toBe(0)
+    expect(HAS_RAW_CONTROL.test(r.stdout)).toBe(false)
+    expect(r.stdout).toContain('v1.6[31m')
+  })
+
+  test('the final "update.done" confirmation line strips the remote version too (both callers)', () => {
+    // maybe_prompt_update's run-time "install now" path.
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, [POISON_VERSION, 'v1.5'])
+    const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
+    fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
+    const script = `
+import importlib.util, importlib.machinery, sys, io
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+class Tty:
+    def __init__(self, s): self._s = s
+    def isatty(self): return True
+    def __getattr__(self, n): return getattr(self._s, n)
+sys.stdin = Tty(io.StringIO("1\\n"))
+sys.stdout = Tty(sys.stdout)
+m.os.execv = lambda *a: print("EXECV_CALLED")
+m.maybe_prompt_update("status")
+`
+    const out = execFileSync('python3', ['-c', script], {
+      encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: home, PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')), CI: '' },
+    })
+    expect(out).toContain('EXECV_CALLED')
+    expect(HAS_RAW_CONTROL.test(out)).toBe(false)
+    expect(out).toContain('v1.6[31m')
+
+    // cmd_update's own "install now" path — separate call site, separate fixture.
+    const { origin: origin2, clone: clone2 } = makeRemoteAndClone()
+    advanceOrigin(origin2, [POISON_VERSION, 'v1.5'])
+    const home2 = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
+    fs.mkdirSync(path.join(home2, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(home2, '.prdt', 'prdt.env'), `PRDT_REPO=${clone2}\n`)
+    const script2 = `
+import importlib.util, importlib.machinery, sys, io
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+class Tty:
+    def __init__(self, s): self._s = s
+    def isatty(self): return True
+    def __getattr__(self, n): return getattr(self._s, n)
+sys.stdin = Tty(io.StringIO("1\\n"))
+sys.stdout = Tty(sys.stdout)
+m.cmd_update(None)
+`
+    const out2 = execFileSync('python3', ['-c', script2], {
+      encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: home2, PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')), CI: '' },
+    })
+    expect(HAS_RAW_CONTROL.test(out2)).toBe(false)
+    expect(out2).toContain('v1.6[31m')
+    expect(fs.existsSync(path.join(clone2, '.install-ran'))).toBe(true)
+  })
+})
+
+// T-785 F3 / code review #1: `main()`'s `skip_update_nudge` must make the
+// nudge a full no-op — no daily-slot write, no network check — for every
+// call a hook shells out to (`prdt viewer --no-open`, install.sh's own
+// `_shared-state-guard` seam) or any `--json`-flagged command a tool parses
+// (`prdt schedule --json`). Drives the REAL CLI entry point (`main()`), not
+// `maybe_prompt_update` directly, since the skip decision lives in `main()`
+// itself — a direct call would bypass the very branch under test.
+describe.skipIf(!PYTHON3)('T-785 F3 / code review #1 · skip_update_nudge (main(), real subprocess)', () => {
+  function homeWithRepo(clone: string): string {
+    const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
+    fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
+    return home
+  }
+
+  const stateFile = (home: string) => path.join(home, '.prdt', 'update-state.json')
+
+  /** Runs the real `prdt` CLI (not the module directly) so `main()`'s own
+   * skip_update_nudge branch is exercised. HOME carries the daily-slot file
+   * under test; PRDT_HOME is sandboxed per-call so no other machine state
+   * (hooks lookups, meta-backup latches) leaks in or out. Exit status is
+   * ignored — `require_root()` legitimately fails downstream in this
+   * project-less fixture, but `main()` decides skip_update_nudge and (when
+   * applicable) calls `maybe_prompt_update` BEFORE that dispatch, so the
+   * assertion under test is already settled by then. */
+  function runCli(args: string[], home: string): void {
+    spawnSync('python3', [PRDT_CLI, ...args], {
+      encoding: 'utf-8',
+      cwd: tmpRoot,
+      timeout: subprocessTimeout('cli'),
+      env: {
+        ...process.env, HOME: home,
+        PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')),
+        CI: '', PRDT_META_BACKUP: '0',
+      },
+    })
+  }
+
+  test('schedule --json / viewer --no-open / _shared-state-guard leave update-state.json absent even with a real update pending; an ordinary command then writes it', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin) // origin strictly ahead — a real check here WOULD normally fire
+    const home = homeWithRepo(clone)
+    const target = path.join(tmpRoot, 'note.md')
+    fs.writeFileSync(target, 'x')
+
+    runCli(['schedule', '--json'], home)
+    expect(fs.existsSync(stateFile(home))).toBe(false)
+
+    runCli(['viewer', '--no-open', target], home)
+    expect(fs.existsSync(stateFile(home))).toBe(false)
+
+    runCli(['_shared-state-guard', 'artifacts sync'], home)
+    expect(fs.existsSync(stateFile(home))).toBe(false)
+
+    // same repo, same "ahead" fixture, but an ordinary nudge-eligible command
+    // (no --json, not viewer --no-open, not _shared-state-guard) — the daily
+    // slot IS consumed, proving the three calls above were skipped on their
+    // own merits and not because the nudge can never fire against this fixture.
+    runCli(['schedule'], home)
+    expect(fs.existsSync(stateFile(home))).toBe(true)
   })
 })
