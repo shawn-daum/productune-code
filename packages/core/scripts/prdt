@@ -4354,8 +4354,14 @@ def cmd_po(args):
 
 
 def cmd_update(_args):
-    """구 productune update 계승: repo pull --ff-only → install.sh 재실행."""
+    """구 productune update 계승: repo pull --ff-only → install.sh 재실행.
+
+    T-749: 묻지 않고 바로 pull+install 하던 as-is를 고친다 — 설치된 버전 → 새
+    버전과 그 사이 RELEASES.md 노트를 먼저 보여주고 `1. update`/`2. skip` 을
+    번호 입력으로 물은 뒤에야 pull 한다(`_prompt_update_choice`; 화살표 선택이
+    아니다 — 그 선택의 재현된 결함은 이 함수 바로 아래 주석 참고)."""
     import subprocess
+    m = load_messages()
     repo = None
     env = Path.home() / ".prdt" / "prdt.env"
     if env.is_file():
@@ -4371,31 +4377,62 @@ def cmd_update(_args):
     dirty = [l for l in git("status", "--porcelain").stdout.splitlines() if l and not l.startswith("??")]
     if dirty:
         sys.exit(f"prdt update: repo에 커밋 안 된 변경이 있어 중단 — 정리 후 재시도: git -C {repo} status")
-    old = git("rev-parse", "--short", "HEAD").stdout.strip()
+
+    code_root = git_toplevel(repo)
+    if code_root is None:
+        sys.exit("prdt update: repo 루트를 찾지 못했어요 — git 저장소인지 확인하세요.")
+    installed, _ = releases_local(code_root)
+    ahead = remote_ahead(code_root)
+    if ahead is None:
+        sys.exit(msg(m, "update.error.offline"))
+    new_version, sections = (None, []) if not ahead else releases_pending_between(code_root, installed)
+    if not new_version or not _newer_version(new_version, installed):
+        print(msg(m, "update.uptodate", version=installed or "?"))
+        return
+
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print(msg(m, "update.noninteractive", installed=installed or "?", new=new_version))
+        return
+
+    if _prompt_update_choice(m, installed or "?", new_version, sections) != "update":
+        return
+
     p = git("pull", "--ff-only")
     if p.returncode:
         tail = (p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"]
         sys.exit(f"prdt update: pull 실패({tail[0]}) — repo에서 수동 해결 후 재시도")
-    new = git("rev-parse", "--short", "HEAD").stdout.strip()
     if subprocess.run(["bash", str(Path(repo) / "scripts" / "install.sh")]).returncode:
         sys.exit("prdt update: install 실패 — 위 출력 확인")
-    print(f"업데이트 완료: {old} → {new}" if old != new else f"이미 최신({old}) — 미러/메뉴판만 갱신했어요")
+    print(msg(m, "update.done", old=installed or "?", new=new_version))
 
 
 # ── update-on-run (T-393 · 1일 1회 interactive update nudge) ──────────────────
 # Fires BEFORE any subcommand (main): once-a-day it compares the installed code
 # clone's local HEAD to `origin/<branch>` and, when the remote is STRICTLY ahead
 # (T-456: fast-forwardable — a clone that is ahead or diverged is NOT an update)
-# AND the remote advertises a version above the installed one, shows a
-# release-note interstitial + a 3-way gum/fzf choose. EVERY failure path degrades
-# to silence — the original command always runs. Non-blocking by construction
-# (doctrine #5). Design SoT: docs/tickets/v1.4/T-393.md (Design decisions / UX flow).
-#   · state: ~/.prdt/update-state.json = {last_check(UTC date), skip_version}.
+# AND the remote advertises a version above the installed one, shows the same
+# version+notes box `cmd_update` shows and asks the same plain `1`/`2` number
+# prompt (`_prompt_update_choice`, T-749). CI degrades to silence before any
+# network call; a non-tty run still checks (throttled to once a day, same as
+# always) but only PRINTS the pending version line — it never prompts, never
+# installs. Non-blocking by construction (doctrine #5). Design SoT:
+# docs/tickets/v1.4/T-393.md (original UX flow) · docs/tickets/v1.11/T-749.md
+# (version+notes box, plain-number choice, non-tty line).
+#   · state: ~/.prdt/update-state.json = {last_check(UTC date)}.
 #   · pending version + RN box come from <codeRoot>/docs/RELEASES.md (T-394 parse
 #     contract: section = ^## , version = first token after '## ' = git tag verbatim).
 #   · update now → cmd_update (pull --ff-only + install.sh) → os.execv re-runs the
 #     ORIGINAL invocation on the freshly-copied code (the PATH `prdt` is a COPY that
 #     install.sh refreshes, so re-exec is what loads the new code — this process is stale).
+#
+# T-749 dropped the gum/fzf arrow-select this used to call for the choice.
+# Reproduced (2026-09-28, ticket `outcome`): gum/fzf choose starts with the
+# FIRST option pre-highlighted, and pressing a single bare Enter — no arrow
+# keys, no navigation — confirms whatever sits there. The old 3-way list put
+# "update now" first, so a reflexive Enter (typed for the ORIGINAL command this
+# nudge interrupted) silently installed: a menu technically rendered, but
+# nothing about it required the user to have read or chosen anything. A typed
+# digit (`1`/`2`) has no default to fall into — a bare Enter re-prompts.
 
 def prdt_repo_dir():
     """PRDT_REPO (=<clone>/packages/core) from ~/.prdt/prdt.env, or None."""
@@ -4438,6 +4475,24 @@ def _parse_releases(text):
         return None, None
     end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
     return tok[0], "\n".join(lines[start:end]).rstrip("\n")
+
+
+def _parse_all_releases(text):
+    """Every `## <version>` section in a RELEASES.md body, as
+    `[(version, section_text), ...]` in file order (newest first, by the format's
+    own convention). Same anchor as `_parse_releases` (T-394): section boundary
+    `^## `, version = first whitespace token after `## `. T-749: the update
+    prompt shows every version BETWEEN installed and new, not just the newest."""
+    lines = text.splitlines()
+    starts = [i for i, l in enumerate(lines) if l.startswith("## ")]
+    out = []
+    for idx, start in enumerate(starts):
+        tok = lines[start][3:].split()
+        if not tok:
+            continue
+        end = starts[idx + 1] if idx + 1 < len(starts) else len(lines)
+        out.append((tok[0], "\n".join(lines[start:end]).rstrip("\n")))
+    return out
 
 
 def _releases_sections(code_root_path):
@@ -4738,6 +4793,47 @@ def releases_pending(code_root, timeout=2):
     return _parse_releases(s.stdout)
 
 
+def releases_pending_between(code_root, installed_version, timeout=2):
+    """(new_version, [(version, section_text), ...]) — every REMOTE RELEASES.md
+    section strictly above `installed_version`, newest first; `new_version` is
+    the newest of those. `(None, [])` on any fetch failure or when nothing
+    qualifies. T-749: the update prompt (explicit `prdt update` and the run-time
+    nudge) must show the notes of EVERY version between installed and new, not
+    just the newest one — same remote-read rationale as `releases_pending`
+    (T-393: an out-of-date install's LOCAL RELEASES.md carries no pending
+    section, so the notes must come from the new version's copy, not the
+    pre-update local one). `installed_version` unparseable/None → every
+    parseable remote section qualifies (mirrors `_newer_version`'s "unreadable
+    local leaves nothing to compare against" posture)."""
+    def g(*a, t=timeout):
+        return subprocess.run(["git", "-C", str(code_root), *a],
+                              capture_output=True, text=True, timeout=t)
+    try:
+        branch = g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if not branch or branch == "HEAD":
+            return None, []
+        if g("fetch", "origin", branch).returncode != 0:
+            return None, []
+        s = g("show", f"origin/{branch}:docs/RELEASES.md")
+        if s.returncode != 0:
+            return None, []
+    except (subprocess.TimeoutExpired, OSError):
+        return None, []
+    ik = _version_key(installed_version)
+    out = []
+    for v, text in _parse_all_releases(s.stdout):
+        vk = _version_key(v)
+        if vk is None:
+            continue
+        if ik is not None and vk <= ik:
+            continue
+        out.append((v, text))
+    if not out:
+        return None, []
+    out.sort(key=lambda pair: _version_key(pair[0]), reverse=True)
+    return out[0][0], out
+
+
 def remote_ahead(code_root, timeout=2):
     """True only when `origin/<current-branch>` is STRICTLY AHEAD of local HEAD —
     i.e. local HEAD is an ancestor of the remote tip and the two differ, which is
@@ -4809,27 +4905,61 @@ def _newer_version(remote_v, local_v):
     return True if lk is None else rk > lk
 
 
-def _render_release_box(version, note):
-    # Rules-only frame (no right border) — sidesteps CJK double-width misalignment
-    # that a boxed layout would get wrong; the release note prints verbatim inside.
+def _render_update_notes(m, installed, new_version, sections):
+    """The version+notes box both `cmd_update` and the run-time nudge show
+    (T-749). Rules-only frame (no right border) — sidesteps CJK double-width
+    misalignment that a boxed layout would get wrong; each section's own body
+    prints under its own `## <version> — <title>` header, verbatim, newest
+    first. `sections`: `[(version, section_text), ...]` as `releases_pending_between`
+    returns — every version strictly above `installed`, up to and including
+    `new_version`."""
     rule = "─" * 64
     print(f"\n{rule}")
-    print(f"  prdt 업데이트 가능 — {version}  (`prdt update` 로도 언제든 갱신)")
+    print(f"  {msg(m, 'update.version-line', installed=installed, new=new_version)}")
     print(rule)
-    for line in (note or "").splitlines():
-        print(f"  {line}")
-    print(f"{rule}\n")
+    for _version, text in sections:
+        lines = text.splitlines()
+        header = lines[0][3:].strip() if lines else _version
+        print(f"  {header}")
+        for line in lines[1:]:
+            print(f"    {line}" if line.strip() else "")
+        print()
+    print(rule)
+    print(f"  {msg(m, 'update.choice1')}")
+    print(f"  {msg(m, 'update.choice2')}")
+
+
+def _prompt_update_choice(m, installed, new_version, sections):
+    """Render the version+notes box and collect a plain `1`/`2` answer — never
+    an arrow-key select. T-749 reproduced gum/fzf's arrow-select confirming its
+    PRE-HIGHLIGHTED first option (the destructive "update now") on a single bare
+    Enter with zero navigation — see the design-comment block above
+    `maybe_prompt_update` for the repro. A typed digit has no default to fall
+    into: a bare Enter (or anything else) just re-prompts. Returns "update" or
+    "skip" — never None; EOF on stdin reads as "skip" (never installs)."""
+    _render_update_notes(m, installed, new_version, sections)
+    while True:
+        try:
+            raw = input(msg(m, "update.prompt")).strip()
+        except EOFError:
+            return "skip"
+        if raw == "1":
+            return "update"
+        if raw == "2":
+            return "skip"
+        print(msg(m, "update.error.badchoice"))
 
 
 def maybe_prompt_update(cmd):
-    """T-393 entry — called from main() before dispatch. Silent on every degrade
-    path (non-tty / CI / gum·fzf 부재 / offline / timeout / broken install)."""
+    """T-393 entry — called from main() before dispatch. CI degrades to silence
+    before any network call. A non-tty run (piped / no controlling terminal)
+    still runs the once-a-day check but only PRINTS the pending version line —
+    it never prompts and never installs (T-749 acceptance). See the T-749
+    design-comment block above this section for the reproduced defect the
+    plain-number prompt (`_prompt_update_choice`) replaces."""
     if cmd in ("update", "preflight"):                  # never self-check the updater;
         return                                          # `preflight` emits machine-read JSON on stdout
-    # fast degrade: no interactive prompt is possible in these environments
-    if os.environ.get("CI") or not (sys.stdin.isatty() and sys.stdout.isatty()):
-        return
-    if not (shutil.which("gum") or shutil.which("fzf")):
+    if os.environ.get("CI"):
         return
     # throttle — at most one check per UTC calendar day
     today = now_iso()[:10]
@@ -4848,29 +4978,25 @@ def maybe_prompt_update(cmd):
     ahead = remote_ahead(code_root)                     # ls-remote + ancestry gate (network, 2s)
     if not ahead:                                       # None (degrade/offline) or False (equal / local ahead / diverged)
         return
-    version, note = releases_pending(code_root)         # REMOTE RELEASES via fetch+show (T-393)
-    if not version:                                     # no section / fetch failed → silent degrade
+    installed, _ = releases_local(code_root)
+    new_version, sections = releases_pending_between(code_root, installed)  # REMOTE RELEASES via fetch+show (T-393)
+    if not new_version:                                 # no qualifying section / fetch failed → silent degrade
         return
-    if not _newer_version(version, releases_local(code_root)[0]):
+    if not _newer_version(new_version, installed):
         return                                          # T-456: never advertise an equal-or-lower version
-    if version == state.get("skip_version"):            # user muted THIS remote version
+    m = load_messages()
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print(msg(m, "update.noninteractive", installed=installed or "?", new=new_version))
         return
-    _render_release_box(version, note)
-    choice = select_choice([
-        (f"update now — 업데이트하고 원래 명령 이어서 실행", "update"),
-        ("skip — 이번만 건너뛰기 (내일 다시 물음)", "skip"),
-        (f"skip {version} — 이 버전은 다시 묻지 않기", "skip_version"),
-    ], f"업데이트 가능: {version}")
-    if choice == "update":
+    if _prompt_update_choice(m, installed or "?", new_version, sections) == "update":
         cmd_update(None)                                # pull --ff-only + install.sh (may sys.exit on failure)
         try:                                            # re-exec original invocation on the freshly-copied code
             os.execv(sys.executable, [sys.executable, *sys.argv])
         except OSError:
             return                                      # exec failed → fall through on stale code
-    elif choice == "skip_version":
-        state["skip_version"] = version
-        _write_update_state(state)
-    # "skip" or cancelled (None) → fall through to the original command
+    else:
+        print(msg(m, "update.skip.runtime"))
+    # fall through to the original command
 
 
 # ── meta backup tick (T-504 · stage boundary + once daily, detached) ─────────
