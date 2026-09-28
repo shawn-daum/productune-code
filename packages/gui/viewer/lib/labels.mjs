@@ -156,3 +156,13 @@ export const PRD = {
 export const FILE_HREF_NOTE =
   // T-705 §C 제안 교체 문구 그대로(해요체 등록 통일).
   '이 문서는 페이지 안에 들어있지 않아요 — 아래 파일을 열어서 봐요.'
+
+// T-746: the home notice when the viewer is opened at an `#id` it cannot
+// show (approved screen set docs/artifacts/v1.11/define-screen-set.html,
+// 화면 「뷰어 홈 — 모르는/낡은 id」 · #labels `notice.unknown` /
+// `notice.stale`, text after the `#id` verbatim). The page prints
+// `#<id> — <text>`, the id exactly as received.
+export const HASH_NOTICE = {
+  unknown: '이런 항목을 찾을 수 없어요. 홈으로 돌아왔어요.',
+  stale: '뷰어를 만든 뒤 옮겨지거나 지워졌어요. 홈으로 돌아왔어요.',
+}
