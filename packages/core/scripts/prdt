@@ -4429,8 +4429,23 @@ def viewer_anchor(root, target):
     if rel.startswith("docs/wiki/") and rel.count("/") == 2:
         return p.stem
     if rel == "docs/prd/PRD.md" or re.fullmatch(r"docs/prd/versions/[^/]+\.md", rel) \
-            or re.fullmatch(r"docs/features/[^/]+\.md", rel) or rel.startswith("docs/artifacts/"):
+            or re.fullmatch(r"docs/features/[^/]+\.md", rel):
         return rel
+    if rel.startswith("docs/artifacts/"):
+        # T-785 code review #6: the page's own anchor table (buildAnchors)
+        # keys an artifact entry off `docs/artifacts/manifest.json` alone —
+        # this must read the SAME one source, not re-derive "looks like an
+        # artifact path" from the string shape. A path not yet in the
+        # manifest (written, not synced with `prdt artifacts sync`) has no
+        # anchor on the page; returning one here would jump to a hash the
+        # page never draws, landing on its "stale" notice instead of the
+        # file the caller can still open directly.
+        bucket, _, art_path = rel[len("docs/artifacts/"):].partition("/")
+        if art_path:
+            entries, _err, _malformed, _present = read_artifact_manifest(root)
+            if (bucket, art_path) in entries:
+                return rel
+        return None
     return None
 
 
@@ -4783,7 +4798,11 @@ def cmd_update(_args):
         sections = []
 
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        print(msg(m, "update.noninteractive", installed=installed or "?", new=new_version))
+        # T-785 F4 (2차 발견 — grep sweep, code review 대상은 아니었음): 이 분기는
+        # `_render_update_notes`/`_prompt_update_choice`를 거치지 않고 REMOTE
+        # RELEASES.md 헤더에서 뽑은 `new_version`을 직접 찍는다 — 같은 제어 문자
+        # 통과 결함이 여기도 있었다.
+        print(msg(m, "update.noninteractive", installed=installed or "?", new=_strip_control_chars(new_version)))
         return
 
     # T-749c: captured NOW, same moment the version/notes above came from
@@ -4797,7 +4816,9 @@ def cmd_update(_args):
         return
 
     _run_pull_install(repo, target_sha=target_sha)
-    print(msg(m, "update.done", old=installed or "?", new=new_version))
+    # T-785 F4: same REMOTE-derived `new_version` printed again here, unstripped
+    # in the original fix — stripped now too, same reason as the box above.
+    print(msg(m, "update.done", old=installed or "?", new=_strip_control_chars(new_version)))
 
 
 # ── update-on-run (T-393 · 1일 1회 interactive update nudge) ──────────────────
@@ -5299,6 +5320,19 @@ def _newer_version(remote_v, local_v):
     return True if lk is None else rk > lk
 
 
+# T-785 F4: C0 (0x00-0x1F) + DEL (0x7F) + C1 (0x80-0x9F), minus tab (0x09) and
+# newline (0x0A) — release-notes text is printed straight from a REMOTE
+# docs/RELEASES.md and must never carry a raw control byte onto the terminal.
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _strip_control_chars(s):
+    """`s` with every C0/C1 control character removed except tab and newline
+    (T-785 F4) — used on every piece of a REMOTE RELEASES.md section (version
+    token, header, body line) before it reaches a `print()`."""
+    return _CONTROL_CHAR_RE.sub("", s or "")
+
+
 def _render_update_notes(m, installed, new_version, sections):
     """The version+notes box both `cmd_update` and the run-time nudge show
     (T-749). Rules-only frame (no right border) — sidesteps CJK double-width
@@ -5306,10 +5340,18 @@ def _render_update_notes(m, installed, new_version, sections):
     prints under its own `## <version> — <title>` header, verbatim, newest
     first. `sections`: `[(version, section_text), ...]` as `releases_pending_between`
     returns — every version strictly above `installed`, up to and including
-    `new_version`."""
+    `new_version`.
+
+    T-785 F4: `sections`/`new_version` come straight off a REMOTE
+    `docs/RELEASES.md` (`git show origin/<branch>:…`) shown on a consent
+    screen before the user has approved anything — a control character in
+    there (cursor move, alt-screen switch, an OSC sequence) would otherwise
+    land on the terminal verbatim. Every piece taken from that remote text is
+    run through `_strip_control_chars` first; the box's own drawing (the
+    rule, the catalog strings) is trusted local text and untouched."""
     rule = "─" * 64
     print(f"\n{rule}")
-    print(f"  {msg(m, 'update.version-line', installed=installed, new=new_version)}")
+    print(f"  {msg(m, 'update.version-line', installed=installed, new=_strip_control_chars(new_version))}")
     print(rule)
     if not sections:
         # T-749b: origin ahead in git but no qualifying RELEASES.md section —
@@ -5317,9 +5359,10 @@ def _render_update_notes(m, installed, new_version, sections):
         print(f"  {msg(m, 'update.no-notes')}")
     for _version, text in sections:
         lines = text.splitlines()
-        header = lines[0][3:].strip() if lines else _version
+        header = _strip_control_chars(lines[0][3:].strip() if lines else _version)
         print(f"  {header}")
         for line in lines[1:]:
+            line = _strip_control_chars(line)
             print(f"    {line}" if line.strip() else "")
         print()
     print(rule)
@@ -5405,7 +5448,15 @@ def maybe_prompt_update(cmd):
         return
     m = load_messages()
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        print(msg(m, "update.noninteractive", installed=installed or "?", new=new_version))
+        # T-785 F3: this line used to always go to stdout — a caller piping/
+        # capturing stdout (the auto-open hook's `| head -1`, any `$(prdt …)`)
+        # got the nudge INSTEAD of the line it asked for, silently. Route to
+        # stdout only when stdout itself is still a real terminal (stdin
+        # alone came from a pipe/redirect — nothing downstream is parsing
+        # this stream); otherwise stderr, never the stdout a script reads.
+        out = sys.stdout if sys.stdout.isatty() else sys.stderr
+        print(msg(m, "update.noninteractive", installed=installed or "?", new=_strip_control_chars(new_version)),
+              file=out)
         return
     choice = _prompt_update_choice(m, installed or "?", new_version, sections)
     if choice == "update":
@@ -5414,7 +5465,10 @@ def maybe_prompt_update(cmd):
         # (QA grill finding #1). The choice was already made above; only the
         # pull+install mechanics are still needed.
         _run_pull_install(repo, target_sha=target_sha)   # may sys.exit on failure; never `@{upstream}`
-        print(msg(m, "update.done", old=installed or "?", new=new_version))
+        # T-785 F4: same REMOTE-derived `new_version` this box already showed
+        # stripped — the final confirmation line printed it a second time,
+        # unstripped, until this grep sweep caught it.
+        print(msg(m, "update.done", old=installed or "?", new=_strip_control_chars(new_version)))
         try:                                              # re-exec original invocation on the freshly-copied code
             os.execv(sys.executable, [sys.executable, *sys.argv])
         except OSError:
@@ -13710,8 +13764,24 @@ def main():
     # contracts §Git names no per-turn hook as a meta-backup trigger, and a hook
     # has no terminal to prompt on.
     hook_call = args.cmd == "schedule" and getattr(args, "action", None) == "record"
-    if not hook_call:
+    # T-785 F3 / code review #1: the update nudge must be a full no-op — no
+    # daily-slot write, no network check, same as `hook_call` above — from any
+    # call a hook shells out to (the auto-open hook's own `prdt viewer
+    # --no-open <file>`, install.sh's `_shared-state-guard` seam) or any
+    # `--json`-flagged command another tool parses (the statusline's `prdt
+    # schedule --json`): all of these read stdout as data, none has a
+    # terminal to prompt on, and a git-fetch mid-hook (the PostToolUse
+    # auto-open hook calling into this) is exactly the defect this exists to
+    # kill. Scoped to the nudge alone — meta-backup's own gate is unchanged.
+    skip_update_nudge = (
+        hook_call
+        or getattr(args, "json", False)
+        or (args.cmd == "viewer" and getattr(args, "no_open", False))
+        or args.cmd == "_shared-state-guard"
+    )
+    if not skip_update_nudge:
         maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
+    if not hook_call:
         maybe_meta_backup(args.cmd)    # T-504: detached meta backup tick (stage boundary / once daily; never blocks)
     if not args.cmd:
         # bare `prdt` = 구 productune UX 계승: init(필요 시 §10 3항목) → PO 대화 진입

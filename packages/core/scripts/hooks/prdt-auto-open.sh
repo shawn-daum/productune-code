@@ -112,6 +112,12 @@
 #    event, no Write classification, no debounce (one explicit hand-off, one
 #    open) — but the GUI-session, auto-open=off and never-cold-start (T-571)
 #    rules below apply exactly as for a Write, so the policy lives here once.
+#    The extension allowlist applies too (T-785 F2 fix — it used to open
+#    ANY path handed to it, unfiltered): the same light/heavy set as a Write,
+#    plus a bare `.md` (a jump page is already `.html`, and a ticket/wiki/
+#    feature/artifact file that `viewer_links()` hands off directly — no
+#    anchor, or no viewer at all — is a legitimate `--open` target that a
+#    Write never classifies on its own).
 #  - .html mockups, images, pdf and installers keep opening as the file
 #    itself — the viewer only summarizes those.
 
@@ -198,11 +204,18 @@ if [ -n "$VIEWER_DOC" ]; then
   fi
 fi
 
-if [ -n "$OPEN_MODE" ]; then
-  ACTION="open"
-elif [ -z "$ACTION" ]; then
+if [ -z "$ACTION" ]; then
+# T-785 F2: `--open` (the hand-off mode `prdt viewer` / `prdt tickets --link`
+# call to open a link they just printed, see header) used to skip this
+# allowlist entirely and open ANY path handed to it. It must clear the SAME
+# gate as a Write-classified open — the allowlist below plus a bare `.md`
+# (the ticket/wiki/feature/artifact file `viewer_links()` hands off directly
+# when the viewer has no anchor for it, or when no viewer exists at all;
+# `prd.md` and a viewer jump page under .prdt/scratch/viewer/at/*.html are
+# already `.md`/`.html` respectively, so they need no separate case here).
 case "$LOWER" in
   prd.md) ACTION="open" ;;
+  *.md) [ -n "$OPEN_MODE" ] && ACTION="open" ;;
   *.html|*.htm|*.png|*.jpg|*.jpeg|*.gif|*.svg|*.pdf) ACTION="open" ;;
   *.dmg|*.pkg|*.zip|*.tar.gz|*.tar.xz|*.tgz|*.exe|*.msi) ACTION="reveal" ;;
   *) ACTION="" ;;

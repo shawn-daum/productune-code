@@ -21,6 +21,7 @@ const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-auto-open.sh')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
 const HAS_GENERATOR = fs.existsSync(path.join(CORE_ROOT, '..', 'gui', 'node_modules'))
+const PRDT_CLI_EXISTS = fs.existsSync(PRDT_CLI)
 
 function hasJq(): boolean {
   try { execFileSync('jq', ['--version'], { stdio: 'ignore' }); return true } catch { return false }
@@ -139,6 +140,110 @@ describe('hook — --open hand-off mode', () => {
     fs.writeFileSync(path.join(s.prdtHome, 'auto-open'), 'off\n')
     execFileSync('bash', [HOOK, '--open', f], { env: s.env, input: '' })
     expect(readLog(s.log)).toBe('')
+  })
+
+  // T-785 F2: `--open` used to skip the extension allowlist entirely — ANY
+  // path handed to it opened, unfiltered (`prdt viewer evil.command` reached
+  // `open`). It must now clear the SAME gate a Write-classified open does.
+  describe('T-785 F2 — --open applies the same allowlist as Write mode', () => {
+    test.skipIf(!hasJq())('an unmatched extension is never opened, even in --open mode', () => {
+      const s = sandbox()
+      for (const name of ['evil.command', 'script.sh', 'notes.txt', 'archive.tar']) {
+        const f = path.join(s.dir, name)
+        fs.writeFileSync(f, 'x')
+        execFileSync('bash', [HOOK, '--open', f], { env: s.env, input: '' })
+        expect(readLog(s.log), name).toBe('')
+      }
+    })
+
+    test.skipIf(!hasJq())('a bare .md (not prd.md) opens under --open — a legitimate viewer_links() direct hand-off, but does NOT open under a plain Write', () => {
+      const s = sandbox()
+      const f = path.join(s.dir, 'some-ticket.md')
+      fs.writeFileSync(f, 'x')
+      execFileSync('bash', [HOOK, '--open', f], { env: s.env, input: '' })
+      expect(readLog(s.log)).toBe(f)
+
+      // same file, same content, but as a plain Write event (no --open) → the
+      // existing narrow allowlist (T-409) must still say silent — the fix
+      // widens `--open` only, never Write classification.
+      const g = path.join(s.dir, 'another-ticket.md')
+      fs.writeFileSync(g, 'x')
+      execFileSync('bash', [HOOK], { env: s.env, input: writeEvent(g) })
+      expect(readLog(s.log)).toBe(f) // unchanged — the Write never opened `g`
+    })
+
+    test.skipIf(!hasJq())('the existing prd/html set still opens under --open (png/jpg/gif/svg/pdf take the identical case branch, already proven under Write mode in auto-open-hook.test.ts)', () => {
+      const s = sandbox()
+      for (const name of ['prd.md', 'mock.html']) {
+        const f = path.join(s.dir, name)
+        fs.writeFileSync(f, 'x')
+        execFileSync('bash', [HOOK, '--open', f], { env: s.env, input: '' })
+        expect(readLog(s.log), name).toBe(f)
+        fs.writeFileSync(s.log, '') // reset log between cases
+      }
+    })
+
+    test.skipIf(!hasJq())('an installer/archive extension still reveals (never a bare open) under --open', () => {
+      const s = sandbox()
+      const f = path.join(s.dir, 'installer.dmg')
+      fs.writeFileSync(f, 'x')
+      execFileSync('bash', [HOOK, '--open', f], { env: s.env, input: '' })
+      expect(readLog(s.log)).toBe(`-R ${f}`)
+    })
+  })
+})
+
+// T-785 code review #6: viewer_anchor's docs/artifacts/ branch must key off
+// docs/artifacts/manifest.json — the SAME source the page's own anchor table
+// (render.mjs buildAnchors) reads — instead of re-deriving "looks like an
+// artifact path" from the string shape. An artifact not yet synced into the
+// manifest has no anchor: the caller (viewer_links) then opens the FILE
+// itself, never a hash the page never draws (which would land on its own
+// "stale" notice).
+describe('viewer_anchor — docs/artifacts/ keys off manifest.json (T-785 #6)', () => {
+  function anchorFor(root: string, rel: string): string | null {
+    const script = `
+import importlib.util, importlib.machinery, json
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+print(json.dumps(m.viewer_anchor(m.Path(${JSON.stringify(root)}), ${JSON.stringify(path.join(root, rel))})))
+`
+    return JSON.parse(execFileSync('python3', ['-c', script], {
+      encoding: 'utf-8', cwd: root,
+      env: { ...process.env, HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t785-6-home-')), PRDT_HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t785-6-prdthome-')) },
+    }))
+  }
+
+  test.skipIf(!PRDT_CLI_EXISTS)('an artifact registered in manifest.json gets its path as anchor', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t785-6-'))
+    const root = project(dir)
+    const rel = 'docs/artifacts/v1.0/notes.md'
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true })
+    fs.writeFileSync(path.join(root, rel), '# notes\n')
+    fs.writeFileSync(path.join(root, 'docs', 'artifacts', 'manifest.json'),
+      JSON.stringify({ entries: [{ bucket: 'v1.0', path: 'notes.md' }] }))
+    expect(anchorFor(root, rel)).toBe(rel)
+  })
+
+  test.skipIf(!PRDT_CLI_EXISTS)('an artifact NOT (yet) in manifest.json has no anchor — caller falls back to the file itself', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t785-6-'))
+    const root = project(dir)
+    const rel = 'docs/artifacts/v1.0/fresh.md'
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true })
+    fs.writeFileSync(path.join(root, rel), '# fresh\n')
+    fs.writeFileSync(path.join(root, 'docs', 'artifacts', 'manifest.json'), JSON.stringify([]))
+    expect(anchorFor(root, rel)).toBeNull()
+  })
+
+  test.skipIf(!PRDT_CLI_EXISTS)('no manifest.json at all (never synced) → still no anchor, not a crash', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t785-6-'))
+    const root = project(dir)
+    const rel = 'docs/artifacts/v1.0/fresh.md'
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true })
+    fs.writeFileSync(path.join(root, rel), '# fresh\n')
+    expect(anchorFor(root, rel)).toBeNull()
   })
 })
 
