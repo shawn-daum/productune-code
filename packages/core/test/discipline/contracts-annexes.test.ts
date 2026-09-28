@@ -228,13 +228,12 @@ describe('po habit — Define entry and dispatch failure live in playbooks the h
     expect(menu).toMatch(/^\| dispatch-failure \| /m)
   })
 
-  test('define-entry carries the fork, the backlog sweep and the fable session line verbatim; the habit no longer does', () => {
+  test('define-entry carries the fork and the backlog sweep verbatim; the habit no longer does', () => {
     const p = pb('define-entry')
     for (const s of [
       '- **Define entry on a net-new version section — always, however complete the PRD/wiki/tickets already look**',
       'the direction fork comes BEFORE any `prd-clarity` dispatch — 2–3 named options, max 3',
       '- On next Define entry: unobserved outcome in the last retro → ask the user once; backlog sweep (`prdt tickets --backlog`) once',
-      '- **Fable session guidance**: at Define entry (plan gate passed), recommend once, in conversation',
     ]) {
       expect(p).toContain(s)
       expect(HABITS.po).not.toContain(s)
