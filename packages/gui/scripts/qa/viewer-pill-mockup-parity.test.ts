@@ -5,14 +5,25 @@
 // sources and diffs them property-by-property (whitespace-insensitive) —
 // it does NOT read the whole 3.3MB mockup file into a string compare; it
 // greps the handful of `.pill-*{...}` rule bodies it needs out of it.
+//
+// T-730: the mockup lives under docs/artifacts, one level ABOVE the code
+// repo root — only present when this checkout sits inside the meta project
+// layout. A detached worktree (parallel-safety, v1.11) has no such sibling,
+// so this file used to throw ENOENT at describe-body eval time and take the
+// whole suite down. Same condition, same helper, as viewer-html.test.ts /
+// viewer-labels.test.ts / viewer-shell.test.ts: skip (with a visible reason)
+// instead of crashing when the meta root isn't there; run for real whenever
+// it is.
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TEMPLATE_CSS } from '../../viewer/lib/render.mjs'
+import { missingMetaRootReason } from '../../viewer/generate.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MOCKUP_PATH = path.resolve(__dirname, '../../../../../docs/artifacts/v1.10/define-screen-set.html')
+const metaMissingReason = missingMetaRootReason()
 
 // The pill classes the ticket names explicitly.
 const PILL_CLASSES = [
@@ -64,13 +75,15 @@ function declMap(body) {
 }
 
 describe('viewer pills — render.mjs TEMPLATE_CSS matches the approved mockup (T-721)', () => {
-  const mockupCss = fs.readFileSync(MOCKUP_PATH, 'utf8')
-  const mockupRules = extractRuleBodies(mockupCss)
   const renderRules = extractRuleBodies(TEMPLATE_CSS)
+  const mockupRules = metaMissingReason ? new Map() : extractRuleBodies(fs.readFileSync(MOCKUP_PATH, 'utf8'))
 
-  it.each(PILL_CLASSES)('.%s: render.mjs rule body equals the mockup rule body', (cls) => {
-    expect(mockupRules.has(cls)).toBe(true) // fixture sanity — mockup must actually define this class
-    expect(renderRules.has(cls)).toBe(true) // render.mjs must actually define this class
-    expect(declMap(renderRules.get(cls))).toEqual(declMap(mockupRules.get(cls)))
-  })
+  it.skipIf(metaMissingReason).each(PILL_CLASSES)(
+    `.%s: render.mjs rule body equals the mockup rule body${metaMissingReason ? ` — SKIPPED: ${metaMissingReason}` : ''}`,
+    (cls) => {
+      expect(mockupRules.has(cls)).toBe(true) // fixture sanity — mockup must actually define this class
+      expect(renderRules.has(cls)).toBe(true) // render.mjs must actually define this class
+      expect(declMap(renderRules.get(cls))).toEqual(declMap(mockupRules.get(cls)))
+    },
+  )
 })
