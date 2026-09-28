@@ -288,16 +288,38 @@ describe('prdt track land', () => {
   // the land target) refused to delete track/T-2 forever, since track/T-2 was
   // never merged into dev. Land must check against `main` — the actual target
   // — instead.
-  test('--base main: dev stays checked out in code/, main is fast-forwarded and the branch is deleted', () => {
+  //
+  // T-784: a main land now also takes the explicit `--base main` PO flag AT
+  // LAND TIME (not just at open) — see the F1 test below for why.
+  test('--base main at both open and land: main is fast-forwarded and the branch is deleted, dev checkout untouched', () => {
     cli('track', 'open', 'T-2', '--base', 'main')
     commit(wt('T-2'), 'm.txt', 'main only\n', 'feat: m')
-    const r = cli('track', 'land', 'T-2')
+    const r = cli('track', 'land', 'T-2', '--base', 'main')
     expect(r.status, r.err).toBe(0)
     expect(r.out).toContain('main fast-forwarded')
     expect(r.out).toContain('branch track/T-2 deleted')
     expect(git(code, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('dev')    // main ref moved without touching the dev checkout
     expect(git(code, 'show', 'main:m.txt')).toBe('main only')
     expect(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/track/T-2'], { cwd: code }).status).not.toBe(0)
+  })
+
+  // T-784 (F1, security pass, sandbox repro): the land target used to come
+  // from `branch.<branch>.prdtbase`, a git config value written by `open`
+  // into the CODE REPO'S SHARED config — a value any git command the worker
+  // runs inside the track worktree can rewrite. A worker sets it to `main`;
+  // a plain `prdt track land` (no PO flag) must still land `dev` and leave
+  // `main` untouched — the land target is only ever an explicit `--base` on
+  // THIS invocation, never that config.
+  test('F1: a worker-set prdtbase=main does not redirect a plain land — dev lands, main is untouched', () => {
+    const mainBefore = git(code, 'rev-parse', 'main')
+    commit(wt(), 'c.txt', 'new\n', 'feat: c')
+    git(wt(), 'config', 'branch.track/T-1.prdtbase', 'main')   // the worker's attack
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('dev fast-forwarded')
+    expect(r.out).not.toContain('main fast-forwarded')
+    expect(fs.readFileSync(path.join(code, 'c.txt'), 'utf8')).toBe('new\n')
+    expect(git(code, 'rev-parse', 'main')).toBe(mainBefore)
   })
 
   // T-778 (T-775 grill): a test command that leaves a stray file behind must
@@ -369,6 +391,20 @@ describe('prdt track drop', () => {
     expect(r.out).toContain('branch track/T-1 deleted')
     expect(fs.existsSync(wt())).toBe(false)
     expect(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/track/T-1'], { cwd: code }).status).not.toBe(0)
+  })
+
+  // code review #2 (2026-09-29): worker output is uncommitted until the PO
+  // commits it (review → PO commit → land) — a plain drop must not discard
+  // it silently.
+  test('a track with uncommitted changes is refused without --force, dropped with it', () => {
+    fs.writeFileSync(path.join(wt(), 'wip.txt'), 'x\n')
+    const r = cli('track', 'drop', 'T-1')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('has uncommitted changes')
+    expect(fs.existsSync(wt())).toBe(true)
+    const f = cli('track', 'drop', 'T-1', '--force')
+    expect(f.status, f.err).toBe(0)
+    expect(fs.existsSync(wt())).toBe(false)
   })
 
   test('a track with commits not on dev or main is refused without --force, dropped with it', () => {
