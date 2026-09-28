@@ -500,6 +500,24 @@ describe('T-780 — each concurrent same-persona start ends up with the marker o
   const OWN_A = own(A, 'toolu_a', 'opus')
   const OWN_B = own(B, 'toolu_b', 'sonnet')
 
+  // T-780 round 2 (QA grill): A/B above resolve tickets (T-701/T-702) via the
+  // dispatch_id heuristic, which hides the bug — the `elif dispatch_id and not
+  // data.get("dispatch_id")` branch in marker_refine only ever fires when the
+  // marker has NO dispatch_id yet, which is never true once SubagentStart has
+  // run; when ticket_id never resolves, a marker that got the WRONG FIFO guess
+  // kept it forever while still being stamped `pairing: "confirmed"`. C/D below
+  // are this project's own real dispatch_id/slug FORM (`d-v111-t780b-7407`,
+  // lowercase `t`) — TICKET_TOKEN_RE is case-sensitive, so neither resolves a
+  // ticket, exercising exactly the path A/B cannot.
+  const C = { slug: 'v111-t780b-first', goal: 'g', dispatch_id: 'd-v111-t780b-1111', worktree: '/p/tracks/T-780' }
+  const D = { slug: 'v111-t780b-second', goal: 'g', dispatch_id: 'd-v111-t780b-2222', worktree: '/p/tracks/T-780' }
+  function fanOutNoTicket(): string {
+    return writeTranscript([
+      { toolUse: 'toolu_c', ctx: C, model: 'opus' },
+      { toolUse: 'toolu_d', ctx: D, model: 'sonnet' },
+    ])
+  }
+
   // agent-x runs call A, agent-y runs call B; `order` is the order their starts arrive.
   for (const order of [['agent-x', 'agent-y'], ['agent-y', 'agent-x']]) {
     test(`FOREGROUND, starts ${order.join(' then ')}: re-paired at the next event, before either dispatch ends`, () => {
@@ -537,6 +555,19 @@ describe('T-780 — each concurrent same-persona start ends up with the marker o
       postToolUseAgent({ agentId: 'agent-y', ctx: B, status: 'async_launched', toolUseId: 'toolu_b', model: 'sonnet' })
       expect(readMarker(prdtHome, 'agent-x')).toMatchObject(OWN_A)
       expect(readMarker(prdtHome, 'agent-y')).toMatchObject(OWN_B)
+    })
+
+    test(`BACKGROUND, starts ${order.join(' then ')}, real no-ticket dispatch_ids (T-780 round 2 regression): PostToolUse always sets its OWN dispatch, never holds a stale FIFO guess`, () => {
+      const t = fanOutNoTicket()
+      for (const aid of order) expectSilent(subagentStart({ agentId: aid, transcriptPath: t }))
+      // neither dispatch_id/slug resolves a ticket — the exact condition that
+      // used to leave the `elif` branch a no-op
+      expect(readMarker(prdtHome, order[0]).ticket_id).toBeNull()
+      expect(readMarker(prdtHome, order[1]).ticket_id).toBeNull()
+      postToolUseAgent({ agentId: 'agent-x', ctx: C, status: 'async_launched', toolUseId: 'toolu_c', model: 'opus' })
+      postToolUseAgent({ agentId: 'agent-y', ctx: D, status: 'async_launched', toolUseId: 'toolu_d', model: 'sonnet' })
+      expect(readMarker(prdtHome, 'agent-x')).toMatchObject({ dispatch_id: C.dispatch_id, ticket_id: null, tool_use_id: 'toolu_c', model: 'opus', pairing: 'confirmed' })
+      expect(readMarker(prdtHome, 'agent-y')).toMatchObject({ dispatch_id: D.dispatch_id, ticket_id: null, tool_use_id: 'toolu_d', model: 'sonnet', pairing: 'confirmed' })
     })
   }
 
