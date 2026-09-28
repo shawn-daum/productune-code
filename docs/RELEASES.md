@@ -12,6 +12,14 @@ Version-by-version release notes for this project.
 >   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
 > - Everything above the first `## ` heading is preamble and is ignored by the parser.
 
+## v1.10.4 — 답의 단계가 기호로 보임 (2026-09-28)
+
+> 패치 릴리스입니다. T-754 를 반영합니다.
+> 적용: `prdt update` 또는 `packages/core/scripts/install.sh` 재실행.
+
+### Changed
+- **register `form=outline` 의 답이 단계마다 다른 기호를 씁니다.** 굵은 제목 → `1.` `2.` `3.` 번호(묶음마다 1 부터) → 3칸 들여쓴 `·` 설명, 번호 묶음 사이에 빈 줄 한 줄. 모든 항목이 한 단계 `-` 목록으로 나와 계층이 안 보이던 문제를 고칩니다. "목록이 6줄을 넘을 때만 제목" 규칙은 없어졌습니다.
+
 ## v1.10.3 — 기본 fable 경로를 임시로 opus 로 (2026-09-28)
 
 > 패치 릴리스입니다. T-739 를 반영합니다. v1.11 의 라우팅 설정화(T-737) 전까지 쓰는 임시 수정입니다.
