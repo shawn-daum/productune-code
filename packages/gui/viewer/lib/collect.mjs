@@ -90,6 +90,9 @@ function ticketLite(doc) {
  */
 export function collectTickets(repoRoot, currentVersion) {
   const ticketsRoot = path.join(repoRoot, 'docs/tickets')
+  // T-746: a project with no ticket yet has no docs/tickets at all — zero
+  // tickets, never an ENOENT that leaves the viewer ungenerated.
+  if (!fs.existsSync(ticketsRoot)) return { included: [], omitted: [] }
   const bucketDirs = fs
     .readdirSync(ticketsRoot, { withFileTypes: true })
     .filter((e) => e.isDirectory())
@@ -152,7 +155,12 @@ export function collectFeatures(repoRoot) {
 }
 
 export function collectPrd(repoRoot) {
-  const current = readDoc(repoRoot, path.join(repoRoot, 'docs/prd/PRD.md'))
+  // T-746: a project whose PRD is not written yet still gets a viewer (an
+  // empty open section), never an ENOENT.
+  const prdPath = path.join(repoRoot, 'docs/prd/PRD.md')
+  const current = fs.existsSync(prdPath)
+    ? readDoc(repoRoot, prdPath)
+    : { rel: 'docs/prd/PRD.md', frontmatter: {}, body: '' }
   const versionsDir = path.join(repoRoot, 'docs/prd/versions')
   const closed = listMarkdownFiles(versionsDir).map((f) => {
     const rel = `docs/prd/versions/${f}`
