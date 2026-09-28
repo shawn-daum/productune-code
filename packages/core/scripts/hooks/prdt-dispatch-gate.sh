@@ -382,15 +382,28 @@ else (.tool_input // {}) as $ti
       end
   end
 end;
+# T-774: this dispatch's requested MODEL TIER, read the same structural way —
+# `.tool_input.model` when the PO set one, else the literal "default" bucket
+# (this hook cannot see what the harness/agent-definition would resolve an
+# unset override to — see prdt-post-dispatch.sh's norm_model()). Restricted to
+# the Agent tool's own `model` enum {sonnet,opus,haiku,fable}; anything else
+# (a malformed payload, a future enum member this copy predates) also falls
+# into "default" rather than being trusted as a cap-lookup key.
+def want_model:
+  ((.tool_input.model // "") ) as $m
+  | if ($m | type) == "string" and ($m | test("^(sonnet|opus|haiku|fable)$")) then $m else "default" end;
+
 # T-695: two lines — does the resource cap apply to this call (a `prdt-*`
 # dispatch on PreToolUse/Agent), and the `[ctx]` verdict above (deny · warn ·
 # nothing) as one compact JSON line or an empty line. Structural, never a
-# substring test on the raw payload.
+# substring test on the raw payload. T-774 adds a third value (this dispatch's
+# model tier) on the FIRST line, tab-separated after `applies` — never a third
+# line, so the existing two-line split below only needs one more cut.
 {applies: (if (.hook_event_name == "PreToolUse") and (.tool_name == "Agent") and ((.tool_input // {}) | type) == "object"
               and (((.tool_input // {}).subagent_type // "") | type) == "string"
            then ((.tool_input // {}).subagent_type // "") | test("^prdt-") else false end),
- out: ([gate] | first)}
-| "\(.applies)\n\(if .out == null then "" else (.out | tojson) end)"
+ out: ([gate] | first), model: want_model}
+| "\(.applies)\t\(.model)\n\(if .out == null then "" else (.out | tojson) end)"
 JQ
 
 RAW="$(printf '%s' "$EV" | jq -r \
@@ -405,9 +418,12 @@ RAW="$(printf '%s' "$EV" | jq -r \
 # ever fail OPEN. A gate that breaks a dispatch because its own parser tripped
 # would be worse than the drift it exists to catch.
 [ -n "$RAW" ] || exit 0
-APPLIES="${RAW%%$'\n'*}"
+LINE1="${RAW%%$'\n'*}"
 GATE="${RAW#*$'\n'}"
 [ "$GATE" = "$RAW" ] && GATE=""          # no second line: the `[ctx]` verdict was silence
+APPLIES="${LINE1%%$'\t'*}"
+WANT_MODEL="${LINE1#*$'\t'}"
+[ "$WANT_MODEL" = "$LINE1" ] && WANT_MODEL="default"   # no tab: fail-safe, never reached in practice
 if [ "$APPLIES" != "true" ]; then
   [ -n "$GATE" ] && printf '%s\n' "$GATE"
   exit 0
@@ -425,7 +441,7 @@ esac
 # it spawns. Reached only after the `[ctx]` verdict above passed, so a cwd
 # outside a prdt project and a non-prdt dispatch still cost zero forks.
 #
-# FIVE AXES — each with its measurement, each failing OPEN on its own:
+# SIX AXES — each with its measurement, each failing OPEN on its own:
 #   load       1-minute load average ÷ cores. `sysctl -n vm.loadavg` ("{ a b c }")
 #              and `hw.ncpu`; Linux fallback /proc/loadavg + getconf. The vitest
 #              timeout scaler's history on this machine: passes at load 4, times
@@ -457,6 +473,27 @@ esac
 #   vms        `com.apple.Virtualization.VirtualMachine` processes in the same
 #              ps output. Not `lume ls`: its status stays `running` after a stop
 #              (machine wiki fact--qa-cua-vm), while the process IS the memory.
+#   model_tier (T-774) the SAME dispatches-axis liveness computation, grouped
+#              by each open marker's `model` field (prdt-post-dispatch.sh
+#              writes it at SubagentStart — sonnet/opus/haiku/fable, or the
+#              literal "default" bucket for a call with no override) and
+#              compared only against the count in THIS dispatch's OWN
+#              requested tier (`tool_input.model`, same normalization, same
+#              "default" fallback — see `want_model` above). WHY per-tier
+#              rather than folding into the existing machine-wide `dispatches`
+#              cap: T-681's user request asked for device-level resource
+#              limits that do not collapse to a worker-count knob, and the
+#              designer's own note on this axis (critical-path.html §2) flags
+#              that whether a model's rate/quota limit is per-model or
+#              account-wide was never observed — scoping the cap to "same
+#              tier only" means a wrong guess there cannot spill a denial onto
+#              an unrelated tier. This axis is therefore a COUNT-based proxy
+#              (in-flight dispatches on the tier), not the quota-probe shape
+#              the designer's own draft table sketches (`run/preflight/*.json`
+#              unavailable latches, a `<synthetic>` tail on same-model
+#              markers) — that measurement needs `prdt preflight` machinery
+#              this ticket's acceptance does not ask for; T-774's WHY note
+#              scopes this slice to the in-flight count alone.
 #
 # CAPS — the measured value OVER the cap denies (memory: UNDER the minimum).
 # Defaults sized on this machine (14 CPU / 36 GB) from the incidents above; any
@@ -475,6 +512,12 @@ esac
 #                         that broke both 09-23 and 09-26.
 #   vms_max          2    — two VM processes (16 GiB, 44% of RAM) still admit;
 #                         one leftover process must not stall every dispatch.
+#   inflight_sonnet_max   } 5 each — T-774 has no incident of its own to size
+#   inflight_opus_max     } these from (the designer's own note: unobserved
+#   inflight_haiku_max    } whether a quota limit is even per-model), so each
+#   inflight_fable_max    } defaults to the SAME value as `inflight_max`: the
+#   inflight_default_max  } per-tier cap never binds tighter than the existing
+#                           machine-wide one until the user tunes it here.
 #
 # A measurement that fails (tool missing, output unparsed) makes that axis
 # `unmeasured`: it never denies, and the failure is said ONCE per session — the
@@ -562,7 +605,10 @@ if [ -z "$MARK_BAD" ] && [ ${#MARK_FILES[@]} -gt 0 ]; then
   # Line 1: `<bad-count>`; then one candidate line per open marker whose
   # `since` is within STALE_H. Values are our own hook's writes, never payload
   # — still, an id is used below only as a file-name token and a path only
-  # when absolute.
+  # when absolute. T-774: a fourth field, `model` — normalized the same way as
+  # `want_model` above (a legacy marker predating T-774 has no `.model` at all,
+  # which `// "default"` folds into the same bucket a fresh tier-less marker
+  # gets, never a parse failure).
   IFS= read -r -d '' MPROG <<'JQ'
 (reduce (split("\n"))[] as $l ({cur: null, files: {}};
    if ($l | test("^==> .* <==$")) then (($l | capture("^==> (?<p>.*) <==$").p) as $p | .cur = $p | .files[$p] = "")
@@ -573,8 +619,10 @@ if [ -z "$MARK_BAD" ] && [ ${#MARK_FILES[@]} -gt 0 ]; then
 | ($m | map(select(type == "object" and ((.stopped_at // null) == null))
         | ((.since // "") | try fromdate catch null) as $s
         | select($s != null and ($now - $s) < ($stale_h * 3600))
-        | {id: ((.agent_id // "") | tostring), t: ((.transcript // "") | tostring), age: ($now - $s)})) as $c
-| "\($bad)", ($c[] | "\(.id | gsub("[\u001f\n]"; ""))\u001f\(.t | gsub("[\u001f\n]"; ""))\u001f\(.age)")
+        | {id: ((.agent_id // "") | tostring), t: ((.transcript // "") | tostring), age: ($now - $s),
+           model: (((.model // "default") | tostring) as $mm
+                   | if ($mm | test("^(sonnet|opus|haiku|fable)$")) then $mm else "default" end)})) as $c
+| "\($bad)", ($c[] | "\(.id | gsub("[\u001f\n]"; ""))\u001f\(.t | gsub("[\u001f\n]"; ""))\u001f\(.age)\u001f\(.model | gsub("[\u001f\n]"; ""))")
 JQ
   MOUT="$(printf '%s' "$MARK_RAW" | jq -r -R -s --argjson stale_h "$STALE_H" "$MPROG" 2>/dev/null)"
   if [ -z "$MOUT" ]; then
@@ -588,7 +636,7 @@ JQ
       # Legacy markers (no `transcript`): one `find` for all of them. Zero forks
       # once every open marker carries its path.
       FIND_ARGS=(); FOUND=""
-      while IFS=$US read -r id t age; do
+      while IFS=$US read -r id t age model; do
         [ -n "$id" ] || continue
         case "$t" in /*) continue ;; esac
         case "$id" in *[!A-Za-z0-9_-]*) continue ;; esac
@@ -600,7 +648,7 @@ JQ
       fi
       # Resolve every candidate to a path (or none); collect the paths that exist.
       EXIST=()
-      while IFS=$US read -r id t age; do
+      while IFS=$US read -r id t age model; do
         [ -n "$id" ] || continue
         case "$t" in /*) ;; *) t="" ;; esac
         if [ -z "$t" ] && [ -n "$FOUND" ]; then
@@ -611,7 +659,7 @@ JQ
           esac
         fi
         [ -n "$t" ] && [ -f "$t" ] && EXIST+=("$t")
-        MARK_CANDS="$MARK_CANDS$id$US$t$US$age"$'\n'
+        MARK_CANDS="$MARK_CANDS$id$US$t$US$age$US$model"$'\n'
       done <<< "$CANDS"
       if [ ${#EXIST[@]} -gt 0 ]; then
         # macOS stat first, GNU second; `/dev/null` forces tail's per-file
@@ -640,7 +688,10 @@ def num: try (tonumber | select(. >= 0)) catch null;
 def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
   permissionDecision: "deny", permissionDecisionReason: $why}};
 
-({load_ratio: 1.5, mem_free_pct_min: 15, inflight_max: 5, suites_max: 1, vms_max: 2} + $caps) as $cap
+({load_ratio: 1.5, mem_free_pct_min: 15, inflight_max: 5, suites_max: 1, vms_max: 2,
+  inflight_sonnet_max: 5, inflight_opus_max: 5, inflight_haiku_max: 5, inflight_fable_max: 5,
+  inflight_default_max: 5} + $caps) as $cap
+| $cap["inflight_\($want_model)_max"] as $tier_cap
 | ([$loadavg | scan("[0-9]+\\.[0-9]+")] | first | if . == null then null else num end) as $load1
 | ($ncpu | num | if . == 0 then null else . end) as $ncpu
 | ($memsize | num | if . == 0 then null else . end) as $memsize
@@ -657,13 +708,14 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
        | (reduce ($tails | split("\n"))[] as $l ({cur: "", last: {}};
             if ($l | test("^==> .* <==$")) then .cur = ($l | capture("^==> (?<p>.*) <==$").p)
             elif $l == "" or .cur == "" then . else .last[.cur] = $l end)).last as $last
-       | [$cands | split("\n")[] | select(length > 0) | split("\u001f") | {id: .[0], t: .[1], age: (.[2] | tonumber)}]
-       | map(if .t == "" or ($mt[.t] // null) == null then (.age < $grace)
+       | [$cands | split("\n")[] | select(length > 0) | split("\u001f") | {id: .[0], t: .[1], age: (.[2] | tonumber), model: (.[3] // "default")}]
+       | map(. + {live: (if .t == "" or ($mt[.t] // null) == null then (.age < $grace)
              elif (($last[.t] // "") | contains("\"model\":\"<synthetic>\"")) then false
              elif (now - $mt[.t]) > ($idle_min * 60) then false
-             else true end)
-       | map(select(.)) | length
-     ) catch null end) as $inflight
+             else true end)})
+     ) catch null end) as $live_cands
+| (if $live_cands == null then null else ($live_cands | map(select(.live)) | length) end) as $inflight
+| (if $live_cands == null then null else ($live_cands | map(select(.live and .model == $want_model)) | length) end) as $tier_inflight
 | (if $load1 != null and $ncpu != null then ($load1 / $ncpu) else null end) as $ratio
 | (if $memsize != null then ($memsize / 1073741824 | r2) else null end) as $gb
 | [
@@ -686,7 +738,11 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
   {k: "vms", ok: ($vms != null), over: ($vms != null and $vms > $cap.vms_max),
    text: (if $vms != null then "resident VMs \($vms) (cap \($cap.vms_max) — com.apple.Virtualization.VirtualMachine processes, from ps)"
           else "resident VMs: unmeasured (ps)" end),
-   free: "stop a VM whose job is done (`prdt resource ls` names its owner; a VM no marker owns is the user's)"}
+   free: "stop a VM whose job is done (`prdt resource ls` names its owner; a VM no marker owns is the user's)"},
+  {k: "model_tier", ok: ($tier_inflight != null), over: ($tier_inflight != null and $tier_inflight > $tier_cap),
+   text: (if $tier_inflight != null then "in-flight dispatches on model tier \"\($want_model)\" \($tier_inflight) machine-wide (cap \($tier_cap) — same run/dispatches liveness rule as the dispatches axis, grouped by each marker's model)"
+          else "in-flight dispatches on model tier \"\($want_model)\": unmeasured (a run/dispatches marker is unreadable or a liveness probe failed — `prdt dispatch ls` names it)" end),
+   free: "wait for a worker on the same model tier to return, or dispatch on a different tier"}
   ] as $axes
 | ($axes | map(select(.ok | not) | .k)) as $unm_axes
 | (if $caps_bad == "1" then $unm_axes + ["caps-file"] else $unm_axes end) as $unm
@@ -700,7 +756,7 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
           + "\nmeasured: " + ($axes | map(.text) | join(" · "))
           + "\nover cap: " + ($over | map(.k) | join(", "))
           + "\nfrees it: " + ($over | map(.free) | join("; "))
-          + " — then re-dispatch the same prompt. Caps: defaults in prdt-dispatch-gate.sh, machine override `$PRDT_HOME/dispatch-caps.json` (keys load_ratio · mem_free_pct_min · inflight_max · suites_max · vms_max, numbers only)."
+          + " — then re-dispatch the same prompt. Caps: defaults in prdt-dispatch-gate.sh, machine override `$PRDT_HOME/dispatch-caps.json` (keys load_ratio · mem_free_pct_min · inflight_max · suites_max · vms_max · inflight_sonnet_max · inflight_opus_max · inflight_haiku_max · inflight_fable_max · inflight_default_max, numbers only)."
           + (if $note == "" then "" else "\n" + $note end)) | tojson end) as $deny
 | "\($unm | join(","))\n\($deny)\n\($note)\nend"
 JQ
@@ -710,6 +766,7 @@ RES="$(jq -rn \
   --arg ps "$PSOUT" --argjson caps "$CAPS" --arg caps_bad "$CAPS_BAD" \
   --arg mark_bad "$MARK_BAD" --arg cands "$MARK_CANDS" --arg mtimes "$MTIMES" --arg tails "$TAILS" \
   --argjson stale_h "$STALE_H" --argjson idle_min "$IDLE_MIN" --argjson grace "$GRACE_S" \
+  --arg want_model "$WANT_MODEL" \
   "$RPROG" 2>/dev/null)"
 if [ -z "$RES" ]; then
   # The resource program itself failed: fail OPEN, keep the `[ctx]` verdict.

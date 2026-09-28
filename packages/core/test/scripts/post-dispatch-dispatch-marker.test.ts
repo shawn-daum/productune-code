@@ -70,7 +70,7 @@ function markerPath(home: string, agentId: string): string {
 
 type Marker = {
   agent_id: string; persona: string; dispatch_id: string | null; ticket_id: string | null
-  tool_use_id: string | null; project_root: string; since: string; stopped_at?: string; resumed_from?: string | null
+  tool_use_id: string | null; model?: string; project_root: string; since: string; stopped_at?: string; resumed_from?: string | null
   session_id?: string | null; transcript?: string | null
 }
 
@@ -128,11 +128,11 @@ function subagentStop(opts: { agentId: string; transcriptPath?: string; cwd?: st
  *  background launch) in tool_response, plus tool_use_id. */
 function postToolUseAgent(opts: {
   agentId: string; ctx: Record<string, unknown>; status?: 'completed' | 'async_launched'
-  toolUseId?: string; cwd?: string; home?: string
+  toolUseId?: string; cwd?: string; home?: string; model?: string
 }): HookRun {
   const ev = {
     session_id: 'sess-1', cwd: opts.cwd ?? root, hook_event_name: 'PostToolUse', tool_name: 'Agent',
-    tool_input: { subagent_type: PERSONA_TYPE, prompt: ctxPrompt(opts.ctx), description: 'x' },
+    tool_input: { subagent_type: PERSONA_TYPE, prompt: ctxPrompt(opts.ctx), description: 'x', ...(opts.model !== undefined ? { model: opts.model } : {}) },
     tool_response: { status: opts.status ?? 'completed', agentId: opts.agentId, agentType: PERSONA_TYPE, prompt: ctxPrompt(opts.ctx) },
     tool_use_id: opts.toolUseId ?? `toolu_${opts.agentId}`,
   }
@@ -142,13 +142,13 @@ function postToolUseAgent(opts: {
 /** A parent-transcript fixture in the shape the hook reads: one assistant record per
  *  Agent/SendMessage tool_use, one user record per tool_result. */
 type TranscriptItem =
-  | { toolUse: string; subagentType?: string; ctx: Record<string, unknown> }
+  | { toolUse: string; subagentType?: string; ctx: Record<string, unknown>; model?: string }
   | { sendMessage: string; to: string }
   | { toolResult: string }
 function writeTranscript(items: TranscriptItem[], name = 'parent.jsonl'): string {
   const lines = items.map((it) => {
     if ('toolUse' in it) {
-      return JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: it.toolUse, name: 'Agent', input: { subagent_type: it.subagentType ?? PERSONA_TYPE, description: 'd', prompt: ctxPrompt(it.ctx) } }] } })
+      return JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: it.toolUse, name: 'Agent', input: { subagent_type: it.subagentType ?? PERSONA_TYPE, description: 'd', prompt: ctxPrompt(it.ctx), ...(it.model !== undefined ? { model: it.model } : {}) } }] } })
     }
     if ('sendMessage' in it) {
       return JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: it.sendMessage, name: 'SendMessage', input: { to: it.to, message: 'more' } }] } })
@@ -271,6 +271,73 @@ describe('T-682 slice 3 — F2: a resumed worker (same agent_id) runs under its 
 
     expectSilent(subagentStop({ agentId }))
     expect(readMarker(prdtHome, agentId).stopped_at).toBeDefined()
+  })
+})
+
+describe('T-774 — each dispatch marker records its model', () => {
+  test('SubagentStart pairs with a pending Agent call carrying `model`: the marker records that tier', () => {
+    const transcript = writeTranscript([{ toolUse: 'toolu_m1', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m1' }, model: 'opus' }])
+    expectSilent(subagentStart({ agentId: 'agent-m1', transcriptPath: transcript }))
+    expect(readMarker(prdtHome, 'agent-m1').model).toBe('opus')
+  })
+
+  test('the paired Agent call carries no `model` (no override): the marker falls into the "default" bucket', () => {
+    const transcript = writeTranscript([{ toolUse: 'toolu_m2', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m2' } }])
+    expectSilent(subagentStart({ agentId: 'agent-m2', transcriptPath: transcript }))
+    expect(readMarker(prdtHome, 'agent-m2').model).toBe('default')
+  })
+
+  test('the paired Agent call carries a value outside the four-tier enum: falls into "default", never invented or dropped', () => {
+    const transcript = writeTranscript([{ toolUse: 'toolu_m3', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m3' }, model: 'claude-opus-5-not-a-tier' }])
+    expectSilent(subagentStart({ agentId: 'agent-m3', transcriptPath: transcript }))
+    expect(readMarker(prdtHome, 'agent-m3').model).toBe('default')
+  })
+
+  test('no pairable transcript at all (po-state fallback): the marker still records "default"', () => {
+    fs.rmSync(root, { recursive: true, force: true })
+    root = makeProject({ ticket_id: 'T-774', slug: 'cur', assignee: 'developer' })
+    expectSilent(subagentStart({ agentId: 'agent-m4' }))
+    expect(readMarker(prdtHome, 'agent-m4').model).toBe('default')
+  })
+
+  test('PostToolUse:Agent corrects the model from the authoritative tool_input (same site as ticket_id/dispatch_id)', () => {
+    const transcript = writeTranscript([{ toolUse: 'toolu_m5', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m5' } }])
+    expectSilent(subagentStart({ agentId: 'agent-m5', transcriptPath: transcript }))
+    expect(readMarker(prdtHome, 'agent-m5').model).toBe('default')
+
+    const r = postToolUseAgent({ agentId: 'agent-m5', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m5' }, status: 'async_launched', toolUseId: 'toolu_m5', model: 'sonnet' })
+    expect(r.status).toBe(0)
+    expect(readMarker(prdtHome, 'agent-m5').model).toBe('sonnet')
+  })
+
+  test('PostToolUse:Agent with no `model` in tool_input never overwrites an already-recorded tier', () => {
+    const transcript = writeTranscript([{ toolUse: 'toolu_m6', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m6' }, model: 'haiku' }])
+    expectSilent(subagentStart({ agentId: 'agent-m6', transcriptPath: transcript }))
+    expect(readMarker(prdtHome, 'agent-m6').model).toBe('haiku')
+
+    postToolUseAgent({ agentId: 'agent-m6', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m6' }, status: 'async_launched', toolUseId: 'toolu_m6' })
+    expect(readMarker(prdtHome, 'agent-m6').model).toBe('haiku')
+  })
+
+  test('RESUME (same agent_id): the revived marker carries the ORIGINAL dispatch\'s model forward, not a new pick', () => {
+    const agentId = 'agent-m7'
+    const t1 = writeTranscript([{ toolUse: 'toolu_m7', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m7' }, model: 'fable' }])
+    expectSilent(subagentStart({ agentId, transcriptPath: t1 }))
+    expect(readMarker(prdtHome, agentId).model).toBe('fable')
+    expectSilent(subagentStop({ agentId }))
+    postToolUseAgent({ agentId, ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m7' }, status: 'completed', toolUseId: 'toolu_m7', model: 'fable' })
+    expect(readMarker(prdtHome, agentId).stopped_at).toBeDefined()
+
+    // resumed via SendMessage: no new pending Agent call to pair with, so the prior
+    // marker's ticket_id (and model) are carried forward rather than re-derived.
+    const t2 = writeTranscript([
+      { toolUse: 'toolu_m7', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m7' } }, { toolResult: 'toolu_m7' },
+      { sendMessage: 'toolu_sm7', to: agentId },
+    ], 'parent-m7.jsonl')
+    expectSilent(subagentStart({ agentId, transcriptPath: t2 }))
+    const revived = readMarker(prdtHome, agentId)
+    expect(revived.stopped_at).toBeUndefined()
+    expect(revived.model).toBe('fable')
   })
 })
 
