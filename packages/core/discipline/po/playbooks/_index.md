@@ -7,4 +7,5 @@
 | dispatch-failure | a dispatch fails at the execution layer (no valid envelope back · a safety refusal in place of the work) · a quota kill | opus/medium |
 | patch-cycle | post-close patch (a fix or a deliberately split-off scope arrives at stage `idle`) · emergency `main` hotfix (`dev` tip not deployable and delivery cannot wait) · in-build regression patch (stage is `build`, both trigger questions below are yes, delivered via a parallel worktree — the round does not stop) | opus/medium |
 | readiness-dispatch | Ship entry (build believed complete, before deploy) | opus/medium |
+| resource-sweep | stage entry · VM-boot `needs_info` · closing a resource-holding ticket | opus/medium |
 | retro | Retro entry (version shipped or wrapped) · user asks to close out a version | opus/medium |

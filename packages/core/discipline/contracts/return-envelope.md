@@ -1,7 +1,7 @@
 ---
 name: return-envelope
 section: Return envelope
-when: "QA returns a live or smoke verification · the PO reads such a return"
+when: "QA returns a live or smoke verification · the PO reads such a return · a return was handed back by the return check"
 ---
 # Contracts §Return envelope — annex
 
@@ -10,3 +10,6 @@ Continues `contracts.md` §Return envelope; binds every persona the same way, lo
 ## QA live/smoke extras
 - QA live/smoke extras (conditional): `browser_url` · `verify_url` · `verify_description` · `auth_required{service,instruction,type}` · `variant_matrix[]{variant,verdict}` — the last returned whenever the verified change renders conditional variants
 - Reading them (PO): `browser_url` + `verify_url`/`verify_description` → hand the user the URL and the one thing to confirm — skippable, never blocking · `auth_required` → the user's own hands: an entry point to open + an `assignee: user` ticket (PO habit Triage), never a command to type.
+
+## A return that breaks the envelope (moved from contracts.md §Return envelope)
+- A return breaking the `Required:` line or `{`-first is handed back ONCE; a second failure passes through as a PO notice.

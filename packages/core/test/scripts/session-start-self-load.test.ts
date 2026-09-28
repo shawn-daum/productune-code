@@ -139,7 +139,11 @@ describe.skipIf(!READY)('--self-load prints the hook set, paged for the Bash too
       const home = realHome()
       const agent = `prdt-${persona}`
       const pages = allPages(home, agent)
-      expect(pages.length).toBeGreaterThan(1)   // the real set never fits one Bash output
+      // T-770 hot→cold split cut hot injection by about a quarter: po's set
+      // (docs 37,034 B) still overflows one Bash-tool page, but designer/
+      // developer/qa (20,930 / 19,845 / 22,898 B) now fit in one.
+      if (persona === 'po') expect(pages.length).toBeGreaterThan(1)
+      else expect(pages.length).toBe(1)
       const joined = pages.join('\n')
       pages.forEach((pg, i) => {
         expect(Buffer.byteLength(pg, 'utf8'), `page ${i + 1} bytes`).toBeLessThanOrEqual(PAGE_BUDGET_BYTES)
