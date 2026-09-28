@@ -47,6 +47,8 @@ export const HOME = {
   legendMain: '담당',
   legendDerived: '검수',
   overall: '전체',
+  // T-792: 홈의 이번 버전 결정 묶음 — 사용자 표현 "결정은 홈에 신설하자" 그대로.
+  decision: '결정',
 }
 
 // T-705 §B: linkage 연결→간선 (그래프 용어, T-600 정합). Everything else here
