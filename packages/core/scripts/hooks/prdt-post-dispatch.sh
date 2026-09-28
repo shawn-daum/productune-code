@@ -270,7 +270,10 @@ def _append_line(path, text):
 #                    gate's per-model-tier in-flight cap reads this same field
 #                    off every OTHER open marker (see prdt-dispatch-gate.sh);
 #                    see MODEL_TIERS/norm_model above for what it holds.
-#   PostToolUse    → pairing refinement only: the response carries `agentId`
+#                    T-775: and `checkout` (`[ctx].worktree`, else "code") —
+#                    the gate denies a second live developer/qa dispatch into
+#                    the same checkout (see checkout_from_ctx below).
+#   PostToolUse   → pairing refinement only: the response carries `agentId`
 #                    and the input carries the `[ctx]` prompt, so an EXISTING
 #                    marker's ticket_id/dispatch_id (and, T-774, `model`) are
 #                    corrected from the authoritative source. Never revives a
@@ -438,6 +441,18 @@ def ticket_from_ctx(ctx_obj):
     return dispatch_id, None
 
 
+def checkout_from_ctx(ctx_obj):
+    """T-775: the checkout a dispatch works in — `[ctx].worktree` verbatim (the
+    dispatch gate normalizes it), `"code"` (the shared code checkout) when the
+    `[ctx]` has none, None when there is no `[ctx]` to read at all (the gate's
+    one-live-dispatch-per-checkout rule then skips this marker: unknown, never
+    guessed)."""
+    if not isinstance(ctx_obj, dict):
+        return None
+    wt = ctx_obj.get("worktree")
+    return wt.strip() if isinstance(wt, str) and wt.strip() else "code"
+
+
 def pending_agent_calls(transcript_path, agent_type, tail_bytes=4 * 1024 * 1024):
     """Agent tool_use blocks of `agent_type` in the parent transcript's tail
     that have no tool_result yet, oldest first: [(tool_use_id, prompt, model)].
@@ -529,10 +544,10 @@ def marker_start(aid):
         "agent_id": aid, "persona": persona, "dispatch_id": None, "ticket_id": None,
         "tool_use_id": None, "model": None, "project_root": root, "since": now,
         "session_id": ev.get("session_id") if isinstance(ev.get("session_id"), str) else None,
-        "transcript": agent_transcript_path(aid),
+        "transcript": agent_transcript_path(aid), "checkout": None,
     }
     if prior:
-        for k in ("dispatch_id", "ticket_id", "tool_use_id"):
+        for k in ("dispatch_id", "ticket_id", "tool_use_id", "checkout"):
             data[k] = prior.get(k) if isinstance(prior.get(k), str) else None
         # T-774: a resume is the SAME logical dispatch continuing, never a new
         # tier pick — carry the prior marker's model forward (a legacy marker
@@ -546,6 +561,7 @@ def marker_start(aid):
             if tuid in claimed:
                 continue
             data["dispatch_id"], data["ticket_id"] = ticket_from_ctx(ctx_from_prompt(prompt))
+            data["checkout"] = checkout_from_ctx(ctx_from_prompt(prompt))
             data["tool_use_id"] = tuid
             data["model"] = norm_model(model)
             break
@@ -572,6 +588,9 @@ def marker_refine(aid, ctx_obj, tool_use_id, launched_async, model=None):
                 "tool_use_id": None, "model": nmodel or "default", "project_root": root, "since": now,
                 "session_id": ev.get("session_id") if isinstance(ev.get("session_id"), str) else None,
                 "transcript": agent_transcript_path(aid)}
+    co = checkout_from_ctx(ctx_obj)
+    if co is not None:
+        data["checkout"] = co
     if ticket_id:
         data["ticket_id"], data["dispatch_id"] = ticket_id, dispatch_id
     elif dispatch_id and not data.get("dispatch_id"):

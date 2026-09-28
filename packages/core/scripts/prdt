@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · schedule · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · schedule · track (open|review|land) · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
@@ -5213,8 +5213,8 @@ def _meta_backup_fail_hint(remote, error):
 
 
 def maybe_meta_backup(cmd):
-    if cmd == "meta":                                   # `prdt meta push` is the explicit path; don't race it
-        return
+    if cmd in ("meta", "track"):                        # `prdt meta push` is the explicit path; don't race it;
+        return                                          # `track` (T-775) pushes nothing, the meta backup included
     if os.environ.get("PRDT_META_BACKUP") == "0":       # kill switch (tests · a machine that must stay offline)
         return
     try:
@@ -10376,6 +10376,349 @@ def discipline_caps_warnings(droot):
     return warns
 
 
+# ── prdt track open | review | land (T-775, T-681 slice S4) ──────────────────
+# Design SoT: docs/artifacts/v1.11/critical-path.html, tab 「체크아웃 격리」.
+# contracts/git.md ③: a parallel track is cut from `dev` by `prdt track open`
+# (branch `track/<T-NNN>`), never Agent `isolation: "worktree"` — that fails
+# wherever the META root is not a git work tree (PO observation 2026-09-28).
+# So every git call here runs against the CODE repo (`code_root`), never the
+# meta root, and the worktree sits at `<meta root>/tracks/<T-NNN>`: inside the
+# project (inside a worker's permissions), outside the meta allowlist (the
+# meta repo never tracks it), and not a session scratchpad that disappears.
+# Adopt = PO local review (`review`) → PO commit on the track branch → `land`
+# (tests on the merged tree, the base fast-forwards, branch + worktree gone).
+# NO PUSH, NO REMOTE PR (T-748 A): nothing in this section names a remote, and
+# `track` is exempt from the meta backup tick too (maybe_meta_backup), so a
+# track command never pushes anything anywhere.
+TRACK_ID_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+TRACK_BASES = ("dev", "main")
+TRACK_LOCK = "prdt-track-land.lock"
+TRACK_LOCKFILES = ("pnpm-lock.yaml", "package-lock.json", "yarn.lock")
+
+
+def _tgit(args, cwd, timeout=300):
+    return subprocess.run(["git", *args], cwd=str(cwd), env=_scrubbed_git_env(),
+                          capture_output=True, text=True, timeout=timeout)
+
+
+def _track_die(text, code=1):
+    print(f"prdt track: {text}", file=sys.stderr)
+    sys.exit(code)
+
+
+def _track_ctx(args):
+    """(root, code, tid, wt, branch) — refuses anything but a split-or-legacy
+    project whose code root IS a git work tree (the meta root need not be)."""
+    root = require_root()
+    tid = args.ticket
+    if not (isinstance(tid, str) and TRACK_ID_RE.match(tid)):
+        _track_die("the ticket id must look like T-NNN", 2)
+    code = code_root(root)
+    r = _tgit(["rev-parse", "--is-inside-work-tree"], code) if code.is_dir() else None
+    if r is None or r.returncode != 0 or r.stdout.strip() != "true":
+        _track_die(f"the code checkout {code} is not a git work tree — a track is cut from the code repo")
+    return root, code, tid, Path(root) / "tracks" / tid, f"track/{tid}"
+
+
+def _track_cfg(root):
+    cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
+    t = cfg.get("track") if isinstance(cfg, dict) else None
+    return t if isinstance(t, dict) else {}
+
+
+def _track_setup_cmd(root, wt):
+    """The per-worktree setup step (T-762: `pnpm install` builds core too):
+    `.prdt/config.json` `track.setup` (a shell string) wins; else the
+    lockfile's package manager; else none."""
+    s = _track_cfg(root).get("setup")
+    if isinstance(s, str) and s.strip():
+        return s
+    if (wt / "pnpm-lock.yaml").is_file():
+        return "pnpm install"
+    if (wt / "package-lock.json").is_file():
+        return "npm ci"
+    if (wt / "yarn.lock").is_file():
+        return "yarn install --frozen-lockfile"
+    return None
+
+
+def _track_test_cmd(root, wt, override):
+    """The test command `land` runs on the merged tree: `--test` · config
+    `track.test` · the package.json `test` script through the lockfile's
+    package manager; None = refuse to land (a land without tests is not one)."""
+    if isinstance(override, str) and override.strip():
+        return override
+    t = _track_cfg(root).get("test")
+    if isinstance(t, str) and t.strip():
+        return t
+    pkg = read_json(wt / "package.json")
+    if isinstance(pkg, dict) and isinstance(pkg.get("scripts"), dict) and pkg["scripts"].get("test"):
+        pm = "pnpm" if (wt / "pnpm-lock.yaml").is_file() else "yarn" if (wt / "yarn.lock").is_file() else "npm"
+        return f"{pm} test"
+    return None
+
+
+def _track_run(cmd, cwd, label):
+    print(f"{label}: {cmd}", flush=True)
+    r = subprocess.run(cmd, shell=True, cwd=str(cwd), stdout=sys.stderr, stderr=sys.stderr)
+    return r.returncode
+
+
+def _track_base(code, branch):
+    r = _tgit(["config", "--get", f"branch.{branch}.prdtbase"], code)
+    b = r.stdout.strip() if r.returncode == 0 else ""
+    return b if b in TRACK_BASES else "dev"
+
+
+def _track_require_open(code, wt, branch, tid):
+    if not wt.is_dir():
+        _track_die(f"no track worktree at {wt} — `prdt track open {tid}` first")
+    if _tgit(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], code).returncode != 0:
+        _track_die(f"branch {branch} does not exist in the code repo")
+
+
+def _track_exclude(code, root):
+    """Legacy (unsplit) layout: code root == meta root, so `tracks/` sits inside
+    the code work tree — keep it out of `git status` via info/exclude."""
+    if Path(code).resolve() != Path(root).resolve():
+        return
+    r = _tgit(["rev-parse", "--git-common-dir"], code)
+    if r.returncode != 0:
+        return
+    gd = Path(r.stdout.strip())
+    gd = gd if gd.is_absolute() else Path(code) / gd
+    ex = gd / "info" / "exclude"
+    try:
+        cur = ex.read_text(encoding="utf-8") if ex.is_file() else ""
+        if "/tracks/" not in cur.splitlines():
+            ex.parent.mkdir(parents=True, exist_ok=True)
+            with open(ex, "a", encoding="utf-8") as f:
+                f.write(("" if cur == "" or cur.endswith("\n") else "\n") + "/tracks/\n")
+    except OSError:
+        pass
+
+
+def cmd_track_open(args):
+    root, code, tid, wt, branch = _track_ctx(args)
+    base = args.base or "dev"
+    if base not in TRACK_BASES:
+        _track_die("--base takes dev or main", 2)
+    if _tgit(["rev-parse", "--verify", "--quiet", f"refs/heads/{base}"], code).returncode != 0:
+        _track_die(f"base branch {base} does not exist in the code repo")
+    if wt.exists():
+        _track_die(f"{wt} already exists — this track is open (`prdt track review {tid}`)")
+    if _tgit(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], code).returncode == 0:
+        _track_die(f"branch {branch} already exists with no worktree at {wt} — land or drop it first")
+    _track_exclude(code, root)
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    r = _tgit(["worktree", "add", str(wt), "-b", branch, base], code)
+    if r.returncode != 0:
+        _track_die("git worktree add failed: " + (r.stderr.strip() or r.stdout.strip()))
+    _tgit(["config", f"branch.{branch}.prdtbase", base], code)
+    setup = _track_setup_cmd(root, wt)
+    if setup is None:
+        print("setup: none (no track.setup in .prdt/config.json, no lockfile)")
+    elif _track_run(setup, wt, "setup") != 0:
+        _track_die(f"the setup step failed in {wt} — the worktree stays; rerun `{setup}` there")
+    print(f"track {tid} open: {wt}  (branch {branch} from {base})")
+    print(f"dispatch into it with `[ctx].worktree` = {wt}")
+
+
+def _track_changed(wt, mb):
+    """Files the track changed since the merge-base: committed + uncommitted +
+    untracked (not ignored), as {path: status}."""
+    out = {}
+    r = _tgit(["diff", "--name-status", "--no-renames", mb], wt)
+    for line in r.stdout.splitlines():
+        st, _, p = line.partition("\t")
+        if p:
+            out[p] = st
+    r = _tgit(["ls-files", "--others", "--exclude-standard"], wt)
+    for p in r.stdout.splitlines():
+        if p:
+            out[p] = "??"
+    return out
+
+
+def _track_records(root, tid):
+    rows, _bad = read_schedule_log(root)
+    disp = [r for r in rows if r.get("kind") == "dispatch" and r.get("ticket") == tid]
+    stops = [r for r in rows if r.get("kind") == "stop"]
+    out = []
+    for d in disp:
+        s = next((s for s in stops if (d.get("tool_use_id") and s.get("tool_use_id") == d.get("tool_use_id"))
+                  or (not d.get("tool_use_id") and d.get("dispatch_id") and s.get("dispatch_id") == d.get("dispatch_id"))), None)
+        out.append((d, s))
+    return out
+
+
+def cmd_track_review(args):
+    root, code, tid, wt, branch = _track_ctx(args)
+    _track_require_open(code, wt, branch, tid)
+    base = _track_base(code, branch)
+    mb = _tgit(["merge-base", base, branch], code).stdout.strip()
+    if not mb:
+        _track_die(f"{branch} shares no history with {base}")
+    changed = _track_changed(wt, mb)
+    ahead = _tgit(["rev-list", "--count", f"{base}..{branch}"], code).stdout.strip() or "0"
+    behind = _tgit(["rev-list", "--count", f"{branch}..{base}"], code).stdout.strip() or "0"
+    dirty = [p for p in changed if _tgit(["diff", "--quiet", "HEAD", "--", p], wt).returncode != 0 or changed[p] == "??"]
+    print(f"track {tid} review — {branch} vs {base} (merge-base {mb[:12]}): "
+          f"{ahead} commit(s) ahead, {base} {behind} commit(s) ahead, {len(dirty)} uncommitted file(s)")
+    # 1 scope
+    recs = _track_records(root, tid)
+    declared = {f for d, _s in recs for f in (d.get("files") or []) if isinstance(f, str)}
+    print(f"\n1. scope — {len(changed)} changed file(s)")
+    for p in sorted(changed):
+        print(f"   {changed[p]:<2} {p}{'  (uncommitted)' if p in dirty else ''}")
+    if not recs:
+        print(f"   no dispatch record for {tid} in .prdt/{SCHEDULE_LOG} — scope not checked against change_meta.files")
+    else:
+        outside = sorted(p for p in changed if p not in declared)
+        print("   outside the dispatch record's change_meta.files: " + (", ".join(outside) if outside else "(none)"))
+    # 2 merge preview
+    r = _tgit(["merge-tree", "--write-tree", "--name-only", "--no-messages", base, branch], code)
+    conflicts = r.stdout.splitlines()[1:] if r.returncode == 1 else []
+    if r.returncode == 0:
+        verdict = "clean"
+    elif r.returncode == 1:
+        verdict = "CONFLICT in " + ", ".join(c for c in conflicts if c)
+    else:
+        verdict = "unmeasured (git merge-tree failed: " + (r.stderr.strip() or "?") + ")"
+    print(f"\n2. merge {branch} into {base} (git merge-tree, committed work only): {verdict}")
+    if dirty:
+        print(f"   {len(dirty)} uncommitted file(s) are not in this preview — commit on {branch} first")
+    # 3 overlap
+    base_changed = set(_tgit(["diff", "--name-only", "--no-renames", mb, base], code).stdout.split("\n")) - {""}
+    overlap = sorted(base_changed & set(changed))
+    print(f"\n3. overlap — files {base} changed since the merge-base that this track also changed: "
+          + (", ".join(overlap) if overlap else "(none)"))
+    if overlap:
+        print(_tgit(["diff", mb, base, "--", *overlap], code).stdout.rstrip("\n"))
+    # 4 verification
+    print(f"\n4. verification — dispatch records for {tid}:")
+    if not recs:
+        print("   (none)")
+    for d, s in recs:
+        print(f"   {safe_label(str(d.get('ts') or '-'))} {safe_label(str(d.get('persona') or '-'))} "
+              f"{safe_label(str(d.get('dispatch_id') or '-'))} → "
+              f"{safe_label(str((s or {}).get('outcome') or 'no stop row'))}")
+    if recs and not any(d.get("persona") == "qa" for d, _s in recs):
+        print("   no qa dispatch recorded — a user_facing or risk_flags change needs a QA verdict before land")
+    # 5 discipline files
+    disc = sorted(p for p in changed if p.startswith("packages/core/discipline/") or p.startswith("discipline/"))
+    print("\n5. discipline files: " + (", ".join(disc) + " — the DoD annex's discipline extra step applies"
+                                      if disc else "(none)"))
+    # the diff itself
+    print(f"\n── diff {mb[:12]}..worktree ──")
+    print(_tgit(["diff", "--stat", mb], wt).stdout.rstrip("\n"))
+    print(_tgit(["diff", mb], wt).stdout.rstrip("\n"))
+    for p in sorted(p for p in changed if changed[p] == "??"):
+        print(f"untracked: {p}")
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _track_lock(code):
+    gd = Path(_tgit(["rev-parse", "--git-common-dir"], code).stdout.strip())
+    lock = (gd if gd.is_absolute() else Path(code) / gd) / TRACK_LOCK
+    for _ in range(2):
+        try:
+            fd = os.open(str(lock), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            os.write(fd, f"{os.getpid()}\n".encode())
+            os.close(fd)
+            return lock
+        except FileExistsError:
+            try:
+                pid = int(lock.read_text().strip() or "0")
+            except (OSError, ValueError):
+                pid = 0
+            if pid and _pid_alive(pid):
+                _track_die(f"another `prdt track land` is running (pid {pid}) — land one track at a time")
+            try:
+                lock.unlink()           # its owner is gone: the lock is this tool's own leftover
+            except OSError:
+                pass
+    _track_die(f"could not take the land lock {lock}")
+
+
+def _lockfile_sig(wt):
+    return {n: (wt / n).read_bytes() if (wt / n).is_file() else None for n in TRACK_LOCKFILES}
+
+
+def cmd_track_land(args):
+    root, code, tid, wt, branch = _track_ctx(args)
+    _track_require_open(code, wt, branch, tid)
+    base = _track_base(code, branch)
+    st = _tgit(["status", "--porcelain"], wt)
+    if st.returncode != 0 or st.stdout.strip():
+        _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or drop them, then land")
+    test = _track_test_cmd(root, wt, args.test)
+    if test is None:
+        _track_die("no test command — pass --test <cmd>, set `track.test` in .prdt/config.json, "
+                   "or give package.json a test script")
+    lock = _track_lock(code)
+    try:
+        old = _tgit(["rev-parse", f"refs/heads/{base}"], code).stdout.strip()
+        before = _lockfile_sig(wt)
+        if _tgit(["merge-base", "--is-ancestor", base, branch], wt).returncode != 0:
+            r = _tgit(["merge", "--no-edit", "--no-ff", base], wt)
+            if r.returncode != 0:
+                un = _tgit(["diff", "--name-only", "--diff-filter=U"], wt).stdout.split()
+                _tgit(["merge", "--abort"], wt)
+                _track_die(f"merging {base} into {branch} conflicts in: {', '.join(un) or '(see git output)'} — "
+                           f"{base} is unchanged; resolve on {branch} (re-dispatch its worker), then land again")
+            print(f"merged {base} ({old[:12]}) into {branch}")
+            if _lockfile_sig(wt) != before:
+                setup = _track_setup_cmd(root, wt)
+                if setup and _track_run(setup, wt, "setup (lockfile changed)") != 0:
+                    _track_die(f"the setup step failed on the merged tree — {base} is unchanged")
+        if _track_run(test, wt, "tests on the merged tree") != 0:
+            _track_die(f"tests failed on the merged tree — {base} is unchanged; {branch} keeps the merge, "
+                       f"fix it there and land again")
+        new = _tgit(["rev-parse", branch], code).stdout.strip()
+        if _tgit(["merge-base", "--is-ancestor", f"refs/heads/{base}", new], code).returncode != 0:
+            _track_die(f"{base} moved during the land — land again")
+        holder = None
+        cur = None
+        for line in _tgit(["worktree", "list", "--porcelain"], code).stdout.splitlines() + [""]:
+            if line.startswith("worktree "):
+                cur = line[len("worktree "):]
+            elif line == f"branch refs/heads/{base}":
+                holder = cur
+        if holder:
+            r = _tgit(["merge", "--ff-only", new], holder)
+        else:
+            r = _tgit(["update-ref", f"refs/heads/{base}", new, old], code)
+        if r.returncode != 0:
+            _track_die(f"fast-forwarding {base} failed: " + (r.stderr.strip() or r.stdout.strip())
+                       + f" — {base} is unchanged")
+        print(f"{base} fast-forwarded {old[:12]} → {new[:12]}")
+    finally:
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+    r = _tgit(["worktree", "remove", str(wt)], code)
+    print(f"worktree {wt} removed" if r.returncode == 0 else f"worktree remove failed: {r.stderr.strip()}")
+    r = _tgit(["branch", "-d", branch], code)
+    print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -d failed: {r.stderr.strip()}")
+    print(f"landed {tid} — tests `{test}` green; nothing pushed")
+
+
+def cmd_track(args):
+    {"open": cmd_track_open, "review": cmd_track_review, "land": cmd_track_land}[args.action](args)
+
+
+
 # ── resource ownership markers (T-591/T-680) — the CLI the stop rule names ──
 #
 # `qa/habit.md` §Working rules and `po/habit.md` §Returns already read: "last
@@ -12975,6 +13318,17 @@ def main():
     p.add_argument("--version", help="report: the version bucket (default: po-state.json version)")
     p.add_argument("--json", action="store_true", help="the same rows, machine-readable")
     p.set_defaults(fn=cmd_schedule)
+    p = sub.add_parser("track", help="parallel track worktree (T-775): open <T-NNN> [--base dev|main] · "
+                                     "review <T-NNN> · land <T-NNN> [--test CMD] — the worktree is "
+                                     "<project>/tracks/<T-NNN> on branch track/<T-NNN> of the code repo; "
+                                     "land merges the base in, runs the tests on the merged tree and "
+                                     "fast-forwards the base; never pushes")
+    p.add_argument("action", choices=("open", "review", "land"))
+    p.add_argument("ticket", help="T-NNN")
+    p.add_argument("--base", choices=TRACK_BASES, help="open: the branch to cut from (default dev)")
+    p.add_argument("--test", help="land: the test command (default: .prdt/config.json track.test, "
+                                  "else the package.json test script)")
+    p.set_defaults(fn=cmd_track)
     p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591/T-680): "
                                         "up <name> --dispatch <id> · down <name> --dispatch <id> · "
                                         "ls [--json] · register-stop <name> <command> — up/down record/report; "
