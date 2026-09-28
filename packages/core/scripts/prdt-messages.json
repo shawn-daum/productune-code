@@ -22,7 +22,17 @@
     "settings.error.empty": "prdt settings: '{key}' 는 빈 값으로 둘 수 없어요 — 기본값으로 되돌리려면: prdt settings unset {key}",
     "settings.error.badkey": "prdt settings: '{key}' 은 없는 설정이에요 — {keys} 중 하나여야 해요.",
     "settings.error.usage": "사용법: prdt settings [set <키> <값> | unset <키>]",
-    "settings.error.resolver": "prdt settings: 말투 설정을 읽는 prdt-audience-inject.sh 를 찾지 못했어요 — install.sh 를 다시 실행해 주세요."
+    "settings.error.resolver": "prdt settings: 말투 설정을 읽는 prdt-audience-inject.sh 를 찾지 못했어요 — install.sh 를 다시 실행해 주세요.",
+    "update.version-line": "설치됨 {installed} → 새 버전 {new}",
+    "update.choice1": "1. update",
+    "update.choice2": "2. skip",
+    "update.prompt": "번호를 고르세요 [1/2]: ",
+    "update.error.badchoice": "1 또는 2 를 입력하세요.",
+    "update.uptodate": "지금 버전이 최신이에요 ({version}) — 업데이트할 것이 없어요.",
+    "update.noninteractive": "업데이트 가능: {installed} → {new} — 묻지 않아요(비대화형 실행). 설치하려면 `prdt update` 를 직접 실행하세요.",
+    "update.skip.runtime": "건너뜁니다 — 오늘은 다시 묻지 않아요.",
+    "update.done": "업데이트 완료: {old} → {new}",
+    "update.error.offline": "prdt update: 새 버전 정보를 가져오지 못했어요(오프라인 등) — 잠시 후 다시 시도하세요."
   },
   "en": {
     "settings.list.header.key": "Key",
@@ -47,6 +57,16 @@
     "settings.error.empty": "prdt settings: '{key}' can't be empty — to go back to the default: prdt settings unset {key}",
     "settings.error.badkey": "prdt settings: '{key}' isn't a setting — it must be one of {keys}.",
     "settings.error.usage": "usage: prdt settings [set <key> <value> | unset <key>]",
-    "settings.error.resolver": "prdt settings: prdt-audience-inject.sh, which reads the tone settings, was not found — re-run install.sh."
+    "settings.error.resolver": "prdt settings: prdt-audience-inject.sh, which reads the tone settings, was not found — re-run install.sh.",
+    "update.version-line": "installed {installed} → new version {new}",
+    "update.choice1": "1. update",
+    "update.choice2": "2. skip",
+    "update.prompt": "Pick a number [1/2]: ",
+    "update.error.badchoice": "Enter 1 or 2.",
+    "update.uptodate": "You're already on the latest version ({version}) — nothing to update.",
+    "update.noninteractive": "Update available: {installed} → {new} — not asking (non-interactive run). Run `prdt update` yourself to install.",
+    "update.skip.runtime": "Skipping — won't ask again today.",
+    "update.done": "Update complete: {old} → {new}",
+    "update.error.offline": "prdt update: couldn't fetch version info (offline?) — try again shortly."
   }
 }
