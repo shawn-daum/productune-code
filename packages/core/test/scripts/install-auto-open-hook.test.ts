@@ -30,22 +30,26 @@ test.skipIf(!hasJq())('mirrors prdt-auto-open.sh executable', () => {
   expect(fs.statSync(script).mode & 0o111).not.toBe(0)
 })
 
-test.skipIf(!hasJq())('PostToolUse carries BOTH the pre-existing Agent entry and the new Write entry', () => {
+test.skipIf(!hasJq())('PostToolUse carries the pre-existing Agent entry and BOTH new auto-open entries (Write, Bash — T-794)', () => {
   const { settings } = installedMachine()
   const entries = settings.hooks.PostToolUse as any[]
   const agentEntry = entries.find((e) => e.matcher === 'Agent')
   const writeEntry = entries.find((e) => e.matcher === 'Write')
+  const bashEntry = entries.find((e) => e.matcher === 'Bash')
   expect(agentEntry?.hooks?.[0]?.command).toContain('prdt-post-dispatch.sh')
   expect(writeEntry?.hooks?.[0]?.command).toContain('prdt-auto-open.sh')
-  expect(entries.length).toBe(2)
+  expect(bashEntry?.hooks?.[0]?.command).toContain('prdt-auto-open.sh')
+  expect(entries.length).toBe(3)
 })
 
-test.skipIf(!hasJq())('re-running install.sh is idempotent (single auto-open entry, single command)', () => {
+test.skipIf(!hasJq())('re-running install.sh is idempotent (single auto-open entry per matcher, single command each)', () => {
   // its own installs ON PURPOSE: the subject is the second RUN, not the state
   const { settings } = freshInstall({ times: 2 })
-  const entries = (settings.hooks.PostToolUse as any[]).filter((e) => e.matcher === 'Write')
-  expect(entries.length).toBe(1)
-  expect(entries[0].hooks.length).toBe(1)
+  for (const matcher of ['Write', 'Bash']) {
+    const entries = (settings.hooks.PostToolUse as any[]).filter((e) => e.matcher === matcher)
+    expect(entries.length, matcher).toBe(1)
+    expect(entries[0].hooks.length, matcher).toBe(1)
+  }
 })
 
 // T-750: the message catalog is mirrored beside bin/prdt, so the INSTALLED
