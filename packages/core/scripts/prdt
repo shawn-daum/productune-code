@@ -2328,9 +2328,27 @@ def cmd_index(args):
           (f", {len(v)} ticket violations (see `prdt doctor`)" if v else ""))
 
 
+def cmd_shared_state_guard(args):
+    """`prdt _shared-state-guard <label>` — install.sh's own seam onto
+    `live_dispatch_warning` (T-601). Not a project command (no `require_root`):
+    install.sh's mirror write is machine-scoped (PRDT_HOME), not project-scoped,
+    and runs from the repo checkout before any project directory is assumed.
+    Single source of truth stays in `live_dispatch_warning`/
+    `SHARED_DERIVED_STATE_WRITERS` — this is a thin CLI wrapper so a bash
+    script (no forks allowed in the call-governor hook itself, but install.sh
+    already hard-depends on python3) can reuse it instead of re-deriving the
+    threshold or the counter filename shape a second time."""
+    w = live_dispatch_warning(args.label)
+    if w:
+        print(w, file=sys.stderr)
+
+
 def cmd_wiki(args):
     root = require_root()
     if args.action == "reindex":
+        w = live_dispatch_warning("wiki reindex")
+        if w:
+            print(w, file=sys.stderr)
         _con, v, pages, mpages = rebuild_index(root)
         mdir = machine_wiki_root()
         if mdir.is_dir():
@@ -2756,6 +2774,93 @@ GOVERNOR_WITNESS_PREFIX = ".hw-"
 # quiet weekend (Fri→Mon is 3 days) so a normal gap in usage doesn't page
 # a false alarm.
 GOVERNOR_STALE_DAYS = 7
+
+
+# ── shared-derived-state CLI guard (T-601) ────────────────────────────────────
+# Single source of truth for "which prdt-side write rewrites state shared across
+# every session/worktree on this machine, not one dispatch's own scratch" — the
+# acceptance's own requirement, so a future writer of shared state has one place
+# to add itself rather than a prose rule to remember. PO-observed 2026-09-10,
+# same cause 3x same day: the PO ran `prdt wiki reindex` from their own session
+# while a worker's own test suite (packages/core, unrelated PRDT_HOME — workers
+# run sandboxed, T-450) was mid-run; ~/.prdt/wiki/index.md's mtime moved under
+# it and the suite's own real-home tripwire read that as contamination and
+# failed a run that was otherwise fine.
+SHARED_DERIVED_STATE_WRITERS = {
+    "wiki reindex": (".prdt/index.db", "docs/wiki/index.md", "$PRDT_HOME/wiki/index.md"),
+    "artifacts sync": ("docs/artifacts/manifest.json",),
+    "install.sh mirror write": ("$PRDT_HOME/discipline/", "$PRDT_HOME/hooks/",
+                                 "$PRDT_HOME/bin/prdt", "$PRDT_HOME/doctrine.md"),
+}
+
+# Freshness threshold (seconds) for "does a dispatch look live right now".
+# Measured (docs/wiki/fact--test-suite.md, T-649/656/668/703/718): the core
+# suite alone runs ~456s single-worker and up to ~10 min (600s) in a detached
+# worktree under load 6-8. The signal below (a call-governor counter's mtime)
+# advances once per ASSISTANT TURN, not per wall-clock second, so a live
+# dispatch mid-way through one long verification Bash call — the exact shape
+# all 3 T-601 observations were — can leave that mtime up to a whole tool
+# timeout old while still very much running. Set above the slowest measured
+# gap rather than at it: this guard only WARNS (acceptance line 3; same
+# direction as T-765's precedent — warn+record over refuse when refusing can
+# stop legitimate work and there is no observation yet that refusing would
+# have done better), so a false POSITIVE costs one printed line the PO can
+# read and ignore, while a false NEGATIVE silently reproduces the exact
+# incident this ticket exists to catch. That asymmetry is why this leans
+# generous rather than tight.
+LIVE_DISPATCH_FRESH_S = 900  # 15 min — 1.5x the slowest measured single-tool gap
+
+# Counter filename shape, byte-identical in spirit to RE_SID/RE_AID in
+# prdt-call-governor.sh (that hook is bash-only, no forks allowed on its hot
+# path, so it cannot import this — the T-561 "deliberate copy" class; a test
+# pins the two shapes against each other). Exactly one `.`, no leading dot:
+# matches `<sid>.<aid>` only and excludes `.fired-<event>` (fires on EVERY
+# session's every tool call in EVERY prdt project on the machine — far too
+# broad a signal, see GOVERNOR_STALE_DAYS above), `.hw-<sid>.<aid>` (witness,
+# leading dot) and `<sid>.<aid>.w<band>` (band marker, two dots). The counter
+# itself only ever advances for prdt-developer/-qa/-designer dispatches
+# (call-governor's own persona scope) — exactly "a worker is running", never
+# the PO's or main session's own tool calls.
+_RUN_COUNTER_RE = re.compile(r'^[A-Za-z0-9_-]{8,64}\.[A-Za-z0-9_-]{4,64}$')
+
+
+def live_dispatch_warning(label):
+    """Read-only (contracts §Return: run/ is never written or cleared here,
+    T-514 owns cleanup) — `label` names the calling command for the printed
+    line. Returns a warning string, or None when nothing under
+    run/call-governor looks live within LIVE_DISPATCH_FRESH_S."""
+    run_dir = prdt_home() / "run" / "call-governor"
+    if not run_dir.is_dir():
+        return None
+    newest = None
+    try:
+        entries = list(run_dir.iterdir())
+    except OSError:
+        return None
+    for p in entries:
+        if not _RUN_COUNTER_RE.match(p.name):
+            continue
+        try:
+            if not p.is_file():
+                continue
+            mt = p.stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or mt > newest:
+            newest = mt
+    if newest is None:
+        return None
+    age_s = (datetime.now(timezone.utc)
+              - datetime.fromtimestamp(newest, tz=timezone.utc)).total_seconds()
+    if age_s > LIVE_DISPATCH_FRESH_S:
+        return None
+    return (f"⚠ prdt {label}: a dispatch looks live on this machine (worker activity "
+            f"~{int(age_s)}s ago, {run_dir}) — this command rewrites shared derived "
+            f"state ({', '.join(SHARED_DERIVED_STATE_WRITERS.get(label, ()))}) a "
+            f"running worker may read mid-write (T-601, PO-observed 2026-09-10: this "
+            f"exact shape killed a running worker's test 3x same day). Proceeding "
+            f"anyway — this is a warning, not a block; check `ListAgents` first if "
+            f"you are not sure what is running.")
 
 
 def claude_settings_path():
@@ -8037,6 +8142,9 @@ def cmd_artifacts(args):
             print(l)
         sys.exit(code)
     # sync — write the ONE root manifest from disk; report what sits outside a bucket.
+    w = live_dispatch_warning("artifacts sync")
+    if w:
+        print(w, file=sys.stderr)
     legacy = legacy_bucket_manifests(root)
     if legacy:
         for mp in legacy:
@@ -13189,6 +13297,10 @@ def main():
                                      "never hand-maintained")
     p.add_argument("action", choices=["rebuild"])
     p.set_defaults(fn=cmd_index)
+    p = sub.add_parser("_shared-state-guard",
+                        help=argparse.SUPPRESS)  # install.sh's own seam (T-601), not a user command
+    p.add_argument("label", choices=sorted(SHARED_DERIVED_STATE_WRITERS))
+    p.set_defaults(fn=cmd_shared_state_guard)
     p = sub.add_parser("tickets", help="list tickets (--version --feature --status --assignee --ready --backlog) "
                                        "· --link T-NNN … prints paste-ready file:// links "
                                        "· new --type <design|impl|qa|ops|decision> --slug <slug> "
