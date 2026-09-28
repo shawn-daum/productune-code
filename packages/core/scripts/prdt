@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · schedule · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
@@ -10422,6 +10422,201 @@ def cmd_dispatch(args):
         print(f"in flight (what the dispatch gate counts, machine-wide): {live} of {len(rows)} shown")
 
 
+# ── T-772 (T-681 S1): `prdt schedule` — critical path from ticket `deps` ─────
+# Design SoT: docs/artifacts/v1.11/critical-path.html §1. Per project (T-747),
+# edges from `deps` only (T-763), every ticket weighs 1 (T-764). Nodes = the
+# open tickets of po-state's version + every open ticket they (transitively)
+# depend on in another dir; done/dropped are not nodes and an edge to one is
+# satisfied; an edge to an id no md carries is ignored with one line (doctor
+# E5 already flags it). Reads md frontmatter in memory — never index.db, whose
+# ticket slice can lag the md (design §5) — and writes nothing.
+SCHEDULE_DISPATCHABLE = ("designer", "developer", "qa")
+
+
+def _ticket_num_key(tid):
+    m = re.search(r"(\d+)$", tid or "")
+    return (int(m.group(1)) if m else math.inf, tid or "")
+
+
+def _schedule_in_flight(root):
+    """Ticket ids this project has a LIVE dispatch marker for — the dispatch
+    gate's liveness rule (`_dispatch_state`, T-695), read-only."""
+    d = prdt_home() / "run" / "dispatches"
+    hits = set()
+    if not d.is_dir():
+        return hits
+    now = datetime.now(timezone.utc)
+    here = Path(root).resolve()
+    for f in sorted(d.glob("*.json")):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                continue
+            pr = data.get("project_root")
+            tid = data.get("ticket_id")
+            if not (isinstance(pr, str) and isinstance(tid, str)) or Path(pr).resolve() != here:
+                continue
+        except Exception:
+            continue
+        if _dispatch_state(data, now).startswith("live"):
+            hits.add(tid)
+    return hits
+
+
+def compute_schedule(root):
+    """The schedule as one dict (the `--json` shape; text renders from it)."""
+    import graphlib
+    root = Path(root)
+    st = read_json(root / ".prdt" / "po-state.json") or {}
+    version = st.get("version") if isinstance(st.get("version"), str) else None
+    tickets = {}
+    for row, p, _probs in scan_tickets(root):
+        tickets.setdefault(row["id"], (row, p))
+    out = {"version": version, "cycle": None, "critical_path": [], "cp_length": 0,
+           "rows": [], "missing_deps": []}
+
+    # node set: current version's open tickets, then open deps wherever they live
+    nodes, stack = {}, [t for t, (r, _) in tickets.items()
+                        if r["status"] == "open" and r["version"] == version]
+    while stack:
+        tid = stack.pop()
+        if tid in nodes:
+            continue
+        nodes[tid] = tickets[tid]
+        for d in nodes[tid][0]["deps"]:
+            if d not in tickets:
+                out["missing_deps"].append({"ticket": tid, "dep": d})
+            elif tickets[d][0]["status"] == "open" and d not in nodes:
+                stack.append(d)
+    out["missing_deps"].sort(key=lambda m: (_ticket_num_key(m["ticket"]), _ticket_num_key(m["dep"])))
+    preds = {t: sorted({d for d in r["deps"] if d in nodes and d != t} | ({t} if t in r["deps"] else set()))
+             for t, (r, _) in nodes.items()}
+
+    ts = graphlib.TopologicalSorter(preds)
+    try:
+        order = list(ts.static_order())
+    except graphlib.CycleError as e:
+        out["cycle"] = list(e.args[1]) if len(e.args) > 1 else []
+        return out
+
+    succ = {t: [] for t in nodes}
+    for t, ps in preds.items():
+        for p_ in ps:
+            succ[p_].append(t)
+    es = {}
+    for t in order:
+        es[t] = max((es[p_] + 1 for p_ in preds[t]), default=0)
+    length = max(es.values(), default=-1) + 1
+    ls = {}
+    for t in reversed(order):
+        ls[t] = min((ls[s] - 1 for s in succ[t]), default=length - 1)
+    below = {}
+    for t in reversed(order):
+        acc = set()
+        for s in succ[t]:
+            acc.add(s)
+            acc |= below[s]
+        below[t] = acc
+
+    h4 = {}
+    open_v, body = _prd_open_section(root, st)
+    if open_v is not None:
+        for i, (_ln, key, _c) in enumerate(k for k in _prd_h4_items(body) if k[1]):
+            h4.setdefault(key, i)
+    open_vkey = _version_id_canon(open_v) if open_v else None
+    in_flight = _schedule_in_flight(root)
+
+    rows = []
+    for t, (r, p) in nodes.items():
+        fm, _ = parse_frontmatter(p)
+        prd_item = fm.get("prd_item") if isinstance(fm.get("prd_item"), str) else None
+        m = PRD_ITEM_RE.match(prd_item.strip()) if prd_item else None
+        prd_order = (h4.get(m.group(2)) if m and open_vkey is not None
+                     and _version_id_canon(m.group(1)) == open_vkey else None)
+        waits = sorted(preds[t], key=_ticket_num_key)
+        if r["type"] == "decision" or r["assignee"] == "user":
+            state = "waiting-user"
+        elif r["assignee"] not in SCHEDULE_DISPATCHABLE:
+            state = "po"
+        elif t in in_flight:
+            state = "in-flight"
+        elif waits:
+            state = "blocked"
+        else:
+            state = "ready"
+        rows.append({"id": t, "slug": r["slug"], "version": r["version"], "type": r["type"],
+                     "assignee": r["assignee"], "state": state, "slack": ls[t] - es[t],
+                     "es": es[t], "ls": ls[t], "blocks": len(below[t]), "waits_on": waits,
+                     "prd_item": prd_item, "prd_order": prd_order, "rank": None})
+
+    def tie(row):
+        return (-row["blocks"], row["prd_order"] if row["prd_order"] is not None else math.inf,
+                _ticket_num_key(row["id"]))
+    rows.sort(key=lambda row: (row["slack"], tie(row)))
+    rank = 0
+    for row in rows:
+        if row["state"] == "ready":
+            rank += 1
+            row["rank"] = rank
+    by_id = {row["id"]: row for row in rows}
+    chain, cur = [], None
+    while True:
+        cand = [by_id[s] for s in (succ[cur] if cur else nodes)
+                if by_id[s]["slack"] == 0 and es[s] == (es[cur] + 1 if cur else 0)]
+        if not cand:
+            break
+        cur = min(cand, key=tie)["id"]
+        chain.append(cur)
+    out.update(critical_path=chain, cp_length=length if length > 0 else 0, rows=rows)
+    return out
+
+
+def cmd_schedule(args):
+    """`prdt schedule [--json]` — next dispatch order by critical path (T-772)."""
+    root = require_root()
+    s = compute_schedule(root)
+    if args.json:
+        print(json.dumps(s, ensure_ascii=False))
+        if s["cycle"] is not None:
+            sys.exit(1)
+        return
+    lab = lambda v: safe_label(str(v if v is not None else "-"))
+    for m in s["missing_deps"]:
+        print(f"note: {lab(m['ticket'])} deps on missing {lab(m['dep'])} — ignored")
+    if s["cycle"] is not None:
+        print("dependency cycle: " + " → ".join(lab(t) for t in s["cycle"]))
+        print("no order computed — break the cycle in these tickets' `deps`")
+        sys.exit(1)
+    rows = s["rows"]
+    print(f"schedule {lab(s['version'])} — {len(rows)} open ticket(s) in the graph")
+    if s["critical_path"]:
+        print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
+    else:
+        print("critical path: (none)")
+    w = max([len(lab(r["id"])) for r in rows] + [5])
+
+    def line(r, lead):
+        extra = f"  [{lab(r['version'])}]" if r["version"] != s["version"] else ""
+        waits = f"  waits {','.join(lab(x) for x in r['waits_on'])}" if r["state"] == "blocked" else ""
+        return (f"{lead}{lab(r['id']):<{w}}  slack {r['slack']}  {lab(r['assignee']):<9}  "
+                f"blocks {r['blocks']}{waits}{extra}")
+    ready = [r for r in rows if r["state"] == "ready"]
+    if ready:
+        print("dispatch next:")
+        for r in ready:
+            print(line(r, f"  {r['rank']:>2}  "))
+    else:
+        print("dispatch next: (none)")
+    blocked = [r for r in rows if r["state"] == "blocked"]
+    if blocked:
+        print("blocked (deps open):")
+        for r in blocked:
+            print(line(r, "      "))
+    for state, title in (("waiting-user", "waiting on user"), ("po", "PO work"), ("in-flight", "in flight")):
+        ids = [lab(r["id"]) for r in rows if r["state"] == state]
+        print(f"{title}: {' '.join(ids) if ids else '(none)'}")
+
+
 def cmd_resource(args):
     """`prdt resource up|down|ls|register-stop`. `up`/`down`/`ls` record and
     report ownership markers; `register-stop` writes this machine's stop
@@ -12164,6 +12359,13 @@ def main():
     p.add_argument("--json", action="store_true", help="machine-readable output")
     p.add_argument("--all", action="store_true", help="include stopped markers")
     p.set_defaults(fn=cmd_dispatch)
+    p = sub.add_parser("schedule", help="next dispatch order by critical path (T-772): open tickets of the "
+                                        "current version ranked by slack (critical path first), then "
+                                        "blocked-count, PRD H4 order, id — edges from `deps` only, every "
+                                        "ticket weighs 1; reads md, writes nothing; a dependency cycle is "
+                                        "named and exits 1")
+    p.add_argument("--json", action="store_true", help="the same rows, machine-readable")
+    p.set_defaults(fn=cmd_schedule)
     p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591/T-680): "
                                         "up <name> --dispatch <id> · down <name> --dispatch <id> · "
                                         "ls [--json] · register-stop <name> <command> — up/down record/report; "
