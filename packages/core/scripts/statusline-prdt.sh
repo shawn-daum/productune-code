@@ -2,10 +2,12 @@
 # prdt statusline — PURE DISPLAY (§10). No writes, no side effects; the state/cost
 # recording that full's statusline smuggled in lives in hooks/prdt-post-dispatch.sh.
 #
-# Format: <slug> | <version> | <stage> <sdone>/<stotal> | total <vdone>/<vtotal> | T-NNN <task>→<persona> | branch: <branch>
-#   - <stage> N/M counts ONLY tickets whose type maps to the current stage
-#     (TYPE_TO_STAGE); `| total` is the version-wide open+done count, appended
-#     only when out-of-stage tickets exist (else it would duplicate the stage count).
+# Format: <slug> | <version> | <stage> | <vdone>/<vtotal> | T-NNN <task>→<persona> | branch: <branch>
+#   - <vdone>/<vtotal> is ONE version-wide count over every ticket (open+done)
+#     in the current version dir, every type included (`decision` too) — T-755:
+#     a per-type "which stage is this ticket in" guess (the old TYPE_TO_STAGE
+#     map) read wrong the moment a `design`-typed ticket was actually Build
+#     work, so the count no longer estimates a stage from ticket type at all.
 #   - <task> slug is capped at 16 chars (+ …) so a long slug can't blow out the line.
 # Missing pieces degrade silently (init is deterministic, so slug/stage exist from 0s).
 
@@ -108,33 +110,19 @@ stage = token(st.get("stage"), lambda v: v in STAGES, absent="?") or "?"
 version = token(st.get("version"), lambda v: VERSION_RE.match(v) is not None)
 parts = [slug]
 
-# ticket type → prdt stage. Keyed on the REAL ticket-type enum (design/impl/qa/ops
-# — TICKET_TYPES in scripts/prdt); idiomatic aliases follow so free-form/legacy
-# frontmatter still buckets. Prior map keyed on types that never ship (feature/
-# deploy/…) and sent qa→retro + left ops unmapped, so the `ship` bucket was always
-# empty (T-403 LOW). ops→ship fixes that. Unmapped types fall to the version total.
-TYPE_TO_STAGE = {
-    # canonical enum
-    "design": "define", "impl": "build", "qa": "build", "ops": "ship",
-    # tolerated aliases
-    "docs": "define", "prd": "define", "spec": "define", "feature": "define",
-    "build": "build", "refactor": "build", "bug": "build", "fix": "build",
-    "chore": "build", "test": "build",
-    "deploy": "ship", "release": "ship",
-    "retro": "retro", "close": "retro",
-}
-
-# ticket progress for the current version dir:
-#   sdone/stotal — tickets whose type maps to the current stage
-#   vdone/vtotal — all open+done tickets in the version (version-wide)
-sdone = stotal = vdone = vtotal = 0
+# ticket progress for the current version dir: ONE version-wide count over
+# every open+done ticket, every type included (`decision` too) — T-755 removed
+# the per-type "which stage is this ticket in" guess (TYPE_TO_STAGE) that used
+# to narrow this to a stage-matched subset; a ticket's `type` no longer affects
+# the count at all, only its `status`.
+vdone = vtotal = 0
 # `version` reaches the filesystem here, so only a SHAPE-MATCHED value is used
 # (`<withheld>` / off-shape → no counting, and no `../` reaching os.listdir).
 tdir = os.path.join(root, "docs", "tickets", version) if VERSION_RE.match(version or "") else ""
 # T-682 "waiting": open `type: decision` and open `assignee: user` tickets —
 # scoped to this SAME current-version directory (not a repo-wide walk on every
 # prompt): reused from the loop below that already opens every ticket file
-# here for the stage/version counts, so this costs no extra file reads.
+# here for the version count, so this costs no extra file reads.
 waiting = []
 if tdir and os.path.isdir(tdir):
     for fn in os.listdir(tdir):
@@ -153,9 +141,6 @@ if tdir and os.path.isdir(tdir):
         vdone += is_done
         mt = re.search(r"^(?:type|stage):\s*(\S+)", head, re.M)
         ttype = mt.group(1) if mt else ""
-        if TYPE_TO_STAGE.get(ttype) == stage:
-            stotal += 1
-            sdone += is_done
         if s == "open":
             ma = re.search(r"^assignee:\s*(\S+)", head, re.M)
             tassignee = ma.group(1) if ma else ""
@@ -167,13 +152,8 @@ waiting = sorted(set(waiting))
 
 if version and version != slug:
     parts.append(version)
-if stotal:
-    prog = f"{stage} {sdone}/{stotal}"
-    if vtotal != stotal:  # out-of-stage tickets exist → surface the version total too
-        prog += f" | total {vdone}/{vtotal}"
-    parts.append(prog)
-elif vtotal:
-    parts.append(f"{stage} | total {vdone}/{vtotal}")
+if vtotal:
+    parts.append(f"{stage} | {vdone}/{vtotal}")
 else:
     parts.append(stage)
 
