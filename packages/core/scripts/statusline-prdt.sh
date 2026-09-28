@@ -9,6 +9,8 @@
 #     map) read wrong the moment a `design`-typed ticket was actually Build
 #     work, so the count no longer estimates a stage from ticket type at all.
 #   - <task> slug is capped at 16 chars (+ …) so a long slug can't blow out the line.
+#   - Trailing footer (T-682): `running T-NNN[»T-NNN…] | waiting T-NNN[»T-NNN…] | CP T-NNN→T-NNN`
+#     — CP (T-776) is the ≤2-id head of `prdt schedule`'s own critical_path.
 # Missing pieces degrade silently (init is deterministic, so slug/stage exist from 0s).
 
 set +e
@@ -47,7 +49,7 @@ done
 [ -z "$ROOT" ] && exit 0
 
 ROOT="$ROOT" python3 - <<'PYEOF'
-import json, os, re, sqlite3, subprocess, unicodedata
+import json, os, re, sqlite3, subprocess, sys, unicodedata
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -346,10 +348,60 @@ links = {}  # ticket_id -> resolved path, filled in as segments are built;
             # strip the OSC 8 escape bytes as control characters, same as it
             # strips any other Cc/Cf/Zl/Zp — see the wrap step's own note).
 
+# ── T-776: critical-path head, "from the SAME computation as `prdt schedule`" ─
+# Reimplementing compute_schedule() here would drift from it the next time
+# S1's graph rules (T-747/763/764/765) change; shelling out to the project's
+# own `prdt schedule --json` instead can't drift, at the cost of one child
+# python process per render (~0.2s measured) — accepted per design (SoT:
+# docs/artifacts/v1.11/critical-path.html §4: "statusline critical path 표시
+# … 매 갱신 계산", computed fresh every render, nothing cached).
+def _find_prdt_script():
+    """This project's own `scripts/prdt`, same non-split-root-then-code-dir
+    order as git_branch() above (T-426 split). None when not found — no CP
+    segment, same silent degrade as every other piece here."""
+    for base in (root, os.path.join(root, code_dir_name() or CODE_DIR_DEFAULT)):
+        p = os.path.join(base, "packages", "core", "scripts", "prdt")
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def critical_path_head():
+    """Up to 2 ids — the head of `prdt schedule`'s own `critical_path` — or
+    [] on any degrade (script missing, non-zero exit, timeout, bad JSON;
+    a dependency cycle also computes as [] on the `prdt schedule` side, so it
+    degrades the same way here, silently). PRDT_META_BACKUP=0: this script is
+    pure display (file header, "No writes, no side effects") and every `prdt`
+    subcommand but `meta` fires the detached meta-backup tick otherwise — the
+    same kill switch the ticket's own observed command used."""
+    script = _find_prdt_script()
+    if not script:
+        return []
+    env = dict(os.environ)
+    env["PRDT_META_BACKUP"] = "0"
+    try:
+        r = subprocess.run([sys.executable, script, "schedule", "--json"],
+                            cwd=root, capture_output=True, text=True, timeout=2, env=env)
+    except Exception:
+        return []
+    if r.returncode != 0:
+        return []
+    try:
+        chain = json.loads(r.stdout).get("critical_path")
+    except Exception:
+        return []
+    if not isinstance(chain, list):
+        return []
+    return [t for t in chain[:2] if isinstance(t, str) and TICKET_RE.match(t)]
+
+
 running = running_dispatches()
-idx = open_index_ro() if (running or waiting or ct_tid) else None
+cp = critical_path_head()
+idx = open_index_ro() if (running or waiting or ct_tid or cp) else None
 if ct_tid:
     links[ct_tid] = ticket_path(idx, ct_tid)  # F4: the current_task id links too
+for _cp_tid in cp:
+    links.setdefault(_cp_tid, ticket_path(idx, _cp_tid))
 
 
 def fmt_group(ids, limit, succ_limit, with_persona=None):
@@ -381,6 +433,8 @@ def tail_segments(limits):
         out.append("running " + fmt_group([tid for tid, _ in running], run_lim, succ_lim, personas))
     if waiting:
         out.append("waiting " + fmt_group(waiting, wait_lim, succ_lim))
+    if cp:
+        out.append("CP " + "→".join(cp))  # T-776: beside `waiting`, always the ≤2-id head (never collapsed)
     return out
 
 
@@ -391,7 +445,7 @@ def tail_segments(limits):
 # the cap, rebuilt tighter (2/2/1, then 1/1/0) before the belt ever sees it:
 # collapsing to counts is the rule the acceptance names, truncation is not.
 line = clean(" | ".join(parts), cap=LINE_CAP, bar=True)
-if running or waiting:
+if running or waiting or cp:
     for limits in ((3, 3, 2), (2, 2, 1), (1, 1, 0)):
         candidate = " | ".join(parts + tail_segments(limits))
         if len(candidate) <= LINE_CAP:
