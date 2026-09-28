@@ -1117,6 +1117,46 @@ describe('T-695: the machine resource cap', () => {
       expect(run({ cwd: proj, model: 'sonnet' }, { home })).toBe('')
     })
 
+    test('T-780 round 2: a swapped foreground pair is counted at each worker\'s OWN dispatch tier, never its (possibly-swapped) recorded `model`', () => {
+      // agent-x's marker was FIFO-guessed onto B's (did, model) pair at
+      // SubagentStart — recorded model "sonnet" — but its own worker transcript's
+      // first `[ctx]` line proves it is really running A (opus). agent-y is the
+      // mirror image. Before the fix, both stayed excluded from every tier count
+      // (pairing unconfirmed); the fix re-keys each onto the dispatch its own
+      // worker names, via a did→model map built from every live candidate's own
+      // (did, model) pair — which is always internally consistent even when
+      // misattributed to the wrong agent_id.
+      const home = tmp('prdt-t780b-home-')
+      const A = { dispatch_id: 'd-v112-t900a-1', model: 'opus' }
+      const B = { dispatch_id: 'd-v112-t900b-2', model: 'sonnet' }
+      const ctxFor = (did: string) => ({ slug: 's', goal: 'g', dispatch_id: did, worktree: '/p/tracks/x' })
+      const tdir = path.join(home, 'transcripts', 'sess', 'subagents')
+      const writeHead = (name: string, did: string) => {
+        fs.mkdirSync(tdir, { recursive: true })
+        const t = path.join(tdir, `agent-${name}.jsonl`)
+        const firstLine = JSON.stringify({ type: 'user', message: { role: 'user', content: `[ctx] ${JSON.stringify(ctxFor(did))}\nDo the thing.` } })
+        const rest = fs.readFileSync(t, 'utf8')
+        fs.writeFileSync(t, `${firstLine}\n${rest}`)
+      }
+      marker(home, 'agent-x', 10, false, 'live', 45, false, B.model)
+      marker(home, 'agent-y', 20, false, 'live', 45, false, A.model)
+      for (const [name, did] of [['agent-x', B.dispatch_id], ['agent-y', A.dispatch_id]] as const) {
+        const f = path.join(home, 'run', 'dispatches', `${name}.json`)
+        fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, 'utf8')), pairing: 'unconfirmed', dispatch_id: did }))
+      }
+      writeHead('agent-x', A.dispatch_id)
+      writeHead('agent-y', B.dispatch_id)
+
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_opus_max: 0 }))
+      const dOpus = denyReason({ cwd: proj, model: 'opus' }, { home })
+      expect(dOpus).toContain('in-flight dispatches on model tier "opus" 1 machine-wide (cap 0')
+      expect(dOpus).toContain('\nover cap: model_tier\n')
+
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_sonnet_max: 0 }))
+      const dSonnet = denyReason({ cwd: proj, model: 'sonnet' }, { home })
+      expect(dSonnet).toContain('in-flight dispatches on model tier "sonnet" 1 machine-wide (cap 0')
+    })
+
     test('an unknown/malformed `tool_input.model` value falls back to the "default" bucket, never denies on a bad key', () => {
       const home = tmp('prdt-t774-home-')
       marker(home, 'one', 10, false, 'live', 45, false, 'default')

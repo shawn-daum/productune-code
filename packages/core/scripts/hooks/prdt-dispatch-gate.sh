@@ -41,11 +41,18 @@
 #         marker with no `checkout` (older than T-775, or no `[ctx]` paired)
 #         never matches, and an unmeasured liveness never denies — fail open.
 #         Checked with ④ and outranks it: the fix differs (`prdt track open`).
-#   T-780 — neither ⑥ nor ④'s model_tier axis denies on a marker whose
-#         pairing is unconfirmed (see "T-780: pairing" below): such a marker
+#   T-780 — a marker whose pairing is unconfirmed (see "T-780: pairing" below)
 #         still counts toward the machine-wide `dispatches` axis (its persona
-#         and liveness come from its own agent_id, not the pairing), but its
-#         `model` and `checkout` do not.
+#         and liveness come from its own agent_id, not the pairing). ⑥'s
+#         checkout and ④'s model_tier axis never trust such a marker's OWN
+#         (possibly FIFO-swapped) `checkout`/`model` field — both are read off
+#         the worker's own first-prompt `[ctx]` instead (round 2, T-780: a
+#         swap moves the `did`/`model` PAIR together, never mixes across
+#         candidates, so the model_tier axis re-keys onto the dispatch the
+#         worker itself names, from a did→model map built across every live
+#         candidate). Neither axis EVER guesses: no worker evidence yet, or a
+#         worktree/model this machine's other candidates cannot resolve, and
+#         that marker counts toward neither.
 #   NOT HERE — the return/envelope side (slice 3), and the three binary
 #         candidates held under doctrine #5 for zero observed violations
 #         (AskUserQuestion in a worker · worker↔worker calls · discipline-path
@@ -796,26 +803,42 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
        | (reduce ($heads | split("\n"))[] as $l ({cur: "", first: {}};
             if ($l | test("^==> .* <==$")) then .cur = ($l | capture("^==> (?<p>.*) <==$").p)
             elif $l == "" or .cur == "" then . else .first[.cur] = $l end)).first as $first
-       | [$cands | split("\n")[] | select(length > 0) | split("\u001f") | {id: .[0], t: .[1], age: (.[2] | tonumber), model: (.[3] // "default"),
-           persona: (.[4] // ""), root: (.[5] // ""), co: (.[6] // ""), ticket: (.[7] // ""), did: (.[8] // ""), pc: ((.[9] // "") == "1")}]
-       | map(if .pc then . else
+       | ([$cands | split("\n")[] | select(length > 0) | split("\u001f") | {id: .[0], t: .[1], age: (.[2] | tonumber), model: (.[3] // "default"),
+           persona: (.[4] // ""), root: (.[5] // ""), co: (.[6] // ""), ticket: (.[7] // ""), did: (.[8] // ""), pc: ((.[9] // "") == "1")}]) as $base
+       # T-780 round 2 (QA grill): an unconfirmed marker's own `.did`/`.model`
+       # were written TOGETHER at SubagentStart from the same FIFO-guessed
+       # pending call — a swap moves the whole pair to the wrong agent_id, it
+       # never mixes did from one candidate with model from another. So every
+       # live candidate's own (did, model) pair is still a GLOBALLY valid fact
+       # about that dispatch_id's tier, however it got attached — this map lets
+       # an unconfirmed marker be re-keyed onto the model of the dispatch its
+       # OWN worker (never its stale marker) claims, below.
+       | ($base | map(select(.did != "")) | map({(.did): .model}) | add // {}) as $did_model
+       | ($base | map(if .pc then . + {tier_model: .model} else
              ((try ($first[.t] // "" | fromjson | .message.content
                     | (if type == "array" then (map(select(type == "object" and .type == "text") | .text) | first) else . end)
                     | strings | split("\n") | map(select(startswith("[ctx] {"))) | first
                     | .[6:] | fromjson | select(type == "object")) catch null) // null) as $wc
-             | if $wc == null then . + {co: "", ticket: ""}
-               else ((($wc.dispatch_id // "") | tostring) as $wd
-                     | ($wd != "" and $wd == .did)) as $ok
+             | if $wc == null then . + {co: "", ticket: "", tier_model: null}
+               else (($wc.dispatch_id // "") | tostring) as $wd
+                 | ($wd != "" and $wd == .did) as $ok
                  | . + {pc: $ok,
                         co: (($wc.worktree // "") | if type == "string" and (gsub("^\\s+|\\s+$"; "") != "") then gsub("^\\s+|\\s+$"; "") else "code" end),
-                        ticket: (if $ok then .ticket else "" end)} end end)
+                        ticket: (if $ok then .ticket else "" end),
+                        tier_model: (if $ok then .model elif $wd != "" then ($did_model[$wd] // null) else null end)} end end))
        | map(. + {live: (if .t == "" or ($mt[.t] // null) == null then (.age < $grace)
              elif (($last[.t] // "") | contains("\"model\":\"<synthetic>\"")) then false
              elif (now - $mt[.t]) > ($idle_min * 60) then false
              else true end)})
      ) catch null end) as $live_cands
 | (if $live_cands == null then null else ($live_cands | map(select(.live)) | length) end) as $inflight
-| (if $live_cands == null then null else ($live_cands | map(select(.live and .pc and .model == $want_model)) | length) end) as $tier_inflight
+# T-780 round 2: `.tier_model` (never `.model` directly) — a confirmed marker's
+# tier_model IS its own model; an unconfirmed one's is the model its OWN
+# worker's dispatch maps to (or null, never guessed, when there is no worker
+# evidence yet or its true dispatch_id matches no known candidate) — so a
+# swapped foreground pair is counted on the tier it is ACTUALLY running at,
+# without ever trusting the (possibly wrong) pairing.
+| (if $live_cands == null then null else ($live_cands | map(select(.live and .tier_model == $want_model)) | length) end) as $tier_inflight
 | (if $load1 != null and $ncpu != null then ($load1 / $ncpu) else null end) as $ratio
 | (if $memsize != null then ($memsize / 1073741824 | r2) else null end) as $gb
 | [
@@ -840,7 +863,7 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
           else "resident VMs: unmeasured (ps)" end),
    free: "stop a VM whose job is done (`prdt resource ls` names its owner; a VM no marker owns is the user's)"},
   {k: "model_tier", ok: ($tier_inflight != null), over: ($tier_inflight != null and $tier_inflight > $tier_cap),
-   text: (if $tier_inflight != null then "in-flight dispatches on model tier \"\($want_model)\" \($tier_inflight) machine-wide (cap \($tier_cap) — same run/dispatches liveness rule as the dispatches axis, grouped by each marker's model; a marker not yet paired with its own Agent call is not counted)"
+   text: (if $tier_inflight != null then "in-flight dispatches on model tier \"\($want_model)\" \($tier_inflight) machine-wide (cap \($tier_cap) — same run/dispatches liveness rule as the dispatches axis; a marker not yet paired with its own Agent call is grouped by the model of the dispatch its own worker's first prompt names, never its own possibly-swapped `model` field, and dropped from every tier when that cannot be read yet)"
           else "in-flight dispatches on model tier \"\($want_model)\": unmeasured (a run/dispatches marker is unreadable or a liveness probe failed — `prdt dispatch ls` names it)" end),
    free: "wait for a worker on the same model tier to return, or dispatch on a different tier"}
   ] as $axes
