@@ -521,3 +521,34 @@ describe('same-path debounce', () => {
     expect(readLog(log).split('\n')).toEqual([p, p])
   })
 })
+
+// T-750: `prdt settings` reads and writes the SAME file the hook reads, by the
+// same rule — whatever the CLI reports as viewer.auto-open is what the hook does.
+describe('prdt settings viewer.auto-open ↔ hook parity (T-750)', () => {
+  const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
+  const DISCIPLINE = path.join(CORE_ROOT, 'discipline')
+  const settings = (prdtHome: string, ...args: string[]) => execFileSync('python3', [PRDT_CLI, 'settings', ...args], {
+    cwd: prdtHome, encoding: 'utf8', env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: 'en' },
+  })
+  const cliValue = (prdtHome: string) =>
+    JSON.parse(settings(prdtHome, '--json')).find((e: any) => e.key === 'viewer.auto-open').value
+
+  for (const content of [undefined, 'off\n', ' off \n', 'off', 'OFF\n', 'on\n', '', 'garbage\n']) {
+    test.skipIf(!hasJq())(`file content ${JSON.stringify(content)} → CLI value matches hook behavior`, () => {
+      const prdtHome = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t750-home-'))
+      if (content !== undefined) fs.writeFileSync(path.join(prdtHome, 'auto-open'), content)
+      const p = makeFile('PRD.md')
+      const { log } = run({ filePath: p, prdtHome })
+      expect(cliValue(prdtHome)).toBe(readLog(log) === p ? 'on' : 'off')
+    })
+  }
+
+  test.skipIf(!hasJq())('set off → hook silent; set on → hook opens', () => {
+    const prdtHome = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t750-home-'))
+    settings(prdtHome, 'set', 'viewer.auto-open', 'off')
+    const p = makeFile('PRD.md')
+    expect(readLog(run({ filePath: p, prdtHome }).log)).toBe('')
+    settings(prdtHome, 'set', 'viewer.auto-open', 'on')
+    expect(readLog(run({ filePath: p, prdtHome }).log)).toBe(p)
+  })
+})

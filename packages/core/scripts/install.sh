@@ -237,6 +237,7 @@ done <<EOF
 $HOOK_BASENAMES
 EOF
 cp "$ROOT/scripts/prdt" "$PRDT_HOME/bin/prdt"
+cp "$ROOT/scripts/prdt-messages.json" "$PRDT_HOME/bin/prdt-messages.json"
 cp "$ROOT/scripts/statusline-prdt.sh" "$PRDT_HOME/bin/statusline-prdt.sh"
 chmod +x "$PRDT_HOME/hooks/"*.sh "$PRDT_HOME/bin/prdt" "$PRDT_HOME/bin/statusline-prdt.sh"
 
