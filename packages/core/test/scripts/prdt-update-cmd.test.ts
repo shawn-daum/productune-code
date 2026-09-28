@@ -91,6 +91,36 @@ function advanceOrigin(origin: string, releases: string[]): void {
   git(wc, 'push', '-q', 'origin', 'dev')
 }
 
+/** Advance `origin`'s `branch` (which must already exist on origin) with a new
+ * commit carrying `releases` — used to shape the mismatched-upstream repro. */
+function advanceOriginBranch(origin: string, branch: string, releases: string[]): void {
+  const scratch = fs.mkdtempSync(path.join(tmpRoot, 'push-'))
+  const wc = path.join(scratch, 'wc')
+  git(scratch, 'clone', '-q', '-b', branch, origin, wc)
+  writeReleases(wc, releases)
+  commit(wc, `${branch} moves`)
+  git(wc, 'push', '-q', 'origin', branch)
+}
+
+/**
+ * T-749c (QA sandbox repro, round 3): a local `dev` whose upstream is
+ * misconfigured to `origin/main` — `remote_ahead`/`releases_pending_between`
+ * read `origin/<branch-name>` (i.e. `origin/dev`), NOT `@{upstream}`, so this
+ * mismatch is exactly what let a plain `git pull --ff-only` (which DOES
+ * follow `@{upstream}`) install something the version/notes check never saw.
+ */
+function makeMismatchedUpstreamCase(): { origin: string; clone: string } {
+  const { origin, clone } = makeRemoteAndClone() // origin: branch `dev` @ v1.5 only
+  // birth `main` at `dev`'s current tip — same commit, no new commit needed
+  const scratch = fs.mkdtempSync(path.join(tmpRoot, 'mkmain-'))
+  const wc = path.join(scratch, 'wc')
+  git(scratch, 'clone', '-q', origin, wc)
+  git(wc, 'push', '-q', 'origin', 'dev:refs/heads/main')
+  git(clone, 'fetch', '-q', 'origin', 'main')
+  git(clone, 'branch', '--set-upstream-to=origin/main', 'dev')
+  return { origin, clone }
+}
+
 /** Run `cmd_update(None)` against `clone` (PRDT_REPO), feeding `stdinAnswer` when a tty. */
 function runCmdUpdate(clone: string, opts: { tty: boolean; stdinAnswer?: string }): string {
   const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
@@ -278,5 +308,37 @@ print("AFTER_CMD_UPDATE")
     expect(out).toContain('AFTER_CMD_UPDATE') // cmd_update returned normally, no crash
     expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before)
     expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(false)
+  })
+
+  // T-749c (QA sandbox repro, round 3): `remote_ahead` compares `origin/dev` (the
+  // CURRENT branch name), but the old `_run_pull_install` ran a bare
+  // `git pull --ff-only`, which follows `@{upstream}` — here misconfigured to
+  // `origin/main`. `origin/dev` is equal (→ "up to date", no prompt), but
+  // `origin/main` is ahead: the old code silently installed it right after
+  // printing "최신이에요".
+  test('up-to-date verdict (origin/dev equal) never pulls @{upstream} (origin/main) even when it is ahead', () => {
+    const { origin, clone } = makeMismatchedUpstreamCase()
+    const before = git(clone, 'rev-parse', 'HEAD').trim()
+    advanceOriginBranch(origin, 'main', ['v1.6', 'v1.5']) // @{upstream} now strictly ahead; origin/dev untouched
+    const out = runCmdUpdate(clone, { tty: true, stdinAnswer: '1\n' }) // must never be reached either way
+    expect(out.trim()).toBe('지금 버전이 최신이에요 (v1.5) — 업데이트할 것이 없어요.')
+    expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before) // nothing pulled from origin/main
+    expect(fs.readFileSync(path.join(clone, 'docs', 'RELEASES.md'), 'utf-8')).not.toContain('v1.6')
+    expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(true) // mirror refresh still ran
+  })
+
+  // T-749c: the prompted path must pull the SAME ref its notes came from
+  // (`origin/dev`), not `@{upstream}` (`origin/main`, diverging further here) —
+  // even though a plain `git pull --ff-only` would have followed the latter.
+  test('prompted "1" pulls exactly origin/<branch> (origin/dev), never @{upstream} (origin/main)', () => {
+    const { origin, clone } = makeMismatchedUpstreamCase()
+    advanceOrigin(origin, ['v1.6', 'v1.5']) // origin/dev — the ref whose notes get shown
+    advanceOriginBranch(origin, 'main', ['v1.9-should-never-be-seen', 'v1.5']) // @{upstream}, diverges further
+    const out = runCmdUpdate(clone, { tty: true, stdinAnswer: '1\n' })
+    expect(out).toContain('v1.6 line')
+    expect(out).not.toContain('v1.9-should-never-be-seen')
+    expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(git(origin, 'rev-parse', 'dev').trim())
+    expect(git(clone, 'rev-parse', 'HEAD').trim()).not.toBe(git(origin, 'rev-parse', 'main').trim())
+    expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(true)
   })
 })
