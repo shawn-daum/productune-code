@@ -4353,15 +4353,9 @@ def cmd_po(args):
         sys.exit("prdt po: `claude` CLI를 찾을 수 없어요 — Claude Code 설치/PATH 확인")
 
 
-def cmd_update(_args):
-    """구 productune update 계승: repo pull --ff-only → install.sh 재실행.
-
-    T-749: 묻지 않고 바로 pull+install 하던 as-is를 고친다 — 설치된 버전 → 새
-    버전과 그 사이 RELEASES.md 노트를 먼저 보여주고 `1. update`/`2. skip` 을
-    번호 입력으로 물은 뒤에야 pull 한다(`_prompt_update_choice`; 화살표 선택이
-    아니다 — 그 선택의 재현된 결함은 이 함수 바로 아래 주석 참고)."""
-    import subprocess
-    m = load_messages()
+def _resolve_prdt_repo():
+    """PRDT_REPO from ~/.prdt/prdt.env, or exit — shared by `cmd_update` and the
+    T-749b pull+install helper below."""
     repo = None
     env = Path.home() / ".prdt" / "prdt.env"
     if env.is_file():
@@ -4370,14 +4364,74 @@ def cmd_update(_args):
                 repo = line.split("=", 1)[1].strip()
     if not repo or not Path(repo).is_dir():
         sys.exit("prdt update: PRDT_REPO를 찾을 수 없어요 — ~/.prdt/prdt.env 확인 (재설치: packages/core/scripts/install.sh)")
+    return repo
 
-    def git(*a):
-        return subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True)
 
-    dirty = [l for l in git("status", "--porcelain").stdout.splitlines() if l and not l.startswith("??")]
+def _run_pull_install(repo):
+    """`git pull --ff-only` then re-run `<repo>/scripts/install.sh` — the actual
+    mechanics both `cmd_update`'s own prompt AND the run-time nudge
+    (`maybe_prompt_update`) need once THEIR OWN choice is "update". T-749b:
+    pulled out of `cmd_update` so the nudge never calls `cmd_update(None)` again
+    after already asking — that re-entry re-ran the whole version check and
+    rendered the box + question a SECOND time (QA grill finding #1). Exits the
+    process on any failure (dirty tree / non-fast-forward pull / install.sh
+    failure) — the same fatal-on-failure contract `cmd_update` always had."""
+    repo = str(repo)
+    dirty = [l for l in _git_repo(repo, "status", "--porcelain").stdout.splitlines()
+             if l and not l.startswith("??")]
     if dirty:
         sys.exit(f"prdt update: repo에 커밋 안 된 변경이 있어 중단 — 정리 후 재시도: git -C {repo} status")
+    p = _git_repo(repo, "pull", "--ff-only")
+    if p.returncode:
+        tail = (p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"]
+        sys.exit(f"prdt update: pull 실패({tail[0]}) — repo에서 수동 해결 후 재시도")
+    if subprocess.run(["bash", str(Path(repo) / "scripts" / "install.sh")]).returncode:
+        sys.exit("prdt update: install 실패 — 위 출력 확인")
 
+
+def _git_repo(repo, *a):
+    return subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True)
+
+
+def _remote_short_ref(code_root, timeout=2):
+    """Short SHA of `origin/<branch>` — the "new version" label for the T-749b
+    no-release-notes prompt (origin has commits ahead, but no `## <version>`
+    section in RELEASES.md qualifies). The objects are already local by the
+    time this is called: both `remote_ahead` and `releases_pending_between`
+    already fetched `origin/<branch>` to get here, so this is a plain local
+    `rev-parse`, no extra network hop. None on any failure — caller falls back
+    to a literal "?"."""
+    try:
+        branch = subprocess.run(["git", "-C", str(code_root), "rev-parse", "--abbrev-ref", "HEAD"],
+                                 capture_output=True, text=True, timeout=timeout).stdout.strip()
+        if not branch or branch == "HEAD":
+            return None
+        r = subprocess.run(["git", "-C", str(code_root), "rev-parse", "--short", f"origin/{branch}"],
+                            capture_output=True, text=True, timeout=timeout)
+        return r.stdout.strip() or None
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def cmd_update(_args):
+    """구 productune update 계승: repo pull --ff-only → install.sh 재실행.
+
+    T-749: 묻지 않고 바로 pull+install 하던 as-is를 고친다 — 설치된 버전 → 새
+    버전과 그 사이 RELEASES.md 노트를 먼저 보여주고 `1. update`/`2. skip` 을
+    번호 입력으로 물은 뒤에야 pull 한다(`_prompt_update_choice`; 화살표 선택이
+    아니다 — 그 선택의 재현된 결함은 이 함수 바로 아래 주석 참고).
+
+    T-749b (QA grill finding #2): T-749 위 문단의 "묻고서만 pull" 규칙을 새
+    RELEASES.md 섹션이 없는 두 경우까지 잘못 확대해, 그 두 경우엔 pull도
+    install.sh도 아예 돌지 않게 됐다 — `packages/gui/electron/ipc/settings.ts`
+    와 두 README 모두 "prdt update 는 늘 install.sh 를 다시 돈다(미러/메뉴판
+    갱신)"는 구 계약을 그대로 전제한다. 그래서 원격이 하나도 안 앞서 있으면(=
+    새 섹션이 있을 수조차 없음) 옛 무조건 pull+install 미러 갱신 경로를 그대로
+    묻지 않고 돈다. 원격은 앞서 있는데 그 커밋들에 해당하는 RELEASES.md 섹션이
+    없으면(예: 아직 태그 전) — 그래도 묻는다, 다만 노트 자리에 "릴리즈 노트
+    없음" 한 줄과 커밋 해시를 "새 버전" 자리에 보여준다."""
+    m = load_messages()
+    repo = _resolve_prdt_repo()
     code_root = git_toplevel(repo)
     if code_root is None:
         sys.exit("prdt update: repo 루트를 찾지 못했어요 — git 저장소인지 확인하세요.")
@@ -4385,10 +4439,22 @@ def cmd_update(_args):
     ahead = remote_ahead(code_root)
     if ahead is None:
         sys.exit(msg(m, "update.error.offline"))
-    new_version, sections = (None, []) if not ahead else releases_pending_between(code_root, installed)
-    if not new_version or not _newer_version(new_version, installed):
+
+    if not ahead:
+        # T-749b: nothing on origin at all → the pre-T-749 mirror-refresh
+        # contract (GUI settings / both READMEs point at `prdt update` always
+        # re-running install.sh) — no prompt, since there is nothing to choose.
+        _run_pull_install(repo)
         print(msg(m, "update.uptodate", version=installed or "?"))
         return
+
+    new_version, sections = releases_pending_between(code_root, installed)
+    if not new_version or not _newer_version(new_version, installed):
+        # T-749b: origin IS ahead, but no RELEASES.md section qualifies as a
+        # newer version — still ask, with a "no release notes" line and the
+        # remote's short SHA standing in for the version number.
+        new_version = _remote_short_ref(code_root) or "?"
+        sections = []
 
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print(msg(m, "update.noninteractive", installed=installed or "?", new=new_version))
@@ -4397,12 +4463,7 @@ def cmd_update(_args):
     if _prompt_update_choice(m, installed or "?", new_version, sections) != "update":
         return
 
-    p = git("pull", "--ff-only")
-    if p.returncode:
-        tail = (p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"]
-        sys.exit(f"prdt update: pull 실패({tail[0]}) — repo에서 수동 해결 후 재시도")
-    if subprocess.run(["bash", str(Path(repo) / "scripts" / "install.sh")]).returncode:
-        sys.exit("prdt update: install 실패 — 위 출력 확인")
+    _run_pull_install(repo)
     print(msg(m, "update.done", old=installed or "?", new=new_version))
 
 
@@ -4917,6 +4978,10 @@ def _render_update_notes(m, installed, new_version, sections):
     print(f"\n{rule}")
     print(f"  {msg(m, 'update.version-line', installed=installed, new=new_version)}")
     print(rule)
+    if not sections:
+        # T-749b: origin ahead in git but no qualifying RELEASES.md section —
+        # still show the box and still ask, just with no notes to print.
+        print(f"  {msg(m, 'update.no-notes')}")
     for _version, text in sections:
         lines = text.splitlines()
         header = lines[0][3:].strip() if lines else _version
@@ -4935,14 +5000,29 @@ def _prompt_update_choice(m, installed, new_version, sections):
     PRE-HIGHLIGHTED first option (the destructive "update now") on a single bare
     Enter with zero navigation — see the design-comment block above
     `maybe_prompt_update` for the repro. A typed digit has no default to fall
-    into: a bare Enter (or anything else) just re-prompts. Returns "update" or
-    "skip" — never None; EOF on stdin reads as "skip" (never installs)."""
+    into: a bare Enter (or anything else) just re-prompts. Returns "update",
+    "skip", or "cancel" — never None.
+
+    T-749b (QA grill findings #3/#4): EOF on stdin reads as "skip" (never
+    installs) same as before, but now prints a fresh-line newline first — the
+    terminal never echoes one for Ctrl-D itself, so the next message used to
+    run on directly after the prompt text with no line break. Ctrl-C
+    (KeyboardInterrupt) is caught here too — it used to propagate all the way
+    out of `main()` as an uncaught traceback and, on the run-time nudge path,
+    take the ORIGINAL command down with it; caught here it prints one fresh
+    line + one catalog message and returns "cancel", never installs, and lets
+    both callers fall through normally."""
     _render_update_notes(m, installed, new_version, sections)
     while True:
         try:
             raw = input(msg(m, "update.prompt")).strip()
         except EOFError:
+            print()          # fresh line — Ctrl-D echoes none of its own
             return "skip"
+        except KeyboardInterrupt:
+            print()          # fresh line — Ctrl-C echoes none of its own either
+            print(msg(m, "update.cancelled"))
+            return "cancel"
         if raw == "1":
             return "update"
         if raw == "2":
@@ -4988,14 +5068,22 @@ def maybe_prompt_update(cmd):
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print(msg(m, "update.noninteractive", installed=installed or "?", new=new_version))
         return
-    if _prompt_update_choice(m, installed or "?", new_version, sections) == "update":
-        cmd_update(None)                                # pull --ff-only + install.sh (may sys.exit on failure)
-        try:                                            # re-exec original invocation on the freshly-copied code
+    choice = _prompt_update_choice(m, installed or "?", new_version, sections)
+    if choice == "update":
+        # T-749b: NEVER re-enter `cmd_update(None)` here — that re-ran the whole
+        # version check and rendered this same box + question a SECOND time
+        # (QA grill finding #1). The choice was already made above; only the
+        # pull+install mechanics are still needed.
+        _run_pull_install(repo)                          # may sys.exit on failure
+        print(msg(m, "update.done", old=installed or "?", new=new_version))
+        try:                                              # re-exec original invocation on the freshly-copied code
             os.execv(sys.executable, [sys.executable, *sys.argv])
         except OSError:
-            return                                      # exec failed → fall through on stale code
-    else:
+            return                                        # exec failed → fall through on stale code
+    elif choice == "skip":
         print(msg(m, "update.skip.runtime"))
+    # choice == "cancel" (Ctrl-C): `_prompt_update_choice` already printed the
+    # one catalog line for it — nothing more to print, nothing installed.
     # fall through to the original command
 
 
