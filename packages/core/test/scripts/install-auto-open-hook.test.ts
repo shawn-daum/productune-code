@@ -19,6 +19,7 @@
 
 import path from 'path'
 import fs from 'fs'
+import { execFileSync } from 'child_process'
 import { test, expect } from 'vitest'
 import { installedMachine, freshInstall, hasJq } from '../helpers/install-fixture'
 
@@ -45,4 +46,17 @@ test.skipIf(!hasJq())('re-running install.sh is idempotent (single auto-open ent
   const entries = (settings.hooks.PostToolUse as any[]).filter((e) => e.matcher === 'Write')
   expect(entries.length).toBe(1)
   expect(entries[0].hooks.length).toBe(1)
+})
+
+// T-750: the message catalog is mirrored beside bin/prdt, so the INSTALLED
+// `prdt settings` prints catalog lines — never the bare message keys.
+test.skipIf(!hasJq())('installed prdt settings reads the mirrored message catalog', () => {
+  const { prdtHome } = installedMachine()
+  expect(fs.existsSync(path.join(prdtHome, 'bin', 'prdt-messages.json'))).toBe(true)
+  const out = execFileSync('python3', [path.join(prdtHome, 'bin', 'prdt'), 'settings'], {
+    cwd: prdtHome, encoding: 'utf8',
+    env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: path.join(prdtHome, 'discipline'), PRDT_LANG: 'ko' },
+  })
+  expect(out).toContain('PO가 건네는 파일 자동 열기')
+  expect(out).not.toContain('settings.list.')
 })

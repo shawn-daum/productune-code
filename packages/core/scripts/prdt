@@ -3685,6 +3685,48 @@ def _ascii_strip(s):
     return s.strip(" \t\n\r\x0b\x0c")
 
 
+def register_value_error(spec, value):
+    """Why `value` is illegal for register key `spec` (a resolver `--list` key
+    entry): "domain" · "shape" · None when legal. The one judgment both
+    `prdt register set` and `prdt settings set register.*` apply (T-750)."""
+    if spec["kind"] == "enum" and value not in spec["domain"]:
+        return "domain"
+    if spec["kind"] == "text":
+        # Same three literals prdt-audience-inject.sh's address_ok bans
+        # (T-586 QA defect 1): they would forge the binding/session
+        # line's own key=value grammar. Both gates refuse identically --
+        # a hand-edited register line is judged the same way.
+        bad = (len(value.encode("utf-8")) > spec["max_bytes"]
+               or re.search(r"[\x00-\x1f\x7f\x85\u2028\u2029]", value)
+               or '"' in value or '\u00b7' in value or '[prdt' in value)
+        if bad:
+            return "shape"
+    return None
+
+
+def register_write(dom, key, value):
+    """Set (`value` non-empty) or remove (`value` "") one key in the register
+    file, keeping every other line as written. Returns the file path."""
+    path = Path(dom["file"])
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    out, placed = [], False
+    for raw in (existing.rstrip("\n").split("\n") if existing else []):
+        line = raw.rstrip("\r")
+        t = _ascii_strip(line)
+        k = _ascii_strip(t.split("=", 1)[0]) if ("=" in t and not t.startswith("#")) else None
+        if k == key:
+            if not placed and value:
+                out.append(f"{key}={value}")
+                placed = True
+            continue
+        out.append(line)
+    if not placed and value:
+        out.append(f"{key}={value}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, ("\n".join(out) + "\n") if out else "", mode=0o600)
+    return path
+
+
 def cmd_register(args):
     """`prdt register` — show · set <key> <value> · unset <key> · --list. Legality is
     the resolver's judgment (`--list`), never this function's: `set` refuses what
@@ -3747,41 +3789,183 @@ def cmd_register(args):
             sys.exit(f"prdt register: unknown key `{key}` — keys: "
                      + ", ".join(k["key"] for k in dom["keys"]))
         if value:
-            if spec["kind"] == "enum" and value not in spec["domain"]:
+            bad = register_value_error(spec, value)
+            if bad == "domain":
                 sys.exit(f"prdt register: {key}={value} is outside its domain ({' | '.join(spec['domain'])})")
-            if spec["kind"] == "text":
-                # Same three literals prdt-audience-inject.sh's address_ok bans
-                # (T-586 QA defect 1): they would forge the binding/session
-                # line's own key=value grammar. Both gates refuse identically --
-                # a hand-edited register line is judged the same way.
-                bad = (len(value.encode("utf-8")) > spec["max_bytes"]
-                       or re.search(r"[\x00-\x1f\x7f\x85\u2028\u2029]", value)
-                       or '"' in value or '\u00b7' in value or '[prdt' in value)
-                if bad:
-                    sys.exit(f"prdt register: address fails its shape ({spec['shape']})")
-        path = Path(dom["file"])
-        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-        out, placed = [], False
-        for raw in (existing.rstrip("\n").split("\n") if existing else []):
-            line = raw.rstrip("\r")
-            t = _ascii_strip(line)
-            k = _ascii_strip(t.split("=", 1)[0]) if ("=" in t and not t.startswith("#")) else None
-            if k == key:
-                if not placed and value:
-                    out.append(f"{key}={value}")
-                    placed = True
-                continue
-            out.append(line)
-        if not placed and value:
-            out.append(f"{key}={value}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(path, ("\n".join(out) + "\n") if out else "", mode=0o600)
+            if bad == "shape":
+                sys.exit(f"prdt register: address fails its shape ({spec['shape']})")
+        path = register_write(dom, key, value)
         # confirm through the resolver — the write is only as good as what it reads back
         res = register_query("--resolve", droot) or {}
         shown = (res.get("values") or {}).get(key)
         print(f"register: {key}={shown if shown is not None else 'none'} → {path}")
         return
     sys.exit(f"prdt register: unknown action `{action}`")
+
+
+# ── settings (T-750) — every machine setting behind one command ─────────────
+#
+# `prdt settings` lists and changes the machine settings that used to live
+# behind separate paths (register → `prdt register`, auto-open / plan-tier →
+# hand edits). Keys are dot-scoped `<area>.<key>` (T-759). A new setting is ONE
+# more entry in `settings_entries()` plus its catalog lines — never a new
+# subcommand. Every line this command prints comes from `prdt-messages.json`
+# (T-757); the language is `PRDT_LANG` (ko | en), default ko.
+
+MESSAGES_FILE = "prdt-messages.json"
+AUTO_OPEN_DOMAIN = ("on", "off")
+# the legal set prdt-plan-tier-inject.sh's `case` and settings/plan-tier.ts accept
+PLAN_TIER_DOMAIN = ("max-x20", "team-premium", "other")
+
+
+def cli_lang():
+    lang = (os.environ.get("PRDT_LANG") or "").strip().lower()
+    return "en" if lang.startswith("en") else "ko"
+
+
+def load_messages(lang=None):
+    """The catalog for `lang` — the script's sibling file, which install.sh
+    mirrors next to `bin/prdt`. A missing file or key prints the key itself,
+    so a gap is visible rather than silently hardcoded."""
+    data = read_json(Path(__file__).resolve().parent / MESSAGES_FILE) or {}
+    table = data.get(lang or cli_lang())
+    return table if isinstance(table, dict) else {}
+
+
+def msg(table, mkey, /, **kw):
+    text = table.get(mkey, mkey)
+    try:
+        return text.format(**kw)
+    except (KeyError, IndexError, ValueError):
+        return text
+
+
+def _display_width(s):
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s)
+
+
+def _pad(s, width):
+    return s + " " * max(1, width - _display_width(s))
+
+
+def _token_file(name):
+    return prdt_home() / name
+
+
+def _read_token(name):
+    """Whitespace-stripped content, the way the bash hooks read it
+    (`cat | tr -d '[:space:]'`); "" when the file is missing/unreadable."""
+    try:
+        return "".join(_token_file(name).read_text(encoding="utf-8", errors="replace").split())
+    except OSError:
+        return ""
+
+
+def _write_token(name, value):
+    path = _token_file(name)
+    if value is None:
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, value + "\n", mode=0o644)
+
+
+def settings_entries(droot):
+    """Every machine setting: key · kind (enum|text) · domain/shape · get() ·
+    put(value or None to reset). None when the register resolver is absent."""
+    dom = register_query("--list", droot)
+    if dom is None:
+        return None
+    entries = []
+
+    def reg_get(k):
+        return lambda: ((register_query("--resolve", droot) or {}).get("values") or {}).get(k)
+
+    for spec in dom["keys"]:
+        k = spec["key"]
+        entries.append({
+            "key": f"register.{k}", "kind": spec["kind"], "domain": spec.get("domain"),
+            "shape": spec.get("shape"), "check": (lambda v, spec=spec: register_value_error(spec, v)),
+            "get": reg_get(k), "put": (lambda v, k=k: register_write(dom, k, v or "")),
+        })
+    # prdt-auto-open.sh: exactly "off" (whitespace-stripped) disables; anything
+    # else — missing file included — is on.
+    entries.append({
+        "key": "viewer.auto-open", "kind": "enum", "domain": list(AUTO_OPEN_DOMAIN),
+        "check": lambda v: None if v in AUTO_OPEN_DOMAIN else "domain",
+        "get": lambda: "off" if _read_token("auto-open") == "off" else "on",
+        "put": lambda v: _write_token("auto-open", v),
+    })
+    # prdt-plan-tier-inject.sh: a value outside the domain reads as unset.
+    entries.append({
+        "key": "plan.tier", "kind": "enum", "domain": list(PLAN_TIER_DOMAIN),
+        "check": lambda v: None if v in PLAN_TIER_DOMAIN else "domain",
+        "get": lambda: (lambda t: t if t in PLAN_TIER_DOMAIN else None)(_read_token("plan-tier")),
+        "put": lambda v: _write_token("plan-tier", v),
+    })
+    return entries
+
+
+def _join_or(items, word):
+    items = list(items)
+    if len(items) <= 1:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} {word} {items[-1]}"
+
+
+def cmd_settings(args):
+    """`prdt settings` — list · set <key> <value> · unset <key> (T-750)."""
+    m = load_messages()
+    entries = settings_entries(discipline_root())
+    if entries is None:
+        sys.exit(msg(m, "settings.error.resolver"))
+    none = msg(m, "settings.value.none")
+    shown = lambda v: none if v is None else v
+    action = args.action or "list"
+    rest = list(args.rest or [])
+    if action == "list":
+        if rest:
+            sys.exit(msg(m, "settings.error.usage"))
+        rows = [(e["key"], shown(e["get"]()), msg(m, f"settings.list.desc.{e['key']}")) for e in entries]
+        if args.json:
+            print(json.dumps([{"key": e["key"], "value": e["get"](), "domain": e.get("domain"),
+                               "shape": e.get("shape")} for e in entries], ensure_ascii=False))
+            return
+        head = (msg(m, "settings.list.header.key"), msg(m, "settings.list.header.value"),
+                msg(m, "settings.list.header.desc"))
+        kw = max(_display_width(r[0]) for r in [head, *rows]) + 5
+        vw = max(17, max(_display_width(r[1]) for r in [head, *rows]) + 3)
+        for r in [head, *rows]:
+            print(f"{_pad(r[0], kw)}{_pad(r[1], vw)}{r[2]}")
+        print()
+        print(msg(m, "settings.list.hint"))
+        return
+    if (action == "set" and len(rest) != 2) or (action == "unset" and len(rest) != 1):
+        sys.exit(msg(m, "settings.error.usage"))
+    key = rest[0]
+    entry = next((e for e in entries if e["key"] == key), None)
+    if entry is None:
+        sys.exit(msg(m, "settings.error.badkey", key=key, keys=", ".join(e["key"] for e in entries)))
+    current = shown(entry["get"]())
+    if action == "unset":
+        entry["put"](None)
+        print(msg(m, "settings.change.unset", key=key, value=shown(entry["get"]())))
+        return
+    value = _ascii_strip(rest[1])
+    if not value:
+        sys.exit(msg(m, "settings.error.empty", key=key))
+    bad = entry["check"](value)
+    if bad == "domain":
+        sys.exit(msg(m, "settings.error.badvalue", key=key, value=value, current=current,
+                     allowed=_join_or(entry["domain"], msg(m, "settings.or"))))
+    if bad:
+        sys.exit(msg(m, "settings.error.badshape", key=key, value=value, current=current,
+                     shape=entry.get("shape") or ""))
+    entry["put"](value)
+    now = shown(entry["get"]())
+    polished = f"settings.{key}.{now}"
+    print(msg(m, polished) if polished in m else msg(m, "settings.change.done", key=key, value=now))
 
 
 # ── tickets / history ─────────────────────────────────────────────────────────
@@ -11938,6 +12122,14 @@ def main():
     p.add_argument("--list", action="store_true", help="print keys · domain · default · body presence")
     p.add_argument("--json", action="store_true", help="machine mode (show / --list)")
     p.set_defaults(fn=cmd_register)
+    p = sub.add_parser("settings", help="every machine setting in one place (T-750): list (no action) · "
+                                        "set <key> <value> · unset <key> — keys register.audience · register.form · "
+                                        "register.structure · register.address · viewer.auto-open · plan.tier; "
+                                        "lines from prdt-messages.json, language PRDT_LANG=ko|en (default ko)")
+    p.add_argument("action", nargs="?", choices=("list", "set", "unset"))
+    p.add_argument("rest", nargs="*", help="set: <key> <value> · unset: <key>")
+    p.add_argument("--json", action="store_true", help="machine mode (list)")
+    p.set_defaults(fn=cmd_settings)
     p = sub.add_parser("dispatch", help="in-flight dispatch markers, every project (T-695): "
                                         "ls [--json] [--all] — each marker with the state the dispatch gate "
                                         "gives it (live · phantom · stale · stopped); read-only")

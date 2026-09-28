@@ -11,9 +11,9 @@
 #  - $PRDT_GUI_SESSION set → nothing. The GUI po-runner spawn sets this (T-409)
 #    specifically so its own PO turns never ALSO pop native Finder/Preview
 #    windows behind the Electron window — GUI already auto-surfaces in-app.
-#  - $PRDT_HOME/auto-open = "off" → nothing (default "on" when missing/invalid;
-#    toggle by direct file edit for now, same convention as the register's
-#    `audience` key).
+#  - $PRDT_HOME/auto-open = "off" → nothing (default "on" when missing/invalid).
+#    Changed with `prdt settings set viewer.auto-open on|off` (T-750), which
+#    reads this file by the same rule (whitespace-stripped, exactly "off" = off).
 #  - macOS `open` not on PATH → nothing (this feature is macOS-only, T-409
 #    decision: single-user tool, cross-platform not worth it yet).
 #
