@@ -46,6 +46,7 @@ const BIN = (() => {
   ].join('\n'))
   write('memory_pressure', "echo 'System-wide memory free percentage: 60%'")
   write('ps', "echo '/sbin/launchd'")
+  write('pnpm', 'echo "pnpm $*"')   // T-778: a no-op shim so `--frozen-lockfile` is verifiable without real pnpm
   return bin
 })()
 
@@ -80,6 +81,31 @@ function setConfig(extra: Record<string, unknown>) {
   const p = path.join(proj, '.prdt', 'config.json')
   const cur = JSON.parse(fs.readFileSync(p, 'utf8'))
   fs.writeFileSync(p, JSON.stringify({ ...cur, ...extra }))
+}
+
+/** T-778: a real (bare, `core.worktree`-anchored) `.prdt/meta.git`, exactly the
+ * shape `prdt init` leaves behind — `makeProject` itself stays meta-git-free
+ * (most tests don't need one), so this is opt-in per test. */
+function metaGit(root: string, ...args: string[]): string {
+  const gd = path.join(root, '.prdt', 'meta.git')
+  const r = spawnSync('git', ['--git-dir', gd, '--work-tree', root, ...args],
+    { cwd: root, encoding: 'utf8', env: { ...env(), GIT_CONFIG_NOSYSTEM: '1' } })
+  if (r.status !== 0) throw new Error(`meta git ${args.join(' ')}: ${r.stderr}`)
+  return r.stdout.trim()
+}
+
+function initMetaGit(root: string) {
+  const gd = path.join(root, '.prdt', 'meta.git')
+  fs.mkdirSync(gd, { recursive: true })
+  const r = spawnSync('git', ['init', '-q', '--bare', gd], { cwd: root, encoding: 'utf8', env: env() })
+  if (r.status !== 0) throw new Error(`meta git init: ${r.stderr}`)
+  metaGit(root, 'config', 'user.name', 'T')
+  metaGit(root, 'config', 'user.email', 't@example.com')
+  metaGit(root, 'config', 'commit.gpgsign', 'false')
+  metaGit(root, 'config', 'core.worktree', root)
+  fs.writeFileSync(path.join(root, 'meta-placeholder.txt'), 'x\n')
+  metaGit(root, 'add', 'meta-placeholder.txt')
+  metaGit(root, 'commit', '-q', '-m', 'chore: init meta')
 }
 
 /** A split project: meta root is NOT a git work tree; the code repo is `code/` on `dev`. */
@@ -146,6 +172,32 @@ describe('prdt track open', () => {
     makeProject(false)
     expect(cli('track', 'open', 'T-1').status).toBe(0)
     expect(git(code, 'status', '--porcelain')).toBe('')
+  })
+
+  test('a pnpm lockfile installs with --frozen-lockfile (no track.setup override)', () => {
+    commit(code, 'pnpm-lock.yaml', 'lockfileVersion: 9\n', 'chore: lock')
+    setConfig({ track: { test: 'test -f a.txt' } })
+    const r = cli('track', 'open', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('setup: pnpm install --frozen-lockfile')
+  })
+
+  // T-778: split project — meta root is `proj`, code root is `proj/code`, both
+  // are their own git work tree (`.prdt/meta.git` for meta) — `tracks/` sits
+  // under `proj` and must stay out of the META repo's own `git status` too,
+  // not just the code repo's (the T-775 grill: it didn't, before this fix).
+  test('split layout: tracks/ is kept out of the META repo\'s git status', () => {
+    initMetaGit(proj)
+    expect(cli('track', 'open', 'T-1').status).toBe(0)
+    expect(metaGit(proj, 'status', '--porcelain')).not.toContain('tracks')
+  })
+
+  test('legacy layout: tracks/ is kept out of the META repo\'s git status too', () => {
+    makeProject(false)
+    initMetaGit(proj)
+    expect(cli('track', 'open', 'T-1').status).toBe(0)
+    expect(metaGit(proj, 'status', '--porcelain')).not.toContain('tracks')
+    expect(git(code, 'status', '--porcelain')).not.toContain('tracks')
   })
 })
 
@@ -231,6 +283,38 @@ describe('prdt track land', () => {
     expect(git(code, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main')
   })
 
+  // T-778 (T-775 grill): `--base main` — dev stays checked out in code/, so the
+  // old `git branch -d` (which always checks the CURRENT checkout's HEAD, not
+  // the land target) refused to delete track/T-2 forever, since track/T-2 was
+  // never merged into dev. Land must check against `main` — the actual target
+  // — instead.
+  test('--base main: dev stays checked out in code/, main is fast-forwarded and the branch is deleted', () => {
+    cli('track', 'open', 'T-2', '--base', 'main')
+    commit(wt('T-2'), 'm.txt', 'main only\n', 'feat: m')
+    const r = cli('track', 'land', 'T-2')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('main fast-forwarded')
+    expect(r.out).toContain('branch track/T-2 deleted')
+    expect(git(code, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('dev')    // main ref moved without touching the dev checkout
+    expect(git(code, 'show', 'main:m.txt')).toBe('main only')
+    expect(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/track/T-2'], { cwd: code }).status).not.toBe(0)
+  })
+
+  // T-778 (T-775 grill): a test command that leaves a stray file behind must
+  // fail the land (rc != 0), not print "landed" — dev stays put and the track
+  // keeps the merge so the worker can clean it up and land again.
+  test('tests that leave an untracked file behind report failure instead of landing', () => {
+    commit(wt(), 'c.txt', 'new\n', 'feat: c')
+    const before = git(code, 'rev-parse', 'dev')
+    const r = cli('track', 'land', 'T-1', '--test', 'echo leftover > stray.txt')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('tests left the merged tree dirty')
+    expect(r.err).toContain('stray.txt')
+    expect(r.out).not.toContain('landed')
+    expect(git(code, 'rev-parse', 'dev')).toBe(before)
+    expect(fs.existsSync(wt())).toBe(true)
+  })
+
   test('red tests on the merged tree: dev is unchanged and the track stays', () => {
     commit(wt(), 'c.txt', 'new\n', 'feat: c')
     const before = git(code, 'rev-parse', 'dev')
@@ -272,6 +356,46 @@ describe('prdt track land', () => {
     fs.writeFileSync(lock, '999999\n')   // a dead owner: taken over
     expect(cli('track', 'land', 'T-1', '--test', 'true').status).toBe(0)
     expect(fs.existsSync(lock)).toBe(false)
+  })
+})
+
+describe('prdt track drop', () => {
+  beforeEach(() => { makeProject(); cli('track', 'open', 'T-1') })
+
+  test('a track with no unique commits is dropped without --force', () => {
+    const r = cli('track', 'drop', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain(`worktree ${wt()} removed`)
+    expect(r.out).toContain('branch track/T-1 deleted')
+    expect(fs.existsSync(wt())).toBe(false)
+    expect(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/track/T-1'], { cwd: code }).status).not.toBe(0)
+  })
+
+  test('a track with commits not on dev or main is refused without --force, dropped with it', () => {
+    commit(wt(), 'c.txt', 'new\n', 'feat: c')
+    const r = cli('track', 'drop', 'T-1')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('holds commits not on dev or main')
+    expect(fs.existsSync(wt())).toBe(true)
+    expect(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/track/T-1'], { cwd: code }).status).toBe(0)
+    const f = cli('track', 'drop', 'T-1', '--force')
+    expect(f.status, f.err).toBe(0)
+    expect(fs.existsSync(wt())).toBe(false)
+    expect(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/track/T-1'], { cwd: code }).status).not.toBe(0)
+  })
+
+  test('a track merged onto dev (e.g. after land elsewhere advanced dev to include it) drops clean', () => {
+    commit(wt(), 'c.txt', 'new\n', 'feat: c')
+    git(code, 'merge', '--no-ff', '--no-edit', 'track/T-1')
+    const r = cli('track', 'drop', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(fs.existsSync(wt())).toBe(false)
+  })
+
+  test('an unopened track is refused', () => {
+    const r = cli('track', 'drop', 'T-9')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('prdt track open T-9')
   })
 })
 
