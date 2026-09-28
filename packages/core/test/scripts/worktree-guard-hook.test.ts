@@ -184,6 +184,36 @@ describe.skipIf(!PY)('T-779 — a worktree-dispatched worker cannot write the sh
       expect(bash(c, root), c).toBe('')
     }
   })
+
+  test('T-786 (F5) — destination flags and eval bodies are checked', () => {
+    for (const c of [
+      'tar -xf archive.tar -C code',
+      'tar --extract -f archive.tar --directory=code',
+      'patch -p1 -d code < a.patch',
+      'patch --directory=code -p1 < a.patch',
+      'unzip -d code archive.zip',
+      'npm --prefix code install',
+      'npm --prefix=code install',
+      'eval "echo x > code/a"',
+    ]) {
+      expect(denied(bash(c, root)), c).toContain(wt)
+    }
+  })
+
+  test('T-786 (F5) — a tar create (read-only for -C) stays silent, like cat', () => {
+    expect(bash('tar -cf archive.tar -C code file.txt', root)).toBe('')
+    expect(bash('tar --create -f archive.tar --directory=code file.txt', root)).toBe('')
+  })
+
+  test('T-786 (F5) — variable and command-substitution destinations are an accepted gap, stay silent', () => {
+    for (const c of [
+      'echo x > $CODE/a',
+      'echo x > $(echo code)/a',
+      'echo x > `echo code`/a',
+    ]) {
+      expect(bash(c, root), c).toBe('')
+    }
+  })
 })
 
 describe.skipIf(!PY)('T-779 — who the guard applies to', () => {
@@ -252,5 +282,18 @@ describe.skipIf(!PY)('T-779 — legacy layout (code root == meta root)', () => {
     denied(run({ tool: 'Write', input: { file_path: path.join(root, 'src', 'a.ts'), content: 'x' } }))
     expect(run({ tool: 'Edit', input: { file_path: path.join(root, 'docs', 'tickets', 'T-9.md') } })).toBe('')
     expect(run({ tool: 'Write', input: { file_path: path.join(wt, 'src', 'a.ts'), content: 'x' } })).toBe('')
+  })
+
+  test('T-786 (code review #3) — a variable target no longer false-denies in the legacy layout', () => {
+    for (const c of [
+      'echo x > $TMPDIR/x',
+      'echo x > $S/x',
+    ]) {
+      expect(bash(c, root), c).toBe('')
+    }
+  })
+
+  test('T-786 (code review #3) — a bare `cd` moves the effective cwd to $HOME, so a later relative write no longer false-denies', () => {
+    expect(bash('cd; echo x > notes.txt', root)).toBe('')
   })
 })

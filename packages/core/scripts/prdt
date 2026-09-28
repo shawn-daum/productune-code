@@ -10995,7 +10995,17 @@ def _lockfile_sig(wt):
 def cmd_track_land(args):
     root, code, tid, wt, branch = _track_ctx(args)
     _track_require_open(code, wt, branch, tid)
-    base = _track_base(code, branch)
+    # T-784 (F1, security pass): the land target is an explicit PO flag on
+    # THIS invocation, never `branch.<branch>.prdtbase` — that git config
+    # lives in the code repo's shared config, which a worker's own git calls
+    # inside the worktree can rewrite (`git config branch.track/T-NNN.prdtbase
+    # main`); land trusted it, so a worker could redirect a plain `land` to
+    # fast-forward `main` with no PO consent. Default with no `--base` is
+    # always `dev`; landing to `main` (the patch-cycle hotfix path, `prdt
+    # track open --base main`) now takes `--base main` again at land time,
+    # a deliberate PO act — `_track_base`/config stays read-only advisory
+    # info for `review`, never a land decision input.
+    base = args.base or "dev"
     st = _tgit(["status", "--porcelain"], wt)
     if st.returncode != 0 or st.stdout.strip():
         _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or drop them, then land")
@@ -11070,6 +11080,13 @@ def cmd_track_drop(args):
     root, code, tid, wt, branch = _track_ctx(args)
     _track_require_open(code, wt, branch, tid)
     if not args.force:
+        # code review #2 (2026-09-29): worker output is uncommitted until the
+        # PO commits it (review → PO commit → land) — a plain drop must not
+        # silently discard it.
+        st = _tgit(["status", "--porcelain"], wt)
+        if st.returncode != 0 or st.stdout.strip():
+            _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or "
+                       f"`prdt track drop {tid} --force` to discard them")
         on_dev = _tgit(["merge-base", "--is-ancestor", branch, "refs/heads/dev"], code).returncode == 0
         on_main = _tgit(["merge-base", "--is-ancestor", branch, "refs/heads/main"], code).returncode == 0
         if not (on_dev or on_main):
@@ -13704,18 +13721,21 @@ def main():
     p.add_argument("--json", action="store_true", help="the same rows, machine-readable")
     p.set_defaults(fn=cmd_schedule)
     p = sub.add_parser("track", help="parallel track worktree (T-775): open <T-NNN> [--base dev|main] · "
-                                     "review <T-NNN> · land <T-NNN> [--test CMD] · drop <T-NNN> [--force] — "
-                                     "the worktree is <project>/tracks/<T-NNN> on branch track/<T-NNN> of "
-                                     "the code repo; land merges the base in, runs the tests on the merged "
-                                     "tree and fast-forwards the base; drop discards the worktree and "
-                                     "branch instead; neither pushes")
+                                     "review <T-NNN> · land <T-NNN> [--base dev|main] [--test CMD] · "
+                                     "drop <T-NNN> [--force] — the worktree is <project>/tracks/<T-NNN> on "
+                                     "branch track/<T-NNN> of the code repo; land merges the base in, runs "
+                                     "the tests on the merged tree and fast-forwards the base; drop discards "
+                                     "the worktree and branch instead; neither pushes")
     p.add_argument("action", choices=("open", "review", "land", "drop"))
     p.add_argument("ticket", help="T-NNN")
-    p.add_argument("--base", choices=TRACK_BASES, help="open: the branch to cut from (default dev)")
+    p.add_argument("--base", choices=TRACK_BASES, help="open: the branch to cut from (default dev) · "
+                                                        "land: the branch to land to (default dev; landing "
+                                                        "to main takes this explicit PO flag every time — "
+                                                        "never read from git config, worker-writable)")
     p.add_argument("--test", help="land: the test command (default: .prdt/config.json track.test, "
                                   "else the package.json test script)")
     p.add_argument("--force", action="store_true",
-                   help="drop: also discard a branch that holds commits not on dev or main")
+                   help="drop: also discard a branch with uncommitted changes or commits not on dev or main")
     p.set_defaults(fn=cmd_track)
     p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591/T-680): "
                                         "up <name> --dispatch <id> · down <name> --dispatch <id> · "
