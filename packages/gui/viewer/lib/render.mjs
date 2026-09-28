@@ -1071,48 +1071,45 @@ const PROGRESS_OUT_OF_SCOPE_KEY = 'out-of-scope'
 // key here (including PROGRESS_OUT_OF_SCOPE_KEY's '항목 밖', this repo's own
 // existing PRD.md vocabulary reused verbatim) is §A keep.
 
-// T-666 slice 2b acceptance line 1: "Stage progress is counted by
-// statusline-prdt.sh's own TYPE_TO_STAGE mapping, not a second rule — a test
-// fails if the two diverge." Values copied VERBATIM from
-// code/packages/core/scripts/statusline-prdt.sh lines 116-125 (its own
-// `TYPE_TO_STAGE` dict) — `scripts/qa/type-to-stage-parity.test.ts` parses
-// that file's dict literal and deep-equals it against this export, so a hand
-// edit to either side without the other fails CI rather than silently
-// drifting.
-export const TYPE_TO_STAGE = {
-  // canonical enum
-  design: 'define', impl: 'build', qa: 'build', ops: 'ship',
-  // tolerated aliases
-  docs: 'define', prd: 'define', spec: 'define', feature: 'define',
-  build: 'build', refactor: 'build', bug: 'build', fix: 'build',
-  chore: 'build', test: 'build',
-  deploy: 'ship', release: 'ship',
-  retro: 'retro', close: 'retro',
-}
-
-// The four ticket-mapped stages, always rendered in this order (acceptance
-// line 1: "all four lifecycle stages always render") — statusline-prdt.sh's
-// own STAGES tuple also carries "idle", but idle is a po-state-only stage no
-// ticket ever maps to (TYPE_TO_STAGE has no "idle" value), so it is not a
-// fifth column here.
-const STAGE_ORDER = ['define', 'build', 'ship', 'retro']
+// T-766: T-755 dropped statusline-prdt.sh's own per-type "which stage is
+// this ticket in" guess (the old `TYPE_TO_STAGE` dict) — a `design`-typed
+// ticket read as Build work broke that guess, so the statusline now shows
+// ONE version-wide done/total over every open+done ticket in the current
+// version, every type included (`decision` too), and never estimates a stage
+// from a ticket's `type` at all. This viewer carried its own copy of the
+// retired guess (the old `TYPE_TO_STAGE` export + `homeStageLine`'s
+// per-stage `n/m` cells below) until this ticket — the exact regression
+// `scripts/qa/type-to-stage-parity.test.ts` catches. The home progress line
+// now mirrors statusline-prdt.sh's rule exactly instead: the current po-state
+// stage name, plus that same version-wide count.
 
 /**
- * One line, `define n/m · build n/m · ship n/m · retro n/m`, always all
- * four. Mirrors statusline-prdt.sh's own counting rule exactly (lines
- * 147-158): a ticket counts toward a stage's n/m only when
- * `TYPE_TO_STAGE[type] === stage`; `status: dropped` counts toward neither
- * (open/done only) — never a second rule invented for the viewer.
+ * Version-wide done/total over every open+done ticket (`status: dropped` or
+ * any other value counts toward neither) — the SAME counting rule as
+ * statusline-prdt.sh's own `vdone`/`vtotal` (packages/core/scripts/
+ * statusline-prdt.sh), never a second rule invented for the viewer, and never
+ * narrowed by a ticket's `type` (`decision` included, same as every other
+ * type). `scripts/qa/type-to-stage-parity.test.ts` drives both the real
+ * script and this function against one shared fixture and asserts their
+ * counts agree.
  * @param {Array} currentTickets current-version tickets (any status)
+ * @returns {{done: number, total: number}}
  */
-function homeStageLine(currentTickets) {
+export function versionProgressCounts(currentTickets) {
   const counted = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
-  const cells = STAGE_ORDER.map((stage) => {
-    const inStage = counted.filter((t) => TYPE_TO_STAGE[t.frontmatter.type] === stage)
-    const done = inStage.filter((t) => t.frontmatter.status === 'done').length
-    return `${stage} ${done}/${inStage.length}`
-  })
-  return `<div class="stage-line mono">${escapeHtml(cells.join(' · '))}</div>`
+  const done = counted.filter((t) => t.frontmatter.status === 'done').length
+  return { done, total: counted.length }
+}
+
+/**
+ * One line, `<stage> | <done>/<total>` — the current po-state stage name
+ * (never guessed from ticket type) plus the version-wide count above.
+ * @param {Array} currentTickets current-version tickets (any status)
+ * @param {string} stage current po-state stage (define|build|ship|retro|idle|'?')
+ */
+function homeStageLine(currentTickets, stage) {
+  const { done, total } = versionProgressCounts(currentTickets)
+  return `<div class="stage-line mono">${escapeHtml(`${stage} | ${done}/${total}`)}</div>`
 }
 
 function progressSquare(done) {
@@ -1175,7 +1172,7 @@ function progressOverall(currentTickets) {
 
 const PROGRESS_LEGEND = `<div class="stage-matrix-legend"><span class="stage-matrix-legend-item">${progressSquare(true)} <span>${HOME.legendMain}</span></span><span class="stage-matrix-legend-item">${progressDashedSquare(true)} <span>${HOME.legendDerived}</span></span></div>`
 
-/** The "진행 상황" pane: T-666 slice 2b's own TYPE_TO_STAGE stage line, above T-675's assignee x PRD-item matrix (a trailing "항목 밖" row included) — two different questions ("which lifecycle stage" vs "which PRD item"), not the same component, per this ticket's two separate acceptance lines. */
+/** The "진행 상황" pane: T-766's own version-wide stage line, above T-675's assignee x PRD-item matrix (a trailing "항목 밖" row included) — two different questions ("which lifecycle stage" vs "which PRD item"), not the same component, per this ticket's two separate acceptance lines. */
 function homeProgressBody(data) {
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   const byItem = new Map(PROGRESS_ITEM_ORDER.map((k) => [k, []]))
@@ -1188,7 +1185,7 @@ function homeProgressBody(data) {
   const rows = PROGRESS_ITEM_ORDER.map((key) => progressMatrixRow(key, byItem.get(key))).join('') + progressMatrixRow(PROGRESS_OUT_OF_SCOPE_KEY, outOfScope)
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
-${homeStageLine(currentTickets)}
+${homeStageLine(currentTickets, data.poState?.stage || '?')}
 ${progressOverall(currentTickets)}
 <div class="stage-matrix">${progressMatrixHeadRow()}${rows}</div>
 ${PROGRESS_LEGEND}

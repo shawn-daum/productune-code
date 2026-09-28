@@ -703,21 +703,23 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
     }
   }, 30_000)
 
-  // T-666 slice 2b: home's stage line (all four lifecycle stages, always
-  // rendered) and the progress matrix's trailing "항목 밖" row (a ticket with
-  // no prd_item never disappears) — driven against the REAL generated page's
-  // real ticket data, not a fixture, per this file's own reason for being
-  // (slice 1a's lesson: markup-string tests alone once passed while the real
-  // interaction was dead).
-  test("home's progress pane always shows all four TYPE_TO_STAGE stages and a trailing row for a ticket with no prd_item @window", async () => {
+  // T-766: home's stage line shows the current po-state stage plus ONE
+  // version-wide done/total (never a per-type TYPE_TO_STAGE guess — T-755's
+  // fix to statusline-prdt.sh, carried into the viewer by this ticket), and
+  // the progress matrix's trailing "항목 밖" row (a ticket with no prd_item
+  // never disappears) — driven against the REAL generated page's real ticket
+  // data, not a fixture, per this file's own reason for being (slice 1a's
+  // lesson: markup-string tests alone once passed while the real interaction
+  // was dead).
+  test("home's progress pane shows the current stage's version-wide done/total and a trailing row for a ticket with no prd_item @window", async () => {
     const html = fs.readFileSync(VIEWER_HTML, 'utf8')
     const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
     try {
       await expect(page.locator('#store-home .view-pane[data-group="progress"]')).toHaveClass(/active/)
       const stageLineText = await page.locator('#store-home .stage-line').innerText()
-      for (const stage of ['define', 'build', 'ship', 'retro']) {
-        expect(stageLineText, `stage line "${stageLineText}" is missing "${stage}"`).toContain(stage)
-      }
+      expect(stageLineText, `stage line "${stageLineText}" is not "<stage> | n/m"`).toMatch(
+        /^(define|build|ship|retro|idle|\?) \| \d+\/\d+$/,
+      )
 
       const rows = page.locator('#store-home .stage-matrix-row:not(.stage-matrix-head)')
       const rowCount = await rows.count()
