@@ -4367,24 +4367,54 @@ def _resolve_prdt_repo():
     return repo
 
 
-def _run_pull_install(repo):
-    """`git pull --ff-only` then re-run `<repo>/scripts/install.sh` — the actual
-    mechanics both `cmd_update`'s own prompt AND the run-time nudge
-    (`maybe_prompt_update`) need once THEIR OWN choice is "update". T-749b:
-    pulled out of `cmd_update` so the nudge never calls `cmd_update(None)` again
-    after already asking — that re-entry re-ran the whole version check and
-    rendered the box + question a SECOND time (QA grill finding #1). Exits the
-    process on any failure (dirty tree / non-fast-forward pull / install.sh
-    failure) — the same fatal-on-failure contract `cmd_update` always had."""
+def _run_pull_install(repo, *, pull=True, target_sha=None):
+    """Re-run `<repo>/scripts/install.sh` — the actual mechanics both
+    `cmd_update`'s own prompt AND the run-time nudge (`maybe_prompt_update`)
+    need once THEIR OWN choice is "update". T-749b: pulled out of `cmd_update`
+    so the nudge never calls `cmd_update(None)` again after already asking —
+    that re-entry re-ran the whole version check and rendered the box +
+    question a SECOND time (QA grill finding #1). Exits the process on any
+    failure (dirty tree / non-fast-forward pull / install.sh failure) — the
+    same fatal-on-failure contract `cmd_update` always had.
+
+    T-749c (QA sandbox repro, round 3): a plain `git pull --ff-only` follows
+    `@{upstream}`, which can be configured to a DIFFERENT branch than the one
+    `remote_ahead`/`releases_pending_between` actually read the shown
+    version/notes from (e.g. a local `dev` whose upstream is `origin/main`) —
+    silently installing a version whose notes were never shown, or (on the
+    "up to date" verdict, where `origin/<branch>` is equal but `@{upstream}`
+    is still ahead) installing something right after printing "최신".
+    `pull=False` (the up-to-date branch: mirror-refresh only, per the contract
+    in `packages/gui/electron/ipc/settings.ts` + both READMEs) skips the pull
+    entirely — there is nothing to pull, so nothing to mismatch. `pull=True`
+    requires `target_sha`, the exact commit `_remote_target_sha` captured at
+    the SAME moment the shown version/notes were read (`origin/<branch>`,
+    never `@{upstream}`); it fetches that branch and ff-only-merges to THAT
+    sha specifically, then refuses to install if HEAD doesn't land exactly
+    there — never whatever `origin/<branch>` (or `@{upstream}`) has moved to
+    since."""
     repo = str(repo)
     dirty = [l for l in _git_repo(repo, "status", "--porcelain").stdout.splitlines()
              if l and not l.startswith("??")]
     if dirty:
         sys.exit(f"prdt update: repo에 커밋 안 된 변경이 있어 중단 — 정리 후 재시도: git -C {repo} status")
-    p = _git_repo(repo, "pull", "--ff-only")
-    if p.returncode:
-        tail = (p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"]
-        sys.exit(f"prdt update: pull 실패({tail[0]}) — repo에서 수동 해결 후 재시도")
+    if pull:
+        if not target_sha:
+            sys.exit("prdt update: 보여준 버전의 커밋을 다시 확인하지 못해 중단 — 재시도하세요")
+        branch = _git_repo(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if not branch or branch == "HEAD":
+            sys.exit("prdt update: 현재 브랜치를 확인할 수 없어 중단")
+        f = _git_repo(repo, "fetch", "origin", branch)
+        if f.returncode:
+            tail = (f.stderr or f.stdout).strip().splitlines()[-1:] or ["?"]
+            sys.exit(f"prdt update: fetch 실패({tail[0]}) — repo에서 수동 해결 후 재시도")
+        p = _git_repo(repo, "merge", "--ff-only", target_sha)
+        if p.returncode:
+            tail = (p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"]
+            sys.exit(f"prdt update: pull 실패({tail[0]}) — repo에서 수동 해결 후 재시도")
+        head = _git_repo(repo, "rev-parse", "HEAD").stdout.strip()
+        if head != target_sha:
+            sys.exit("prdt update: 안내한 버전과 받아온 커밋이 달라 설치를 건너뜀 — 다시 시도하세요")
     if subprocess.run(["bash", str(Path(repo) / "scripts" / "install.sh")]).returncode:
         sys.exit("prdt update: install 실패 — 위 출력 확인")
 
@@ -4409,6 +4439,29 @@ def _remote_short_ref(code_root, timeout=2):
         r = subprocess.run(["git", "-C", str(code_root), "rev-parse", "--short", f"origin/{branch}"],
                             capture_output=True, text=True, timeout=timeout)
         return r.stdout.strip() or None
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def _remote_target_sha(code_root, timeout=2):
+    """Full SHA of `origin/<current-branch>` — the exact ref `remote_ahead` /
+    `releases_pending_between` / `_remote_short_ref` already read to compute
+    the version + notes an update prompt shows. `_run_pull_install` pulls to
+    exactly this sha (never `@{upstream}`, which can point somewhere else
+    entirely — e.g. a `dev` branch whose upstream is set to `origin/main`) and
+    refuses to install if the pull lands anywhere else. Plain local
+    `rev-parse` (no fetch): the objects are already local by the time this is
+    called, same rationale as `_remote_short_ref`. None on any failure —
+    caller degrades the same way `ahead is None` does."""
+    try:
+        branch = subprocess.run(["git", "-C", str(code_root), "rev-parse", "--abbrev-ref", "HEAD"],
+                                 capture_output=True, text=True, timeout=timeout).stdout.strip()
+        if not branch or branch == "HEAD":
+            return None
+        r = subprocess.run(["git", "-C", str(code_root), "rev-parse", f"origin/{branch}"],
+                            capture_output=True, text=True, timeout=timeout)
+        sha = r.stdout.strip()
+        return sha or None
     except (subprocess.TimeoutExpired, OSError):
         return None
 
@@ -4444,7 +4497,12 @@ def cmd_update(_args):
         # T-749b: nothing on origin at all → the pre-T-749 mirror-refresh
         # contract (GUI settings / both READMEs point at `prdt update` always
         # re-running install.sh) — no prompt, since there is nothing to choose.
-        _run_pull_install(repo)
+        # T-749c: install.sh ONLY — `origin/<branch>` (what `ahead` is actually
+        # about) is equal, but a plain `git pull --ff-only` follows
+        # `@{upstream}`, which can be a DIFFERENT, still-ahead ref (QA sandbox
+        # repro: local `dev` tracking `origin/main`) and would silently
+        # install something right after this "최신" line prints.
+        _run_pull_install(repo, pull=False)
         print(msg(m, "update.uptodate", version=installed or "?"))
         return
 
@@ -4460,10 +4518,17 @@ def cmd_update(_args):
         print(msg(m, "update.noninteractive", installed=installed or "?", new=new_version))
         return
 
+    # T-749c: captured NOW, same moment the version/notes above came from
+    # (`origin/<branch>`) — `_run_pull_install` pulls to exactly this sha,
+    # never `@{upstream}`.
+    target_sha = _remote_target_sha(code_root)
+    if not target_sha:
+        sys.exit(msg(m, "update.error.offline"))
+
     if _prompt_update_choice(m, installed or "?", new_version, sections) != "update":
         return
 
-    _run_pull_install(repo)
+    _run_pull_install(repo, target_sha=target_sha)
     print(msg(m, "update.done", old=installed or "?", new=new_version))
 
 
@@ -5064,6 +5129,12 @@ def maybe_prompt_update(cmd):
         return
     if not _newer_version(new_version, installed):
         return                                          # T-456: never advertise an equal-or-lower version
+    # T-749c: captured NOW, before the prompt — the same `origin/<branch>` sha
+    # the version/notes above came from. A capture failure degrades silently,
+    # same as every other network gate here.
+    target_sha = _remote_target_sha(code_root)
+    if not target_sha:
+        return
     m = load_messages()
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print(msg(m, "update.noninteractive", installed=installed or "?", new=new_version))
@@ -5074,7 +5145,7 @@ def maybe_prompt_update(cmd):
         # version check and rendered this same box + question a SECOND time
         # (QA grill finding #1). The choice was already made above; only the
         # pull+install mechanics are still needed.
-        _run_pull_install(repo)                          # may sys.exit on failure
+        _run_pull_install(repo, target_sha=target_sha)   # may sys.exit on failure; never `@{upstream}`
         print(msg(m, "update.done", old=installed or "?", new=new_version))
         try:                                              # re-exec original invocation on the freshly-copied code
             os.execv(sys.executable, [sys.executable, *sys.argv])
