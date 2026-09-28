@@ -63,7 +63,7 @@ const SEMIBOLD_WOFF2 = path.join(PRETENDARD_STATIC_DIR, 'Pretendard-SemiBold.wof
  * `created`/`closed`, artifact `added_at`, etc.), never "generated at".
  * @returns {Promise<{ html: string }>}
  */
-export async function generate({ repoRoot = REPO_ROOT } = {}) {
+export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH } = {}) {
   const tokensBuf = fs.readFileSync(TOKENS_PATH)
   const tokensCss = tokensBuf.toString('utf8')
   const tokensSha256 = crypto.createHash('sha256').update(tokensBuf).digest('hex')
@@ -90,23 +90,29 @@ export async function generate({ repoRoot = REPO_ROOT } = {}) {
   // `artifactsBaseHref` (T-666 slice 1b) is exactly `${repoRootHref}/docs/artifacts`
   // — derived from the SAME relative-path computation rather than a second
   // one (doctrine #2).
-  const repoRootHref = path.relative(path.dirname(OUTPUT_PATH), repoRoot).split(path.sep).join('/') || '.'
+  // T-746: `outputPath` is where THIS page will be written — the installed
+  // `prdt` writes each project's viewer under that project's own
+  // `.prdt/scratch/viewer/` (a project with no code checkout beside it has
+  // no `packages/gui/viewer/` to write into), so the relative hrefs are
+  // computed from the real destination, never from this module's own folder.
+  const repoRootHref = path.relative(path.dirname(outputPath), repoRoot).split(path.sep).join('/') || '.'
   const artifactsBaseHref = `${repoRootHref}/docs/artifacts`
 
-  const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256, artifactsBaseHref, repoRootHref })
+  const viewerAbsPath = path.resolve(outputPath)
+  const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath })
   const usedText = collectUsedChars(draft)
 
   const regularBuffer = fs.readFileSync(REGULAR_WOFF2)
   const semiboldBuffer = fs.readFileSync(SEMIBOLD_WOFF2)
   const fontFaceCss = await buildPretendardFontFaceCss({ regularBuffer, semiboldBuffer, usedText })
 
-  const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref })
+  const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath })
   return { html }
 }
 
 /** @returns {Promise<{ upToDate: boolean, html: string }>} */
-export async function checkUpToDate({ repoRoot = REPO_ROOT } = {}) {
-  const { html } = await generate({ repoRoot })
-  const committed = fs.existsSync(OUTPUT_PATH) ? fs.readFileSync(OUTPUT_PATH, 'utf8') : null
+export async function checkUpToDate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH } = {}) {
+  const { html } = await generate({ repoRoot, outputPath })
+  const committed = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf8') : null
   return { upToDate: committed === html, html }
 }

@@ -5,16 +5,38 @@
 // this generator's input is the whole evolving docs/ corpus, so checking it
 // on every lint run would re-read hundreds of files for no defect this repo
 // has — regenerate on demand instead.
+//
+// T-746: `--repo-root <dir> --out <file>` generate ANY project's viewer from
+// this checkout — the installed `prdt` calls it that way (`prdt viewer`,
+// `prdt tickets --link`, the auto-open hook), so a project with no
+// `code/packages/gui` of its own still gets one. Without them, the defaults
+// are this repo's own layout, unchanged.
 import fs from 'node:fs'
-import { generate, checkUpToDate, OUTPUT_PATH } from './generate.mjs'
+import path from 'node:path'
+import { generate, checkUpToDate, OUTPUT_PATH, REPO_ROOT } from './generate.mjs'
+
+function argValue(name) {
+  const i = process.argv.indexOf(name)
+  if (i === -1) return undefined
+  const v = process.argv[i + 1]
+  if (v === undefined || v.startsWith('--')) {
+    throw new Error(`viewer: ${name} needs a value`)
+  }
+  return v
+}
 
 const checkMode = process.argv.includes('--check')
 
 async function main() {
+  const repoRootArg = argValue('--repo-root')
+  const outArg = argValue('--out')
+  const repoRoot = repoRootArg ? path.resolve(repoRootArg) : REPO_ROOT
+  const outputPath = outArg ? path.resolve(outArg) : OUTPUT_PATH
+
   if (checkMode) {
-    const { upToDate } = await checkUpToDate()
+    const { upToDate } = await checkUpToDate({ repoRoot, outputPath })
     if (!upToDate) {
-      console.error(`viewer --check: ${OUTPUT_PATH} is stale. Re-run \`pnpm --filter @productune/gui viewer\`.`)
+      console.error(`viewer --check: ${outputPath} is stale. Re-run \`pnpm --filter @productune/gui viewer\`.`)
       process.exitCode = 1
       return
     }
@@ -22,9 +44,14 @@ async function main() {
     return
   }
 
-  const { html } = await generate()
-  fs.writeFileSync(OUTPUT_PATH, html)
-  console.log(`viewer: wrote ${OUTPUT_PATH} (${Buffer.byteLength(html, 'utf8')} bytes)`)
+  const { html } = await generate({ repoRoot, outputPath })
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true })
+  // Write-then-rename: a browser tab opening the page mid-write never reads
+  // a half-written file.
+  const tmp = `${outputPath}.${process.pid}.tmp`
+  fs.writeFileSync(tmp, html)
+  fs.renameSync(tmp, outputPath)
+  console.log(`viewer: wrote ${outputPath} (${Buffer.byteLength(html, 'utf8')} bytes)`)
 }
 
 main().catch((err) => {
