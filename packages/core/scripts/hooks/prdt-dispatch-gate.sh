@@ -41,6 +41,11 @@
 #         marker with no `checkout` (older than T-775, or no `[ctx]` paired)
 #         never matches, and an unmeasured liveness never denies — fail open.
 #         Checked with ④ and outranks it: the fix differs (`prdt track open`).
+#   T-780 — neither ⑥ nor ④'s model_tier axis denies on a marker whose
+#         pairing is unconfirmed (see "T-780: pairing" below): such a marker
+#         still counts toward the machine-wide `dispatches` axis (its persona
+#         and liveness come from its own agent_id, not the pairing), but its
+#         `model` and `checkout` do not.
 #   NOT HERE — the return/envelope side (slice 3), and the three binary
 #         candidates held under doctrine #5 for zero observed violations
 #         (AskUserQuestion in a worker · worker↔worker calls · discipline-path
@@ -626,6 +631,7 @@ CLAUDE_CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 MARK_BAD=""          # non-empty = the dispatches axis is unmeasured
 MARK_CANDS=""        # `<agent_id>US<transcript>US<age-seconds>` per open, fresh marker
 MTIMES=""; TAILS=""  # liveness evidence for the transcripts that exist
+HEADS=""             # T-780: first line of each unconfirmed marker's worker transcript
 MARK_FILES=()
 for f in "$PRDT_ROOT"/run/dispatches/*.json; do
   [ -e "$f" ] || continue
@@ -662,8 +668,10 @@ if [ -z "$MARK_BAD" ] && [ ${#MARK_FILES[@]} -gt 0 ]; then
            co: (if (.checkout | type) == "string" then .checkout else "" end),
            ticket: ((.ticket_id // "") | tostring | if test("^T-[0-9]{1,5}$") then . else "" end),
            model: (((.model // "default") | tostring) as $mm
-                   | if ($mm | test("^(sonnet|opus|haiku|fable)$")) then $mm else "default" end)})) as $c
-| "\($bad)", ($c[] | [.id, .t, (.age | tostring), .model, .persona, .root, .co, .ticket]
+                   | if ($mm | test("^(sonnet|opus|haiku|fable)$")) then $mm else "default" end),
+           did: (if (.dispatch_id | type) == "string" then .dispatch_id else "" end),
+           pc: (if .pairing == "confirmed" then "1" else "" end)})) as $c
+| "\($bad)", ($c[] | [.id, .t, (.age | tostring), .model, .persona, .root, .co, .ticket, .did, .pc]
     | map(gsub("[\u0000-\u001f]"; "")) | join("\u001f"))
 JQ
   MOUT="$(printf '%s' "$MARK_RAW" | jq -r -R -s --argjson stale_h "$STALE_H" "$MPROG" 2>/dev/null)"
@@ -689,7 +697,7 @@ JQ
         FOUND="$(find "$CLAUDE_CFG/projects" -maxdepth 4 -name 'agent-*.jsonl' -path '*/subagents/*' \( "${FIND_ARGS[@]}" \) 2>/dev/null)"
       fi
       # Resolve every candidate to a path (or none); collect the paths that exist.
-      EXIST=()
+      EXIST=(); UNCONF=()
       while IFS=$US read -r id t age model rest; do
         [ -n "$id" ] || continue
         case "$t" in /*) ;; *) t="" ;; esac
@@ -701,6 +709,7 @@ JQ
           esac
         fi
         [ -n "$t" ] && [ -f "$t" ] && EXIST+=("$t")
+        case "$rest" in *"${US}1") ;; *) [ -n "$t" ] && [ -f "$t" ] && UNCONF+=("$t") ;; esac
         MARK_CANDS="$MARK_CANDS$id$US$t$US$age$US$model$US$rest"$'\n'
       done <<< "$CANDS"
       if [ ${#EXIST[@]} -gt 0 ]; then
@@ -711,6 +720,19 @@ JQ
         [ -n "$MTIMES" ] || MTIMES="$(stat -c '%Y %n' -- "${EXIST[@]}" 2>/dev/null)"
         TAILS="$(tail -c 4000 -- "${EXIST[@]}" /dev/null 2>/dev/null)"
         [ -n "$MTIMES" ] && [ -n "$TAILS" ] || MARK_BAD=1
+      fi
+      # T-780: pairing. SubagentStart pairs a marker with its Agent call before
+      # the worker's transcript exists, so a same-persona fan-out can pair a
+      # marker with a SIBLING's call (QA: 6 of 20 runs; every run in reverse
+      # start order) — `pairing` stays "unconfirmed" until prdt-post-dispatch.sh
+      # proves it. For each such marker whose worker transcript exists, its
+      # FIRST line (the worker's own prompt) is read here: its `[ctx]`
+      # dispatch_id equal to the marker's confirms the pairing (dispatch_id is
+      # one per dispatch, contracts §Dispatch); its `[ctx].worktree` (else
+      # "code") is the checkout rule's input either way — the worker's own
+      # prompt, never the pairing. Unreadable heads = unconfirmed, never a deny.
+      if [ ${#UNCONF[@]} -gt 0 ]; then
+        HEADS="$(head -n 1 -- "${UNCONF[@]}" /dev/null 2>/dev/null)"
       fi
     fi
   fi
@@ -771,15 +793,29 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
        | (reduce ($tails | split("\n"))[] as $l ({cur: "", last: {}};
             if ($l | test("^==> .* <==$")) then .cur = ($l | capture("^==> (?<p>.*) <==$").p)
             elif $l == "" or .cur == "" then . else .last[.cur] = $l end)).last as $last
+       | (reduce ($heads | split("\n"))[] as $l ({cur: "", first: {}};
+            if ($l | test("^==> .* <==$")) then .cur = ($l | capture("^==> (?<p>.*) <==$").p)
+            elif $l == "" or .cur == "" then . else .first[.cur] = $l end)).first as $first
        | [$cands | split("\n")[] | select(length > 0) | split("\u001f") | {id: .[0], t: .[1], age: (.[2] | tonumber), model: (.[3] // "default"),
-           persona: (.[4] // ""), root: (.[5] // ""), co: (.[6] // ""), ticket: (.[7] // "")}]
+           persona: (.[4] // ""), root: (.[5] // ""), co: (.[6] // ""), ticket: (.[7] // ""), did: (.[8] // ""), pc: ((.[9] // "") == "1")}]
+       | map(if .pc then . else
+             ((try ($first[.t] // "" | fromjson | .message.content
+                    | (if type == "array" then (map(select(type == "object" and .type == "text") | .text) | first) else . end)
+                    | strings | split("\n") | map(select(startswith("[ctx] {"))) | first
+                    | .[6:] | fromjson | select(type == "object")) catch null) // null) as $wc
+             | if $wc == null then . + {co: "", ticket: ""}
+               else ((($wc.dispatch_id // "") | tostring) as $wd
+                     | ($wd != "" and $wd == .did)) as $ok
+                 | . + {pc: $ok,
+                        co: (($wc.worktree // "") | if type == "string" and (gsub("^\\s+|\\s+$"; "") != "") then gsub("^\\s+|\\s+$"; "") else "code" end),
+                        ticket: (if $ok then .ticket else "" end)} end end)
        | map(. + {live: (if .t == "" or ($mt[.t] // null) == null then (.age < $grace)
              elif (($last[.t] // "") | contains("\"model\":\"<synthetic>\"")) then false
              elif (now - $mt[.t]) > ($idle_min * 60) then false
              else true end)})
      ) catch null end) as $live_cands
 | (if $live_cands == null then null else ($live_cands | map(select(.live)) | length) end) as $inflight
-| (if $live_cands == null then null else ($live_cands | map(select(.live and .model == $want_model)) | length) end) as $tier_inflight
+| (if $live_cands == null then null else ($live_cands | map(select(.live and .pc and .model == $want_model)) | length) end) as $tier_inflight
 | (if $load1 != null and $ncpu != null then ($load1 / $ncpu) else null end) as $ratio
 | (if $memsize != null then ($memsize / 1073741824 | r2) else null end) as $gb
 | [
@@ -804,7 +840,7 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
           else "resident VMs: unmeasured (ps)" end),
    free: "stop a VM whose job is done (`prdt resource ls` names its owner; a VM no marker owns is the user's)"},
   {k: "model_tier", ok: ($tier_inflight != null), over: ($tier_inflight != null and $tier_inflight > $tier_cap),
-   text: (if $tier_inflight != null then "in-flight dispatches on model tier \"\($want_model)\" \($tier_inflight) machine-wide (cap \($tier_cap) — same run/dispatches liveness rule as the dispatches axis, grouped by each marker's model)"
+   text: (if $tier_inflight != null then "in-flight dispatches on model tier \"\($want_model)\" \($tier_inflight) machine-wide (cap \($tier_cap) — same run/dispatches liveness rule as the dispatches axis, grouped by each marker's model; a marker not yet paired with its own Agent call is not counted)"
           else "in-flight dispatches on model tier \"\($want_model)\": unmeasured (a run/dispatches marker is unreadable or a liveness probe failed — `prdt dispatch ls` names it)" end),
    free: "wait for a worker on the same model tier to return, or dispatch on a different tier"}
   ] as $axes
@@ -841,7 +877,7 @@ JQ
 RES="$(jq -rn \
   --arg loadavg "$LOADAVG" --arg ncpu "$NCPU" --arg memsize "$MEMSIZE" --arg memp "$MEMP" \
   --arg ps "$PSOUT" --argjson caps "$CAPS" --arg caps_bad "$CAPS_BAD" \
-  --arg mark_bad "$MARK_BAD" --arg cands "$MARK_CANDS" --arg mtimes "$MTIMES" --arg tails "$TAILS" \
+  --arg mark_bad "$MARK_BAD" --arg cands "$MARK_CANDS" --arg mtimes "$MTIMES" --arg tails "$TAILS" --arg heads "$HEADS" \
   --argjson stale_h "$STALE_H" --argjson idle_min "$IDLE_MIN" --argjson grace "$GRACE_S" \
   --arg want_model "$WANT_MODEL" \
   --arg want_persona "$WANT_PERSONA" --arg want_co "$WANT_CO" --arg proj_root "$PROJ_ROOT" --arg code_abs "$CODE_ABS" \

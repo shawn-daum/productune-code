@@ -977,7 +977,7 @@ describe('T-695: the machine resource cap', () => {
     const dir = path.join(home, 'run', 'dispatches')
     fs.mkdirSync(dir, { recursive: true })
     const since = new Date(Date.now() - sinceAgoSec * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
-    const data: Record<string, unknown> = { agent_id: name, persona: 'developer', ticket_id: 'T-695', since }
+    const data: Record<string, unknown> = { agent_id: name, persona: 'developer', ticket_id: 'T-695', since, pairing: 'confirmed' }
     if (model !== undefined) data.model = model
     if (stopped) data.stopped_at = since
     if (worker !== 'none') {
@@ -1064,6 +1064,24 @@ describe('T-695: the machine resource cap', () => {
       expect(d).toContain('\nover cap: model_tier\n')
       expect(d).toContain('frees it: wait for a worker on the same model tier to return, or dispatch on a different tier')
       expect(d).not.toContain('over cap: dispatches')
+    })
+
+    test('T-780: an unconfirmed marker counts toward dispatches but never toward a model_tier deny', () => {
+      const home = tmp('prdt-t780-home-')
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 10, inflight_opus_max: 5 }))
+      for (let i = 0; i < 6; i++) {
+        marker(home, `u${i}`, 60 * i, false, 'live', 45, false, 'opus')
+        const f = path.join(home, 'run', 'dispatches', `u${i}.json`)
+        fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, 'utf8')), pairing: 'unconfirmed', dispatch_id: `d-${i}` }))
+      }
+      // six live opus-looking markers, none proven to be its own dispatch: the tier axis admits
+      expect(run({ cwd: proj, model: 'opus' }, { home })).toBe('')
+      // the machine-wide count still sees all six (persona + liveness do not rest on the pairing)
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 5, inflight_opus_max: 5 }))
+      const d = denyReason({ cwd: proj, model: 'opus' }, { home })
+      expect(d).toContain('in-flight dispatches 6 machine-wide')
+      expect(d).toContain('in-flight dispatches on model tier "opus" 0 machine-wide')
+      expect(d).toContain('\nover cap: dispatches\n')
     })
 
     test('regression: a raised inflight_max with no tier key is not re-capped at 5 by the tier axis', () => {
