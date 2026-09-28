@@ -64,6 +64,46 @@ function listedIds(out: string): string[] {
   return out.trim().split('\n').flatMap((l) => l.match(/^(T-\d+)\b/)?.slice(1, 2) ?? [])
 }
 
+/** Parses `[T-NNN](file:///abs/path)` lines into a map (mirrors
+ *  prdt-tickets-link.test.ts's `parseLinks`). */
+function parseLinks(out: string): Record<string, string> {
+  const links: Record<string, string> = {}
+  for (const l of out.trim().split('\n').filter(Boolean)) {
+    const m = l.match(/^\[(T-\d+)\]\(file:\/\/(.+)\)$/)
+    if (m) links[m[1]] = m[2]
+  }
+  return links
+}
+
+/** The `<script id="detail-data" type="application/json">` blob a generated
+ *  viewer.html embeds — `anchors[id].g` is the sidebar group (bucket) it
+ *  placed a ticket under (render.mjs `buildAnchors`; mirrors
+ *  prdt-tickets-link.test.ts's `readViewerAnchors`). */
+function readViewerAnchors(root: string): Record<string, { s: string; g: string }> {
+  const html = fs.readFileSync(path.join(fs.realpathSync(root), '.prdt', 'scratch', 'viewer', 'viewer.html'), 'utf-8')
+  const m = html.match(/<script id="detail-data" type="application\/json">([\s\S]*?)<\/script>/)
+  if (!m) throw new Error('viewer.html: no detail-data blob')
+  return JSON.parse(m[1]).anchors
+}
+
+/**
+ * T-746/T-781: `--link`'s target moved from a bare md path to a viewer
+ * forwarding page — this asserts the underlying claim (`id` resolves to
+ * `dir`, its actual `docs/tickets/<dir>/`) either way (mirrors
+ * prdt-tickets-link.test.ts's `expectResolvesToDir`).
+ */
+function expectResolvesToDir(root: string, id: string, dir: string, dest: string) {
+  const jump = path.join(fs.realpathSync(root), '.prdt', 'scratch', 'viewer', 'at', `${id}.html`)
+  expect(fs.existsSync(dest)).toBe(true)
+  if (dest === jump) {
+    expect(fs.readFileSync(dest, 'utf-8')).toContain(`url=../viewer.html#${id}`)
+    expect(readViewerAnchors(root)[id]).toMatchObject({ s: 'ticket', g: dir })
+  } else {
+    expect(dest).toBe(path.join(fs.realpathSync(root), 'docs', 'tickets', dir, `${id}.md`))
+    expect(fs.readFileSync(dest, 'utf-8')).toContain(`id: ${id}`)
+  }
+}
+
 beforeEach(() => {
   projectDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-tickets-assignee-')), 'proj')
   fs.mkdirSync(projectDir, { recursive: true })
@@ -164,7 +204,7 @@ describe.skipIf(!PYTHON3)('prdt tickets --assignee (T-464)', () => {
     const res = runInit()
     writeTicket(res.version, 'T-960', 'user')
 
-    const out = runPrdt(['tickets', '--link', 'T-960'])
-    expect(out.trim()).toBe(`[T-960](file://${path.join(fs.realpathSync(projectDir), 'docs', 'tickets', res.version, 'T-960.md')})`)
+    const links = parseLinks(runPrdt(['tickets', '--link', 'T-960']))
+    expectResolvesToDir(projectDir, 'T-960', res.version, links['T-960'])
   })
 })
