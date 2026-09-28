@@ -12,6 +12,17 @@ Version-by-version release notes for this project.
 >   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
 > - Everything above the first `## ` heading is preamble and is ignored by the parser.
 
+## v1.10.3 — 기본 fable 경로를 임시로 opus 로 (2026-09-28)
+
+> 패치 릴리스입니다. T-739 를 반영합니다. v1.11 의 라우팅 설정화(T-737) 전까지 쓰는 임시 수정입니다.
+> 적용: `prdt update` 또는 `packages/core/scripts/install.sh` 재실행.
+
+### Changed
+- **fable 을 기본으로 쓰던 7곳이 opus 로 바뀌었습니다(effort 는 그대로).** playbook 최소 모델 5개 — designer `inject-edit` · `prd-clarity` · `scope-challenge`, developer `plan-first` (opus/high), QA `grill` 첫 회 (opus/medium) — 와 출하 전 전체 코드 리뷰(opus/medium), Define 진입 시 세션 모델 권고(모든 단계 opus). 근거: opus 5.5 가 설계 검토 1건에서 fable 5.1 보다 나았고(9.0 대 8.5 / 17, 치명 결함 4/4 대 3/4), 호출 비용은 약 1/4 입니다(사용자 제공 벤치마크 — 과제 1건, 참고 수준). 워커의 fable 격상 요청(`escalate_to`)은 그대로 fable 로 갑니다. 바뀐 곳마다 `T-737` 표시가 있습니다.
+
+### Fixed
+- README 설치 줄이 gitignore 대상 빌드 경로를 실행 블록에 적어 `prdt doctor` 가 README 를 태그 기준으로 낡았다고 경고하던 문제.
+
 ## v1.10.2 — core 수정이 설치만으로 node bridge 에 실림 (2026-09-28)
 
 > 패치 릴리스입니다. T-731 · T-732 · T-734 를 반영합니다.
