@@ -5010,14 +5010,32 @@ _README_STAGE_CHAIN_RE = re.compile(r"(?:[A-Za-z]+\s*→\s*){2,}[A-Za-z]+")
 _CLI_SUBCOMMAND_RE = re.compile(r"""add_parser\(\s*['"]([a-zA-Z0-9_-]+)['"]""")
 
 
+def _strip_shell_comment(line):
+    """A line without its shell `#` comment (T-810): `#` opens a comment only at
+    line start or after whitespace, and never inside a quoted string — so
+    `tracks/T-NNN` in `cmd  # ... tracks/T-NNN` is prose, not a path, while
+    `"a #b"` or `foo#bar` keep their text."""
+    quote = None
+    for i, ch in enumerate(line):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "#" and (i == 0 or line[i - 1].isspace()):
+            return line[:i]
+    return line
+
+
 def _readme_runnable_blocks(text):
     """Fenced-block CONTENT for every block whose info string names a shell
     family — never a block with no info string or a non-shell one (the
-    project-structure / package-tree illustrations in this very README)."""
+    project-structure / package-tree illustrations in this very README).
+    Shell `#` comments are stripped: their words are prose, not commands/paths."""
     out = []
     for m in _README_FENCE_RE.finditer(text):
         if m.group(1).strip().lower() in README_RUNNABLE_FENCE_LANGS:
-            out.append(m.group(2))
+            out.append("\n".join(_strip_shell_comment(l) for l in m.group(2).split("\n")))
     return out
 
 

@@ -198,6 +198,24 @@ describe.skipIf(!PYTHON3)('prdt doctor — README staleness at a cut tag (T-589)
     expect(lines.some((l) => /stale against the shipped tag/.test(l))).toBe(false)
   })
 
+  test('T-810: path-shaped words after a shell `#` comment are not paths; a real stale path before the comment still warns', () => {
+    runInit()
+    const ok = HEALTHY_README.replace('scripts/install.sh   # setup',
+      'scripts/install.sh   # pick 1/2 (update/skip) in tracks/T-NNN, branch track/T-NNN\n# whole-line note: docs/gone/x.md')
+    plantAndTag(path.join(projectDir, 'code'), 'v1.0', ok)
+    expect(readmeLines(doctor()).some((l) => /stale against the shipped tag/.test(l))).toBe(false)
+  })
+
+  test('T-810: a stale path in the command itself still warns even with a trailing comment', () => {
+    runInit()
+    const bad = HEALTHY_README.replace('scripts/install.sh   # setup',
+      'scripts/gone.sh tracks/T-NNN   # 1/2 (update/skip)')
+    plantAndTag(path.join(projectDir, 'code'), 'v1.0', bad)
+    const lines = readmeLines(doctor())
+    expect(lines.some((l) => /stale against the shipped tag/.test(l) && /scripts\/gone\.sh/.test(l))).toBe(true)
+    expect(lines.some((l) => /`update\/skip`|`1\/2`/.test(l))).toBe(false)
+  })
+
   test('violation: README names a persona `prdt-<x>` the tagged CLI does not ship', () => {
     runInit()
     const readme = HEALTHY_README.replace('prdt-po → prdt-designer → prdt-developer → prdt-qa',
