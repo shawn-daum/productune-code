@@ -51,19 +51,20 @@ export const HOME = {
   decision: '결정',
 }
 
-// T-705 §B: linkage 연결→간선 (그래프 용어, T-600 정합). Everything else here
-// is §A keep. 'out-of-scope' 는 PRD 밖 티켓의 트레일링 행(§A, PRD.md 기존 관용구
-// "항목 밖" 재사용).
-export const PROGRESS_ITEM_LABEL = {
-  'north-star': '북극성',
-  'prd-form': 'PRD 표현',
-  linkage: '간선',
-  'gui-deferral-marker': 'GUI 유예',
-  'inherited-defects': '승계 결함',
-  viewer: '뷰어',
-  'ticket-frame': '티켓 틀',
-  'out-of-scope': '항목 밖',
-}
+// T-795: the progress matrix's per-item row labels no longer live here as a
+// hand-typed map (that map hardcoded productune's own v1.10 PRD item keys —
+// a v1.11 item, or another project's own items, had no entry at all and fell
+// back to their raw key). Every row's label now comes straight from the open
+// PRD version section's own `#### <key> — <label>` heading text
+// (collect.mjs's `collectPrdOpenItems`, consumed by render.mjs's
+// `homeProgressBody`) — real PRD prose, not a second copy of it kept in code.
+//
+// 'out-of-scope' is the ONE row here that is NOT a PRD item at all (a ticket
+// with no `prd_item`, or one whose item isn't in the open section) — it has
+// no PRD heading to read a label from, so it keeps its own hardcoded label,
+// same as every other genuine UI copy string in this file (§A keep, PRD.md's
+// own existing "항목 밖" idiom reused verbatim).
+export const PROGRESS_OUT_OF_SCOPE_LABEL = '항목 밖'
 
 // T-705 §B: spec_since 라벨을 영문 키 그대로 노출하던 것을 '시작 버전'으로.
 export const DETAIL_FIELD_LABELS = {

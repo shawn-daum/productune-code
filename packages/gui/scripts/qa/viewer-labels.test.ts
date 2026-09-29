@@ -28,6 +28,7 @@ import ts from 'typescript'
 import { renderPage } from '../../viewer/lib/render.mjs'
 import { generate, missingMetaRootReason } from '../../viewer/generate.mjs'
 import { WIKI, FEATURE } from '../../viewer/lib/labels.mjs'
+import * as labels from '../../viewer/lib/labels.mjs'
 
 // T-718: the real generated page, built HERE in-process rather than read
 // back off the gitignored `viewer/viewer.html` (a fresh checkout never has
@@ -143,6 +144,20 @@ export function findHardcodedUserVisibleStrings(source: string): string[] {
   visit(sourceFile)
   return flagged
 }
+
+// T-795: the hardcoded per-project item-key→label map is gone entirely (its
+// labels now come from the open PRD section's own headings, at generation
+// time — collect.mjs's collectPrdOpenItems) — proven directly against the
+// module's own exports, not only against one generated page's HTML.
+describe('viewer/lib/labels.mjs — PROGRESS_ITEM_LABEL is gone (T-795)', () => {
+  it('no longer exports a hardcoded progress-item label map', () => {
+    expect((labels as Record<string, unknown>).PROGRESS_ITEM_LABEL).toBeUndefined()
+  })
+
+  it('still exports the one label that is not PRD-derived (the out-of-scope trailing row)', () => {
+    expect(labels.PROGRESS_OUT_OF_SCOPE_LABEL).toBe('항목 밖')
+  })
+})
 
 describe('viewer/lib/render.mjs — no hard-coded user-visible string outside labels.mjs (T-706)', () => {
   it('the real render.mjs carries none', () => {

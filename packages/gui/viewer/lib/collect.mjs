@@ -154,7 +154,59 @@ export function collectFeatures(repoRoot) {
   return listMarkdownFiles(dir).map((f) => readDoc(repoRoot, path.join(dir, f)))
 }
 
-export function collectPrd(repoRoot) {
+// T-795: the home progress matrix's row set + labels read the open PRD
+// version section's OWN `#### <key> — <label>` headings (contracts
+// §Fixed-paths: that heading form is fixed) rather than a hand-typed roster
+// kept in render.mjs/labels.mjs — the old roster was productune's own v1.10
+// item keys, so a v1.11 item (or another project's own items) had no row at
+// all. The section is found the same way every other "is this the current
+// version" check in this codebase already does it (`sameVersion`, T-713),
+// never a literal string compare against "## v1.11" — so this holds for any
+// project's own version string too.
+const PRD_VERSION_HEADING_RE = /^##\s+(\S+)/
+const PRD_ITEM_HEADING_RE = /^####\s+(\S+)(?:\s+—\s+(.*))?\s*$/
+
+/**
+ * Ordered `{key, label}` pairs read from the OPEN `## v<N>.<m>` section's own
+ * `#### <key> — <label>` headings. A heading with no ` — <label>` part
+ * (malformed against the contract's own fixed form) falls back to its own
+ * key as the label, rather than dropping the row.
+ * @param {string} prdBody docs/prd/PRD.md's body (standing head + open
+ *   version — contracts §Fixed-paths "read unit")
+ * @param {string} currentVersion
+ * @returns {Array<{key:string, label:string}>}
+ */
+export function collectPrdOpenItems(prdBody, currentVersion) {
+  const lines = (prdBody || '').split('\n')
+  let start = -1
+  for (let i = 0; i < lines.length; i++) {
+    const m = PRD_VERSION_HEADING_RE.exec(lines[i])
+    if (m && sameVersion(m[1], currentVersion)) {
+      start = i + 1
+      break
+    }
+  }
+  if (start === -1) return []
+  let end = lines.length
+  for (let i = start; i < lines.length; i++) {
+    if (/^##\s+\S/.test(lines[i])) {
+      end = i
+      break
+    }
+  }
+  const items = []
+  for (let i = start; i < end; i++) {
+    const m = PRD_ITEM_HEADING_RE.exec(lines[i])
+    if (m) {
+      const key = m[1]
+      const label = (m[2] || '').trim() || key
+      items.push({ key, label })
+    }
+  }
+  return items
+}
+
+export function collectPrd(repoRoot, currentVersion) {
   // T-746: a project whose PRD is not written yet still gets a viewer (an
   // empty open section), never an ENOENT.
   const prdPath = path.join(repoRoot, 'docs/prd/PRD.md')
@@ -166,7 +218,7 @@ export function collectPrd(repoRoot) {
     const rel = `docs/prd/versions/${f}`
     return { rel, name: f, body: fs.readFileSync(path.join(versionsDir, f), 'utf8') }
   })
-  return { current, closed }
+  return { current, closed, openItems: collectPrdOpenItems(current.body, currentVersion) }
 }
 
 const ARTIFACTS_ROOT_REL = 'docs/artifacts'
@@ -268,7 +320,7 @@ export function collectAll(repoRoot) {
   return {
     poState,
     currentVersion,
-    prd: collectPrd(repoRoot),
+    prd: collectPrd(repoRoot, currentVersion),
     tickets: collectTickets(repoRoot, currentVersion),
     wiki: collectWiki(repoRoot),
     features: collectFeatures(repoRoot),
