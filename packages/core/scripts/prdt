@@ -299,6 +299,7 @@ def atomic_write_text(path, text, mode=0o644):
     helper, not eleven copies of the same three lines — this is exactly the
     recurring shape T-656 ratchets against."""
     path = Path(path)
+    before = _prior_text(path) if _docs_relevant(path) else None
     tmp = path.with_name(path.name + ".tmp")
     for attempt in (0, 1):
         try:
@@ -312,7 +313,52 @@ def atomic_write_text(path, text, mode=0o644):
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
     os.replace(tmp, path)
+    note_docs_write(path, before, text)
     return path
+
+
+# ── T-838: a CLI subcommand that changes a document the viewer reads schedules
+# the T-802 viewer regen itself (no Bash hook — decision T-837). Every writer
+# of docs/**/*.md (and docs/artifacts/manifest.json, which the viewer also
+# reads) reports the write here — atomic_write_text does so on its own, the
+# remaining plain `write_text` sites call note_docs_write right after — and
+# main() hands the collected project roots to schedule_docs_viewer_regen()
+# once the subcommand returns. A write whose bytes equal what was already on
+# disk (`wiki reindex` / `doctor` rewriting an unchanged index.md) is no change
+# and schedules nothing.
+_DOCS_WRITTEN = set()
+
+
+def _docs_relevant(path):
+    p = Path(path)
+    return "docs" in p.parts[:-1] and (p.suffix == ".md" or p.name == "manifest.json")
+
+
+def _prior_text(path):
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def note_docs_write(path, before=None, after=None):
+    """Record that this run changed `path` when it is a viewer-read document
+    of a prdt project; `before == after` (both given) is no change."""
+    if before is not None and before == after:
+        return
+    if not _docs_relevant(path):
+        return
+    try:
+        p = Path(path).resolve()
+        root = find_project_root(p.parent)
+        if root is None:
+            return
+        rel = p.relative_to(root)
+    except (OSError, ValueError):
+        return
+    if rel.suffix == ".md" and "docs" in rel.parts[:-1] \
+            or rel.as_posix() == "docs/artifacts/manifest.json":
+        _DOCS_WRITTEN.add(str(root))
 
 
 # ── untrusted text on a structured line (T-586 ①, T-581 QA) ──────────────────
@@ -721,7 +767,9 @@ def reindex_wiki(root, con):
     pages = index_project_wiki(root, con)
     idx = root / "docs" / "wiki" / "index.md"
     idx.parent.mkdir(parents=True, exist_ok=True)
-    idx.write_text(render_wiki_index(pages, PROJECT_INDEX_HEADER), encoding="utf-8")
+    before, text = _prior_text(idx), render_wiki_index(pages, PROJECT_INDEX_HEADER)
+    idx.write_text(text, encoding="utf-8")
+    note_docs_write(idx, before, text)
     return pages
 
 
@@ -2136,6 +2184,7 @@ def scaffold_releases(root):
         if not fp.exists():
             fp.parent.mkdir(parents=True, exist_ok=True)
             fp.write_text(RELEASES_STUB, encoding="utf-8")
+            note_docs_write(fp)
     except OSError:
         pass
 
@@ -2189,6 +2238,7 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
         fp = root / "docs" / "wiki" / f
         if not fp.exists():
             fp.write_text(head, encoding="utf-8")
+            note_docs_write(fp)
     # Code-side release-notes stub (T-453) — after the config write above, so
     # code_root() resolves the layout this init just recorded.
     scaffold_releases(root)
@@ -4400,6 +4450,50 @@ def viewer_regenerate(root):
     except (OSError, subprocess.TimeoutExpired):
         return None
     return out if r.returncode == 0 and out.is_file() else None
+
+
+def _auto_open_hook():
+    """prdt-auto-open.sh beside this CLI (a checkout's scripts/hooks/), else
+    the installed mirror's (~/.prdt/hooks/) — the T-802 regen worker lives
+    there, one copy for the Write/Edit hook and the CLI (T-838)."""
+    for hook in (Path(__file__).resolve().parent / "hooks" / "prdt-auto-open.sh",
+                 prdt_home() / "hooks" / "prdt-auto-open.sh"):
+        if hook.is_file():
+            return hook
+    return None
+
+
+def schedule_docs_viewer_regen():
+    """T-838: after a subcommand changed a viewer-read document, hand each
+    touched project to the T-802 worker (`prdt-auto-open.sh --regen <root>`)
+    as a detached process, and return at once: the command never waits on a
+    regen, never opens anything, and never fails because of one — every error
+    here is swallowed. Only a project whose viewer.html already exists is
+    refreshed: a project that never generated its viewer has nothing stale to
+    read. The worker regenerates with `$PRDT_BIN`, set here to this same CLI
+    when the caller did not set it."""
+    if not _DOCS_WRITTEN:
+        return
+    try:
+        roots = [r for r in sorted(_DOCS_WRITTEN)
+                 if (Path(r) / VIEWER_REL / "viewer.html").is_file()]
+        hook = _auto_open_hook() if roots else None
+        bash = shutil.which("bash") if hook else None
+        if not bash:
+            return
+        env = dict(os.environ)
+        if not env.get("PRDT_BIN"):
+            me = Path(__file__).resolve()
+            if os.access(me, os.X_OK):
+                env["PRDT_BIN"] = str(me)
+        for r in roots:
+            subprocess.Popen([bash, str(hook), "--regen", r], env=env,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+    except Exception:  # noqa: BLE001 — a regen must never fail the command that asked for it
+        pass
+    finally:
+        _DOCS_WRITTEN.clear()
 
 
 def viewer_anchor(root, target):
@@ -8804,6 +8898,7 @@ def features_migrate(root, apply):
             print(f"  skipped {p.relative_to(root)}: no frontmatter `feature: {old}` line found")
             continue
         p.write_text(out, encoding="utf-8")
+        note_docs_write(p)
         done += 1
     rebuild_index(root)
     print(f"prdt features migrate: {done} file(s) rewritten (the frontmatter `feature:` line only) · reindexed")
@@ -12865,6 +12960,7 @@ def migrate_ticket(p, dry):
         note = f"<!-- migrated from full frontmatter: {pairs} -->\n\n"
     if not dry:
         p.write_text(fm_serialize(new) + "\n" + note + body, encoding="utf-8")
+        note_docs_write(p)
     return new["status"]
 
 
@@ -12876,6 +12972,7 @@ def write_wiki_page(root, name, type_, title, body, version, dry):
     if not dry:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(fm_serialize(fm) + "\n" + body.strip() + "\n", encoding="utf-8")
+        note_docs_write(p)
     return True
 
 
@@ -12970,6 +13067,7 @@ def migrate_claude_md(root, dry, assume_yes, to_archive, version):
             fm = {"title": CLAUDE_MIGRATED_TITLE, "status": "archived",
                   "migrated_from": "CLAUDE.md"}
             dst.write_text(fm_serialize(fm) + "\n" + body.strip() + "\n", encoding="utf-8")
+            note_docs_write(dst)
             wrote = dst.is_file()
     except OSError as e:
         print(f"  · [실패] 이관본 기록 실패({e}) — 원본 CLAUDE.md를 보존합니다.")
@@ -13125,6 +13223,7 @@ def cmd_migrate(args):
                 fp.write_text(head, encoding="utf-8")
         with open(root / "docs" / "wiki" / "log.md", "a", encoding="utf-8") as f:
             f.write(f"- ({now_iso()[:10]}) migrated from {kind}: {n_tickets} tickets, {n_pages} wiki pages — curation due at next Retro\n")
+        note_docs_write(root / "docs" / "wiki" / "log.md")
         _con, v, _pages, _mpages = rebuild_index(root)
         if v:
             report.append(f"⚠ reindex: 티켓 위반 {len(v)}건 잔존 — `prdt doctor` 확인")
@@ -13940,7 +14039,14 @@ def main():
         # bare `prdt` = 구 productune UX 계승: init(필요 시 §10 3항목) → PO 대화 진입
         cmd_po(argparse.Namespace(rest=[]))
         return
-    args.fn(args)
+    try:
+        args.fn(args)
+    finally:
+        # T-838: a hook's own call (`schedule record`) regenerates nothing —
+        # same boundary as the meta-backup tick above; a subcommand that wrote
+        # no document (--check, --dry-run, no change) has nothing recorded.
+        if not hook_call:
+            schedule_docs_viewer_regen()
 
 
 if __name__ == "__main__":

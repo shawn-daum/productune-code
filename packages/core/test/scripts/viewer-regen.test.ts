@@ -21,6 +21,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-auto-open.sh')
@@ -212,5 +213,187 @@ describe.skipIf(!RUN)('T-802 — background regen on any docs/**/*.md write', ()
     expect(finalCount).toBeGreaterThan(0)
     expect(finalCount).toBeLessThan(N)
     expect(readLog(s.openLog)).toBe('')
+  })
+})
+
+/**
+ * T-838 — a `prdt` subcommand that changes a viewer-read document schedules
+ * the SAME T-802 worker itself (decision T-837: no Bash hook). Driven through
+ * the real CLI with `$PRDT_BIN` pointing at a stub generator, so every count
+ * below is a real run of the worker's `viewer --no-open` call.
+ */
+const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
+
+function cliSandbox(opts: { fail?: boolean; sleep?: string; viewer?: boolean } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t838-'))
+  const bin = path.join(dir, 'bin')
+  fs.mkdirSync(bin)
+  const openLog = path.join(dir, 'open.log')
+  fs.writeFileSync(path.join(bin, 'open'), `#!/usr/bin/env bash\necho "$@" >> "${openLog}"\n`, { mode: 0o755 })
+  const stub = path.join(dir, 'prdt-stub')
+  fs.writeFileSync(stub, [
+    '#!/usr/bin/env bash',
+    'if [ "${1:-}" = "viewer" ] && [ "${2:-}" = "--no-open" ]; then',
+    '  printf x >> "$PRDT_TEST_COUNT"',
+    '  [ -n "$PRDT_TEST_SLEEP" ] && sleep "$PRDT_TEST_SLEEP"',
+    '  [ -n "$PRDT_TEST_FAIL" ] && exit 1',
+    '  echo "<!doctype html>" > "$(pwd)/.prdt/scratch/viewer/viewer.html"',
+    '  exit 0',
+    'fi',
+    'exit 2',
+  ].join('\n') + '\n', { mode: 0o755 })
+  const prdtHome = path.join(dir, 'prdt-home')
+  fs.mkdirSync(prdtHome)
+  const root = path.join(dir, 'proj')
+  fs.mkdirSync(root)
+  const countFile = path.join(dir, 'count')
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH}`,
+    PRDT_HOME: prdtHome,
+    PRDT_BIN: stub,
+    PRDT_TEST_COUNT: countFile,
+    PRDT_META_BACKUP: '0',
+    CI: '1',
+  }
+  delete env.PRDT_GUI_SESSION
+  delete env.PRDT_TEST_SLEEP
+  delete env.PRDT_TEST_FAIL
+  delete env.PRDT_VIEWER_REGEN_BACKOFF_SECS
+  const run = (args: string[], extra: NodeJS.ProcessEnv = {}, input = '') =>
+    execFileSync('python3', [PRDT_CLI, ...args], {
+      cwd: root, env: { ...env, ...extra }, input, encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
+    })
+  run(['init', '--json', '--slug', 'proj', '--yes'])
+  const vdir = path.join(root, '.prdt', 'scratch', 'viewer')
+  if (opts.viewer !== false) {
+    fs.mkdirSync(vdir, { recursive: true })
+    fs.writeFileSync(path.join(vdir, 'viewer.html'), 'stale\n')
+  }
+  if (opts.fail) env.PRDT_TEST_FAIL = '1'
+  if (opts.sleep) env.PRDT_TEST_SLEEP = opts.sleep
+  return { dir, root, run, countFile, openLog, vdir, env }
+}
+
+/** Wait until the count file stops growing, then return it. */
+async function settledCount(p: string, minWaitMs = 400): Promise<number> {
+  await new Promise((r) => setTimeout(r, minWaitMs))
+  let last = -1
+  let stable = 0
+  const t0 = Date.now()
+  while (Date.now() - t0 < 6000 && stable < 3) {
+    const c = countOf(p)
+    if (c === last) stable++
+    else { stable = 0; last = c }
+    await new Promise((r) => setTimeout(r, 150))
+  }
+  return countOf(p)
+}
+
+function newTicket(s: ReturnType<typeof cliSandbox>, slug: string): string {
+  const out = s.run(['tickets', 'new', '--type', 'impl', '--slug', slug])
+  return out.match(/\[(T-\d+)\]/)![1]
+}
+
+describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the viewer themselves', () => {
+  test('tickets new regenerates viewer.html in the background and opens nothing', async () => {
+    const s = cliSandbox()
+    newTicket(s, 'first')
+    expect(await waitFor(() => countOf(s.countFile) > 0)).toBe(true)
+    expect(await waitFor(() => fs.readFileSync(path.join(s.vdir, 'viewer.html'), 'utf8').startsWith('<!doctype'))).toBe(true)
+    expect(readLog(s.openLog)).toBe('')
+  })
+
+  test('tickets fmt regenerates after a rewrite; --check, --dry-run and an already formatted ticket do not', async () => {
+    const s = cliSandbox()
+    const id = newTicket(s, 'fmt-me')
+    await settledCount(s.countFile)
+    const base = countOf(s.countFile)
+    const f = path.join(s.root, 'docs', 'tickets', 'v0.1', `${id}.md`)
+    fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('## problem', '## Problem'))
+    try { s.run(['tickets', 'fmt', id, '--check']) } catch { /* exits 1 on a violation, by design */ }
+    s.run(['tickets', 'fmt', id, '--dry-run'])
+    expect(await settledCount(s.countFile)).toBe(base)
+    s.run(['tickets', 'fmt', id])
+    expect(await waitFor(() => countOf(s.countFile) > base)).toBe(true)
+    const after = await settledCount(s.countFile)
+    expect(s.run(['tickets', 'fmt', id])).toContain('already formatted')
+    expect(await settledCount(s.countFile)).toBe(after)
+  })
+
+  test('wiki reindex regenerates when index.md changes, not when it is rewritten unchanged', async () => {
+    const s = cliSandbox()
+    s.run(['wiki', 'reindex'])
+    expect(await settledCount(s.countFile)).toBe(0)
+    fs.writeFileSync(path.join(s.root, 'docs', 'wiki', 'fact--y.md'), '---\ntitle: y\ntype: fact\nstatus: live\n---\nbody\n')
+    s.run(['wiki', 'reindex'])
+    expect(await waitFor(() => countOf(s.countFile) > 0)).toBe(true)
+  })
+
+  test('schedule report and artifacts sync regenerate; a repeat with nothing new does not', async () => {
+    const s = cliSandbox()
+    s.run(['schedule', 'report'])
+    expect(await waitFor(() => countOf(s.countFile) > 0)).toBe(true)
+    let base = await settledCount(s.countFile)
+    s.run(['schedule', 'report'])
+    expect(await settledCount(s.countFile)).toBe(base)
+    fs.mkdirSync(path.join(s.root, 'docs', 'artifacts', 'v0.1'), { recursive: true })
+    fs.writeFileSync(path.join(s.root, 'docs', 'artifacts', 'v0.1', 'note.md'), 'hi\n')
+    s.run(['artifacts', 'sync'])
+    expect(await waitFor(() => countOf(s.countFile) > base)).toBe(true)
+    base = await settledCount(s.countFile)
+    s.run(['artifacts', 'sync'])
+    expect(await settledCount(s.countFile)).toBe(base)
+    expect(readLog(s.openLog)).toBe('')
+  })
+
+  test('read-only commands, the dispatch gate\'s `schedule record`, and a project without a viewer regenerate nothing', async () => {
+    const s = cliSandbox()
+    s.run(['tickets'])
+    s.run(['schedule'])
+    s.run(['doctor'])
+    try { s.run(['schedule', 'record'], {}, JSON.stringify({ tool_name: 'Agent', tool_input: {} })) } catch { /* gate-internal */ }
+    expect(await settledCount(s.countFile)).toBe(0)
+
+    const n = cliSandbox({ viewer: false })
+    newTicket(n, 'no-viewer')
+    expect(await settledCount(n.countFile)).toBe(0)
+    expect(fs.existsSync(path.join(n.vdir, 'viewer.html'))).toBe(false)
+  })
+
+  test('the command neither waits on the regen nor fails when it cannot run', async () => {
+    const s = cliSandbox({ sleep: '3' })
+    const t0 = Date.now()
+    newTicket(s, 'fast')
+    expect(Date.now() - t0).toBeLessThan(3000)
+    expect(await waitFor(() => countOf(s.countFile) > 0)).toBe(true)
+
+    const b = cliSandbox()
+    const out = b.run(['tickets', 'new', '--type', 'impl', '--slug', 'broken'], { PRDT_BIN: path.join(b.dir, 'no-such-prdt') })
+    expect(out).toMatch(/\[T-\d+\]/)
+  })
+
+  test('20 doc-writing calls against a failing generator make at most a few attempts (failure stamp)', async () => {
+    const s = cliSandbox({ fail: true })
+    for (let i = 0; i < 20; i++) newTicket(s, `burst-${i}`)
+    const attempts = await settledCount(s.countFile)
+    expect(attempts).toBeGreaterThan(0)
+    expect(attempts).toBeLessThanOrEqual(3)
+    expect(fs.existsSync(path.join(s.vdir, '.regen-failed'))).toBe(true)
+  })
+
+  test('a success after the backoff window clears the failure stamp', async () => {
+    const s = cliSandbox({ fail: true })
+    newTicket(s, 'fails')
+    expect(await waitFor(() => fs.existsSync(path.join(s.vdir, '.regen-failed')))).toBe(true)
+    await settledCount(s.countFile)
+    const base = countOf(s.countFile)
+    delete s.env.PRDT_TEST_FAIL
+    newTicket(s, 'recovers-too-soon')
+    expect(await settledCount(s.countFile)).toBe(base)
+    s.run(['tickets', 'new', '--type', 'impl', '--slug', 'recovers'], { PRDT_VIEWER_REGEN_BACKOFF_SECS: '0' })
+    expect(await waitFor(() => !fs.existsSync(path.join(s.vdir, '.regen-failed')))).toBe(true)
+    expect(countOf(s.countFile)).toBe(base + 1)
   })
 })
