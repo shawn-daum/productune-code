@@ -347,6 +347,21 @@ describe('prdt track land', () => {
     expect(fs.existsSync(wt())).toBe(true)
   })
 
+  // T-813: `--test '<cmd> | tail'` used to end with tail's exit code, so a
+  // failing test landed as a pass — the command now runs under pipefail.
+  test('a failing test piped into tail still fails the land; a passing piped one lands', () => {
+    commit(wt(), 'c.txt', 'new\n', 'feat: c')
+    const before = git(code, 'rev-parse', 'dev')
+    const red = cli('track', 'land', 'T-1', '--test', 'sh -c "echo boom; exit 3" | tail -n 5')
+    expect(red.status).toBe(1)
+    expect(red.err).toContain('tests failed on the merged tree — dev is unchanged')
+    expect(git(code, 'rev-parse', 'dev')).toBe(before)
+    expect(fs.existsSync(wt())).toBe(true)
+    const green = cli('track', 'land', 'T-1', '--test', 'test -f c.txt && echo ok | tail -n 1')
+    expect(green.status).toBe(0)
+    expect(git(code, 'rev-parse', 'dev')).not.toBe(before)
+  })
+
   test('the tests run on the MERGED tree (dev\'s change is visible to them)', () => {
     commit(wt(), 'c.txt', 'new\n', 'feat: c')
     commit(code, 'b.txt', 'dev moved\n', 'feat: b')
