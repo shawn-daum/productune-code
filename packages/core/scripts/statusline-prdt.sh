@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# prdt statusline — PURE DISPLAY (§10). No writes, no side effects; the state/cost
-# recording that full's statusline smuggled in lives in hooks/prdt-post-dispatch.sh.
+# prdt statusline — PURE DISPLAY (§10). No writes, no side effects, with one
+# narrow exception (T-805): a ticket id's OSC 8 link target is the tiny viewer
+# jump stub `.prdt/scratch/viewer/at/T-NNN.html` (T-746) already written by
+# `prdt tickets --link`/`prdt viewer`, created here on demand when missing —
+# a small, idempotent, derived-artifact write (doctrine #6: a tool maintains
+# what it can generate), never project state, and never the full viewer
+# regeneration those commands also do (see `viewer_jump_path` below for why).
+# The state/cost recording that full's statusline smuggled in lives in
+# hooks/prdt-post-dispatch.sh.
 #
 # Format: <slug> | <version> | <stage> | <vdone>/<vtotal> | T-NNN <task>→<persona> | branch: <branch>
 #   - <vdone>/<vtotal> is ONE version-wide count over every ticket (open+done)
@@ -336,6 +343,67 @@ def ticket_path(con, tid):
     return p if p.startswith(root + os.sep) else None
 
 
+# T-805: a ticket id's link target — never `ticket_path()`'s raw md above,
+# always the viewer jump page `prdt tickets --link` prints for the SAME id
+# (T-746/T-792): a person clicking a statusline ticket wants the viewer, not
+# a bare markdown file. `VIEWER_HTML_REL`/`VIEWER_JUMP_REL` mirror the CLI's
+# own `VIEWER_REL`/`VIEWER_JUMP_DIR` (scripts/prdt) — kept as literal path
+# segments rather than an import, since that script has no `.py` extension
+# and this one is a separate bash+python file; drift is caught the moment the
+# CLI's own tests (prdt-tickets-link.test.ts) or this file's move, not before.
+VIEWER_HTML_REL = os.path.join(".prdt", "scratch", "viewer", "viewer.html")
+VIEWER_JUMP_REL = os.path.join(".prdt", "scratch", "viewer", "at")
+
+
+def viewer_jump_path(tid):
+    """The forwarding page for `tid` — same path and same two-line
+    redirect-to-`viewer.html#id` body `viewer_jump()` (scripts/prdt) writes —
+    or None when no viewer has ever been generated for this project (a jump
+    page pointing at a `viewer.html` that was never built would just be a
+    dead link; that degrades the same silent way every other missing piece
+    in this script does).
+
+    Deliberately NOT `viewer_regenerate()`: that shells out to node and
+    rebuilds the WHOLE static viewer — measured ~1.4s in this repo — far too
+    slow to pay on every statusline render. Keeping viewer.html itself fresh
+    is someone else's job (the CLI's own commands; the background regen a
+    docs/**/*.md write already schedules, T-802); this function only writes
+    the tiny stub, which costs one small file write regardless of how fresh
+    the target it points at is. A ticket id is already a safe filename as-is
+    (TICKET_RE = T-\\d+, inside `viewer_jump()`'s own safe charset), so there
+    is no hash-suffix branch to mirror."""
+    if not os.path.isfile(os.path.join(root, VIEWER_HTML_REL)):
+        return None
+    jdir = os.path.join(root, VIEWER_JUMP_REL)
+    try:
+        os.makedirs(jdir, exist_ok=True)
+    except OSError:
+        return None
+    page = os.path.join(jdir, f"{tid}.html")
+    body = ('<!doctype html><meta charset="utf-8">'
+            f'<meta http-equiv="refresh" content="0;url=../viewer.html#{tid}">'
+            f'<a href="../viewer.html#{tid}">viewer.html#{tid}</a>\n')
+    try:
+        tmp = f"{page}.tmp{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.replace(tmp, page)
+    except OSError:
+        return None
+    return page
+
+
+def ticket_link_target(con, tid):
+    """The OSC 8 link target for `tid`: `ticket_path()` still gates existence
+    + path safety exactly as before (an id the index doesn't know, or whose
+    path carries a control byte, links to nothing at all — unchanged); once
+    gated, the link is always the viewer jump page, degrading to no link at
+    all — never to the raw md — when no viewer exists yet (T-805)."""
+    if ticket_path(con, tid) is None:
+        return None
+    return viewer_jump_path(tid)
+
+
 def collapse(items, limit):
     """`items` capped to `limit`, with the dropped count — the "long lists
     collapse to a count + first ids" width-budget rule."""
@@ -343,7 +411,7 @@ def collapse(items, limit):
 
 
 LINE_CAP = 200
-links = {}  # ticket_id -> resolved path, filled in as segments are built;
+links = {}  # ticket_id -> resolved viewer link target (T-805), filled in as segments are built;
             # consumed AFTER the belt-clean below, never before (clean() would
             # strip the OSC 8 escape bytes as control characters, same as it
             # strips any other Cc/Cf/Zl/Zp — see the wrap step's own note).
@@ -399,16 +467,16 @@ running = running_dispatches()
 cp = critical_path_head()
 idx = open_index_ro() if (running or waiting or ct_tid or cp) else None
 if ct_tid:
-    links[ct_tid] = ticket_path(idx, ct_tid)  # F4: the current_task id links too
+    links[ct_tid] = ticket_link_target(idx, ct_tid)  # F4: the current_task id links too
 for _cp_tid in cp:
-    links.setdefault(_cp_tid, ticket_path(idx, _cp_tid))
+    links.setdefault(_cp_tid, ticket_link_target(idx, _cp_tid))
 
 
 def fmt_group(ids, limit, succ_limit, with_persona=None):
     shown, extra = collapse(ids, limit)
     bits = []
     for tid in shown:
-        links[tid] = ticket_path(idx, tid)
+        links[tid] = ticket_link_target(idx, tid)
         seg = tid
         if with_persona is not None and with_persona.get(tid):
             seg += "→" + "+".join(with_persona[tid])
@@ -416,7 +484,7 @@ def fmt_group(ids, limit, succ_limit, with_persona=None):
         if succ:
             s_shown, s_extra = collapse(succ, succ_limit)
             for s in s_shown:
-                links.setdefault(s, ticket_path(idx, s))
+                links.setdefault(s, ticket_link_target(idx, s))
             s_txt = ",".join(s_shown) + (f"+{s_extra}" if s_extra else "")
             seg += f"»{s_txt}"
         bits.append(seg)
