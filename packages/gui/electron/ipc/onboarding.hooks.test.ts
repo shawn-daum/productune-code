@@ -138,7 +138,7 @@ function cliHooksBlock(home: string): any {
     SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh'), h('prdt-return-check.sh')] }],
     PostToolUse: [
       { matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] },
-      { matcher: 'Write', hooks: [h('prdt-auto-open.sh')] },
+      { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-auto-open.sh')] },
       // T-794: a second registration of the SAME script — the CLI no longer
       // opens its own hand-offs; this is the main-session-only relay that
       // reads a completed `prdt` Bash call's own printed stdout instead.
