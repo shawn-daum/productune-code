@@ -417,9 +417,24 @@ function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF) {
   return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer })
 }
 
-function emitThemeVarBlock(className, resolvedMap) {
-  const lines = [...resolvedMap.entries()].map(([name, value]) => `  --${name}: ${value};`)
-  return `.${className} {\n${lines.join('\n')}\n}`
+/**
+ * T-797: `:root` carries the dark token set as the page's baseline
+ * (dark-first, same convention tokens.css itself uses — its own header:
+ * "dark is the :root default"), then `@media (prefers-color-scheme: light)`
+ * overrides it with the light set — the SAME two-block shape tokens.css
+ * uses, not a JS-driven class toggle: this page ships no runtime theme
+ * switcher (no script writes a `.v-light`/`.theme-light` class anywhere),
+ * so a class-scoped var block the page never applies is dead weight that
+ * always renders dark regardless of the OS setting — the exact defect this
+ * ticket reports. `dark`/`light` are `resolveVarChains(buildRawThemeMaps(…))`
+ * output — the same parser tokens.css's own DS generator consumes
+ * (ds/lib/parse-tokens.mjs) — so the light set here can never drift from
+ * tokens.css as a hand copy.
+ */
+function emitRootThemeCss(dark, light) {
+  const darkLines = [...dark.entries()].map(([name, value]) => `  --${name}: ${value};`)
+  const lightLines = [...light.entries()].map(([name, value]) => `  --${name}: ${value};`)
+  return `:root {\n${darkLines.join('\n')}\n}\n@media (prefers-color-scheme: light) {\n:root {\n${lightLines.join('\n')}\n}\n}`
 }
 
 function fmtBytes(n) {
@@ -1828,11 +1843,10 @@ export function renderPage({
 <style>
 ${fontFaceCss}
 ${TEMPLATE_CSS}
-${emitThemeVarBlock('v-dark', dark)}
-${emitThemeVarBlock('v-light', light)}
+${emitRootThemeCss(dark, light)}
 </style>
 </head>
-<body class="v-dark">
+<body>
 <!-- sha256:${escapeHtml(tokensSha256)} -->
 <div class="app-shell">
 ${activityBar('home')}
