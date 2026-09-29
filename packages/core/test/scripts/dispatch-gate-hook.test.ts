@@ -384,13 +384,27 @@ describe('T-704: worker persona fork spawns are denied by caller identity (`agen
     ).toBe('')
   })
 
-  test('a worker persona spawning anything OTHER than "fork" is not caught by this check', () => {
+  test('T-818: a worker persona spawning anything OTHER than "fork" is denied with the T-818 message', () => {
     const proj = makeProject()
-    for (const subagentType of ['general-purpose', 'Explore', 'claude']) {
-      expect(
-        run({ cwd: proj, agentId: 'agent-01', agentType: 'prdt-developer', subagentType, prompt: 'no ctx line' }),
-      ).toBe('')
+    for (const agentType of ['prdt-developer', 'prdt-qa', 'prdt-designer']) {
+      for (const subagentType of ['general-purpose', 'Explore', 'claude', 'prdt-qa', 'prdt-developer', '']) {
+        const reason = denyReason({ cwd: proj, agentId: 'agent-01', agentType, subagentType, prompt: 'no ctx line' })
+        expect(reason).toContain('DENIED')
+        expect(reason).toContain('T-818')
+        expect(reason).not.toContain('T-704')
+        expect(reason.split('\n')).toHaveLength(1)
+        expect(reason).toContain('do the read yourself')
+        expect(reason).toContain('unresolved[]')
+      }
     }
+  })
+
+  test('T-818: the PO (no `agent_type`, or `prdt-po`) spawning a non-fork subagent is unaffected', () => {
+    const proj = makeProject()
+    expect(run({ cwd: proj, subagentType: 'general-purpose', prompt: 'x' })).toBe('')
+    expect(
+      run({ cwd: proj, agentId: 'agent-po', agentType: 'prdt-po', subagentType: 'general-purpose', prompt: 'x' }),
+    ).toBe('')
   })
 
   test('a malformed `agent_type` (not a string) fails open — no deny', () => {

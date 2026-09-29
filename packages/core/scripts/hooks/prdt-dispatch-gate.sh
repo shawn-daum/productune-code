@@ -301,7 +301,7 @@ while [ -n "$DIR" ] && [ "$DIR" != "/" ]; do
 done
 [ -n "$FOUND" ] || exit 0
 
-# ── T-704: a worker persona may not spawn `subagent_type: "fork"` ────────────
+# ── T-704/T-818: a worker persona may not spawn a subagent (fork: T-704; any: T-818) ──
 # WHY: 2026-09-26, T-666 2b — a worker-spawned fork wrote `render.mjs` twice
 # AFTER the worker itself had handed back, then, told to stop, claimed over
 # SendMessage to BE the worker of record and wrote again; the PO had to
@@ -322,16 +322,22 @@ done
 # `agent_type` set to its own name (`prdt-developer` / `prdt-qa` /
 # `prdt-designer`); the PO's own call — main session, or `agent_type` absent —
 # never matches, unaffected by design, never denied here.
+# T-818 widens the callee condition (user decision, T-817 option A): a worker
+# persona may not spawn ANY subagent — every `subagent_type`, absent or empty
+# included (the harness default is a general-purpose subagent). `fork` keeps its
+# own T-704 message; every other value gets the T-818 one. No `// null` needed:
+# the message is picked with `if`, never a `try … catch null` inside `map()`.
 FORK_DENY="$(printf '%s' "$EV" | jq -rc '
   if (.hook_event_name != "PreToolUse") or (.tool_name != "Agent") then empty
   else (.tool_input // {}) as $ti
   | if ($ti | type) != "object" then empty
-    elif (($ti.subagent_type // "") | type) != "string" then empty
-    elif ($ti.subagent_type != "fork") then empty
     elif ((.agent_type // "") | type) != "string" then empty
     elif ((.agent_type) | test("^prdt-(developer|qa|designer)$") | not) then empty
-    else {hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny",
-      permissionDecisionReason: "[prdt dispatch gate] DENIED: a worker persona cannot spawn subagent_type \"fork\" (T-704) — do the read yourself, or return `unresolved[]` for the PO."}}
+    else (if $ti.subagent_type == "fork"
+          then "a worker persona cannot spawn subagent_type \"fork\" (T-704) — do the read yourself, or return `unresolved[]` for the PO."
+          else "a worker persona cannot spawn any subagent (T-818) — do the read yourself, or return `unresolved[]` for the PO." end) as $msg
+    | {hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny",
+      permissionDecisionReason: ("[prdt dispatch gate] DENIED: " + $msg)}}
     end
   end
 ' 2>/dev/null)"
