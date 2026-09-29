@@ -28,6 +28,7 @@ Continues `contracts.md` §Tickets; binds every persona the same way, loaded on 
 
 ## `type: decision` — a fork the PO puts to the user
 - `assignee: user` always; `options` is its centre; every ticket the answer blocks names it in ITS `deps` — the viewer draws the reverse edge; no `blocks` key.
+- Any other `assignee: user` body: `contracts/user-tickets.md`.
 - Closes only on the user's own reply, quoted verbatim into `outcome` by the PO. Its `done` records a direction: consent for push · deploy · destructive git is the user's own words in the live session (contracts §Overrides floor) — no option cell, `direction_pin` or ticket status is that consent.
 
 ## `feature:` — the graph key
