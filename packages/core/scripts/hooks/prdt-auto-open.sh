@@ -147,6 +147,106 @@
 #    (GUI session, auto-open=off, the extension allowlist, T-571's warm-
 #    handler check) applies unchanged and only once each, per path.
 
+# T-802 — background, coalesced viewer regeneration on ANY docs/**/*.md write
+# (Write/Edit/MultiEdit), from the PO or any worker, opening nothing: the user
+# refreshes the viewer by hand ("새로고침은 내손으로 자주하니까 일단 1로만 해줘
+# 이번버젼엔" — 2, an always-fresh live view, stays backlog). See the call site
+# near the top of the main script body for why this fires ahead of — and
+# independent of — the GUI-session / agent_type / auto-open guards below: none
+# of those gate "may this hook OPEN something", never "may a doc write refresh
+# the file the user reads by hand".
+
+# Resolve the projectRoot the same way `prdt` itself does (find_project_root):
+# outermost `.prdt/po-state.json` on the ancestor chain (T-484) — kept in
+# lockstep with prdt-session-start.sh's own find_proj / the python twins
+# (prdt-post-dispatch.sh, prdt-user-prompt.sh), so the regen lock below and the
+# `prdt viewer` call it shells out to agree on the SAME project, never two
+# different nested markers each running their own lock.
+find_proj() {
+  local d hit="" up="" phys=""
+  phys="$(cd -P -- "$1" 2>/dev/null && pwd -P)"
+  d="${phys:-$1}"
+  while [ -n "$d" ] && [ "$d" != "/" ]; do
+    [ -f "$d/.prdt/po-state.json" ] && hit="$d"
+    up="$(dirname "$d")"
+    [ "$up" = "$d" ] && break
+    d="$up"
+  done
+  printf '%s' "$hit"
+  return 0
+}
+
+# Schedule a background `prdt viewer --no-open` for the project root holding
+# $1 (a just-written docs/**/*.md file). Never blocks the caller: this
+# function only launches a detached python3 and returns — a bare `&` would
+# leave the job in THIS hook's own process group, which the harness may reap
+# along with the hook itself (prdt-session-start.sh's meta-backup tick already
+# documents the same finding), so detaching needs `start_new_session=True`,
+# which only `subprocess.Popen` gives us, not bash job control. All the
+# coalescing (single-flight per root via a non-blocking flock + a dirty flag
+# any write landing mid-regen sets, so the in-flight run loops once more
+# instead of a second run racing it) happens inside that detached process,
+# never here — a burst of writes regenerates once or a few times, never once
+# per write.
+schedule_viewer_regen() {
+  local fpath="$1" root prdt_cli
+  root="$(find_proj "$(dirname -- "$fpath")" 2>/dev/null)"
+  [ -n "$root" ] || return 0
+  prdt_cli="${PRDT_BIN:-${PRDT_HOME:-$HOME/.prdt}/bin/prdt}"
+  [ -x "$prdt_cli" ] || prdt_cli="$(command -v prdt 2>/dev/null)"
+  [ -n "$prdt_cli" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 - "$root" "$prdt_cli" >/dev/null 2>&1 <<'PY'
+import subprocess, sys
+
+root, cli = sys.argv[1], sys.argv[2]
+
+# The actual single-flight worker: spawned as its OWN detached process (below)
+# so this outer script — the one the hook waits on — never itself blocks on a
+# regen, however long one takes.
+WORKER = r'''
+import fcntl, os, subprocess, sys
+root, cli = sys.argv[1], sys.argv[2]
+vdir = os.path.join(root, ".prdt", "scratch", "viewer")
+os.makedirs(vdir, exist_ok=True)
+dirty = os.path.join(vdir, ".regen-dirty")
+lock = os.path.join(vdir, ".regen-lock")
+try:
+    with open(dirty, "w") as f:
+        f.write("1")
+except OSError:
+    pass
+fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    os.close(fd)
+    sys.exit(0)  # a regen is already in flight for this root; the dirty write
+                 # above is what makes IT loop again, not a second run of ours
+try:
+    while True:
+        try:
+            os.remove(dirty)
+        except OSError:
+            pass
+        subprocess.run([cli, "viewer", "--no-open"], cwd=root,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not os.path.exists(dirty):
+            break
+finally:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    os.close(fd)
+'''
+
+subprocess.Popen([sys.executable, "-c", WORKER, root, cli],
+                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                  start_new_session=True)
+PY
+}
+
 set +e
 
 OPEN_MODE=""
@@ -162,13 +262,29 @@ else
 fi
 [ -z "$EVENT_JSON" ] && { printf '{}'; exit 0; }
 
-# GUI po-runner spawns set this (T-409) — CLI-only feature, GUI already surfaces
-# artifacts in-app; skip before even touching jq/tool_name.
-[ -n "${PRDT_GUI_SESSION:-}" ] && { printf '{}'; exit 0; }
-
 command -v jq >/dev/null 2>&1 || { printf '{}'; exit 0; }
 
 TOOL_NAME="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_name // ""' 2>/dev/null)"
+
+# T-802: background regen fires for a real Write/Edit/MultiEdit of a
+# docs/**/*.md file only — never for the synthetic `--open` hand-off event
+# (OPEN_MODE), which opens an already-generated link and writes nothing.
+if [ -z "$OPEN_MODE" ]; then
+  case "$TOOL_NAME" in
+    Write|Edit|MultiEdit)
+      REGEN_FILE="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_input.file_path // ""' 2>/dev/null)"
+      case "$REGEN_FILE" in
+        */docs/*.md|docs/*.md) schedule_viewer_regen "$REGEN_FILE" ;;
+      esac
+      ;;
+  esac
+fi
+
+# GUI po-runner spawns set this (T-409) — CLI-only feature, GUI already surfaces
+# artifacts in-app; skips only the OPENING pipeline below — T-802's regen just
+# above already ran regardless of this flag (regenerating is not opening a
+# window, and the GUI needs the static viewer current too).
+[ -n "${PRDT_GUI_SESSION:-}" ] && { printf '{}'; exit 0; }
 
 # T-794 relay (see header): a real Bash PostToolUse event, never the synthetic
 # one `--open` builds above (OPEN_MODE is unset here on purpose — an `--open`
