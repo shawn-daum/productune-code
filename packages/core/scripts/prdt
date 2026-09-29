@@ -11140,9 +11140,14 @@ def cmd_track_land(args):
                 setup = _track_setup_cmd(root, wt)
                 if setup and _track_run(setup, wt, "setup (lockfile changed)") != 0:
                     _track_die(f"the setup step failed on the merged tree — {base} is unchanged")
-        if _track_run(test, wt, "tests on the merged tree") != 0:
+        rc = _track_run(test, wt, "tests on the merged tree")
+        if rc != 0:
+            # T-835 (decision T-822 「C」): 141 = SIGPIPE — a later pipeline stage closed the pipe early.
+            why = ("\nexit 141: a later pipeline stage (such as `| head`) closed the pipe, so the run was cut short "
+                   "and its result is unknown — remove the `| head` or write the output to a file"
+                   if rc == 141 else "")
             _track_die(f"tests failed on the merged tree — {base} is unchanged; {branch} keeps the merge, "
-                       f"fix it there and land again")
+                       f"fix it there and land again{why}")
         dirty = _tgit(["status", "--porcelain"], wt)
         if dirty.returncode != 0 or dirty.stdout.strip():
             left = [ln[3:] if len(ln) > 3 else ln for ln in dirty.stdout.splitlines() if ln]
