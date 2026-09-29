@@ -1274,14 +1274,14 @@ function progressMatrixHeadRow() {
   return `<div class="stage-matrix-row stage-matrix-head"><span class="stage-matrix-label"></span>${cols}</div>`
 }
 
-/** `ticketsForItem` = every current-version ticket whose `prd_item:` resolves to this row's key. `label` is already resolved (the PRD heading's own label text, or `PROGRESS_OUT_OF_SCOPE_LABEL` for the trailing row) — this function has no label lookup of its own. The `qa` column is always the dashed/derived one — contracts §Dispatch: QA never gets its own ticket, so an `assignee: qa` solid square is a possibility this code still handles correctly, but never observed in this repo (T-675 round 2). */
+/** `ticketsForItem` = every current-version ticket whose `prd_item:` resolves to this row's key. `label` is already resolved (the PRD heading's own label text, or `PROGRESS_OUT_OF_SCOPE_LABEL` for the trailing row) — this function has no label lookup of its own. The `qa` column is always the dashed/derived one — contracts §Dispatch: QA never gets its own ticket, so an `assignee: qa` solid square is a possibility this code still handles correctly, but never observed in this repo (T-675 round 2). T-798: `role="row"` + `aria-label={label}` gives the row its own accessible name from the FULL, untruncated label text — independent of whatever the visible `.stage-matrix-label` cell does (wrap, or a future truncation), so a screen reader never depends on the visual layout to read the whole PRD heading. */
 function progressMatrixRow(label, ticketsForItem) {
   const cells = PROGRESS_ASSIGNEE_ORDER.map((role) => {
     const solid = ticketsForItem.filter((t) => t.frontmatter.assignee === role)
     const dashed = role === 'qa' ? ticketsForItem.filter((t) => t.frontmatter.assignee !== 'qa' && /^### QA/m.test(t.body || '')) : []
     return progressCell(solid, dashed)
   }).join('')
-  return `<div class="stage-matrix-row"><span class="stage-matrix-label">${escapeHtml(label)}</span>${cells}</div>`
+  return `<div class="stage-matrix-row" role="row" aria-label="${escapeHtml(label)}"><span class="stage-matrix-label">${escapeHtml(label)}</span>${cells}</div>`
 }
 
 /** The straight overall line above the matrix — one square per current-version ticket, once each, regardless of assignee or prd_item (T-675 round 3: "전체는... 일직선으로 쭉... assignee상관없이"). */
@@ -1481,13 +1481,28 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
    덮어쓰지 않는다). 유일하게 남는 차이는 접지 않고(결함 3의 +N 규칙은 이 줄의
    대상이 아니다) 넘치면 줄을 바꾼다는 것뿐이라 wrap 오버라이드 하나만 남긴다. */
 .stage-matrix-sq-wrap.stage-overall-sq-wrap { flex-wrap: wrap; }
-.stage-matrix { display: grid; grid-template-columns: 60px repeat(5, 1fr); column-gap: var(--space-6); row-gap: 4px; align-items: center; margin-bottom: var(--space-8); }
+/* T-798: was a fixed 60px label column with the label cell itself clipped
+   (white-space: nowrap; overflow: hidden) — a PRD heading longer than ~4
+   Korean syllables cut off mid-word with no hover to recover it (user
+   screenshot: 「"두 단계"가 시」 · 「리스크가 정하」). minmax(60px, 140px)
+   lets the column grow to fit a short-to-medium heading (home's own
+   .main-inner has no max-width — plenty of room beside the 5 fixed 1fr
+   assignee columns); the label cell itself now wraps instead of clipping
+   (see .stage-matrix-label below), so even a heading past 140px still
+   reads in full, on a second/third line, never cut. */
+.stage-matrix { display: grid; grid-template-columns: minmax(60px, 140px) repeat(5, 1fr); column-gap: var(--space-6); row-gap: 4px; align-items: center; margin-bottom: var(--space-8); }
 .stage-matrix-row { display: contents; }
 .stage-matrix-head .stage-matrix-col { font-size: 9px; text-transform: none; letter-spacing: 0.02em; color: var(--text-quaternary);
   font-weight: 600; text-align: center; padding-bottom: var(--space-6); border-bottom: 1px solid var(--border-item); }
 .stage-matrix-head .stage-matrix-label { border-bottom: 1px solid var(--border-item); padding-bottom: var(--space-6); }
+/* T-798: was white-space: nowrap; overflow: hidden — a label longer than
+   the column clipped mid-word with nothing to recover it (no hover, no
+   tooltip). word-break: keep-all keeps a Korean word/quoted-phrase whole
+   where a normal break opportunity exists (space, punctuation) rather than
+   snapping mid-syllable-block; overflow-wrap: anywhere is still the
+   fallback for one token literally wider than the 140px column cap above. */
 .stage-matrix-label { display: flex; align-items: center; gap: 3px; color: var(--text-tertiary); font-size: 11px;
-  text-transform: none; white-space: nowrap; overflow: hidden; }
+  text-transform: none; white-space: normal; overflow: visible; word-break: keep-all; overflow-wrap: anywhere; line-height: 1.3; }
 .stage-matrix-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 0; }
 /* T-708 결함 3: was 'flex-wrap: wrap', letting a cell with >10 tickets fold
    onto a 2nd row and grow taller than every other cell in the same row —
