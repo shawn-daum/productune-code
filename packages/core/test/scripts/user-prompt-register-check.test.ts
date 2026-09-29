@@ -274,6 +274,31 @@ const FIXTURES: Array<{ name: string, reply: string, violations: number[] | null
     reply: '하나.\n둘.\n\n셋.\n넷.\n\n다섯.\n여섯.',
     violations: [2, 5, 8],
   },
+  {
+    name: 'self-labelled A/B/C sequence, no blank line between items — not flagged (T-768)',
+    reply: '정리입니다.\n\nA 항목1\nB 항목2\nC 항목3',
+    violations: null,
+  },
+  {
+    name: 'self-labelled a/b/c sequence — not flagged (T-768)',
+    reply: '정리입니다.\n\na 세부1\nb 세부2\nc 세부3',
+    violations: null,
+  },
+  {
+    name: 'self-labelled i/ii/iii roman-numeral sequence — not flagged (T-768)',
+    reply: '정리입니다.\n\ni 단계1\nii 단계2\niii 단계3',
+    violations: null,
+  },
+  {
+    name: 'self-labelled items beside a genuine 2-sentence unmarked line — that line still flags (T-768)',
+    reply: 'A 항목1\nB 항목2\n이건 하나입니다. 그리고 둘입니다.',
+    violations: [3],
+  },
+  {
+    name: 'self-labelled items beside two consecutive unmarked lines — the second still flags (T-768)',
+    reply: 'A 항목1\nB 항목2\n첫 문장.\n둘째 문장.',
+    violations: [4],
+  },
 ]
 
 describe('§판정식 fixture — pinned sample-line classification', () => {

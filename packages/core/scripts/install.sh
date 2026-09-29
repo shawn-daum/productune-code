@@ -199,6 +199,12 @@ say "0) Writes outside PRDT_HOME=$PRDT_HOME: $CLAUDE_DIR/settings.json (hook ros
 #    only ever creates: the rm -rf below is scoped to discipline/ alone, so a fresh
 #    install and an update both leave accumulated machine content standing.
 say "1) Mirroring discipline → $PRDT_HOME"
+# T-601: this write rewrites shared derived state ($PRDT_HOME/discipline · hooks ·
+# bin/prdt) a worker dispatch may be reading mid-run. Single source of truth for
+# the check (freshness threshold, counter filename shape) is scripts/prdt itself
+# (SHARED_DERIVED_STATE_WRITERS / live_dispatch_warning) — this shells out to it
+# rather than re-deriving either value here. Warns only, never blocks install.
+PRDT_HOME="$PRDT_HOME" python3 "$ROOT/scripts/prdt" _shared-state-guard "install.sh mirror write" || true
 mkdir -p "$PRDT_HOME/overrides" "$PRDT_HOME/wiki" "$PRDT_HOME/hooks" "$PRDT_HOME/bin"
 # T-586: the register object (`register`, key=value) absorbs the T-326 one-token
 # `audience-mode` file. A machine that recorded its audience level there keeps it:
@@ -237,6 +243,7 @@ done <<EOF
 $HOOK_BASENAMES
 EOF
 cp "$ROOT/scripts/prdt" "$PRDT_HOME/bin/prdt"
+cp "$ROOT/scripts/prdt-messages.json" "$PRDT_HOME/bin/prdt-messages.json"
 cp "$ROOT/scripts/statusline-prdt.sh" "$PRDT_HOME/bin/statusline-prdt.sh"
 chmod +x "$PRDT_HOME/hooks/"*.sh "$PRDT_HOME/bin/prdt" "$PRDT_HOME/bin/statusline-prdt.sh"
 

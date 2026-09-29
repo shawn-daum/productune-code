@@ -12,6 +12,34 @@ Version-by-version release notes for this project.
 >   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
 > - Everything above the first `## ` heading is preamble and is ignored by the parser.
 
+## v1.11 — critical path 기반 병렬 작업 배치 (2026-09-29)
+
+> 적용: `prdt update` (이제 설치 전에 버전과 이 노트를 보여 주고 `1. update` / `2. skip` 을 묻습니다) 또는 `packages/core/scripts/install.sh` 재실행.
+
+### Added
+- **`prdt schedule`** — 티켓 `deps` 로 프로젝트별 critical path 를 계산해 다음에 보낼 작업 순서를 보여 줍니다(`--json`). 상태줄 끝에 critical path 맨 앞(`CP T-…`)이 보입니다.
+- **발주 기록** — 발주마다 `.prdt/schedule.jsonl` 에 한 줄(그때의 critical path · 따랐는가 · 이유 · 걸린 시간). critical path 맨 앞이 아닌 작업을 이유 없이 보내면 경고만 합니다(막지 않음). `prdt schedule report` 가 버전 관측 문서를 만듭니다.
+- **`prdt track open | review | land | drop`** — 트랙마다 `tracks/<T-NNN>` worktree 를 만들고, PO 가 로컬에서 검토한 뒤 합친 트리에서 테스트해 `dev` 로 합칩니다. push 없음. `main` 은 `land --base main` 을 직접 줄 때만.
+- **`prdt settings`** — 기기 설정(말투 `register.*` · 자동 열기 `viewer.auto-open` · 요금제 `plan.tier` · CLI 언어 `cli.lang`)을 한 명령으로 보고 바꿉니다. `prdt register set` 은 그대로 동작합니다. CLI 문구는 한국어 · 영어 메시지 목록에서 읽습니다.
+- **뷰어로 건네기** — `prdt tickets --link` · `prdt viewer <경로|id>` 와 PO 가 쓴 문서의 자동 열기가 파일 대신 최신 뷰어를 그 항목이 선택된 채로 엽니다. 없는 번호는 홈에 안내가 뜹니다.
+
+### Changed
+- 같은 checkout 에 Developer · QA 발주가 이미 돌고 있으면 두 번째는 거부합니다. worktree 로 보낸 워커는 공유 checkout(`code/`)에 쓸 수 없습니다.
+- 기기 자원 한도에 모델 등급별 동시 발주 수가 추가됐습니다(기본값 = 전체 한도).
+- 핫 주입 규율을 부속 문서로 나눠 `contracts.md` 가 20.8 KB → 15.3 KB, 역할별 주입이 19~21% 줄었습니다. 크기 상한도 같이 낮췄습니다.
+- 답 형식(register `form=outline`): 굵은 제목 → `-` 항목 → 들여쓴 `·` 설명, 번호는 고를 선택지 · 순서 있는 단계에만.
+- 뷰어: 이번 버전 티켓 · PRD · 산출물 · 결정 문서 링크는 홈에서 열립니다(홈에 "결정" 묶음 신설). 지난 버전은 전처럼 탭에서. 진행 상황 표의 행 이름은 PRD 의 `#### 키 — 이름` 에서 읽습니다.
+- 자동 열기는 PO(메인 세션)가 건넨 것만 엽니다 — 워커가 `prdt viewer` · `prdt tickets --link` 를 돌려도 창이 뜨지 않습니다.
+- 상태줄 · 뷰어 홈 진행률이 티켓 종류로 단계를 추정하지 않고 버전 전체 done/total 을 보여 줍니다.
+- Define 진입 때 세션 모델 권고를 하지 않습니다. 배너에 왼쪽 색 띠를 쓰지 않고, 이 띠를 AI 티로 잡습니다.
+
+### Fixed
+- `prdt update` 가 선택 메뉴의 기본값 때문에 Enter 한 번에 설치되던 문제. 이제 `1` 을 입력해야만 설치하고, 노트를 보여 준 그 커밋에만 착지합니다.
+- 새 worktree 에서 core 가 빌드되지 않아 전체 테스트가 실패하던 문제(설치 때 core 빌드).
+- 발주 표식이 동시 발주에서 서로 바뀌던 문제 — 거부에는 짝이 확인된 표식만 씁니다.
+- 상태줄의 티켓 번호가 티켓 md 파일을 직접 열던 문제 — 이제 PO 링크와 같은 뷰어 페이지로 엽니다.
+- 뷰어에서 항목을 열면 라이트/다크 토글이 가려지던 문제 — 토글을 왼쪽 탭 줄 맨 아래로 옮겼습니다.
+
 ## v1.10.4 — 답의 단계가 기호로 보임 (2026-09-28)
 
 > 패치 릴리스입니다. T-754 를 반영합니다.

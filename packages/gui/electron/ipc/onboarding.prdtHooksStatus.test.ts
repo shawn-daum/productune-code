@@ -125,7 +125,10 @@ export const CASES: readonly Case[] = [
           SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh'), h('prdt-return-check.sh')] }],
           PostToolUse: [
             { matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] },
-            { matcher: 'Write', hooks: [h('prdt-auto-open.sh')] },
+            { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-auto-open.sh')] },
+            // T-794: a second registration of the same script — main-session-only
+            // relay for the CLI's own hand-offs, off the Bash tool's stdout.
+            { matcher: 'Bash', hooks: [h('prdt-auto-open.sh')] },
           ],
           UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
           PostToolBatch: [{ hooks: [h('prdt-call-governor.sh')] }],
@@ -139,6 +142,8 @@ export const CASES: readonly Case[] = [
             { hooks: [h('prdt-call-governor.sh')] },
             { matcher: 'Agent', hooks: [h('prdt-dispatch-gate.sh')] },
             { matcher: 'Read|Bash', hooks: [h('prdt-secret-guard.sh')] },
+            // T-779: prdt-worktree-guard.sh, a FOURTH PreToolUse entry (the write-shaped tools).
+            { matcher: 'Edit|Write|MultiEdit|NotebookEdit|Bash', hooks: [h('prdt-worktree-guard.sh')] },
           ],
         },
       }))

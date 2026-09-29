@@ -106,7 +106,7 @@ EVENT_JSON="$(cat 2>/dev/null || true)"
 [ -z "$EVENT_JSON" ] && exit 0
 
 PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
-import hashlib, json, os, re, shlex, shutil, subprocess, sys
+import contextlib, fcntl, hashlib, json, os, re, shlex, shutil, subprocess, sys
 from datetime import datetime, timezone
 
 try:
@@ -266,11 +266,18 @@ def _append_line(path, text):
 # start; SubagentStop the mode-independent end:
 #   SubagentStart  → marker written (or REVIVED for a known agent_id: a resume
 #                    keeps the ticket id of its original dispatch), `since`=now,
-#                    no `stopped_at`.
-#   PostToolUse    → pairing refinement only: the response carries `agentId`
+#                    no `stopped_at`. T-774: also carries `model` — the dispatch
+#                    gate's per-model-tier in-flight cap reads this same field
+#                    off every OTHER open marker (see prdt-dispatch-gate.sh);
+#                    see MODEL_TIERS/norm_model above for what it holds.
+#                    T-775: and `checkout` (`[ctx].worktree`, else "code") —
+#                    the gate denies a second live developer/qa dispatch into
+#                    the same checkout (see checkout_from_ctx below).
+#   PostToolUse   → pairing refinement only: the response carries `agentId`
 #                    and the input carries the `[ctx]` prompt, so an EXISTING
-#                    marker's ticket_id/dispatch_id are corrected from the
-#                    authoritative source. Never revives a stopped marker. It
+#                    marker's ticket_id/dispatch_id (and, T-774, `model`) are
+#                    corrected from the authoritative source. Never revives a
+#                    stopped marker. It
 #                    CREATES one only when none exists AND the response says
 #                    `status:"async_launched"` (a background launch, still
 #                    running) — the fallback that keeps background dispatches
@@ -296,6 +303,31 @@ def _append_line(path, text):
 #      FIFO — a heuristic; PostToolUse:Agent corrects a wrong pairing for a
 #      background dispatch the moment it fires, and the running segment is
 #      one row per ticket anyway.
+#      T-780 PAIRING: QA measured that FIFO swaps two concurrent same-persona
+#      starts in 6 of 20 runs (every run when the starts arrive in reverse),
+#      and a FOREGROUND swap lasted until the dispatch ended — while the gate's
+#      T-774 tier cap and T-775 checkout deny read these very fields. The
+#      worker's OWN transcript cannot settle it here: its first record (the
+#      prompt, byte-identical to the parent tool_use's `input.prompt`,
+#      measured 2026-09-28) is stamped before this hook runs but the FILE is
+#      created ~2 s later, after every SubagentStart hook has returned
+#      (birthtime − first-record timestamp 1.98–2.16 s over 5 real workers).
+#      So every marker carries `pairing`:
+#        "confirmed"    the tool_use is provably this worker's — PostToolUse:
+#                       Agent's (agentId ↔ tool_input) pair, the worker's own
+#                       first prompt matched byte-for-byte to a parent Agent
+#                       tool_use (marker_reconcile, below), or exactly ONE
+#                       pending call of this agent_type left once the calls
+#                       held by confirmed markers are set aside.
+#        "unconfirmed"  a FIFO guess among two or more candidates, or no
+#                       candidate at all. The dispatch gate never denies on an
+#                       unconfirmed marker's model/checkout (it re-checks the
+#                       worker transcript itself, prdt-dispatch-gate.sh).
+#      marker_reconcile runs at EVERY event this hook handles (and before a
+#      SubagentStop stamps and joins its schedule row): an open unconfirmed
+#      marker whose worker transcript now exists is re-paired from that
+#      transcript's first prompt — a foreground swap is corrected at the next
+#      dispatch event instead of surviving until its end.
 #   3. `.prdt/po-state.json` `current_task.ticket_id` — the PO's own record
 #      of what it is working on.
 #   none → the marker is still written (persona-only) so SubagentStop has
@@ -309,6 +341,22 @@ MARKER_RETENTION_HOURS = 24
 # `T-682`, `d-T682-s3-…` (the PO's dispatch_id convention has no hyphen), never
 # the `T-4` inside `GPT-4` (F9: left boundary) nor `T-68` inside `T-6829`.
 TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T-?([0-9]{1,5})(?![0-9])")
+
+# T-774: the marker's `model` field is the TIER a dispatch runs at, never a
+# versioned model id — the Agent tool's own `model` parameter is restricted to
+# exactly these four values (its enum), and `prdt-dispatch-gate.sh` normalizes
+# its own read of `tool_input.model` to the same set (T-774, same ticket) so
+# the two sides compare literally. A call that carries no override resolves to
+# whatever the harness/agent-definition default is — this hook cannot see that
+# resolution from here, so it is recorded as the literal "default" bucket
+# rather than guessed at. A value outside the four (a stale fixture, a future
+# enum member this copy predates) also falls into "default" — never invented,
+# never silently dropped.
+MODEL_TIERS = {"sonnet", "opus", "haiku", "fable"}
+
+
+def norm_model(v):
+    return v if isinstance(v, str) and v in MODEL_TIERS else "default"
 
 
 def marker_dir():
@@ -347,15 +395,69 @@ def ctx_from_prompt(prompt):
     return None
 
 
+_SLUG_TICKETS = None
+
+
+def ticket_by_slug(slug):
+    """T-773: the id of the ticket md whose frontmatter `slug` equals `slug`
+    (an open ticket first, then the highest id) — the PO's `[ctx].slug` IS the
+    ticket slug, but carries no `T-NNN`, so every marker used to land with
+    `ticket_id: null` and `prdt schedule` could not show in-flight rows. Same
+    rule as `schedule_ticket_for_ctx` in scripts/prdt (the gate's schedule
+    record). A frontmatter-only line scan of docs/tickets/**/T-*.md, cached for
+    this one hook run; any read failure is just no match."""
+    global _SLUG_TICKETS
+    if not (isinstance(slug, str) and slug.strip()):
+        return None
+    if _SLUG_TICKETS is None:
+        _SLUG_TICKETS = {}
+        tdir = os.path.join(root, "docs", "tickets")
+        for dp, _dn, fns in os.walk(tdir):
+            for fn in fns:
+                if not (fn.startswith("T-") and fn.endswith(".md")):
+                    continue
+                fm = {}
+                try:
+                    with open(os.path.join(dp, fn), encoding="utf-8") as f:
+                        if f.readline().rstrip("\n") != "---":
+                            continue
+                        for _ in range(60):
+                            ln = f.readline()
+                            if not ln or ln.rstrip("\n") == "---":
+                                break
+                            k, sep, v = ln.partition(":")
+                            if sep and k.strip() in ("id", "slug", "status"):
+                                fm[k.strip()] = v.strip().strip("'\"")
+                except Exception:
+                    continue
+                tid = fm.get("id") or fn[:-3]
+                m = re.match(r"\AT-([0-9]{1,5})\Z", tid)
+                if not (m and fm.get("slug")):
+                    continue
+                cand = (fm.get("status") == "open", int(m.group(1)), tid)
+                prev = _SLUG_TICKETS.get(fm["slug"])
+                if prev is None or cand > prev:
+                    _SLUG_TICKETS[fm["slug"]] = cand
+    hit = _SLUG_TICKETS.get(slug.strip())
+    return hit[2] if hit else None
+
+
 def ticket_from_ctx(ctx_obj):
-    """(dispatch_id, ticket_id) — the ticket id is a documented heuristic, not a
-    contract field: `[ctx]` has no `ticket_id` (contracts §Dispatch). Checked in
-    dispatch_id, then goal, then slug; the digits are always re-assembled as
-    `T-<digits>`, the shape the read side's TICKET_RE requires."""
+    """(dispatch_id, ticket_id) — `[ctx]` has no `ticket_id` (contracts
+    §Dispatch). T-773: the ticket whose md slug equals `[ctx].slug` first;
+    else the documented heuristic — a `T-NNN` token in dispatch_id, then goal,
+    then slug; the digits are always re-assembled as `T-<digits>`, the shape
+    the read side's TICKET_RE requires."""
     if not isinstance(ctx_obj, dict):
         return None, None
     did = ctx_obj.get("dispatch_id")
     dispatch_id = did if isinstance(did, str) and did.strip() else None
+    try:
+        by_slug = ticket_by_slug(ctx_obj.get("slug"))
+    except Exception:
+        by_slug = None
+    if by_slug:
+        return dispatch_id, by_slug
     for field in (dispatch_id, ctx_obj.get("goal"), ctx_obj.get("slug")):
         if isinstance(field, str):
             m = TICKET_TOKEN_RE.search(field)
@@ -364,9 +466,23 @@ def ticket_from_ctx(ctx_obj):
     return dispatch_id, None
 
 
+def checkout_from_ctx(ctx_obj):
+    """T-775: the checkout a dispatch works in — `[ctx].worktree` verbatim (the
+    dispatch gate normalizes it), `"code"` (the shared code checkout) when the
+    `[ctx]` has none, None when there is no `[ctx]` to read at all (the gate's
+    one-live-dispatch-per-checkout rule then skips this marker: unknown, never
+    guessed)."""
+    if not isinstance(ctx_obj, dict):
+        return None
+    wt = ctx_obj.get("worktree")
+    return wt.strip() if isinstance(wt, str) and wt.strip() else "code"
+
+
 def pending_agent_calls(transcript_path, agent_type, tail_bytes=4 * 1024 * 1024):
     """Agent tool_use blocks of `agent_type` in the parent transcript's tail
-    that have no tool_result yet, oldest first: [(tool_use_id, prompt)]."""
+    that have no tool_result yet, oldest first: [(tool_use_id, prompt, model)].
+    `model` is the call's raw `input.model` (T-774) — un-normalized here, the
+    caller runs it through `norm_model()`."""
     if not (isinstance(transcript_path, str) and os.path.isfile(transcript_path)):
         return []
     try:
@@ -395,18 +511,19 @@ def pending_agent_calls(transcript_path, agent_type, tail_bytes=4 * 1024 * 1024)
             if blk.get("type") == "tool_use" and blk.get("name") == "Agent":
                 tin_ = blk.get("input") or {}
                 if isinstance(tin_, dict) and tin_.get("subagent_type") == agent_type and isinstance(blk.get("id"), str):
-                    calls.append((blk["id"], tin_.get("prompt")))
+                    calls.append((blk["id"], tin_.get("prompt"), tin_.get("model")))
             elif blk.get("type") == "tool_result" and isinstance(blk.get("tool_use_id"), str):
                 resolved.add(blk["tool_use_id"])
-    return [(tid, prompt) for tid, prompt in calls if tid not in resolved]
+    return [(tid, prompt, model) for tid, prompt, model in calls if tid not in resolved]
 
 
 def claimed_tool_use_ids():
-    ids = set()
+    """(every tool_use_id a marker holds, those held by a `confirmed` one)."""
+    ids, confirmed = set(), set()
     try:
         names = os.listdir(marker_dir())
     except OSError:
-        return ids
+        return ids, confirmed
     for n in names:
         if not n.endswith(".json"):
             continue
@@ -415,9 +532,11 @@ def claimed_tool_use_ids():
                 data = json.load(f)
             if isinstance(data, dict) and isinstance(data.get("tool_use_id"), str):
                 ids.add(data["tool_use_id"])
+                if data.get("pairing") == "confirmed":
+                    confirmed.add(data["tool_use_id"])
         except Exception:
             continue
-    return ids
+    return ids, confirmed
 
 
 def po_state_ticket():
@@ -451,56 +570,219 @@ def marker_start(aid):
     prior = marker_load(aid)
     data = {
         "agent_id": aid, "persona": persona, "dispatch_id": None, "ticket_id": None,
-        "tool_use_id": None, "project_root": root, "since": now,
+        "tool_use_id": None, "model": None, "project_root": root, "since": now,
         "session_id": ev.get("session_id") if isinstance(ev.get("session_id"), str) else None,
-        "transcript": agent_transcript_path(aid),
+        "transcript": agent_transcript_path(aid), "checkout": None,
+        "pairing": None,
+        "parent_transcript": ev.get("transcript_path") if isinstance(ev.get("transcript_path"), str) else None,
     }
     if prior:
-        for k in ("dispatch_id", "ticket_id", "tool_use_id"):
+        for k in ("dispatch_id", "ticket_id", "tool_use_id", "checkout", "pairing"):
             data[k] = prior.get(k) if isinstance(prior.get(k), str) else None
+        # T-774: a resume is the SAME logical dispatch continuing, never a new
+        # tier pick — carry the prior marker's model forward (a legacy marker
+        # from before this ticket has none; norm_model() below falls back to
+        # "default" for it exactly as a fresh, tier-less marker would).
+        data["model"] = norm_model(prior.get("model")) if prior.get("model") is not None else None
         data["resumed_from"] = prior.get("since") if isinstance(prior.get("since"), str) else None
-    if not data["ticket_id"]:
-        claimed = claimed_tool_use_ids()
-        for tuid, prompt in pending_agent_calls(ev.get("transcript_path"), sub):
+    if not prior:
+        claimed, confirmed_claims = claimed_tool_use_ids()
+        pending = pending_agent_calls(ev.get("transcript_path"), sub)
+        # T-780: one call left once the confirmed claims are set aside IS this
+        # worker's — any other count leaves the FIFO pick unconfirmed.
+        open_calls = [c for c in pending if c[0] not in confirmed_claims]
+        for tuid, prompt, model in pending:
             if tuid in claimed:
                 continue
             data["dispatch_id"], data["ticket_id"] = ticket_from_ctx(ctx_from_prompt(prompt))
+            data["checkout"] = checkout_from_ctx(ctx_from_prompt(prompt))
             data["tool_use_id"] = tuid
+            data["model"] = norm_model(model)
+            data["pairing"] = "confirmed" if len(open_calls) == 1 and open_calls[0][0] == tuid else "unconfirmed"
             break
+    if not data["pairing"]:
+        data["pairing"] = "unconfirmed"
     if not data["ticket_id"]:
         data["ticket_id"] = po_state_ticket()
+    if data["model"] is None:
+        data["model"] = "default"
     marker_save(data)
 
 
-def marker_refine(aid, ctx_obj, tool_use_id, launched_async):
+def marker_refine(aid, ctx_obj, tool_use_id, launched_async, model=None):
     """PostToolUse:Agent: correct an existing marker's pairing; create one only
-    for a still-running background launch that has none (see LIFECYCLE)."""
+    for a still-running background launch that has none (see LIFECYCLE). T-774:
+    `model` is corrected from the same authoritative (agentId ↔ tool_input)
+    source as `ticket_id`/`dispatch_id` above it — same rationale, same call
+    site already has it at zero extra cost.
+
+    T-780 round 2 (QA grill): `ctx_obj` is THIS event's own tool_input — the
+    (agentId ↔ tool_input) pair PostToolUse:Agent hands us is authoritative by
+    construction (both sides come off the SAME tool call), never a FIFO guess.
+    The prior `elif dispatch_id and not data.get("dispatch_id")` only wrote
+    dispatch_id when the marker had none yet, so a marker that already carried
+    a WRONG FIFO-guessed dispatch_id from SubagentStart, and whose slug/goal
+    never resolves a ticket (ticket_id stays None), kept that wrong id forever
+    — while `pairing` was stamped "confirmed" unconditionally below anyway.
+    QA measured 13 of 20 concurrent-start rounds landing exactly there: two
+    markers left holding the SAME dispatch_id, both marked confirmed.
+    dispatch_id/ticket_id are therefore ALWAYS overwritten from this event's
+    own ctx_obj — ticket_id to whatever resolves (or None), never preserved
+    from a stale guess — before pairing is stamped confirmed."""
     dispatch_id, ticket_id = ticket_from_ctx(ctx_obj)
+    nmodel = norm_model(model) if model is not None else None
     data = marker_load(aid)
     if data is None:
         if not launched_async:
             return
         data = {"agent_id": aid, "persona": persona, "dispatch_id": None, "ticket_id": None,
-                "tool_use_id": None, "project_root": root, "since": now,
+                "tool_use_id": None, "model": nmodel or "default", "project_root": root, "since": now,
                 "session_id": ev.get("session_id") if isinstance(ev.get("session_id"), str) else None,
                 "transcript": agent_transcript_path(aid)}
-    if ticket_id:
-        data["ticket_id"], data["dispatch_id"] = ticket_id, dispatch_id
-    elif dispatch_id and not data.get("dispatch_id"):
-        data["dispatch_id"] = dispatch_id
+    co = checkout_from_ctx(ctx_obj)
+    if co is not None:
+        data["checkout"] = co
+    data["ticket_id"], data["dispatch_id"] = ticket_id, dispatch_id
     if isinstance(tool_use_id, str):
         data["tool_use_id"] = tool_use_id
+    if nmodel is not None:
+        data["model"] = nmodel
+    # T-780: the (agentId ↔ tool_input) pair of this event is the authoritative one.
+    data["pairing"] = "confirmed"
     marker_save(data)
+
+
+def worker_first_prompt(path):
+    """T-780: the worker transcript's first record's prompt (its user message
+    content — the parent Agent tool_use's `input.prompt`, byte-identical), or
+    None while the file does not exist yet / reads as anything else."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            rec = json.loads(f.readline())
+    except Exception:
+        return None
+    msg = rec.get("message") if isinstance(rec, dict) and rec.get("type") == "user" else None
+    content = msg.get("content") if isinstance(msg, dict) else None
+    if isinstance(content, list):
+        texts = [b.get("text") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        content = texts[0] if texts and isinstance(texts[0], str) else None
+    return content if isinstance(content, str) else None
+
+
+def agent_call_by_prompt(transcript_path, agent_type, prompt, tail_bytes=4 * 1024 * 1024):
+    """The (tool_use_id, model) of the Agent tool_use of `agent_type` whose
+    prompt equals `prompt` — the LATEST one (a re-dispatch of the same prompt
+    is the newer call) — or None."""
+    if not (isinstance(transcript_path, str) and os.path.isfile(transcript_path)):
+        return None
+    try:
+        size = os.path.getsize(transcript_path)
+        with open(transcript_path, "rb") as f:
+            if size > tail_bytes:
+                f.seek(size - tail_bytes)
+                f.readline()
+            raw = f.read().decode("utf-8", "replace")
+    except Exception:
+        return None
+    hit = None
+    for line in raw.split("\n"):
+        if '"tool_use"' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        content = ((rec.get("message") or {}).get("content")) if isinstance(rec, dict) else None
+        if not isinstance(content, list):
+            continue
+        for blk in content:
+            if not (isinstance(blk, dict) and blk.get("type") == "tool_use" and blk.get("name") == "Agent"):
+                continue
+            tin_ = blk.get("input") or {}
+            if (isinstance(tin_, dict) and tin_.get("subagent_type") == agent_type
+                    and tin_.get("prompt") == prompt and isinstance(blk.get("id"), str)):
+                hit = (blk["id"], tin_.get("model"))
+    return hit
+
+
+def marker_reconcile():
+    """T-780: re-pair every open `unconfirmed` marker whose worker transcript
+    now exists from that transcript's own first prompt (see LIFECYCLE ·
+    T-780 PAIRING). A marker whose prompt matches no parent Agent call stays
+    unconfirmed — never guessed."""
+    try:
+        names = os.listdir(marker_dir())
+    except OSError:
+        return
+    with marker_lock():
+        _reconcile(names)
+
+
+def _reconcile(names):
+    for n in names:
+        if not n.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(marker_dir(), n), encoding="utf-8") as f:
+                data = json.load(f)
+            if not (isinstance(data, dict) and isinstance(data.get("agent_id"), str)):
+                continue
+            if data.get("stopped_at") or data.get("pairing") == "confirmed":
+                continue
+            prompt = worker_first_prompt(data.get("transcript")) if isinstance(data.get("transcript"), str) else None
+            if prompt is None:
+                continue
+            call = agent_call_by_prompt(data.get("parent_transcript"), "prdt-" + str(data.get("persona") or ""), prompt)
+            if call is None:
+                continue
+            ctx_obj = ctx_from_prompt(prompt)
+            # T-788: this event's own (agentId <-> parent Agent call) pairing is
+            # authoritative by construction (agent_call_by_prompt matched the
+            # worker's OWN first prompt against the parent transcript) — the
+            # same rationale marker_refine's T-780 fix already applies. tid is
+            # therefore ALWAYS taken as-is (None included), never falling back
+            # to a stale/FIFO-guessed ticket_id already sitting on the marker.
+            data["dispatch_id"], data["ticket_id"] = ticket_from_ctx(ctx_obj)
+            data["checkout"] = checkout_from_ctx(ctx_obj)
+            data["tool_use_id"], data["model"] = call[0], norm_model(call[1])
+            data["pairing"] = "confirmed"
+            marker_save(data)
+        except Exception:
+            continue
+
+
+@contextlib.contextmanager
+def marker_lock():
+    """T-780: serializes marker_reconcile's read-modify-write against
+    marker_stop — a reconcile that loaded a marker just before a concurrent
+    SubagentStop stamped it would otherwise save it back without `stopped_at`.
+    Best-effort: no lock obtainable → proceed unlocked, as before T-780."""
+    fd = None
+    try:
+        run_dir = os.path.dirname(marker_dir())
+        os.makedirs(run_dir, exist_ok=True)
+        fd = os.open(os.path.join(run_dir, "dispatches.lock"), os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    except Exception:
+        if fd is not None:
+            os.close(fd)
+        fd = None
+    try:
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 
 def marker_stop(aid):
     if not aid:
         return
     try:
-        data = marker_load(aid)
-        if data is not None and not data.get("stopped_at"):
-            data["stopped_at"] = now
-            marker_save(data)
+        with marker_lock():
+            data = marker_load(aid)
+            if data is not None and not data.get("stopped_at"):
+                data["stopped_at"] = now
+                marker_save(data)
     except Exception:
         pass
 
@@ -533,6 +815,74 @@ def marker_prune():
                 pass
 
 
+# ── T-773: the `stop` row of .prdt/schedule.jsonl ────────────────────────────
+# The dispatch gate appends a `dispatch` row per dispatch (`prdt schedule
+# record`); this hook appends its `stop` row at SubagentStop — outcome ·
+# duration_s, joined to it by `tool_use_id` (else `dispatch_id`). Written only
+# when a matching `dispatch` row exists, so a dispatch from before the record
+# landed (or one the gate never saw) adds nothing. duration_s is one run
+# segment (`since` → now; a resume revives `since`, so each resumed segment
+# gets its own row); these are the samples v1.12's time weights come from
+# (T-764). outcome: `quota-killed` when the worker transcript's last record
+# is the harness's `<synthetic>` placeholder, `returned` when the final
+# message opens with `{` (the envelope shape), else `no-envelope`. A 429-killed
+# run that never reaches SubagentStop has no stop row — `prdt schedule report`
+# shows its duration as unrecorded.
+def schedule_stop(aid):
+    if not aid:
+        return
+    data = marker_load(aid)
+    if data is None:
+        return
+    log = os.path.join(state_dir, "schedule.jsonl")
+    tuid, did = data.get("tool_use_id"), data.get("dispatch_id")
+    if not (isinstance(tuid, str) and tuid) and not (isinstance(did, str) and did):
+        return
+    try:
+        with open(log, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return
+    match = False
+    for ln in lines:
+        try:
+            r = json.loads(ln)
+        except Exception:
+            continue
+        if not (isinstance(r, dict) and r.get("kind") == "dispatch"):
+            continue
+        if (tuid and r.get("tool_use_id") == tuid) or (did and not r.get("tool_use_id") and r.get("dispatch_id") == did):
+            match = True
+            break
+    if not match:
+        return
+    dur = None
+    try:
+        t0 = datetime.strptime(data.get("since"), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        t1 = datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        dur = max(0, int((t1 - t0).total_seconds()))
+    except Exception:
+        pass
+    outcome = None
+    atp = ev.get("agent_transcript_path") or data.get("transcript")
+    try:
+        if isinstance(atp, str) and os.path.isfile(atp):
+            with open(atp, "rb") as f:
+                f.seek(max(0, os.path.getsize(atp) - 8000))
+                tail = [x for x in f.read().decode("utf-8", "replace").split("\n") if x.strip()]
+            if tail and '"model":"<synthetic>"' in tail[-1]:
+                outcome = "quota-killed"
+    except Exception:
+        pass
+    if outcome is None:
+        lam = ev.get("last_assistant_message")
+        outcome = "returned" if isinstance(lam, str) and lam.lstrip().startswith("{") else "no-envelope"
+    row = {"kind": "stop", "ts": now, "dispatch_id": did if isinstance(did, str) else None,
+           "tool_use_id": tuid if isinstance(tuid, str) else None, "agent_id": aid,
+           "persona": persona, "ticket": data.get("ticket_id"), "outcome": outcome, "duration_s": dur}
+    _append_line(log, json.dumps(row, ensure_ascii=False) + "\n")
+
+
 if event == "SubagentStart":
     # Marker-only event: no sessions.json / turns.jsonl / autosave here — those
     # stay keyed on PostToolUse:Agent + SubagentStop exactly as before.
@@ -542,6 +892,10 @@ if event == "SubagentStart":
             marker_start(aid)
         except Exception:
             pass
+    try:
+        marker_reconcile()
+    except Exception:
+        pass
     try:
         marker_prune()
     except Exception:
@@ -570,7 +924,11 @@ atomic_write(sess_path, sess)
 if event != "SubagentStop" and agent_id:
     try:
         marker_refine(agent_id, ctx_from_prompt(tin.get("prompt")), ev.get("tool_use_id"),
-                      resp_obj.get("status") == "async_launched")
+                      resp_obj.get("status") == "async_launched", tin.get("model"))
+    except Exception:
+        pass
+    try:
+        marker_reconcile()
     except Exception:
         pass
     try:
@@ -1037,8 +1395,17 @@ if event == "SubagentStop":
     # marker_stop). Independent of the cost-recording dedup right below — the
     # stamp lands whether or not THIS SubagentStop turns out to be a dup of an
     # already-recorded sync dispatch. Best-effort: a missing/corrupt marker is
-    # not an error.
+    # not an error. T-780: reconcile first, so the stop row joins the dispatch
+    # row of THIS worker's own tool_use.
+    try:
+        marker_reconcile()
+    except Exception:
+        pass
     marker_stop(agent_id)
+    try:
+        schedule_stop(agent_id)
+    except Exception:
+        pass
     try:
         marker_prune()
     except Exception:

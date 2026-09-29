@@ -12,6 +12,7 @@
     "check-ticket-version": "node scripts/check-ticket-version.mjs",
     "ds": "node ds/cli.mjs",
     "viewer": "node viewer/cli.mjs",
+    "pretest": "turbo run build --filter=@productune/core",
     "test": "vitest run",
     "smoke": "vite build && ln -sfn dist renderer && playwright test",
     "dist:mac": "pnpm run build && electron-builder --mac dmg --config electron-builder.yml"

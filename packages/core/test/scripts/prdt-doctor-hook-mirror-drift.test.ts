@@ -338,6 +338,7 @@ function addInstallScaffolding(root: string) {
     registrations: [{ event: 'SessionStart', hooks: ['prdt-hook-a.sh', 'prdt-hook-b.sh'] }],
   }))
   fs.writeFileSync(path.join(scriptsDir, 'statusline-prdt.sh'), '#!/usr/bin/env bash\necho ok\n')
+  fs.copyFileSync(path.join(CORE_ROOT, 'scripts', 'prdt-messages.json'), path.join(scriptsDir, 'prdt-messages.json'))
   fs.mkdirSync(path.join(root, 'discipline'), { recursive: true })
   fs.writeFileSync(path.join(root, 'doctrine.md'), 'test doctrine\n')
   fs.mkdirSync(path.join(root, 'agents'), { recursive: true })

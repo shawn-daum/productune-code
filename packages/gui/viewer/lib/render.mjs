@@ -28,7 +28,7 @@ import {
   COMMON,
   PAGE,
   HOME,
-  PROGRESS_ITEM_LABEL,
+  PROGRESS_OUT_OF_SCOPE_LABEL,
   DETAIL_FIELD_LABELS,
   TICKET,
   WIKI,
@@ -36,6 +36,8 @@ import {
   ARTIFACT,
   PRD,
   FILE_HREF_NOTE,
+  HASH_NOTICE,
+  THEME_TOGGLE,
   noGroupLabel,
 } from './labels.mjs'
 
@@ -308,7 +310,7 @@ export function encodeFsPathHref(relPath) {
  * @returns {string|undefined}
  */
 function containedFileHref(candidateHref, repoRootHref) {
-  return isHrefContained(candidateHref, { repoRootHref, rootSubpath: 'docs' }) ? candidateHref : undefined
+  return isHrefContained(candidateHref, { repoRootHref, rootSubpath: 'docs', viewerAbsPath: pageViewerAbsPath }) ? candidateHref : undefined
 }
 
 /**
@@ -357,10 +359,16 @@ function isAllowedRawHref(href) {
 // is single-threaded and synchronous (no md() call is ever in flight while
 // another starts).
 let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF }
+// T-746: where the page being rendered will live on disk — every containment
+// check below judges an href against THIS location (the installed `prdt`
+// writes a project's viewer under its own `.prdt/scratch/viewer/`, not next
+// to this module). Set once per `renderPage` call; same single-threaded,
+// synchronous-generation reasoning as `linkContext` above.
+let pageViewerAbsPath = DEFAULT_VIEWER_ABS_PATH
 
 hardenedRenderer.link = function ({ href, title, tokens }) {
   const text = this.parser.parseInline(tokens)
-  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref)
+  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath)
   if (rewritten !== null) {
     const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
     return `<a href="${escapeHtml(rewritten)}" target="_blank" rel="noopener"${titleAttr}>${text}</a>`
@@ -391,7 +399,7 @@ hardenedRenderer.link = function ({ href, title, tokens }) {
 hardenedRenderer.image = function ({ href, title, text, tokens }) {
   const altSource = tokens ? this.parser.parseInline(tokens, this.parser.textRenderer) : text
   const alt = escapeHtml(altSource)
-  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref)
+  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath)
   if (rewritten === null) return alt
   const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
   return `<img src="${escapeHtml(rewritten)}" alt="${alt}"${titleAttr}>`
@@ -410,9 +418,31 @@ function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF) {
   return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer })
 }
 
-function emitThemeVarBlock(className, resolvedMap) {
-  const lines = [...resolvedMap.entries()].map(([name, value]) => `  --${name}: ${value};`)
-  return `.${className} {\n${lines.join('\n')}\n}`
+/**
+ * T-797 개정 (사용자 축자 "라이트 기본에 마지막 설정 따르게"): the page is
+ * light by default and follows the viewer's own toggle, never the OS —
+ * `:root` carries the LIGHT token set, `:root[data-theme="dark"]` the dark
+ * one. THEME_HEAD_SCRIPT sets `data-theme` from the remembered choice before
+ * the body paints. Both maps are still `resolveVarChains(buildRawThemeMaps(…))`
+ * output from tokens.css, never a hand copy.
+ *
+ * Former T-797 slice-1 note, kept for history: `:root` carried the dark token set as the page's baseline
+ * (dark-first, same convention tokens.css itself uses — its own header:
+ * "dark is the :root default"), then `@media (prefers-color-scheme: light)`
+ * overrides it with the light set — the SAME two-block shape tokens.css
+ * uses, not a JS-driven class toggle: this page ships no runtime theme
+ * switcher (no script writes a `.v-light`/`.theme-light` class anywhere),
+ * so a class-scoped var block the page never applies is dead weight that
+ * always renders dark regardless of the OS setting — the exact defect this
+ * ticket reports. `dark`/`light` are `resolveVarChains(buildRawThemeMaps(…))`
+ * output — the same parser tokens.css's own DS generator consumes
+ * (ds/lib/parse-tokens.mjs) — so the light set here can never drift from
+ * tokens.css as a hand copy.
+ */
+function emitRootThemeCss(dark, light) {
+  const darkLines = [...dark.entries()].map(([name, value]) => `  --${name}: ${value};`)
+  const lightLines = [...light.entries()].map(([name, value]) => `  --${name}: ${value};`)
+  return `:root {\n${lightLines.join('\n')}\n}\n:root[data-theme="dark"] {\n${darkLines.join('\n')}\n}`
 }
 
 function fmtBytes(n) {
@@ -438,6 +468,18 @@ const STORE_ICON_PATHS = {
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
 }
 const CLOSE_ICON_PATH = '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+const MOON_ICON_PATH = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'
+const SUN_ICON_PATH = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'
+
+// T-806: sits at the bottom of the activity rail (T-797 first placed it in
+// the topstrip's top-right slot; a detail-panel open — ticket/PRD/artifact/
+// wiki item — overlays that slot, hiding it — see the .activity-theme-toggle
+// CSS comment above). The moon shows in light (press → dark), the sun in
+// dark (press → light); INTERACTION_SCRIPT keeps aria-label/title in step
+// with the live theme.
+function themeToggleButton() {
+  return `<button type="button" class="activity-theme-toggle js-theme-toggle" aria-label="${THEME_TOGGLE.toDark}" title="${THEME_TOGGLE.toDark}"><span class="theme-icon-moon">${svgIcon(MOON_ICON_PATH, 16)}</span><span class="theme-icon-sun">${svgIcon(SUN_ICON_PATH, 16)}</span></button>`
+}
 
 function svgIcon(pathMarkup, size = 20) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${pathMarkup}</svg>`
@@ -448,7 +490,10 @@ function activityBar(activeStore) {
     const active = key === activeStore ? ' active' : ''
     return `<button type="button" class="activity-btn${active}" data-store="${key}" title="${STORE_LABEL[key]}" aria-label="${STORE_LABEL[key]}">${svgIcon(STORE_ICON_PATHS[key])}</button>`
   }).join('\n')
-  return `<nav class="activity">\n${buttons}\n</nav>`
+  // T-806: the toggle sits at the rail's bottom, below every store button —
+  // the rail is the one element unchanged across Home, every store tab, and
+  // any item open (see the .activity-theme-toggle CSS comment).
+  return `<nav class="activity">\n${buttons}\n${themeToggleButton()}\n</nav>`
 }
 
 /** Wraps `innerHtml` (a frame-main-col's full content, sidebar included) into one activity-bar-addressable store section. */
@@ -485,9 +530,24 @@ export function sameVersion(a, b) {
   return compareVersionIdsDesc(a, b) === 0
 }
 
+/** The ticket store's current-version sidebar group key — see `ticketStoreInner` (T-713). One function, so the `#id` anchor table (T-746) names the same group the sidebar draws. */
+function currentTicketBucketKey(tickets, currentVersion) {
+  return currentVersionTickets(tickets, currentVersion)[0]?.bucket ?? currentVersion
+}
+
 /** Every current-version ticket (any status) in `tickets.included`, matched by `sameVersion` rather than string equality (T-713) — a bucket dir spelled differently from po-state's own version string is still "current". `backlog` is excluded — it is never a version at all. */
 function currentVersionTickets(tickets, currentVersion) {
   return tickets.included.filter((t) => t.bucket !== 'backlog' && sameVersion(t.bucket, currentVersion))
+}
+
+/** Home's decision group (T-792): `decision--*` wiki pages whose `version:` is the current version. One function, so the `#id` anchor table names only the rows Home draws. */
+function currentDecisionPages(pages, currentVersion) {
+  return pages.filter((p) => p.rel.split('/').pop().startsWith('decision--') && p.frontmatter.version && sameVersion(String(p.frontmatter.version), currentVersion))
+}
+
+/** Home's artifact group — the literal bucket match home has always used (T-713 scope note in `homeSection`); shared with the anchor table (T-792). */
+function currentArtifactEntries(artifacts, currentVersion) {
+  return artifacts.entries.filter((e) => e.fields.bucket === currentVersion)
 }
 
 /**
@@ -584,7 +644,7 @@ function ticketRowsTable(tickets) {
 function ticketStoreInner(tickets, currentVersion) {
   const currentTickets = currentVersionTickets(tickets, currentVersion)
   const backlogTickets = tickets.included.filter((t) => t.bucket === 'backlog')
-  const currentBucketKey = currentTickets[0]?.bucket ?? currentVersion
+  const currentBucketKey = currentTicketBucketKey(tickets, currentVersion)
 
   // The current version's own row is a version bucket like any other — it
   // must be sorted INTO the same numeric-descending run as `tickets.omitted`
@@ -703,7 +763,7 @@ function ticketSection(tickets, currentVersion) {
 // simply never matches it. `noGroupUnit` is the caller's own count-unit word
 // (e.g. FEATURE.countUnit) — groupedStore has no store-specific vocabulary of
 // its own, so it cannot guess one.
-function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey }) {
+function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey, topHtml = '' }) {
   const singleGroup = groups.length === 1
   const defaultIndex = defaultKey === undefined ? 0 : Math.max(0, groups.findIndex((g) => g.key === defaultKey))
   const sidebarButtons = singleGroup
@@ -734,7 +794,7 @@ ${sidebarButtons}
   const defaultLabel = groups.length > 0 ? groups[defaultIndex].label : ''
   const mainCol = `<div class="frame-main-col">
 <div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)} · <span class="js-group-label">${escapeHtml(defaultLabel)}</span></b></span></div>
-<div class="frame-body"><div class="main-inner">${panes}</div></div>
+<div class="frame-body"><div class="main-inner">${topHtml}${panes}</div></div>
 <div class="detail-panel" role="dialog" aria-label="${COMMON.detailPanel}">
 <div class="detail-panel-header"><span class="detail-panel-title"></span><button type="button" class="detail-panel-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 14)}</button></div>
 <div class="detail-panel-body"></div>
@@ -1017,6 +1077,99 @@ function artifactDetailEntries(artifacts, artifactsBaseHref, repoRootHref) {
   return entries
 }
 
+// ---------- `#id` deep links (T-746) ----------
+// `viewer.html#<id>` opens the page with that item selected — the hand-off
+// links `prdt tickets --link` / `prdt viewer` print, and what the auto-open
+// hook opens. The anchor table maps every addressable id to where it lives:
+// `s` store · `g` sidebar group key · `k`/`i` detail kind + id (absent for a
+// PRD round, whose pane IS the document). Keys, one namespace:
+//   - a ticket id (`T-746`) — every ticket the page lists, a closed round's
+//     frontmatter-only row included
+//   - a wiki page's slug (`decision--define-screen-set`) and its repo path
+//   - the repo path of every other document the page holds: `docs/prd/PRD.md`
+//     (also `PRD`), `docs/prd/versions/<v>.md`, `docs/features/<f>.md`,
+//     `docs/artifacts/<bucket>/<file>` (an `.md` one inlined, any other kind
+//     its summary row)
+// Built from the SAME inputs and the SAME group-key rules as the sidebar
+// (`currentTicketBucketKey`, the wiki `type` grouping, the artifact bucket),
+// so an anchor can never name a group the page does not draw.
+export function buildAnchors(data) {
+  const anchors = {}
+  const put = (key, entry) => {
+    if (key && !Object.prototype.hasOwnProperty.call(anchors, key)) anchors[key] = entry
+  }
+  // T-792: a current-version item opens inside Home (the group Home draws it
+  // in); every other item opens in its own store, as T-746 built it. `put`
+  // keeps the first entry, so the Home entries go in first.
+  for (const t of currentVersionTickets(data.tickets, data.currentVersion)) {
+    const id = t.frontmatter.id || t.rel
+    put(id, { s: 'home', g: 'ticket', k: 'ticket', i: id })
+  }
+  for (const p of currentDecisionPages(data.wiki, data.currentVersion)) {
+    const file = p.rel.split('/').pop()
+    const entry = { s: 'home', g: 'decision', k: 'wiki', i: file }
+    put(file.replace(/\.md$/, ''), entry)
+    put(p.rel, entry)
+  }
+  put('docs/prd/PRD.md', { s: 'home', g: 'prd' })
+  put('PRD', { s: 'home', g: 'prd' })
+  for (const e of currentArtifactEntries(data.artifacts, data.currentVersion)) {
+    const f = e.fields
+    put(e.diskRel, { s: 'home', g: 'artifact', k: 'artifact', i: `${f.bucket}/${f.path}` })
+  }
+  const currentKey = currentTicketBucketKey(data.tickets, data.currentVersion)
+  for (const t of data.tickets.included) {
+    const id = t.frontmatter.id || t.rel
+    put(id, { s: 'ticket', g: t.bucket === 'backlog' ? 'backlog' : currentKey, k: 'ticket', i: id })
+  }
+  for (const bucket of data.tickets.omitted) {
+    for (const t of bucket.tickets) {
+      const id = t.frontmatter.id || t.rel
+      put(id, { s: 'ticket', g: bucket.bucket, k: 'ticket', i: id })
+    }
+  }
+  for (const p of data.wiki) {
+    const file = p.rel.split('/').pop()
+    const entry = { s: 'wiki', g: p.frontmatter.type || WIKI_UNCLASSIFIED, k: 'wiki', i: file }
+    put(file.replace(/\.md$/, ''), entry)
+    put(p.rel, entry)
+  }
+  for (const p of data.features) {
+    put(p.rel, { s: 'feature', g: 'all', k: 'feature', i: p.rel.split('/').pop() })
+  }
+  for (const c of data.prd.closed) {
+    put(c.rel, { s: 'prd', g: c.name.replace(/\.md$/, '') })
+  }
+  for (const e of data.artifacts.entries) {
+    const f = e.fields
+    put(e.diskRel, { s: 'artifact', g: f.bucket, k: 'artifact', i: `${f.bucket}/${f.path}` })
+  }
+  return anchors
+}
+
+/** Highest ticket number the page lists — an absent `#T-<n>` at or below it names a ticket that existed once (ids are one global counter, contracts §Tickets), i.e. moved or removed since generation: the `stale` notice rather than `unknown`. */
+export function maxTicketNumber(data) {
+  let max = 0
+  const see = (id) => {
+    const m = /^T-(\d+)$/.exec(id || '')
+    if (m) max = Math.max(max, Number(m[1]))
+  }
+  for (const t of data.tickets.included) see(t.frontmatter.id)
+  for (const b of data.tickets.omitted) for (const t of b.tickets) see(t.frontmatter.id)
+  return max
+}
+
+const INFO_ICON_SVG =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>'
+
+/** docs/design.md §8.4 Banner (no side stripe, T-756) — hidden until the page is opened at an `#id` it cannot show; the script fills in the id and the text. */
+const HASH_NOTICE_HTML = `<div class="notice" id="hash-notice" role="status" hidden>
+<span class="notice-icon">${INFO_ICON_SVG}</span>
+<span class="notice-body"><b class="js-notice-id"></b> — <span class="js-notice-text"></span></span>
+<button type="button" class="notice-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 13)}</button>
+</div>
+`
+
 function artifactsSection(artifacts, currentVersion) {
   return storeSection('artifact', { innerHtml: artifactStoreInner(artifacts, currentVersion) })
 }
@@ -1047,72 +1200,60 @@ function artifactsSection(artifacts, currentVersion) {
 // designer developer qa 순으로 배치해줘 열 순서는").
 const PROGRESS_ASSIGNEE_ORDER = ['user', 'po', 'designer', 'developer', 'qa']
 
-// Row keys = the `## v1.10` PRD §What section's own H4 order (docs/prd/PRD.md
-// ~line 105-149, `#### <key> — <label>`), NOT parsed from that file at
-// generation time — this fixed list only changes when the version's own
-// §What items change, at which point this generator's next edit changes too
-// (T-675 round 2: a ticket's `prd_item:` string is never printed to the
-// screen verbatim; the label is this generator's own short Korean gloss,
-// trimmed from the PRD's own H4 label text — Designer sign-off on the exact
-// wording is still open, same as the wiki/feature UNCLASSIFIED-group and
-// no-body-link copy flagged in slice 1a/1b's own 미해결).
+// T-795: row keys + labels come from `data.prd.openItems` — the OPEN PRD
+// version section's own `#### <key> — <label>` headings, read at generation
+// time by collect.mjs's `collectPrdOpenItems` (never a fixed list hand-typed
+// here — that used to be productune's own v1.10 item keys, so a v1.11 item,
+// or another project's own items, had no row at all: this ticket's defect).
 //
 // T-666 slice 2b: a ticket with NO matching `prd_item` (today T-677/678/679
 // — measured 2026-09-26, `grep -L prd_item: docs/tickets/v1.10`) used to be
 // silently omitted from the matrix (slice 2a scope, "leave room for them,
-// build neither"). This slice appends `PROGRESS_OUT_OF_SCOPE_KEY` as one more
-// row — labelled from this SAME label layer (`PROGRESS_ITEM_LABEL`), never a
-// second vocabulary — so a ticket never disappears from the card for lacking
-// an item address (acceptance line 2).
-const PROGRESS_ITEM_ORDER = ['north-star', 'prd-form', 'linkage', 'gui-deferral-marker', 'inherited-defects', 'viewer', 'ticket-frame']
-const PROGRESS_OUT_OF_SCOPE_KEY = 'out-of-scope'
-// PROGRESS_ITEM_LABEL now imported from ./labels.mjs (T-706: one label
-// layer) — T-705 §B moved `linkage` from '연결' to '간선' there; every other
-// key here (including PROGRESS_OUT_OF_SCOPE_KEY's '항목 밖', this repo's own
-// existing PRD.md vocabulary reused verbatim) is §A keep.
+// build neither"). This slice appends one more trailing row for those —
+// `PROGRESS_OUT_OF_SCOPE_LABEL` (./labels.mjs), the one row label that is
+// NOT PRD-derived (no `prd_item` means no PRD heading to read at all) — so a
+// ticket never disappears from the card for lacking an item address
+// (acceptance line 2).
 
-// T-666 slice 2b acceptance line 1: "Stage progress is counted by
-// statusline-prdt.sh's own TYPE_TO_STAGE mapping, not a second rule — a test
-// fails if the two diverge." Values copied VERBATIM from
-// code/packages/core/scripts/statusline-prdt.sh lines 116-125 (its own
-// `TYPE_TO_STAGE` dict) — `scripts/qa/type-to-stage-parity.test.ts` parses
-// that file's dict literal and deep-equals it against this export, so a hand
-// edit to either side without the other fails CI rather than silently
-// drifting.
-export const TYPE_TO_STAGE = {
-  // canonical enum
-  design: 'define', impl: 'build', qa: 'build', ops: 'ship',
-  // tolerated aliases
-  docs: 'define', prd: 'define', spec: 'define', feature: 'define',
-  build: 'build', refactor: 'build', bug: 'build', fix: 'build',
-  chore: 'build', test: 'build',
-  deploy: 'ship', release: 'ship',
-  retro: 'retro', close: 'retro',
-}
-
-// The four ticket-mapped stages, always rendered in this order (acceptance
-// line 1: "all four lifecycle stages always render") — statusline-prdt.sh's
-// own STAGES tuple also carries "idle", but idle is a po-state-only stage no
-// ticket ever maps to (TYPE_TO_STAGE has no "idle" value), so it is not a
-// fifth column here.
-const STAGE_ORDER = ['define', 'build', 'ship', 'retro']
+// T-766: T-755 dropped statusline-prdt.sh's own per-type "which stage is
+// this ticket in" guess (the old `TYPE_TO_STAGE` dict) — a `design`-typed
+// ticket read as Build work broke that guess, so the statusline now shows
+// ONE version-wide done/total over every open+done ticket in the current
+// version, every type included (`decision` too), and never estimates a stage
+// from a ticket's `type` at all. This viewer carried its own copy of the
+// retired guess (the old `TYPE_TO_STAGE` export + `homeStageLine`'s
+// per-stage `n/m` cells below) until this ticket — the exact regression
+// `scripts/qa/type-to-stage-parity.test.ts` catches. The home progress line
+// now mirrors statusline-prdt.sh's rule exactly instead: the current po-state
+// stage name, plus that same version-wide count.
 
 /**
- * One line, `define n/m · build n/m · ship n/m · retro n/m`, always all
- * four. Mirrors statusline-prdt.sh's own counting rule exactly (lines
- * 147-158): a ticket counts toward a stage's n/m only when
- * `TYPE_TO_STAGE[type] === stage`; `status: dropped` counts toward neither
- * (open/done only) — never a second rule invented for the viewer.
+ * Version-wide done/total over every open+done ticket (`status: dropped` or
+ * any other value counts toward neither) — the SAME counting rule as
+ * statusline-prdt.sh's own `vdone`/`vtotal` (packages/core/scripts/
+ * statusline-prdt.sh), never a second rule invented for the viewer, and never
+ * narrowed by a ticket's `type` (`decision` included, same as every other
+ * type). `scripts/qa/type-to-stage-parity.test.ts` drives both the real
+ * script and this function against one shared fixture and asserts their
+ * counts agree.
  * @param {Array} currentTickets current-version tickets (any status)
+ * @returns {{done: number, total: number}}
  */
-function homeStageLine(currentTickets) {
+export function versionProgressCounts(currentTickets) {
   const counted = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
-  const cells = STAGE_ORDER.map((stage) => {
-    const inStage = counted.filter((t) => TYPE_TO_STAGE[t.frontmatter.type] === stage)
-    const done = inStage.filter((t) => t.frontmatter.status === 'done').length
-    return `${stage} ${done}/${inStage.length}`
-  })
-  return `<div class="stage-line mono">${escapeHtml(cells.join(' · '))}</div>`
+  const done = counted.filter((t) => t.frontmatter.status === 'done').length
+  return { done, total: counted.length }
+}
+
+/**
+ * One line, `<stage> | <done>/<total>` — the current po-state stage name
+ * (never guessed from ticket type) plus the version-wide count above.
+ * @param {Array} currentTickets current-version tickets (any status)
+ * @param {string} stage current po-state stage (define|build|ship|retro|idle|'?')
+ */
+function homeStageLine(currentTickets, stage) {
+  const { done, total } = versionProgressCounts(currentTickets)
+  return `<div class="stage-line mono">${escapeHtml(`${stage} | ${done}/${total}`)}</div>`
 }
 
 function progressSquare(done) {
@@ -1156,14 +1297,14 @@ function progressMatrixHeadRow() {
   return `<div class="stage-matrix-row stage-matrix-head"><span class="stage-matrix-label"></span>${cols}</div>`
 }
 
-/** `ticketsForItem` = every current-version ticket whose `prd_item:` resolves to this row's key. The `qa` column is always the dashed/derived one — contracts §Dispatch: QA never gets its own ticket, so an `assignee: qa` solid square is a possibility this code still handles correctly, but never observed in this repo (T-675 round 2). */
-function progressMatrixRow(key, ticketsForItem) {
+/** `ticketsForItem` = every current-version ticket whose `prd_item:` resolves to this row's key. `label` is already resolved (the PRD heading's own label text, or `PROGRESS_OUT_OF_SCOPE_LABEL` for the trailing row) — this function has no label lookup of its own. The `qa` column is always the dashed/derived one — contracts §Dispatch: QA never gets its own ticket, so an `assignee: qa` solid square is a possibility this code still handles correctly, but never observed in this repo (T-675 round 2). T-798: `role="row"` + `aria-label={label}` gives the row its own accessible name from the FULL, untruncated label text — independent of whatever the visible `.stage-matrix-label` cell does (wrap, or a future truncation), so a screen reader never depends on the visual layout to read the whole PRD heading. */
+function progressMatrixRow(label, ticketsForItem) {
   const cells = PROGRESS_ASSIGNEE_ORDER.map((role) => {
     const solid = ticketsForItem.filter((t) => t.frontmatter.assignee === role)
     const dashed = role === 'qa' ? ticketsForItem.filter((t) => t.frontmatter.assignee !== 'qa' && /^### QA/m.test(t.body || '')) : []
     return progressCell(solid, dashed)
   }).join('')
-  return `<div class="stage-matrix-row"><span class="stage-matrix-label">${escapeHtml(PROGRESS_ITEM_LABEL[key] || key)}</span>${cells}</div>`
+  return `<div class="stage-matrix-row" role="row" aria-label="${escapeHtml(label)}"><span class="stage-matrix-label">${escapeHtml(label)}</span>${cells}</div>`
 }
 
 /** The straight overall line above the matrix — one square per current-version ticket, once each, regardless of assignee or prd_item (T-675 round 3: "전체는... 일직선으로 쭉... assignee상관없이"). */
@@ -1175,20 +1316,23 @@ function progressOverall(currentTickets) {
 
 const PROGRESS_LEGEND = `<div class="stage-matrix-legend"><span class="stage-matrix-legend-item">${progressSquare(true)} <span>${HOME.legendMain}</span></span><span class="stage-matrix-legend-item">${progressDashedSquare(true)} <span>${HOME.legendDerived}</span></span></div>`
 
-/** The "진행 상황" pane: T-666 slice 2b's own TYPE_TO_STAGE stage line, above T-675's assignee x PRD-item matrix (a trailing "항목 밖" row included) — two different questions ("which lifecycle stage" vs "which PRD item"), not the same component, per this ticket's two separate acceptance lines. */
+/** The "진행 상황" pane: T-766's own version-wide stage line, above T-675's assignee x PRD-item matrix (a trailing "항목 밖" row included) — two different questions ("which lifecycle stage" vs "which PRD item"), not the same component, per this ticket's two separate acceptance lines. */
 function homeProgressBody(data) {
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
-  const byItem = new Map(PROGRESS_ITEM_ORDER.map((k) => [k, []]))
+  const openItems = data.prd.openItems || []
+  const byItem = new Map(openItems.map((i) => [i.key, []]))
   const outOfScope = []
   for (const t of currentTickets) {
     const key = prdItemKey(t.frontmatter.prd_item || '', data.currentVersion)
     if (key && byItem.has(key)) byItem.get(key).push(t)
     else outOfScope.push(t) // no prd_item, or one this version's §What items don't name — the trailing row
   }
-  const rows = PROGRESS_ITEM_ORDER.map((key) => progressMatrixRow(key, byItem.get(key))).join('') + progressMatrixRow(PROGRESS_OUT_OF_SCOPE_KEY, outOfScope)
+  const rows =
+    openItems.map((i) => progressMatrixRow(i.label, byItem.get(i.key))).join('') +
+    progressMatrixRow(PROGRESS_OUT_OF_SCOPE_LABEL, outOfScope)
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
-${homeStageLine(currentTickets)}
+${homeStageLine(currentTickets, data.poState?.stage || '?')}
 ${progressOverall(currentTickets)}
 <div class="stage-matrix">${progressMatrixHeadRow()}${rows}</div>
 ${PROGRESS_LEGEND}
@@ -1202,14 +1346,16 @@ function homeSection(data, repoRootHref) {
   // `prd_item` prefixes only; an artifact-manifest bucket spelled
   // differently from po-state's version string is the same latent bug class
   // but out of scope here (see this dispatch's `unresolved[]`).
-  const currentArtifacts = data.artifacts.entries.filter((e) => e.fields.bucket === data.currentVersion)
+  const currentArtifacts = currentArtifactEntries(data.artifacts, data.currentVersion)
+  const currentDecisions = currentDecisionPages(data.wiki, data.currentVersion)
   const groups = [
     { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
+    { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref) },
   ]
-  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups }) })
+  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups, topHtml: HASH_NOTICE_HTML }) })
 }
 
 export const TEMPLATE_CSS = `
@@ -1358,13 +1504,28 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
    덮어쓰지 않는다). 유일하게 남는 차이는 접지 않고(결함 3의 +N 규칙은 이 줄의
    대상이 아니다) 넘치면 줄을 바꾼다는 것뿐이라 wrap 오버라이드 하나만 남긴다. */
 .stage-matrix-sq-wrap.stage-overall-sq-wrap { flex-wrap: wrap; }
-.stage-matrix { display: grid; grid-template-columns: 60px repeat(5, 1fr); column-gap: var(--space-6); row-gap: 4px; align-items: center; margin-bottom: var(--space-8); }
+/* T-798: was a fixed 60px label column with the label cell itself clipped
+   (white-space: nowrap; overflow: hidden) — a PRD heading longer than ~4
+   Korean syllables cut off mid-word with no hover to recover it (user
+   screenshot: 「"두 단계"가 시」 · 「리스크가 정하」). minmax(60px, 140px)
+   lets the column grow to fit a short-to-medium heading (home's own
+   .main-inner has no max-width — plenty of room beside the 5 fixed 1fr
+   assignee columns); the label cell itself now wraps instead of clipping
+   (see .stage-matrix-label below), so even a heading past 140px still
+   reads in full, on a second/third line, never cut. */
+.stage-matrix { display: grid; grid-template-columns: minmax(60px, 140px) repeat(5, 1fr); column-gap: var(--space-6); row-gap: 4px; align-items: center; margin-bottom: var(--space-8); }
 .stage-matrix-row { display: contents; }
 .stage-matrix-head .stage-matrix-col { font-size: 9px; text-transform: none; letter-spacing: 0.02em; color: var(--text-quaternary);
   font-weight: 600; text-align: center; padding-bottom: var(--space-6); border-bottom: 1px solid var(--border-item); }
 .stage-matrix-head .stage-matrix-label { border-bottom: 1px solid var(--border-item); padding-bottom: var(--space-6); }
+/* T-798: was white-space: nowrap; overflow: hidden — a label longer than
+   the column clipped mid-word with nothing to recover it (no hover, no
+   tooltip). word-break: keep-all keeps a Korean word/quoted-phrase whole
+   where a normal break opportunity exists (space, punctuation) rather than
+   snapping mid-syllable-block; overflow-wrap: anywhere is still the
+   fallback for one token literally wider than the 140px column cap above. */
 .stage-matrix-label { display: flex; align-items: center; gap: 3px; color: var(--text-tertiary); font-size: 11px;
-  text-transform: none; white-space: nowrap; overflow: hidden; }
+  text-transform: none; white-space: normal; overflow: visible; word-break: keep-all; overflow-wrap: anywhere; line-height: 1.3; }
 .stage-matrix-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 0; }
 /* T-708 결함 3: was 'flex-wrap: wrap', letting a cell with >10 tickets fold
    onto a 2nd row and grow taller than every other cell in the same row —
@@ -1425,6 +1586,48 @@ table.v-omitted th, table.v-artifacts th { color: var(--text-secondary); border-
 .v-body table th, .v-body table td { border: 1px solid var(--border-item); padding: var(--space-4) var(--space-8); }
 details.v-fold summary { cursor: pointer; color: var(--icon-tertiary); padding: var(--space-8) 0; }
 details.v-fold[open] summary { color: var(--text-primary); }
+
+/* ---------- light/dark toggle (T-806 개정 — the bottom of the activity rail;
+   T-797 first placed it in the topstrip's top-right slot, where the
+   .detail-panel overlay (position: absolute; top: 0 — see its rule below)
+   covers it the moment a ticket/PRD/artifact/wiki item opens. The activity
+   rail sits OUTSIDE .frame-main-col, so the overlay never reaches it, and
+   the rail is the one element present unchanged across every view: Home,
+   every store tab, and any item open. margin-top: auto (not margin-left,
+   T-797's horizontal-flex value) pushes it to the rail's bottom edge in the
+   rail's own column flex. ) ---------- */
+.activity-theme-toggle { margin-top: auto; width: 28px; height: 28px; border: none; background: none; padding: 0; cursor: pointer;
+  color: var(--text-tertiary); border-radius: var(--radius-4); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.activity-theme-toggle:hover { background: var(--bg-state-hover); color: var(--text-primary); }
+.activity-theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.theme-icon-sun, :root[data-theme="dark"] .theme-icon-moon { display: none; }
+.theme-icon-moon, :root[data-theme="dark"] .theme-icon-sun { display: flex; }
+/* T-797: light scheme only — a 14% tint of the same hue under its own text
+   measured below AA (4.05–4.45:1). Pulling the text 20% toward
+   --text-primary keeps the hue and clears 4.5:1 on both light surfaces;
+   dark keeps the plain token (it already passes). */
+:root:not([data-theme="dark"]) .pill-error { color: color-mix(in srgb, var(--status-blocked) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-status-done { color: color-mix(in srgb, var(--status-done) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-status-progress { color: color-mix(in srgb, var(--status-in-progress) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-status-review { color: color-mix(in srgb, var(--status-review) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-status-blocked { color: color-mix(in srgb, var(--status-blocked) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-role-po { color: color-mix(in srgb, var(--persona-po) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-role-designer { color: color-mix(in srgb, var(--persona-designer) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-role-developer { color: color-mix(in srgb, var(--persona-dev) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-role-qa { color: color-mix(in srgb, var(--persona-qa) 80%, var(--text-primary)); }
+/* docs/design.md 8.4 Banner: severity tint + a full 1px border, no side stripe (T-756). */
+.notice { display: flex; gap: 10px; align-items: flex-start; position: relative;
+  background: color-mix(in srgb, var(--health-info) 10%, var(--bg-surface-onlayer));
+  border: 1px solid color-mix(in srgb, var(--health-info) 35%, var(--border-section));
+  border-radius: var(--radius-8); padding: 12px 14px; margin: 0 0 16px; }
+.notice[hidden] { display: none; }
+.notice-icon { color: var(--health-info); flex: 0 0 auto; margin-top: 1px; display: flex; }
+.notice-body { font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; padding-right: 20px; }
+.notice-body b { color: var(--text-primary); }
+.notice-close { position: absolute; right: 8px; top: 8px; width: 22px; height: 22px; border: none; background: none; padding: 0;
+  color: var(--text-tertiary); cursor: pointer; border-radius: var(--radius-4); display: flex; align-items: center; justify-content: center; }
+.notice-close:hover { background: var(--bg-state-hover); color: var(--text-primary); }
+.detail-row.hash-target td { background: var(--bg-state-hover); }
 `
 
 /**
@@ -1434,15 +1637,21 @@ details.v-fold[open] summary { color: var(--text-primary); }
  * script issues no fetch and mutates no remote state, so "zero network
  * requests" (tests/viewer-html.window.spec.ts) still holds.
  */
+// T-797 개정: localStorage key prefix for the remembered theme — one key per viewer file (location.pathname appended at runtime).
+const THEME_STORAGE_PREFIX = 'prdt-viewer-theme:'
 const INTERACTION_SCRIPT = `
 (function () {
   var DETAIL_DATA = JSON.parse(document.getElementById('detail-data').textContent);
   var DETAIL_FIELD_LABELS = ${JSON.stringify(DETAIL_FIELD_LABELS)};
+  var HASH_NOTICE = ${JSON.stringify(HASH_NOTICE)};
+  var THEME_TOGGLE = ${JSON.stringify(THEME_TOGGLE)};
+  var THEME_KEY = ${JSON.stringify(THEME_STORAGE_PREFIX)} + location.pathname;
+  var URL_KEYS = ['view', 'group', 'kind', 'id'];
 
   function closeDetailPanel(section) {
     if (!section) return;
     var panel = section.querySelector('.detail-panel');
-    if (panel) panel.classList.remove('active');
+    if (panel) { panel.classList.remove('active'); panel.removeAttribute('data-open-kind'); panel.removeAttribute('data-open-id'); }
   }
 
   function openDetailPanel(section, kind, id) {
@@ -1473,10 +1682,160 @@ const INTERACTION_SCRIPT = `
       docHtml = '';
     }
     panel.querySelector('.detail-panel-body').innerHTML = metaHtml + docHtml;
+    panel.setAttribute('data-open-kind', kind);
+    panel.setAttribute('data-open-id', id);
     panel.classList.add('active');
   }
 
-  document.addEventListener('click', function (ev) {
+  function selectStore(key) {
+    document.querySelectorAll('.activity-btn').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-store') === key); });
+    document.querySelectorAll('.store-section').forEach(function (s) { s.classList.toggle('active', s.dataset.store === key); });
+    return document.querySelector('.store-section[data-store="' + key + '"]');
+  }
+
+  function selectGroup(section, group) {
+    var groupBtn = null;
+    section.querySelectorAll('[data-group-select]').forEach(function (b) {
+      if (b.getAttribute('data-group-select') === group) groupBtn = b;
+    });
+    section.querySelectorAll('.nav-item-clickable').forEach(function (b) { b.classList.toggle('active', b === groupBtn); });
+    section.querySelectorAll('.view-pane').forEach(function (v) { v.classList.toggle('active', v.dataset.group === group); });
+    var label = section.querySelector('.js-group-label');
+    if (label && groupBtn) {
+      // T-708 결함 5: breadcrumb showed the raw data-group-select key
+      // (an internal id — 'progress', 'backlog', a version/bucket key),
+      // never a translated label of its own. Reads the SAME text the
+      // pressed button is already showing (its first <span>, the label —
+      // see groupedStore()/ticketStoreInner() below, where that span is
+      // always the button's label, never the count) instead of the key.
+      var btnLabelSpan = groupBtn.querySelector('span');
+      label.textContent = btnLabelSpan ? btnLabelSpan.textContent : group;
+    }
+    closeDetailPanel(section);
+  }
+
+  // T-746: viewer.html#<id> selects that item on load (and whenever the hash
+  // changes). An id the page cannot show lands on home with the notice,
+  // never a blank page.
+  function clearHashMarks() {
+    document.querySelectorAll('.detail-row.hash-target').forEach(function (r) { r.classList.remove('hash-target'); });
+  }
+
+  function showHashNotice(raw) {
+    var notice = document.getElementById('hash-notice');
+    if (!notice) return;
+    var m = /^T-([0-9]+)$/.exec(raw);
+    var stale = (m !== null && Number(m[1]) <= DETAIL_DATA.maxTicket) || raw.indexOf('docs/') === 0;
+    notice.querySelector('.js-notice-id').textContent = '#' + raw;
+    notice.querySelector('.js-notice-text').textContent = stale ? HASH_NOTICE.stale : HASH_NOTICE.unknown;
+    notice.hidden = false;
+  }
+
+  function routeHash() {
+    var rawHash = location.hash.replace(/^#/, '');
+    if (!rawHash) return;
+    var raw;
+    try { raw = decodeURIComponent(rawHash); } catch (e) { raw = rawHash; }
+    clearHashMarks();
+    var notice = document.getElementById('hash-notice');
+    if (notice) notice.hidden = true;
+    var a = Object.prototype.hasOwnProperty.call(DETAIL_DATA.anchors, raw) ? DETAIL_DATA.anchors[raw] : null;
+    var section = a ? document.querySelector('.store-section[data-store="' + a.s + '"]') : null;
+    if (!section) {
+      var home = selectStore('home');
+      if (home) selectGroup(home, 'progress');
+      showHashNotice(raw);
+      return;
+    }
+    selectStore(a.s);
+    selectGroup(section, a.g);
+    if (a.k) focusItem(section, a.k, a.i);
+  }
+
+  function focusItem(section, kind, id) {
+    section.querySelectorAll('.view-pane.active [data-detail-kind]').forEach(function (r) {
+      if (r.getAttribute('data-detail-kind') === kind && r.getAttribute('data-detail-id') === id) {
+        r.classList.add('hash-target');
+        if (r.scrollIntoView) r.scrollIntoView({ block: 'center' });
+      }
+    });
+    openDetailPanel(section, kind, id);
+  }
+
+  // T-797 개정: the URL carries the screen as ?view=<store>&group=<sidebar
+  // group>&kind=<detail kind>&id=<item id> (design: T-797 ## outcome). Every
+  // value is compared, never spliced into a selector.
+  function findByAttr(selector, attr, value, root) {
+    var hit = null;
+    (root || document).querySelectorAll(selector).forEach(function (el) { if (!hit && el.getAttribute(attr) === value) hit = el; });
+    return hit;
+  }
+
+  function readState() {
+    var section = document.querySelector('.store-section.active');
+    if (!section) return null;
+    var st = { view: section.getAttribute('data-store') };
+    var pane = section.querySelector('.view-pane.active');
+    if (pane && pane.getAttribute('data-group')) st.group = pane.getAttribute('data-group');
+    var panel = section.querySelector('.detail-panel.active');
+    if (panel && panel.getAttribute('data-open-kind')) { st.kind = panel.getAttribute('data-open-kind'); st.id = panel.getAttribute('data-open-id'); }
+    return st;
+  }
+
+  function syncUrl(replace) {
+    var st = readState();
+    if (!st) return;
+    var p = new URLSearchParams();
+    URL_KEYS.forEach(function (k) { if (st[k]) p.set(k, st[k]); });
+    var target = location.pathname + '?' + p.toString();
+    if (!location.hash && location.pathname + location.search === target) return;
+    try { history[replace ? 'replaceState' : 'pushState'](null, '', target); } catch (e) { /* file:// history quirks: the screen still works */ }
+  }
+
+  function routeParams() {
+    var p = new URLSearchParams(location.search);
+    var view = p.get('view');
+    if (!view) return false;
+    var section = findByAttr('.store-section', 'data-store', view);
+    if (!section) return false;
+    clearHashMarks();
+    selectStore(view);
+    var group = p.get('group');
+    if (group && findByAttr('.view-pane', 'data-group', group, section)) selectGroup(section, group);
+    var kind = p.get('kind');
+    var id = p.get('id');
+    if (kind && id) {
+      var bucket = Object.prototype.hasOwnProperty.call(DETAIL_DATA, kind) ? DETAIL_DATA[kind] : null;
+      if (bucket && Object.prototype.hasOwnProperty.call(bucket, id)) focusItem(section, kind, id);
+      else showHashNotice(id);
+    }
+    return true;
+  }
+
+  function route() {
+    if (location.hash) routeHash(); else routeParams();
+  }
+
+  function currentTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  }
+
+  function paintToggle() {
+    var label = currentTheme() === 'dark' ? THEME_TOGGLE.toLight : THEME_TOGGLE.toDark;
+    document.querySelectorAll('.js-theme-toggle').forEach(function (b) { b.setAttribute('aria-label', label); b.setAttribute('title', label); });
+  }
+
+  function toggleTheme() {
+    var next = currentTheme() === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* storage blocked: the toggle still applies for this visit */ }
+    paintToggle();
+  }
+
+  function onClick(ev) {
+    var themeBtn = ev.target.closest('.js-theme-toggle');
+    if (themeBtn) { ev.preventDefault(); toggleTheme(); return; }
+
     var stalePanel = document.querySelector('.detail-panel.active');
     if (stalePanel && !stalePanel.contains(ev.target)) {
       closeDetailPanel(stalePanel.closest('.store-section'));
@@ -1490,9 +1849,8 @@ const INTERACTION_SCRIPT = `
     var storeBtn = ev.target.closest('.activity-btn[data-store]');
     if (storeBtn) {
       ev.preventDefault();
-      var key = storeBtn.getAttribute('data-store');
-      document.querySelectorAll('.activity-btn').forEach(function (b) { b.classList.toggle('active', b === storeBtn); });
-      document.querySelectorAll('.store-section').forEach(function (s) { s.classList.toggle('active', s.dataset.store === key); });
+      selectStore(storeBtn.getAttribute('data-store'));
+      clearHashMarks();
       return;
     }
 
@@ -1501,21 +1859,16 @@ const INTERACTION_SCRIPT = `
       ev.preventDefault();
       var section = groupBtn.closest('.store-section');
       if (!section) return;
-      var group = groupBtn.getAttribute('data-group-select');
-      section.querySelectorAll('.nav-item-clickable').forEach(function (b) { b.classList.toggle('active', b === groupBtn); });
-      section.querySelectorAll('.view-pane').forEach(function (v) { v.classList.toggle('active', v.dataset.group === group); });
-      var label = section.querySelector('.js-group-label');
-      if (label) {
-        // T-708 결함 5: breadcrumb showed the raw data-group-select key
-        // (an internal id — 'progress', 'backlog', a version/bucket key),
-        // never a translated label of its own. Reads the SAME text the
-        // pressed button is already showing (its first <span>, the label —
-        // see groupedStore()/ticketStoreInner() below, where that span is
-        // always the button's label, never the count) instead of the key.
-        var btnLabelSpan = groupBtn.querySelector('span');
-        label.textContent = btnLabelSpan ? btnLabelSpan.textContent : group;
-      }
-      closeDetailPanel(section);
+      selectGroup(section, groupBtn.getAttribute('data-group-select'));
+      clearHashMarks();
+      return;
+    }
+
+    var noticeClose = ev.target.closest('.notice-close');
+    if (noticeClose) {
+      ev.preventDefault();
+      var notice = noticeClose.closest('.notice');
+      if (notice) notice.hidden = true;
       return;
     }
 
@@ -1528,14 +1881,24 @@ const INTERACTION_SCRIPT = `
 
     var closeBtn = ev.target.closest('.detail-panel-close');
     if (closeBtn) { ev.preventDefault(); closeDetailPanel(closeBtn.closest('.store-section')); }
-  });
+  }
+
+  document.addEventListener('click', function (ev) { onClick(ev); syncUrl(false); });
 
   document.addEventListener('keydown', function (ev) {
     if (ev.key === 'Escape') {
       var openPanel = document.querySelector('.detail-panel.active');
-      if (openPanel) closeDetailPanel(openPanel.closest('.store-section'));
+      if (openPanel) { closeDetailPanel(openPanel.closest('.store-section')); syncUrl(false); }
     }
   });
+
+  // A '#<key>' link keeps working: it routes, then the URL is rewritten to
+  // the same screen's query form so a refresh reopens it.
+  window.addEventListener('hashchange', function () { routeHash(); syncUrl(true); });
+  window.addEventListener('popstate', function () { if (!location.hash) routeParams(); });
+  paintToggle();
+  route();
+  syncUrl(true);
 })();
 `
 
@@ -1558,10 +1921,14 @@ const INTERACTION_SCRIPT = `
 // type="application/json">` is inert data (never a JavaScript MIME type), so
 // CSP's script-src does not gate it at all — same pattern as, e.g., a
 // Next.js `__NEXT_DATA__` block.
+// T-797 개정: runs in <head>, before the body paints, so a remembered dark
+// choice never flashes light first. Light unless the stored value is 'dark'.
+const THEME_HEAD_SCRIPT = `(function(){var t=null;try{t=localStorage.getItem(${JSON.stringify(THEME_STORAGE_PREFIX)}+location.pathname)}catch(e){}document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light')})();`
+const THEME_HEAD_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(THEME_HEAD_SCRIPT, 'utf8').digest('base64')
 const INTERACTION_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT, 'utf8').digest('base64')
 const CSP_CONTENT = [
   "default-src 'none'",
-  `script-src 'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}'`,
+  `script-src 'sha256-${THEME_HEAD_SCRIPT_SHA256_BASE64}' 'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}'`,
   "style-src 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src data:",
@@ -1604,7 +1971,9 @@ export function renderPage({
   tokensSha256,
   artifactsBaseHref = '../../../../docs/artifacts',
   repoRootHref = DEFAULT_REPO_ROOT_HREF,
+  viewerAbsPath = DEFAULT_VIEWER_ABS_PATH,
 }) {
+  pageViewerAbsPath = viewerAbsPath
   const detailData = {
     ticket: ticketDetailEntries(data.tickets, repoRootHref),
     wiki: wikiDetailEntries(data.wiki, repoRootHref),
@@ -1613,6 +1982,8 @@ export function renderPage({
     // No "prd" bucket (T-709 결정 2): a closed PRD round is no longer a
     // detail-row — its body renders directly in its own sidebar group's pane
     // (prdStoreInner) — so DETAIL_DATA never needs one.
+    anchors: buildAnchors(data),
+    maxTicket: maxTicketNumber(data),
   }
 
   return `<!doctype html>
@@ -1621,14 +1992,14 @@ export function renderPage({
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${CSP_CONTENT}">
 <title>${PAGE.title}</title>
+<script>${THEME_HEAD_SCRIPT}</script>
 <style>
 ${fontFaceCss}
 ${TEMPLATE_CSS}
-${emitThemeVarBlock('v-dark', dark)}
-${emitThemeVarBlock('v-light', light)}
+${emitRootThemeCss(dark, light)}
 </style>
 </head>
-<body class="v-dark">
+<body>
 <!-- sha256:${escapeHtml(tokensSha256)} -->
 <div class="app-shell">
 ${activityBar('home')}

@@ -469,7 +469,12 @@ FORM_OUTLINE_LIST_CAP = 5
 #             heading/table/enumeration token: `-` `*` `+` `•` `1.` `1)` `#`
 #             through `######` `|` `>` `→` `①`–`⑳` `ⓐ`–`ⓩ` — or a thematic
 #             break made only of 3+ `-` (a table row's own `---` separator is
-#             already caught by the leading `|`/table case)
+#             already caught by the leading `|`/table case) — OR a self-labelled
+#             item per form-outline.md line 10 (T-768: "A B C a b c i ii 같은
+#             머리가 이미 있는 리스트는 - 안써도"): a bare single Latin letter
+#             (`A`, `a`) or a lowercase roman numeral (`i` through `xx`),
+#             optionally closed with `.`/`)`, then whitespace or end-of-line —
+#             it drops the `-` precisely because it IS already a label
 #   bold    — the WHOLE line is one bold span (`**...**`) — a sub-heading
 #   indent  — 2+ leading spaces/tabs and none of the above — a wrapped
 #             continuation
@@ -492,6 +497,15 @@ FORM_OUTLINE_MARKER_RE = re.compile(
 )
 FORM_OUTLINE_HR_RE = re.compile(r"^-{3,}$")  # thematic break: "---", "- - -"
 FORM_OUTLINE_BOLD_RE = re.compile(r"^\*\*.+\*\*$")
+# Self-labelled item (T-768, form-outline.md line 10): a bare single Latin
+# letter (A, a — either case, any letter) or a lowercase roman numeral up to
+# xx, optionally closed with `.`/`)`, then whitespace or end-of-line. Plain
+# digit-dot ("1.") is already a marker above; this covers the letter/roman
+# labels the PO approved dropping the `-` for.
+FORM_OUTLINE_SELF_LABEL_RE = re.compile(
+    r"^(?:[A-Za-z]|ii|iii|iv|vi|vii|viii|ix|xi|xii|xiii|xiv|xv|xvi|xvii|xviii|xix|xx)"
+    r"[.)]?(?=\s|$)"
+)
 # Sentence end = one of `. ! ? 。`, optionally followed by a closing wrapper
 # (`**`, `*`, `」`, `)`, `"` — a QA-round PO decision: "정말 좋아요.**" still
 # ends the sentence AT the period, the bold-close is not new content), then
@@ -512,6 +526,8 @@ def _form_outline_line_kind(line):
     if FORM_OUTLINE_MARKER_RE.match(body) or FORM_OUTLINE_HR_RE.match(line.strip()):
         return "marker"
     if FORM_OUTLINE_BOLD_RE.match(line.strip()):
+        return "marker"
+    if FORM_OUTLINE_SELF_LABEL_RE.match(body):
         return "marker"
     if lead >= 2:
         return "indent"

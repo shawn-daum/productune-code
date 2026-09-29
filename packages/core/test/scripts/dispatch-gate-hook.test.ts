@@ -92,6 +92,8 @@ interface EventOpts {
   // models a main-session (PO) call, unchanged.
   agentId?: string
   agentType?: string
+  // T-774: `tool_input.model` — the Agent tool's own tier override.
+  model?: string
 }
 
 /**
@@ -118,6 +120,7 @@ function eventObject(o: EventOpts): Record<string, unknown> {
       description: '디스패치 게이트 구현',
       prompt: o.prompt ?? promptWith(VALID_CTX),
       subagent_type: o.subagentType ?? 'prdt-developer',
+      ...(o.model !== undefined ? { model: o.model } : {}),
     },
     tool_use_id: 'toolu_01aaaaaaaaaaaaaaaaaaaaaa',
   }
@@ -328,12 +331,18 @@ describe('silence outside its scope', () => {
     expect(run({ cwd: makeProject() })).toBe('')
   })
 
-  test('the gate writes nothing anywhere — it has no state', () => {
+  // T-773: a dispatch that PASSES now leaves exactly one state file — its row
+  // in `.prdt/schedule.jsonl` (prdt-schedule-record.test.ts owns its content);
+  // a denied one still writes nothing at all.
+  test('a denied dispatch writes nothing; a passed one writes only its schedule row', () => {
     const proj = makeProject()
     const before = fs.readdirSync(path.join(proj, '.prdt')).sort()
     run({ cwd: proj, prompt: 'no ctx line' })
-    run({ cwd: proj })
     expect(fs.readdirSync(path.join(proj, '.prdt')).sort()).toEqual(before)
+    run({ cwd: proj })
+    expect(fs.readdirSync(path.join(proj, '.prdt')).sort()).toEqual([...before, 'schedule.jsonl'].sort())
+    const rows = fs.readFileSync(path.join(proj, '.prdt', 'schedule.jsonl'), 'utf8').trim().split('\n')
+    expect(rows).toHaveLength(1)
   })
 })
 
@@ -944,7 +953,8 @@ describe('T-561: the two hooks share one walker, byte-for-byte', () => {
 })
 
 // ── T-695: a dispatch waits when the machine is full ─────────────────────────
-// Five axes, each replayed over and under its cap through the PATH shim above;
+// Six axes (T-774 adds model_tier), each replayed over and under its cap through
+// the PATH shim above;
 // a failed measurement degrades to `unmeasured` (said once per session, never
 // a deny); caps come from defaults or `$PRDT_HOME/dispatch-caps.json`; the
 // `[ctx]` verdict keeps precedence and non-prdt dispatches stay untouched.
@@ -963,11 +973,12 @@ describe('T-695: the machine resource cap', () => {
   type Worker = 'live' | 'synthetic' | 'none' | 'idle'
   const REAL_LAST = '{"type":"assistant","message":{"model":"claude-sonnet-5","role":"assistant","content":[{"type":"text","text":"Now the test."}]},"timestamp":"2026-09-26T07:00:00.000Z"}'
   const SYNTHETIC_LAST = '{"parentUuid":"x","isSidechain":true,"type":"assistant","message":{"id":"m","model":"<synthetic>","role":"assistant","type":"message","content":[{"type":"text","text":"You\'ve hit your session limit · resets 6:30pm (Asia/Seoul)"}]},"timestamp":"2026-09-26T06:41:35.903Z"}'
-  function marker(home: string, name: string, sinceAgoSec: number, stopped = false, worker: Worker = 'live', idleMin = 45, legacy = false): void {
+  function marker(home: string, name: string, sinceAgoSec: number, stopped = false, worker: Worker = 'live', idleMin = 45, legacy = false, model?: string): void {
     const dir = path.join(home, 'run', 'dispatches')
     fs.mkdirSync(dir, { recursive: true })
     const since = new Date(Date.now() - sinceAgoSec * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
-    const data: Record<string, unknown> = { agent_id: name, persona: 'developer', ticket_id: 'T-695', since }
+    const data: Record<string, unknown> = { agent_id: name, persona: 'developer', ticket_id: 'T-695', since, pairing: 'confirmed' }
+    if (model !== undefined) data.model = model
     if (stopped) data.stopped_at = since
     if (worker !== 'none') {
       const tdir = path.join(home, 'transcripts', 'sess', 'subagents')
@@ -1026,8 +1037,133 @@ describe('T-695: the machine resource cap', () => {
     const d = denyReason({ cwd: proj }, { home: over })
     expect(d).toContain('in-flight dispatches 6 machine-wide, every project (cap 5')
     expect(d).toContain('frees it: wait for a worker to return (`prdt dispatch ls` lists every project\'s in-flight dispatches and each marker\'s state)')
-    expect(d).toContain('\nover cap: dispatches\n')
+    // T-774: every marker here has no `model` (pre-T-774 fixture shape), so
+    // they all fall into the "default" tier bucket, same as this request
+    // (no `model` override either) — the new model_tier axis is over too.
+    expect(d).toContain('\nover cap: dispatches, model_tier\n')
     expect(d).toContain('frees it: wait for a worker to return')
+  })
+
+  describe('T-774: model tier axis — in-flight dispatches per model tier', () => {
+    test('5 markers on "opus" admit a "sonnet" dispatch (different tier, own cap)', () => {
+      const home = tmp('prdt-t774-home-')
+      for (let i = 0; i < 5; i++) marker(home, `o${i}`, 60 * i, false, 'live', 45, false, 'opus')
+      expect(run({ cwd: proj, model: 'sonnet' }, { home })).toBe('')
+    })
+
+    test('6 markers on the SAME tier as this dispatch deny on model_tier, not on dispatches', () => {
+      const home = tmp('prdt-t774-home-')
+      // inflight_max raised so the machine-wide dispatches axis (which counts every
+      // tier together) stays under its own cap at 6 — isolating the assertion to the
+      // per-tier axis, whose own key is set to 5 (an absent tier key follows
+      // inflight_max — see the regression test below).
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 10, inflight_opus_max: 5 }))
+      for (let i = 0; i < 6; i++) marker(home, `o${i}`, 60 * i, false, 'live', 45, false, 'opus')
+      const d = denyReason({ cwd: proj, model: 'opus' }, { home })
+      expect(d).toContain('in-flight dispatches on model tier "opus" 6 machine-wide (cap 5')
+      expect(d).toContain('\nover cap: model_tier\n')
+      expect(d).toContain('frees it: wait for a worker on the same model tier to return, or dispatch on a different tier')
+      expect(d).not.toContain('over cap: dispatches')
+    })
+
+    test('T-780: an unconfirmed marker counts toward dispatches but never toward a model_tier deny', () => {
+      const home = tmp('prdt-t780-home-')
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 10, inflight_opus_max: 5 }))
+      for (let i = 0; i < 6; i++) {
+        marker(home, `u${i}`, 60 * i, false, 'live', 45, false, 'opus')
+        const f = path.join(home, 'run', 'dispatches', `u${i}.json`)
+        fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, 'utf8')), pairing: 'unconfirmed', dispatch_id: `d-${i}` }))
+      }
+      // six live opus-looking markers, none proven to be its own dispatch: the tier axis admits
+      expect(run({ cwd: proj, model: 'opus' }, { home })).toBe('')
+      // the machine-wide count still sees all six (persona + liveness do not rest on the pairing)
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 5, inflight_opus_max: 5 }))
+      const d = denyReason({ cwd: proj, model: 'opus' }, { home })
+      expect(d).toContain('in-flight dispatches 6 machine-wide')
+      expect(d).toContain('in-flight dispatches on model tier "opus" 0 machine-wide')
+      expect(d).toContain('\nover cap: dispatches\n')
+    })
+
+    test('regression: a raised inflight_max with no tier key is not re-capped at 5 by the tier axis', () => {
+      // QA grill of T-774: caps {inflight_max: 10}, 6 live markers with no model
+      // override — the pre-T-774 hook admits this dispatch, so the tier axis must too.
+      const home = tmp('prdt-t774-home-')
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 10 }))
+      for (let i = 0; i < 6; i++) marker(home, `d${i}`, 60 * i)
+      expect(run({ cwd: proj }, { home })).toBe('')
+    })
+
+    test('no `model` override: this dispatch and legacy (no-`model`) markers both fall into the "default" bucket', () => {
+      const home = tmp('prdt-t774-home-')
+      for (let i = 0; i < 6; i++) marker(home, `d${i}`, 60 * i) // no model field: legacy shape
+      const d = denyReason({ cwd: proj }, { home })
+      expect(d).toContain('in-flight dispatches on model tier "default" 6 machine-wide (cap 5')
+      expect(d).toContain('\nover cap: dispatches, model_tier\n')
+    })
+
+    test('a per-tier override in dispatch-caps.json (inflight_opus_max) is honored independently of inflight_max', () => {
+      const home = tmp('prdt-t774-home-')
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_opus_max: 1 }))
+      // two, so the count (2) is OVER the tier cap (1) — "over" is strict, not "at or over"
+      // (see "load exactly at the cap is not over it" above) — while still well under the
+      // default machine-wide inflight_max (5), isolating the assertion to model_tier.
+      marker(home, 'one', 10, false, 'live', 45, false, 'opus')
+      marker(home, 'two', 20, false, 'live', 45, false, 'opus')
+      const d = denyReason({ cwd: proj, model: 'opus' }, { home })
+      expect(d).toContain('in-flight dispatches on model tier "opus" 2 machine-wide (cap 1')
+      expect(d).toContain('\nover cap: model_tier\n')
+      expect(d).not.toContain('over cap: dispatches')
+      // a sonnet dispatch on the same machine is untouched by the opus override
+      expect(run({ cwd: proj, model: 'sonnet' }, { home })).toBe('')
+    })
+
+    test('T-780 round 2: a swapped foreground pair is counted at each worker\'s OWN dispatch tier, never its (possibly-swapped) recorded `model`', () => {
+      // agent-x's marker was FIFO-guessed onto B's (did, model) pair at
+      // SubagentStart — recorded model "sonnet" — but its own worker transcript's
+      // first `[ctx]` line proves it is really running A (opus). agent-y is the
+      // mirror image. Before the fix, both stayed excluded from every tier count
+      // (pairing unconfirmed); the fix re-keys each onto the dispatch its own
+      // worker names, via a did→model map built from every live candidate's own
+      // (did, model) pair — which is always internally consistent even when
+      // misattributed to the wrong agent_id.
+      const home = tmp('prdt-t780b-home-')
+      const A = { dispatch_id: 'd-v112-t900a-1', model: 'opus' }
+      const B = { dispatch_id: 'd-v112-t900b-2', model: 'sonnet' }
+      const ctxFor = (did: string) => ({ slug: 's', goal: 'g', dispatch_id: did, worktree: '/p/tracks/x' })
+      const tdir = path.join(home, 'transcripts', 'sess', 'subagents')
+      const writeHead = (name: string, did: string) => {
+        fs.mkdirSync(tdir, { recursive: true })
+        const t = path.join(tdir, `agent-${name}.jsonl`)
+        const firstLine = JSON.stringify({ type: 'user', message: { role: 'user', content: `[ctx] ${JSON.stringify(ctxFor(did))}\nDo the thing.` } })
+        const rest = fs.readFileSync(t, 'utf8')
+        fs.writeFileSync(t, `${firstLine}\n${rest}`)
+      }
+      marker(home, 'agent-x', 10, false, 'live', 45, false, B.model)
+      marker(home, 'agent-y', 20, false, 'live', 45, false, A.model)
+      for (const [name, did] of [['agent-x', B.dispatch_id], ['agent-y', A.dispatch_id]] as const) {
+        const f = path.join(home, 'run', 'dispatches', `${name}.json`)
+        fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, 'utf8')), pairing: 'unconfirmed', dispatch_id: did }))
+      }
+      writeHead('agent-x', A.dispatch_id)
+      writeHead('agent-y', B.dispatch_id)
+
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_opus_max: 0 }))
+      const dOpus = denyReason({ cwd: proj, model: 'opus' }, { home })
+      expect(dOpus).toContain('in-flight dispatches on model tier "opus" 1 machine-wide (cap 0')
+      expect(dOpus).toContain('\nover cap: model_tier\n')
+
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_sonnet_max: 0 }))
+      const dSonnet = denyReason({ cwd: proj, model: 'sonnet' }, { home })
+      expect(dSonnet).toContain('in-flight dispatches on model tier "sonnet" 1 machine-wide (cap 0')
+    })
+
+    test('an unknown/malformed `tool_input.model` value falls back to the "default" bucket, never denies on a bad key', () => {
+      const home = tmp('prdt-t774-home-')
+      marker(home, 'one', 10, false, 'live', 45, false, 'default')
+      fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_default_max: 0 }))
+      const d = denyReason({ cwd: proj, model: 'claude-opus-5-not-a-tier' }, { home })
+      expect(d).toContain('in-flight dispatches on model tier "default" 1 machine-wide (cap 0')
+    })
   })
 
   test('phantom markers (slice 2): a 429-killed worker, a marker with no transcript, an idle transcript — none count; a starting worker does', () => {
