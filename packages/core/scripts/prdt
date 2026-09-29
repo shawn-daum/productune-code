@@ -10832,6 +10832,65 @@ def _track_base(code, branch):
     return b if b in TRACK_BASES else "dev"
 
 
+# T-833 (decision T-828 「D」): where a track was cut from is a fact the tool
+# knows at `open` — recorded here so a bare `land` of a track cut from `main`
+# is REFUSED instead of silently merging a hotfix into `dev`. The record lives
+# under $PRDT_HOME/run/tracks/<code-repo key>/<T-NNN>.json: machine scope,
+# tooling-owned (contracts §Return: `run/` is written by tooling alone), and
+# outside the code repo, its shared git config and the worktree — so no git
+# command a worker runs in the track rewrites it (the T-784 F1 channel). Only
+# `open` writes it; `land` (after a fast-forward) and `drop` remove it. It is
+# never a land TARGET: its one power is to refuse a bare land, so a forged
+# `main` only refuses, a forged/deleted `dev` falls back to the pre-T-833 dev
+# default — `main` still moves only on an explicit `--base main` (T-784).
+# Unreadable/corrupt/mismatched/symlinked → fail closed (refuse a bare land).
+TRACK_RECORD_MISSING, TRACK_RECORD_BAD = object(), object()
+
+
+def _track_record_path(code, tid):
+    r = _tgit(["rev-parse", "--git-common-dir"], code)
+    gd = Path(r.stdout.strip())
+    gd = (gd if gd.is_absolute() else Path(code) / gd).resolve()
+    key = hashlib.sha256(str(gd).encode("utf-8")).hexdigest()[:16]
+    return prdt_home() / "run" / "tracks" / key / f"{tid}.json"
+
+
+def _track_record_write(code, tid, branch, base):
+    p = _track_record_path(code, tid)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"schema": 1, "ticket": tid, "branch": branch, "base": base,
+                               "opened_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}) + "\n",
+                   encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def _track_record_read(code, tid, branch):
+    """'dev' | 'main' | TRACK_RECORD_MISSING | TRACK_RECORD_BAD."""
+    p = _track_record_path(code, tid)
+    if not os.path.lexists(p):
+        return TRACK_RECORD_MISSING
+    try:
+        fd = os.open(str(p), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "r", encoding="utf-8") as f:
+            rec = json.loads(f.read(65536))
+    except (OSError, ValueError):
+        return TRACK_RECORD_BAD
+    if not (isinstance(rec, dict) and rec.get("ticket") == tid and rec.get("branch") == branch
+            and rec.get("base") in TRACK_BASES):
+        return TRACK_RECORD_BAD
+    return rec["base"]
+
+
+def _track_record_remove(code, tid):
+    try:
+        _track_record_path(code, tid).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        print(f"track record not removed: {e}", file=sys.stderr)
+
+
 def _track_require_open(code, wt, branch, tid):
     if not wt.is_dir():
         _track_die(f"no track worktree at {wt} — `prdt track open {tid}` first")
@@ -10890,6 +10949,12 @@ def cmd_track_open(args):
     if r.returncode != 0:
         _track_die("git worktree add failed: " + (r.stderr.strip() or r.stdout.strip()))
     _tgit(["config", f"branch.{branch}.prdtbase", base], code)
+    try:
+        _track_record_write(code, tid, branch, base)
+    except OSError as e:
+        _tgit(["worktree", "remove", "--force", str(wt)], code)
+        _tgit(["branch", "-D", branch], code)
+        _track_die(f"could not write the track record ({e}) — the track was not opened")
     setup = _track_setup_cmd(root, wt)
     if setup is None:
         print("setup: none (no track.setup in .prdt/config.json, no lockfile)")
@@ -11042,6 +11107,18 @@ def cmd_track_land(args):
     # track open --base main`) now takes `--base main` again at land time,
     # a deliberate PO act — `_track_base`/config stays read-only advisory
     # info for `review`, never a land decision input.
+    # T-833: with no `--base`, the PO-side open record (never git config) may
+    # REFUSE — a track cut from main, or a record that cannot be trusted — but
+    # never picks main itself.
+    if not args.base:
+        rec = _track_record_read(code, tid, branch)
+        if rec == "main":
+            _track_die(f"this track was cut from main — pass --base main to merge it to main, "
+                       f"or --base dev to merge it to dev; nothing was merged")
+        if rec is TRACK_RECORD_BAD:
+            _track_die(f"the open record for {tid} ({_track_record_path(code, tid)}) is unreadable or does "
+                       f"not match this track — pass --base main to merge it to main, or --base dev to "
+                       f"merge it to dev; nothing was merged")
     base = args.base or "dev"
     st = _tgit(["status", "--porcelain"], wt)
     if st.returncode != 0 or st.stdout.strip():
@@ -11092,6 +11169,7 @@ def cmd_track_land(args):
             _track_die(f"fast-forwarding {base} failed: " + (r.stderr.strip() or r.stdout.strip())
                        + f" — {base} is unchanged")
         print(f"{base} fast-forwarded {old[:12]} → {new[:12]}")
+        _track_record_remove(code, tid)
     finally:
         try:
             lock.unlink()
@@ -11135,10 +11213,17 @@ def cmd_track_drop(args):
     print(f"worktree {wt} removed")
     r = _tgit(["branch", "-D", branch], code)
     print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
+    _track_record_remove(code, tid)
     print(f"dropped {tid} — nothing landed, nothing pushed")
 
 
 def cmd_track(args):
+    # T-833: `--base` is the main consent flag — given twice (`--base dev
+    # --base main`), argparse would silently keep the last; refuse instead.
+    if isinstance(args.base, list):
+        if len(args.base) > 1:
+            _track_die("--base given more than once — pass it once (dev or main)", 2)
+        args.base = args.base[0]
     {"open": cmd_track_open, "review": cmd_track_review, "land": cmd_track_land,
      "drop": cmd_track_drop}[args.action](args)
 
@@ -13772,10 +13857,12 @@ def main():
                                      "the worktree and branch instead; neither pushes")
     p.add_argument("action", choices=("open", "review", "land", "drop"))
     p.add_argument("ticket", help="T-NNN")
-    p.add_argument("--base", choices=TRACK_BASES, help="open: the branch to cut from (default dev) · "
-                                                        "land: the branch to land to (default dev; landing "
-                                                        "to main takes this explicit PO flag every time — "
-                                                        "never read from git config, worker-writable)")
+    p.add_argument("--base", choices=TRACK_BASES, action="append",
+                   help="open: the branch to cut from (default dev) · "
+                        "land: the branch to land to (default dev; landing "
+                        "to main takes this explicit PO flag every time — "
+                        "never read from git config, worker-writable; a track "
+                        "opened with --base main refuses a land without --base)")
     p.add_argument("--test", help="land: the test command (default: .prdt/config.json track.test, "
                                   "else the package.json test script)")
     p.add_argument("--force", action="store_true",
