@@ -471,11 +471,14 @@ const CLOSE_ICON_PATH = '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
 const MOON_ICON_PATH = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'
 const SUN_ICON_PATH = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'
 
-// T-797 개정: replaces the T-746 '#<id>' key in the topstrip's top-right slot.
-// The moon shows in light (press → dark), the sun in dark (press → light);
-// INTERACTION_SCRIPT keeps aria-label/title in step with the live theme.
+// T-806: sits at the bottom of the activity rail (T-797 first placed it in
+// the topstrip's top-right slot; a detail-panel open — ticket/PRD/artifact/
+// wiki item — overlays that slot, hiding it — see the .activity-theme-toggle
+// CSS comment above). The moon shows in light (press → dark), the sun in
+// dark (press → light); INTERACTION_SCRIPT keeps aria-label/title in step
+// with the live theme.
 function themeToggleButton() {
-  return `<button type="button" class="topstrip-theme js-theme-toggle" aria-label="${THEME_TOGGLE.toDark}" title="${THEME_TOGGLE.toDark}"><span class="theme-icon-moon">${svgIcon(MOON_ICON_PATH, 16)}</span><span class="theme-icon-sun">${svgIcon(SUN_ICON_PATH, 16)}</span></button>`
+  return `<button type="button" class="activity-theme-toggle js-theme-toggle" aria-label="${THEME_TOGGLE.toDark}" title="${THEME_TOGGLE.toDark}"><span class="theme-icon-moon">${svgIcon(MOON_ICON_PATH, 16)}</span><span class="theme-icon-sun">${svgIcon(SUN_ICON_PATH, 16)}</span></button>`
 }
 
 function svgIcon(pathMarkup, size = 20) {
@@ -487,7 +490,10 @@ function activityBar(activeStore) {
     const active = key === activeStore ? ' active' : ''
     return `<button type="button" class="activity-btn${active}" data-store="${key}" title="${STORE_LABEL[key]}" aria-label="${STORE_LABEL[key]}">${svgIcon(STORE_ICON_PATHS[key])}</button>`
   }).join('\n')
-  return `<nav class="activity">\n${buttons}\n</nav>`
+  // T-806: the toggle sits at the rail's bottom, below every store button —
+  // the rail is the one element unchanged across Home, every store tab, and
+  // any item open (see the .activity-theme-toggle CSS comment).
+  return `<nav class="activity">\n${buttons}\n${themeToggleButton()}\n</nav>`
 }
 
 /** Wraps `innerHtml` (a frame-main-col's full content, sidebar included) into one activity-bar-addressable store section. */
@@ -787,7 +793,7 @@ ${sidebarButtons}
 
   const defaultLabel = groups.length > 0 ? groups[defaultIndex].label : ''
   const mainCol = `<div class="frame-main-col">
-<div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)} · <span class="js-group-label">${escapeHtml(defaultLabel)}</span></b></span>${themeToggleButton()}</div>
+<div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)} · <span class="js-group-label">${escapeHtml(defaultLabel)}</span></b></span></div>
 <div class="frame-body"><div class="main-inner">${topHtml}${panes}</div></div>
 <div class="detail-panel" role="dialog" aria-label="${COMMON.detailPanel}">
 <div class="detail-panel-header"><span class="detail-panel-title"></span><button type="button" class="detail-panel-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 14)}</button></div>
@@ -1581,11 +1587,19 @@ table.v-omitted th, table.v-artifacts th { color: var(--text-secondary); border-
 details.v-fold summary { cursor: pointer; color: var(--icon-tertiary); padding: var(--space-8) 0; }
 details.v-fold[open] summary { color: var(--text-primary); }
 
-/* ---------- light/dark toggle (T-797 개정 — the T-746 '#id' key's old slot) ---------- */
-.topstrip-theme { margin-left: auto; width: 28px; height: 28px; border: none; background: none; padding: 0; cursor: pointer;
-  color: var(--text-tertiary); border-radius: var(--radius-4); display: flex; align-items: center; justify-content: center; }
-.topstrip-theme:hover { background: var(--bg-state-hover); color: var(--text-primary); }
-.topstrip-theme:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* ---------- light/dark toggle (T-806 개정 — the bottom of the activity rail;
+   T-797 first placed it in the topstrip's top-right slot, where the
+   .detail-panel overlay (position: absolute; top: 0 — see its rule below)
+   covers it the moment a ticket/PRD/artifact/wiki item opens. The activity
+   rail sits OUTSIDE .frame-main-col, so the overlay never reaches it, and
+   the rail is the one element present unchanged across every view: Home,
+   every store tab, and any item open. margin-top: auto (not margin-left,
+   T-797's horizontal-flex value) pushes it to the rail's bottom edge in the
+   rail's own column flex. ) ---------- */
+.activity-theme-toggle { margin-top: auto; width: 28px; height: 28px; border: none; background: none; padding: 0; cursor: pointer;
+  color: var(--text-tertiary); border-radius: var(--radius-4); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.activity-theme-toggle:hover { background: var(--bg-state-hover); color: var(--text-primary); }
+.activity-theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .theme-icon-sun, :root[data-theme="dark"] .theme-icon-moon { display: none; }
 .theme-icon-moon, :root[data-theme="dark"] .theme-icon-sun { display: flex; }
 /* T-797: light scheme only — a 14% tint of the same hue under its own text
