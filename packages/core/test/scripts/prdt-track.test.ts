@@ -519,6 +519,29 @@ describe('prdt track land', () => {
     expect(git(code, 'rev-parse', 'dev')).not.toBe(before)
   })
 
+  // T-835 (T-822 「C」): exit 141 = a later pipeline stage closed the pipe. Still a
+  // failed land, with one extra line saying why; other failures stay unchanged.
+  test('exit 141 (`| head` cut the run short) fails the land with an extra line; other failures get none; a short pipe lands', () => {
+    commit(wt(), 'c.txt', 'new\n', 'feat: c')
+    const before = git(code, 'rev-parse', 'dev')
+    const cut = cli('track', 'land', 'T-1', '--test', 'seq 1 200000 | head -n 1')
+    expect(cut.status).toBe(1)
+    expect(cut.err).toContain('tests failed on the merged tree — dev is unchanged')
+    expect(cut.err).toContain('exit 141')
+    expect(cut.err).toContain('| head')
+    expect(cut.err).toContain('result is unknown')
+    expect(cut.err).toContain('write the output to a file')
+    expect(git(code, 'rev-parse', 'dev')).toBe(before)
+    const plain = cli('track', 'land', 'T-1', '--test', 'false | tail -n 1')
+    expect(plain.status).toBe(1)
+    expect(plain.err).toContain('tests failed on the merged tree — dev is unchanged')
+    expect(plain.err).not.toContain('exit 141')
+    expect(plain.err).not.toContain('result is unknown')
+    expect(git(code, 'rev-parse', 'dev')).toBe(before)
+    expect(cli('track', 'land', 'T-1', '--test', 'seq 1 3 | head -n 5').status).toBe(0)
+    expect(git(code, 'rev-parse', 'dev')).not.toBe(before)
+  })
+
   test('the tests run on the MERGED tree (dev\'s change is visible to them)', () => {
     commit(wt(), 'c.txt', 'new\n', 'feat: c')
     commit(code, 'b.txt', 'dev moved\n', 'feat: b')
