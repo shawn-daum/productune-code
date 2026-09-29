@@ -4586,6 +4586,39 @@ def legacy_kind(d):
     return None
 
 
+def reset_terminal_input_modes():
+    """T-799: some program run before us (a killed/interrupted arrow-key
+    picker is the reproduced case — see below) can leave mouse tracking or
+    focus reporting turned ON and never send the matching disable sequence.
+    Left on, every mouse move or focus change lands as raw escape bytes
+    (`^[[O^[[I…`, `^[[<35;8;1M…`) in Claude Code's own input once we hand it
+    the tty. Write the disable sequences ourselves right before that handoff,
+    rather than trust every past or future subprocess to have cleaned up
+    after itself.
+
+    Reproduced (2026-09-29): `select_choice`'s `fzf` branch (arrow-key first-
+    version prompt, `prompt_version` above) enables mouse tracking as
+    `\\x1b[?1000h\\x1b[?1002h\\x1b[?1006h` on start; killed abruptly (SIGKILL,
+    standing in for an interrupted/crashed run) it exits without ever writing
+    the matching `l` disable — confirmed via a pty capture. `gum choose` did
+    NOT reproduce the same way (no mouse modes in its own byte stream in that
+    capture). Focus reporting (1004) was not reproduced from either tool here;
+    it is reset anyway since a stray enable from anywhere upstream is exactly
+    what this guards against.
+
+    Mouse tracking: 1000 (X10) / 1002 (button-event) / 1003 (any-motion) /
+    1006 (SGR encoding) / 1015 (urxvt encoding). Focus reporting: 1004.
+    Only on a real tty — writing these to a pipe/file would corrupt it."""
+    if not sys.stdout.isatty():
+        return
+    reset = "".join(f"\x1b[?{mode}l" for mode in (1000, 1002, 1003, 1006, 1015, 1004))
+    try:
+        sys.stdout.write(reset)
+        sys.stdout.flush()
+    except OSError:
+        pass
+
+
 def cmd_po(args):
     """Launch the PO conversation (thin exec over Claude Code)."""
     root = find_project_root()
@@ -4609,6 +4642,8 @@ def cmd_po(args):
     # a NEW machine has no ~/.claude.json trust entry — init never re-runs, so
     # heal here on every launch. Idempotent, best-effort, never blocks exec.
     trust_accept_project(root or find_project_root() or Path(os.getcwd()))
+    # T-799: last thing before Claude Code owns the tty.
+    reset_terminal_input_modes()
     cmd = ["claude", "--agent", "prdt-po"] + (getattr(args, "rest", None) or [])
     try:
         os.execvp("claude", cmd)
