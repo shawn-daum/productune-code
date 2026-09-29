@@ -10817,8 +10817,12 @@ def _track_test_cmd(root, wt, override):
 
 
 def _track_run(cmd, cwd, label):
+    """Runs under pipefail (T-813): `--test '<cmd> | tail'` must not take tail's
+    exit code, or a failing test lands as a pass."""
     print(f"{label}: {cmd}", flush=True)
-    r = subprocess.run(cmd, shell=True, cwd=str(cwd), stdout=sys.stderr, stderr=sys.stderr)
+    bash = shutil.which("bash")
+    argv = [bash, "-o", "pipefail", "-c", cmd] if bash else ["/bin/sh", "-c", f"set -o pipefail; {cmd}"]
+    r = subprocess.run(argv, cwd=str(cwd), stdout=sys.stderr, stderr=sys.stderr)
     return r.returncode
 
 
