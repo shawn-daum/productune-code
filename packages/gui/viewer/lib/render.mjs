@@ -1582,6 +1582,7 @@ table.v-fm th { width: 160px; color: var(--text-secondary); font-weight: 600; }
 table.v-omitted th, table.v-artifacts th { color: var(--text-secondary); border-bottom: 1px solid var(--border-section); }
 .v-body :is(h1,h2,h3,h4) { margin-top: var(--space-16); }
 .v-body pre { background: var(--bg-surface-on); padding: var(--space-12); border-radius: var(--radius-4); white-space: pre-wrap; overflow-wrap: anywhere; }
+.detail-doc pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .v-body table { border-collapse: collapse; }
 .v-body table th, .v-body table td { border: 1px solid var(--border-item); padding: var(--space-4) var(--space-8); }
 details.v-fold summary { cursor: pointer; color: var(--icon-tertiary); padding: var(--space-8) 0; }
