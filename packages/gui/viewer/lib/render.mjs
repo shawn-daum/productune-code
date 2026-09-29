@@ -37,6 +37,7 @@ import {
   PRD,
   FILE_HREF_NOTE,
   HASH_NOTICE,
+  THEME_TOGGLE,
   noGroupLabel,
 } from './labels.mjs'
 
@@ -418,7 +419,14 @@ function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF) {
 }
 
 /**
- * T-797: `:root` carries the dark token set as the page's baseline
+ * T-797 개정 (사용자 축자 "라이트 기본에 마지막 설정 따르게"): the page is
+ * light by default and follows the viewer's own toggle, never the OS —
+ * `:root` carries the LIGHT token set, `:root[data-theme="dark"]` the dark
+ * one. THEME_HEAD_SCRIPT sets `data-theme` from the remembered choice before
+ * the body paints. Both maps are still `resolveVarChains(buildRawThemeMaps(…))`
+ * output from tokens.css, never a hand copy.
+ *
+ * Former T-797 slice-1 note, kept for history: `:root` carried the dark token set as the page's baseline
  * (dark-first, same convention tokens.css itself uses — its own header:
  * "dark is the :root default"), then `@media (prefers-color-scheme: light)`
  * overrides it with the light set — the SAME two-block shape tokens.css
@@ -434,7 +442,7 @@ function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF) {
 function emitRootThemeCss(dark, light) {
   const darkLines = [...dark.entries()].map(([name, value]) => `  --${name}: ${value};`)
   const lightLines = [...light.entries()].map(([name, value]) => `  --${name}: ${value};`)
-  return `:root {\n${darkLines.join('\n')}\n}\n@media (prefers-color-scheme: light) {\n:root {\n${lightLines.join('\n')}\n}\n}`
+  return `:root {\n${lightLines.join('\n')}\n}\n:root[data-theme="dark"] {\n${darkLines.join('\n')}\n}`
 }
 
 function fmtBytes(n) {
@@ -460,6 +468,15 @@ const STORE_ICON_PATHS = {
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
 }
 const CLOSE_ICON_PATH = '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+const MOON_ICON_PATH = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'
+const SUN_ICON_PATH = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'
+
+// T-797 개정: replaces the T-746 '#<id>' key in the topstrip's top-right slot.
+// The moon shows in light (press → dark), the sun in dark (press → light);
+// INTERACTION_SCRIPT keeps aria-label/title in step with the live theme.
+function themeToggleButton() {
+  return `<button type="button" class="topstrip-theme js-theme-toggle" aria-label="${THEME_TOGGLE.toDark}" title="${THEME_TOGGLE.toDark}"><span class="theme-icon-moon">${svgIcon(MOON_ICON_PATH, 16)}</span><span class="theme-icon-sun">${svgIcon(SUN_ICON_PATH, 16)}</span></button>`
+}
 
 function svgIcon(pathMarkup, size = 20) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${pathMarkup}</svg>`
@@ -770,7 +787,7 @@ ${sidebarButtons}
 
   const defaultLabel = groups.length > 0 ? groups[defaultIndex].label : ''
   const mainCol = `<div class="frame-main-col">
-<div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)} · <span class="js-group-label">${escapeHtml(defaultLabel)}</span></b></span><span class="topstrip-key js-hash-key" hidden></span></div>
+<div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)} · <span class="js-group-label">${escapeHtml(defaultLabel)}</span></b></span>${themeToggleButton()}</div>
 <div class="frame-body"><div class="main-inner">${topHtml}${panes}</div></div>
 <div class="detail-panel" role="dialog" aria-label="${COMMON.detailPanel}">
 <div class="detail-panel-header"><span class="detail-panel-title"></span><button type="button" class="detail-panel-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 14)}</button></div>
@@ -1564,10 +1581,26 @@ table.v-omitted th, table.v-artifacts th { color: var(--text-secondary); border-
 details.v-fold summary { cursor: pointer; color: var(--icon-tertiary); padding: var(--space-8) 0; }
 details.v-fold[open] summary { color: var(--text-primary); }
 
-/* ---------- '#id' deep links (T-746) ---------- */
-.topstrip-key { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-quaternary); background: var(--bg-interaction-neutral);
-  padding: 2px 7px; border-radius: var(--radius-4); margin-left: auto; }
-.topstrip-key[hidden] { display: none; }
+/* ---------- light/dark toggle (T-797 개정 — the T-746 '#id' key's old slot) ---------- */
+.topstrip-theme { margin-left: auto; width: 28px; height: 28px; border: none; background: none; padding: 0; cursor: pointer;
+  color: var(--text-tertiary); border-radius: var(--radius-4); display: flex; align-items: center; justify-content: center; }
+.topstrip-theme:hover { background: var(--bg-state-hover); color: var(--text-primary); }
+.topstrip-theme:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.theme-icon-sun, :root[data-theme="dark"] .theme-icon-moon { display: none; }
+.theme-icon-moon, :root[data-theme="dark"] .theme-icon-sun { display: flex; }
+/* T-797: light scheme only — a 14% tint of the same hue under its own text
+   measured below AA (4.05–4.45:1). Pulling the text 20% toward
+   --text-primary keeps the hue and clears 4.5:1 on both light surfaces;
+   dark keeps the plain token (it already passes). */
+:root:not([data-theme="dark"]) .pill-error { color: color-mix(in srgb, var(--status-blocked) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-status-done { color: color-mix(in srgb, var(--status-done) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-status-progress { color: color-mix(in srgb, var(--status-in-progress) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-status-review { color: color-mix(in srgb, var(--status-review) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-status-blocked { color: color-mix(in srgb, var(--status-blocked) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-role-po { color: color-mix(in srgb, var(--persona-po) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-role-designer { color: color-mix(in srgb, var(--persona-designer) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-role-developer { color: color-mix(in srgb, var(--persona-dev) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .pill-role-qa { color: color-mix(in srgb, var(--persona-qa) 80%, var(--text-primary)); }
 /* docs/design.md 8.4 Banner: severity tint + a full 1px border, no side stripe (T-756). */
 .notice { display: flex; gap: 10px; align-items: flex-start; position: relative;
   background: color-mix(in srgb, var(--health-info) 10%, var(--bg-surface-onlayer));
@@ -1590,16 +1623,21 @@ details.v-fold[open] summary { color: var(--text-primary); }
  * script issues no fetch and mutates no remote state, so "zero network
  * requests" (tests/viewer-html.window.spec.ts) still holds.
  */
+// T-797 개정: localStorage key prefix for the remembered theme — one key per viewer file (location.pathname appended at runtime).
+const THEME_STORAGE_PREFIX = 'prdt-viewer-theme:'
 const INTERACTION_SCRIPT = `
 (function () {
   var DETAIL_DATA = JSON.parse(document.getElementById('detail-data').textContent);
   var DETAIL_FIELD_LABELS = ${JSON.stringify(DETAIL_FIELD_LABELS)};
   var HASH_NOTICE = ${JSON.stringify(HASH_NOTICE)};
+  var THEME_TOGGLE = ${JSON.stringify(THEME_TOGGLE)};
+  var THEME_KEY = ${JSON.stringify(THEME_STORAGE_PREFIX)} + location.pathname;
+  var URL_KEYS = ['view', 'group', 'kind', 'id'];
 
   function closeDetailPanel(section) {
     if (!section) return;
     var panel = section.querySelector('.detail-panel');
-    if (panel) panel.classList.remove('active');
+    if (panel) { panel.classList.remove('active'); panel.removeAttribute('data-open-kind'); panel.removeAttribute('data-open-id'); }
   }
 
   function openDetailPanel(section, kind, id) {
@@ -1630,6 +1668,8 @@ const INTERACTION_SCRIPT = `
       docHtml = '';
     }
     panel.querySelector('.detail-panel-body').innerHTML = metaHtml + docHtml;
+    panel.setAttribute('data-open-kind', kind);
+    panel.setAttribute('data-open-id', id);
     panel.classList.add('active');
   }
 
@@ -1664,7 +1704,6 @@ const INTERACTION_SCRIPT = `
   // changes). An id the page cannot show lands on home with the notice,
   // never a blank page.
   function clearHashMarks() {
-    document.querySelectorAll('.js-hash-key').forEach(function (k) { k.hidden = true; k.textContent = ''; });
     document.querySelectorAll('.detail-row.hash-target').forEach(function (r) { r.classList.remove('hash-target'); });
   }
 
@@ -1696,20 +1735,93 @@ const INTERACTION_SCRIPT = `
     }
     selectStore(a.s);
     selectGroup(section, a.g);
-    var key = section.querySelector('.js-hash-key');
-    if (key) { key.textContent = '#' + raw; key.hidden = false; }
-    if (a.k) {
-      section.querySelectorAll('.view-pane.active [data-detail-kind]').forEach(function (r) {
-        if (r.getAttribute('data-detail-kind') === a.k && r.getAttribute('data-detail-id') === a.i) {
-          r.classList.add('hash-target');
-          if (r.scrollIntoView) r.scrollIntoView({ block: 'center' });
-        }
-      });
-      openDetailPanel(section, a.k, a.i);
-    }
+    if (a.k) focusItem(section, a.k, a.i);
   }
 
-  document.addEventListener('click', function (ev) {
+  function focusItem(section, kind, id) {
+    section.querySelectorAll('.view-pane.active [data-detail-kind]').forEach(function (r) {
+      if (r.getAttribute('data-detail-kind') === kind && r.getAttribute('data-detail-id') === id) {
+        r.classList.add('hash-target');
+        if (r.scrollIntoView) r.scrollIntoView({ block: 'center' });
+      }
+    });
+    openDetailPanel(section, kind, id);
+  }
+
+  // T-797 개정: the URL carries the screen as ?view=<store>&group=<sidebar
+  // group>&kind=<detail kind>&id=<item id> (design: T-797 ## outcome). Every
+  // value is compared, never spliced into a selector.
+  function findByAttr(selector, attr, value, root) {
+    var hit = null;
+    (root || document).querySelectorAll(selector).forEach(function (el) { if (!hit && el.getAttribute(attr) === value) hit = el; });
+    return hit;
+  }
+
+  function readState() {
+    var section = document.querySelector('.store-section.active');
+    if (!section) return null;
+    var st = { view: section.getAttribute('data-store') };
+    var pane = section.querySelector('.view-pane.active');
+    if (pane && pane.getAttribute('data-group')) st.group = pane.getAttribute('data-group');
+    var panel = section.querySelector('.detail-panel.active');
+    if (panel && panel.getAttribute('data-open-kind')) { st.kind = panel.getAttribute('data-open-kind'); st.id = panel.getAttribute('data-open-id'); }
+    return st;
+  }
+
+  function syncUrl(replace) {
+    var st = readState();
+    if (!st) return;
+    var p = new URLSearchParams();
+    URL_KEYS.forEach(function (k) { if (st[k]) p.set(k, st[k]); });
+    var target = location.pathname + '?' + p.toString();
+    if (!location.hash && location.pathname + location.search === target) return;
+    try { history[replace ? 'replaceState' : 'pushState'](null, '', target); } catch (e) { /* file:// history quirks: the screen still works */ }
+  }
+
+  function routeParams() {
+    var p = new URLSearchParams(location.search);
+    var view = p.get('view');
+    if (!view) return false;
+    var section = findByAttr('.store-section', 'data-store', view);
+    if (!section) return false;
+    clearHashMarks();
+    selectStore(view);
+    var group = p.get('group');
+    if (group && findByAttr('.view-pane', 'data-group', group, section)) selectGroup(section, group);
+    var kind = p.get('kind');
+    var id = p.get('id');
+    if (kind && id) {
+      var bucket = Object.prototype.hasOwnProperty.call(DETAIL_DATA, kind) ? DETAIL_DATA[kind] : null;
+      if (bucket && Object.prototype.hasOwnProperty.call(bucket, id)) focusItem(section, kind, id);
+      else showHashNotice(id);
+    }
+    return true;
+  }
+
+  function route() {
+    if (location.hash) routeHash(); else routeParams();
+  }
+
+  function currentTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  }
+
+  function paintToggle() {
+    var label = currentTheme() === 'dark' ? THEME_TOGGLE.toLight : THEME_TOGGLE.toDark;
+    document.querySelectorAll('.js-theme-toggle').forEach(function (b) { b.setAttribute('aria-label', label); b.setAttribute('title', label); });
+  }
+
+  function toggleTheme() {
+    var next = currentTheme() === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* storage blocked: the toggle still applies for this visit */ }
+    paintToggle();
+  }
+
+  function onClick(ev) {
+    var themeBtn = ev.target.closest('.js-theme-toggle');
+    if (themeBtn) { ev.preventDefault(); toggleTheme(); return; }
+
     var stalePanel = document.querySelector('.detail-panel.active');
     if (stalePanel && !stalePanel.contains(ev.target)) {
       closeDetailPanel(stalePanel.closest('.store-section'));
@@ -1755,17 +1867,24 @@ const INTERACTION_SCRIPT = `
 
     var closeBtn = ev.target.closest('.detail-panel-close');
     if (closeBtn) { ev.preventDefault(); closeDetailPanel(closeBtn.closest('.store-section')); }
-  });
+  }
+
+  document.addEventListener('click', function (ev) { onClick(ev); syncUrl(false); });
 
   document.addEventListener('keydown', function (ev) {
     if (ev.key === 'Escape') {
       var openPanel = document.querySelector('.detail-panel.active');
-      if (openPanel) closeDetailPanel(openPanel.closest('.store-section'));
+      if (openPanel) { closeDetailPanel(openPanel.closest('.store-section')); syncUrl(false); }
     }
   });
 
-  window.addEventListener('hashchange', routeHash);
-  routeHash();
+  // A '#<key>' link keeps working: it routes, then the URL is rewritten to
+  // the same screen's query form so a refresh reopens it.
+  window.addEventListener('hashchange', function () { routeHash(); syncUrl(true); });
+  window.addEventListener('popstate', function () { if (!location.hash) routeParams(); });
+  paintToggle();
+  route();
+  syncUrl(true);
 })();
 `
 
@@ -1788,10 +1907,14 @@ const INTERACTION_SCRIPT = `
 // type="application/json">` is inert data (never a JavaScript MIME type), so
 // CSP's script-src does not gate it at all — same pattern as, e.g., a
 // Next.js `__NEXT_DATA__` block.
+// T-797 개정: runs in <head>, before the body paints, so a remembered dark
+// choice never flashes light first. Light unless the stored value is 'dark'.
+const THEME_HEAD_SCRIPT = `(function(){var t=null;try{t=localStorage.getItem(${JSON.stringify(THEME_STORAGE_PREFIX)}+location.pathname)}catch(e){}document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light')})();`
+const THEME_HEAD_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(THEME_HEAD_SCRIPT, 'utf8').digest('base64')
 const INTERACTION_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT, 'utf8').digest('base64')
 const CSP_CONTENT = [
   "default-src 'none'",
-  `script-src 'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}'`,
+  `script-src 'sha256-${THEME_HEAD_SCRIPT_SHA256_BASE64}' 'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}'`,
   "style-src 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src data:",
@@ -1855,6 +1978,7 @@ export function renderPage({
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${CSP_CONTENT}">
 <title>${PAGE.title}</title>
+<script>${THEME_HEAD_SCRIPT}</script>
 <style>
 ${fontFaceCss}
 ${TEMPLATE_CSS}

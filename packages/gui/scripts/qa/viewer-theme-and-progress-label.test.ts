@@ -29,22 +29,43 @@ const BASE_FIXTURE_DATA = {
   artifacts: { entries: [] },
 }
 
-describe('T-797: viewer follows the OS light/dark setting', () => {
+describe('T-797: light by default, dark on the remembered toggle (개정)', () => {
   const { dark, light } = realThemeMaps()
   const html = renderPage({ data: BASE_FIXTURE_DATA, dark, light, fontFaceCss: '', tokensSha256: '' })
 
-  it('carries the dark set on :root as the baseline (dark-first, same as tokens.css)', () => {
-    expect(html).toMatch(/:root\s*\{\s*--brand-accent: #A48AF8;/)
+  it('carries the LIGHT set on :root as the default, from the same parsed token maps as tokens.css', () => {
+    expect(html).toMatch(/:root\s*\{\s*--brand-accent: #7C3AED;/)
   })
 
-  it('carries the light set under @media (prefers-color-scheme: light), from the SAME parsed token maps as tokens.css — never a hand copy', () => {
-    expect(html).toMatch(/@media \(prefers-color-scheme: light\)\s*\{\s*:root\s*\{\s*--brand-accent: #7C3AED;/)
+  it('carries the dark set under :root[data-theme="dark"], never under an OS media query', () => {
+    expect(html).toMatch(/:root\[data-theme="dark"\]\s*\{\s*--brand-accent: #A48AF8;/)
+    expect(html).not.toContain('prefers-color-scheme')
   })
 
-  it('never scopes either set to a class the page has no script to apply — the T-797 defect (always dark regardless of OS)', () => {
-    expect(html).not.toContain('.v-dark {')
-    expect(html).not.toContain('.v-light {')
-    expect(html).not.toContain('class="v-dark"')
+  it('sets data-theme in <head> before the body paints, and wraps every localStorage access in try/catch', () => {
+    const head = html.slice(0, html.indexOf('<body>'))
+    expect(head).toMatch(/<script>\(function\(\)\{var t=null;try\{t=localStorage\.getItem/)
+    const accesses = html.match(/localStorage\.(getItem|setItem)/g) ?? []
+    const guarded = html.match(/try \{ ?localStorage\.|try\{t=localStorage\./g) ?? []
+    expect(accesses.length).toBeGreaterThan(0)
+    expect(guarded.length).toBe(accesses.length)
+  })
+
+  it('allows both inline scripts by hash only — never unsafe-inline', () => {
+    const csp = /script-src ([^;"]+)/.exec(html)![1]
+    expect(csp.match(/'sha256-[^']+'/g)).toHaveLength(2)
+    expect(csp).not.toContain('unsafe-inline')
+  })
+
+  it('the topstrip carries the theme toggle and no longer the T-746 "#<id>" key', () => {
+    expect(html).toContain('js-theme-toggle')
+    expect(html).not.toContain('js-hash-key')
+    expect(html).not.toContain('topstrip-key')
+  })
+
+  it('raises tinted pill text in the light scheme only — dark keeps the plain token', () => {
+    expect(TEMPLATE_CSS).toContain(':root:not([data-theme="dark"]) .pill-role-designer { color: color-mix(in srgb, var(--persona-designer) 80%, var(--text-primary)); }')
+    expect(TEMPLATE_CSS).toContain('.pill-role-designer { background: color-mix(in srgb, var(--persona-designer) 14%, transparent); color: var(--persona-designer); }')
   })
 })
 
