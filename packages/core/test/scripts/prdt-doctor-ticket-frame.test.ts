@@ -114,6 +114,14 @@ describe.skipIf(!CAN_RUN)('doctor: ticket frame (advisory)', () => {
     expect(w.some(l => /`Request`.*`problem`/.test(l))).toBe(true)
   })
 
+  test('T-825: a decision ticket with the rows=options table raises no options warning', () => {
+    ticket('v1.10', 'T-802', {
+      type: 'decision', assignee: 'user', created: '2026-09-24',
+      body: '## problem\nfork\n\n## options\n| 선택지 | pros | cons | trade-off | recommend |\n|---|---|---|---|---|\n| A | | | | |\n| B | | | | |\n\n## acceptance\nuser answers\n',
+    })
+    expect(frameWarnings().some(l => l.includes('T-802'))).toBe(false)
+  })
+
   test('a decision ticket missing the recommend cell is reported', () => {
     ticket('v1.10', 'T-801', {
       type: 'decision', assignee: 'user', created: '2026-09-24',

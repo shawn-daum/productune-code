@@ -56,21 +56,18 @@ TICKET_FRAME_ALIASES = {
     "문제": "problem", "대안": "options", "관련사항": "related",
     "합격 기준": "acceptance", "근거": "evidence", "진행 기록": "log",
 }
-# `tickets new`'s `type: decision` scaffold for the `options` key (contracts/
-# tickets.md annex: "one table — columns the options, rows `pros` · `cons` ·
-# `trade-off` · `recommend`") — the empty shape so the PO fills cells instead
-# of retyping the table (T-685 fix, PO-observed scratch-project run: a fresh
-# decision ticket's `options` landed empty). Column headers are placeholders
-# the PO renames to the real fork names; the row labels are the frame's own
-# vocabulary and stay as written — `fmt_ticket_body`'s decision gate looks for
-# a `recommend` row, which this scaffold already carries.
+# `tickets new`'s `type: decision` scaffold for the `options` key: one table,
+# rows the options, columns `pros` · `cons` · `trade-off` · `recommend` (T-825;
+# was columns = options). Two empty option rows the PO fills and renames to the
+# real fork names, so a longer fork grows downward, not sideways. The decision
+# gate in `fmt_ticket_body` and doctor only look for the word `recommend`
+# anywhere in `options`, so they accept this header AND an already-closed
+# ticket's old `| recommend |` row label — no reader depends on orientation.
 TICKET_OPTIONS_TABLE_SCAFFOLD = (
-    "| | Option A | Option B |\n"
-    "|---|---|---|\n"
-    "| pros | | |\n"
-    "| cons | | |\n"
-    "| trade-off | | |\n"
-    "| recommend | | |\n"
+    "| 선택지 | pros | cons | trade-off | recommend |\n"
+    "|---|---|---|---|---|\n"
+    "| | | | | |\n"
+    "| | | | | |\n"
 )
 
 
@@ -11143,9 +11140,14 @@ def cmd_track_land(args):
                 setup = _track_setup_cmd(root, wt)
                 if setup and _track_run(setup, wt, "setup (lockfile changed)") != 0:
                     _track_die(f"the setup step failed on the merged tree — {base} is unchanged")
-        if _track_run(test, wt, "tests on the merged tree") != 0:
+        rc = _track_run(test, wt, "tests on the merged tree")
+        if rc != 0:
+            # T-835 (decision T-822 「C」): 141 = SIGPIPE — a later pipeline stage closed the pipe early.
+            why = ("\nexit 141: a later pipeline stage (such as `| head`) closed the pipe, so the run was cut short "
+                   "and its result is unknown — remove the `| head` or write the output to a file"
+                   if rc == 141 else "")
             _track_die(f"tests failed on the merged tree — {base} is unchanged; {branch} keeps the merge, "
-                       f"fix it there and land again")
+                       f"fix it there and land again{why}")
         dirty = _tgit(["status", "--porcelain"], wt)
         if dirty.returncode != 0 or dirty.stdout.strip():
             left = [ln[3:] if len(ln) > 3 else ln for ln in dirty.stdout.splitlines() if ln]
