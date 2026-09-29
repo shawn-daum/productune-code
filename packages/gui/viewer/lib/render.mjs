@@ -28,7 +28,7 @@ import {
   COMMON,
   PAGE,
   HOME,
-  PROGRESS_ITEM_LABEL,
+  PROGRESS_OUT_OF_SCOPE_LABEL,
   DETAIL_FIELD_LABELS,
   TICKET,
   WIKI,
@@ -1162,29 +1162,20 @@ function artifactsSection(artifacts, currentVersion) {
 // designer developer qa 순으로 배치해줘 열 순서는").
 const PROGRESS_ASSIGNEE_ORDER = ['user', 'po', 'designer', 'developer', 'qa']
 
-// Row keys = the `## v1.10` PRD §What section's own H4 order (docs/prd/PRD.md
-// ~line 105-149, `#### <key> — <label>`), NOT parsed from that file at
-// generation time — this fixed list only changes when the version's own
-// §What items change, at which point this generator's next edit changes too
-// (T-675 round 2: a ticket's `prd_item:` string is never printed to the
-// screen verbatim; the label is this generator's own short Korean gloss,
-// trimmed from the PRD's own H4 label text — Designer sign-off on the exact
-// wording is still open, same as the wiki/feature UNCLASSIFIED-group and
-// no-body-link copy flagged in slice 1a/1b's own 미해결).
+// T-795: row keys + labels come from `data.prd.openItems` — the OPEN PRD
+// version section's own `#### <key> — <label>` headings, read at generation
+// time by collect.mjs's `collectPrdOpenItems` (never a fixed list hand-typed
+// here — that used to be productune's own v1.10 item keys, so a v1.11 item,
+// or another project's own items, had no row at all: this ticket's defect).
 //
 // T-666 slice 2b: a ticket with NO matching `prd_item` (today T-677/678/679
 // — measured 2026-09-26, `grep -L prd_item: docs/tickets/v1.10`) used to be
 // silently omitted from the matrix (slice 2a scope, "leave room for them,
-// build neither"). This slice appends `PROGRESS_OUT_OF_SCOPE_KEY` as one more
-// row — labelled from this SAME label layer (`PROGRESS_ITEM_LABEL`), never a
-// second vocabulary — so a ticket never disappears from the card for lacking
-// an item address (acceptance line 2).
-const PROGRESS_ITEM_ORDER = ['north-star', 'prd-form', 'linkage', 'gui-deferral-marker', 'inherited-defects', 'viewer', 'ticket-frame']
-const PROGRESS_OUT_OF_SCOPE_KEY = 'out-of-scope'
-// PROGRESS_ITEM_LABEL now imported from ./labels.mjs (T-706: one label
-// layer) — T-705 §B moved `linkage` from '연결' to '간선' there; every other
-// key here (including PROGRESS_OUT_OF_SCOPE_KEY's '항목 밖', this repo's own
-// existing PRD.md vocabulary reused verbatim) is §A keep.
+// build neither"). This slice appends one more trailing row for those —
+// `PROGRESS_OUT_OF_SCOPE_LABEL` (./labels.mjs), the one row label that is
+// NOT PRD-derived (no `prd_item` means no PRD heading to read at all) — so a
+// ticket never disappears from the card for lacking an item address
+// (acceptance line 2).
 
 // T-766: T-755 dropped statusline-prdt.sh's own per-type "which stage is
 // this ticket in" guess (the old `TYPE_TO_STAGE` dict) — a `design`-typed
@@ -1268,14 +1259,14 @@ function progressMatrixHeadRow() {
   return `<div class="stage-matrix-row stage-matrix-head"><span class="stage-matrix-label"></span>${cols}</div>`
 }
 
-/** `ticketsForItem` = every current-version ticket whose `prd_item:` resolves to this row's key. The `qa` column is always the dashed/derived one — contracts §Dispatch: QA never gets its own ticket, so an `assignee: qa` solid square is a possibility this code still handles correctly, but never observed in this repo (T-675 round 2). */
-function progressMatrixRow(key, ticketsForItem) {
+/** `ticketsForItem` = every current-version ticket whose `prd_item:` resolves to this row's key. `label` is already resolved (the PRD heading's own label text, or `PROGRESS_OUT_OF_SCOPE_LABEL` for the trailing row) — this function has no label lookup of its own. The `qa` column is always the dashed/derived one — contracts §Dispatch: QA never gets its own ticket, so an `assignee: qa` solid square is a possibility this code still handles correctly, but never observed in this repo (T-675 round 2). */
+function progressMatrixRow(label, ticketsForItem) {
   const cells = PROGRESS_ASSIGNEE_ORDER.map((role) => {
     const solid = ticketsForItem.filter((t) => t.frontmatter.assignee === role)
     const dashed = role === 'qa' ? ticketsForItem.filter((t) => t.frontmatter.assignee !== 'qa' && /^### QA/m.test(t.body || '')) : []
     return progressCell(solid, dashed)
   }).join('')
-  return `<div class="stage-matrix-row"><span class="stage-matrix-label">${escapeHtml(PROGRESS_ITEM_LABEL[key] || key)}</span>${cells}</div>`
+  return `<div class="stage-matrix-row"><span class="stage-matrix-label">${escapeHtml(label)}</span>${cells}</div>`
 }
 
 /** The straight overall line above the matrix — one square per current-version ticket, once each, regardless of assignee or prd_item (T-675 round 3: "전체는... 일직선으로 쭉... assignee상관없이"). */
@@ -1290,14 +1281,17 @@ const PROGRESS_LEGEND = `<div class="stage-matrix-legend"><span class="stage-mat
 /** The "진행 상황" pane: T-766's own version-wide stage line, above T-675's assignee x PRD-item matrix (a trailing "항목 밖" row included) — two different questions ("which lifecycle stage" vs "which PRD item"), not the same component, per this ticket's two separate acceptance lines. */
 function homeProgressBody(data) {
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
-  const byItem = new Map(PROGRESS_ITEM_ORDER.map((k) => [k, []]))
+  const openItems = data.prd.openItems || []
+  const byItem = new Map(openItems.map((i) => [i.key, []]))
   const outOfScope = []
   for (const t of currentTickets) {
     const key = prdItemKey(t.frontmatter.prd_item || '', data.currentVersion)
     if (key && byItem.has(key)) byItem.get(key).push(t)
     else outOfScope.push(t) // no prd_item, or one this version's §What items don't name — the trailing row
   }
-  const rows = PROGRESS_ITEM_ORDER.map((key) => progressMatrixRow(key, byItem.get(key))).join('') + progressMatrixRow(PROGRESS_OUT_OF_SCOPE_KEY, outOfScope)
+  const rows =
+    openItems.map((i) => progressMatrixRow(i.label, byItem.get(i.key))).join('') +
+    progressMatrixRow(PROGRESS_OUT_OF_SCOPE_LABEL, outOfScope)
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
 ${homeStageLine(currentTickets, data.poState?.stage || '?')}
