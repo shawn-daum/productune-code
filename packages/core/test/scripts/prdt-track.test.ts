@@ -519,6 +519,74 @@ describe('dispatch gate: one live developer/qa dispatch per checkout', () => {
   })
 })
 
+describe('T-814: a QA dispatch that writes only meta documents occupies no checkout', () => {
+  beforeEach(() => {
+    makeProject()
+    setConfig({ meta: { allowlist: ['.prdt', 'docs/tickets', 'docs/wiki'] } })
+  })
+
+  const files = (f: string[]) => ({ change_meta: { files: f, user_facing: false, risk_flags: [], stage: 'build' } })
+  /** A live QA marker whose worker's own first prompt carries `c`. */
+  function qaMarker(name: string, c: Record<string, unknown>, m: Record<string, unknown> = {}) {
+    marker(name, { checkout: 'code', persona: 'qa', ...m })
+    const t = path.join(home, 'transcripts', 'subagents', `agent-${name}.jsonl`)
+    fs.writeFileSync(t, JSON.stringify({ type: 'user', message: { role: 'user', content: `[ctx] ${JSON.stringify(c)}\n\nGo.` } }) + '\n' + REAL_LAST + '\n')
+  }
+
+  test('meta-only QA alongside a live developer dispatch: both allowed, in either order', () => {
+    const meta = ['docs/tickets/v1.11/T-775.md', path.join(proj, 'docs', 'wiki', 'inbox.md')]
+    // a developer is live in the shared code checkout; the meta-only QA is admitted
+    marker('dev1', { checkout: 'code' })
+    expect(denied(gate(ctx(files(meta)), 'prdt-qa'))).toBeNull()
+    // a meta-only QA is live; the developer is admitted (the v1.11 refusal)
+    fs.rmSync(path.join(home, 'run'), { recursive: true })
+    qaMarker('qa1', ctx({ dispatch_id: 'd-qa', ...files(meta) }))
+    expect(denied(gate(ctx()))).toBeNull()
+    // unconfirmed pairing: judged by the worker's own prompt all the same
+    fs.rmSync(path.join(home, 'run'), { recursive: true })
+    qaMarker('qa2', ctx({ dispatch_id: 'd-qa2', ...files(meta) }), { pairing: 'unconfirmed', dispatch_id: 'd-qa2' })
+    expect(denied(gate(ctx()))).toBeNull()
+    // a developer dispatch naming only meta paths is unaffected: still denied
+    fs.rmSync(path.join(home, 'run'), { recursive: true })
+    marker('dev1', { checkout: 'code' })
+    expect(denied(gate(ctx(files(meta))))).toContain('the shared code checkout already has a live developer dispatch (T-7)')
+  })
+
+  test('a QA with any code path is still counted and denied', () => {
+    const mixed = ['docs/tickets/v1.11/T-775.md', 'packages/core/scripts/hooks/prdt-dispatch-gate.sh']
+    marker('dev1', { checkout: 'code' })
+    expect(denied(gate(ctx(files(mixed)), 'prdt-qa'))).toContain('the shared code checkout already has a live developer dispatch')
+    // `code/…` from the project root, and an absolute path under the code checkout, are code too
+    expect(denied(gate(ctx(files(['code/docs/tickets/x.md'])), 'prdt-qa'))).not.toBeNull()
+    expect(denied(gate(ctx(files([path.join(proj, 'code', 'a.txt')])), 'prdt-qa'))).not.toBeNull()
+    // a path escaping the project, or outside it, is never meta
+    expect(denied(gate(ctx(files(['docs/tickets/../../../etc/x'])), 'prdt-qa'))).not.toBeNull()
+    expect(denied(gate(ctx(files(['/elsewhere/docs/tickets/x.md'])), 'prdt-qa'))).not.toBeNull()
+    // and a live QA marker naming a code path still occupies the checkout
+    fs.rmSync(path.join(home, 'run'), { recursive: true })
+    qaMarker('qa1', ctx({ dispatch_id: 'd-qa', ...files(mixed) }))
+    expect(denied(gate(ctx()))).toContain('already has a live qa dispatch')
+  })
+
+  test('a QA with empty files is still counted and denied', () => {
+    marker('dev1', { checkout: 'code' })
+    expect(denied(gate(ctx(files([])), 'prdt-qa'))).toContain('already has a live developer dispatch')
+    fs.rmSync(path.join(home, 'run'), { recursive: true })
+    qaMarker('qa1', ctx({ dispatch_id: 'd-qa', ...files([]) }))
+    expect(denied(gate(ctx()))).toContain('already has a live qa dispatch')
+    // no readable worker prompt yet: counted as before
+    fs.rmSync(path.join(home, 'run'), { recursive: true })
+    marker('qa2', { checkout: 'code', persona: 'qa' })
+    expect(denied(gate(ctx()))).toContain('already has a live qa dispatch')
+  })
+
+  test('a project that persists no meta allowlist exempts nothing', () => {
+    setConfig({ meta: {} })
+    marker('dev1', { checkout: 'code' })
+    expect(denied(gate(ctx(files(['docs/tickets/v1.11/T-775.md'])), 'prdt-qa'))).not.toBeNull()
+  })
+})
+
 describe('post-dispatch: the marker records its checkout', () => {
   beforeEach(() => makeProject())
 
