@@ -125,7 +125,7 @@ export const CASES: readonly Case[] = [
           SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh'), h('prdt-return-check.sh')] }],
           PostToolUse: [
             { matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] },
-            { matcher: 'Write', hooks: [h('prdt-auto-open.sh')] },
+            { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-auto-open.sh')] },
             // T-794: a second registration of the same script — main-session-only
             // relay for the CLI's own hand-offs, off the Bash tool's stdout.
             { matcher: 'Bash', hooks: [h('prdt-auto-open.sh')] },

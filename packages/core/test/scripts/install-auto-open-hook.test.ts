@@ -3,11 +3,13 @@
  *
  * Unlike prdt-audience-inject.sh/prdt-plan-tier-inject.sh/prdt-overrides-
  * inject.sh (which ride SessionStart/SubagentStart alongside prdt-session-
- * start.sh), prdt-auto-open.sh rides its OWN PostToolUse registration with
- * matcher "Write" — a distinct event/matcher pair from the existing
- * PostToolUse:Agent entry (prdt-post-dispatch.sh), so both must coexist as
- * separate {matcher, hooks[]} entries under the same "PostToolUse" key. It
- * must be mirrored executable. Re-running install.sh must stay idempotent.
+ * start.sh), prdt-auto-open.sh rides its OWN PostToolUse registrations —
+ * matcher "Write|Edit|MultiEdit" (T-802 widened this from plain "Write") and
+ * a second matcher "Bash" (T-794) — both distinct event/matcher pairs from
+ * the existing PostToolUse:Agent entry (prdt-post-dispatch.sh), so all three
+ * must coexist as separate {matcher, hooks[]} entries under the same
+ * "PostToolUse" key. It must be mirrored executable. Re-running install.sh
+ * must stay idempotent.
  *
  * Drives the REAL install.sh under a sandboxed HOME / PRDT_HOME / CLAUDE_DIR
  * via the shared fixture (T-536: installed-state assertions share ONE install
@@ -30,11 +32,11 @@ test.skipIf(!hasJq())('mirrors prdt-auto-open.sh executable', () => {
   expect(fs.statSync(script).mode & 0o111).not.toBe(0)
 })
 
-test.skipIf(!hasJq())('PostToolUse carries the pre-existing Agent entry and BOTH new auto-open entries (Write, Bash — T-794)', () => {
+test.skipIf(!hasJq())('PostToolUse carries the pre-existing Agent entry and BOTH auto-open entries (Write|Edit|MultiEdit — T-802, Bash — T-794)', () => {
   const { settings } = installedMachine()
   const entries = settings.hooks.PostToolUse as any[]
   const agentEntry = entries.find((e) => e.matcher === 'Agent')
-  const writeEntry = entries.find((e) => e.matcher === 'Write')
+  const writeEntry = entries.find((e) => e.matcher === 'Write|Edit|MultiEdit')
   const bashEntry = entries.find((e) => e.matcher === 'Bash')
   expect(agentEntry?.hooks?.[0]?.command).toContain('prdt-post-dispatch.sh')
   expect(writeEntry?.hooks?.[0]?.command).toContain('prdt-auto-open.sh')
@@ -45,7 +47,7 @@ test.skipIf(!hasJq())('PostToolUse carries the pre-existing Agent entry and BOTH
 test.skipIf(!hasJq())('re-running install.sh is idempotent (single auto-open entry per matcher, single command each)', () => {
   // its own installs ON PURPOSE: the subject is the second RUN, not the state
   const { settings } = freshInstall({ times: 2 })
-  for (const matcher of ['Write', 'Bash']) {
+  for (const matcher of ['Write|Edit|MultiEdit', 'Bash']) {
     const entries = (settings.hooks.PostToolUse as any[]).filter((e) => e.matcher === matcher)
     expect(entries.length, matcher).toBe(1)
     expect(entries[0].hooks.length, matcher).toBe(1)
