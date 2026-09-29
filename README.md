@@ -45,9 +45,14 @@ prdt doctor                 # non-blocking lint: state·ticket·wiki·discipline
 prdt wiki search "질의"     # 위키 검색 (FTS5 trigram, 한글)
 prdt wiki reindex|lint      # 파생 index.md 재생성 / 위키 lint
 prdt tickets [--ready|--backlog|--version v1|--feature auth]
+prdt tickets --link T-NNN   # 그 티켓이 선택된 뷰어를 여는 file:// 링크 (기본 자동 오픈, --no-open이면 링크만)
+prdt viewer [TARGET ...]    # 정적 뷰어 생성 — TARGET(티켓 id·문서 경로)이 선택된 채로 열림
+prdt schedule                # 열린 티켓을 critical path 순으로 잰 다음 발주 순서 — 읽기 전용, 아무것도 쓰지 않음
+prdt track open|review|land|drop T-NNN  # 트랙별 worktree(tracks/T-NNN, branch track/T-NNN) — land는 테스트 뒤 base로 fast-forward, drop은 폐기, 둘 다 push 안 함
 prdt history                # 버전별 티켓 집계 + retro 포인터
+prdt settings [set <키> <값>|unset <키>]  # register.*·viewer.auto-open·plan.tier 등 기기 설정 한 곳 (prdt register set도 그대로 동작)
 prdt meta log|remote|split  # 메타 git 조작 (v1.2 — 아래 참고)
-prdt update                 # repo pull --ff-only + 재설치
+prdt update                  # 설치판 → 새 버전 + 그 사이 릴리스 노트를 보여주고 1/2(update/skip)로 물은 뒤에만 pull+재설치
 ```
 
 프로젝트 측 구조(prdt가 관리하는 프로젝트에 생기는 것들):

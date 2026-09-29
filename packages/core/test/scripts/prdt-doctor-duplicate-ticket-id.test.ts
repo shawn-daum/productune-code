@@ -39,7 +39,9 @@ import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
-const CONTRACTS = path.join(CORE_ROOT, 'discipline', 'contracts.md')
+// T-770 hot→cold split: the ticket-frontmatter rules (this clause included)
+// moved off contracts.md into its own annex — contracts.md now only points at it.
+const TICKETS_ANNEX = path.join(CORE_ROOT, 'discipline', 'contracts', 'tickets.md')
 
 function has(bin: string, args: string[]): boolean {
   try { execFileSync(bin, args, { stdio: 'ignore' }); return true } catch { return false }
@@ -273,6 +275,6 @@ describe('the claim the check is derived from', () => {
   test('contracts still declares ids globally unique, in the words quoted above', () => {
     // if this wording ever goes, the check is orphaned and must be re-argued, not
     // silently kept
-    expect(fs.readFileSync(CONTRACTS, 'utf-8')).toContain('unique across ALL ticket dirs')
+    expect(fs.readFileSync(TICKETS_ANNEX, 'utf-8')).toContain('unique across ALL ticket dirs')
   })
 })

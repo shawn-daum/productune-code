@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { generate, missingMetaRootReason } from '../../viewer/generate.mjs'
 import { renderPage, resolveDocLink } from '../../viewer/lib/render.mjs'
+import { collectPrdOpenItems } from '../../viewer/lib/collect.mjs'
 
 // T-718: the real generated page, built HERE in-process rather than read
 // back off the gitignored `viewer/viewer.html` (a fresh checkout never has
@@ -22,10 +23,26 @@ beforeAll(async () => {
   ;({ html: realHtml } = await generate())
 }, 30000)
 
+// T-795: real `#### <key> — <label>` headings, matching a fixture ticket's
+// own `prd_item: v1.10#viewer` — proves row labels come from THIS prose,
+// never a hardcoded map. 'bare-key' (no ` — <label>`) proves the
+// no-heading-text fallback: the key itself as the label.
+const FIXTURE_PRD_BODY =
+  '## v1.10 — fixture round\n\n#### north-star — North star fixture label\n\nprose.\n\n#### viewer — Viewer row fixture label\n\nprose.\n\n#### bare-key\n\nprose, no " — label" part.\n'
+
 const fixtureData = {
   poState: { stage: 'build', version: 'v1.10', current_task: null },
   currentVersion: 'v1.10',
-  prd: { current: { body: '' }, closed: [] },
+  prd: {
+    current: { body: FIXTURE_PRD_BODY },
+    closed: [],
+    // `collectPrd` derives this from `current.body` via `collectPrdOpenItems`
+    // (collect.mjs) — this fixture bypasses collect.mjs entirely (it builds
+    // `data` by hand), so it computes the SAME derived value here, with the
+    // real function, rather than a hand-kept copy that could drift from the
+    // body above.
+    openItems: collectPrdOpenItems(FIXTURE_PRD_BODY, 'v1.10'),
+  },
   tickets: {
     included: [
       {
@@ -308,32 +325,33 @@ describe('viewer/lib/render.mjs — home is the shared-model, version-scoped wor
     expect(m![0]).toContain('인라인')
   })
 
-  // T-666 slice 2b acceptance line 1: the stage line, always all four stages.
-  it('the stage line always renders all four lifecycle stages, counted by TYPE_TO_STAGE', () => {
+  // T-766: the stage line shows the current po-state stage name plus ONE
+  // version-wide done/total, never a per-type stage guess (T-755's fix to
+  // statusline-prdt.sh, carried into the viewer by this ticket).
+  it('the stage line shows the po-state stage and a version-wide done/total, never a per-type count', () => {
     const html = render()
     const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
     const home = homeMatch![0]
     expect(home).toContain('class="stage-line')
-    // T-901 (impl→build, open) and T-903 (ops→ship, open) are this
-    // fixture's only current-version tickets whose type maps anywhere;
-    // T-902 is backlog (excluded from home) and has no type mapping to
-    // "define" here regardless.
-    expect(home).toMatch(/define 0\/0/)
-    expect(home).toMatch(/build 0\/1/)
-    expect(home).toMatch(/ship 0\/1/)
-    expect(home).toMatch(/retro 0\/0/)
+    // fixtureData's poState.stage is 'build'; T-901 and T-903 are this
+    // fixture's only current-version (v1.10) tickets, both `status: open` —
+    // T-902 is backlog (excluded from home) and never counts here.
+    expect(home).toMatch(/build \| 0\/2/)
+    // never the retired per-type cells (any of the four stage words followed
+    // by its own "n/m" the old TYPE_TO_STAGE line used to print)
+    expect(home).not.toMatch(/define \d+\/\d+/)
+    expect(home).not.toMatch(/ship \d+\/\d+/)
+    expect(home).not.toMatch(/retro \d+\/\d+/)
   })
 
-  // Non-vacuous control: a version with zero tickets must still show all
-  // four stages at 0/0, never omit one.
-  it('checker fixture: a version with zero tickets still shows all four stages, all at 0/0', () => {
+  // Non-vacuous control: a version with zero tickets must still show the
+  // stage name with an explicit 0/0, never omit the count.
+  it('checker fixture: a version with zero tickets still shows the stage line at 0/0', () => {
     const emptyData = { ...fixtureData, currentVersion: 'v1.11', tickets: { included: [], omitted: [] } }
     const html = renderPage({ data: emptyData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
     const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
     const home = homeMatch![0]
-    for (const stage of ['define', 'build', 'ship', 'retro']) {
-      expect(home).toMatch(new RegExp(`${stage} 0/0`))
-    }
+    expect(home).toMatch(/build \| 0\/0/)
   })
 
   // T-666 slice 2b acceptance line 2: the matrix's trailing row for a
@@ -342,11 +360,84 @@ describe('viewer/lib/render.mjs — home is the shared-model, version-scoped wor
     const html = render()
     const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
     const home = homeMatch![0]
-    const rowMatch = /<div class="stage-matrix-row"><span class="stage-matrix-label">항목 밖<\/span>([\s\S]*?)<\/div>/.exec(home)
+    const rowMatch = /<div class="stage-matrix-row"[^>]*><span class="stage-matrix-label">항목 밖<\/span>([\s\S]*?)<\/div>/.exec(home)
     expect(rowMatch, 'no trailing "항목 밖" row found in the matrix').not.toBeNull()
     // T-903 (assignee: user, status: open) draws a real square in this row
     // — never all "–", or the ticket would still be effectively invisible.
     expect(rowMatch![1]).toContain('stage-sq')
+  })
+
+  // T-795: the defect this ticket fixes — row labels used to come from a
+  // map hand-typed with productune's own v1.10 item keys, so any other
+  // project/version's items had no real label at all. Now every row's label
+  // is the open PRD section's own heading text (`fixtureData.prd.current`
+  // above), for any key.
+  it('a progress row label is the open PRD section\'s own heading text, not a hardcoded map', () => {
+    const html = render()
+    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    const home = homeMatch![0]
+    expect(home).toContain('Viewer row fixture label')
+    expect(home).toContain('North star fixture label')
+    // T-901 (prd_item v1.10#viewer) draws its square inside the "Viewer row
+    // fixture label" row specifically, not merely somewhere in the matrix.
+    const viewerRow = /<div class="stage-matrix-row"[^>]*><span class="stage-matrix-label">Viewer row fixture label<\/span>([\s\S]*?)<\/div>/.exec(home)
+    expect(viewerRow, 'no row for the "viewer" PRD item').not.toBeNull()
+    expect(viewerRow![1]).toContain('stage-sq')
+  })
+
+  // T-795 acceptance: "a key with no heading falls back to the key itself" —
+  // here, a heading present but missing its ` — <label>` part.
+  it('a PRD item heading with no " — label" part falls back to its own key as the row label', () => {
+    const html = render()
+    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    expect(homeMatch![0]).toContain('<span class="stage-matrix-label">bare-key</span>')
+  })
+})
+
+describe('viewer/lib/collect.mjs — collectPrdOpenItems reads the open PRD section\'s own item headings (T-795)', () => {
+  const body = [
+    '## Why — 비전',
+    '',
+    '#### not-a-real-item — outside the version section, never collected',
+    '',
+    '## v1.11 — fixture round',
+    '',
+    '#### alpha — Alpha label',
+    '',
+    'prose.',
+    '',
+    '#### beta',
+    '',
+    'prose, no label part.',
+    '',
+    '## v1.12 — next round, never collected either',
+    '',
+    '#### gamma — never collected (wrong section)',
+    '',
+  ].join('\n')
+
+  it('collects only the current version\'s own #### headings, in heading order', () => {
+    expect(collectPrdOpenItems(body, 'v1.11')).toEqual([
+      { key: 'alpha', label: 'Alpha label' },
+      { key: 'beta', label: 'beta' },
+    ])
+  })
+
+  // T-713-style numeric equality: 'v1.11.0' on disk vs 'v1.11' in po-state
+  // (or vice versa) is still the same version — never a literal string match.
+  it('matches the version heading by numeric equality, not literal string equality', () => {
+    expect(collectPrdOpenItems(body, 'v1.11.0')).toEqual([
+      { key: 'alpha', label: 'Alpha label' },
+      { key: 'beta', label: 'beta' },
+    ])
+  })
+
+  it('returns an empty list when no section matches the current version', () => {
+    expect(collectPrdOpenItems(body, 'v2.0')).toEqual([])
+  })
+
+  it('returns an empty list for an empty/absent PRD body (a project with no PRD written yet, T-746)', () => {
+    expect(collectPrdOpenItems('', 'v1.11')).toEqual([])
   })
 })
 

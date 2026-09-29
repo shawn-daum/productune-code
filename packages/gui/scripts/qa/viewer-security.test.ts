@@ -256,7 +256,7 @@ describe('detailDataScript — every "<" is escaped as \\u003c, not only "</scri
   it('a "<!--<script>" frontmatter value leaves the page interactive — the real INTERACTION_SCRIPT still follows as its own <script> tag', () => {
     const { html } = renderTicketBody('body text', { slug: '<!--<script>evil' })
     const scriptOpenTags = html.match(/<script\b[^>]*>/gi) ?? []
-    expect(scriptOpenTags.length).toBe(2) // #detail-data + the interaction script
+    expect(scriptOpenTags.length).toBe(3) // the head theme script + #detail-data + the interaction script (T-797)
     expect(html).toContain('document.addEventListener')
     // The hostile value itself is present, but only inside the escaped JSON
     // blob (no raw "<!--" anywhere in the document).

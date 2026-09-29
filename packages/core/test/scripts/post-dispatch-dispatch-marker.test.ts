@@ -70,7 +70,7 @@ function markerPath(home: string, agentId: string): string {
 
 type Marker = {
   agent_id: string; persona: string; dispatch_id: string | null; ticket_id: string | null
-  tool_use_id: string | null; project_root: string; since: string; stopped_at?: string; resumed_from?: string | null
+  tool_use_id: string | null; model?: string; project_root: string; since: string; stopped_at?: string; resumed_from?: string | null
   session_id?: string | null; transcript?: string | null
 }
 
@@ -128,11 +128,11 @@ function subagentStop(opts: { agentId: string; transcriptPath?: string; cwd?: st
  *  background launch) in tool_response, plus tool_use_id. */
 function postToolUseAgent(opts: {
   agentId: string; ctx: Record<string, unknown>; status?: 'completed' | 'async_launched'
-  toolUseId?: string; cwd?: string; home?: string
+  toolUseId?: string; cwd?: string; home?: string; model?: string
 }): HookRun {
   const ev = {
     session_id: 'sess-1', cwd: opts.cwd ?? root, hook_event_name: 'PostToolUse', tool_name: 'Agent',
-    tool_input: { subagent_type: PERSONA_TYPE, prompt: ctxPrompt(opts.ctx), description: 'x' },
+    tool_input: { subagent_type: PERSONA_TYPE, prompt: ctxPrompt(opts.ctx), description: 'x', ...(opts.model !== undefined ? { model: opts.model } : {}) },
     tool_response: { status: opts.status ?? 'completed', agentId: opts.agentId, agentType: PERSONA_TYPE, prompt: ctxPrompt(opts.ctx) },
     tool_use_id: opts.toolUseId ?? `toolu_${opts.agentId}`,
   }
@@ -142,13 +142,13 @@ function postToolUseAgent(opts: {
 /** A parent-transcript fixture in the shape the hook reads: one assistant record per
  *  Agent/SendMessage tool_use, one user record per tool_result. */
 type TranscriptItem =
-  | { toolUse: string; subagentType?: string; ctx: Record<string, unknown> }
+  | { toolUse: string; subagentType?: string; ctx: Record<string, unknown>; model?: string }
   | { sendMessage: string; to: string }
   | { toolResult: string }
 function writeTranscript(items: TranscriptItem[], name = 'parent.jsonl'): string {
   const lines = items.map((it) => {
     if ('toolUse' in it) {
-      return JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: it.toolUse, name: 'Agent', input: { subagent_type: it.subagentType ?? PERSONA_TYPE, description: 'd', prompt: ctxPrompt(it.ctx) } }] } })
+      return JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: it.toolUse, name: 'Agent', input: { subagent_type: it.subagentType ?? PERSONA_TYPE, description: 'd', prompt: ctxPrompt(it.ctx), ...(it.model !== undefined ? { model: it.model } : {}) } }] } })
     }
     if ('sendMessage' in it) {
       return JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: it.sendMessage, name: 'SendMessage', input: { to: it.to, message: 'more' } }] } })
@@ -271,6 +271,73 @@ describe('T-682 slice 3 — F2: a resumed worker (same agent_id) runs under its 
 
     expectSilent(subagentStop({ agentId }))
     expect(readMarker(prdtHome, agentId).stopped_at).toBeDefined()
+  })
+})
+
+describe('T-774 — each dispatch marker records its model', () => {
+  test('SubagentStart pairs with a pending Agent call carrying `model`: the marker records that tier', () => {
+    const transcript = writeTranscript([{ toolUse: 'toolu_m1', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m1' }, model: 'opus' }])
+    expectSilent(subagentStart({ agentId: 'agent-m1', transcriptPath: transcript }))
+    expect(readMarker(prdtHome, 'agent-m1').model).toBe('opus')
+  })
+
+  test('the paired Agent call carries no `model` (no override): the marker falls into the "default" bucket', () => {
+    const transcript = writeTranscript([{ toolUse: 'toolu_m2', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m2' } }])
+    expectSilent(subagentStart({ agentId: 'agent-m2', transcriptPath: transcript }))
+    expect(readMarker(prdtHome, 'agent-m2').model).toBe('default')
+  })
+
+  test('the paired Agent call carries a value outside the four-tier enum: falls into "default", never invented or dropped', () => {
+    const transcript = writeTranscript([{ toolUse: 'toolu_m3', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m3' }, model: 'claude-opus-5-not-a-tier' }])
+    expectSilent(subagentStart({ agentId: 'agent-m3', transcriptPath: transcript }))
+    expect(readMarker(prdtHome, 'agent-m3').model).toBe('default')
+  })
+
+  test('no pairable transcript at all (po-state fallback): the marker still records "default"', () => {
+    fs.rmSync(root, { recursive: true, force: true })
+    root = makeProject({ ticket_id: 'T-774', slug: 'cur', assignee: 'developer' })
+    expectSilent(subagentStart({ agentId: 'agent-m4' }))
+    expect(readMarker(prdtHome, 'agent-m4').model).toBe('default')
+  })
+
+  test('PostToolUse:Agent corrects the model from the authoritative tool_input (same site as ticket_id/dispatch_id)', () => {
+    const transcript = writeTranscript([{ toolUse: 'toolu_m5', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m5' } }])
+    expectSilent(subagentStart({ agentId: 'agent-m5', transcriptPath: transcript }))
+    expect(readMarker(prdtHome, 'agent-m5').model).toBe('default')
+
+    const r = postToolUseAgent({ agentId: 'agent-m5', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m5' }, status: 'async_launched', toolUseId: 'toolu_m5', model: 'sonnet' })
+    expect(r.status).toBe(0)
+    expect(readMarker(prdtHome, 'agent-m5').model).toBe('sonnet')
+  })
+
+  test('PostToolUse:Agent with no `model` in tool_input never overwrites an already-recorded tier', () => {
+    const transcript = writeTranscript([{ toolUse: 'toolu_m6', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m6' }, model: 'haiku' }])
+    expectSilent(subagentStart({ agentId: 'agent-m6', transcriptPath: transcript }))
+    expect(readMarker(prdtHome, 'agent-m6').model).toBe('haiku')
+
+    postToolUseAgent({ agentId: 'agent-m6', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m6' }, status: 'async_launched', toolUseId: 'toolu_m6' })
+    expect(readMarker(prdtHome, 'agent-m6').model).toBe('haiku')
+  })
+
+  test('RESUME (same agent_id): the revived marker carries the ORIGINAL dispatch\'s model forward, not a new pick', () => {
+    const agentId = 'agent-m7'
+    const t1 = writeTranscript([{ toolUse: 'toolu_m7', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m7' }, model: 'fable' }])
+    expectSilent(subagentStart({ agentId, transcriptPath: t1 }))
+    expect(readMarker(prdtHome, agentId).model).toBe('fable')
+    expectSilent(subagentStop({ agentId }))
+    postToolUseAgent({ agentId, ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m7' }, status: 'completed', toolUseId: 'toolu_m7', model: 'fable' })
+    expect(readMarker(prdtHome, agentId).stopped_at).toBeDefined()
+
+    // resumed via SendMessage: no new pending Agent call to pair with, so the prior
+    // marker's ticket_id (and model) are carried forward rather than re-derived.
+    const t2 = writeTranscript([
+      { toolUse: 'toolu_m7', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m7' } }, { toolResult: 'toolu_m7' },
+      { sendMessage: 'toolu_sm7', to: agentId },
+    ], 'parent-m7.jsonl')
+    expectSilent(subagentStart({ agentId, transcriptPath: t2 }))
+    const revived = readMarker(prdtHome, agentId)
+    expect(revived.stopped_at).toBeUndefined()
+    expect(revived.model).toBe('fable')
   })
 })
 
@@ -404,5 +471,173 @@ describe('T-682 — the marker is best-effort: a failing write/stamp never break
     expectSilent(subagentStop({ agentId, transcriptPath: transcript }))
     expect(lastTurn(root)).toMatchObject({ scope: 'subagent', persona: 'developer', session_id: agentId })
     expect(fs.statSync(mp).isDirectory()).toBe(true) // left as-is, never force-removed
+  })
+})
+
+describe('T-780 — each concurrent same-persona start ends up with the marker of its OWN dispatch', () => {
+  // Two same-persona Agent calls in one assistant message. The harness decides
+  // which agent_id runs which call; SubagentStart cannot see it and the worker
+  // transcript does not exist yet when it fires (file created ~2 s after, measured
+  // 2026-09-28). So the start pairing is provisional (`pairing: "unconfirmed"`)
+  // and the next event re-pairs from each worker's own first prompt.
+  const A = { slug: 'first', goal: 'g', dispatch_id: 'd-T701-a', worktree: '/p/tracks/T-701' }
+  const B = { slug: 'second', goal: 'g', dispatch_id: 'd-T702-b', worktree: '/p/tracks/T-702' }
+  function fanOut(): string {
+    return writeTranscript([
+      { toolUse: 'toolu_a', ctx: A, model: 'opus' },
+      { toolUse: 'toolu_b', ctx: B, model: 'sonnet' },
+    ])
+  }
+  /** The worker transcript the harness writes once the worker runs: first record = its prompt. */
+  function workerWrites(agentId: string, c: Record<string, unknown>): void {
+    const dir = path.join(root, 'sess-1', 'subagents')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, `agent-${agentId}.jsonl`),
+      JSON.stringify({ type: 'user', agentId, message: { role: 'user', content: ctxPrompt(c) } }) + '\n')
+  }
+  const own = (c: typeof A, tuid: string, model: string) =>
+    ({ dispatch_id: c.dispatch_id, ticket_id: c.dispatch_id === A.dispatch_id ? 'T-701' : 'T-702', checkout: c.worktree, tool_use_id: tuid, model, pairing: 'confirmed' })
+  const OWN_A = own(A, 'toolu_a', 'opus')
+  const OWN_B = own(B, 'toolu_b', 'sonnet')
+
+  // T-780 round 2 (QA grill): A/B above resolve tickets (T-701/T-702) via the
+  // dispatch_id heuristic, which hides the bug — the `elif dispatch_id and not
+  // data.get("dispatch_id")` branch in marker_refine only ever fires when the
+  // marker has NO dispatch_id yet, which is never true once SubagentStart has
+  // run; when ticket_id never resolves, a marker that got the WRONG FIFO guess
+  // kept it forever while still being stamped `pairing: "confirmed"`. C/D below
+  // are this project's own real dispatch_id/slug FORM (`d-v111-t780b-7407`,
+  // lowercase `t`) — TICKET_TOKEN_RE is case-sensitive, so neither resolves a
+  // ticket, exercising exactly the path A/B cannot.
+  const C = { slug: 'v111-t780b-first', goal: 'g', dispatch_id: 'd-v111-t780b-1111', worktree: '/p/tracks/T-780' }
+  const D = { slug: 'v111-t780b-second', goal: 'g', dispatch_id: 'd-v111-t780b-2222', worktree: '/p/tracks/T-780' }
+  function fanOutNoTicket(): string {
+    return writeTranscript([
+      { toolUse: 'toolu_c', ctx: C, model: 'opus' },
+      { toolUse: 'toolu_d', ctx: D, model: 'sonnet' },
+    ])
+  }
+
+  // agent-x runs call A, agent-y runs call B; `order` is the order their starts arrive.
+  for (const order of [['agent-x', 'agent-y'], ['agent-y', 'agent-x']]) {
+    test(`FOREGROUND, starts ${order.join(' then ')}: re-paired at the next event, before either dispatch ends`, () => {
+      const t = fanOut()
+      for (const aid of order) expectSilent(subagentStart({ agentId: aid, transcriptPath: t }))
+      // provisional: two candidates, so neither start is confirmed
+      expect(readMarker(prdtHome, 'agent-x')).toMatchObject({ pairing: 'unconfirmed' })
+      expect(readMarker(prdtHome, 'agent-y')).toMatchObject({ pairing: 'unconfirmed' })
+      workerWrites('agent-x', A); workerWrites('agent-y', B)
+      // the next dispatch event (here: a third, unrelated persona start) — no PostToolUse yet
+      runHook({ session_id: 'sess-1', cwd: root, agent_id: 'agent-z', agent_type: 'prdt-designer', hook_event_name: 'SubagentStart', transcript_path: t }, prdtHome)
+      expect(readMarker(prdtHome, 'agent-x')).toMatchObject(OWN_A)
+      expect(readMarker(prdtHome, 'agent-y')).toMatchObject(OWN_B)
+      expect(readMarker(prdtHome, 'agent-x').stopped_at).toBeUndefined()
+    })
+
+    test(`FOREGROUND, starts ${order.join(' then ')}: a SubagentStop re-pairs before it stamps, so its stop row joins its own dispatch row`, () => {
+      const t = fanOut()
+      fs.writeFileSync(path.join(root, '.prdt', 'schedule.jsonl'),
+        [JSON.stringify({ kind: 'dispatch', tool_use_id: 'toolu_a', dispatch_id: A.dispatch_id }),
+         JSON.stringify({ kind: 'dispatch', tool_use_id: 'toolu_b', dispatch_id: B.dispatch_id })].join('\n') + '\n')
+      for (const aid of order) expectSilent(subagentStart({ agentId: aid, transcriptPath: t }))
+      workerWrites('agent-x', A); workerWrites('agent-y', B)
+      subagentStop({ agentId: 'agent-y' })
+      expect(readMarker(prdtHome, 'agent-y')).toMatchObject({ ...OWN_B, stopped_at: expect.any(String) })
+      expect(readMarker(prdtHome, 'agent-x')).toMatchObject(OWN_A)
+      const stops = fs.readFileSync(path.join(root, '.prdt', 'schedule.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.kind === 'stop')
+      expect(stops).toMatchObject([{ agent_id: 'agent-y', tool_use_id: 'toolu_b', dispatch_id: B.dispatch_id }])
+    })
+
+    test(`BACKGROUND, starts ${order.join(' then ')}: PostToolUse:Agent confirms each from the authoritative pair`, () => {
+      const t = fanOut()
+      for (const aid of order) expectSilent(subagentStart({ agentId: aid, transcriptPath: t }))
+      postToolUseAgent({ agentId: 'agent-x', ctx: A, status: 'async_launched', toolUseId: 'toolu_a', model: 'opus' })
+      postToolUseAgent({ agentId: 'agent-y', ctx: B, status: 'async_launched', toolUseId: 'toolu_b', model: 'sonnet' })
+      expect(readMarker(prdtHome, 'agent-x')).toMatchObject(OWN_A)
+      expect(readMarker(prdtHome, 'agent-y')).toMatchObject(OWN_B)
+    })
+
+    test(`BACKGROUND, starts ${order.join(' then ')}, real no-ticket dispatch_ids (T-780 round 2 regression): PostToolUse always sets its OWN dispatch, never holds a stale FIFO guess`, () => {
+      const t = fanOutNoTicket()
+      for (const aid of order) expectSilent(subagentStart({ agentId: aid, transcriptPath: t }))
+      // neither dispatch_id/slug resolves a ticket — the exact condition that
+      // used to leave the `elif` branch a no-op
+      expect(readMarker(prdtHome, order[0]).ticket_id).toBeNull()
+      expect(readMarker(prdtHome, order[1]).ticket_id).toBeNull()
+      postToolUseAgent({ agentId: 'agent-x', ctx: C, status: 'async_launched', toolUseId: 'toolu_c', model: 'opus' })
+      postToolUseAgent({ agentId: 'agent-y', ctx: D, status: 'async_launched', toolUseId: 'toolu_d', model: 'sonnet' })
+      expect(readMarker(prdtHome, 'agent-x')).toMatchObject({ dispatch_id: C.dispatch_id, ticket_id: null, tool_use_id: 'toolu_c', model: 'opus', pairing: 'confirmed' })
+      expect(readMarker(prdtHome, 'agent-y')).toMatchObject({ dispatch_id: D.dispatch_id, ticket_id: null, tool_use_id: 'toolu_d', model: 'sonnet', pairing: 'confirmed' })
+    })
+  }
+
+  test('truly concurrent starts (two hook processes at once, 5 rounds): after the workers write, both markers are their own', async () => {
+    const { spawn } = await import('child_process')
+    const start = (aid: string, t: string) => new Promise<void>((resolve) => {
+      const c = spawn('bash', [HOOK], { env: { ...process.env, PRDT_HOME: prdtHome } })
+      c.on('close', () => resolve())
+      c.stdin.end(JSON.stringify({ session_id: 'sess-1', cwd: root, agent_id: aid, agent_type: PERSONA_TYPE, hook_event_name: 'SubagentStart', transcript_path: t }))
+    })
+    for (let i = 0; i < 5; i++) {
+      fs.rmSync(path.join(prdtHome, 'run'), { recursive: true, force: true })
+      fs.rmSync(path.join(root, 'sess-1'), { recursive: true, force: true })
+      const t = fanOut()
+      await Promise.all([start('agent-y', t), start('agent-x', t)])
+      for (const aid of ['agent-x', 'agent-y']) expect(readMarker(prdtHome, aid).pairing).toBe('unconfirmed')
+      workerWrites('agent-x', A); workerWrites('agent-y', B)
+      subagentStop({ agentId: 'agent-x' })
+      expect(readMarker(prdtHome, 'agent-x')).toMatchObject({ ...OWN_A, stopped_at: expect.any(String) })
+      expect(readMarker(prdtHome, 'agent-y')).toMatchObject(OWN_B)
+    }
+  }, 120_000)
+
+  test('one pending call of the persona is provably this worker\'s: confirmed at SubagentStart; a worker prompt matching no call stays unconfirmed', () => {
+    const t = writeTranscript([{ toolUse: 'toolu_a', ctx: A, model: 'opus' }])
+    expectSilent(subagentStart({ agentId: 'agent-x', transcriptPath: t }))
+    expect(readMarker(prdtHome, 'agent-x')).toMatchObject(OWN_A)
+
+    const t2 = fanOut()
+    expectSilent(subagentStart({ agentId: 'agent-q', transcriptPath: t2 }))  // toolu_a is held by a CONFIRMED marker, so toolu_b is the one call left: confirmed
+    expect(readMarker(prdtHome, 'agent-q')).toMatchObject({ tool_use_id: 'toolu_b', pairing: 'confirmed' })
+    // a start whose worker prompt is in no parent call is never guessed into "confirmed"
+    expectSilent(subagentStart({ agentId: 'agent-r', transcriptPath: writeTranscript([], 'empty.jsonl') }))
+    workerWrites('agent-r', { slug: 'nowhere', goal: 'g', dispatch_id: 'd-T999-n' })
+    subagentStop({ agentId: 'agent-q' })
+    expect(readMarker(prdtHome, 'agent-r')).toMatchObject({ pairing: 'unconfirmed', checkout: null })
+  })
+})
+
+describe('T-788 — _reconcile never keeps a guessed ticket', () => {
+  // SubagentStart's FIFO guess can land on a pending call that DOES resolve a
+  // real ticket, while the worker's own transcript later proves it is really
+  // running a DIFFERENT dispatch whose id/slug resolve none. QA: a fixture
+  // whose dispatch_id/slug resolve SOME ticket hides this bug outright — WRONG
+  // uses this project's real ticket form (uppercase `T`, `d-T701-wrong`); OWN
+  // uses the real no-ticket form (lowercase `t`, `d-v111-t701-a`), the same
+  // shape T-780's marker_refine regression test already exercises.
+  const WRONG_GUESS = { slug: 'wrong-first', goal: 'g', dispatch_id: 'd-T701-wrong', worktree: '/p/tracks/T-788' }
+  const OWN = { slug: 'v111-t701-first', goal: 'g', dispatch_id: 'd-v111-t701-a', worktree: '/p/tracks/T-788' }
+
+  test('a marker holding a resolved-but-wrong ticket_id is corrected to null once its OWN (no-ticket) call is confirmed', () => {
+    const t = writeTranscript([
+      { toolUse: 'toolu_wrong', ctx: WRONG_GUESS },
+      { toolUse: 'toolu_own', ctx: OWN },
+    ])
+    expectSilent(subagentStart({ agentId: 'agent-x', transcriptPath: t }))
+    // the FIFO guess at start: first unclaimed call, which happens to resolve a ticket
+    expect(readMarker(prdtHome, 'agent-x')).toMatchObject({ ticket_id: 'T-701', tool_use_id: 'toolu_wrong', pairing: 'unconfirmed' })
+
+    // the worker's own transcript proves it is really running the no-ticket call
+    const dir = path.join(root, 'sess-1', 'subagents')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'agent-agent-x.jsonl'),
+      JSON.stringify({ type: 'user', agentId: 'agent-x', message: { role: 'user', content: ctxPrompt(OWN) } }) + '\n')
+
+    // any subsequent dispatch event runs marker_reconcile() over every open marker
+    runHook({ session_id: 'sess-1', cwd: root, agent_id: 'agent-z', agent_type: 'prdt-designer', hook_event_name: 'SubagentStart', transcript_path: t }, prdtHome)
+
+    expect(readMarker(prdtHome, 'agent-x')).toMatchObject({
+      dispatch_id: OWN.dispatch_id, ticket_id: null, tool_use_id: 'toolu_own', pairing: 'confirmed',
+    })
   })
 })

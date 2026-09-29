@@ -79,6 +79,7 @@ extraResources:
       - "discipline/**"
       - "agents/prdt-*.md"
       - "scripts/prdt"
+      - "scripts/prdt-messages.json"
       - "scripts/statusline-prdt.sh"
       - "scripts/hook-manifest.json"
       - "scripts/install.sh"

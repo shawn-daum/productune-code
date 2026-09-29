@@ -26,6 +26,33 @@
 #         own deny; a non-prdt dispatch and a cwd outside a prdt project stay
 #         fork-free and silent). See "T-695: machine resource cap" below for
 #         the five axes, their measurement, the defaults and the override file.
+#   RECORD + WARN  ⑤ (T-773) every dispatch that passed ①–④ appends one row to
+#         `<project>/.prdt/schedule.jsonl` against the critical path of that
+#         moment; one off `prdt schedule`'s top row with no
+#         `[ctx].schedule_reason` also WARNS. Never a deny (T-765, user
+#         decision) — see "T-773: the schedule record" below.
+#   DENY  ⑥ (T-775) a `prdt-developer` / `prdt-qa` dispatch into a checkout
+#         (`[ctx].worktree`, else the shared code checkout) that already has a
+#         LIVE developer/qa dispatch of the same project — contracts/git.md
+#         isolation trigger ① (one checkout, two impl tracks running suites)
+#         enforced by machine, whether or not the files overlap. Live = the
+#         same marker liveness the dispatches axis uses; each marker's
+#         `checkout` is written by prdt-post-dispatch.sh from its `[ctx]`. A
+#         marker with no `checkout` (older than T-775, or no `[ctx]` paired)
+#         never matches, and an unmeasured liveness never denies — fail open.
+#         Checked with ④ and outranks it: the fix differs (`prdt track open`).
+#   T-780 — a marker whose pairing is unconfirmed (see "T-780: pairing" below)
+#         still counts toward the machine-wide `dispatches` axis (its persona
+#         and liveness come from its own agent_id, not the pairing). ⑥'s
+#         checkout and ④'s model_tier axis never trust such a marker's OWN
+#         (possibly FIFO-swapped) `checkout`/`model` field — both are read off
+#         the worker's own first-prompt `[ctx]` instead (round 2, T-780: a
+#         swap moves the `did`/`model` PAIR together, never mixes across
+#         candidates, so the model_tier axis re-keys onto the dispatch the
+#         worker itself names, from a did→model map built across every live
+#         candidate). Neither axis EVER guesses: no worker evidence yet, or a
+#         worktree/model this machine's other candidates cannot resolve, and
+#         that marker counts toward neither.
 #   NOT HERE — the return/envelope side (slice 3), and the three binary
 #         candidates held under doctrine #5 for zero observed violations
 #         (AskUserQuestion in a worker · worker↔worker calls · discipline-path
@@ -382,15 +409,46 @@ else (.tool_input // {}) as $ti
       end
   end
 end;
+# T-774: this dispatch's requested MODEL TIER, read the same structural way —
+# `.tool_input.model` when the PO set one, else the literal "default" bucket
+# (this hook cannot see what the harness/agent-definition would resolve an
+# unset override to — see prdt-post-dispatch.sh's norm_model()). Restricted to
+# the Agent tool's own `model` enum {sonnet,opus,haiku,fable}; anything else
+# (a malformed payload, a future enum member this copy predates) also falls
+# into "default" rather than being trusted as a cap-lookup key.
+# T-775: the persona the checkout rule binds ("" for every other one) and this
+# dispatch's raw `[ctx].worktree` ("" when absent = the shared code checkout);
+# control characters dropped so the value can ride a TAB-separated line. It is
+# compared, never echoed.
+def want_persona:
+  ((.tool_input.subagent_type // "")) as $s
+  | if ($s | type) == "string" and ($s | test("^prdt-(developer|qa)$")) then ($s | sub("^prdt-"; "")) else "" end;
+def want_checkout:
+  ((.tool_input.prompt // "")) as $p
+  | if ($p | type) != "string" then "" else
+      ([$p | split("\n")[] | select(test("^\\[ctx\\] \\{"))] | first) as $l
+      | if $l == null then "" else
+          (try ($l | sub("^\\[ctx\\] "; "") | fromjson) catch null) as $c
+          | if ($c | type) == "object" and (($c.worktree // null) | type) == "string"
+            then ($c.worktree | gsub("[\u0000-\u001f\u007f]"; "") | sub("^\\s+"; "") | sub("\\s+$"; ""))
+            else "" end
+        end
+    end;
+def want_model:
+  ((.tool_input.model // "") ) as $m
+  | if ($m | type) == "string" and ($m | test("^(sonnet|opus|haiku|fable)$")) then $m else "default" end;
+
 # T-695: two lines — does the resource cap apply to this call (a `prdt-*`
 # dispatch on PreToolUse/Agent), and the `[ctx]` verdict above (deny · warn ·
 # nothing) as one compact JSON line or an empty line. Structural, never a
-# substring test on the raw payload.
+# substring test on the raw payload. T-774 adds a third value (this dispatch's
+# model tier) on the FIRST line, tab-separated after `applies` — never a third
+# line, so the existing two-line split below only needs one more cut.
 {applies: (if (.hook_event_name == "PreToolUse") and (.tool_name == "Agent") and ((.tool_input // {}) | type) == "object"
               and (((.tool_input // {}).subagent_type // "") | type) == "string"
            then ((.tool_input // {}).subagent_type // "") | test("^prdt-") else false end),
- out: ([gate] | first)}
-| "\(.applies)\n\(if .out == null then "" else (.out | tojson) end)"
+ out: ([gate] | first), model: want_model, persona: want_persona, checkout: want_checkout}
+| "\(.applies)\t\(.model)\t\(.persona)\t\(.checkout)\n\(if .out == null then "" else (.out | tojson) end)"
 JQ
 
 RAW="$(printf '%s' "$EV" | jq -r \
@@ -405,9 +463,16 @@ RAW="$(printf '%s' "$EV" | jq -r \
 # ever fail OPEN. A gate that breaks a dispatch because its own parser tripped
 # would be worse than the drift it exists to catch.
 [ -n "$RAW" ] || exit 0
-APPLIES="${RAW%%$'\n'*}"
+LINE1="${RAW%%$'\n'*}"
 GATE="${RAW#*$'\n'}"
 [ "$GATE" = "$RAW" ] && GATE=""          # no second line: the `[ctx]` verdict was silence
+APPLIES="${LINE1%%$'\t'*}"
+WANT_MODEL="${LINE1#*$'\t'}"
+[ "$WANT_MODEL" = "$LINE1" ] && WANT_MODEL="default"   # no tab: fail-safe, never reached in practice
+L1REST="${WANT_MODEL#*$'\t'}"; [ "$L1REST" = "$WANT_MODEL" ] && L1REST=""
+WANT_MODEL="${WANT_MODEL%%$'\t'*}"
+WANT_PERSONA="${L1REST%%$'\t'*}"
+WANT_CO="${L1REST#*$'\t'}"; [ "$WANT_CO" = "$L1REST" ] && WANT_CO=""
 if [ "$APPLIES" != "true" ]; then
   [ -n "$GATE" ] && printf '%s\n' "$GATE"
   exit 0
@@ -425,7 +490,7 @@ esac
 # it spawns. Reached only after the `[ctx]` verdict above passed, so a cwd
 # outside a prdt project and a non-prdt dispatch still cost zero forks.
 #
-# FIVE AXES — each with its measurement, each failing OPEN on its own:
+# SIX AXES — each with its measurement, each failing OPEN on its own:
 #   load       1-minute load average ÷ cores. `sysctl -n vm.loadavg` ("{ a b c }")
 #              and `hw.ncpu`; Linux fallback /proc/loadavg + getconf. The vitest
 #              timeout scaler's history on this machine: passes at load 4, times
@@ -457,6 +522,27 @@ esac
 #   vms        `com.apple.Virtualization.VirtualMachine` processes in the same
 #              ps output. Not `lume ls`: its status stays `running` after a stop
 #              (machine wiki fact--qa-cua-vm), while the process IS the memory.
+#   model_tier (T-774) the SAME dispatches-axis liveness computation, grouped
+#              by each open marker's `model` field (prdt-post-dispatch.sh
+#              writes it at SubagentStart — sonnet/opus/haiku/fable, or the
+#              literal "default" bucket for a call with no override) and
+#              compared only against the count in THIS dispatch's OWN
+#              requested tier (`tool_input.model`, same normalization, same
+#              "default" fallback — see `want_model` above). WHY per-tier
+#              rather than folding into the existing machine-wide `dispatches`
+#              cap: T-681's user request asked for device-level resource
+#              limits that do not collapse to a worker-count knob, and the
+#              designer's own note on this axis (critical-path.html §2) flags
+#              that whether a model's rate/quota limit is per-model or
+#              account-wide was never observed — scoping the cap to "same
+#              tier only" means a wrong guess there cannot spill a denial onto
+#              an unrelated tier. This axis is therefore a COUNT-based proxy
+#              (in-flight dispatches on the tier), not the quota-probe shape
+#              the designer's own draft table sketches (`run/preflight/*.json`
+#              unavailable latches, a `<synthetic>` tail on same-model
+#              markers) — that measurement needs `prdt preflight` machinery
+#              this ticket's acceptance does not ask for; T-774's WHY note
+#              scopes this slice to the in-flight count alone.
 #
 # CAPS — the measured value OVER the cap denies (memory: UNDER the minimum).
 # Defaults sized on this machine (14 CPU / 36 GB) from the incidents above; any
@@ -475,6 +561,13 @@ esac
 #                         that broke both 09-23 and 09-26.
 #   vms_max          2    — two VM processes (16 GiB, 44% of RAM) still admit;
 #                         one leftover process must not stall every dispatch.
+#   inflight_sonnet_max   } = the EFFECTIVE `inflight_max` each (its default 5,
+#   inflight_opus_max     } or the user's raised value) — T-774 has no incident
+#   inflight_haiku_max    } of its own to size these from (the designer's own
+#   inflight_fable_max    } note: unobserved whether a quota limit is even
+#   inflight_default_max  } per-model), so a per-tier cap never binds tighter
+#                           than the machine-wide one until the user sets that
+#                           tier's own key here.
 #
 # A measurement that fails (tool missing, output unparsed) makes that axis
 # `unmeasured`: it never denies, and the failure is said ONCE per session — the
@@ -545,6 +638,7 @@ CLAUDE_CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 MARK_BAD=""          # non-empty = the dispatches axis is unmeasured
 MARK_CANDS=""        # `<agent_id>US<transcript>US<age-seconds>` per open, fresh marker
 MTIMES=""; TAILS=""  # liveness evidence for the transcripts that exist
+HEADS=""             # T-780: first line of each unconfirmed marker's worker transcript
 MARK_FILES=()
 for f in "$PRDT_ROOT"/run/dispatches/*.json; do
   [ -e "$f" ] || continue
@@ -562,7 +656,10 @@ if [ -z "$MARK_BAD" ] && [ ${#MARK_FILES[@]} -gt 0 ]; then
   # Line 1: `<bad-count>`; then one candidate line per open marker whose
   # `since` is within STALE_H. Values are our own hook's writes, never payload
   # — still, an id is used below only as a file-name token and a path only
-  # when absolute.
+  # when absolute. T-774: a fourth field, `model` — normalized the same way as
+  # `want_model` above (a legacy marker predating T-774 has no `.model` at all,
+  # which `// "default"` folds into the same bucket a fresh tier-less marker
+  # gets, never a parse failure).
   IFS= read -r -d '' MPROG <<'JQ'
 (reduce (split("\n"))[] as $l ({cur: null, files: {}};
    if ($l | test("^==> .* <==$")) then (($l | capture("^==> (?<p>.*) <==$").p) as $p | .cur = $p | .files[$p] = "")
@@ -573,8 +670,16 @@ if [ -z "$MARK_BAD" ] && [ ${#MARK_FILES[@]} -gt 0 ]; then
 | ($m | map(select(type == "object" and ((.stopped_at // null) == null))
         | ((.since // "") | try fromdate catch null) as $s
         | select($s != null and ($now - $s) < ($stale_h * 3600))
-        | {id: ((.agent_id // "") | tostring), t: ((.transcript // "") | tostring), age: ($now - $s)})) as $c
-| "\($bad)", ($c[] | "\(.id | gsub("[\u001f\n]"; ""))\u001f\(.t | gsub("[\u001f\n]"; ""))\u001f\(.age)")
+        | {id: ((.agent_id // "") | tostring), t: ((.transcript // "") | tostring), age: ($now - $s),
+           persona: ((.persona // "") | tostring), root: ((.project_root // "") | tostring),
+           co: (if (.checkout | type) == "string" then .checkout else "" end),
+           ticket: ((.ticket_id // "") | tostring | if test("^T-[0-9]{1,5}$") then . else "" end),
+           model: (((.model // "default") | tostring) as $mm
+                   | if ($mm | test("^(sonnet|opus|haiku|fable)$")) then $mm else "default" end),
+           did: (if (.dispatch_id | type) == "string" then .dispatch_id else "" end),
+           pc: (if .pairing == "confirmed" then "1" else "" end)})) as $c
+| "\($bad)", ($c[] | [.id, .t, (.age | tostring), .model, .persona, .root, .co, .ticket, .did, .pc]
+    | map(gsub("[\u0000-\u001f]"; "")) | join("\u001f"))
 JQ
   MOUT="$(printf '%s' "$MARK_RAW" | jq -r -R -s --argjson stale_h "$STALE_H" "$MPROG" 2>/dev/null)"
   if [ -z "$MOUT" ]; then
@@ -588,7 +693,7 @@ JQ
       # Legacy markers (no `transcript`): one `find` for all of them. Zero forks
       # once every open marker carries its path.
       FIND_ARGS=(); FOUND=""
-      while IFS=$US read -r id t age; do
+      while IFS=$US read -r id t age model rest; do
         [ -n "$id" ] || continue
         case "$t" in /*) continue ;; esac
         case "$id" in *[!A-Za-z0-9_-]*) continue ;; esac
@@ -599,8 +704,8 @@ JQ
         FOUND="$(find "$CLAUDE_CFG/projects" -maxdepth 4 -name 'agent-*.jsonl' -path '*/subagents/*' \( "${FIND_ARGS[@]}" \) 2>/dev/null)"
       fi
       # Resolve every candidate to a path (or none); collect the paths that exist.
-      EXIST=()
-      while IFS=$US read -r id t age; do
+      EXIST=(); UNCONF=()
+      while IFS=$US read -r id t age model rest; do
         [ -n "$id" ] || continue
         case "$t" in /*) ;; *) t="" ;; esac
         if [ -z "$t" ] && [ -n "$FOUND" ]; then
@@ -611,7 +716,8 @@ JQ
           esac
         fi
         [ -n "$t" ] && [ -f "$t" ] && EXIST+=("$t")
-        MARK_CANDS="$MARK_CANDS$id$US$t$US$age"$'\n'
+        case "$rest" in *"${US}1") ;; *) [ -n "$t" ] && [ -f "$t" ] && UNCONF+=("$t") ;; esac
+        MARK_CANDS="$MARK_CANDS$id$US$t$US$age$US$model$US$rest"$'\n'
       done <<< "$CANDS"
       if [ ${#EXIST[@]} -gt 0 ]; then
         # macOS stat first, GNU second; `/dev/null` forces tail's per-file
@@ -622,8 +728,31 @@ JQ
         TAILS="$(tail -c 4000 -- "${EXIST[@]}" /dev/null 2>/dev/null)"
         [ -n "$MTIMES" ] && [ -n "$TAILS" ] || MARK_BAD=1
       fi
+      # T-780: pairing. SubagentStart pairs a marker with its Agent call before
+      # the worker's transcript exists, so a same-persona fan-out can pair a
+      # marker with a SIBLING's call (QA: 6 of 20 runs; every run in reverse
+      # start order) — `pairing` stays "unconfirmed" until prdt-post-dispatch.sh
+      # proves it. For each such marker whose worker transcript exists, its
+      # FIRST line (the worker's own prompt) is read here: its `[ctx]`
+      # dispatch_id equal to the marker's confirms the pairing (dispatch_id is
+      # one per dispatch, contracts §Dispatch); its `[ctx].worktree` (else
+      # "code") is the checkout rule's input either way — the worker's own
+      # prompt, never the pairing. Unreadable heads = unconfirmed, never a deny.
+      if [ ${#UNCONF[@]} -gt 0 ]; then
+        HEADS="$(head -n 1 -- "${UNCONF[@]}" /dev/null 2>/dev/null)"
+      fi
     fi
   fi
+fi
+
+# T-775: the project (physical path — the post-dispatch hook stores markers'
+# `project_root` realpath'd) and its code checkout, for the checkout rule.
+PROJ_ROOT="$(cd -P -- "$DIR" 2>/dev/null && pwd)"
+[ -n "$PROJ_ROOT" ] || PROJ_ROOT="$DIR"
+CODE_ABS="$PROJ_ROOT"
+if [ -n "$WANT_PERSONA" ]; then
+  CODE_DIR="$(jq -r '(.code.dir // "") | strings' "$DIR/.prdt/config.json" 2>/dev/null)"
+  case "$CODE_DIR" in ""|/*|*..*) ;; *) CODE_ABS="$PROJ_ROOT/${CODE_DIR%/}" ;; esac
 fi
 
 CAPSF="$PRDT_ROOT/dispatch-caps.json"
@@ -636,11 +765,25 @@ fi
 
 IFS= read -r -d '' RPROG <<'JQ'
 def r2: (. * 100 | round) / 100;
+# T-775: a checkout's identity — "code" for the shared code checkout (spelled
+# `code`, or its absolute path), else the absolute worktree path, trailing
+# slashes dropped; a relative path is taken from the project root.
+def norm_co($root; $code_abs):
+  if . == "" then "" elif . == "code" then "code"
+  else ((if startswith("/") then . else $root + "/" + . end) | sub("/+$"; "")) as $a
+    | if $a == $code_abs then "code" else $a end end;
 def num: try (tonumber | select(. >= 0)) catch null;
 def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
   permissionDecision: "deny", permissionDecisionReason: $why}};
 
-({load_ratio: 1.5, mem_free_pct_min: 15, inflight_max: 5, suites_max: 1, vms_max: 2} + $caps) as $cap
+({load_ratio: 1.5, mem_free_pct_min: 15, inflight_max: 5, suites_max: 1, vms_max: 2} + $caps) as $cap0
+# A tier key absent from dispatch-caps.json defaults to the EFFECTIVE
+# inflight_max (QA grill of T-774): a literal 5 re-capped a machine that had
+# raised inflight_max, denying a dispatch the pre-T-774 hook admitted.
+| ({inflight_sonnet_max: $cap0.inflight_max, inflight_opus_max: $cap0.inflight_max,
+    inflight_haiku_max: $cap0.inflight_max, inflight_fable_max: $cap0.inflight_max,
+    inflight_default_max: $cap0.inflight_max} + $cap0) as $cap
+| $cap["inflight_\($want_model)_max"] as $tier_cap
 | ([$loadavg | scan("[0-9]+\\.[0-9]+")] | first | if . == null then null else num end) as $load1
 | ($ncpu | num | if . == 0 then null else . end) as $ncpu
 | ($memsize | num | if . == 0 then null else . end) as $memsize
@@ -657,13 +800,45 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
        | (reduce ($tails | split("\n"))[] as $l ({cur: "", last: {}};
             if ($l | test("^==> .* <==$")) then .cur = ($l | capture("^==> (?<p>.*) <==$").p)
             elif $l == "" or .cur == "" then . else .last[.cur] = $l end)).last as $last
-       | [$cands | split("\n")[] | select(length > 0) | split("\u001f") | {id: .[0], t: .[1], age: (.[2] | tonumber)}]
-       | map(if .t == "" or ($mt[.t] // null) == null then (.age < $grace)
+       | (reduce ($heads | split("\n"))[] as $l ({cur: "", first: {}};
+            if ($l | test("^==> .* <==$")) then .cur = ($l | capture("^==> (?<p>.*) <==$").p)
+            elif $l == "" or .cur == "" then . else .first[.cur] = $l end)).first as $first
+       | ([$cands | split("\n")[] | select(length > 0) | split("\u001f") | {id: .[0], t: .[1], age: (.[2] | tonumber), model: (.[3] // "default"),
+           persona: (.[4] // ""), root: (.[5] // ""), co: (.[6] // ""), ticket: (.[7] // ""), did: (.[8] // ""), pc: ((.[9] // "") == "1")}]) as $base
+       # T-780 round 2 (QA grill): an unconfirmed marker's own `.did`/`.model`
+       # were written TOGETHER at SubagentStart from the same FIFO-guessed
+       # pending call — a swap moves the whole pair to the wrong agent_id, it
+       # never mixes did from one candidate with model from another. So every
+       # live candidate's own (did, model) pair is still a GLOBALLY valid fact
+       # about that dispatch_id's tier, however it got attached — this map lets
+       # an unconfirmed marker be re-keyed onto the model of the dispatch its
+       # OWN worker (never its stale marker) claims, below.
+       | ($base | map(select(.did != "")) | map({(.did): .model}) | add // {}) as $did_model
+       | ($base | map(if .pc then . + {tier_model: .model} else
+             ((try ($first[.t] // "" | fromjson | .message.content
+                    | (if type == "array" then (map(select(type == "object" and .type == "text") | .text) | first) else . end)
+                    | strings | split("\n") | map(select(startswith("[ctx] {"))) | first
+                    | .[6:] | fromjson | select(type == "object")) catch null) // null) as $wc
+             | if $wc == null then . + {co: "", ticket: "", tier_model: null}
+               else (($wc.dispatch_id // "") | tostring) as $wd
+                 | ($wd != "" and $wd == .did) as $ok
+                 | . + {pc: $ok,
+                        co: (($wc.worktree // "") | if type == "string" and (gsub("^\\s+|\\s+$"; "") != "") then gsub("^\\s+|\\s+$"; "") else "code" end),
+                        ticket: (if $ok then .ticket else "" end),
+                        tier_model: (if $ok then .model elif $wd != "" then ($did_model[$wd] // null) else null end)} end end))
+       | map(. + {live: (if .t == "" or ($mt[.t] // null) == null then (.age < $grace)
              elif (($last[.t] // "") | contains("\"model\":\"<synthetic>\"")) then false
              elif (now - $mt[.t]) > ($idle_min * 60) then false
-             else true end)
-       | map(select(.)) | length
-     ) catch null end) as $inflight
+             else true end)})
+     ) catch null end) as $live_cands
+| (if $live_cands == null then null else ($live_cands | map(select(.live)) | length) end) as $inflight
+# T-780 round 2: `.tier_model` (never `.model` directly) — a confirmed marker's
+# tier_model IS its own model; an unconfirmed one's is the model its OWN
+# worker's dispatch maps to (or null, never guessed, when there is no worker
+# evidence yet or its true dispatch_id matches no known candidate) — so a
+# swapped foreground pair is counted on the tier it is ACTUALLY running at,
+# without ever trusting the (possibly wrong) pairing.
+| (if $live_cands == null then null else ($live_cands | map(select(.live and .tier_model == $want_model)) | length) end) as $tier_inflight
 | (if $load1 != null and $ncpu != null then ($load1 / $ncpu) else null end) as $ratio
 | (if $memsize != null then ($memsize / 1073741824 | r2) else null end) as $gb
 | [
@@ -686,7 +861,11 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
   {k: "vms", ok: ($vms != null), over: ($vms != null and $vms > $cap.vms_max),
    text: (if $vms != null then "resident VMs \($vms) (cap \($cap.vms_max) — com.apple.Virtualization.VirtualMachine processes, from ps)"
           else "resident VMs: unmeasured (ps)" end),
-   free: "stop a VM whose job is done (`prdt resource ls` names its owner; a VM no marker owns is the user's)"}
+   free: "stop a VM whose job is done (`prdt resource ls` names its owner; a VM no marker owns is the user's)"},
+  {k: "model_tier", ok: ($tier_inflight != null), over: ($tier_inflight != null and $tier_inflight > $tier_cap),
+   text: (if $tier_inflight != null then "in-flight dispatches on model tier \"\($want_model)\" \($tier_inflight) machine-wide (cap \($tier_cap) — same run/dispatches liveness rule as the dispatches axis; a marker not yet paired with its own Agent call is grouped by the model of the dispatch its own worker's first prompt names, never its own possibly-swapped `model` field, and dropped from every tier when that cannot be read yet)"
+          else "in-flight dispatches on model tier \"\($want_model)\": unmeasured (a run/dispatches marker is unreadable or a liveness probe failed — `prdt dispatch ls` names it)" end),
+   free: "wait for a worker on the same model tier to return, or dispatch on a different tier"}
   ] as $axes
 | ($axes | map(select(.ok | not) | .k)) as $unm_axes
 | (if $caps_bad == "1" then $unm_axes + ["caps-file"] else $unm_axes end) as $unm
@@ -695,26 +874,82 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
      + " — a measurement failed (tool missing or output unparsed), so that axis never blocks a dispatch; said once per session."
      + (if $caps_bad == "1" then " `dispatch-caps.json` is not a JSON object of numbers — defaults in force." else "" end) end) as $note
 | ($axes | map(select(.over))) as $over
+| (if $want_persona == "" or $live_cands == null then [] else
+     (if $want_co == "" then "code" else ($want_co | norm_co($proj_root; $code_abs)) end) as $mine
+     | $live_cands | map(select(.live and (.persona == "developer" or .persona == "qa")
+         and .root == $proj_root and .co != "" and (.co | norm_co($proj_root; $code_abs)) == $mine))
+   end) as $co_hits
+| (if ($co_hits | length) == 0 then "" else
+     ($co_hits | first) as $h
+     | deny("[prdt dispatch gate] DENIED before the worker spawned: "
+          + (if ($want_co == "" or ($want_co | norm_co($proj_root; $code_abs)) == "code") then "the shared code checkout" else "this dispatch's `[ctx].worktree` checkout" end)
+          + " already has a live \($h.persona) dispatch (" + (if $h.ticket == "" then "ticket unresolved" else $h.ticket end)
+          + ") — one live developer/qa dispatch per checkout (T-775): two tracks in one checkout share its working tree and its test runs, whether or not their files overlap."
+          + "\nOpen a track for this dispatch's ticket — `prdt track open <T-NNN>` — and set `[ctx].worktree` to the path it prints, or wait for that dispatch to return (`prdt dispatch ls`)."
+          + "\nNothing was spawned and no dispatch tokens were spent.") | tojson end) as $co_deny
 | (if ($over | length) == 0 then "" else
      deny("[prdt dispatch gate] WAITING — the machine is over cap; nothing was spawned and no dispatch tokens were spent."
           + "\nmeasured: " + ($axes | map(.text) | join(" · "))
           + "\nover cap: " + ($over | map(.k) | join(", "))
           + "\nfrees it: " + ($over | map(.free) | join("; "))
-          + " — then re-dispatch the same prompt. Caps: defaults in prdt-dispatch-gate.sh, machine override `$PRDT_HOME/dispatch-caps.json` (keys load_ratio · mem_free_pct_min · inflight_max · suites_max · vms_max, numbers only)."
+          + " — then re-dispatch the same prompt. Caps: defaults in prdt-dispatch-gate.sh, machine override `$PRDT_HOME/dispatch-caps.json` (keys load_ratio · mem_free_pct_min · inflight_max · suites_max · vms_max · inflight_sonnet_max · inflight_opus_max · inflight_haiku_max · inflight_fable_max · inflight_default_max, numbers only)."
           + (if $note == "" then "" else "\n" + $note end)) | tojson end) as $deny
-| "\($unm | join(","))\n\($deny)\n\($note)\nend"
+| "\($unm | join(","))\n\(if $co_deny != "" then $co_deny else $deny end)\n\($note)\nend"
 JQ
 
 RES="$(jq -rn \
   --arg loadavg "$LOADAVG" --arg ncpu "$NCPU" --arg memsize "$MEMSIZE" --arg memp "$MEMP" \
   --arg ps "$PSOUT" --argjson caps "$CAPS" --arg caps_bad "$CAPS_BAD" \
-  --arg mark_bad "$MARK_BAD" --arg cands "$MARK_CANDS" --arg mtimes "$MTIMES" --arg tails "$TAILS" \
+  --arg mark_bad "$MARK_BAD" --arg cands "$MARK_CANDS" --arg mtimes "$MTIMES" --arg tails "$TAILS" --arg heads "$HEADS" \
   --argjson stale_h "$STALE_H" --argjson idle_min "$IDLE_MIN" --argjson grace "$GRACE_S" \
+  --arg want_model "$WANT_MODEL" \
+  --arg want_persona "$WANT_PERSONA" --arg want_co "$WANT_CO" --arg proj_root "$PROJ_ROOT" --arg code_abs "$CODE_ABS" \
   "$RPROG" 2>/dev/null)"
+
+# ── T-773: the schedule record — one `dispatch` row per dispatch that passed ──
+# Reached only once every check above passed (a deny above never records: that
+# dispatch never left). `prdt schedule record` reads THIS event on stdin,
+# computes `prdt schedule` for the project at this moment, appends one row to
+# `<project>/.prdt/schedule.jsonl` (ticket · critical path · top row · class
+# followed/deviated/continuation/off-graph · `[ctx].schedule_reason` ·
+# `[ctx].worktree`) and prints ONE warning line when the dispatch is off the
+# top row with no `schedule_reason` — a WARNING, never a deny (T-765, user
+# decision). The CLI is the sibling mirror copy (`~/.prdt/bin/prdt` beside
+# `~/.prdt/hooks/`), or `scripts/prdt` beside `scripts/hooks/` in the repo.
+# PRDT_META_BACKUP=0: contracts §Git never lets a per-turn hook trigger the
+# meta backup push (the CLI also skips it for `record` on its own). Any
+# failure — no CLI, no python3, a crash — is silence: the record fails open
+# exactly like every other part of this hook, and the dispatch still goes.
+schedule_record() {
+  local hd="${BASH_SOURCE[0]%/*}" cli
+  [ "$hd" = "${BASH_SOURCE[0]}" ] && hd="."
+  cli="$hd/../bin/prdt"
+  [ -f "$cli" ] || cli="$hd/../prdt"
+  [ -f "$cli" ] || return 0
+  printf '%s' "$EV" | PRDT_META_BACKUP=0 python3 "$cli" schedule record 2>/dev/null
+}
+
+# Merge extra advisory lines into the `[ctx]` verdict (a warn object or empty)
+# as one PreToolUse additionalContext, then exit.
+emit() {
+  local extra="$1" out=""
+  if [ -z "$extra" ]; then
+    [ -n "$GATE" ] && printf '%s\n' "$GATE"
+    exit 0
+  fi
+  if [ -n "$GATE" ]; then
+    out="$(printf '%s' "$GATE" | jq -c --arg n "$extra" '.hookSpecificOutput.additionalContext += "\n" + $n' 2>/dev/null)"
+  else
+    out="$(jq -nc --arg n "$extra" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $n}}' 2>/dev/null)"
+  fi
+  [ -n "$out" ] || out="$GATE"
+  [ -n "$out" ] && printf '%s\n' "$out"
+  exit 0
+}
+
 if [ -z "$RES" ]; then
   # The resource program itself failed: fail OPEN, keep the `[ctx]` verdict.
-  [ -n "$GATE" ] && printf '%s\n' "$GATE"
-  exit 0
+  emit "$(schedule_record)"
 fi
 UNM="${RES%%$'\n'*}"; REST="${RES#*$'\n'}"
 DENY="${REST%%$'\n'*}"; REST="${REST#*$'\n'}"
@@ -724,6 +959,7 @@ if [ -n "$DENY" ]; then
   printf '%s\n' "$DENY"
   exit 0
 fi
+SCHED_WARN="$(schedule_record)"
 
 # Unmeasured: say it once per session. The session id is a file-name token
 # only — anything outside [A-Za-z0-9._-] collapses to `nosession`.
@@ -742,15 +978,8 @@ if [ -n "$UNM" ]; then
   fi
 fi
 
-if [ -z "$NOTE" ]; then
-  [ -n "$GATE" ] && printf '%s\n' "$GATE"
-  exit 0
+EXTRA="$NOTE"
+if [ -n "$SCHED_WARN" ]; then
+  if [ -n "$EXTRA" ]; then EXTRA="$EXTRA"$'\n'"$SCHED_WARN"; else EXTRA="$SCHED_WARN"; fi
 fi
-if [ -n "$GATE" ]; then
-  OUT="$(printf '%s' "$GATE" | jq -c --arg n "$NOTE" '.hookSpecificOutput.additionalContext += "\n" + $n' 2>/dev/null)"
-else
-  OUT="$(jq -nc --arg n "$NOTE" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $n}}' 2>/dev/null)"
-fi
-[ -n "$OUT" ] || OUT="$GATE"
-[ -n "$OUT" ] && printf '%s\n' "$OUT"
-exit 0
+emit "$EXTRA"

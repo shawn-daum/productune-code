@@ -50,7 +50,9 @@ describe('contracts.md — prd_path is a fragment, not the whole file', () => {
   })
 
   test('the Fixed paths PRD row states the read unit', () => {
-    const row = read(CONTRACTS).split('\n').find((l) => l.startsWith('| PRD (working document + history) |'))
+    // T-770 hot→cold split: the whole Fixed-paths table moved off contracts.md
+    // into the fixed-paths annex — contracts.md now only points at it.
+    const row = read(FIXED_PATHS_ANNEX).split('\n').find((l) => l.startsWith('| PRD (working document + history) |'))
     expect(row).toBeDefined()
     expect(row).toContain('`docs/prd/PRD.md#v<N>.<m>`')
     expect(row).toContain('that ONE version section')
@@ -70,8 +72,9 @@ describe('contracts.md — prd_path is a fragment, not the whole file', () => {
 })
 
 describe('contracts.md — PRD split: working document + one file per closed version (T-602 → T-657)', () => {
+  // T-770: the row itself lives in the fixed-paths annex now (see above).
   const row = () =>
-    read(CONTRACTS).split('\n').find((l) => l.startsWith('| PRD (working document + history) |'))!
+    read(FIXED_PATHS_ANNEX).split('\n').find((l) => l.startsWith('| PRD (working document + history) |'))!
 
   // The user's requirement is sight: opening the working document shows the
   // current version only. The row must therefore name the working file and the
@@ -168,8 +171,9 @@ describe('contracts.md — PRD split: working document + one file per closed ver
 })
 
 describe('contracts.md — docs/features is a registered fixed path', () => {
+  // T-770: this row moved into the fixed-paths annex with the rest of the table.
   const row = () =>
-    read(CONTRACTS)
+    read(FIXED_PATHS_ANNEX)
       .split('\n')
       .find((l) => l.startsWith('|') && l.includes('`docs/features/<feature>.md`'))
 

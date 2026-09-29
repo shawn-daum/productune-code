@@ -170,7 +170,7 @@ export function decideBootstrap(paths: BootstrapPaths): BootstrapDecision {
 // ── Provision ─────────────────────────────────────────────────────────────────
 
 function payloadValid(payloadRoot: string): boolean {
-  return ['scripts/prdt', 'scripts/statusline-prdt.sh', 'doctrine.md', 'discipline']
+  return ['scripts/prdt', 'scripts/prdt-messages.json', 'scripts/statusline-prdt.sh', 'doctrine.md', 'discipline']
     .every((rel) => {
       try { return fs.existsSync(path.join(payloadRoot, rel)) } catch { return false }
     })
@@ -214,6 +214,8 @@ export function runBootstrap(paths: BootstrapPaths): BootstrapResult {
     const binPrdt = path.join(prdtHome, 'bin', 'prdt')
     fs.copyFileSync(path.join(payloadRoot, 'scripts', 'prdt'), binPrdt)
     fs.chmodSync(binPrdt, 0o755)
+    // T-750: the CLI's message catalog lives beside bin/prdt (install.sh parity)
+    fs.copyFileSync(path.join(payloadRoot, 'scripts', 'prdt-messages.json'), path.join(prdtHome, 'bin', 'prdt-messages.json'))
     const statusline = path.join(prdtHome, 'bin', 'statusline-prdt.sh')
     fs.copyFileSync(path.join(payloadRoot, 'scripts', 'statusline-prdt.sh'), statusline)
     fs.chmodSync(statusline, 0o755)
