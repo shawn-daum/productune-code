@@ -21,6 +21,16 @@
  *           byte level; a live click-test in a real terminal is out of
  *           scope, per this ticket).
  *
+ * T-805: the link target moved from the raw ticket md to the viewer jump
+ * page `prdt tickets --link` prints for the same id (`.prdt/scratch/viewer/
+ * at/T-NNN.html`, T-746) — never the md, and never fabricated when no viewer
+ * has been generated yet (an id then renders unlinked, same silent degrade
+ * as every other missing piece here). Most tests below only assert on the
+ * unwrapped, visible text (`segment()`/`unwrapLinks()`), so they hold
+ * regardless of the link target; the tests that assert on the link target
+ * itself pre-create a stub `.prdt/scratch/viewer/viewer.html` the way a real
+ * project's `prdt viewer`/T-802 background regen would have.
+ *
  * `PRDT_HOME` is always a scratch dir here (`run/` is tooling-owned — never
  * the real `~/.prdt`).
  */
@@ -113,6 +123,20 @@ con.close()
   execFileSync('python3', ['-c', script, dbPath,
     JSON.stringify(tickets.map((t) => ({ id: t.id, path: t.relPath }))),
     JSON.stringify(edges)])
+}
+
+/** Stubs `.prdt/scratch/viewer/viewer.html` — the one fact `viewer_jump_path()`
+ *  checks before writing a jump page (T-805); content is irrelevant, only
+ *  its existence is. */
+function stubViewerHtml(): void {
+  const dir = path.join(root, '.prdt', 'scratch', 'viewer')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'viewer.html'), '<html></html>')
+}
+
+/** The jump-page path `viewer_jump_path()` writes for `id` (T-746 form). */
+function jumpPagePath(id: string): string {
+  return path.join(root, '.prdt', 'scratch', 'viewer', 'at', `${id}.html`)
 }
 
 function runStatusline(): string {
@@ -250,21 +274,45 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(out).not.toMatch(/\brunning\b/)
   })
 
-  test('OSC 8 bytes present when the id resolves a path (index.db present); absent otherwise', () => {
+  test('T-805: OSC 8 link targets the viewer jump page (never the raw ticket md) when a viewer exists', () => {
     writeMarker({ agentId: 'linked', ticketId: 'T-682', ageMs: 60_000 })
     buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], [])
+    stubViewerHtml()
     const linked = runStatusline()
     expect(linked).toContain(OSC8_OPEN)
     expect(linked).toContain(OSC8_CLOSE)
-    expect(linked).toContain(`file://${path.join(root, 'docs/tickets/v9.9/T-682.md')}`)
+    const jump = jumpPagePath('T-682')
+    expect(linked).toContain(`file://${jump}`)
+    expect(linked).not.toContain(`file://${path.join(root, 'docs/tickets/v9.9/T-682.md')}`)
     // the plain id is still the visible text between the open/close escapes
     expect(linked).toMatch(/\x1b\]8;;file:\/\/[^\x1b]+\x1b\\T-682\x1b\]8;;\x1b\\/)
+    // the stub the script writes on demand, matching viewer_jump()'s own form
+    expect(fs.existsSync(jump)).toBe(true)
+    expect(fs.readFileSync(jump, 'utf-8')).toContain('url=../viewer.html#T-682')
+  })
 
-    // Same marker, no index.db at all → no path resolves → plain text, no OSC 8.
+  test('T-805: no viewer generated yet → the id renders unlinked, never falls back to the raw ticket md', () => {
+    writeMarker({ agentId: 'linked', ticketId: 'T-682', ageMs: 60_000 })
+    buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], [])
+    // no stubViewerHtml() here — no viewer.html anywhere under .prdt/scratch/viewer
+    const out = runStatusline()
+    expect(out).toContain('T-682')
+    expect(out).not.toContain(OSC8_OPEN)
+    expect(out).not.toContain('file://')
+    expect(fs.existsSync(path.join(root, '.prdt', 'scratch'))).toBe(false)
+  })
+
+  test('OSC 8 bytes absent when the id resolves no path at all (no index.db)', () => {
+    writeMarker({ agentId: 'linked', ticketId: 'T-682', ageMs: 60_000 })
+    buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], [])
+    stubViewerHtml()
+    // Same marker, no index.db at all → no path resolves → plain text, no OSC 8,
+    // and no jump page gets written (ticket_link_target gates on ticket_path first).
     fs.rmSync(path.join(root, '.prdt', 'index.db'))
     const unlinked = runStatusline()
     expect(unlinked).toContain('T-682')
     expect(unlinked).not.toContain(OSC8_OPEN)
+    expect(fs.existsSync(jumpPagePath('T-682'))).toBe(false)
   })
   test('F3: two workers on the same ticket are ONE running row, personas joined', () => {
     writeMarker({ agentId: 'dev', ticketId: 'T-700', persona: 'developer', ageMs: 3 * 60_000 })
@@ -280,6 +328,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     root = makeProject('prdt-t682-sl-proj-', { ticket_id: 'T-682', slug: 'footer', assignee: 'developer' })
     writeMarker({ agentId: 'a', ticketId: 'T-682', ageMs: 60_000 })
     buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], [])
+    stubViewerHtml()
     const out = runStatusline()
     const wrapped = out.match(/\x1b\]8;;file:\/\/[^\x1b]+\x1b\\T-682\x1b\]8;;\x1b\\/g) ?? []
     expect(wrapped.length).toBe(2) // once in the current_task segment, once in running
@@ -291,23 +340,26 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
   test('F5: an index path carrying a control byte is refused (plain id, no link); a root with a space yields a percent-encoded file URI', () => {
     writeMarker({ agentId: 'a', ticketId: 'T-682', ageMs: 60_000 })
     buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682\x1b]8;;http://evil/\x1b\\.md' }], [])
+    stubViewerHtml()
     const out = runStatusline()
     expect(out).toContain('T-682')
     expect(out).not.toContain(OSC8_OPEN)
     expect(out).not.toContain('evil')
 
-    // a root with a space
+    // a root with a space — the jump page path (under this same root) is what
+    // must survive percent-encoding now, not the raw ticket md path (T-805).
     fs.rmSync(root, { recursive: true, force: true })
     root = makeProject('prdt t682 sl ')
     writeMarker({ agentId: 'b', ticketId: 'T-683', ageMs: 60_000 })
     buildIndexDb([{ id: 'T-683', relPath: 'docs/tickets/v9.9/T-683.md' }], [])
+    stubViewerHtml()
     const out2 = runStatusline()
     const m = out2.match(/\x1b\]8;;(file:\/\/[^\x1b]*)\x1b\\T-683/)
     expect(m).not.toBeNull()
     const uri = m![1]
     expect(uri).toContain('%20')
     expect(uri).not.toContain(' ')
-    expect(decodeURIComponent(uri.slice('file://'.length))).toBe(path.join(root, 'docs/tickets/v9.9/T-683.md'))
+    expect(decodeURIComponent(uri.slice('file://'.length))).toBe(jumpPagePath('T-683'))
     expect(/^file:\/\/[A-Za-z0-9\-._~\/%]*$/.test(uri)).toBe(true)
   })
 
