@@ -322,6 +322,163 @@ describe('prdt track land', () => {
     expect(git(code, 'rev-parse', 'main')).toBe(mainBefore)
   })
 
+  // T-833 (decision T-828 「D」): `open --base main` records the track's origin
+  // in a PO-side record under $PRDT_HOME/run/tracks/ — outside the code repo,
+  // outside its git config, outside the worktree. A bare land of such a track
+  // is REFUSED (nothing merged, nothing moved) and names both flags; main
+  // still moves only on an explicit `--base main` at land time (T-784).
+  describe('T-833: a track cut from main refuses a bare land', () => {
+    const recordDir = () => path.join(home, 'run', 'tracks')
+    const recordFiles = (): string[] => {
+      if (!fs.existsSync(recordDir())) return []
+      return fs.readdirSync(recordDir()).flatMap(k => fs.readdirSync(path.join(recordDir(), k)).map(f => path.join(recordDir(), k, f)))
+    }
+    const recordOf = (t: string) => recordFiles().find(f => path.basename(f) === `${t}.json`)
+    const refs = () => ({ dev: git(code, 'rev-parse', 'dev'), main: git(code, 'rev-parse', 'main') })
+    const expectRefusal = (r: { out: string; err: string; status: number }) => {
+      expect(r.status).not.toBe(0)
+      expect(r.err).toContain('--base main')
+      expect(r.err).toContain('--base dev')
+      expect(r.out).not.toContain('fast-forwarded')
+      expect(r.out).not.toContain('merged ')
+    }
+
+    beforeEach(() => {
+      const o = cli('track', 'open', 'T-2', '--base', 'main')
+      expect(o.status, o.err).toBe(0)
+      commit(wt('T-2'), 'm.txt', 'main only\n', 'feat: m')
+    })
+
+    test('open --base main writes the record outside the code repo and its git config; open without it records dev', () => {
+      const rec = recordOf('T-2')
+      expect(rec).toBeDefined()
+      expect(rec!.startsWith(home + path.sep)).toBe(true)
+      expect(rec!.startsWith(proj + path.sep)).toBe(false)
+      expect(JSON.parse(fs.readFileSync(rec!, 'utf8'))).toMatchObject({ ticket: 'T-2', branch: 'track/T-2', base: 'main' })
+      expect(JSON.parse(fs.readFileSync(recordOf('T-1')!, 'utf8'))).toMatchObject({ ticket: 'T-1', base: 'dev' })
+    })
+
+    test('bare land: exits non-zero, merges nothing, names --base main and --base dev; the track stays open', () => {
+      const before = refs()
+      const tip = git(wt('T-2'), 'rev-parse', 'HEAD')
+      const r = cli('track', 'land', 'T-2')
+      expectRefusal(r)
+      expect(r.err).toContain('cut from main')
+      expect(refs()).toEqual(before)
+      expect(git(wt('T-2'), 'rev-parse', 'HEAD')).toBe(tip)          // no merge commit on the track either
+      expect(fs.existsSync(wt('T-2'))).toBe(true)
+      expect(recordOf('T-2')).toBeDefined()
+    })
+
+    test('--base main lands to main (dev untouched) and removes the record', () => {
+      const before = refs()
+      const r = cli('track', 'land', 'T-2', '--base', 'main')
+      expect(r.status, r.err).toBe(0)
+      expect(git(code, 'show', 'main:m.txt')).toBe('main only')
+      expect(git(code, 'rev-parse', 'dev')).toBe(before.dev)
+      expect(recordOf('T-2')).toBeUndefined()
+    })
+
+    test('--base dev lands to dev (main untouched)', () => {
+      const before = refs()
+      const r = cli('track', 'land', 'T-2', '--base', 'dev')
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toContain('dev fast-forwarded')
+      expect(git(code, 'show', 'dev:m.txt')).toBe('main only')
+      expect(git(code, 'rev-parse', 'main')).toBe(before.main)
+      expect(recordOf('T-2')).toBeUndefined()
+    })
+
+    test('F1 against the record: a worker-set prdtbase=dev/main in git config + a commit changes nothing — the record still governs, main untouched', () => {
+      const before = refs()
+      git(wt('T-2'), 'config', 'branch.track/T-2.prdtbase', 'dev')    // try to talk the tool out of the refusal
+      commit(wt('T-2'), 'n.txt', 'x\n', 'feat: n')
+      expectRefusal(cli('track', 'land', 'T-2'))
+      git(wt('T-2'), 'config', 'branch.track/T-2.prdtbase', 'main')   // and the T-784 F1 attack on a dev track
+      git(wt(), 'config', 'branch.track/T-1.prdtbase', 'main')
+      commit(wt(), 'c.txt', 'new\n', 'feat: c')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toContain('dev fast-forwarded')
+      expect(git(code, 'rev-parse', 'main')).toBe(before.main)
+      expectRefusal(cli('track', 'land', 'T-2'))
+      expect(git(code, 'rev-parse', 'main')).toBe(before.main)
+    })
+
+    test('a corrupt or unreadable record fails closed: a bare land is refused, an explicit --base still works', () => {
+      const rec = recordOf('T-2')!
+      for (const body of ['{not json', '{"ticket":"T-2","branch":"track/T-2","base":"staging"}', '[]',
+                          '{"ticket":"T-9","branch":"track/T-9","base":"dev"}']) {
+        fs.writeFileSync(rec, body)
+        const before = refs()
+        const r = cli('track', 'land', 'T-2')
+        expectRefusal(r)
+        expect(refs()).toEqual(before)
+      }
+      fs.rmSync(rec)
+      fs.symlinkSync(path.join(proj, 'nowhere.json'), rec)             // a symlinked record is not trusted either
+      fs.writeFileSync(path.join(proj, 'nowhere.json'), JSON.stringify({ ticket: 'T-2', branch: 'track/T-2', base: 'dev' }))
+      expectRefusal(cli('track', 'land', 'T-2'))
+      const r = cli('track', 'land', 'T-2', '--base', 'main')
+      expect(r.status, r.err).toBe(0)
+      expect(git(code, 'show', 'main:m.txt')).toBe('main only')
+    })
+
+    test('a worker rewriting the record to dev cannot move main; deleting it falls back to the pre-T-833 dev default — main still untouched', () => {
+      const before = refs()
+      fs.writeFileSync(recordOf('T-2')!, JSON.stringify({ ticket: 'T-2', branch: 'track/T-2', base: 'dev' }))
+      commit(wt(), 'c.txt', 'new\n', 'feat: c')
+      fs.writeFileSync(recordOf('T-1')!, JSON.stringify({ ticket: 'T-1', branch: 'track/T-1', base: 'main' }))
+      expectRefusal(cli('track', 'land', 'T-1'))                        // forging main only ever refuses
+      expect(refs()).toEqual(before)
+      fs.rmSync(recordOf('T-2')!)
+      const r = cli('track', 'land', 'T-2')                            // no record = the pre-change behaviour: dev
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toContain('dev fast-forwarded')
+      expect(git(code, 'rev-parse', 'main')).toBe(before.main)
+    })
+
+    test('--base given twice is refused before anything runs, whichever order', () => {
+      const before = refs()
+      for (const pair of [['main', 'dev'], ['dev', 'main'], ['main', 'main']]) {
+        const r = cli('track', 'land', 'T-2', '--base', pair[0], '--base', pair[1])
+        expect(r.status).toBe(2)
+        expect(r.err).toContain('--base given more than once')
+        expect(refs()).toEqual(before)
+      }
+      expect(cli('track', 'open', 'T-3', '--base', 'dev', '--base', 'main').status).toBe(2)
+      expect(fs.existsSync(wt('T-3'))).toBe(false)
+      expect(recordOf('T-3')).toBeUndefined()
+    })
+
+    test('unusual track names are refused and write no record', () => {
+      for (const t of ['T-2\n', 'T-2/../T-1', '../T-2', 'T-2.json', 'T-2 ', 't-2', 'T-']) {
+        const r = cli('track', 'open', t, '--base', 'main')
+        expect(r.status).toBe(2)
+        expect(r.err).toContain('T-NNN')
+        expect(cli('track', 'land', t).status).toBe(2)
+      }
+      expect(recordFiles().map(f => path.basename(f)).sort()).toEqual(['T-1.json', 'T-2.json'])
+    })
+
+    test('drop removes the record', () => {
+      expect(cli('track', 'drop', 'T-2', '--force').status).toBe(0)
+      expect(recordOf('T-2')).toBeUndefined()
+      expect(cli('track', 'drop', 'T-1').status).toBe(0)
+      expect(recordOf('T-1')).toBeUndefined()
+    })
+
+    test('a track opened before T-833 (no record) lands to dev without a flag, as before', () => {
+      fs.rmSync(recordOf('T-1')!)
+      commit(wt(), 'c.txt', 'new\n', 'feat: c')
+      const mainBefore = git(code, 'rev-parse', 'main')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toContain('dev fast-forwarded')
+      expect(git(code, 'rev-parse', 'main')).toBe(mainBefore)
+    })
+  })
+
   // T-778 (T-775 grill): a test command that leaves a stray file behind must
   // fail the land (rc != 0), not print "landed" — dev stays put and the track
   // keeps the merge so the worker can clean it up and land again.
