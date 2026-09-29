@@ -878,7 +878,7 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
        | map(if .persona == "qa" and ((try ($first[.t] // "" | fromjson | .message.content
                     | (if type == "array" then (map(select(type == "object" and .type == "text") | .text) | first) else . end)
                     | strings | split("\n") | map(select(startswith("[ctx] {"))) | first
-                    | .[6:] | fromjson | .change_meta.files) catch null) | meta_only($proj_root; $code_rel; $allow))
+                    | .[6:] | fromjson | .change_meta.files) catch null) // null | meta_only($proj_root; $code_rel; $allow))
              then . + {co: ""} else . end)
        | map(. + {live: (if .t == "" or ($mt[.t] // null) == null then (.age < $grace)
              elif (($last[.t] // "") | contains("\"model\":\"<synthetic>\"")) then false

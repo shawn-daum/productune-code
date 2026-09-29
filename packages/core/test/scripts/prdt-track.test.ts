@@ -580,6 +580,15 @@ describe('T-814: a QA dispatch that writes only meta documents occupies no check
     expect(denied(gate(ctx()))).toContain('already has a live qa dispatch')
   })
 
+  test('live QA markers whose transcript first line is JSON without text content still count (in-flight cap)', () => {
+    for (let i = 0; i < 6; i++) {
+      marker(`qs${i}`, { checkout: wt(`T-${i + 1}`), persona: 'qa' })
+      const t = path.join(home, 'transcripts', 'subagents', `agent-qs${i}.jsonl`)
+      fs.writeFileSync(t, '{"type":"summary"}\n' + REAL_LAST + '\n')
+    }
+    expect(denied(gate(ctx()))).toContain('in-flight dispatches 6 machine-wide')
+  })
+
   test('a project that persists no meta allowlist exempts nothing', () => {
     setConfig({ meta: {} })
     marker('dev1', { checkout: 'code' })
