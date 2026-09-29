@@ -31,7 +31,7 @@ One editor, one pass, four verdicts judged per RULE, bytes reported. Form is com
 
 ## Verdict 2 — file and layer, one home
 - Binds every persona → `discipline/contracts.md` hot / `discipline/contracts/<section>.md` cold. One persona → its `habit.md` / its playbook; several → the owner's (Verdict 1). Belief, not rule → `doctrine.md`. Fact of this machine or project → override line (Scope). Rule scoped to one playbook → that body, or `overrides/playbooks/<name>.md` when it is a machine fact.
-- Before any new line: grep the behavior's key words across `discipline/**` · `agents/` · `scripts/hooks/*.sh`. Clause exists → sharpen it in place. New line only when no clause covers the behavior; new file only when no home exists.
+- Before any new line: grep the behavior's key words across `discipline/**` · `agents/` · `scripts/hooks/*.sh`. Clause exists → sharpen it in place. New line only when no clause covers the behavior. Cold home = the one whose `when` is narrowest while still covering the rule's trigger; every candidate `when` broader (it loads where the rule never applies) → new annex or playbook, costing its hot pointer (`contracts.md` line · menu row).
 - One rule, one body. A second statement keeps at most a pointer. Persona variants survive only where the difference is real (numbers, actions), never a restated kernel.
 
 ## Verdict 3 — byte budget
@@ -55,7 +55,7 @@ One editor, one pass, four verdicts judged per RULE, bytes reported. Form is com
 ## Run
 1. State the behavior: one line, situation → act at the line's own grain, and every persona performing it (Verdict 1). Grep for its home (Verdict 2).
 2. Verdicts 1–4, one line of grounds each → envelope `decisions[]`; Verdict 1 names the dependents.
-3. Draft compressed. Keep/cut list. Meaning check.
+3. Placement first, above the wording, for every rule or override line drafted: hot or cold with its Verdict-1 ground · the chosen home and each rejected one, each with its `when` and hot pointer bytes. Then draft compressed. Keep/cut list. Meaning check.
 4. Measure before (Verdict 3): `wc -c` on touched files · `--plan` per affected persona at the reference length (or the one length you report).
 5. Land in the source tree. Frontmatter touched → `PRDT_DISCIPLINE=$PWD/discipline python3 scripts/prdt menus`. Pinned literals in the same diff.
 6. Measure after, same commands, same path length. `parts_needed` > `slots` · `oversized` non-empty · a part over its `limit` → cut more; never ship it.
