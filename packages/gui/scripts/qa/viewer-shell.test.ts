@@ -360,7 +360,7 @@ describe('viewer/lib/render.mjs — home is the shared-model, version-scoped wor
     const html = render()
     const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
     const home = homeMatch![0]
-    const rowMatch = /<div class="stage-matrix-row"><span class="stage-matrix-label">항목 밖<\/span>([\s\S]*?)<\/div>/.exec(home)
+    const rowMatch = /<div class="stage-matrix-row"[^>]*><span class="stage-matrix-label">항목 밖<\/span>([\s\S]*?)<\/div>/.exec(home)
     expect(rowMatch, 'no trailing "항목 밖" row found in the matrix').not.toBeNull()
     // T-903 (assignee: user, status: open) draws a real square in this row
     // — never all "–", or the ticket would still be effectively invisible.
@@ -380,7 +380,7 @@ describe('viewer/lib/render.mjs — home is the shared-model, version-scoped wor
     expect(home).toContain('North star fixture label')
     // T-901 (prd_item v1.10#viewer) draws its square inside the "Viewer row
     // fixture label" row specifically, not merely somewhere in the matrix.
-    const viewerRow = /<div class="stage-matrix-row"><span class="stage-matrix-label">Viewer row fixture label<\/span>([\s\S]*?)<\/div>/.exec(home)
+    const viewerRow = /<div class="stage-matrix-row"[^>]*><span class="stage-matrix-label">Viewer row fixture label<\/span>([\s\S]*?)<\/div>/.exec(home)
     expect(viewerRow, 'no row for the "viewer" PRD item').not.toBeNull()
     expect(viewerRow![1]).toContain('stage-sq')
   })

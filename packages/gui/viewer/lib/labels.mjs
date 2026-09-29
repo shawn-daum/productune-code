@@ -169,3 +169,10 @@ export const HASH_NOTICE = {
   unknown: '이런 항목을 찾을 수 없어요. 홈으로 돌아왔어요.',
   stale: '뷰어를 만든 뒤 옮겨지거나 지워졌어요. 홈으로 돌아왔어요.',
 }
+
+// T-797 개정: the topstrip's light/dark toggle — its accessible name says
+// what pressing it does next (the page opens light by default).
+export const THEME_TOGGLE = {
+  toDark: '다크 모드로 바꾸기',
+  toLight: '라이트 모드로 바꾸기',
+}
