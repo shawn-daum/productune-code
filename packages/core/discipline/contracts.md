@@ -38,7 +38,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 
 ## Tickets — md is SoT; the PO writes frontmatter · problem · options · related · acceptance, workers write outcome
 - `status` is the whole enum. blocked / review / waiting-on-user / deferred-decision are narration inside an `open` ticket.
-- Writing or reading any ticket key or frontmatter (an `acceptance` line included), raising a user fork, splitting or carrying over a ticket: `contracts/tickets.md` first.
+- Writing or reading any ticket key or frontmatter (an `acceptance` line included), raising a user fork, splitting or carrying over a ticket: `contracts/tickets.md` first; an `assignee: user` body: `contracts/user-tickets.md`.
 
 ## Definition of Done
 - Not done until: build green · lint clean · typecheck clean · relevant tests green · acceptance verified against the ticket. `relevant` derives from the changed files — the derivation, and the discipline-file extra step: `contracts/definition-of-done.md`.
