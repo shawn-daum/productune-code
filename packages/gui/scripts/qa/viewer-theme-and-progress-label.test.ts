@@ -57,10 +57,19 @@ describe('T-797: light by default, dark on the remembered toggle (개정)', () =
     expect(csp).not.toContain('unsafe-inline')
   })
 
-  it('the topstrip carries the theme toggle and no longer the T-746 "#<id>" key', () => {
+  it('the page carries the theme toggle and no longer the T-746 "#<id>" key', () => {
     expect(html).toContain('js-theme-toggle')
     expect(html).not.toContain('js-hash-key')
     expect(html).not.toContain('topstrip-key')
+  })
+
+  it('T-806: the toggle sits in the activity rail, not the topstrip — the topstrip is inside .frame-main-col, which .detail-panel (position: absolute; top: 0) overlays the instant an item opens; the activity rail is a sibling of .frame-main-col and stays clear of that overlay', () => {
+    const activityNav = /<nav class="activity">([\s\S]*?)<\/nav>/.exec(html)
+    expect(activityNav, '.activity nav not found').not.toBeNull()
+    expect(activityNav![1]).toContain('js-theme-toggle')
+    const topstrip = /<div class="topstrip">([\s\S]*?)<\/div>/.exec(html)
+    expect(topstrip, '.topstrip not found').not.toBeNull()
+    expect(topstrip![1]).not.toContain('js-theme-toggle')
   })
 
   it('raises tinted pill text in the light scheme only — dark keeps the plain token', () => {
