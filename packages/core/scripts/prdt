@@ -4428,12 +4428,80 @@ VIEWER_REL = Path(".prdt") / "scratch" / "viewer"
 VIEWER_JUMP_DIR = "at"
 
 
+# The generator's own inputs under the checkout's `packages/gui`: the bare
+# imports (`marked`, `subset-font` — render.mjs / ds/lib/font-subset.mjs), the
+# Pretendard woff2 files it embeds, and the tokens file it reads. Ordered as
+# reported. Read from the CHECKOUT, never from `.prdt/scratch`.
+VIEWER_GUI_PACKAGES = ("marked", "subset-font")
+VIEWER_PRETENDARD_REL = Path("node_modules") / "pretendard" / "dist" / "web" / "static" / "woff2"
+VIEWER_TOKENS_REL = Path("src") / "styles" / "tokens.css"
+
+
+def _viewer_diagnose():
+    """T-868: `(cli, None)` when this machine can run the viewer generator, or
+    `(None, "<cause as a fact> — <the one fix>")` naming the first cause that
+    stops it: node not on PATH · no prdt checkout · `cli.mjs` missing · a named
+    input missing under `packages/gui`. Static — it never runs the generator
+    (a run that fails is `viewer_generate`'s cause)."""
+    if shutil.which("node") is None:
+        return None, "node 가 PATH 에 없어요 — node 를 설치한 뒤 다시 실행하세요 (예: `brew install node`)"
+    bases = list(_repo_root_candidates())
+    if not bases:
+        env = prdt_home() / "prdt.env"
+        repo = prdt_repo_from_env()
+        if repo:
+            fact = f"prdt 체크아웃을 찾지 못했어요 — {env} 의 PRDT_REPO={repo} 에 scripts/prdt 가 없어요"
+        else:
+            fact = f"prdt 체크아웃을 찾지 못했어요 — {env} 에 PRDT_REPO 가 없어요"
+        return None, f"{fact}. prdt 체크아웃에서 `packages/core/scripts/install.sh` 를 다시 실행하세요"
+    for base in bases:
+        gui = base.parent / "gui"
+        if (gui / "viewer" / "cli.mjs").is_file():
+            break
+    else:
+        cli = bases[0].parent / "gui" / "viewer" / "cli.mjs"
+        return None, (f"뷰어 생성기 {cli} 가 없어요 — 이 체크아웃이 불완전해요. "
+                      f"`prdt update` 로 체크아웃을 갱신하세요")
+    code = base.parent.parent
+    fix = f"`cd {code} && pnpm install`"
+    modules = gui / "node_modules"
+    if not modules.is_dir():
+        return None, f"{modules} 가 없어요 — 의존성이 설치되지 않았어요. {fix}"
+    missing = [pkg for pkg in VIEWER_GUI_PACKAGES if not (modules / pkg / "package.json").is_file()]
+    if not (gui / VIEWER_PRETENDARD_REL).is_dir():
+        missing.append("pretendard")
+    if missing:
+        return None, (f"{modules} 에 {', '.join(missing)} 가 없어요 — 설치된 의존성이 뷰어 생성기보다 오래됐어요. {fix}")
+    if not (gui / VIEWER_TOKENS_REL).is_file():
+        return None, (f"{gui / VIEWER_TOKENS_REL} 가 없어요 — 이 체크아웃이 불완전해요. "
+                      f"`prdt update` 로 체크아웃을 갱신하세요")
+    return gui / "viewer" / "cli.mjs", None
+
+
 def _viewer_generator():
-    for base in _repo_root_candidates():
-        cli = base.parent / "gui" / "viewer" / "cli.mjs"
-        if cli.is_file() and (base.parent / "gui" / "node_modules").is_dir():
-            return cli
-    return None
+    return _viewer_diagnose()[0]
+
+
+def viewer_problem():
+    """The cause text `_viewer_diagnose` names, or None when the generator can run."""
+    return _viewer_diagnose()[1]
+
+
+def viewer_doctor_warnings():
+    """`prdt doctor`: the same finding `prdt viewer` prints; silent when it works."""
+    problem = viewer_problem()
+    return [f"viewer: 뷰어를 만들 수 없어요 — {problem}"] if problem else []
+
+
+def _first_error_line(text):
+    """The first stderr line worth quoting: the first line naming an `Error`,
+    else the first non-empty one (node prints `node:internal/…:NN` and a code
+    frame ahead of the message)."""
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    for l in lines:
+        if re.search(r"\w*Error\b", l):
+            return l[:300]
+    return lines[0][:300] if lines else ""
 
 
 def _scratch_walk(root, parts):
@@ -4541,24 +4609,30 @@ def viewer_scratch_message(rel, kind):
     return f"prdt viewer: {rel} 를 열지 못해서 뷰어를 만들지 않았어요."
 
 
-def viewer_regenerate(root):
-    """Regenerate `<root>/.prdt/scratch/viewer/viewer.html`; the page's path,
-    or None when there is no generator / node, generation failed, or the
-    viewer directory chain holds a symlink (T-842 — nothing is written)."""
-    cli = _viewer_generator()
+def viewer_generate(root):
+    """`(page, None)` after regenerating `<root>/.prdt/scratch/viewer/viewer.html`,
+    or `(None, cause)` — the cause as `_viewer_diagnose` or the failed run names
+    it (T-868); a viewer directory chain holding a symlink (T-842) writes
+    nothing and answers with the scratch message."""
+    cli, problem = _viewer_diagnose()
+    if cli is None:
+        return None, problem
     node = shutil.which("node")
-    if cli is None or node is None:
-        return None
-    if not viewer_scratch_safe(root):
-        return None
+    scratch = viewer_scratch_problem(root)
+    if scratch:
+        return None, viewer_scratch_message(*scratch).replace("prdt viewer: ", "", 1)
     out = Path(root) / VIEWER_REL / "viewer.html"
+    fix = f"직접 실행해 전체 오류를 보세요: `{node} {cli} --repo-root {root} --out {out}`"
     try:
         r = subprocess.run([node, str(cli), "--repo-root", str(root), "--out", str(out)],
                            capture_output=True, text=True, timeout=120)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+    except subprocess.TimeoutExpired:
+        return None, f"뷰어 생성기가 120초 안에 끝나지 않았어요. {fix}"
+    except OSError as e:
+        return None, f"뷰어 생성기를 실행하지 못했어요 — {e}. {fix}"
     if r.returncode != 0 or not out.is_file():
-        return None
+        first = _first_error_line(r.stderr) or f"종료 코드 {r.returncode}, 오류 출력 없음"
+        return None, f"뷰어 생성기가 실패했어요 — {first}. {fix}"
     # T-850 (review C3): a success clears the regen worker's failure stamp, so
     # the next doc write regenerates at once instead of waiting out the backoff.
     # unlink never follows a link; the directory chain is re-walked with O_NOFOLLOW.
@@ -4570,7 +4644,12 @@ def viewer_regenerate(root):
             pass
         finally:
             os.close(fd)
-    return out
+    return out, None
+
+
+def viewer_regenerate(root):
+    """The regenerated page's path, or None (see `viewer_generate` for why)."""
+    return viewer_generate(root)[0]
 
 
 def _auto_open_hook():
@@ -4721,7 +4800,10 @@ def viewer_links(root, targets, labels=None):
     literal `--no-open` on that same command line."""
     labels = labels or {}
     keys = {t: viewer_anchor(root, t) for t in targets}
-    viewer = viewer_regenerate(root) if any(keys.values()) else None
+    viewer, problem = viewer_generate(root) if any(keys.values()) else (None, None)
+    if problem:
+        # T-868: the markdown fallback below stays; one stderr line says why.
+        print(f"prdt: 뷰어 링크 대신 파일 링크를 냈어요 — {problem}", file=sys.stderr)
     lines = []
     for t in targets:
         key = keys[t]
@@ -4749,9 +4831,9 @@ def cmd_viewer(args):
         problem = viewer_scratch_problem(root)
         if problem:
             sys.exit(viewer_scratch_message(*problem))
-        viewer = viewer_regenerate(root)
+        viewer, problem = viewer_generate(root)
         if viewer is None:
-            sys.exit("prdt viewer: 뷰어를 만들지 못했어요 — node 와 prdt 체크아웃의 packages/gui 의존성이 필요해요 (`prdt doctor`).")
+            sys.exit(f"prdt viewer: 뷰어를 만들지 못했어요 — {problem}")
         print(f"[viewer](file://{viewer})")
         return
     for line in viewer_links(root, args.targets):
@@ -13051,6 +13133,10 @@ def cmd_doctor(_args):
         ("hook command targets", FAMILY_DE, lambda: hook_dangling_command_warnings()),
         # statusline registration — user + project-level (T-500)
         ("statusline registration", FAMILY_DE, lambda: statusline_warnings(root)),
+        # viewer generator (T-868) — node · checkout · cli.mjs · packages/gui inputs;
+        # FAMILY_PROJECT: a missing local dependency is this machine's setup, not a
+        # discipline↔execution mismatch, so it never moves the verdict tail.
+        ("viewer generator", FAMILY_PROJECT, lambda: viewer_doctor_warnings()),
         # prdt script mirror↔repo drift (T-507 follow-up) — independent of whether a
         # discipline mirror exists at all.
         ("prdt script mirror drift", FAMILY_DE, lambda: prdt_script_drift_warnings()),
