@@ -397,3 +397,136 @@ describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the vie
     expect(countOf(s.countFile)).toBe(base + 1)
   })
 })
+
+/**
+ * T-842 — a repository can commit symlinks under `.prdt/scratch/`. The regen
+ * worker (hook path and CLI path alike) and the viewer / jump-page writers must
+ * never write THROUGH one: every victim outside the project keeps its bytes and
+ * mtime, the regeneration is skipped, and the calling command still succeeds.
+ * QA repro (2026-09-30): viewer.html -> v1, .regen-dirty -> v2, .regen-failed
+ * -> v3 (targets older than the 60 s backoff), then a doc-writing command —
+ * v2 became `1`, v3 a Unix timestamp.
+ */
+type Snap = Record<string, { bytes: string; mtimeMs: number }>
+
+/** A scratch "home" holding victim files, all stamped an hour old. */
+function victimHome(dir: string) {
+  const home = path.join(dir, 'home')
+  fs.mkdirSync(home, { recursive: true })
+  const old = Date.now() / 1000 - 3600
+  const mk = (rel: string, body = `victim ${rel}\n`) => {
+    const p = path.join(home, rel)
+    fs.mkdirSync(path.dirname(p), { recursive: true })
+    fs.writeFileSync(p, body)
+    fs.utimesSync(p, old, old)
+    return p
+  }
+  const snapshot = (): Snap => {
+    const out: Snap = {}
+    const walk = (d: string) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name)
+        if (e.isDirectory()) walk(p)
+        else { const st = fs.lstatSync(p); out[path.relative(home, p)] = { bytes: fs.readFileSync(p, 'utf8'), mtimeMs: st.mtimeMs } }
+      }
+    }
+    walk(home)
+    return out
+  }
+  return { home, mk, snapshot }
+}
+
+type Layout = 'files' | 'viewer-dir' | 'scratch-dir' | 'at-dir'
+
+/** Plant one attack layout under `root`'s `.prdt/scratch/`. */
+function plant(root: string, v: ReturnType<typeof victimHome>, layout: Layout) {
+  const scratch = path.join(root, '.prdt', 'scratch')
+  const vdir = path.join(scratch, 'viewer')
+  if (layout === 'files') {
+    fs.mkdirSync(vdir, { recursive: true })
+    fs.rmSync(path.join(vdir, 'viewer.html'), { force: true })
+    fs.symlinkSync(v.mk('victim1'), path.join(vdir, 'viewer.html'))
+    fs.symlinkSync(v.mk('victim2'), path.join(vdir, '.regen-dirty'))
+    fs.symlinkSync(v.mk('victim3'), path.join(vdir, '.regen-failed'))
+    fs.symlinkSync(v.mk('victim4'), path.join(vdir, '.regen-lock'))
+  } else if (layout === 'viewer-dir') {
+    fs.rmSync(vdir, { recursive: true, force: true })
+    fs.mkdirSync(scratch, { recursive: true })
+    v.mk('vdir/viewer.html', 'victim viewer\n')
+    v.mk('vdir/.regen-dirty')
+    v.mk('vdir/.regen-failed')
+    v.mk('vdir/at/T-001.html')
+    fs.symlinkSync(path.join(v.home, 'vdir'), vdir)
+  } else if (layout === 'scratch-dir') {
+    fs.rmSync(scratch, { recursive: true, force: true })
+    v.mk('sdir/viewer/viewer.html', 'victim viewer\n')
+    v.mk('sdir/viewer/.regen-failed')
+    fs.symlinkSync(path.join(v.home, 'sdir'), scratch)
+  } else {
+    fs.mkdirSync(vdir, { recursive: true })
+    if (!fs.existsSync(path.join(vdir, 'viewer.html'))) fs.writeFileSync(path.join(vdir, 'viewer.html'), 'stale\n')
+    fs.rmSync(path.join(vdir, 'at'), { recursive: true, force: true })
+    v.mk('atdir/T-001.html')
+    v.mk('atdir/docs/wiki/fact--x.md.html')
+    fs.symlinkSync(path.join(v.home, 'atdir'), path.join(vdir, 'at'))
+  }
+}
+
+const LAYOUTS: Layout[] = ['files', 'viewer-dir', 'scratch-dir', 'at-dir']
+
+describe.skipIf(!RUN)('T-842 — regen state files and scratch writers never follow a committed symlink', () => {
+  for (const layout of LAYOUTS) {
+    test(`CLI path (tickets new, wiki reindex): every victim unchanged — ${layout}`, async () => {
+      const s = cliSandbox()
+      const v = victimHome(s.dir)
+      s.env.HOME = v.home
+      plant(s.root, v, layout)
+      const before = v.snapshot()
+      const env = {}
+      const out = s.run(['tickets', 'new', '--type', 'impl', '--slug', 'planted'], env)
+      expect(out).toMatch(/\[T-\d+\]/)
+      fs.writeFileSync(path.join(s.root, 'docs', 'wiki', 'fact--z.md'), '---\ntitle: z\ntype: fact\nstatus: live\n---\nbody\n')
+      s.run(['wiki', 'reindex'], env)
+      const count = await settledCount(s.countFile, 800)
+      expect(v.snapshot()).toEqual(before)
+      // Only the at/-dir layout leaves the viewer directory itself intact, so
+      // only there may the worker still regenerate viewer.html.
+      if (layout !== 'at-dir') expect(count).toBe(0)
+      expect(readLog(s.openLog)).toBe('')
+    })
+  }
+
+  for (const layout of LAYOUTS) {
+    test(`hook path (Write/Edit of docs/**/*.md): every victim unchanged — ${layout}`, async () => {
+      const s = sandbox()
+      const root = project(s.dir)
+      const v = victimHome(s.dir)
+      plant(root, v, layout)
+      const before = v.snapshot()
+      const env = { ...s.env, HOME: v.home }
+      for (const [tool, rel] of [['Write', 'docs/tickets/v1.0/T-001.md'], ['Edit', 'docs/wiki/fact--x.md']]) {
+        const r = execFileSync('bash', [HOOK], { input: writeEvent(tool, path.join(root, rel), 'developer'), env, encoding: 'utf8' })
+        expect(r).toBe('{}')
+      }
+      const count = await settledCount(s.countFile, 800)
+      expect(v.snapshot()).toEqual(before)
+      if (layout !== 'at-dir') expect(count).toBe(0)
+      expect(readLog(s.openLog)).toBe('')
+    })
+  }
+
+  for (const layout of LAYOUTS) {
+    test(`real \`prdt viewer\` (generator + at/ jump page) writes nothing outside the project — ${layout}`, () => {
+      const s = cliSandbox()
+      const v = victimHome(s.dir)
+      s.env.HOME = v.home
+      plant(s.root, v, layout)
+      const before = v.snapshot()
+      const env = {}
+      const id = newTicket(s, 'jump')
+      const out = s.run(['viewer', '--no-open', id, path.join('docs', 'wiki', 'index.md')], env)
+      expect(out).toContain('file://')
+      expect(v.snapshot()).toEqual(before)
+    })
+  }
+})
