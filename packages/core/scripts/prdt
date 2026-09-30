@@ -4779,7 +4779,18 @@ def reset_terminal_input_modes():
 
     Mouse tracking: 1000 (X10) / 1002 (button-event) / 1003 (any-motion) /
     1006 (SGR encoding) / 1015 (urxvt encoding). Focus reporting: 1004.
-    Only on a real tty — writing these to a pipe/file would corrupt it."""
+    Only on a real tty — writing these to a pipe/file would corrupt it.
+
+    T-843: turning a mode off only stops FUTURE events. Event bytes the
+    terminal already sent — while the previous Claude Code was exiting and
+    while this process started — sit in the tty input queue and the new
+    Claude Code reads them as typed input (pty experiment 2026-09-30: with
+    the reset alone, focus/mouse bytes injected before and 5 ms after it all
+    reached the exec'd program; with the flush below, none did). So after
+    the disable, discard pending input, wait briefly for events still in
+    flight from before the terminal processed the disable, and discard
+    again. Cost: ~80 ms per launch; anything typed ahead during prdt's own
+    startup is dropped with it."""
     if not sys.stdout.isatty():
         return
     reset = "".join(f"\x1b[?{mode}l" for mode in (1000, 1002, 1003, 1006, 1015, 1004))
@@ -4787,6 +4798,31 @@ def reset_terminal_input_modes():
         sys.stdout.write(reset)
         sys.stdout.flush()
     except OSError:
+        pass
+    discard_pending_tty_input()
+
+
+def discard_pending_tty_input(settle=0.08):
+    """T-843: drop bytes queued in stdin's tty input (see
+    `reset_terminal_input_modes`). No-op unless stdin is a real tty."""
+    try:
+        fd = sys.stdin.fileno()
+        if not os.isatty(fd):
+            return
+        # A background process group may not touch the tty's queues: tcflush
+        # would stop us with SIGTTOU (`prdt &` under job control) before we
+        # reach exec. Skip flush + drain unless we are the foreground group;
+        # any error asking counts as "not foreground".
+        try:
+            if os.tcgetpgrp(fd) != os.getpgrp():
+                return
+        except OSError:
+            return
+        import termios, time
+        termios.tcflush(fd, termios.TCIFLUSH)
+        time.sleep(settle)
+        termios.tcflush(fd, termios.TCIFLUSH)
+    except (OSError, ValueError, AttributeError):
         pass
 
 
