@@ -165,13 +165,11 @@ describe.skipIf(!PYTHON3)('prdt tickets new', () => {
     const m = out.match(/\(file:\/\/(.+)\)$/)!
     const text = fs.readFileSync(m[1], 'utf-8')
     const optionsSection = text.split(/^## options$/m)[1].split(/^## /m)[0]
-    // rows the annex names, columns are the options (placeholders here — the
-    // PO renames them to the real fork names)
-    for (const row of ['pros', 'cons', 'trade-off', 'recommend']) {
-      expect(optionsSection).toMatch(new RegExp(`\\| ${row} \\|`))
-    }
-    expect(optionsSection).toMatch(/Option A/)
-    expect(optionsSection).toMatch(/Option B/)
+    // T-825: rows are the options, columns are the criteria
+    const lines = optionsSection.trim().split('\n')
+    expect(lines[0]).toBe('| 선택지 | pros | cons | trade-off | recommend |')
+    expect(lines[1]).toBe('|---|---|---|---|---|')
+    expect(lines.slice(2)).toEqual(['| | | | | |', '| | | | | |'])
     // the scaffold already satisfies fmt --check's decision gate (a
     // `recommend` cell present) — the PO fills content, never the shape
     const id = out.match(/^\[(T-\d+)\]/)![1]
@@ -282,6 +280,21 @@ describe.skipIf(!PYTHON3)('prdt tickets fmt', () => {
     })
     const r3 = runPrdtAllowFail(['tickets', 'fmt', 'T-708', '--check'])
     expect(r3.out).not.toMatch(/recommend/)
+  })
+
+  test('T-825: fmt --check accepts the new rows=options orientation and the legacy one', () => {
+    const res = runInit()
+    writeTicket(res.version, 'T-790', {
+      type: 'decision', assignee: 'user',
+      body: '## problem\nfork\n\n## options\n| 선택지 | pros | cons | trade-off | recommend |\n|---|---|---|---|---|\n| A | a | b | c | yes |\n| B | | | | |\n\n## acceptance\nuser answers\n',
+    })
+    expect(runPrdtAllowFail(['tickets', 'fmt', 'T-790', '--check']).out).not.toMatch(/options|recommend/)
+    // a closed ticket keeps the old table (row label `recommend`) and passes unchanged
+    writeTicket(res.version, 'T-791', {
+      type: 'decision', assignee: 'user', status: 'done',
+      body: '## problem\nfork\n\n## options\n| | A | B |\n|---|---|---|\n| pros | | |\n| recommend | x | |\n\n## acceptance\nuser answers\n\n## outcome\ndone\n',
+    })
+    expect(runPrdtAllowFail(['tickets', 'fmt', 'T-791', '--check']).out).not.toMatch(/options|recommend/)
   })
 
   // ── T-715 ③: a missing/malformed `created` used to coerce to `""`, which
