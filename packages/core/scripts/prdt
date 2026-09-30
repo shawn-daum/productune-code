@@ -6,7 +6,7 @@ Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + o
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
-import argparse, contextlib, difflib, fcntl, hashlib, json, math, os, re, shlex, shutil, sqlite3, statistics, subprocess, sys, unicodedata
+import argparse, contextlib, difflib, errno, fcntl, hashlib, json, math, os, re, shlex, shutil, sqlite3, stat, statistics, subprocess, sys, unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -4436,37 +4436,62 @@ def _viewer_generator():
     return None
 
 
-def _open_scratch_dir(root, parts):
-    """T-842: a descriptor of `<root>/<parts…>` (created as needed), opened one
-    component at a time with O_NOFOLLOW — or None when any component is a
-    symlink or not a directory. `.prdt/scratch/**` lives in a repository whose
-    author may have committed a symlink there (`viewer -> ~/somewhere`); a
-    writer that resolved the path string would create, rename or truncate
-    files at the link's target, outside this project. mkdir with dir_fd never
-    follows a link at its final component (EEXIST), and the O_NOFOLLOW open
-    right after refuses it."""
+def _scratch_walk(root, parts):
+    """T-842: `(fd, None)` — a descriptor of `<root>/<parts…>` (created as
+    needed), opened one component at a time with O_NOFOLLOW — or `(None,
+    (rel, kind))` naming the first component that stopped the walk, `kind` one
+    of "symlink", "file" (a regular file), "notdir", "noopen" (no permission to open it), "nocreate" (no
+    permission to create it in its parent), "other". `.prdt/scratch/**` lives in a
+    repository whose author may have committed a symlink there (`viewer ->
+    ~/somewhere`); a writer that resolved the path string would create, rename
+    or truncate files at the link's target, outside this project. mkdir with
+    dir_fd never follows a link at its final component (EEXIST), and the
+    O_NOFOLLOW open right after refuses it."""
     try:
         fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     except OSError:
-        return None
-    try:
-        for part in parts:
+        return None, (".", "other")
+    rel = Path()
+    for part in parts:
+        rel = rel / part
+        try:
             try:
                 os.mkdir(part, 0o755, dir_fd=fd)
             except FileExistsError:
                 pass
             nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        except OSError as e:
+            # T-850: classify with lstat relative to the same parent descriptor,
+            # so the message names the real cause, never a link that is not there.
+            try:
+                st = os.stat(part, dir_fd=fd, follow_symlinks=False)
+            except OSError:
+                st = None
             os.close(fd)
-            fd = nfd
-    except OSError:
+            if st is not None and stat.S_ISLNK(st.st_mode):
+                kind = "symlink"
+            elif st is not None and stat.S_ISREG(st.st_mode):
+                kind = "file"
+            elif st is not None and not stat.S_ISDIR(st.st_mode):
+                kind = "notdir"
+            elif e.errno in (errno.EACCES, errno.EPERM):
+                kind = "noopen" if st is not None else "nocreate"
+            else:
+                kind = "other"
+            return None, (rel.as_posix(), kind)
         os.close(fd)
-        return None
-    return fd
+        fd = nfd
+    return fd, None
+
+
+def _open_scratch_dir(root, parts):
+    """A descriptor of `<root>/<parts…>` (see `_scratch_walk`), or None."""
+    return _scratch_walk(root, parts)[0]
 
 
 def viewer_scratch_safe(root):
     """True when `<root>/.prdt/scratch/viewer/` is a real directory chain
-    (created if missing) — see `_open_scratch_dir`."""
+    (created if missing) — see `_scratch_walk`."""
     fd = _open_scratch_dir(root, VIEWER_REL.parts)
     if fd is None:
         return False
@@ -4474,15 +4499,46 @@ def viewer_scratch_safe(root):
     return True
 
 
-def viewer_symlink_component(root):
-    """The first of `.prdt`, `.prdt/scratch`, `.prdt/scratch/viewer` (relative
-    to `root`) that is a symlink, or None."""
-    p = Path(root)
-    for part in VIEWER_REL.parts:
-        p = p / part
-        if p.is_symlink():
-            return p.relative_to(root).as_posix()
+def viewer_scratch_problem(root):
+    """T-850: why `prdt viewer` cannot write its folder — `(rel, kind)` as in
+    `_scratch_walk`, or "nowrite" for an existing viewer folder that cannot be
+    written — or None when the folder chain is usable."""
+    fd, problem = _scratch_walk(root, VIEWER_REL.parts)
+    if fd is None:
+        return problem
+    try:
+        if not os.access(".", os.W_OK | os.X_OK, dir_fd=fd):
+            return VIEWER_REL.as_posix(), "nowrite"
+    except (OSError, NotImplementedError):
+        pass
+    finally:
+        os.close(fd)
     return None
+
+
+def viewer_scratch_message(rel, kind):
+    """The `prdt viewer` refusal for `viewer_scratch_problem`'s answer."""
+    if kind == "symlink" and rel == ".prdt":
+        # T-850 (review C1): `.prdt` holds po-state, config, index.db and
+        # meta.git — never tell the user to delete it.
+        return ("prdt viewer: .prdt 가 심볼릭 링크라서 뷰어를 만들지 않았어요 — prdt 는 이 링크를 따라가지 않아요. "
+                ".prdt 를 링크로 둔 구성에서는 뷰어를 자동으로 만들지 않아요.")
+    if kind == "symlink":
+        return (f"prdt viewer: {rel} 가 심볼릭 링크라서 뷰어를 만들지 않았어요 — 링크가 가리키는 폴더는 두고, "
+                f"{rel} 링크 자체만 지운 뒤 다시 실행하세요.")
+    if kind == "file":
+        return f"prdt viewer: {rel} 가 폴더가 아니라 일반 파일이라서 뷰어를 만들지 않았어요."
+    if kind == "notdir":
+        return f"prdt viewer: {rel} 가 폴더가 아니라서 뷰어를 만들지 않았어요."
+    if kind == "nowrite":
+        return f"prdt viewer: {rel} 폴더에 쓰기 권한이 없어서 뷰어를 만들지 않았어요."
+    if kind == "noopen":
+        return f"prdt viewer: {rel} 폴더를 열 권한이 없어서 뷰어를 만들지 않았어요."
+    if kind == "nocreate":
+        parent = Path(rel).parent.as_posix()
+        return (f"prdt viewer: {parent} 폴더에 쓰기 권한이 없어서 {rel} 폴더를 만들지 못했어요 — "
+                f"뷰어를 만들지 않았어요.")
+    return f"prdt viewer: {rel} 를 열지 못해서 뷰어를 만들지 않았어요."
 
 
 def viewer_regenerate(root):
@@ -4501,7 +4557,20 @@ def viewer_regenerate(root):
                            capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    return out if r.returncode == 0 and out.is_file() else None
+    if r.returncode != 0 or not out.is_file():
+        return None
+    # T-850 (review C3): a success clears the regen worker's failure stamp, so
+    # the next doc write regenerates at once instead of waiting out the backoff.
+    # unlink never follows a link; the directory chain is re-walked with O_NOFOLLOW.
+    fd = _open_scratch_dir(root, VIEWER_REL.parts)
+    if fd is not None:
+        try:
+            os.unlink(".regen-failed", dir_fd=fd)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+    return out
 
 
 def _auto_open_hook():
@@ -4677,9 +4746,9 @@ def cmd_viewer(args):
     still wins too)."""
     root = require_root()
     if not args.targets:
-        if not viewer_scratch_safe(root):
-            link = viewer_symlink_component(root) or VIEWER_REL.as_posix()
-            sys.exit(f"prdt viewer: {link} 가 심볼릭 링크라서 뷰어를 만들지 않았어요 — 링크가 가리키는 폴더는 두고, {link} 링크 자체만 지운 뒤 다시 실행하세요.")
+        problem = viewer_scratch_problem(root)
+        if problem:
+            sys.exit(viewer_scratch_message(*problem))
         viewer = viewer_regenerate(root)
         if viewer is None:
             sys.exit("prdt viewer: 뷰어를 만들지 못했어요 — node 와 prdt 체크아웃의 packages/gui 의존성이 필요해요 (`prdt doctor`).")
@@ -11382,14 +11451,20 @@ def cmd_track_land(args):
             _track_die(f"fast-forwarding {base} failed: " + (r.stderr.strip() or r.stdout.strip())
                        + f" — {base} is unchanged")
         print(f"{base} fast-forwarded {old[:12]} → {new[:12]}")
-        _track_record_remove(code, tid)
     finally:
         try:
             lock.unlink()
         except OSError:
             pass
     r = _tgit(["worktree", "remove", str(wt)], code)
-    print(f"worktree {wt} removed" if r.returncode == 0 else f"worktree remove failed: {r.stderr.strip()}")
+    if r.returncode == 0:
+        print(f"worktree {wt} removed")
+        # T-850: the record goes only once the worktree is gone — a worktree
+        # left behind keeps its branch, and a later bare land must still read
+        # "cut from main" instead of falling through to dev.
+        _track_record_remove(code, tid)
+    else:
+        print(f"worktree remove failed: {r.stderr.strip()} — the open record is kept")
     # `git branch -d` checks mergedness against the CODE checkout's own HEAD,
     # not the land target — with `--base main` and `dev` checked out in `code`
     # (the common case) that refuses forever and leaves the branch behind

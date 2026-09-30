@@ -238,6 +238,7 @@ function cliSandbox(opts: { fail?: boolean; sleep?: string; viewer?: boolean } =
     '  [ -n "$PRDT_TEST_SLEEP" ] && sleep "$PRDT_TEST_SLEEP"',
     '  [ -n "$PRDT_TEST_FAIL" ] && exit 1',
     '  echo "<!doctype html>" > "$(pwd)/.prdt/scratch/viewer/viewer.html"',
+    '  find "$(pwd)/docs/tickets" -name "T-*.md" | sed "s#.*/##" >> "$(pwd)/.prdt/scratch/viewer/viewer.html"',
     '  exit 0',
     'fi',
     'exit 2',
@@ -396,6 +397,38 @@ describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the vie
     expect(await waitFor(() => !fs.existsSync(path.join(s.vdir, '.regen-failed')))).toBe(true)
     expect(countOf(s.countFile)).toBe(base + 1)
   })
+
+  // T-850 (final review C3): a failing regen, then a working generator — the
+  // request skipped inside the backoff window is retried by the next
+  // doc-writing command once the stamp is older than the window.
+  test('reviewer sequence: failing generator, then a working one — the next doc write after the window shows the second ticket', async () => {
+    const s = cliSandbox({ fail: true })
+    newTicket(s, 'first')
+    expect(await waitFor(() => fs.existsSync(path.join(s.vdir, '.regen-failed')))).toBe(true)
+    await settledCount(s.countFile)
+    delete s.env.PRDT_TEST_FAIL
+    const second = newTicket(s, 'second')
+    await settledCount(s.countFile)
+    expect(fs.readFileSync(path.join(s.vdir, 'viewer.html'), 'utf8')).not.toContain(second)
+    const old = Date.now() / 1000 - 120
+    fs.utimesSync(path.join(s.vdir, '.regen-failed'), old, old)
+    newTicket(s, 'third')
+    expect(await waitFor(() => fs.readFileSync(path.join(s.vdir, 'viewer.html'), 'utf8').includes(second))).toBe(true)
+    expect(fs.existsSync(path.join(s.vdir, '.regen-failed'))).toBe(false)
+  })
+
+  test('a successful manual prdt viewer removes .regen-failed, so the next doc write regenerates at once', async () => {
+    const s = cliSandbox({ fail: true })
+    newTicket(s, 'first')
+    expect(await waitFor(() => fs.existsSync(path.join(s.vdir, '.regen-failed')))).toBe(true)
+    await settledCount(s.countFile)
+    delete s.env.PRDT_TEST_FAIL
+    const out = s.run(['viewer', '--no-open'], { PRDT_BIN: '' })
+    expect(out).toContain('viewer.html')
+    expect(fs.existsSync(path.join(s.vdir, '.regen-failed'))).toBe(false)
+    const second = newTicket(s, 'second')
+    expect(await waitFor(() => fs.readFileSync(path.join(s.vdir, 'viewer.html'), 'utf8').includes(second))).toBe(true)
+  }, 30000)
 })
 
 /**
@@ -590,12 +623,57 @@ describe.skipIf(!RUN)('T-842 — regen state files and scratch writers never fol
       let err = ''
       try { s.run(['viewer', '--no-open']) } catch (e: any) { err = String(e.stderr) }
       expect(err).toContain(`prdt viewer: ${linked} 가 심볼릭 링크라서`)
-      expect(err).toContain('링크 자체만 지운')
+      if (which === 'prdt') {
+        // T-850 (final review C1): `.prdt` holds the project's state — never tell the user to delete it
+        expect(err).toContain('따라가지 않아요')
+        expect(err).toContain('자동')
+        expect(err).not.toMatch(/지우|지운|삭제/)
+      } else {
+        expect(err).toContain(`${linked} 링크 자체만 지운`)
+      }
       // the other two components are not named as the link, and no trailing-slash command is offered
       for (const other of ['.prdt/scratch/viewer', '.prdt/scratch', '.prdt']) {
         if (other !== linked) expect(err).not.toContain(`prdt viewer: ${other} `)
       }
       expect(err).not.toMatch(/rm |\/ /)
+    })
+  }
+
+  // T-850 (final review C2): a refusal not caused by a symlink names the path
+  // that failed and why, never a link that does not exist.
+  const viewerErr = (s: ReturnType<typeof cliSandbox>) => {
+    try { s.run(['viewer', '--no-open']); return '' } catch (e: any) { return String(e.stderr) }
+  }
+  test('a regular file at .prdt/scratch: the message names it and says it is not a folder', () => {
+    const s = cliSandbox()
+    fs.rmSync(path.join(s.root, '.prdt', 'scratch'), { recursive: true, force: true })
+    fs.writeFileSync(path.join(s.root, '.prdt', 'scratch'), 'x\n')
+    const err = viewerErr(s)
+    expect(err).toContain('prdt viewer: .prdt/scratch 가')
+    expect(err).toContain('폴더가 아니')
+    expect(err).not.toContain('심볼릭')
+    expect(err).not.toContain('.prdt/scratch/viewer')
+    expect(fs.readFileSync(path.join(s.root, '.prdt', 'scratch'), 'utf8')).toBe('x\n')
+  })
+
+  for (const [label, rel, missing] of [
+    ['an unwritable .prdt/scratch (viewer folder missing)', '.prdt/scratch', true],
+    ['an unwritable .prdt/scratch/viewer', '.prdt/scratch/viewer', false],
+  ] as Array<[string, string, boolean]>) {
+    test(`${label}: the message names that folder and the permission, not a symlink`, () => {
+      const s = cliSandbox({ viewer: !missing })
+      if (missing) fs.rmSync(s.vdir, { recursive: true, force: true })
+      const dir = path.join(s.root, rel)
+      fs.mkdirSync(dir, { recursive: true })
+      fs.chmodSync(dir, 0o555)
+      try {
+        const err = viewerErr(s)
+        expect(err).toContain(`prdt viewer: ${rel} `)
+        expect(err).toContain('쓰기 권한이 없어')
+        expect(err).not.toContain('심볼릭')
+      } finally {
+        fs.chmodSync(dir, 0o755)
+      }
     })
   }
 })
