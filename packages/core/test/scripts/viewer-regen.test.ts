@@ -529,4 +529,73 @@ describe.skipIf(!RUN)('T-842 — regen state files and scratch writers never fol
       expect(v.snapshot()).toEqual(before)
     })
   }
+  // QA round 2: a hard link is a regular file, so S_ISREG alone let O_TRUNC
+  // write through it into the linked inode.
+  test('a hard link at .regen-dirty, .regen-failed or .regen-lock is never written through', async () => {
+    const s = cliSandbox()
+    const v = victimHome(s.dir)
+    for (const name of ['.regen-dirty', '.regen-failed', '.regen-lock']) {
+      fs.linkSync(v.mk(`hl-${name}`), path.join(s.vdir, name))
+    }
+    const before = v.snapshot()
+    s.run(['tickets', 'new', '--type', 'impl', '--slug', 'hardlink'])
+    const count = await settledCount(s.countFile, 800)
+    expect(v.snapshot()).toEqual(before)
+    expect(count).toBe(0)
+  })
+
+  // T-715's exact-mode contract: the jump page mode equals atomic_write_text's
+  // under any umask (os.open()'s mode is masked; the fchmod re-asserts it).
+  for (const umask of ['022', '077']) {
+    test(`jump page mode equals atomic_write_text's under umask ${umask}`, () => {
+      const s = cliSandbox()
+      const probe = [
+        'import importlib.machinery, importlib.util, os, sys, tempfile',
+        'from pathlib import Path',
+        'spec = importlib.util.spec_from_loader("prdt_mod", importlib.machinery.SourceFileLoader("prdt_mod", sys.argv[1]))',
+        'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+        `os.umask(0o${umask})`,
+        'root = Path(sys.argv[2]); viewer = root / ".prdt/scratch/viewer/viewer.html"',
+        'page = m.viewer_jump(viewer, "T-001")',
+        'base = m.atomic_write_text(Path(tempfile.mkdtemp()) / "base.html", "x")',
+        'print(oct(os.stat(page).st_mode & 0o777), oct(os.stat(base).st_mode & 0o777))',
+      ].join('\n')
+      const out = execFileSync('python3', ['-c', probe, PRDT_CLI, s.root], { env: s.env, encoding: 'utf8' }).trim()
+      const [jump, base] = out.split(' ')
+      expect(base).toBe('0o644')
+      expect(jump).toBe(base)
+    })
+  }
+
+  // QA round 2: the message names the actual linked component.
+  const MESSAGE_LAYOUTS: Array<[string, string]> = [['viewer', '.prdt/scratch/viewer'], ['scratch', '.prdt/scratch'], ['prdt', '.prdt']]
+  for (const [which, linked] of MESSAGE_LAYOUTS) {
+    test(`prdt viewer names the linked path ${linked} and says to remove the link itself`, () => {
+      const s = cliSandbox()
+      const target = path.join(s.dir, 'elsewhere')
+      fs.mkdirSync(path.join(target, 'scratch', 'viewer'), { recursive: true })
+      fs.mkdirSync(path.join(target, 'viewer'), { recursive: true })
+      const dot = path.join(s.root, '.prdt')
+      if (which === 'viewer') {
+        fs.rmSync(s.vdir, { recursive: true, force: true })
+        fs.symlinkSync(target, s.vdir)
+      } else if (which === 'scratch') {
+        fs.rmSync(path.join(dot, 'scratch'), { recursive: true, force: true })
+        fs.symlinkSync(target, path.join(dot, 'scratch'))
+      } else {
+        const moved = path.join(s.dir, 'prdt-moved')
+        fs.renameSync(dot, moved)
+        fs.symlinkSync(moved, dot)
+      }
+      let err = ''
+      try { s.run(['viewer', '--no-open']) } catch (e: any) { err = String(e.stderr) }
+      expect(err).toContain(`prdt viewer: ${linked} 가 심볼릭 링크라서`)
+      expect(err).toContain('링크 자체만 지운')
+      // the other two components are not named as the link, and no trailing-slash command is offered
+      for (const other of ['.prdt/scratch/viewer', '.prdt/scratch', '.prdt']) {
+        if (other !== linked) expect(err).not.toContain(`prdt viewer: ${other} `)
+      }
+      expect(err).not.toMatch(/rm |\/ /)
+    })
+  }
 })

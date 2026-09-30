@@ -4474,6 +4474,17 @@ def viewer_scratch_safe(root):
     return True
 
 
+def viewer_symlink_component(root):
+    """The first of `.prdt`, `.prdt/scratch`, `.prdt/scratch/viewer` (relative
+    to `root`) that is a symlink, or None."""
+    p = Path(root)
+    for part in VIEWER_REL.parts:
+        p = p / part
+        if p.is_symlink():
+            return p.relative_to(root).as_posix()
+    return None
+
+
 def viewer_regenerate(root):
     """Regenerate `<root>/.prdt/scratch/viewer/viewer.html`; the page's path,
     or None when there is no generator / node, generation failed, or the
@@ -4614,6 +4625,7 @@ def viewer_jump(viewer_html, key):
                 if attempt:
                     raise
                 os.unlink(tmp, dir_fd=fd)
+        os.fchmod(wfd, 0o644)  # os.open()'s mode is masked by umask — same exact bits as atomic_write_text
         with os.fdopen(wfd, "w", encoding="utf-8") as f:
             f.write(body)
         os.replace(tmp, page.name, src_dir_fd=fd, dst_dir_fd=fd)
@@ -4666,7 +4678,8 @@ def cmd_viewer(args):
     root = require_root()
     if not args.targets:
         if not viewer_scratch_safe(root):
-            sys.exit("prdt viewer: .prdt/scratch/viewer 경로에 심볼릭 링크가 있어서 뷰어를 만들지 않았어요 — 그 링크를 지우고 다시 실행하세요.")
+            link = viewer_symlink_component(root) or VIEWER_REL.as_posix()
+            sys.exit(f"prdt viewer: {link} 가 심볼릭 링크라서 뷰어를 만들지 않았어요 — 링크가 가리키는 폴더는 두고, {link} 링크 자체만 지운 뒤 다시 실행하세요.")
         viewer = viewer_regenerate(root)
         if viewer is None:
             sys.exit("prdt viewer: 뷰어를 만들지 못했어요 — node 와 prdt 체크아웃의 packages/gui 의존성이 필요해요 (`prdt doctor`).")
