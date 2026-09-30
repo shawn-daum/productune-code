@@ -255,7 +255,9 @@ def lst(name):
 
 for name in (DIRTY, LOCK, FAILED):
     st = lst(name)
-    if st is not None and not stat.S_ISREG(st.st_mode):
+    # st_nlink > 1: a hard link planted at a state file is a regular file whose
+    # inode is shared with a file elsewhere — O_TRUNC would write through it.
+    if st is not None and (not stat.S_ISREG(st.st_mode) or st.st_nlink > 1):
         sys.exit(0)
 
 def write_flag(name, text):
