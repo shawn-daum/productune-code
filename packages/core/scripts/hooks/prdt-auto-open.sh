@@ -188,9 +188,27 @@ find_proj() {
 # instead of a second run racing it) happens inside that detached process,
 # never here — a burst of writes regenerates once or a few times, never once
 # per write.
+#
+# T-838 — the SAME worker also serves the `prdt` CLI: a CLI subcommand that
+# changed a docs/**/*.md file calls this script as `--regen <projectRoot>`
+# (see the entry below and `schedule_docs_viewer_regen` in scripts/prdt), so
+# there is one single-flight worker, one lock and one dirty flag per project,
+# whichever of the two paths asked. Failure stamp (T-831 QA finding: a failing
+# regen was retried by every call): the worker touches `.regen-failed` when the
+# generator exits non-zero and removes it on success; while that stamp is
+# younger than $PRDT_VIEWER_REGEN_BACKOFF_SECS (default 60) a worker that wins
+# the lock runs nothing, so a burst of writes against a broken generator costs
+# one attempt per window, not one per write. The check sits AFTER the lock, so
+# a worker spawned before the previous run failed still sees its stamp.
 schedule_viewer_regen() {
-  local fpath="$1" root prdt_cli
+  local fpath="$1" root
   root="$(find_proj "$(dirname -- "$fpath")" 2>/dev/null)"
+  [ -n "$root" ] || return 0
+  schedule_viewer_regen_root "$root"
+}
+
+schedule_viewer_regen_root() {
+  local root="$1" prdt_cli
   [ -n "$root" ] || return 0
   prdt_cli="${PRDT_BIN:-${PRDT_HOME:-$HOME/.prdt}/bin/prdt}"
   [ -x "$prdt_cli" ] || prdt_cli="$(command -v prdt 2>/dev/null)"
@@ -205,18 +223,70 @@ root, cli = sys.argv[1], sys.argv[2]
 # so this outer script — the one the hook waits on — never itself blocks on a
 # regen, however long one takes.
 WORKER = r'''
-import fcntl, os, subprocess, sys
+import fcntl, os, stat, subprocess, sys, time
 root, cli = sys.argv[1], sys.argv[2]
-vdir = os.path.join(root, ".prdt", "scratch", "viewer")
-os.makedirs(vdir, exist_ok=True)
-dirty = os.path.join(vdir, ".regen-dirty")
-lock = os.path.join(vdir, ".regen-lock")
+# T-842: `.prdt/scratch/viewer/` is inside a repository someone else may have
+# committed, symlinks included. Every step below goes through a descriptor of
+# the viewer directory opened component by component with O_NOFOLLOW (a
+# symlinked `.prdt`, `scratch` or `viewer` is refused, never followed, never
+# replaced), and every state file is opened, stat'ed and unlinked relative to
+# it with O_NOFOLLOW / follow_symlinks=False. Any symlink among them → this
+# regen is skipped, silently: the caller never waits on this process anyway.
+NOFOLLOW_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 try:
-    with open(dirty, "w") as f:
-        f.write("1")
+    vfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    for part in (".prdt", "scratch", "viewer"):
+        try:
+            os.mkdir(part, 0o755, dir_fd=vfd)
+        except FileExistsError:
+            pass
+        nfd = os.open(part, NOFOLLOW_DIR, dir_fd=vfd)
+        os.close(vfd)
+        vfd = nfd
 except OSError:
-    pass
-fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+    sys.exit(0)
+DIRTY, LOCK, FAILED = ".regen-dirty", ".regen-lock", ".regen-failed"
+
+def lst(name):
+    try:
+        return os.stat(name, dir_fd=vfd, follow_symlinks=False)
+    except OSError:
+        return None
+
+for name in (DIRTY, LOCK, FAILED):
+    st = lst(name)
+    # st_nlink > 1: a hard link planted at a state file is a regular file whose
+    # inode is shared with a file elsewhere — O_TRUNC would write through it.
+    if st is not None and (not stat.S_ISREG(st.st_mode) or st.st_nlink > 1):
+        sys.exit(0)
+
+def write_flag(name, text):
+    try:
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644, dir_fd=vfd)
+    except OSError:
+        return
+    try:
+        os.write(fd, text.encode())
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+def unlink(name):
+    try:
+        os.unlink(name, dir_fd=vfd)
+    except OSError:
+        pass
+
+try:
+    backoff = float(os.environ.get("PRDT_VIEWER_REGEN_BACKOFF_SECS", "60"))
+except ValueError:
+    backoff = 60.0
+write_flag(DIRTY, "1")
+try:
+    fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o644, dir_fd=vfd)
+except OSError:
+    sys.exit(0)
 try:
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
 except OSError:
@@ -224,14 +294,23 @@ except OSError:
     sys.exit(0)  # a regen is already in flight for this root; the dirty write
                  # above is what makes IT loop again, not a second run of ours
 try:
-    while True:
+    st = lst(FAILED)
+    recent_failure = st is not None and time.time() - st.st_mtime < backoff
+    while not recent_failure:
+        unlink(DIRTY)
         try:
-            os.remove(dirty)
+            rc = subprocess.run([cli, "viewer", "--no-open"], cwd=root,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL).returncode
         except OSError:
-            pass
-        subprocess.run([cli, "viewer", "--no-open"], cwd=root,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if not os.path.exists(dirty):
+            rc = 127
+        if rc != 0:
+            # Stamp and stop: the dirty flag stays for the next attempt after
+            # the backoff window, never a tight retry loop here.
+            write_flag(FAILED, str(int(time.time())))
+            break
+        unlink(FAILED)
+        if lst(DIRTY) is None:
             break
 finally:
     try:
@@ -239,6 +318,7 @@ finally:
     except OSError:
         pass
     os.close(fd)
+    os.close(vfd)
 '''
 
 subprocess.Popen([sys.executable, "-c", WORKER, root, cli],
@@ -248,6 +328,16 @@ PY
 }
 
 set +e
+
+# T-838: `--regen <projectRoot>` — the `prdt` CLI's own entry after one of
+# its subcommands changed a docs/**/*.md file. Schedules the same detached,
+# coalesced regen as a Write/Edit below and nothing else: no stdin, no event,
+# never an open. The root is re-resolved with find_proj (outermost marker), so
+# the lock is the one a Write/Edit of that project takes.
+if [ "${1:-}" = "--regen" ]; then
+  [ -n "${2:-}" ] && [ -d "$2" ] && schedule_viewer_regen_root "$(find_proj "$2" 2>/dev/null)"
+  exit 0
+fi
 
 OPEN_MODE=""
 if [ "${1:-}" = "--open" ]; then

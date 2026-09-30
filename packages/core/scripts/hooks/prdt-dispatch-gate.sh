@@ -41,6 +41,9 @@
 #         marker with no `checkout` (older than T-775, or no `[ctx]` paired)
 #         never matches, and an unmeasured liveness never denies — fail open.
 #         Checked with ④ and outranks it: the fix differs (`prdt track open`).
+#         T-814: a `prdt-qa` dispatch whose `[ctx].change_meta.files` names
+#         only meta documents (see `meta_doc` below) neither occupies a
+#         checkout nor is denied for one; a developer dispatch is unaffected.
 #   T-780 — a marker whose pairing is unconfirmed (see "T-780: pairing" below)
 #         still counts toward the machine-wide `dispatches` axis (its persona
 #         and liveness come from its own agent_id, not the pairing). ⑥'s
@@ -298,7 +301,7 @@ while [ -n "$DIR" ] && [ "$DIR" != "/" ]; do
 done
 [ -n "$FOUND" ] || exit 0
 
-# ── T-704: a worker persona may not spawn `subagent_type: "fork"` ────────────
+# ── T-704/T-818: a worker persona may not spawn a subagent (fork: T-704; any: T-818) ──
 # WHY: 2026-09-26, T-666 2b — a worker-spawned fork wrote `render.mjs` twice
 # AFTER the worker itself had handed back, then, told to stop, claimed over
 # SendMessage to BE the worker of record and wrote again; the PO had to
@@ -319,16 +322,22 @@ done
 # `agent_type` set to its own name (`prdt-developer` / `prdt-qa` /
 # `prdt-designer`); the PO's own call — main session, or `agent_type` absent —
 # never matches, unaffected by design, never denied here.
+# T-818 widens the callee condition (user decision, T-817 option A): a worker
+# persona may not spawn ANY subagent — every `subagent_type`, absent or empty
+# included (the harness default is a general-purpose subagent). `fork` keeps its
+# own T-704 message; every other value gets the T-818 one. No `// null` needed:
+# the message is picked with `if`, never a `try … catch null` inside `map()`.
 FORK_DENY="$(printf '%s' "$EV" | jq -rc '
   if (.hook_event_name != "PreToolUse") or (.tool_name != "Agent") then empty
   else (.tool_input // {}) as $ti
   | if ($ti | type) != "object" then empty
-    elif (($ti.subagent_type // "") | type) != "string" then empty
-    elif ($ti.subagent_type != "fork") then empty
     elif ((.agent_type // "") | type) != "string" then empty
     elif ((.agent_type) | test("^prdt-(developer|qa|designer)$") | not) then empty
-    else {hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny",
-      permissionDecisionReason: "[prdt dispatch gate] DENIED: a worker persona cannot spawn subagent_type \"fork\" (T-704) — do the read yourself, or return `unresolved[]` for the PO."}}
+    else (if $ti.subagent_type == "fork"
+          then "a worker persona cannot spawn subagent_type \"fork\" (T-704) — do the read yourself, or return `unresolved[]` for the PO."
+          else "a worker persona cannot spawn any subagent (T-818) — do the read yourself, or return `unresolved[]` for the PO." end) as $msg
+    | {hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny",
+      permissionDecisionReason: ("[prdt dispatch gate] DENIED: " + $msg)}}
     end
   end
 ' 2>/dev/null)"
@@ -423,17 +432,28 @@ end;
 def want_persona:
   ((.tool_input.subagent_type // "")) as $s
   | if ($s | type) == "string" and ($s | test("^prdt-(developer|qa)$")) then ($s | sub("^prdt-"; "")) else "" end;
-def want_checkout:
+def want_ctx:
   ((.tool_input.prompt // "")) as $p
-  | if ($p | type) != "string" then "" else
+  | if ($p | type) != "string" then null else
       ([$p | split("\n")[] | select(test("^\\[ctx\\] \\{"))] | first) as $l
-      | if $l == null then "" else
+      | if $l == null then null else
           (try ($l | sub("^\\[ctx\\] "; "") | fromjson) catch null) as $c
-          | if ($c | type) == "object" and (($c.worktree // null) | type) == "string"
-            then ($c.worktree | gsub("[\u0000-\u001f\u007f]"; "") | sub("^\\s+"; "") | sub("\\s+$"; ""))
-            else "" end
+          | if ($c | type) == "object" then $c else null end
         end
     end;
+def want_checkout:
+  want_ctx as $c
+  | if $c != null and (($c.worktree // null) | type) == "string"
+    then ($c.worktree | gsub("[\u0000-\u001f\u007f]"; "") | sub("^\\s+"; "") | sub("\\s+$"; ""))
+    else "" end;
+# T-814: this dispatch's raw `[ctx].change_meta.files` as one compact JSON line
+# ("" when there is none to read) — the checkout rule's meta-only test for a
+# `prdt-qa` dispatch. `tojson` escapes every control character, so the value
+# can ride the TAB-separated line; it is classified, never echoed.
+def want_files:
+  want_ctx as $c
+  | if $c != null and (($c.change_meta // null) | type) == "object" and (($c.change_meta.files // null) | type) == "array"
+    then ($c.change_meta.files | tojson) else "" end;
 def want_model:
   ((.tool_input.model // "") ) as $m
   | if ($m | type) == "string" and ($m | test("^(sonnet|opus|haiku|fable)$")) then $m else "default" end;
@@ -447,8 +467,8 @@ def want_model:
 {applies: (if (.hook_event_name == "PreToolUse") and (.tool_name == "Agent") and ((.tool_input // {}) | type) == "object"
               and (((.tool_input // {}).subagent_type // "") | type) == "string"
            then ((.tool_input // {}).subagent_type // "") | test("^prdt-") else false end),
- out: ([gate] | first), model: want_model, persona: want_persona, checkout: want_checkout}
-| "\(.applies)\t\(.model)\t\(.persona)\t\(.checkout)\n\(if .out == null then "" else (.out | tojson) end)"
+ out: ([gate] | first), model: want_model, persona: want_persona, checkout: want_checkout, files: want_files}
+| "\(.applies)\t\(.model)\t\(.persona)\t\(.checkout)\t\(.files)\n\(if .out == null then "" else (.out | tojson) end)"
 JQ
 
 RAW="$(printf '%s' "$EV" | jq -r \
@@ -473,6 +493,8 @@ L1REST="${WANT_MODEL#*$'\t'}"; [ "$L1REST" = "$WANT_MODEL" ] && L1REST=""
 WANT_MODEL="${WANT_MODEL%%$'\t'*}"
 WANT_PERSONA="${L1REST%%$'\t'*}"
 WANT_CO="${L1REST#*$'\t'}"; [ "$WANT_CO" = "$L1REST" ] && WANT_CO=""
+WANT_FILES="${WANT_CO#*$'\t'}"; [ "$WANT_FILES" = "$WANT_CO" ] && WANT_FILES=""
+WANT_CO="${WANT_CO%%$'\t'*}"
 if [ "$APPLIES" != "true" ]; then
   [ -n "$GATE" ] && printf '%s\n' "$GATE"
   exit 0
@@ -716,7 +738,10 @@ JQ
           esac
         fi
         [ -n "$t" ] && [ -f "$t" ] && EXIST+=("$t")
-        case "$rest" in *"${US}1") ;; *) [ -n "$t" ] && [ -f "$t" ] && UNCONF+=("$t") ;; esac
+        # T-814: a `qa` marker's worker prompt is read too, confirmed or not —
+        # its `[ctx].change_meta.files` decides whether it occupies a checkout.
+        case "$rest" in *"${US}1") [ "${rest%%"$US"*}" = "qa" ] && [ -n "$t" ] && [ -f "$t" ] && UNCONF+=("$t") ;;
+          *) [ -n "$t" ] && [ -f "$t" ] && UNCONF+=("$t") ;; esac
         MARK_CANDS="$MARK_CANDS$id$US$t$US$age$US$model$US$rest"$'\n'
       done <<< "$CANDS"
       if [ ${#EXIST[@]} -gt 0 ]; then
@@ -750,9 +775,14 @@ fi
 PROJ_ROOT="$(cd -P -- "$DIR" 2>/dev/null && pwd)"
 [ -n "$PROJ_ROOT" ] || PROJ_ROOT="$DIR"
 CODE_ABS="$PROJ_ROOT"
+CODE_REL=""          # T-814: code.dir relative to the project ("" = the code checkout IS the project root)
+META_ALLOW="[]"      # T-814: config.json `meta.allowlist` — what counts as a meta document
 if [ -n "$WANT_PERSONA" ]; then
-  CODE_DIR="$(jq -r '(.code.dir // "") | strings' "$DIR/.prdt/config.json" 2>/dev/null)"
-  case "$CODE_DIR" in ""|/*|*..*) ;; *) CODE_ABS="$PROJ_ROOT/${CODE_DIR%/}" ;; esac
+  CFG2="$(jq -r '((.code.dir // "") | strings), ((.meta.allowlist // []) | if type == "array" then map(strings) else [] end | tojson)' "$DIR/.prdt/config.json" 2>/dev/null)"
+  CODE_DIR="${CFG2%%$'\n'*}"
+  [ "$CODE_DIR" = "$CFG2" ] || META_ALLOW="${CFG2#*$'\n'}"
+  case "$META_ALLOW" in '['*']') ;; *) META_ALLOW="[]" ;; esac
+  case "$CODE_DIR" in ""|/*|*..*) ;; *) CODE_REL="${CODE_DIR%/}"; CODE_ABS="$PROJ_ROOT/$CODE_REL" ;; esac
 fi
 
 CAPSF="$PRDT_ROOT/dispatch-caps.json"
@@ -773,6 +803,29 @@ def norm_co($root; $code_abs):
   else ((if startswith("/") then . else $root + "/" + . end) | sub("/+$"; "")) as $a
     | if $a == $code_abs then "code" else $a end end;
 def num: try (tonumber | select(. >= 0)) catch null;
+# T-814: a `prdt-qa` dispatch whose `[ctx].change_meta.files` is non-empty and
+# names only meta documents occupies no code checkout (v1.11: a meta-only QA
+# made the gate refuse a Developer dispatch as "same checkout"). A path is a
+# meta document when, taken from the project root (an absolute one must lie
+# under it), it is not under the code checkout (`code.dir`) and falls under
+# an entry of the project's `meta.allowlist` — the list meta git tracks. A
+# relative path is ambiguous on its own (`packages/…` is code-relative, `docs/
+# tickets/…` project-relative), so anything the allowlist does not name —
+# and every path when the code checkout IS the project root, or when the
+# project persists no allowlist — counts as code: the rule only ever narrows
+# toward the pre-T-814 behaviour, never guesses a path away.
+def meta_doc($root; $code_rel; $allow):
+  (if type == "string" then gsub("^\\s+|\\s+$"; "") else "" end) as $p
+  | (if $p == "" then null
+     elif ($p | startswith("/")) then (if ($p | startswith($root + "/")) then $p[($root | length) + 1:] else null end)
+     else $p end
+     | if . == null then null else sub("^(\\./)+"; "") | sub("/+$"; "") end) as $r
+  | $code_rel != "" and $r != null and $r != ""
+    and (($r | split("/")) | index("..") | not)
+    and ($r != $code_rel and ($r | startswith($code_rel + "/") | not))
+    and any($allow[]; . as $a | ($a | sub("/+$"; "")) as $a | $a != "" and ($r == $a or ($r | startswith($a + "/"))));
+def meta_only($root; $code_rel; $allow):
+  type == "array" and length > 0 and all(.[]; meta_doc($root; $code_rel; $allow));
 def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
   permissionDecision: "deny", permissionDecisionReason: $why}};
 
@@ -826,6 +879,13 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
                         co: (($wc.worktree // "") | if type == "string" and (gsub("^\\s+|\\s+$"; "") != "") then gsub("^\\s+|\\s+$"; "") else "code" end),
                         ticket: (if $ok then .ticket else "" end),
                         tier_model: (if $ok then .model elif $wd != "" then ($did_model[$wd] // null) else null end)} end end))
+       # T-814: a live `qa` marker whose OWN worker prompt names only meta
+       # documents holds no checkout; no readable prompt yet = counted as before.
+       | map(if .persona == "qa" and ((try ($first[.t] // "" | fromjson | .message.content
+                    | (if type == "array" then (map(select(type == "object" and .type == "text") | .text) | first) else . end)
+                    | strings | split("\n") | map(select(startswith("[ctx] {"))) | first
+                    | .[6:] | fromjson | .change_meta.files) catch null) // null | meta_only($proj_root; $code_rel; $allow))
+             then . + {co: ""} else . end)
        | map(. + {live: (if .t == "" or ($mt[.t] // null) == null then (.age < $grace)
              elif (($last[.t] // "") | contains("\"model\":\"<synthetic>\"")) then false
              elif (now - $mt[.t]) > ($idle_min * 60) then false
@@ -874,7 +934,8 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
      + " — a measurement failed (tool missing or output unparsed), so that axis never blocks a dispatch; said once per session."
      + (if $caps_bad == "1" then " `dispatch-caps.json` is not a JSON object of numbers — defaults in force." else "" end) end) as $note
 | ($axes | map(select(.over))) as $over
-| (if $want_persona == "" or $live_cands == null then [] else
+| ($want_persona == "qa" and (($want_files | try fromjson catch null) | meta_only($proj_root; $code_rel; $allow))) as $self_meta
+| (if $want_persona == "" or $self_meta or $live_cands == null then [] else
      (if $want_co == "" then "code" else ($want_co | norm_co($proj_root; $code_abs)) end) as $mine
      | $live_cands | map(select(.live and (.persona == "developer" or .persona == "qa")
          and .root == $proj_root and .co != "" and (.co | norm_co($proj_root; $code_abs)) == $mine))
@@ -904,6 +965,7 @@ RES="$(jq -rn \
   --argjson stale_h "$STALE_H" --argjson idle_min "$IDLE_MIN" --argjson grace "$GRACE_S" \
   --arg want_model "$WANT_MODEL" \
   --arg want_persona "$WANT_PERSONA" --arg want_co "$WANT_CO" --arg proj_root "$PROJ_ROOT" --arg code_abs "$CODE_ABS" \
+  --arg want_files "$WANT_FILES" --arg code_rel "$CODE_REL" --argjson allow "$META_ALLOW" \
   "$RPROG" 2>/dev/null)"
 
 # ── T-773: the schedule record — one `dispatch` row per dispatch that passed ──

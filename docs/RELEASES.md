@@ -12,6 +12,32 @@ Version-by-version release notes for this project.
 >   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
 > - Everything above the first `## ` heading is preamble and is ignored by the parser.
 
+## v1.11.1 — 결정 티켓 · 링크 쓰기 방어 · 고스트 입력 (2026-09-30)
+
+> 패치 릴리스입니다. T-810 · T-813 · T-814 · T-818 · T-825 · T-826 · T-830 · T-833 · T-835 · T-838 · T-842 · T-843 · T-847 · T-850 을 반영합니다.
+> 적용: `prdt update` 또는 `packages/core/scripts/install.sh` 재실행.
+
+### Added
+- **문서를 쓰는 prdt 명령이 뷰어를 스스로 다시 만듭니다.** `tickets new` · `fmt` · `wiki reindex` · `schedule report` · `artifacts sync` 등이 `docs/` 를 바꾸면 명령이 끝난 뒤 `viewer.html` 이 갱신되고, 창은 열리지 않습니다. 생성이 실패하면 60초 안에는 다시 시도하지 않습니다. `viewer.html` 이 이미 있을 때만 동작합니다. (T-838)
+
+### Changed
+- **결정 티켓의 `options` 표가 한 행 = 선택지 하나입니다.** `prdt tickets new --type decision` 이 `| 선택지 | pros | cons | trade-off | recommend |` 머리글로 시작합니다. 옛 방향으로 닫힌 티켓도 `fmt --check` 를 그대로 통과합니다. (T-825)
+- **결정 티켓 계약이 바뀌었습니다.** 문구를 제안하는 선택지는 초안과 번역을 함께 적고, `problem` 은 쉬운 한 줄 · 실제 관측 · As-is / To-be 그림 · 갈리는 곳을 담으며, `options` 에 To-be 를 잇는 열이 하나 붙습니다. (T-826)
+- **`prdt track land` 가 실수를 더 막습니다.** `--test` 명령을 `pipefail` 로 돌려 파이프 앞 명령이 실패해도 land 가 실패합니다(`dev` 는 그대로). 종료 코드 141 이면 `| head` 가 파이프를 닫아 결과를 알 수 없다는 설명이 실패 메시지에 붙습니다. `prdt track open --base main` 으로 연 트랙은 `--base` 없는 `land` 를 거부하고, `--base main` 과 `--base dev` 를 모두 안내합니다. (T-813 · T-835 · T-833)
+- **워커(developer · qa · designer)는 `Agent` 로 하위 에이전트를 만들 수 없습니다.** `subagent_type` 이 무엇이든 한 줄로 거부하며 PO 는 그대로 통과합니다. (T-818)
+- **QA 발주가 메타 문서만 바꿀 때는 점유로 세지도 거부하지도 않습니다.** `change_meta.files` 가 전부 메타 allowlist 아래이고 코드 경로가 아닐 때만입니다. (T-814)
+- 규율 문구 조정: retro 5단계 · 8단계, patch-cycle 의 `land` 줄, PO habit 한 줄(뷰어 재생성), `contracts/tickets.md`. 기기 미러(`~/.prdt/discipline`)는 재설치 뒤 `prdt doctor` 로 드리프트 경고가 없는지 확인하세요. (T-820 · T-816 · T-851 · T-839 · T-826)
+
+### Fixed
+- **다른 저장소가 커밋한 심볼릭 링크를 따라 prdt 가 내 파일을 덮어쓰던 문제.** 뷰어 재생성 작업자 · `prdt viewer` · 전달 페이지 · 상태줄 조각 · 뷰어 생성기의 `.prdt/scratch/` 임시 파일과, 메타 exclude 파일(`.prdt/meta.git/info/exclude`)이 링크 · 하드 링크를 따라가지 않습니다. 링크가 끼어 있으면 아무것도 쓰지 않고 조용히 끝나며 명령은 실패하지 않습니다. `.prdt` 자체가 링크이면 `prdt viewer` 안내가 지우라고 하지 않고 "링크를 따라가지 않는다" 고 알려 줍니다. (T-842 · T-847 · T-850)
+- **`prdt` 를 시작할 때 포커스 · 마우스 이동 글자(고스트 입력)가 새 Claude Code 입력창에 섞이던 문제.** 모드를 끈 뒤 읽지 않은 입력을 버립니다. (T-843)
+- **`prdt doctor` 가 README 실행 블록의 `#` 주석 뒤를 경로로 읽어 낡았다고 경고하던 문제.** (T-810)
+- **뷰어의 티켓 상세 패널과 카드에서 코드 블록의 긴 줄이 잘리던 문제.** 이제 줄바꿈되고 복사한 글자는 원본과 같습니다. (T-830)
+
+### Known limits
+- `.prdt` 나 `docs/` 가 프로젝트 밖을 가리키는 심볼릭 링크인 프로젝트는 뷰어 자동 재생성이 걸리지 않습니다. `prdt` 를 실행한 뒤 약 190 ms 안에 미리 친 글자는 버려집니다(시작도 약 85 ms 늦어집니다). 실행 중인 세션에서 마우스 이동 보고가 계속 들어오는 현상은 재현하지 못해 아직 고치지 않았습니다.
+- 링크 방어는 이번에 다룬 쓰기 통로(뷰어 관련 파일과 메타 exclude 자동 저장)에만 적용됩니다. `.prdt` 아래의 다른 쓰기 통로(예: `prdt init`)는 아직 링크를 따라갈 수 있어, 믿지 않는 저장소에서는 `prdt init` 을 돌리지 마세요. 나머지는 v1.12 에서 이어 갑니다.
+
 ## v1.11 — critical path 기반 병렬 작업 배치 (2026-09-29)
 
 > 적용: `prdt update` (이제 설치 전에 버전과 이 노트를 보여 주고 `1. update` / `2. skip` 을 묻습니다) 또는 `packages/core/scripts/install.sh` 재실행.

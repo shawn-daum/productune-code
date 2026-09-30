@@ -291,6 +291,25 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(fs.readFileSync(jump, 'utf-8')).toContain('url=../viewer.html#T-682')
   })
 
+  test('T-842: a committed symlink at viewer/at/ is never written through — the victim keeps its bytes and the id renders unlinked', () => {
+    writeMarker({ agentId: 'linked', ticketId: 'T-682', ageMs: 60_000 })
+    buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], [])
+    stubViewerHtml()
+    const victimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t842-victim-'))
+    const victim = path.join(victimDir, 'T-682.html')
+    fs.writeFileSync(victim, 'victim\n')
+    const old = Date.now() / 1000 - 3600
+    fs.utimesSync(victim, old, old)
+    const before = fs.statSync(victim).mtimeMs
+    fs.symlinkSync(victimDir, path.join(root, '.prdt', 'scratch', 'viewer', 'at'))
+    const out = runStatusline()
+    expect(out).toContain('T-682')
+    expect(out).not.toContain(OSC8_OPEN)
+    expect(fs.readFileSync(victim, 'utf-8')).toBe('victim\n')
+    expect(fs.statSync(victim).mtimeMs).toBe(before)
+    expect(fs.readdirSync(victimDir)).toEqual(['T-682.html'])
+  })
+
   test('T-805: no viewer generated yet → the id renders unlinked, never falls back to the raw ticket md', () => {
     writeMarker({ agentId: 'linked', ticketId: 'T-682', ageMs: 60_000 })
     buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], [])
