@@ -272,6 +272,13 @@ describe('viewer/lib/render.mjs — home is the shared-model, version-scoped wor
     expect(home).not.toContain('data-group-select="closed"')
   })
 
+  it('home sidebar lists its groups in the order 진행 상황 · 아티팩트 · PRD · 티켓 · 결정, progress staying the default-open one (T-866)', () => {
+    const home = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(render())![0]
+    const order = [...home.matchAll(/data-group-select="([^"]+)"/g)].map((m) => m[1])
+    expect(order).toEqual(['progress', 'artifact', 'prd', 'ticket', 'decision'])
+    expect(/data-group-select="progress"[^>]*class="[^"]*active|class="[^"]*active[^"]*"[^>]*data-group-select="progress"/.test(home)).toBe(true)
+  })
+
   it('a ticket row inside home resolves against the SAME global ticket detail-data the ticket store itself uses — no duplicated data', () => {
     const html = render()
     const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
