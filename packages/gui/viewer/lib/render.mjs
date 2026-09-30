@@ -22,7 +22,7 @@
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { marked, Renderer } from 'marked'
+import { marked, Renderer, Tokenizer } from 'marked'
 import {
   STORE_LABEL,
   COMMON,
@@ -107,6 +107,17 @@ export function templateGuardErrors(declaredNames, css = TEMPLATE_CSS) {
 // which marked already escapes on its own path (verified above the fold in
 // viewer/lib/render.test.mjs).
 const hardenedRenderer = new Renderer()
+// T-861: marked's GFM `del` accepts a single-tilde pair, so range notation
+// (`Phase 1~3(v0.1~v0.4)`) rendered struck-through. Only `~~text~~` strikes:
+// same rule as marked 16.4.2's own, with the delimiter fixed to two tildes.
+// (Returning undefined, not false, keeps marked from falling back to its own.)
+const DEL_DOUBLE_TILDE = /^~~(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))~~(?=[^~]|$)/
+const strictDelTokenizer = new Tokenizer()
+strictDelTokenizer.del = function (src) {
+  const cap = DEL_DOUBLE_TILDE.exec(src)
+  if (!cap) return undefined
+  return { type: 'del', raw: cap[0], text: cap[1], tokens: this.lexer.inlineTokens(cap[1]) }
+}
 hardenedRenderer.html = (token) => escapeHtml(typeof token === 'string' ? token : (token.text ?? token.raw ?? ''))
 
 // T-666 slice 1a acceptance line 3: "section headings render as chips by one
@@ -415,7 +426,7 @@ hardenedRenderer.image = function ({ href, title, text, tokens }) {
  */
 function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF) {
   linkContext = { sourceDirRel, repoRootHref }
-  return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer })
+  return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
 }
 
 /**
