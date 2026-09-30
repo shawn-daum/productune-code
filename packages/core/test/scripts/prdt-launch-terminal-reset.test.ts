@@ -108,4 +108,55 @@ describe.skipIf(!PYTHON3)('bare `prdt` launch — terminal mode reset (T-799)', 
     ].join('\n'))
     execFileSync('expect', [exp], { cwd: projectDir, stdio: 'ignore', timeout: subprocessTimeout('cli') })
   }, 20000)
+
+  // T-843: the reset stops FUTURE events only. Event bytes the terminal sent
+  // before it (previous session's exit, prdt's own startup) sit in the tty
+  // input queue; without a flush the launched program reads them as typed
+  // input. The stub `claude` enters raw mode like libuv (TCSADRAIN — keeps
+  // pending input) and dumps what it reads. Verified against the pre-T-843
+  // script: that version delivers these exact bytes to the stub.
+  test('tty: event bytes queued before the launch never reach Claude Code', () => {
+    shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t843-shim-'))
+    const dump = path.join(shimDir, 'dump.txt')
+    fs.writeFileSync(path.join(shimDir, 'claude'), [
+      `#!${PYTHON3}`,
+      'import os, select, termios, tty, time',
+      'tty.setraw(0, termios.TCSADRAIN)',
+      'got = b""',
+      'end = time.time() + 0.4',
+      'while True:',
+      '    r, _, _ = select.select([0], [], [], max(0, end - time.time()))',
+      '    if not r: break',
+      '    got += os.read(0, 4096)',
+      `open(${JSON.stringify(dump)}, "wb").write(b"READ:" + got)`,
+    ].join('\n'), { mode: 0o755 })
+    // Parent = the terminal: queue focus + SGR mouse bytes the moment the
+    // child starts, well before prdt reaches its reset.
+    const harness = [
+      'import os, pty, sys, select, time',
+      'pid, m = pty.fork()',
+      'if pid == 0:',
+      `    os.execvp(sys.executable, [sys.executable, ${JSON.stringify(PRDT_CLI)}])`,
+      'os.write(m, b"\\x1b[O\\x1b[I\\x1b[<35;8;1M")',
+      'end = time.time() + 15',
+      'while time.time() < end:',
+      '    r, _, _ = select.select([m], [], [], 0.05)',
+      '    if r:',
+      '        try:',
+      '            if not os.read(m, 65536): break',
+      '        except OSError: break',
+      'os.waitpid(pid, 0)',
+    ].join('\n')
+    execFileSync('python3', ['-c', harness], {
+      cwd: projectDir,
+      stdio: 'ignore',
+      timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: fakeHome, PATH: `${shimDir}:${process.env.PATH ?? ''}` },
+    })
+    const read = fs.readFileSync(dump, 'latin1')
+    expect(read.startsWith('READ:')).toBe(true)
+    expect(read).not.toContain(`${ESC}[O`)
+    expect(read).not.toContain(`${ESC}[I`)
+    expect(read).not.toContain(`${ESC}[<35;8;1M`)
+  }, 20000)
 })
