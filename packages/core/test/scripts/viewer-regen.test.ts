@@ -101,7 +101,7 @@ function writeEvent(tool: string, filePath: string, agentType?: string): string 
 }
 
 /** The regen is a genuinely detached background process — poll for it. */
-async function waitFor(check: () => boolean, ms = 4000): Promise<boolean> {
+async function waitFor(check: () => boolean, ms = 20000): Promise<boolean> {
   const t0 = Date.now()
   while (Date.now() - t0 < ms) {
     if (check()) return true
@@ -413,8 +413,12 @@ describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the vie
     const old = Date.now() / 1000 - 120
     fs.utimesSync(path.join(s.vdir, '.regen-failed'), old, old)
     newTicket(s, 'third')
-    expect(await waitFor(() => fs.readFileSync(path.join(s.vdir, 'viewer.html'), 'utf8').includes(second))).toBe(true)
-    expect(fs.existsSync(path.join(s.vdir, '.regen-failed'))).toBe(false)
+    // The detached worker writes viewer.html first and clears .regen-failed only
+    // after the generator exits: wait for BOTH (a load-dependent gap between the
+    // two), with a generous timeout, instead of asserting the stamp right after.
+    expect(await waitFor(() =>
+      fs.readFileSync(path.join(s.vdir, 'viewer.html'), 'utf8').includes(second) &&
+      !fs.existsSync(path.join(s.vdir, '.regen-failed')), 20000)).toBe(true)
   })
 
   test('a successful manual prdt viewer removes .regen-failed, so the next doc write regenerates at once', async () => {
