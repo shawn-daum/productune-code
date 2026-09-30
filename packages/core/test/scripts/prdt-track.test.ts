@@ -379,6 +379,23 @@ describe('prdt track land', () => {
       expect(recordOf('T-2')).toBeUndefined()
     })
 
+    // T-850: the record goes only after the worktree is gone — a worktree that
+    // cannot be removed keeps it, so a later bare land is still refused.
+    test('--base main with a worktree that cannot be removed keeps the record; a bare land is still refused', () => {
+      git(code, 'worktree', 'lock', wt('T-2'))
+      try {
+        const r = cli('track', 'land', 'T-2', '--base', 'main')
+        expect(r.out).toContain('main fast-forwarded')
+        expect(r.out).toContain('worktree remove failed')
+        expect(recordOf('T-2')).toBeDefined()
+        const again = cli('track', 'land', 'T-2')
+        expectRefusal(again)
+        expect(again.err).toContain('cut from main')
+      } finally {
+        git(code, 'worktree', 'unlock', wt('T-2'))
+      }
+    })
+
     test('--base dev lands to dev (main untouched)', () => {
       const before = refs()
       const r = cli('track', 'land', 'T-2', '--base', 'dev')
