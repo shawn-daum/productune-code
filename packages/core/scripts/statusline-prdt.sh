@@ -375,21 +375,39 @@ def viewer_jump_path(tid):
     if not os.path.isfile(os.path.join(root, VIEWER_HTML_REL)):
         return None
     jdir = os.path.join(root, VIEWER_JUMP_REL)
-    try:
-        os.makedirs(jdir, exist_ok=True)
-    except OSError:
-        return None
     page = os.path.join(jdir, f"{tid}.html")
     body = ('<!doctype html><meta charset="utf-8">'
             f'<meta http-equiv="refresh" content="0;url=../viewer.html#{tid}">'
             f'<a href="../viewer.html#{tid}">viewer.html#{tid}</a>\n')
+    # T-842: `.prdt/scratch/**` may hold a committed symlink. Walk
+    # .prdt/scratch/viewer/at one component at a time with O_NOFOLLOW (a
+    # symlinked one → no link at all) and write the stub relative to that
+    # descriptor: O_EXCL|O_NOFOLLOW temp, rename inside the same directory.
+    fd = None
     try:
-        tmp = f"{page}.tmp{os.getpid()}"
-        with open(tmp, "w", encoding="utf-8") as f:
+        fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        for part in VIEWER_JUMP_REL.split(os.sep):
+            try:
+                os.mkdir(part, 0o755, dir_fd=fd)
+            except FileExistsError:
+                pass
+            nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+        tmp = f"{tid}.html.tmp{os.getpid()}"
+        try:
+            os.unlink(tmp, dir_fd=fd)
+        except FileNotFoundError:
+            pass
+        wfd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644, dir_fd=fd)
+        with os.fdopen(wfd, "w", encoding="utf-8") as f:
             f.write(body)
-        os.replace(tmp, page)
+        os.replace(tmp, f"{tid}.html", src_dir_fd=fd, dst_dir_fd=fd)
     except OSError:
         return None
+    finally:
+        if fd is not None:
+            os.close(fd)
     return page
 
 

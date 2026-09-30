@@ -4436,12 +4436,53 @@ def _viewer_generator():
     return None
 
 
+def _open_scratch_dir(root, parts):
+    """T-842: a descriptor of `<root>/<parts…>` (created as needed), opened one
+    component at a time with O_NOFOLLOW — or None when any component is a
+    symlink or not a directory. `.prdt/scratch/**` lives in a repository whose
+    author may have committed a symlink there (`viewer -> ~/somewhere`); a
+    writer that resolved the path string would create, rename or truncate
+    files at the link's target, outside this project. mkdir with dir_fd never
+    follows a link at its final component (EEXIST), and the O_NOFOLLOW open
+    right after refuses it."""
+    try:
+        fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return None
+    try:
+        for part in parts:
+            try:
+                os.mkdir(part, 0o755, dir_fd=fd)
+            except FileExistsError:
+                pass
+            nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def viewer_scratch_safe(root):
+    """True when `<root>/.prdt/scratch/viewer/` is a real directory chain
+    (created if missing) — see `_open_scratch_dir`."""
+    fd = _open_scratch_dir(root, VIEWER_REL.parts)
+    if fd is None:
+        return False
+    os.close(fd)
+    return True
+
+
 def viewer_regenerate(root):
     """Regenerate `<root>/.prdt/scratch/viewer/viewer.html`; the page's path,
-    or None when there is no generator / node, or generation failed."""
+    or None when there is no generator / node, generation failed, or the
+    viewer directory chain holds a symlink (T-842 — nothing is written)."""
     cli = _viewer_generator()
     node = shutil.which("node")
     if cli is None or node is None:
+        return None
+    if not viewer_scratch_safe(root):
         return None
     out = Path(root) / VIEWER_REL / "viewer.html"
     try:
@@ -4547,7 +4588,6 @@ def viewer_jump(viewer_html, key):
     guaranteed to survive that trip."""
     import html, urllib.parse
     jdir = Path(viewer_html).parent / VIEWER_JUMP_DIR
-    jdir.mkdir(parents=True, exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", key)
     if safe != key:
         safe += "-" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
@@ -4556,7 +4596,31 @@ def viewer_jump(viewer_html, key):
     body = ('<!doctype html><meta charset="utf-8">'
             f'<meta http-equiv="refresh" content="0;url=../viewer.html#{html.escape(frag)}">'
             f'<a href="../viewer.html#{html.escape(frag)}">viewer.html#{html.escape(key)}</a>\n')
-    atomic_write_text(page, body)
+    # T-842: written relative to a NOFOLLOW descriptor of `at/` (a symlinked
+    # `at/`, `viewer/`, `scratch/` or `.prdt/` → None, and the caller links the
+    # file itself); O_EXCL temp + rename within that directory, so a planted
+    # `<page>.tmp` or `<page>` symlink is removed or replaced, never followed.
+    root = Path(viewer_html).parent.parent.parent.parent
+    fd = _open_scratch_dir(root, (*VIEWER_REL.parts, VIEWER_JUMP_DIR))
+    if fd is None:
+        return None
+    try:
+        tmp = page.name + ".tmp"
+        for attempt in (0, 1):
+            try:
+                wfd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644, dir_fd=fd)
+                break
+            except FileExistsError:
+                if attempt:
+                    raise
+                os.unlink(tmp, dir_fd=fd)
+        with os.fdopen(wfd, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.replace(tmp, page.name, src_dir_fd=fd, dst_dir_fd=fd)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
     return page
 
 
@@ -4580,8 +4644,9 @@ def viewer_links(root, targets, labels=None):
     lines = []
     for t in targets:
         key = keys[t]
-        if key and viewer:
-            dest, label = viewer_jump(viewer, key), key
+        jump = viewer_jump(viewer, key) if key and viewer else None
+        if jump:
+            dest, label = jump, key
         else:
             dest = Path(labels.get(t) or t)
             dest = dest if dest.is_absolute() else (Path.cwd() / dest).resolve()
@@ -4600,6 +4665,8 @@ def cmd_viewer(args):
     still wins too)."""
     root = require_root()
     if not args.targets:
+        if not viewer_scratch_safe(root):
+            sys.exit("prdt viewer: .prdt/scratch/viewer 경로에 심볼릭 링크가 있어서 뷰어를 만들지 않았어요 — 그 링크를 지우고 다시 실행하세요.")
         viewer = viewer_regenerate(root)
         if viewer is None:
             sys.exit("prdt viewer: 뷰어를 만들지 못했어요 — node 와 prdt 체크아웃의 packages/gui 의존성이 필요해요 (`prdt doctor`).")

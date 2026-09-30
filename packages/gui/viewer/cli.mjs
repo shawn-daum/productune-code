@@ -48,8 +48,19 @@ async function main() {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
   // Write-then-rename: a browser tab opening the page mid-write never reads
   // a half-written file.
+  // T-842: the temp is created exclusively ('wx' = O_CREAT|O_EXCL, which
+  // never follows a symlink), so a `<out>.<pid>.tmp` link committed into the
+  // output directory is removed, never written through; renameSync replaces
+  // a symlinked `viewer.html` itself rather than its target. The directory
+  // chain is checked by the caller (`prdt` refuses a symlinked one).
   const tmp = `${outputPath}.${process.pid}.tmp`
-  fs.writeFileSync(tmp, html)
+  try {
+    fs.writeFileSync(tmp, html, { flag: 'wx' })
+  } catch (err) {
+    if (!err || err.code !== 'EEXIST') throw err
+    fs.unlinkSync(tmp)
+    fs.writeFileSync(tmp, html, { flag: 'wx' })
+  }
   fs.renameSync(tmp, outputPath)
   console.log(`viewer: wrote ${outputPath} (${Buffer.byteLength(html, 'utf8')} bytes)`)
 }

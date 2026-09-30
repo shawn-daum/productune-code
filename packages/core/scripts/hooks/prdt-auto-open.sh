@@ -223,23 +223,68 @@ root, cli = sys.argv[1], sys.argv[2]
 # so this outer script — the one the hook waits on — never itself blocks on a
 # regen, however long one takes.
 WORKER = r'''
-import fcntl, os, subprocess, sys, time
+import fcntl, os, stat, subprocess, sys, time
 root, cli = sys.argv[1], sys.argv[2]
-vdir = os.path.join(root, ".prdt", "scratch", "viewer")
-os.makedirs(vdir, exist_ok=True)
-dirty = os.path.join(vdir, ".regen-dirty")
-lock = os.path.join(vdir, ".regen-lock")
-failed = os.path.join(vdir, ".regen-failed")
+# T-842: `.prdt/scratch/viewer/` is inside a repository someone else may have
+# committed, symlinks included. Every step below goes through a descriptor of
+# the viewer directory opened component by component with O_NOFOLLOW (a
+# symlinked `.prdt`, `scratch` or `viewer` is refused, never followed, never
+# replaced), and every state file is opened, stat'ed and unlinked relative to
+# it with O_NOFOLLOW / follow_symlinks=False. Any symlink among them → this
+# regen is skipped, silently: the caller never waits on this process anyway.
+NOFOLLOW_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+try:
+    vfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    for part in (".prdt", "scratch", "viewer"):
+        try:
+            os.mkdir(part, 0o755, dir_fd=vfd)
+        except FileExistsError:
+            pass
+        nfd = os.open(part, NOFOLLOW_DIR, dir_fd=vfd)
+        os.close(vfd)
+        vfd = nfd
+except OSError:
+    sys.exit(0)
+DIRTY, LOCK, FAILED = ".regen-dirty", ".regen-lock", ".regen-failed"
+
+def lst(name):
+    try:
+        return os.stat(name, dir_fd=vfd, follow_symlinks=False)
+    except OSError:
+        return None
+
+for name in (DIRTY, LOCK, FAILED):
+    st = lst(name)
+    if st is not None and not stat.S_ISREG(st.st_mode):
+        sys.exit(0)
+
+def write_flag(name, text):
+    try:
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644, dir_fd=vfd)
+    except OSError:
+        return
+    try:
+        os.write(fd, text.encode())
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+def unlink(name):
+    try:
+        os.unlink(name, dir_fd=vfd)
+    except OSError:
+        pass
+
 try:
     backoff = float(os.environ.get("PRDT_VIEWER_REGEN_BACKOFF_SECS", "60"))
 except ValueError:
     backoff = 60.0
+write_flag(DIRTY, "1")
 try:
-    with open(dirty, "w") as f:
-        f.write("1")
+    fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o644, dir_fd=vfd)
 except OSError:
-    pass
-fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+    sys.exit(0)
 try:
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
 except OSError:
@@ -247,15 +292,10 @@ except OSError:
     sys.exit(0)  # a regen is already in flight for this root; the dirty write
                  # above is what makes IT loop again, not a second run of ours
 try:
-    try:
-        recent_failure = time.time() - os.stat(failed).st_mtime < backoff
-    except OSError:
-        recent_failure = False
+    st = lst(FAILED)
+    recent_failure = st is not None and time.time() - st.st_mtime < backoff
     while not recent_failure:
-        try:
-            os.remove(dirty)
-        except OSError:
-            pass
+        unlink(DIRTY)
         try:
             rc = subprocess.run([cli, "viewer", "--no-open"], cwd=root,
                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -265,17 +305,10 @@ try:
         if rc != 0:
             # Stamp and stop: the dirty flag stays for the next attempt after
             # the backoff window, never a tight retry loop here.
-            try:
-                with open(failed, "w") as f:
-                    f.write(str(int(time.time())))
-            except OSError:
-                pass
+            write_flag(FAILED, str(int(time.time())))
             break
-        try:
-            os.remove(failed)
-        except OSError:
-            pass
-        if not os.path.exists(dirty):
+        unlink(FAILED)
+        if lst(DIRTY) is None:
             break
 finally:
     try:
@@ -283,6 +316,7 @@ finally:
     except OSError:
         pass
     os.close(fd)
+    os.close(vfd)
 '''
 
 subprocess.Popen([sys.executable, "-c", WORKER, root, cli],
