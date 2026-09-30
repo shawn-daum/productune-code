@@ -159,4 +159,54 @@ describe.skipIf(!PYTHON3)('bare `prdt` launch — terminal mode reset (T-799)', 
     expect(read).not.toContain(`${ESC}[I`)
     expect(read).not.toContain(`${ESC}[<35;8;1M`)
   }, 20000)
+
+  // T-843b: a background process group of the tty must not be stopped by the
+  // flush (SIGTTOU) — `prdt &` under job control used to run and exit.
+  // prdt runs in a NEW process group (not the pty's foreground group); the
+  // watcher waits with WUNTRACED: stopped is a failure, exit 0 + the stub
+  // marker file is the pass.
+  test('tty: background process group is not stopped and reaches claude', () => {
+    shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t843b-shim-'))
+    const marker = path.join(shimDir, 'marker.txt')
+    fs.writeFileSync(path.join(shimDir, 'claude'),
+      `#!/bin/sh\necho reached > ${JSON.stringify(marker)}\nexit 0\n`, { mode: 0o755 })
+    // pty.fork's child is the session leader (cannot setpgid), so it forks a
+    // grandchild into its own group and watches that one.
+    const harness = [
+      'import os, pty, sys, select, time',
+      'pid, m = pty.fork()',
+      'if pid == 0:',
+      '    g = os.fork()',
+      '    if g == 0:',
+      '        os.setpgid(0, 0)',
+      `        os.execvp(sys.executable, [sys.executable, ${JSON.stringify(PRDT_CLI)}])`,
+      '    end = time.time() + 8',
+      '    while time.time() < end:',
+      '        p, st = os.waitpid(g, os.WNOHANG | os.WUNTRACED)',
+      '        if p:',
+      '            if os.WIFSTOPPED(st):',
+      '                os.kill(g, 9); os.waitpid(g, 0); os._exit(2)',
+      '            os._exit(0 if os.WEXITSTATUS(st) == 0 else 4)',
+      '        time.sleep(0.02)',
+      '    os.kill(g, 9); os.waitpid(g, 0); os._exit(3)',
+      'end = time.time() + 15',
+      'while time.time() < end:',
+      '    r, _, _ = select.select([m], [], [], 0.05)',
+      '    if r:',
+      '        try:',
+      '            if not os.read(m, 65536): break',
+      '        except OSError: break',
+      '_, st = os.waitpid(pid, 0)',
+      'print("MIDDLE", os.WEXITSTATUS(st))',
+    ].join('\n')
+    const out = execFileSync('python3', ['-c', harness], {
+      cwd: projectDir,
+      encoding: 'utf-8',
+      timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: fakeHome, PATH: `${shimDir}:${process.env.PATH ?? ''}` },
+    })
+    // MIDDLE 0 = grandchild exited 0; 2 = it was stopped (SIGTTOU); 3 = hung
+    expect(out).toContain('MIDDLE 0')
+    expect(fs.readFileSync(marker, 'utf8').trim()).toBe('reached')
+  }, 20000)
 })

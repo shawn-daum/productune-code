@@ -4729,6 +4729,15 @@ def discard_pending_tty_input(settle=0.08):
         fd = sys.stdin.fileno()
         if not os.isatty(fd):
             return
+        # A background process group may not touch the tty's queues: tcflush
+        # would stop us with SIGTTOU (`prdt &` under job control) before we
+        # reach exec. Skip flush + drain unless we are the foreground group;
+        # any error asking counts as "not foreground".
+        try:
+            if os.tcgetpgrp(fd) != os.getpgrp():
+                return
+        except OSError:
+            return
         import termios, time
         termios.tcflush(fd, termios.TCIFLUSH)
         time.sleep(settle)
