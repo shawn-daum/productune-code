@@ -25,7 +25,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { execFile } from 'child_process'
+import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
 import { atomicWriteFileSync } from '../fs/atomic-write'
 import {
@@ -226,6 +226,153 @@ export function scrubbedGitEnv(): NodeJS.ProcessEnv {
   return env
 }
 
+// ── clone-carried meta.git (T-848) ─────────────────────────────────────────────
+//
+// `<stateDir>/meta.git` sits in the project tree, so a cloned repository can
+// carry one. Observed by running (git 2.54): a carried `core.fsmonitor`,
+// `core.hooksPath`, `$GIT_DIR/hooks/*`, an `include.path`, and a
+// `filter.<x>.clean` named by `$GIT_DIR/info/attributes` each RUN a command on
+// plain `status` / `add` / `commit`. Two layers, mirrored in `scripts/prdt`
+// (`_meta_git` — keep both in step): command-line pins for the knobs that can
+// be pinned, and an allowlist over the repo's own config for the driver keys
+// that can't be neutralised by name.
+
+/** Command-line config outranks every config file. */
+export const META_GIT_HARDEN: readonly string[] = [
+  '-c', 'core.fsmonitor=false',
+  '-c', 'core.hooksPath=/dev/null',
+  '-c', 'commit.gpgsign=false',
+]
+
+const META_CONFIG_ALLOWED = new RegExp(
+  '^(?:core\\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase' +
+    '|precomposeunicode|symlinks|worktree|hookspath)' +
+    '|extensions\\.(?:objectformat|refstorage)' +
+    '|user\\.(?:name|email)|commit\\.gpgsign|push\\.(?:followtags|default)' +
+    '|remote\\..+\\.(?:url|pushurl|fetch)|branch\\..+\\.(?:remote|merge))$',
+  's',
+)
+
+/** Thrown by `metaGit` instead of running git on an untrusted meta repo. */
+export class MetaGitUntrustedError extends Error {
+  readonly problem: string
+  constructor(problem: string) {
+    super(metaGitRefusal(problem))
+    this.name = 'MetaGitUntrustedError'
+    this.problem = problem
+  }
+}
+
+export function metaGitRefusal(problem: string): string {
+  return (
+    `prdt does not run git on this project's .prdt/meta.git: ${problem}` +
+    ' — prdt never writes this, so it may have come with a cloned repository.' +
+    ' Check it, remove it, then run `prdt doctor`.'
+  )
+}
+
+function metaRemoteUrlProblem(projectDir: string, url: string): string | null {
+  if (url.split('/', 1)[0].includes('::')) return 'a remote-helper URL'
+  const isFile = url.startsWith('file://')
+  if (!isFile && /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(url)) return null
+  if (!isFile && /^[^/]+:/.test(url)) return null // scp-like host:path
+  const p = isFile ? url.slice('file://'.length) : url
+  let base: string
+  let target: string
+  try {
+    base = fs.realpathSync(projectDir)
+    const abs = path.isAbsolute(p) ? p : path.join(base, p)
+    try {
+      target = fs.realpathSync(abs)
+    } catch {
+      target = path.resolve(abs)
+    }
+  } catch {
+    return 'an unresolvable local remote'
+  }
+  if (target === base || target.startsWith(base + path.sep)) return 'a local remote inside this project'
+  return null
+}
+
+const trustCache = new Map<string, string | null>()
+
+/**
+ * Null when the meta repo may be handed to git, else why not (one English
+ * line). Never throws; never runs a command the repo could name
+ * (`git config --file` reads one file and follows no include).
+ */
+export function metaGitTrustProblem(projectDir: string): string | null {
+  const sd = stateDir(projectDir)
+  const gd = metaGitDir(projectDir)
+  const rel = (p: string) => path.relative(projectDir, p) || '.'
+  const cfg = path.join(gd, 'config')
+  for (const p of [sd, gd, cfg]) {
+    let st: fs.Stats
+    try {
+      st = fs.lstatSync(p)
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (p === cfg) return null // no repo yet — nothing to trust
+        continue
+      }
+      return `cannot inspect ${rel(p)}`
+    }
+    if (st.isSymbolicLink()) return `${rel(p)} is a symbolic link`
+  }
+  for (const name of ['commondir', 'config.worktree']) {
+    try {
+      fs.lstatSync(path.join(gd, name))
+      return `${rel(gd)}/${name} exists`
+    } catch {
+      /* absent — fine */
+    }
+  }
+  let key: string
+  try {
+    const st = fs.statSync(cfg)
+    key = `${gd}\0${st.ino}\0${st.size}\0${st.mtimeMs}`
+  } catch {
+    return `cannot read ${rel(cfg)}`
+  }
+  const cached = trustCache.get(key)
+  if (cached !== undefined) return cached
+  let problem: string | null = null
+  let out: string
+  try {
+    out = execFileSync('git', ['config', '--file', cfg, '--no-includes', '--list', '-z'], {
+      cwd: projectDir,
+      env: scrubbedGitEnv(),
+      encoding: 'utf-8',
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+  } catch {
+    out = ''
+    problem = `cannot parse ${rel(cfg)}`
+  }
+  if (!problem) {
+    for (const ent of out.split('\0')) {
+      if (!ent) continue
+      const nl = ent.indexOf('\n')
+      const k = nl < 0 ? ent : ent.slice(0, nl)
+      const v = nl < 0 ? '' : ent.slice(nl + 1)
+      if (!META_CONFIG_ALLOWED.test(k)) {
+        problem = `${rel(cfg)} sets ${k}`
+        break
+      }
+      if (k.startsWith('remote.') && (k.endsWith('.url') || k.endsWith('.pushurl'))) {
+        const why = metaRemoteUrlProblem(projectDir, v)
+        if (why) {
+          problem = `${rel(cfg)} ${k} is ${why}`
+          break
+        }
+      }
+    }
+  }
+  trustCache.set(key, problem)
+  return problem
+}
+
 /**
  * Run a git command scoped to the meta repo (git-dir + work-tree). Local ops
  * use the default 10s timeout; network ops (fetch/push/set-head) MUST pass
@@ -241,9 +388,11 @@ export async function metaGit(
   opts: { timeout?: number; maxBuffer?: number; env?: Record<string, string> } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   const gitDir = metaGitDir(projectDir)
+  const problem = metaGitTrustProblem(projectDir)
+  if (problem) throw new MetaGitUntrustedError(problem)
   return execFileAsync(
     'git',
-    ['--git-dir', gitDir, '--work-tree', projectDir, ...args],
+    [...META_GIT_HARDEN, '--git-dir', gitDir, '--work-tree', projectDir, ...args],
     {
       cwd: projectDir,
       timeout: opts.timeout ?? 10_000,
@@ -497,6 +646,9 @@ export async function initMetaRepo(projectDir: string): Promise<MetaInitResult> 
       fs.mkdirSync(path.dirname(gitDir), { recursive: true })
       await execFileAsync('git', ['init', '--bare', gitDir], { timeout: 10_000, env })
     }
+    // T-848: never write config into (or exclude next to) a clone-carried repo.
+    const problem = metaGitTrustProblem(projectDir)
+    if (problem) throw new MetaGitUntrustedError(problem)
 
     // Two-git/one-worktree config — non-bare with an explicit work-tree so all
     // meta commands operate on the project root. Idempotent (re-run repropagates
