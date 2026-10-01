@@ -12317,20 +12317,89 @@ def schedule_top(rows):
     return [r["id"] for r in ready if key(r) == best]
 
 
-def schedule_classify(ticket, sched, prior_tickets, top):
-    """followed · deviated · continuation · off-graph (design 「class 정의」).
-    off-graph: no ticket resolved, or it is not a node of this round's graph
-    (done · dropped · another version's ticket nothing here depends on).
-    continuation: an earlier recorded dispatch of the same ticket, or a live
-    marker already on it (auto QA · re-dispatch — resumes never reach the gate).
-    followed: in the top row. deviated: any other node (ready below the top,
-    blocked on deps, or a waiting/PO row)."""
-    by_id = {r["id"]: r for r in sched["rows"]}
-    if ticket is None or ticket not in by_id:
-        return "off-graph"
-    if ticket in prior_tickets or by_id[ticket]["state"] == "in-flight":
-        return "continuation"
-    return "followed" if ticket in top else "deviated"
+def _sched_path(f):
+    f = f.strip()
+    return f[len("code/"):] if f.startswith("code/") else f
+
+
+def _sched_files_overlap(a, b):
+    """T-812: same path, or one is a `/`-terminated directory holding the other
+    (a leading `code/` is dropped first — T-800's row wrote `code/packages/...`)."""
+    a, b = _sched_path(a), _sched_path(b)
+    if a == b:
+        return True
+    return (a.endswith("/") and b.startswith(a)) or (b.endswith("/") and a.startswith(b))
+
+
+def _sched_row_version_is(r, want):
+    return isinstance(r.get("version"), str) and _version_id_canon(r["version"]) == want
+
+
+def _sched_row_tickets(r):
+    """Every ticket a dispatch row sent: its own `ticket` plus its `bundle`."""
+    out = []
+    if r.get("ticket"):
+        out.append(r["ticket"])
+    if isinstance(r.get("bundle"), list):
+        out += [t for t in r["bundle"] if isinstance(t, str)]
+    return out
+
+
+def _sched_first_stops(rows):
+    """{index of a dispatch row: index of its FIRST stop row} (a resume's later
+    stop rows are ignored). Matched by tool_use_id, else dispatch_id."""
+    first = {}
+    for i, r in enumerate(rows):
+        if r.get("kind") != "dispatch":
+            continue
+        for j in range(i + 1, len(rows)):
+            s = rows[j]
+            if s.get("kind") != "stop":
+                continue
+            if (r.get("tool_use_id") and s.get("tool_use_id") == r.get("tool_use_id")) or \
+               (not r.get("tool_use_id") and r.get("dispatch_id") and s.get("dispatch_id") == r.get("dispatch_id")):
+                first[i] = j
+                break
+    return first
+
+
+def schedule_judge(ticket, state, top, files, sent, running_files, top_sent):
+    """The T-812 rule, first matching line wins. Returns (class, line, detail).
+    `sent` = tickets (and bundle members) of earlier dispatch rows of this
+    version; `running_files` = the `files` of every earlier dispatch with no
+    stop row yet; `top_sent` = a `top` ticket was sent before this dispatch (or,
+    at report time, before it ended)."""
+    if not ticket or state is None:
+        return "off-graph", 1, None
+    if ticket in sent or state == "in-flight":
+        return "continuation", 2, None
+    if state != "ready":
+        return "deviated", 3, "ready 아님"
+    if ticket in top:
+        return "followed", 4, None
+    if not top_sent:
+        return "deviated", 6, "top 미발주"
+    if not files:
+        return "deviated", 6, "files 비어 있음"
+    for rf in running_files:
+        for f in files:
+            for g in rf:
+                if _sched_files_overlap(f, g):
+                    return "deviated", 6, f"파일 겹침 {_sched_path(f)}"
+    return "followed", 5, None
+
+
+def schedule_classify(ticket, state, top, files, prior_rows, version):
+    """Record-time class: the same rule over the log so far — only 5(a)'s
+    'sent after this dispatch' half is unknowable at the gate."""
+    want = _version_id_canon(version)
+    mine = [(i, r) for i, r in enumerate(prior_rows) if r.get("kind") == "dispatch" and _sched_row_version_is(r, want)]
+    first = _sched_first_stops(prior_rows)
+    sent = set()
+    for _i, r in mine:
+        sent.update(_sched_row_tickets(r))
+    running = [[f for f in (r.get("files") or []) if isinstance(f, str)] for i, r in mine if i not in first]
+    return schedule_judge(ticket, state, top, files, sent, running, any(t in sent for t in top))
 
 
 def _safe_ids(ids):
@@ -12356,15 +12425,21 @@ def schedule_record(ev, now=None):
     sched = compute_schedule(root, tickets)
     ticket, source = schedule_ticket_for_ctx(ctx, tickets)
     prior, _bad = read_schedule_log(root)
-    prior_tickets = {r.get("ticket") for r in prior if r.get("kind") == "dispatch" and r.get("ticket")}
     top = schedule_top(sched["rows"])
-    cls = schedule_classify(ticket, sched, prior_tickets, top)
     by_id = {r["id"]: r for r in sched["rows"]}
+    cm = ctx.get("change_meta") if isinstance(ctx.get("change_meta"), dict) else {}
+    files = [f for f in (cm.get("files") or []) if isinstance(f, str)] if isinstance(cm.get("files"), list) else []
+    cls, _line, _detail = schedule_classify(ticket, by_id[ticket]["state"] if ticket in by_id else None,
+                                            top, files, prior, sched["version"])
+    raw_bundle = ctx.get("bundle")
+    bundle = []
+    if isinstance(raw_bundle, list):
+        for t in raw_bundle:
+            if isinstance(t, str) and SCHEDULE_ID_RE.match(t) and t != ticket and t not in bundle:
+                bundle.append(t)
     reason = ctx.get("schedule_reason")
     reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
     wt = ctx.get("worktree")
-    cm = ctx.get("change_meta") if isinstance(ctx.get("change_meta"), dict) else {}
-    files = [f for f in (cm.get("files") or []) if isinstance(f, str)] if isinstance(cm.get("files"), list) else []
     model = ti.get("model") if ti.get("model") in SCHEDULE_MODEL_TIERS else "default"
     str_or_none = lambda v: v if isinstance(v, str) and v else None
     row = {"kind": "dispatch", "ts": now or now_iso(),
@@ -12377,7 +12452,8 @@ def schedule_record(ev, now=None):
            "sent_slack": by_id[ticket]["slack"] if ticket in by_id else None,
            "sent_state": by_id[ticket]["state"] if ticket in by_id else None,
            "class": cls, "reason": reason,
-           "checkout": wt if isinstance(wt, str) and wt.strip() else "code", "files": files}
+           "checkout": wt if isinstance(wt, str) and wt.strip() else "code", "files": files,
+           "bundle": bundle}
     if sched["cycle"] is not None:
         row["cycle"] = sched["cycle"]
     append_schedule_row(root, row)
@@ -12419,11 +12495,37 @@ def _fmt_local(ts):
     return t.strftime("%Y-%m-%d %H:%M %Z").strip()
 
 
+def schedule_recompute(rows, version):
+    """[(row, class, detail)] for `version`'s dispatch rows, in log order — the
+    class is RECOMPUTED by the T-812 rule, never read from the row's `class`.
+    5(a) looks ahead: a `top` ticket sent after this dispatch but before its
+    first stop row counts. A legacy row with no `sent_state` key (written
+    before T-812's inputs existed) keeps its stored class."""
+    want = _version_id_canon(version)
+    first = _sched_first_stops(rows)
+    mine = [i for i, r in enumerate(rows) if r.get("kind") == "dispatch" and _sched_row_version_is(r, want)]
+    out, sent = [], set()
+    for i in mine:
+        r = rows[i]
+        top = [t for t in (r.get("top") or []) if isinstance(t, str)]
+        files = [f for f in (r.get("files") or []) if isinstance(f, str)]
+        end = first.get(i, math.inf)
+        running = [[f for f in (rows[j].get("files") or []) if isinstance(f, str)]
+                   for j in mine if j < i and first.get(j, math.inf) > i]
+        top_sent = any(t in _sched_row_tickets(rows[j]) for j in mine if j != i and (j < i or j < end) for t in top)
+        if "sent_state" in r:
+            cls, line, detail = schedule_judge(r.get("ticket"), r.get("sent_state"), top, files, sent, running, top_sent)
+        else:
+            cls, line, detail = (r.get("class") if r.get("class") in SCHEDULE_CLASSES else None), None, None
+        out.append((r, cls, line, detail))
+        sent.update(_sched_row_tickets(r))
+    return out
+
+
 def schedule_report_text(rows, version):
     """The generated section (markers included) for `version`'s dispatch rows."""
-    want = _version_id_canon(version)
-    disp = [r for r in rows if r.get("kind") == "dispatch" and isinstance(r.get("version"), str)
-            and _version_id_canon(r["version"]) == want]
+    judged = schedule_recompute(rows, version)
+    disp = [j[0] for j in judged]
     stops = [r for r in rows if r.get("kind") == "stop"]
     label = {"followed": "따름", "deviated": "벗어남", "continuation": "이어서 (같은 티켓)",
              "off-graph": "그래프 밖"}
@@ -12433,10 +12535,12 @@ def schedule_report_text(rows, version):
            "| 시각 | 발주 | 그 시점의 critical path | 실제로 보낸 작업 | 따랐는가 | 벗어났다면 이유 | 소요 시간 |",
            "|---|---|---|---|---|---|---|"]
     counts = {c: 0 for c in SCHEDULE_CLASSES}
-    for r in disp:
-        cls = r.get("class") if r.get("class") in SCHEDULE_CLASSES else None
+    ties = 0
+    for r, cls, line, detail in judged:
         if cls:
             counts[cls] += 1
+        if cls == "followed" and line == 4 and len(r.get("top") or []) > 1:
+            ties += 1
         mine = [s for s in stops
                 if (r.get("tool_use_id") and s.get("tool_use_id") == r.get("tool_use_id"))
                 or (not r.get("tool_use_id") and r.get("dispatch_id") and s.get("dispatch_id") == r.get("dispatch_id"))]
@@ -12453,14 +12557,14 @@ def schedule_report_text(rows, version):
             sent += f" `{_md_cell(r['slug'], 80)}`"
         reason = r.get("reason")
         if cls == "deviated":
-            why = _md_cell(reason) if reason else "이유 없음"
+            why = _md_cell(reason) if reason else "이유 없음" + (f" — {_md_cell(detail)}" if detail else "")
         else:
             why = _md_cell(reason) if reason else "—"
         out.append(f"| {_fmt_local(r.get('ts'))} | {who} | {cp} | {sent} | "
                    f"{label.get(cls, _md_cell(r.get('class') or '-'))} | {why} | {dur} |")
     f, d = counts["followed"], counts["deviated"]
     ratio = f"{f / (f + d) * 100:.0f}%" if (f + d) else "측정 불가 (분모 0)"
-    out += ["", f"측정 5 — critical path 를 따른 발주 비율: 따름 {f} ÷ (따름 {f} + 벗어남 {d}) = {ratio}. "
+    out += ["", f"측정 5 — critical path 를 따른 발주 비율: 따름 {f} (동점 top 에서 {ties}) ÷ (따름 {f} + 벗어남 {d}) = {ratio}. "
                 f"이어서 {counts['continuation']}건 · 그래프 밖 {counts['off-graph']}건은 분모에 넣지 않는다.",
             "", SCHEDULE_REPORT_END]
     return "\n".join(out) + "\n", len(disp)

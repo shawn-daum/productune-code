@@ -292,7 +292,7 @@ describe('`prdt schedule report` — the gate observation document', () => {
     expect(md).toContain('| 벗어남 | VM \\| is free now |')
     expect(md).toContain('| T-2 (발주 가능 없음) | T-1 | 이어서 (같은 티켓) | — |')
     expect(md).not.toContain('d-old')
-    expect(md).toContain('측정 5 — critical path 를 따른 발주 비율: 따름 1 ÷ (따름 1 + 벗어남 2) = 33%.')
+    expect(md).toContain('측정 5 — critical path 를 따른 발주 비율: 따름 1 (동점 top 에서 0) ÷ (따름 1 + 벗어남 2) = 33%.')
   })
 
   test('a re-run rewrites only the generated section; the PO text outside it stays byte-identical', () => {
@@ -306,7 +306,7 @@ describe('`prdt schedule report` — the gate observation document', () => {
     cli(['schedule', 'report'])
     const second = fs.readFileSync(OBS(), 'utf8')
     expect(second.endsWith(po)).toBe(true)
-    expect(second).toContain('따름 2 ÷ (따름 2 + 벗어남 2) = 50%')
+    expect(second).toContain('따름 2 (동점 top 에서 0) ÷ (따름 2 + 벗어남 2) = 50%')
     expect(second.split('prdt:schedule-report:begin').length).toBe(2)
   })
 
@@ -316,5 +316,93 @@ describe('`prdt schedule report` — the gate observation document', () => {
     const md = fs.readFileSync(path.join(proj, 'docs', 'artifacts', 'v1.12', 'schedule-observation.md'), 'utf8')
     expect(md).toContain('v1.12 발주 0건')
     expect(md).toContain('측정 불가 (분모 0)')
+  })
+})
+
+describe('T-824 (T-812 rule) — `prdt schedule report` recomputes each row\'s class from the log', () => {
+  const FIXTURE = path.join(CORE_ROOT, 'test', 'fixtures', 'schedule-v111-first-ten.jsonl')
+  const OBS = () => path.join(proj, 'docs', 'artifacts', 'v1.11', 'schedule-observation.md')
+  const disp = (o: Record<string, unknown>) => ({
+    kind: 'dispatch', ts: '2026-09-28T05:00:00Z', version: 'v1.11', persona: 'developer', critical_path: [], reason: null, sent_state: 'ready', class: 'deviated', ...o,
+  })
+  const stop = (id: string) => ({ kind: 'stop', tool_use_id: id, dispatch_id: id, outcome: 'returned', duration_s: 5 })
+  function report(lines: unknown[]): string {
+    fs.writeFileSync(path.join(proj, '.prdt', 'schedule.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+    expect(cli(['schedule', 'report']).status).toBe(0)
+    return fs.readFileSync(OBS(), 'utf8')
+  }
+  const classes = (md: string) => md.split('\n').filter((l) => /^\| 20\d\d-/.test(l)).map((l) => l.split(' | ')[4])
+
+  test('replaying the ten v1.11 rows lands 80%: T-786 followed, T-785 still deviated', () => {
+    fs.copyFileSync(FIXTURE, path.join(proj, '.prdt', 'schedule.jsonl'))
+    expect(cli(['schedule', 'report']).status).toBe(0)
+    const md = fs.readFileSync(OBS(), 'utf8')
+    expect(classes(md)).toEqual(['따름', '그래프 밖', '그래프 밖', '그래프 밖', '따름', '벗어남', '따름', '따름', '이어서 (같은 티켓)', '이어서 (같은 티켓)'])
+    expect(md).toContain('| 벗어남 | 이유 없음 — 파일 겹침 packages/core/scripts/prdt |')
+    expect(md).toContain('따름 4 (동점 top 에서 2) ÷ (따름 4 + 벗어남 1) = 80%')
+  })
+
+  test('a bundle: the bundled ticket is no row, and a later dispatch of it counts as continuation, not an extra deviation', () => {
+    const md = report([
+      disp({ tool_use_id: 'a', dispatch_id: 'a', ticket: 'T-1', top: ['T-1'], files: ['x/'], bundle: ['T-2'] }),
+      disp({ tool_use_id: 'b', dispatch_id: 'b', ticket: 'T-2', top: ['T-2'], files: ['y/'] }),
+      disp({ tool_use_id: 'c', dispatch_id: 'c', ticket: 'T-3', top: ['T-2'], files: ['z/'] }),
+    ])
+    // c: T-2 (its top) was sent in a's bundle, z/ is disjoint → followed by 5; b: already sent in the bundle → continuation
+    expect(classes(md)).toEqual(['따름', '이어서 (같은 티켓)', '따름'])
+    expect(md).toContain('3건')
+  })
+
+  test('a tie: every tied top ticket is followed, and the tie count is printed', () => {
+    const md = report([
+      disp({ tool_use_id: 'a', dispatch_id: 'a', ticket: 'T-1', top: ['T-1', 'T-3'], files: ['x'] }),
+      disp({ tool_use_id: 'b', dispatch_id: 'b', ticket: 'T-3', top: ['T-1', 'T-3'], files: ['x'] }),
+    ])
+    expect(classes(md)).toEqual(['따름', '따름'])
+    expect(md).toContain('따름 2 (동점 top 에서 2) ÷ (따름 2 + 벗어남 0) = 100%')
+  })
+
+  test('empty files off the top, a top never sent, or a non-ready ticket stay deviated, each with its reason', () => {
+    const md = report([
+      disp({ tool_use_id: 'a', dispatch_id: 'a', ticket: 'T-1', top: ['T-1'], files: ['x'] }),
+      disp({ tool_use_id: 'b', dispatch_id: 'b', ticket: 'T-3', top: ['T-1'], files: [] }),
+      disp({ tool_use_id: 'c', dispatch_id: 'c', ticket: 'T-4', top: ['T-9'], files: ['q'] }),
+      disp({ tool_use_id: 'd', dispatch_id: 'd', ticket: 'T-5', top: ['T-1'], files: ['q'], sent_state: 'blocked' }),
+    ])
+    expect(classes(md)).toEqual(['따름', '벗어남', '벗어남', '벗어남'])
+    expect(md).toContain('이유 없음 — files 비어 있음')
+    expect(md).toContain('이유 없음 — top 미발주')
+    expect(md).toContain('이유 없음 — ready 아님')
+  })
+
+  test('a stopped dispatch no longer blocks: overlap with it does not count; a directory overlaps its children; code/ prefix is dropped', () => {
+    const md = report([
+      disp({ tool_use_id: 'a', dispatch_id: 'a', ticket: 'T-1', top: ['T-1'], files: ['p/f.ts'] }),
+      stop('a'),
+      disp({ tool_use_id: 'b', dispatch_id: 'b', ticket: 'T-3', top: ['T-1'], files: ['p/f.ts'] }),
+      disp({ tool_use_id: 'c', dispatch_id: 'c', ticket: 'T-4', top: ['T-1'], files: ['code/p/'] }),
+    ])
+    expect(classes(md)).toEqual(['따름', '따름', '벗어남'])
+    expect(md).toContain('이유 없음 — 파일 겹침 p/')
+  })
+
+  test('the gate copies [ctx].bundle (T-NNN only, deduped, never the ticket itself) into the row; the record-time class uses the rule, so a parallel top-first dispatch warns nothing', () => {
+    writeTicket('T-4')
+    // T-1 is the top; T-3 and T-4 are ready off-top
+    expect(gate(ctx({ slug: 's-t-1', dispatch_id: 'd-1', change_meta: { files: ['a/'] }, bundle: ['T-2', 'T-2', 'T-1', 'bad', 'T-77'] }), 'toolu_1')).toBeNull()
+    expect(rows()[0].bundle).toEqual(['T-2', 'T-77'])
+    expect(gate(ctx({ slug: 's-t-3', dispatch_id: 'd-3', change_meta: { files: ['b/'] } }), 'toolu_3')).toBeNull()
+    expect(rows()[1]).toMatchObject({ ticket: 'T-3', class: 'followed', bundle: [] })
+    // overlapping files with the running T-1 → warns
+    const out = gate(ctx({ slug: 's-t-4', dispatch_id: 'd-4', change_meta: { files: ['a/x.ts'] } }), 'toolu_4')
+    expect(out.additionalContext).toContain('off the critical path')
+    expect(rows()[2]).toMatchObject({ ticket: 'T-4', class: 'deviated' })
+  })
+
+  test('empty files at the gate: off the top is deviated and warns', () => {
+    gate(ctx({ slug: 's-t-1', dispatch_id: 'd-1' }), 'toolu_1')
+    const out = gate(ctx({ slug: 's-t-3', dispatch_id: 'd-3', change_meta: { files: [] } }), 'toolu_3')
+    expect(out.additionalContext).toContain('off the critical path')
+    expect(rows()[1]).toMatchObject({ class: 'deviated', files: [] })
   })
 })
