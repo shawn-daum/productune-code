@@ -1068,8 +1068,108 @@ def _git(args, cwd):
                           capture_output=True, text=True, timeout=10)
 
 
+# T-848: `.prdt/meta.git` sits in the project tree, so a cloned repository can
+# carry one — config, hooks and all. Observed by running (git 2.54): a carried
+# `core.fsmonitor`, `core.hooksPath`, `$GIT_DIR/hooks/*`, an `include.path`, and a
+# `filter.<x>.clean` named by `$GIT_DIR/info/attributes` each RUN a command on
+# plain `status` / `add` / `commit`. Two layers, same on the TS side
+# (meta-git.ts metaGit — keep both in step):
+#  1. every meta git run pins the hook / fsmonitor / signing knobs on the
+#     command line (command-line config outranks every file);
+#  2. before any run, the repo's own config must hold only keys prdt or
+#     `prdt meta remote add` write — a driver key (filter / diff / merge /
+#     pager / editor / sshCommand / gpg / credential / alias / include / …)
+#     can't be neutralised by name, so an unknown key refuses the run.
+META_GIT_HARDEN = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+                   "-c", "commit.gpgsign=false"]
+_META_CONFIG_ALLOWED = re.compile(
+    r"(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase"
+    r"|precomposeunicode|symlinks|worktree|hookspath)"
+    r"|extensions\.(objectformat|refstorage)"
+    r"|user\.(name|email)|commit\.gpgsign|push\.(followtags|default)"
+    r"|remote\..+\.(url|pushurl|fetch)|branch\..+\.(remote|merge))")
+_meta_trust_cache = {}
+
+
+def _meta_remote_url_problem(root, url):
+    """A remote URL that would make a push/fetch run a clone-carried program:
+    a `<helper>::` transport (`ext::` runs its argument) or a local repository
+    inside this project (its own hooks run on push)."""
+    if "::" in url.split("/", 1)[0]:
+        return "a remote-helper URL"
+    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", url) and not url.startswith("file://"):
+        return None
+    if not url.startswith("file://") and re.match(r"^[^/]+:", url):
+        return None  # scp-like host:path
+    p = url[len("file://"):] if url.startswith("file://") else url
+    try:
+        base = Path(root).resolve()
+        tgt = (base / p).resolve() if not os.path.isabs(p) else Path(p).resolve()
+    except (OSError, RuntimeError):
+        return "an unresolvable local remote"
+    if tgt == base or base in tgt.parents:
+        return "a local remote inside this project"
+    return None
+
+
+def meta_git_trust_problem(root):
+    """None when `.prdt/meta.git` may be handed to git, else why not (one
+    English line). Never raises; never runs a command the repo could name
+    (`git config --file` reads one file and follows no include)."""
+    root = Path(root)
+    gd = meta_git_dir(root)
+    for p in (root / ".prdt", gd, gd / "config"):
+        try:
+            if stat.S_ISLNK(os.lstat(p).st_mode):
+                return f"{p.relative_to(root)} is a symbolic link"
+        except FileNotFoundError:
+            if p == gd / "config":
+                return None  # no repo yet — nothing to trust
+        except OSError:
+            return f"cannot inspect {p.relative_to(root)}"
+    for name in ("commondir", "config.worktree"):
+        if os.path.lexists(gd / name):
+            return f".prdt/meta.git/{name} exists"
+    try:
+        st = os.stat(gd / "config")
+        key = (str(gd), st.st_ino, st.st_size, st.st_mtime_ns)
+    except OSError:
+        return "cannot read .prdt/meta.git/config"
+    if key in _meta_trust_cache:
+        return _meta_trust_cache[key]
+    r = _git(["config", "--file", str(gd / "config"), "--no-includes", "--list", "-z"], root)
+    if r.returncode != 0:
+        prob = "cannot parse .prdt/meta.git/config"
+    else:
+        prob = None
+        for ent in r.stdout.split("\0"):
+            if not ent:
+                continue
+            k, _, v = ent.partition("\n")
+            if not _META_CONFIG_ALLOWED.fullmatch(k):
+                prob = f".prdt/meta.git/config sets {k}"
+                break
+            if k.endswith((".url", ".pushurl")) and k.startswith("remote."):
+                why = _meta_remote_url_problem(root, v)
+                if why:
+                    prob = f".prdt/meta.git/config {k} is {why}"
+                    break
+    _meta_trust_cache[key] = prob
+    return prob
+
+
+def meta_git_refusal(prob):
+    return ("prdt does not run git on this project's .prdt/meta.git: " + prob
+            + " — prdt never writes this, so it may have come with a cloned "
+              "repository. Check it, remove it, then run `prdt doctor`.")
+
+
 def _meta_git(root, args):
-    return _git(["--git-dir", str(meta_git_dir(root)), "--work-tree", str(root), *args], root)
+    prob = meta_git_trust_problem(root)
+    if prob:
+        return subprocess.CompletedProcess(["git", *args], 128, "", meta_git_refusal(prob))
+    return _git([*META_GIT_HARDEN, "--git-dir", str(meta_git_dir(root)),
+                 "--work-tree", str(root), *args], root)
 
 
 def read_meta_allowlist(root):
@@ -1115,6 +1215,9 @@ def meta_backup_lag_warnings(root):
     gd = meta_git_dir(root)
     if not (gd / "HEAD").exists():
         return []  # no meta split — nothing to back up
+    prob = meta_git_trust_problem(root)  # T-848: say it, never silently skip
+    if prob:
+        return ["meta: " + meta_git_refusal(prob)]
     r = _meta_git(root, ["remote"])
     remotes = [x for x in r.stdout.splitlines() if x.strip()] if r.returncode == 0 else []
     if not remotes:
@@ -1371,6 +1474,9 @@ def init_meta_split(root):
             r = _git(["init", "--bare", "-q", str(gd)], root)
             if r.returncode != 0:
                 return (r.stderr or "meta git init failed").strip()
+        prob = meta_git_trust_problem(root)  # T-848: a clone-carried meta.git
+        if prob:
+            return meta_git_refusal(prob)
         # Idempotent repo-local config — mirrors meta-git.ts initMetaRepo (identity;
         # gpgsign/hooksPath neutralize the user's global gitconfig). core.worktree
         # is projectRoot (meta work-tree — unchanged by the split, §1).
