@@ -382,6 +382,58 @@ export function collectArtifacts(repoRoot) {
   return { entries }
 }
 
+// T-883: the release notes — `code/docs/RELEASES.md`, one `## <version> —
+// <title> (<date>)` section per shipped version, newest first (the format is
+// written in that file's own preamble). Read path: `<repoRoot>/code/docs/RELEASES.md`
+// only — the code checkout's file, never a path taken from a document.
+// Containment: the file is read only when its REAL path (every symlink
+// resolved) is exactly that path under the REAL repo root — a symlinked
+// `code`, `docs` or `RELEASES.md` (T-842 · T-847 class: another repository's
+// committed link) reads as "no release notes", never as a file outside the
+// project. A missing, unreadable or non-file entry is the same empty list.
+export const RELEASES_REL = 'code/docs/RELEASES.md'
+
+/**
+ * @param {string} text the whole RELEASES.md
+ * @returns {Array<{version:string, title:string, date:string, body:string}>} sections in file order; text above the first version heading (the preamble) is ignored, as the file's own format says.
+ */
+export function parseReleases(text) {
+  const sections = []
+  let cur = null
+  let fence = null
+  for (const line of String(text).split('\n')) {
+    const fenceMatch = /^\s*(`{3,}|~{3,})/.exec(line)
+    if (fenceMatch) {
+      if (fence === null) fence = fenceMatch[1][0]
+      else if (fenceMatch[1][0] === fence) fence = null
+    }
+    const h = fence === null ? /^##\s+(v\d\S*)(?:\s+[—–-]\s+(.*?))?\s*$/.exec(line) : null
+    if (h) {
+      let title = h[2] || ''
+      let date = ''
+      const d = /\s*\((\d{4}-\d{2}-\d{2})\)\s*$/.exec(title) || /^\((\d{4}-\d{2}-\d{2})\)\s*$/.exec(title)
+      if (d) { date = d[1]; title = title.slice(0, d.index).trim() }
+      cur = { version: h[1], title, date, lines: [] }
+      sections.push(cur)
+    } else if (cur) {
+      cur.lines.push(line)
+    }
+  }
+  return sections.map((s) => ({ version: s.version, title: s.title, date: s.date, body: s.lines.join('\n').trim() }))
+}
+
+export function collectReleases(repoRoot) {
+  try {
+    const realRoot = fs.realpathSync(repoRoot)
+    const abs = path.join(realRoot, RELEASES_REL)
+    if (fs.realpathSync(abs) !== abs) return []
+    if (!fs.statSync(abs).isFile()) return []
+    return parseReleases(fs.readFileSync(abs, 'utf8'))
+  } catch {
+    return []
+  }
+}
+
 /** Everything the generator needs, gathered once. */
 export function collectAll(repoRoot) {
   const poState = readPoState(repoRoot)
@@ -395,5 +447,6 @@ export function collectAll(repoRoot) {
     features: collectFeatures(repoRoot),
     featureTaxonomy: collectFeatureTaxonomy(repoRoot),
     artifacts: collectArtifacts(repoRoot),
+    releases: collectReleases(repoRoot),
   }
 }
