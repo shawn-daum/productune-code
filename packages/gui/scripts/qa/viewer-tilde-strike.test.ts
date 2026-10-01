@@ -2,7 +2,7 @@
 // strikethrough; only `~~text~~` strikes. marked's GFM default accepts
 // single-tilde pairs, so render.mjs narrows the `del` tokenizer.
 import { describe, it, expect } from 'vitest'
-import { renderPage } from '../../viewer/lib/render.mjs'
+import { renderPage } from '@productune/viewer/lib/render.mjs'
 
 function renderTicketBody(body: string): string {
   const data = {

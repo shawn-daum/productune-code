@@ -9,8 +9,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, it, expect } from 'vitest'
-import { generate } from '../../viewer/generate.mjs'
-import { buildAnchors, maxTicketNumber, renderPage } from '../../viewer/lib/render.mjs'
+import { generate } from '@productune/viewer/generate.mjs'
+import { buildAnchors, maxTicketNumber, renderPage } from '@productune/viewer/lib/render.mjs'
 
 const fixture = {
   poState: { stage: 'build', version: 'v1.10', current_task: null },

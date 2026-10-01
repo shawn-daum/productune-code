@@ -3,9 +3,9 @@
 // document kind" · "a test asserts that every ticket row resolves to a
 // detail entry" (the shell's list → detail proof, ticket store).
 import { describe, it, expect, beforeAll } from 'vitest'
-import { generate, missingMetaRootReason } from '../../viewer/generate.mjs'
-import { renderPage, resolveDocLink } from '../../viewer/lib/render.mjs'
-import { collectPrdOpenItems } from '../../viewer/lib/collect.mjs'
+import { generate, missingMetaRootReason } from '@productune/viewer/generate.mjs'
+import { renderPage, resolveDocLink } from '@productune/viewer/lib/render.mjs'
+import { collectPrdOpenItems } from '@productune/viewer/lib/collect.mjs'
 
 // T-718: the real generated page, built HERE in-process rather than read
 // back off the gitignored `viewer/viewer.html` (a fresh checkout never has
@@ -510,31 +510,31 @@ describe('viewer/lib/render.mjs — ticket sidebar orders buckets by NUMERIC ver
     expect(blobMatch).not.toBeNull()
     const data = JSON.parse(blobMatch![1])
     expect(data.ticket['T-800'].body).toBeUndefined()
-    expect(data.ticket['T-800'].fileHref).toBe('../../../../docs/tickets/v1.9/T-800.md')
+    expect(data.ticket['T-800'].fileHref).toBe('../../../docs/tickets/v1.9/T-800.md')
   })
 })
 
 describe('viewer/lib/render.mjs — resolveDocLink (T-666 slice 2b)', () => {
   it('resolves a same-repo relative link against the source directory and repoRootHref, matching the real hrefs measured in PRD.md', () => {
-    expect(resolveDocLink('./versions/v1.9.md', 'docs/prd', '../../../..')).toBe('../../../../docs/prd/versions/v1.9.md')
-    expect(resolveDocLink('../artifacts/v1.9/phase4-terminal-free-gui.md', 'docs/prd', '../../../..')).toBe(
-      '../../../../docs/artifacts/v1.9/phase4-terminal-free-gui.md',
+    expect(resolveDocLink('./versions/v1.9.md', 'docs/prd', '../../..')).toBe('../../../docs/prd/versions/v1.9.md')
+    expect(resolveDocLink('../artifacts/v1.9/phase4-terminal-free-gui.md', 'docs/prd', '../../..')).toBe(
+      '../../../docs/artifacts/v1.9/phase4-terminal-free-gui.md',
     )
   })
 
   it('leaves an anchor, a protocol-relative link, a scheme link, and a site-absolute link untouched (returns null)', () => {
-    expect(resolveDocLink('#section', 'docs/prd', '../../../..')).toBeNull()
-    expect(resolveDocLink('//example.com/x', 'docs/prd', '../../../..')).toBeNull()
-    expect(resolveDocLink('https://example.com/x', 'docs/prd', '../../../..')).toBeNull()
-    expect(resolveDocLink('mailto:a@b.com', 'docs/prd', '../../../..')).toBeNull()
-    expect(resolveDocLink('/docs/prd/PRD.md', 'docs/prd', '../../../..')).toBeNull()
+    expect(resolveDocLink('#section', 'docs/prd', '../../..')).toBeNull()
+    expect(resolveDocLink('//example.com/x', 'docs/prd', '../../..')).toBeNull()
+    expect(resolveDocLink('https://example.com/x', 'docs/prd', '../../..')).toBeNull()
+    expect(resolveDocLink('mailto:a@b.com', 'docs/prd', '../../..')).toBeNull()
+    expect(resolveDocLink('/docs/prd/PRD.md', 'docs/prd', '../../..')).toBeNull()
   })
 
   // Non-vacuous control: a link that would resolve outside the repo root
   // really is caught, or "leave untouched if it escapes the repo root"
   // could be passing only because no fixture ever exercises that branch.
   it('checker fixture: a link that would escape the repo root is left untouched, never rewritten past it', () => {
-    expect(resolveDocLink('../../../../../etc/passwd', 'docs/prd', '../../../..')).toBeNull()
+    expect(resolveDocLink('../../../../../etc/passwd', 'docs/prd', '../../..')).toBeNull()
   })
 })
 
@@ -548,7 +548,7 @@ describe("viewer/lib/render.mjs — relative document links resolve against the 
   it("rewrites a relative link inside a wiki body against the wiki page's own directory, using the default repoRootHref", () => {
     const html = renderPage({ data: fixtureData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
     const body = detailData(html).wiki['fact--fixture-link.md'].body
-    expect(body).toContain('href="../../../../docs/prd/versions/v1.1.md"')
+    expect(body).toContain('href="../../../docs/prd/versions/v1.1.md"')
     expect(body).toContain('target="_blank"')
     expect(body).toContain('rel="noopener"')
     expect(body).toContain('href="#foo"')

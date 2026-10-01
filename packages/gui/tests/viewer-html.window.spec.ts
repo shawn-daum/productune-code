@@ -45,7 +45,7 @@ import { test, expect, chromium, type Browser, type Page } from '@playwright/tes
 // (`tests/isolation.guard.spec.ts`, `tests/harness.ts`, etc.) uses the plain
 // `__dirname` global instead and loads fine, confirming `import.meta.url` was
 // the one thing this file did differently.
-const VIEWER_HTML = path.resolve(__dirname, '../viewer/viewer.html')
+const VIEWER_HTML = path.resolve(__dirname, '../../viewer/viewer.html')
 
 // Same fix as tests/ds-html.window.spec.ts: `playwright.config.ts` repoints
 // `HOME` at a sandbox at module scope (T-450), so Playwright's own browser
@@ -284,7 +284,7 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
   test.beforeAll(async () => {
     expect(
       fs.existsSync(VIEWER_HTML),
-      `${VIEWER_HTML} does not exist — run \`pnpm --filter @productune/gui viewer\` first`,
+      `${VIEWER_HTML} does not exist — run \`pnpm --filter @productune/viewer viewer\` first`,
     ).toBe(true)
     execPath = chromium.executablePath()
     ;({ child, cdpBase, userDataDir } = await spawnHeadlessChrome(execPath))

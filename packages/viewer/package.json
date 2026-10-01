@@ -1,0 +1,14 @@
+{
+  "name": "@productune/viewer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Static one-page repo viewer generator (T-665). Its own package so prdt install/update installs only these dependencies, never the GUI's (T-871).",
+  "scripts": {
+    "viewer": "node cli.mjs"
+  },
+  "dependencies": {
+    "marked": "16.4.2",
+    "pretendard": "^1.3.9",
+    "subset-font": "2.9.0"
+  }
+}

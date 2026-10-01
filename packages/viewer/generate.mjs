@@ -1,6 +1,6 @@
 // viewer/generate.mjs — orchestrates the one-page repo viewer (T-665).
 // Reads ONLY: tokens.css + the two static Pretendard woff2 files (via the
-// SAME ds/lib modules T-689's DS generator uses — no second parser/subsetter)
+// SAME lib/parse-tokens + lib/font-subset modules T-689's DS generator uses — no second parser/subsetter)
 // plus the repo's own canonical sources (docs/prd, docs/tickets, docs/wiki,
 // docs/features, docs/artifacts/manifest.json, .prdt/po-state.json) via
 // viewer/lib/collect.mjs. Never a runtime fetch — everything above is read
@@ -9,8 +9,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { buildRawThemeMaps, resolveVarChains } from '../ds/lib/parse-tokens.mjs'
-import { collectUsedChars, buildPretendardFontFaceCss } from '../ds/lib/font-subset.mjs'
+import { buildRawThemeMaps, resolveVarChains } from './lib/parse-tokens.mjs'
+import { collectUsedChars, buildPretendardFontFaceCss } from './lib/font-subset.mjs'
 import { collectAll } from './lib/collect.mjs'
 import { renderPage, templateGuardErrors } from './lib/render.mjs'
 
@@ -20,10 +20,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // (a detached `git worktree add` names it whatever the caller passed), so
 // nothing downstream may assume the checkout root itself is named "code" (or
 // any other literal).
-export const GUI_ROOT = path.resolve(__dirname, '..')
-// code/packages/gui -> code -> productune (repo root, where docs/ and
-// .prdt/ live — the viewer reads the WHOLE repo, not just the gui package).
-export const REPO_ROOT = path.resolve(GUI_ROOT, '../../..')
+// T-871: the generator is its own workspace package (`@productune/viewer`) so
+// `prdt` install/update can install ONLY its dependencies (marked ·
+// subset-font · pretendard), never the GUI's (electron). It still reads the
+// GUI's tokens.css — the one token source — from the sibling package.
+export const VIEWER_ROOT = __dirname
+export const GUI_ROOT = path.resolve(VIEWER_ROOT, '../gui')
+// code/packages/viewer -> code -> productune (repo root, where docs/ and
+// .prdt/ live — the viewer reads the WHOLE repo, not just a package).
+export const REPO_ROOT = path.resolve(VIEWER_ROOT, '../../..')
 
 /**
  * T-718 slice 2: whether `repoRoot` looks like a real meta project (the one
@@ -50,9 +55,9 @@ export function missingMetaRootReason(repoRoot = REPO_ROOT) {
 
 const TOKENS_PATH = path.join(GUI_ROOT, 'src/styles/tokens.css')
 export const OUTPUT_PATH = path.join(__dirname, 'viewer.html')
-export const GEN_COMMAND = 'pnpm --filter @productune/gui viewer'
+export const GEN_COMMAND = 'pnpm --filter @productune/viewer viewer'
 
-const PRETENDARD_STATIC_DIR = path.join(GUI_ROOT, 'node_modules/pretendard/dist/web/static/woff2')
+const PRETENDARD_STATIC_DIR = path.join(VIEWER_ROOT, 'node_modules/pretendard/dist/web/static/woff2')
 const REGULAR_WOFF2 = path.join(PRETENDARD_STATIC_DIR, 'Pretendard-Regular.woff2')
 const SEMIBOLD_WOFF2 = path.join(PRETENDARD_STATIC_DIR, 'Pretendard-SemiBold.woff2')
 
@@ -73,7 +78,7 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH 
   const light = resolveVarChains(lightRaw)
 
   // Generation-time template guards (T-665 slice 2 acceptance line 3 — same
-  // shape as ds/generate.mjs's: zero hex/rgb literals in the template CSS,
+  // shape as the GUI's ds/generate.mjs's: zero hex/rgb literals in the template CSS,
   // every var() it uses declared in tokens.css).
   const guardErrors = templateGuardErrors(dark)
   if (guardErrors.length > 0) {

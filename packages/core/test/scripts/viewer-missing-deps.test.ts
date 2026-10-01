@@ -23,7 +23,10 @@ import { subprocessTimeout } from '../helpers/subprocess-timeout'
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const REAL_PRDT = path.join(CORE_ROOT, 'scripts', 'prdt')
 const REAL_DISCIPLINE = path.join(CORE_ROOT, 'discipline')
-const HAS_GENERATOR = fs.existsSync(path.join(CORE_ROOT, '..', 'gui', 'node_modules', 'marked'))
+const HAS_GENERATOR = fs.existsSync(path.join(CORE_ROOT, '..', 'viewer', 'node_modules', 'marked'))
+// T-871: the generator is its own workspace package; the fix is the filtered
+// install install.sh §1c runs — never a full `pnpm install` (electron).
+const FIX = 'pnpm install --frozen-lockfile --filter @productune/viewer --ignore-scripts'
 
 function which(bin: string): string | null {
   try { return execFileSync('which', [bin], { encoding: 'utf8' }).trim() || null } catch { return null }
@@ -43,7 +46,7 @@ fs.mkdirSync(path.dirname(out), { recursive: true })
 fs.writeFileSync(out, '<!doctype html>')
 `
 
-interface Fake { prdt: string; code: string; gui: string }
+interface Fake { prdt: string; code: string; gui: string; viewer: string }
 
 /** A fake checkout; `omit` names pieces to leave out. */
 function fakeCheckout(opts: { omit?: string[]; cli?: string } = {}): Fake {
@@ -51,31 +54,32 @@ function fakeCheckout(opts: { omit?: string[]; cli?: string } = {}): Fake {
   const code = path.join(sb, 'code')
   const scripts = path.join(code, 'packages', 'core', 'scripts')
   const gui = path.join(code, 'packages', 'gui')
+  const viewer = path.join(code, 'packages', 'viewer')
   fs.mkdirSync(scripts, { recursive: true })
   const prdt = path.join(scripts, 'prdt')
   fs.copyFileSync(REAL_PRDT, prdt)
   fs.chmodSync(prdt, 0o755)
   if (!omit.has('cli.mjs')) {
-    fs.mkdirSync(path.join(gui, 'viewer'), { recursive: true })
-    fs.writeFileSync(path.join(gui, 'viewer', 'cli.mjs'), opts.cli ?? OK_CLI)
+    fs.mkdirSync(viewer, { recursive: true })
+    fs.writeFileSync(path.join(viewer, 'cli.mjs'), opts.cli ?? OK_CLI)
   }
   if (!omit.has('node_modules')) {
     for (const pkg of ['marked', 'subset-font']) {
       if (omit.has(pkg)) continue
-      fs.mkdirSync(path.join(gui, 'node_modules', pkg), { recursive: true })
-      fs.writeFileSync(path.join(gui, 'node_modules', pkg, 'package.json'), `{"name":"${pkg}"}`)
+      fs.mkdirSync(path.join(viewer, 'node_modules', pkg), { recursive: true })
+      fs.writeFileSync(path.join(viewer, 'node_modules', pkg, 'package.json'), `{"name":"${pkg}"}`)
     }
     if (!omit.has('pretendard')) {
-      fs.mkdirSync(path.join(gui, 'node_modules', 'pretendard', 'dist', 'web', 'static', 'woff2'), { recursive: true })
+      fs.mkdirSync(path.join(viewer, 'node_modules', 'pretendard', 'dist', 'web', 'static', 'woff2'), { recursive: true })
     } else {
-      fs.mkdirSync(path.join(gui, 'node_modules'), { recursive: true })
+      fs.mkdirSync(path.join(viewer, 'node_modules'), { recursive: true })
     }
   }
   if (!omit.has('tokens.css')) {
     fs.mkdirSync(path.join(gui, 'src', 'styles'), { recursive: true })
     fs.writeFileSync(path.join(gui, 'src', 'styles', 'tokens.css'), ':root{}')
   }
-  return { prdt, code, gui }
+  return { prdt, code, gui, viewer }
 }
 
 function project(): string {
@@ -149,16 +153,17 @@ describe.skipIf(!PYTHON3)('prdt viewer — the cause is named, with the one fix 
     const f = fakeCheckout({ omit: ['cli.mjs'] })
     const r = run(f.prdt, ['viewer'])
     expect(r.code).not.toBe(0)
-    expect(r.err).toContain(path.join(f.gui, 'viewer', 'cli.mjs'))
+    expect(r.err).toContain(path.join(f.viewer, 'cli.mjs'))
     expect(r.err).toContain('없어요')
   })
 
-  test('node_modules directory absent: fix is pnpm install at the code root', () => {
+  test('node_modules directory absent: fix is the viewer-only install at the code root, naming packages/viewer', () => {
     const f = fakeCheckout({ omit: ['node_modules'] })
     const r = run(f.prdt, ['viewer'])
     expect(r.code).not.toBe(0)
-    expect(r.err).toContain('node_modules')
-    expect(r.err).toContain(`cd ${f.code} && pnpm install`)
+    expect(r.err).toContain(path.join(f.viewer, 'node_modules'))
+    expect(r.err).not.toContain(path.join(f.gui, 'node_modules'))
+    expect(r.err).toContain(`cd ${f.code} && ${FIX}`)
   })
 
   test('node_modules present but marked + subset-font missing (the old-install state): both named', () => {
@@ -168,14 +173,14 @@ describe.skipIf(!PYTHON3)('prdt viewer — the cause is named, with the one fix 
     expect(r.err).toContain('marked')
     expect(r.err).toContain('subset-font')
     expect(r.err).not.toContain('pretendard')
-    expect(r.err).toContain(`cd ${f.code} && pnpm install`)
+    expect(r.err).toContain(`cd ${f.code} && ${FIX}`)
   })
 
   test('pretendard woff2 files missing is named', () => {
     const f = fakeCheckout({ omit: ['pretendard'] })
     const r = run(f.prdt, ['viewer'])
     expect(r.err).toContain('pretendard')
-    expect(r.err).toContain(`cd ${f.code} && pnpm install`)
+    expect(r.err).toContain(`cd ${f.code} && ${FIX}`)
   })
 
   test('tokens.css missing is named as an incomplete checkout', () => {
@@ -220,7 +225,8 @@ describe.skipIf(!PYTHON3)('prdt tickets --link — markdown fallback plus one st
     const lines = r.err.split('\n').filter((l) => l.trim())
     expect(lines.length).toBe(1)
     expect(lines[0]).toContain('marked')
-    expect(lines[0]).toContain(`cd ${f.code} && pnpm install`)
+    expect(lines[0]).toContain(path.join(f.viewer, 'node_modules')) // T-871: the new package's path
+    expect(lines[0]).toContain(`cd ${f.code} && ${FIX}`)
   })
 
   test('two ids still print one stderr line', () => {
@@ -272,7 +278,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — viewer generator', () => {
     expect(lines.length).toBe(1)
     expect(lines[0]).toContain('marked')
     expect(lines[0]).toContain('subset-font')
-    expect(lines[0]).toContain(`cd ${f.code} && pnpm install`)
+    expect(lines[0]).toContain(`cd ${f.code} && ${FIX}`)
   })
 
   test('reports a missing cli.mjs', () => {

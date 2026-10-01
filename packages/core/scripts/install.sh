@@ -460,6 +460,55 @@ if [ -f "$ROOT/package.json" ] && [ -f "$SRC_ENTRY" ]; then
   fi
 fi
 
+# 1c. install the viewer generator's dependencies — T-871.
+#     WHY: `prdt viewer` / `prdt tickets --link` / the auto-open hook run the
+#     generator in packages/viewer, which needs marked · subset-font ·
+#     pretendard. It is its own workspace package so this step installs ONLY
+#     those (~130MB), never the GUI's (electron alone is ~750MB): a filtered,
+#     frozen-lockfile install with scripts off (the root postinstall would
+#     build core, which this step does not need).
+#     Up to date (the three packages present AND the stamp matches the
+#     current package.json + lockfile) → nothing runs, no network. A machine
+#     with the full workspace installed keeps it: the filtered install only
+#     adds the viewer package's links (measured, T-871: electron stays).
+#     Never a failure of the install: pnpm absent, offline or a failed install
+#     → one line, and `prdt viewer` / `prdt doctor` name the missing piece
+#     (T-868). Silence when this checkout has no packages/viewer (the
+#     scripts-only payload install-fail-loud.test.ts runs).
+VIEWER_PKG="$ROOT/../viewer"
+if [ -f "$VIEWER_PKG/package.json" ] && [ -f "$ROOT/../../pnpm-lock.yaml" ]; then
+  CODE_ROOT="$(cd "$ROOT/../.." && pwd)"
+  VIEWER_PKG="$CODE_ROOT/packages/viewer"
+  VIEWER_STAMP="$VIEWER_PKG/node_modules/.prdt-deps-stamp"
+  VIEWER_INSTALL_CMD="pnpm install --frozen-lockfile --filter @productune/viewer --ignore-scripts"
+  viewer_deps_key() {
+    cat "$VIEWER_PKG/package.json" "$CODE_ROOT/pnpm-lock.yaml" | shasum -a 256 | cut -d' ' -f1
+  }
+  viewer_deps_present() {
+    [ -f "$VIEWER_PKG/node_modules/marked/package.json" ] \
+      && [ -f "$VIEWER_PKG/node_modules/subset-font/package.json" ] \
+      && [ -d "$VIEWER_PKG/node_modules/pretendard/dist/web/static/woff2" ]
+  }
+  VIEWER_KEY="$(viewer_deps_key)"
+  if viewer_deps_present && [ "$(cat "$VIEWER_STAMP" 2>/dev/null || true)" = "$VIEWER_KEY" ]; then
+    say "1c) viewer dependencies already up to date"
+  elif ! command -v pnpm >/dev/null 2>&1; then
+    say "1c) viewer dependencies NOT installed — pnpm not on PATH (\`npm install -g pnpm\`, then \`cd $CODE_ROOT && $VIEWER_INSTALL_CMD\`); \`prdt viewer\` / \`prdt doctor\` name what is missing"
+  else
+    say "1c) Installing viewer dependencies (marked · subset-font · pretendard only — no GUI/electron)"
+    VIEWER_LOG="$(mktemp "${TMPDIR:-/tmp}/prdt-viewer-deps.XXXXXX")"
+    if (cd "$CODE_ROOT" && $VIEWER_INSTALL_CMD --config.fetch-retries=1 </dev/null) >"$VIEWER_LOG" 2>&1 \
+        && viewer_deps_present; then
+      printf '%s\n' "$VIEWER_KEY" > "$VIEWER_STAMP" 2>/dev/null || true
+      say "   installed into $VIEWER_PKG/node_modules"
+    else
+      VIEWER_ERR="$(grep -m1 -E 'ERR_|Error|error' "$VIEWER_LOG" 2>/dev/null || tail -1 "$VIEWER_LOG" 2>/dev/null || true)"
+      say "   viewer dependencies install FAILED (${VIEWER_ERR:-no output}) — the rest of the install continues; \`prdt viewer\` / \`prdt doctor\` name what is missing (retry: \`cd $CODE_ROOT && $VIEWER_INSTALL_CMD\`)"
+    fi
+    rm -f "$VIEWER_LOG"
+  fi
+fi
+
 # 2. prdt.env (잠정 확정 — 열린 항목 ①: 미니멀 계승)
 ENV_FILE="$PRDT_HOME/prdt.env"
 if [ ! -f "$ENV_FILE" ]; then
