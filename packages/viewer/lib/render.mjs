@@ -2157,6 +2157,9 @@ details.v-fold[open] summary { color: var(--text-primary); }
    under their text; the sheet's approved step is --bg-surface-onlayer (text-secondary 7.1:1, tertiary 5.8:1). */
 :root[data-theme="dark"] .pill-neutral, :root[data-theme="dark"] .pill-type, :root[data-theme="dark"] .pill-heading-1,
 :root[data-theme="dark"] .pill-heading-2, :root[data-theme="dark"] .pill-heading-3, :root[data-theme="dark"] .pill-status-todo { background: var(--bg-surface-onlayer); }
+/* T-887 (viewer-polish sheet): dark rider chip + legend fill = the sheet value, a token mix of 75% neutral and 25% onlayer (no literal). */
+:root[data-theme="dark"] .lgc-rider { background: color-mix(in srgb, var(--bg-interaction-neutral) 75%, var(--bg-surface-onlayer)); }
+:root[data-theme="dark"] .dg-chip-rider { fill: color-mix(in srgb, var(--bg-interaction-neutral) 75%, var(--bg-surface-onlayer)); }
 /* docs/design.md 8.4 Banner: severity tint + a full 1px border, no side stripe (T-756). */
 .notice { display: flex; gap: 10px; align-items: flex-start; position: relative;
   background: color-mix(in srgb, var(--health-info) 10%, var(--bg-surface-onlayer));
