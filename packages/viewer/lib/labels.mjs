@@ -34,7 +34,8 @@ export function noGroupLabel(count, unit) {
 }
 
 export const PAGE = {
-  title: 'productune 뷰어',
+  titlePrefix: '[prdt]',
+  titleFallback: 'viewer',
   h1: 'productune — 뷰어',
 }
 
