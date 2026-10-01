@@ -1134,7 +1134,11 @@ def meta_repo_present(root):
     a repo (HEAD) or a non-directory there (a gitfile / symlink — refused by
     meta_git_trust_problem, never silently 'not split')."""
     gd = meta_git_dir(Path(root))
-    return (gd / "HEAD").exists() or (os.path.lexists(gd) and not gd.is_dir()) or gd.is_symlink()
+    if (gd / "HEAD").exists() or (os.path.lexists(gd) and not gd.is_dir()) or gd.is_symlink():
+        return True
+    # refs/ or objects/ without a HEAD is still something to answer for — the
+    # trust check says "has refs but no config" (T-848 fix2)
+    return (gd / "refs").exists() or (gd / "objects").exists()
 
 
 def meta_git_trust_problem(root):
@@ -2356,6 +2360,8 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
         # Already initialized — no-op. The code `.gitignore` managed block was
         # retired (PRD §v1.3 설계 결정 2, T-377), so there is nothing to resync here.
         return {"status": "exists", "root": str(root)}
+    if os.path.lexists(prdt) and not prdt.is_dir():
+        sys.exit(f"prdt init: {prdt} is a file, not a directory — move or remove it, then run `prdt init` again.")
     slug = slug or root.name
     if interactive and sys.stdin.isatty():
         slug = input(f"project slug [{slug}]: ").strip() or slug
@@ -6867,6 +6873,9 @@ def cmd_meta(args):
             if len(rest) != 3:
                 sys.exit("usage: prdt meta remote add <name> <url>")
             _, name, url = rest
+            why = _meta_remote_url_problem(root, url)
+            if why:  # same check the trust gate applies on read — never write what it would refuse
+                sys.exit(f"prdt meta: remote 설정 실패 — {url} is {why}; prdt would refuse the whole meta repo afterwards")
             res = _meta_call(root, "remote-add", name, url)
             if not res.get("ok"):
                 sys.exit(f"prdt meta: remote 설정 실패 — {res.get('error') or '?'}")

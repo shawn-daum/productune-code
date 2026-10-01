@@ -203,7 +203,9 @@ export function metaRepoExists(projectDir: string): boolean {
   try {
     if (fs.existsSync(path.join(gd, 'HEAD'))) return true
     const st = fs.lstatSync(gd)
-    return st.isSymbolicLink() || !st.isDirectory()
+    if (st.isSymbolicLink() || !st.isDirectory()) return true
+    // refs/ or objects/ without a HEAD: the trust check refuses it by name (T-848 fix2)
+    return fs.existsSync(path.join(gd, 'refs')) || fs.existsSync(path.join(gd, 'objects'))
   } catch {
     return false
   }
@@ -965,6 +967,11 @@ export async function addMetaRemote(
 ): Promise<MetaRemoteResult> {
   if (!metaRepoExists(projectDir)) {
     return { ok: false, error: 'meta repo not initialized' }
+  }
+  // Same check the trust gate applies on read: never write a URL it would refuse (T-848 fix2).
+  const urlProblem = metaRemoteUrlProblem(projectDir, url)
+  if (urlProblem) {
+    return { ok: false, error: `${url} is ${urlProblem}; prdt would refuse the whole meta repo afterwards` }
   }
   try {
     const existing = await listMetaRemotes(projectDir)

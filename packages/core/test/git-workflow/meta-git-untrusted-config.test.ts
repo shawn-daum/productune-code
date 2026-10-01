@@ -292,9 +292,17 @@ function plantNoConfigHook(gd: string): void {
   plantHook(gd)
 }
 
+/** Gap B (fix2): refs/ + objects/ left, no HEAD and no config. */
+function plantRefsOnly(gd: string): void {
+  fs.rmSync(path.join(gd, 'config'))
+  fs.rmSync(path.join(gd, 'HEAD'))
+  plantHook(gd)
+}
+
 const SHAPES: Array<{ name: string; plant: (gd: string) => void; says: RegExp }> = [
   { name: 'config-less meta.git with commondir (QA repro)', plant: plantCommondirNoConfig, says: /commondir exists/ },
   { name: 'config-less meta.git with HEAD + hook', plant: plantNoConfigHook, says: /has HEAD but no config/ },
+  { name: 'refs-only meta.git (no HEAD, no config)', plant: plantRefsOnly, says: /has objects but no config/ },
   { name: 'gitfile meta.git', plant: plantGitfile, says: /is a file pointing elsewhere \(gitdir: / },
 ]
 
@@ -362,6 +370,12 @@ describe.each(SHAPES)('T-848 fix1 — $name', ({ plant, says }) => {
       expect(r.out).not.toMatch(/no meta history|no meta remotes|not configured|add it first/)
     }
     expect(cli(['doctor']).out).toMatch(says)
+    // the bridge's own exists-check must not say "no repo" either
+    for (const c of ['log', 'remote-list']) {
+      const b = bridge(c)
+      expect(b.exists).not.toBe(false)
+      expect(JSON.stringify(b)).toMatch(/does not run git/)
+    }
     fs.rmSync(path.join(W, '.prdt', 'po-state.json'))
     const init = cli(['init', '--yes', '--slug', 't848'])
     expect(init.rc).toBe(0)
@@ -421,5 +435,54 @@ describe('T-848 fix1 — trust edges', () => {
     } finally {
       fs.rmSync(remote, { recursive: true, force: true })
     }
+  })
+})
+
+describe('T-848 fix2 — remote add runs the trust URL check before writing', () => {
+  const REFUSED = ['ext://sh', './evil.git', 'ext::sh -c id', 'file://./evil.git']
+  let HOME: string
+  let env: NodeJS.ProcessEnv
+  const cli = (args: string[]) => {
+    const r = spawnSync('python3', [PRDT_CLI, ...args], { cwd: W, env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] })
+    return { rc: r.status, out: `${r.stdout}${r.stderr}` }
+  }
+  beforeEach(() => {
+    HOME = W + '-home'
+    fs.mkdirSync(path.join(HOME, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(HOME, '.prdt', 'prdt.env'), `PRDT_REPO=${CORE}\n`)
+    env = { ...process.env, HOME, PRDT_HOME: path.join(HOME, '.prdt'), PRDT_META_BACKUP: '0', GIT_CONFIG_NOSYSTEM: '1' }
+    for (const k of Object.keys(env)) if (k.startsWith('GIT_') && k !== 'GIT_CONFIG_NOSYSTEM') delete env[k]
+    execFileSync('git', ['init', '-q'], { cwd: W, env })
+    cli(['init', '--yes', '--slug', 't848'])
+  })
+  afterEach(() => fs.rmSync(HOME, { recursive: true, force: true }))
+
+  test('prdt init with `.prdt` as a regular file says so, no traceback', () => {
+    fs.rmSync(path.join(W, '.prdt'), { recursive: true, force: true })
+    fs.writeFileSync(path.join(W, '.prdt'), 'x\n')
+    const r = cli(['init', '--yes', '--slug', 't848'])
+    expect(r.rc).not.toBe(0)
+    expect(r.out).toMatch(/is a file, not a directory/)
+    expect(r.out).not.toMatch(/Traceback|FileExistsError/)
+  })
+
+  test.each(REFUSED)('TS addMetaRemote refuses %s, config untouched', async (url) => {
+    const { addMetaRemote, listMetaRemotes } = await import('../../src/git-workflow/meta-git')
+    const before = fs.readFileSync(path.join(W, '.prdt', 'meta.git', 'config'), 'utf-8')
+    const r = await addMetaRemote(W, 'b', url)
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/remote-helper|inside this project/)
+    expect(fs.readFileSync(path.join(W, '.prdt', 'meta.git', 'config'), 'utf-8')).toBe(before)
+    expect(await listMetaRemotes(W)).toEqual([])
+  })
+
+  test.each(REFUSED)('CLI `meta remote add b %s` refuses, config untouched, repo still usable', (url) => {
+    const cfg = path.join(W, '.prdt', 'meta.git', 'config')
+    const before = fs.readFileSync(cfg, 'utf-8')
+    const r = cli(['meta', 'remote', 'add', 'b', url])
+    expect(r.rc).not.toBe(0)
+    expect(r.out).toMatch(/remote-helper|inside this project/)
+    expect(fs.readFileSync(cfg, 'utf-8')).toBe(before)
+    expect(cli(['meta', 'remote']).out).not.toMatch(/does not run git/)
   })
 })
