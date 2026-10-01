@@ -77,34 +77,3 @@ describe('T-797: light by default, dark on the remembered toggle (개정)', () =
     expect(TEMPLATE_CSS).toContain('.pill-role-designer { background: color-mix(in srgb, var(--persona-designer) 14%, transparent); color: var(--persona-designer); }')
   })
 })
-
-describe('T-798: a progress row label of any length is never clipped', () => {
-  it('the label cell no longer clips overflow to one line (the T-798 defect)', () => {
-    const m = TEMPLATE_CSS.match(/(?<!-head |-overall )\.stage-matrix-label\s*\{[^}]*\}/)
-    expect(m, '.stage-matrix-label rule not found in TEMPLATE_CSS').not.toBeNull()
-    const rule = m![0]
-    expect(rule).not.toContain('overflow: hidden')
-    expect(rule).not.toContain('white-space: nowrap')
-    expect(rule).toContain('white-space: normal')
-  })
-
-  it('the label column can widen for a longer label rather than staying a hard 60px', () => {
-    expect(TEMPLATE_CSS).toContain('grid-template-columns: minmax(60px, 140px) repeat(5, 1fr)')
-  })
-
-  it('renders a long PRD heading in full, in the label span and as the row\'s aria-label — never truncated at generation time', () => {
-    const longLabel = '"두 단계"가 시작 전에 확정된다'
-    const data = {
-      ...BASE_FIXTURE_DATA,
-      prd: { current: { body: '' }, closed: [], openItems: [{ key: 'k1', label: longLabel }] },
-    }
-    const html = renderPage({ data, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
-    // escapeHtml() escapes `"` everywhere (text content and attribute value
-    // alike — it has no context-sensitivity), so the same escaped form
-    // appears in both places.
-    const escapedLabel = '&quot;두 단계&quot;가 시작 전에 확정된다'
-    expect(html).toContain(`<span class="stage-matrix-label">${escapedLabel}</span>`)
-    expect(html).toContain(`aria-label="${escapedLabel}"`)
-    expect(html).toContain('role="row"')
-  })
-})

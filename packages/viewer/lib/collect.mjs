@@ -226,6 +226,20 @@ const PRD_ITEM_HEADING_RE = /^####\s+(\S+)(?:\s+—\s+(.*))?\s*$/
  * @returns {Array<{key:string, label:string}>}
  */
 export function collectPrdOpenItems(prdBody, currentVersion) {
+  const items = []
+  for (const line of openSectionLines(prdBody, currentVersion)) {
+    const m = PRD_ITEM_HEADING_RE.exec(line)
+    if (m) {
+      const key = m[1]
+      const label = (m[2] || '').trim() || key
+      items.push({ key, label })
+    }
+  }
+  return items
+}
+
+/** The lines of the OPEN `## v<N>.<m>` section (heading excluded), found by `sameVersion` (T-713). */
+function openSectionLines(prdBody, currentVersion) {
   const lines = (prdBody || '').split('\n')
   let start = -1
   for (let i = 0; i < lines.length; i++) {
@@ -243,16 +257,22 @@ export function collectPrdOpenItems(prdBody, currentVersion) {
       break
     }
   }
-  const items = []
-  for (let i = start; i < end; i++) {
-    const m = PRD_ITEM_HEADING_RE.exec(lines[i])
-    if (m) {
-      const key = m[1]
-      const label = (m[2] || '').trim() || key
-      items.push({ key, label })
-    }
+  return lines.slice(start, end)
+}
+
+/**
+ * T-881: the path the open PRD section's 합격선 row names (the first
+ * backtick-quoted `docs/...` path on the line that carries `**합격선**`), or
+ * `''`. Home finds the gate ticket by that path in a ticket body — the PRD
+ * names no ticket id, and a ticket has no gate field.
+ */
+export function collectPrdGatePath(prdBody, currentVersion) {
+  for (const line of openSectionLines(prdBody, currentVersion)) {
+    if (!line.includes('**합격선**')) continue
+    const m = /`(docs\/[^`\s]+)`/.exec(line)
+    if (m) return m[1]
   }
-  return items
+  return ''
 }
 
 export function collectPrd(repoRoot, currentVersion) {
@@ -267,7 +287,7 @@ export function collectPrd(repoRoot, currentVersion) {
     const rel = `docs/prd/versions/${f}`
     return { rel, name: f, body: fs.readFileSync(path.join(versionsDir, f), 'utf8') }
   })
-  return { current, closed, openItems: collectPrdOpenItems(current.body, currentVersion) }
+  return { current, closed, openItems: collectPrdOpenItems(current.body, currentVersion), gatePath: collectPrdGatePath(current.body, currentVersion) }
 }
 
 const ARTIFACTS_ROOT_REL = 'docs/artifacts'
