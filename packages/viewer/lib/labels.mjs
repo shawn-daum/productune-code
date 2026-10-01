@@ -14,7 +14,7 @@
 // formal '-다' register.
 
 // ---------- A. kept verbatim (relocated only — T-705 §A) ----------
-export const STORE_LABEL = { home: '홈', prd: 'PRD', ticket: '티켓', wiki: '위키', feature: '기능', artifact: '아티팩트', glossary: '용어 사전', release: '릴리즈 노트' }
+export const STORE_LABEL = { home: '홈', prd: 'PRD', ticket: '티켓', wiki: '위키', feature: '기능', artifact: '아티팩트', glossary: '용어 사전', release: '릴리즈 노트', disc: '규율' }
 
 export const COMMON = {
   close: '닫기',
@@ -167,6 +167,29 @@ export const RELEASE = {
   tableHeaders: ['버전', '제목', '날짜'],
   fields: { version: '버전', date: '날짜' },
   empty: '릴리즈 노트가 없어요.<br><span style="font-size:11px;">릴리즈 노트 파일에 버전 절이 생기면 여기 나타나요.</span>',
+}
+
+// ---------- discipline store (T-886: T-832 / T-877) ----------
+// Approved strings of T-877 (mockup docs/artifacts/v1.12/discipline-links.html
+// and the screen set's 「규율」 screens). `{N}` is filled in by the page script.
+export const DISCIPLINE = {
+  sidebarLabel: '규율',
+  allLabel: '전체',
+  contractsGroup: '계약 (contracts)',
+  countLabel: '규율 문서',
+  countUnit: '개',
+  tableHeaders: ['문서', '구분', '줄'],
+  // 구분 values — 「계약」 · 「목차」 are the new words; habit · playbook are the documents' own names.
+  kind: { contract: '계약', habit: 'habit', index: '목차', playbook: 'playbook' },
+  fields: { kind: '구분', copy: '사본', lines: '줄' },
+  copyValue: '이 기기에 적용된 사본',
+  linesValue: '{N}줄',
+  // The shown path of the applied copy; the file name under it is the document's own.
+  copyPathPrefix: '~/.prdt/discipline/',
+  differs: '저장소 원본과 {N}줄이 달라요',
+  overLine: '이 문서는 {N}행까지예요. 처음부터 보여 줘요.',
+  emptyLine1: '규율 문서가 없어요.',
+  emptyLine2: 'prdt 규율이 적용된 기기에서 뷰어를 만들면 나타나요.',
 }
 
 /** 「읽기」 칸 값 — 「용어 사전 · 5개」 · 「릴리즈 노트 · 18개」. */

@@ -42,6 +42,7 @@
 //     exists and where, per acceptance line 3's "says so … rather than
 //     rendering half a document" — no row is ever a half-rendered artifact.
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { parseFrontmatter } from './frontmatter.mjs'
 // T-713: reuse render.mjs's own numeric version-equality rule (contracts
@@ -414,8 +415,130 @@ export function collectReleases(repoRoot) {
   }
 }
 
+// T-886 (T-832 / T-877): the discipline documents — the copy applied on THIS
+// machine (`~/.prdt/discipline`), because that is what the agents read here
+// (T-877 D2). Which files count: `contracts.md`, `contracts/*.md`, and for each
+// persona `habit.md` and `playbooks/*.md` — 42 today. `doctrine.md`,
+// `designer/style-library`, `designer/screen-set` and `register/` are not
+// documents of this list (T-877 outcome: doctrine.md is a decision for later).
+// Containment: a file is read only when its REAL path is exactly its place
+// under the REAL discipline root (a link pointing elsewhere reads as "not
+// there"); the repository original used for the 「N줄이 달라요」 comparison is
+// read the same way under the REAL repo root (T-842 · T-847 class). No
+// discipline root → no documents → the page shows the empty state.
+export const DISCIPLINE_SOURCE_REL = 'code/packages/core/discipline'
+const DISCIPLINE_PERSONAS = ['po', 'designer', 'developer', 'qa']
+
+export function defaultDisciplineRoot() {
+  return path.join(os.homedir(), '.prdt', 'discipline')
+}
+
+function readContainedText(realRoot, rel) {
+  try {
+    const abs = path.join(realRoot, rel)
+    if (fs.realpathSync(abs) !== abs) return null
+    if (!fs.statSync(abs).isFile()) return null
+    return fs.readFileSync(abs, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+function splitLines(text) {
+  const lines = String(text).replace(/\r\n/g, '\n').split('\n')
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+  return lines
+}
+
+/**
+ * How many lines differ between two versions of a document: the larger of
+ * the lines only the first has and the lines only the second has (a changed
+ * line counts once).
+ * @param {string[]} a
+ * @param {string[]} b
+ */
+export function countChangedLines(a, b) {
+  const n = a.length
+  const m = b.length
+  let lcs
+  if (n * m > 4_000_000) {
+    const seen = new Map()
+    for (const l of b) seen.set(l, (seen.get(l) || 0) + 1)
+    lcs = 0
+    for (const l of a) {
+      const c = seen.get(l) || 0
+      if (c > 0) { lcs += 1; seen.set(l, c - 1) }
+    }
+  } else {
+    let prev = new Array(m + 1).fill(0)
+    for (let i = 1; i <= n; i += 1) {
+      const cur = new Array(m + 1).fill(0)
+      for (let j = 1; j <= m; j += 1) cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1])
+      prev = cur
+    }
+    lcs = prev[m]
+  }
+  return Math.max(n - lcs, m - lcs)
+}
+
+function listDisciplineRels(realRoot) {
+  const mdIn = (dir) => {
+    try {
+      return fs.readdirSync(path.join(realRoot, dir), { withFileTypes: true })
+        .filter((e) => (e.isFile() || e.isSymbolicLink()) && e.name.endsWith('.md') && !e.name.startsWith('.'))
+        .map((e) => e.name)
+        .sort((x, y) => (x < y ? -1 : x > y ? 1 : 0))
+    } catch {
+      return []
+    }
+  }
+  const out = [{ rel: 'contracts.md', group: 'contracts', kind: 'contract' }]
+  for (const f of mdIn('contracts')) out.push({ rel: `contracts/${f}`, group: 'contracts', kind: 'contract' })
+  for (const persona of DISCIPLINE_PERSONAS) {
+    out.push({ rel: `${persona}/habit.md`, group: persona, kind: 'habit' })
+    for (const f of mdIn(`${persona}/playbooks`)) {
+      out.push({ rel: `${persona}/playbooks/${f}`, group: persona, kind: f === '_index.md' ? 'index' : 'playbook' })
+    }
+  }
+  return out
+}
+
+/**
+ * @returns {Array<{rel:string, name:string, group:string, kind:string, lines:string[], differs:number}>}
+ *   `differs` = lines that differ from the repository original (0 = same, or no original to compare with).
+ */
+export function collectDiscipline(repoRoot, { disciplineRoot = defaultDisciplineRoot() } = {}) {
+  let realRoot
+  try {
+    realRoot = fs.realpathSync(disciplineRoot)
+    if (!fs.statSync(realRoot).isDirectory()) return []
+  } catch {
+    return []
+  }
+  let sourceRoot = null
+  try {
+    const candidate = path.join(fs.realpathSync(repoRoot), DISCIPLINE_SOURCE_REL)
+    if (fs.realpathSync(candidate) === candidate && fs.statSync(candidate).isDirectory()) sourceRoot = candidate
+  } catch {
+    sourceRoot = null
+  }
+  const docs = []
+  for (const e of listDisciplineRels(realRoot)) {
+    const text = readContainedText(realRoot, e.rel)
+    if (text === null) continue
+    const lines = splitLines(text)
+    let differs = 0
+    if (sourceRoot !== null) {
+      const original = readContainedText(sourceRoot, e.rel)
+      differs = original === null ? lines.length : countChangedLines(lines, splitLines(original))
+    }
+    docs.push({ rel: e.rel, name: e.rel.split('/').pop().replace(/\.md$/, ''), group: e.group, kind: e.kind, lines, differs })
+  }
+  return docs
+}
+
 /** Everything the generator needs, gathered once. */
-export function collectAll(repoRoot) {
+export function collectAll(repoRoot, { disciplineRoot } = {}) {
   const poState = readPoState(repoRoot)
   const currentVersion = poState.version
   return {
@@ -428,5 +551,6 @@ export function collectAll(repoRoot) {
     featureTaxonomy: collectFeatureTaxonomy(repoRoot),
     artifacts: collectArtifacts(repoRoot),
     releases: collectReleases(repoRoot),
+    discipline: collectDiscipline(repoRoot, disciplineRoot === undefined ? undefined : { disciplineRoot }),
   }
 }
