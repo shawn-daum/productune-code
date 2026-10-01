@@ -818,7 +818,7 @@ describe('T-814: a QA dispatch that writes only meta documents occupies no check
       const t = path.join(home, 'transcripts', 'subagents', `agent-qs${i}.jsonl`)
       fs.writeFileSync(t, '{"type":"summary"}\n' + REAL_LAST + '\n')
     }
-    expect(denied(gate(ctx()))).toContain('in-flight dispatches 6 machine-wide')
+    expect(denied(gate(ctx()))).toContain('in-flight dispatches 6 / cap 5')
   })
 
   test('a project that persists no meta allowlist exempts nothing', () => {
