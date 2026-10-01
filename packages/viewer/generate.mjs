@@ -71,7 +71,7 @@ const SEMIBOLD_WOFF2 = path.join(PRETENDARD_STATIC_DIR, 'Pretendard-SemiBold.wof
  * bucket, written NEXT TO `outputPath` (`name` is a bare file name).
  * @returns {Promise<{ html: string, dataFiles: Array<{ name: string, content: string }>, buildFile: { name: string, content: string } }>}
  */
-export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH } = {}) {
+export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH, disciplineRoot } = {}) {
   const tokensBuf = fs.readFileSync(TOKENS_PATH)
   const tokensCss = tokensBuf.toString('utf8')
   const tokensSha256 = crypto.createHash('sha256').update(tokensBuf).digest('hex')
@@ -88,7 +88,7 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH 
     throw new Error(`viewer generate: ${guardErrors.join('; ')}`)
   }
 
-  const data = collectAll(repoRoot)
+  const data = collectAll(repoRoot, { disciplineRoot })
 
   // T-666 slice 2b: the path from the generated page's own directory back to
   // the repo root — every relative link inside a rendered document body
@@ -110,7 +110,7 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH 
   // T-885 (T-876 = D): past-version ticket bodies go to sibling data files;
   // the page carries only the bucket → src map, generator-written.
   const prefix = path.basename(outputPath).replace(/\.html?$/i, '')
-  const pastFiles = pastTicketDataFiles(data.tickets, { repoRootHref, viewerAbsPath, prefix })
+  const pastFiles = pastTicketDataFiles(data.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline })
   const pastTicketSrc = {}
   for (const f of pastFiles) pastTicketSrc[f.bucket] = encodeURIComponent(f.name)
   const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc })
@@ -162,8 +162,8 @@ export function isPastTicketDataFileName(outputPath, name) {
 }
 
 /** @returns {Promise<{ upToDate: boolean, html: string }>} */
-export async function checkUpToDate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH } = {}) {
-  const { html, dataFiles, buildFile } = await generate({ repoRoot, outputPath })
+export async function checkUpToDate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH, disciplineRoot } = {}) {
+  const { html, dataFiles, buildFile } = await generate({ repoRoot, outputPath, disciplineRoot })
   const read = (p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null)
   const dir = path.dirname(outputPath)
   const upToDate = read(outputPath) === html && [...dataFiles, buildFile].every((f) => read(path.join(dir, f.name)) === f.content)
