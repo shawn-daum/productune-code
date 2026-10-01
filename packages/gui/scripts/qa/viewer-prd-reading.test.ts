@@ -213,6 +213,25 @@ describe('plainInline', () => {
   })
 })
 
+describe('plainInline — unbackticked underscores (T-884 fix2)', () => {
+  it('keeps intraword _ and still strips real emphasis', () => {
+    expect(plainInline('Success metrics → version_outcome')).toBe('Success metrics → version_outcome')
+    expect(plainInline('feature_name_with_underscores')).toBe('feature_name_with_underscores')
+    expect(plainInline('*a* _a_ **b** __c__ x _d e_ y')).toBe('a a b c x d e y')
+  })
+  it('real heading reads the same in the outline; card with _ key finds its ticket pill', () => {
+    const body = '## v1.12 — r\n\n### Success metrics → version_outcome\n\nx\n\n### What — items\n\n| 항목 key | 티켓 | 무엇 |\n|:--|:--|:--|\n| feature_name_with_underscores | T-808 | one |\n\n#### feature_name_with_underscores — Title\n'
+    const html = render({ body })
+    expect(html).toContain('Success metrics → version_outcome')
+    expect(html).not.toContain('versionoutcome')
+    expect(html).toMatch(/pr-key mono">feature_name_with_underscores<\/span>/)
+    expect(html).toMatch(/pr-tk[^>]*>T-808/)
+  })
+  it('.pr-key is shrinkable and clipped inside the card (layout rule)', () => {
+    expect(PRD_READING_CSS).toMatch(/\.pr-key \{[^}]*flex: 0 1 auto;[^}]*max-width: 100%;[^}]*text-overflow: ellipsis;/)
+  })
+})
+
 describe('fold identity', () => {
   const foldKeys = (html: string) => [...html.matchAll(/<details [^>]*id="([^"]+)" data-fold="([^"]*)"/g)].map((m) => [m[1], m[2]])
   it('keys by heading path, not by sequence; repeats get ~n', () => {
