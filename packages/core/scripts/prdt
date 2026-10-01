@@ -1089,6 +1089,7 @@ _META_CONFIG_ALLOWED = re.compile(
     r"|user\.(name|email)|commit\.gpgsign|push\.(followtags|default)"
     r"|remote\..+\.(url|pushurl|fetch)|branch\..+\.(remote|merge))")
 _meta_trust_cache = {}
+_META_URL_SCHEMES = {"https", "http", "ssh", "git", "git+ssh", "ssh+git", "ftp", "ftps"}
 
 
 def _meta_remote_url_problem(root, url):
@@ -1097,8 +1098,10 @@ def _meta_remote_url_problem(root, url):
     inside this project (its own hooks run on push)."""
     if "::" in url.split("/", 1)[0]:
         return "a remote-helper URL"
-    if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", url) and not url.startswith("file://"):
-        return None
+    m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*)://", url)
+    if m and m.group(1).lower() != "file":
+        # any other `<scheme>://` runs `git-remote-<scheme>` (ext:// included)
+        return None if m.group(1).lower() in _META_URL_SCHEMES else "a remote-helper URL"
     if not url.startswith("file://") and re.match(r"^[^/]+:", url):
         return None  # scp-like host:path
     p = url[len("file://"):] if url.startswith("file://") else url
@@ -1112,24 +1115,60 @@ def _meta_remote_url_problem(root, url):
     return None
 
 
+def _meta_gitfile_problem(gd):
+    """`.prdt/meta.git` as a FILE: git follows a `gitdir: <path>` file to a
+    repository anywhere — never handed to git."""
+    try:
+        with open(gd, "rb") as fh:
+            head = fh.read(4096).decode("utf-8", "replace")
+    except OSError:
+        head = ""
+    if head.startswith("gitdir:"):
+        tgt = head[len("gitdir:"):].strip().splitlines()[0] if head[len("gitdir:"):].strip() else "?"
+        return f".prdt/meta.git is a file pointing elsewhere (gitdir: {tgt})"
+    return ".prdt/meta.git is a file, not a directory"
+
+
+def meta_repo_present(root):
+    """Something stands at `.prdt/meta.git` that a meta command must answer for:
+    a repo (HEAD) or a non-directory there (a gitfile / symlink — refused by
+    meta_git_trust_problem, never silently 'not split')."""
+    gd = meta_git_dir(Path(root))
+    return (gd / "HEAD").exists() or (os.path.lexists(gd) and not gd.is_dir()) or gd.is_symlink()
+
+
 def meta_git_trust_problem(root):
     """None when `.prdt/meta.git` may be handed to git, else why not (one
     English line). Never raises; never runs a command the repo could name
-    (`git config --file` reads one file and follows no include)."""
+    (`git config --file` reads one file and follows no include).
+    Order (T-848 fix1): every structural check runs BEFORE the 'no config yet'
+    answer — a config-less repo with a `commondir` reads ITS config instead."""
     root = Path(root)
     gd = meta_git_dir(root)
-    for p in (root / ".prdt", gd, gd / "config"):
+    for p in (root / ".prdt", gd):
         try:
-            if stat.S_ISLNK(os.lstat(p).st_mode):
-                return f"{p.relative_to(root)} is a symbolic link"
+            st_ = os.lstat(p)
         except FileNotFoundError:
-            if p == gd / "config":
-                return None  # no repo yet — nothing to trust
+            return None  # no meta repo yet — nothing to trust
         except OSError:
             return f"cannot inspect {p.relative_to(root)}"
+        if stat.S_ISLNK(st_.st_mode):
+            return f"{p.relative_to(root)} is a symbolic link"
+    if not stat.S_ISDIR(os.lstat(gd).st_mode):
+        return _meta_gitfile_problem(gd)
     for name in ("commondir", "config.worktree"):
         if os.path.lexists(gd / name):
             return f".prdt/meta.git/{name} exists"
+    try:
+        if stat.S_ISLNK(os.lstat(gd / "config").st_mode):
+            return ".prdt/meta.git/config is a symbolic link"
+    except FileNotFoundError:
+        for name in ("HEAD", "objects", "refs"):
+            if os.path.lexists(gd / name):
+                return f".prdt/meta.git has {name} but no config"
+        return None  # empty / not-yet-initialised dir — git sees no repo there
+    except OSError:
+        return "cannot inspect .prdt/meta.git/config"
     try:
         st = os.stat(gd / "config")
         key = (str(gd), st.st_ino, st.st_size, st.st_mtime_ns)
@@ -1154,6 +1193,17 @@ def meta_git_trust_problem(root):
                 if why:
                     prob = f".prdt/meta.git/config {k} is {why}"
                     break
+        if prob is None:
+            # branch.<b>.remote may name a URL/path instead of a remote (T-848 fix1)
+            ents = [e.partition("\n") for e in r.stdout.split("\0") if e]
+            names = {m.group(1) for k, _, _ in ents
+                     for m in [re.fullmatch(r"remote\.(.+)\.(?:url|pushurl|fetch)", k)] if m}
+            for k, _, v in ents:
+                if k.startswith("branch.") and k.endswith(".remote") and v not in names:
+                    why = _meta_remote_url_problem(root, v)
+                    if why:
+                        prob = f".prdt/meta.git/config {k} is {why}"
+                        break
     _meta_trust_cache[key] = prob
     return prob
 
@@ -1213,7 +1263,7 @@ def meta_backup_lag_warnings(root):
     without a network call in a non-blocking lint."""
     root = Path(root)
     gd = meta_git_dir(root)
-    if not (gd / "HEAD").exists():
+    if not meta_repo_present(root):
         return []  # no meta split — nothing to back up
     prob = meta_git_trust_problem(root)  # T-848: say it, never silently skip
     if prob:
@@ -1469,6 +1519,9 @@ def init_meta_split(root):
             if r.returncode != 0:
                 return (r.stderr or "git init failed").strip()
         gd = meta_git_dir(root)
+        prob = meta_git_trust_problem(root)  # T-848: before `git init` follows a gitfile
+        if prob:
+            return meta_git_refusal(prob)
         if not (gd / "HEAD").exists():
             gd.parent.mkdir(parents=True, exist_ok=True)
             r = _git(["init", "--bare", "-q", str(gd)], root)
@@ -2374,6 +2427,9 @@ def cmd_init(args):
         print(f"already initialized: {res['root']}/.prdt")
     else:
         print(f"initialized {res['slug']} · {res['version']} · {res['stage']} at {res['root']}/.prdt")
+        if str(res.get("meta_git", "ok")).startswith("skipped: "):
+            print(f"prdt init: 메타 저장소(.prdt/meta.git)는 설정하지 않았어요 — {res['meta_git'][len('skipped: '):]}",
+                  file=sys.stderr)
 
 
 # ── wiki refs (T-448) ─────────────────────────────────────────────────────────
@@ -6793,6 +6849,8 @@ def cmd_meta(args):
         cmd_meta_relocate(root, args)
     elif args.action == "log":
         res = _meta_call(root, "log", str(max(1, args.limit)))
+        if res.get("error"):
+            sys.exit(f"prdt meta log: {res['error']}")
         if not res.get("exists"):
             print("메타 분리가 아직 적용되지 않은 프로젝트예요 (.prdt/meta.git 없음)")
             return
@@ -6820,6 +6878,8 @@ def cmd_meta(args):
             print(f"지금 바로 push: prdt meta push {name}")
         elif not rest:
             res = _meta_call(root, "remote-list")
+            if res.get("error"):
+                sys.exit(f"prdt meta remote: {res['error']}")
             if not res.get("exists"):
                 print("메타 분리가 아직 적용되지 않은 프로젝트예요 (.prdt/meta.git 없음)")
                 return

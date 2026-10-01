@@ -263,7 +263,7 @@ export async function runMetaMigration(projectDir: string): Promise<MetaMigratio
   // acceptable here (resume after a completed ②, or a project whose meta exists
   // only in git history).
   const snapshot = await commitMeta(projectDir, MIGRATION_SNAPSHOT_MESSAGE)
-  if (!snapshot.committed && snapshot.skipReason === 'manager-error') {
+  if (!snapshot.committed && (snapshot.skipReason === 'manager-error' || snapshot.skipReason === 'meta-untrusted')) {
     return fail({ error: `meta snapshot failed: ${snapshot.detail}` })
   }
   let snapshotSha = snapshot.sha
