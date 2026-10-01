@@ -2014,6 +2014,10 @@ details.v-fold[open] summary { color: var(--text-primary); }
 :root:not([data-theme="dark"]) .pill-role-designer { color: color-mix(in srgb, var(--persona-designer) 80%, var(--text-primary)); }
 :root:not([data-theme="dark"]) .pill-role-developer { color: color-mix(in srgb, var(--persona-dev) 80%, var(--text-primary)); }
 :root:not([data-theme="dark"]) .pill-role-qa { color: color-mix(in srgb, var(--persona-qa) 80%, var(--text-primary)); }
+/* T-887: dark scheme only — neutral chips on --bg-interaction-neutral measured 3.1-4.4:1
+   under their text; the sheet's approved step is --bg-surface-onlayer (text-secondary 7.1:1, tertiary 5.8:1). */
+:root[data-theme="dark"] .pill-neutral, :root[data-theme="dark"] .pill-type, :root[data-theme="dark"] .pill-heading-1,
+:root[data-theme="dark"] .pill-heading-2, :root[data-theme="dark"] .pill-heading-3, :root[data-theme="dark"] .pill-status-todo { background: var(--bg-surface-onlayer); }
 /* docs/design.md 8.4 Banner: severity tint + a full 1px border, no side stripe (T-756). */
 .notice { display: flex; gap: 10px; align-items: flex-start; position: relative;
   background: color-mix(in srgb, var(--health-info) 10%, var(--bg-surface-onlayer));
@@ -2023,7 +2027,7 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .notice-icon { color: var(--health-info); flex: 0 0 auto; margin-top: 1px; display: flex; }
 .notice-body { font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; padding-right: 20px; }
 .notice-body b { color: var(--text-primary); }
-.notice-close { position: absolute; right: 8px; top: 8px; width: 22px; height: 22px; border: none; background: none; padding: 0;
+.notice-close { position: absolute; right: 8px; top: 8px; width: 24px; height: 24px; border: none; background: none; padding: 0;
   color: var(--text-tertiary); cursor: pointer; border-radius: var(--radius-4); display: flex; align-items: center; justify-content: center; }
 .notice-close:hover { background: var(--bg-state-hover); color: var(--text-primary); }
 .detail-row.hash-target td { background: var(--bg-state-hover); }
@@ -2040,7 +2044,7 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .store-section[data-store="feature"] th.num-col, .store-section[data-store="feature"] td.num-col { text-align: right; }
 .store-section[data-store="feature"] td.num-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
 .store-section[data-store="feature"] .nm { font-weight: 600; display: block; }
-.store-section[data-store="feature"] .nm-key { display: block; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-quaternary); }
+.store-section[data-store="feature"] .nm-key { display: block; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-tertiary); }
 .store-section[data-store="feature"] td.def-col { color: var(--text-secondary); line-height: 1.5; }
 .store-section[data-store="feature"] .grp-row td { background: var(--bg-surface-on); padding: var(--space-10) var(--space-10) var(--space-8); }
 .store-section[data-store="feature"] tbody tr.grp-row:hover td { background: var(--bg-surface-on); }
