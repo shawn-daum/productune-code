@@ -125,6 +125,11 @@ export const WIKI = {
 // docs/artifacts/v1.12/feature-screen.html. Area / kind names and
 // definitions are project data (config), never copy kept here.
 export const FEATURE = {
+  // T-901 = B: a project WITHOUT features.taxonomy keeps the pre-T-882 spec-file list.
+  specList: {
+    tableHeaders: ['기능', '제목', '상태', '시작 버전'],
+    statusText: { live: '유효', superseded: '대체됨', '': '미기재' },
+  },
   tableHeaders: ['이름', '종류', '정의', '티켓'],
   sidebarLabel: '기능',
   allLabel: '전체',

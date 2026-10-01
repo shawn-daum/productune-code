@@ -94,4 +94,41 @@ describe.skipIf(!CAN_RUN)('prdt doctor — feature taxonomy (T-882)', () => {
     config({ vocab: { 'install-cli': { kind: 'tag' } } })
     expect(featureWarnings()).toEqual([])
   })
+
+  test('malformed taxonomy shapes (list / dict values) are named, never a crash', () => {
+    config({
+      taxonomy: TAXONOMY,
+      vocab: {
+        'area-list': { kind: 'tag', label: 'x', taxonomy: { kind: 'feature', area: ['start'], def: 'd' } },
+        'kind-dict': { kind: 'tag', label: 'x', taxonomy: { kind: { a: 1 }, area: 'start', def: 'd' } },
+        'link-list': { kind: 'tag', label: 'x', taxonomy: { kind: 'feature', area: 'start', def: 'd', links: [{ to: ['area-list'] }, { to: { a: 1 } }] } },
+        'label-list': { kind: 'tag', label: ['x'], taxonomy: { kind: 'feature', area: 'start', def: ['d'] } },
+      },
+    })
+    expect(featureWarnings()).toEqual([
+      "feature: config features.vocab 'label-list' label is not a string",
+      "feature: config features.vocab 'area-list' taxonomy area is not a string — the viewer's feature screen leaves it out",
+      "feature: config features.vocab 'kind-dict' taxonomy kind is not a string",
+      "feature: config features.vocab 'link-list' taxonomy link to is not a string",
+      "feature: config features.vocab 'link-list' taxonomy link to is not a string",
+      "feature: config features.vocab 'label-list' has no label — the feature screen shows the key instead",
+      "feature: config features.vocab 'label-list' taxonomy has no def",
+    ])
+  })
+
+  test('features.taxonomy as a list, and areas / kinds items as lists: named, never a crash', () => {
+    config({ taxonomy: [1], vocab: { 'install-cli': good() } })
+    expect(featureWarnings()).toEqual(['feature: config features.taxonomy is not an object'])
+    config({ taxonomy: { areas: [['start']], kinds: { key: 'feature' } }, vocab: { 'install-cli': good() } })
+    expect(featureWarnings().slice(0, 2)).toEqual([
+      'feature: config features.taxonomy.areas[0] has no kebab-case key',
+      'feature: config features.taxonomy.kinds is missing or empty',
+    ])
+  })
+
+  test('features.vocab entries that are lists, and a taxonomy block that is a list: named, never a crash', () => {
+    config({ taxonomy: TAXONOMY, vocab: { 'install-cli': good(), 'weird': ['x'], 'bad-tax': { kind: 'tag', label: 'x', taxonomy: ['feature'] } } })
+    const w = featureWarnings()
+    expect(w).toContain("feature: config features.vocab 'bad-tax' has no taxonomy — the viewer's feature screen leaves it out")
+  })
 })

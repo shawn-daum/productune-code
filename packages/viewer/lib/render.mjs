@@ -920,7 +920,8 @@ function wikiSection(pages) {
 // Ticket counts, statuses, versions and 근거 티켓 are computed here from the
 // tickets themselves (every bucket), never copied from the taxonomy. A link
 // written on one side only also shows on the other side, as a name-only
-// link (T-808 outcome). No taxonomy → the approved empty state.
+// link (T-808 outcome). No taxonomy → the pre-T-882 spec-file list (T-901 = B);
+// no taxonomy and no spec file → the approved empty state.
 const TICKET_ID_RE = /\bT-(?:P\d+-)?\d+\b/g
 
 function ticketIdLinks(escapedText, anchors) {
@@ -1029,8 +1030,34 @@ function featurePane(model, areas, count) {
     `<div class="table-wrap"><table class="feature-table"><thead>${head}</thead><tbody>\n${areas.map((a) => featureAreaRows(model, a)).join('')}</tbody></table></div>\n`
 }
 
+/** T-901 = B — no taxonomy: the pre-T-882 spec-file list (`docs/features/` is flat, one group). */
+function featureSpecListRows(pages) {
+  let html = `<div class="table-wrap"><table><thead><tr>${FEATURE.specList.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
+  for (const p of pages) {
+    const fm = p.frontmatter
+    const id = p.rel.split('/').pop()
+    const text = FEATURE.specList.statusText[fm.status || ''] ?? fm.status ?? ''
+    html += `<tr class="detail-row" data-detail-kind="feature" data-detail-id="${escapeHtml(id)}">`
+    html += `<td class="id-col">${escapeHtml(fm.feature || id)}</td>`
+    html += `<td>${escapeHtml(fm.title || id)}</td>`
+    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(text)}</span></td>`
+    html += `<td class="num-col">${escapeHtml(fm.spec_since || '—')}</td>`
+    html += '</tr>\n'
+  }
+  return html + '</tbody></table></div>\n'
+}
+
 function featureStoreInner(data) {
   const model = featureScreenModel(data)
+  if (!model && data.features.length > 0) {
+    const groups = [{
+      key: 'all',
+      label: STORE_LABEL.feature,
+      count: data.features.length,
+      bodyHtml: countBadge(FEATURE.sidebarLabel, data.features.length, FEATURE.countUnit) + featureSpecListRows(data.features),
+    }]
+    return groupedStore({ sidebarSubLabel: STORE_LABEL.feature, crumbLabel: STORE_LABEL.feature, groups, noGroupUnit: FEATURE.countUnit })
+  }
   if (!model) {
     const groups = [{ key: 'all', label: '', count: 0, bodyHtml: `<p class="v-note">${FEATURE.empty}</p>` }]
     return groupedStore({ sidebarSubLabel: STORE_LABEL.feature, crumbLabel: STORE_LABEL.feature, groups, noGroupUnit: FEATURE.countUnit })
@@ -1099,7 +1126,14 @@ function featureDetailHtml(model, e, anchors, repoRootHref) {
 function featureDetailEntries(data, anchors, repoRootHref) {
   const model = featureScreenModel(data)
   const entries = {}
-  if (!model) return entries
+  if (!model) {
+    for (const p of data.features) {
+      const fm = p.frontmatter
+      const id = p.rel.split('/').pop()
+      entries[id] = { title: fm.title || id, status: fm.status || '', spec_since: fm.spec_since || '', path: p.rel, body: md(p.body, path.dirname(p.rel), repoRootHref) }
+    }
+    return entries
+  }
   for (const e of model.entries) {
     entries[e.key] = { title: `${e.name || e.key} · ${e.key}`, name: e.name || e.key, html: featureDetailHtml(model, e, anchors, repoRootHref) }
   }
@@ -1294,6 +1328,8 @@ export function buildAnchors(data) {
   const featureModel = featureScreenModel(data)
   if (featureModel) {
     for (const e of featureModel.entries) if (e.spec) put(e.spec.rel, { s: 'feature', g: 'all', k: 'feature', i: e.key })
+  } else {
+    for (const p of data.features) put(p.rel, { s: 'feature', g: 'all', k: 'feature', i: p.rel.split('/').pop() })
   }
   for (const c of data.prd.closed) {
     put(c.rel, { s: 'prd', g: c.name.replace(/\.md$/, '') })

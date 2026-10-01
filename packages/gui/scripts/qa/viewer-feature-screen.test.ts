@@ -107,11 +107,35 @@ describe('feature screen (T-882)', () => {
     expect(detailData(render(data())).anchors['docs/features/viewer.md']).toEqual({ s: 'feature', g: 'all', k: 'feature', i: 'viewer' })
   })
 
-  it('no taxonomy → one empty group, the approved two-line empty note, crumb 「기능」', () => {
-    const sec = featureSection(render(data(false)))
+  it('no taxonomy and no spec file → one empty group, the approved two-line empty note, crumb 「기능」', () => {
+    const d = data(false)
+    d.features = []
+    const sec = featureSection(render(d))
     expect(sec).toContain('그룹 없음 · 전체 0개')
     expect(sec).toContain(`<p class="v-note">${FEATURE.empty}</p>`)
     expect(sec).toContain('<span class="topstrip-crumb"><b>기능</b></span>')
-    expect(detailData(render(data(false))).feature).toEqual({})
+    expect(detailData(render(d)).feature).toEqual({})
+  })
+
+  it('no taxonomy, spec files present (T-901 = B) → the pre-T-882 spec-file list, not the empty screen', () => {
+    const d = data(false)
+    d.features = [{ rel: 'docs/features/viewer.md', frontmatter: { feature: 'viewer', title: '뷰어 스펙', status: 'live', spec_since: 'v1.2' }, body: 'SPEC BODY LINE' }]
+    const html = render(d)
+    const sec = featureSection(html)
+    expect(sec).not.toContain(FEATURE.empty)
+    expect(sec).toContain('<th>기능</th><th>제목</th><th>상태</th><th>시작 버전</th>')
+    expect(sec).toContain('<span class="count-badge">기능 · <b>1</b>개</span>')
+    expect(sec).toContain('data-detail-kind="feature" data-detail-id="viewer.md"')
+    expect(sec).toContain('뷰어 스펙')
+    expect(sec).toContain('유효')
+    const e = detailData(html).feature['viewer.md']
+    expect(e.title).toBe('뷰어 스펙')
+    expect(e.body).toContain('SPEC BODY LINE')
+  })
+
+  it('no taxonomy: a docs/features/<x>.md link anchors to that spec (not the home redirect)', () => {
+    const d = data(false)
+    d.features = [{ rel: 'docs/features/viewer.md', frontmatter: {}, body: 'b' }]
+    expect(detailData(render(d)).anchors['docs/features/viewer.md']).toEqual({ s: 'feature', g: 'all', k: 'feature', i: 'viewer.md' })
   })
 })
