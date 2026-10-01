@@ -4032,6 +4032,70 @@ def _write_token(name, value):
     atomic_write_text(path, value + "\n", mode=0o644)
 
 
+# T-896: the dispatch gate's cap keys (prdt-dispatch-gate.sh · `dispatch-caps.json`),
+# settable as `dispatch.<key>`. Numbers only: non-negative and finite; the memory
+# floor is a percentage.
+DISPATCH_CAP_KEYS = ("load_ratio", "mem_free_pct_min", "inflight_max", "suites_max", "vms_max",
+                     "inflight_sonnet_max", "inflight_opus_max", "inflight_haiku_max",
+                     "inflight_fable_max", "inflight_default_max")
+
+
+def _dispatch_caps_file():
+    return prdt_home() / "dispatch-caps.json"
+
+
+def _dispatch_caps_read():
+    """The caps file's object ({} when absent); None when present but not a JSON
+    object — the caller refuses to overwrite what it cannot read."""
+    path = _dispatch_caps_file()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _dispatch_cap_number(text):
+    try:
+        n = float(text)
+    except ValueError:
+        return None
+    return n if math.isfinite(n) and n >= 0 else None
+
+
+def _dispatch_cap_check(key, text):
+    n = _dispatch_cap_number(text)
+    if n is None or (key == "mem_free_pct_min" and n > 100):
+        return "shape"
+    return None
+
+
+def _dispatch_cap_get(key):
+    data = _dispatch_caps_read()
+    v = (data or {}).get(key)
+    return None if isinstance(v, bool) or not isinstance(v, (int, float)) else str(v)
+
+
+def _dispatch_cap_put(key, text):
+    data = _dispatch_caps_read()
+    if data is None:
+        sys.exit(msg(load_messages(), "settings.error.capsfile", path=str(_dispatch_caps_file())))
+    if text is None:
+        data.pop(key, None)
+    else:
+        n = _dispatch_cap_number(text)
+        data[key] = int(n) if n == int(n) else n
+    path = _dispatch_caps_file()
+    if not data:
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", mode=0o644)
+
+
 def settings_entries(droot):
     """Every machine setting: key · kind (enum|text) · domain/shape · get() ·
     put(value or None to reset). None when the register resolver is absent."""
@@ -4073,6 +4137,14 @@ def settings_entries(droot):
         "get": lambda: "en" if _read_token("cli-lang") == "en" else "ko",
         "put": lambda v: _write_token("cli-lang", v),
     })
+    for ck in DISPATCH_CAP_KEYS:
+        entries.append({
+            "key": f"dispatch.{ck}", "kind": "number", "domain": None,
+            "shape": "a non-negative number" + (" up to 100" if ck == "mem_free_pct_min" else ""),
+            "check": (lambda v, ck=ck: _dispatch_cap_check(ck, v)),
+            "get": (lambda ck=ck: _dispatch_cap_get(ck)),
+            "put": (lambda v, ck=ck: _dispatch_cap_put(ck, v)),
+        })
     return entries
 
 
@@ -11972,12 +12044,36 @@ def _dispatch_state(data, now):
     return "live"
 
 
+def _gate_hook_path():
+    """prdt-dispatch-gate.sh — the bound install mirror first, the repo copy next
+    to this file as fallback (same order as `_register_hook_path`)."""
+    for cand in (prdt_home() / "hooks" / "prdt-dispatch-gate.sh",
+                 Path(__file__).resolve().parent / "hooks" / "prdt-dispatch-gate.sh"):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def cmd_dispatch_caps(args):
+    """`prdt dispatch caps` (T-893) — every dispatch-gate axis with its value, cap,
+    cap source, cap key and remedy. The gate script measures; it runs here in
+    report mode, so this output never drifts from what the gate enforces."""
+    hook = _gate_hook_path()
+    if hook is None:
+        sys.exit("prdt dispatch caps: prdt-dispatch-gate.sh not found — re-run install.sh")
+    sys.stdout.flush()
+    os.dup2(os.open(os.devnull, os.O_RDONLY), 0)   # the gate drains stdin: no event, EOF at once
+    os.execvpe("bash", ["bash", str(hook)], {**os.environ, "PRDT_GATE_CAPS_REPORT": "1", "PRDT_HOME": str(prdt_home())})
+
+
 def cmd_dispatch(args):
     """`prdt dispatch ls [--json] [--all]` — markers under
     `<PRDT_HOME>/run/dispatches/` across every project, each with the state the
     dispatch gate assigns it. Default hides `stopped` markers; `--all` shows them."""
+    if args.action == "caps":
+        return cmd_dispatch_caps(args)
     if args.action != "ls":
-        sys.exit("usage: prdt dispatch ls [--json] [--all]")
+        sys.exit("usage: prdt dispatch ls [--json] [--all] | prdt dispatch caps")
     d = prdt_home() / "run" / "dispatches"
     now = datetime.now(timezone.utc)
     rows, unreadable = [], []
@@ -14400,7 +14496,8 @@ def main():
     p.set_defaults(fn=cmd_register)
     p = sub.add_parser("settings", help="every machine setting in one place (T-750): list (no action) · "
                                         "set <key> <value> · unset <key> — keys register.audience · register.form · "
-                                        "register.structure · register.address · viewer.auto-open · plan.tier; "
+                                        "register.structure · register.address · viewer.auto-open · plan.tier · "
+                                        "dispatch.<cap key> (T-896); "
                                         "lines from prdt-messages.json, language PRDT_LANG=ko|en (default ko)")
     # No `choices=` here (unlike the subparsers around it): an out-of-domain
     # action must fall through to cmd_settings's own catalog-driven refusal
@@ -14413,8 +14510,9 @@ def main():
     p.set_defaults(fn=cmd_settings)
     p = sub.add_parser("dispatch", help="in-flight dispatch markers, every project (T-695): "
                                         "ls [--json] [--all] — each marker with the state the dispatch gate "
-                                        "gives it (live · phantom · stale · stopped); read-only")
-    p.add_argument("action", choices=("ls",))
+                                        "gives it (live · phantom · stale · stopped); caps — every gate axis "
+                                        "with value · cap · source · remedy (T-893); read-only")
+    p.add_argument("action", choices=("ls", "caps"))
     p.add_argument("--json", action="store_true", help="machine-readable output")
     p.add_argument("--all", action="store_true", help="include stopped markers")
     p.set_defaults(fn=cmd_dispatch)

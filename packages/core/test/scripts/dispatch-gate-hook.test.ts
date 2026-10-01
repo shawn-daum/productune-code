@@ -215,6 +215,15 @@ function run(o: EventOpts, r: RunEnv = {}): string {
   return res.stdout
 }
 
+/** T-893: `PRDT_GATE_CAPS_REPORT=1` — the same measurement code, every axis printed
+ *  (what `prdt dispatch caps` shows); no event, no judgment. */
+function report(r: RunEnv = {}): string {
+  const res = spawnSync('bash', [HOOK], { input: '', encoding: 'utf8', env: { ...envFor(r).env, PRDT_GATE_CAPS_REPORT: '1' } })
+  expect(res.stderr).toBe('')
+  expect(res.status).toBe(0)
+  return res.stdout
+}
+
 function decision(o: EventOpts, r: RunEnv = {}): { deny?: string; warn?: string } {
   const out = run(o, r)
   if (out === '') return {}
@@ -1013,18 +1022,56 @@ describe('T-695: the machine resource cap', () => {
     expect(fs.existsSync(path.join(home, 'run'))).toBe(false)
   })
 
-  test('load over cap: denied, every axis named with its number, the crossed cap, what frees it, the override file', () => {
+  test('load over cap: one line — the user-approved wording, the over-cap value / cap, nothing else (T-893)', () => {
     const d = denyReason({ cwd: proj }, { machine: { loadavg: '{ 31.20 28.00 20.00 }' } })
-    expect(d).toContain('[prdt dispatch gate] WAITING')
-    expect(d).toContain('CPU load 1m 31.2 on 14 cores = ratio 2.23 (cap 1.5 — sysctl vm.loadavg / hw.ncpu)')
-    expect(d).toContain('available memory 55% of 36 GB (min 15% — memory_pressure free percentage × hw.memsize)')
-    expect(d).toContain('in-flight dispatches 0 machine-wide, every project (cap 5 — run/dispatches markers with no stopped_at, since < 4 h, and a live worker transcript: not ended by the harness, written within 30 min)')
-    expect(d).toContain('running full test suites 0 (cap 1 — vitest entry processes (node …/vitest/vitest.mjs) with no .test. file filter, from ps; pnpm wrappers and pool workers are not counted)')
-    expect(d).toContain('resident VMs 0 (cap 2 — com.apple.Virtualization.VirtualMachine processes, from ps)')
-    expect(d).toContain('\nover cap: load\n')
-    expect(d).toContain('frees it: wait for load to fall')
-    expect(d).toContain('`$PRDT_HOME/dispatch-caps.json`')
-    expect(d).not.toContain('unmeasured')
+    expect(d).toBe('[prdt dispatch gate] WAITING — not spawned: CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+  })
+
+  test('T-893: `prdt dispatch caps` mode prints every axis with value, cap, cap key + source, remedy, and the cap keys', () => {
+    const r = report({ machine: { loadavg: '{ 31.20 28.00 20.00 }' } })
+    expect(r).toContain('OVER  CPU load ratio: 2.23 (1m 31.2 on 14 cores) / cap 1.5')
+    expect(r).toContain('cap key: load_ratio (default) · source: sysctl vm.loadavg / hw.ncpu')
+    expect(r).toContain('to free: wait for load to fall (a running suite or worker finishing)')
+    expect(r).toContain('ok    free memory: 55% of 36 GB / min 15%')
+    expect(r).toContain('source: memory_pressure free percentage × hw.memsize')
+    expect(r).toContain('to free: free memory: stop a VM whose job is done (`prdt resource ls` names its owner)')
+    expect(r).toContain('ok    in-flight dispatches: 0 / cap 5')
+    expect(r).toContain('written within 30 min')
+    expect(r).toContain('ok    running full test suites: 0 / cap 1')
+    expect(r).toContain('to free: wait for a full test suite to finish')
+    expect(r).toContain('ok    resident VMs: 0 / cap 2')
+    expect(r).toContain('to free: stop a VM whose job is done')
+    for (const t of ['sonnet', 'opus', 'haiku', 'fable', 'default']) {
+      expect(r).toContain(`in-flight dispatches on tier "${t}": 0 / cap 5`)
+      expect(r).toContain(`cap key: inflight_${t}_max (default)`)
+    }
+    expect(r).toContain('to free: wait for a worker on the same model tier to return, or dispatch on a different tier')
+    expect(r).toContain('`$PRDT_HOME/dispatch-caps.json`')
+    expect(r).toContain('load_ratio · mem_free_pct_min · inflight_max · suites_max · vms_max · inflight_sonnet_max · inflight_opus_max · inflight_haiku_max · inflight_fable_max · inflight_default_max')
+    expect(r).toContain('prdt settings set dispatch.<key> <number>')
+    expect(r).not.toMatch(/: unmeasured/)
+  })
+
+  test('T-893: the caps report names an override as the cap source, and a failed measurement as unmeasured', () => {
+    const home = tmp('prdt-t893-home-')
+    fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 7 }))
+    marker(home, 'one', 10)
+    fs.writeFileSync(path.join(home, 'run', 'dispatches', 'half-written.json'), '{"agent_id": "x", "since": "2026-09-26T0')
+    const r = report({ home })
+    expect(r).toContain('in-flight dispatches: unmeasured')
+    expect(r).toContain('cap key: inflight_max (dispatch-caps.json)')
+    expect(r).toContain('cap key: suites_max (default)')
+  })
+
+  test('T-893: the deny wording is the same for every over-cap axis, a second line only when a measurement failed', () => {
+    const home = tmp('prdt-t893-home-')
+    marker(home, 'one', 10)
+    fs.writeFileSync(path.join(home, 'run', 'dispatches', 'half-written.json'), '{"agent_id": "x", "since": "2026-09-26T0')
+    const d = denyReason({ cwd: proj, sessionId: 'sess-T893' }, { machine: { loadavg: '{ 31.20 28.00 20.00 }' }, home })
+    const [first, second, ...more] = d.split('\n')
+    expect(first).toBe('[prdt dispatch gate] WAITING — not spawned: CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+    expect(second).toContain('[prdt dispatch gate] resource check: unmeasured dispatches')
+    expect(more).toEqual([])
   })
 
   test('load exactly at the cap is not over it', () => {
@@ -1033,9 +1080,7 @@ describe('T-695: the machine resource cap', () => {
 
   test('memory under the minimum: denied on the memory axis', () => {
     const d = denyReason({ cwd: proj }, { machine: { memp: MEMP_OK(9) } })
-    expect(d).toContain('available memory 9% of 36 GB (min 15%')
-    expect(d).toContain('\nover cap: memory\n')
-    expect(d).toContain('frees it: free memory: stop a VM whose job is done (`prdt resource ls` names its owner)')
+    expect(d).toContain('not spawned: free memory 9% / min 15%.')
   })
 
   test('in-flight dispatches: fresh never-stopped markers count, stopped and stale ones do not', () => {
@@ -1049,13 +1094,11 @@ describe('T-695: the machine resource cap', () => {
     const over = tmp('prdt-t695-home-')
     for (let i = 0; i < 6; i++) marker(over, `fresh${i}`, 60 * i)
     const d = denyReason({ cwd: proj }, { home: over })
-    expect(d).toContain('in-flight dispatches 6 machine-wide, every project (cap 5')
-    expect(d).toContain('frees it: wait for a worker to return (`prdt dispatch ls` lists every project\'s in-flight dispatches and each marker\'s state)')
+    expect(report({ home: over })).toContain('OVER  in-flight dispatches: 6 / cap 5')
     // T-774: every marker here has no `model` (pre-T-774 fixture shape), so
     // they all fall into the "default" tier bucket, same as this request
     // (no `model` override either) — the new model_tier axis is over too.
-    expect(d).toContain('\nover cap: dispatches, model_tier\n')
-    expect(d).toContain('frees it: wait for a worker to return')
+    expect(d).toContain('not spawned: in-flight dispatches 6 / cap 5, in-flight on tier "default" 6 / cap 5.')
   })
 
   describe('T-774: model tier axis — in-flight dispatches per model tier', () => {
@@ -1074,10 +1117,8 @@ describe('T-695: the machine resource cap', () => {
       fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 10, inflight_opus_max: 5 }))
       for (let i = 0; i < 6; i++) marker(home, `o${i}`, 60 * i, false, 'live', 45, false, 'opus')
       const d = denyReason({ cwd: proj, model: 'opus' }, { home })
-      expect(d).toContain('in-flight dispatches on model tier "opus" 6 machine-wide (cap 5')
-      expect(d).toContain('\nover cap: model_tier\n')
-      expect(d).toContain('frees it: wait for a worker on the same model tier to return, or dispatch on a different tier')
-      expect(d).not.toContain('over cap: dispatches')
+      expect(d).toContain('not spawned: in-flight on tier "opus" 6 / cap 5.')
+      expect(d).not.toContain('in-flight dispatches 6')
     })
 
     test('T-780: an unconfirmed marker counts toward dispatches but never toward a model_tier deny', () => {
@@ -1093,9 +1134,8 @@ describe('T-695: the machine resource cap', () => {
       // the machine-wide count still sees all six (persona + liveness do not rest on the pairing)
       fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 5, inflight_opus_max: 5 }))
       const d = denyReason({ cwd: proj, model: 'opus' }, { home })
-      expect(d).toContain('in-flight dispatches 6 machine-wide')
-      expect(d).toContain('in-flight dispatches on model tier "opus" 0 machine-wide')
-      expect(d).toContain('\nover cap: dispatches\n')
+      expect(d).toContain('not spawned: in-flight dispatches 6 / cap 5.')
+      expect(report({ home })).toContain('in-flight dispatches on tier "opus": 0 / cap 5')
     })
 
     test('regression: a raised inflight_max with no tier key is not re-capped at 5 by the tier axis', () => {
@@ -1111,8 +1151,7 @@ describe('T-695: the machine resource cap', () => {
       const home = tmp('prdt-t774-home-')
       for (let i = 0; i < 6; i++) marker(home, `d${i}`, 60 * i) // no model field: legacy shape
       const d = denyReason({ cwd: proj }, { home })
-      expect(d).toContain('in-flight dispatches on model tier "default" 6 machine-wide (cap 5')
-      expect(d).toContain('\nover cap: dispatches, model_tier\n')
+      expect(d).toContain('not spawned: in-flight dispatches 6 / cap 5, in-flight on tier "default" 6 / cap 5.')
     })
 
     test('a per-tier override in dispatch-caps.json (inflight_opus_max) is honored independently of inflight_max', () => {
@@ -1124,9 +1163,8 @@ describe('T-695: the machine resource cap', () => {
       marker(home, 'one', 10, false, 'live', 45, false, 'opus')
       marker(home, 'two', 20, false, 'live', 45, false, 'opus')
       const d = denyReason({ cwd: proj, model: 'opus' }, { home })
-      expect(d).toContain('in-flight dispatches on model tier "opus" 2 machine-wide (cap 1')
-      expect(d).toContain('\nover cap: model_tier\n')
-      expect(d).not.toContain('over cap: dispatches')
+      expect(d).toContain('not spawned: in-flight on tier "opus" 2 / cap 1.')
+      expect(d).not.toContain('in-flight dispatches 2')
       // a sonnet dispatch on the same machine is untouched by the opus override
       expect(run({ cwd: proj, model: 'sonnet' }, { home })).toBe('')
     })
@@ -1163,12 +1201,11 @@ describe('T-695: the machine resource cap', () => {
 
       fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_opus_max: 0 }))
       const dOpus = denyReason({ cwd: proj, model: 'opus' }, { home })
-      expect(dOpus).toContain('in-flight dispatches on model tier "opus" 1 machine-wide (cap 0')
-      expect(dOpus).toContain('\nover cap: model_tier\n')
+      expect(dOpus).toContain('not spawned: in-flight on tier "opus" 1 / cap 0.')
 
       fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_sonnet_max: 0 }))
       const dSonnet = denyReason({ cwd: proj, model: 'sonnet' }, { home })
-      expect(dSonnet).toContain('in-flight dispatches on model tier "sonnet" 1 machine-wide (cap 0')
+      expect(dSonnet).toContain('not spawned: in-flight on tier "sonnet" 1 / cap 0.')
     })
 
     test('an unknown/malformed `tool_input.model` value falls back to the "default" bucket, never denies on a bad key', () => {
@@ -1176,7 +1213,7 @@ describe('T-695: the machine resource cap', () => {
       marker(home, 'one', 10, false, 'live', 45, false, 'default')
       fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_default_max: 0 }))
       const d = denyReason({ cwd: proj, model: 'claude-opus-5-not-a-tier' }, { home })
-      expect(d).toContain('in-flight dispatches on model tier "default" 1 machine-wide (cap 0')
+      expect(d).toContain('not spawned: in-flight on tier "default" 1 / cap 0.')
     })
   })
 
@@ -1191,7 +1228,7 @@ describe('T-695: the machine resource cap', () => {
     marker(home, 'parked', 3600, false, 'idle', 9)             // 9 min idle is a long Bash call, still live
     fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: -1 }))  // always deny → the count is printed
     const d = denyReason({ cwd: proj }, { home })
-    expect(d).toContain('in-flight dispatches 8 machine-wide')   // 6 live + starting + parked
+    expect(d).toContain('in-flight dispatches 8 / cap -1')   // 6 live + starting + parked
     expect(d).not.toContain('unmeasured')
   })
 
@@ -1207,7 +1244,7 @@ describe('T-695: the machine resource cap', () => {
     fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: -1 }))
     const res = spawnSync('bash', [HOOK], { input: eventJson({ cwd: proj }), encoding: 'utf8', env: { ...envFor({ home }).env, CLAUDE_CONFIG_DIR: cfg } })
     expect(res.stderr).toBe('')
-    expect(JSON.parse(res.stdout).hookSpecificOutput.permissionDecisionReason).toContain('in-flight dispatches 1 machine-wide')
+    expect(JSON.parse(res.stdout).hookSpecificOutput.permissionDecisionReason).toContain('in-flight dispatches 1 / cap -1')
   })
 
   test('one corrupt marker file: the dispatches axis alone is unmeasured (said once) — the other axes still judge', () => {
@@ -1215,9 +1252,9 @@ describe('T-695: the machine resource cap', () => {
     marker(home, 'fine', 60)
     fs.writeFileSync(path.join(home, 'run', 'dispatches', 'half-written.json'), '{"agent_id": "x", "since": "2026-09-26T0')
     const d = denyReason({ cwd: proj, sessionId: 'sess-C' }, { machine: { loadavg: '{ 31.20 28.00 20.00 }' }, home })
-    expect(d).toContain('in-flight dispatches: unmeasured (a run/dispatches marker is unreadable or a liveness probe failed — `prdt dispatch ls` names it)')
-    expect(d).toContain('\nover cap: load\n')
+    expect(d).toContain('not spawned: CPU load ratio 2.23 / cap 1.5.')
     expect(d).toContain('unmeasured dispatches')
+    expect(report({ home })).toContain('in-flight dispatches: unmeasured')
     // under cap: the note once, then silence for that session
     const w = decision({ cwd: proj, sessionId: 'sess-D' }, { home })
     expect(w.deny).toBeUndefined()
@@ -1241,10 +1278,10 @@ describe('T-695: the machine resource cap', () => {
       '/bin/zsh -c pnpm exec vitest run',
     ]
     fsCaps(-1)
-    const d0 = denyReason({ cwd: proj }, { machine: { ps: [PS_QUIET, ...noise].join('\n') }, home: capsHome })
-    expect(d0).toContain('running full test suites 0 (cap -1')
-    const d1 = denyReason({ cwd: proj }, { machine: { ps: [PS_QUIET, ...noise, ...tree].join('\n') }, home: capsHome })
-    expect(d1).toContain('running full test suites 1 (cap -1')
+    const d0 = report({ machine: { ps: [PS_QUIET, ...noise].join('\n') }, home: capsHome })
+    expect(d0).toContain('running full test suites: 0 / cap -1')
+    const d1 = report({ machine: { ps: [PS_QUIET, ...noise, ...tree].join('\n') }, home: capsHome })
+    expect(d1).toContain('running full test suites: 1 / cap -1')
     expect(run({ cwd: proj }, { machine: { ps: [PS_QUIET, ...noise, ...tree].join('\n') } })).toBe('')  // cap 1: one suite admits
   })
 
@@ -1277,7 +1314,7 @@ describe('T-695: the machine resource cap', () => {
     fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'vt', private: true, type: 'module', scripts: { test: 'vitest run' } }))
     fs.writeFileSync(path.join(root, 'sleep.test.ts'), 'import { test } from "vitest"\ntest("sleep", async () => { await new Promise(r => setTimeout(r, 40000)) }, 60000)\n')
     fsCaps(-1)
-    const count = () => Number(/running full test suites (-?\d+) /.exec(denyReason({ cwd: proj }, { machine: { realPs: true }, home: capsHome }))![1])
+    const count = () => Number(/running full test suites: (-?\d+) \//.exec(report({ machine: { realPs: true }, home: capsHome }))![1])
     const before = count()
     // never `detached` (T-442 isolation rule): the tree is reaped by walking `ps` from the child's pid
     const child = spawn(cmd, cmdArgs, { cwd: root, stdio: 'ignore', env: { ...process.env, CI: '1' } })
@@ -1304,24 +1341,19 @@ describe('T-695: the machine resource cap', () => {
     expect(run({ cwd: proj }, { machine: { ps: one } })).toBe('')
     const two = [one, VITEST_ROOT + ' --reporter=dot'].join('\n')
     const d = denyReason({ cwd: proj }, { machine: { ps: two } })
-    expect(d).toContain('running full test suites 2 (cap 1')
-    expect(d).toContain('\nover cap: suites\n')
-    expect(d).toContain('frees it: wait for a full test suite to finish')
+    expect(d).toContain('not spawned: full test suites 2 / cap 1.')
   })
 
   test('resident VMs: Virtualization.VirtualMachine processes count, two admit, three deny', () => {
     const two = [PS_QUIET, VM_PROC, VM_PROC].join('\n')
     expect(run({ cwd: proj }, { machine: { ps: two } })).toBe('')
     const d = denyReason({ cwd: proj }, { machine: { ps: [two, VM_PROC].join('\n') } })
-    expect(d).toContain('resident VMs 3 (cap 2')
-    expect(d).toContain('\nover cap: vms\n')
-    expect(d).toContain('frees it: stop a VM whose job is done')
+    expect(d).toContain('not spawned: resident VMs 3 / cap 2.')
   })
 
   test('several axes over at once: all of them named, in axis order', () => {
     const d = denyReason({ cwd: proj }, { machine: { loadavg: '{ 40.00 30.00 20.00 }', ps: [PS_QUIET, VITEST_ROOT, VITEST_ROOT].join('\n') } })
-    expect(d).toContain('\nover cap: load, suites\n')
-    expect(d).toContain('frees it: wait for load to fall (a running suite or worker finishing); wait for a full test suite to finish')
+    expect(d).toContain('not spawned: CPU load ratio 2.86 / cap 1.5, full test suites 2 / cap 1.')
   })
 
   test('a Hangul warning under cap is still exactly the one warning line', () => {
@@ -1356,9 +1388,7 @@ describe('T-695: the machine resource cap', () => {
 
     test('an unmeasured axis rides along inside a deny on another axis', () => {
       const d = denyReason({ cwd: proj }, { machine: { noPs: true, loadavg: '{ 30.00 1.00 1.00 }' } })
-      expect(d).toContain('running full test suites: unmeasured (ps)')
-      expect(d).toContain('resident VMs: unmeasured (ps)')
-      expect(d).toContain('\nover cap: load\n')
+      expect(d).toContain('not spawned: CPU load ratio 2.14 / cap 1.5.')
       expect(d).toContain('unmeasured suites, vms')
     })
 
@@ -1376,8 +1406,8 @@ describe('T-695: the machine resource cap', () => {
       fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 0, vms_max: 'nine' }))
       marker(home, 'one', 10)
       const d = denyReason({ cwd: proj }, { home })
-      expect(d).toContain('in-flight dispatches 1 machine-wide, every project (cap 0')
-      expect(d).toContain('resident VMs 0 (cap 2')      // a non-number key is ignored
+      expect(d).toContain('in-flight dispatches 1 / cap 0')
+      expect(report({ home })).toContain('ok    resident VMs: 0 / cap 2')      // a non-number key is ignored
       expect(d).not.toContain('unmeasured')
     })
 
