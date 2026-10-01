@@ -441,6 +441,41 @@ describe('prdt track land', () => {
       expect(git(code, 'show', 'main:m.txt')).toBe('main only')
     })
 
+    // T-834 (T-833 QA forgery #3): json.loads keeps the LAST of a repeated key,
+    // so `…"base":"main",…,"base":"dev"}` used to read as dev and land there.
+    test('T-834: a record with a key given twice is untrusted — a bare land is refused, nothing merges', () => {
+      const rec = recordOf('T-2')!
+      const before = refs()
+      fs.writeFileSync(rec, '{"schema":1,"ticket":"T-2","branch":"track/T-2","base":"main","base":"dev"}\n')
+      const r = cli('track', 'land', 'T-2')
+      expectRefusal(r)
+      expect(r.err).toContain('unreadable or does not match')
+      expect(refs()).toEqual(before)
+      fs.writeFileSync(rec, '{"schema":1,"ticket":"T-2","ticket":"T-2","branch":"track/T-2","base":"main"}\n')
+      expectRefusal(cli('track', 'land', 'T-2'))
+      expect(refs()).toEqual(before)
+    })
+
+    test('T-834: review compares against the record\'s base, not a worker-rewritten prdtbase git config', () => {
+      git(wt('T-2'), 'config', 'branch.track/T-2.prdtbase', 'dev')     // worker rewrites git config
+      git(wt(), 'config', 'branch.track/T-1.prdtbase', 'main')
+      const r2 = cli('track', 'review', 'T-2')
+      expect(r2.status, r2.err).toBe(0)
+      expect(r2.out).toContain('track/T-2 vs main')
+      const r1 = cli('track', 'review', 'T-1')
+      expect(r1.status, r1.err).toBe(0)
+      expect(r1.out).toContain('track/T-1 vs dev')
+      // no record (a track opened before T-833): git config is all there is, as before
+      fs.rmSync(recordOf('T-1')!)
+      expect(cli('track', 'review', 'T-1').out).toContain('track/T-1 vs main')
+      // an untrusted record: config, with a warning that a bare land refuses
+      fs.writeFileSync(recordOf('T-2')!, '{not json')
+      const bad = cli('track', 'review', 'T-2')
+      expect(bad.status, bad.err).toBe(0)
+      expect(bad.out).toContain('track/T-2 vs dev')
+      expect(bad.err).toContain('a bare land will refuse')
+    })
+
     test('a worker rewriting the record to dev cannot move main; deleting it falls back to the pre-T-833 dev default — main still untouched', () => {
       const before = refs()
       fs.writeFileSync(recordOf('T-2')!, JSON.stringify({ ticket: 'T-2', branch: 'track/T-2', base: 'dev' }))
