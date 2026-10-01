@@ -2063,6 +2063,10 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .dg-role-bg.dg-role-qa { fill: color-mix(in srgb, var(--persona-qa) 14%, transparent); }
 .dg-role-po { fill: color-mix(in srgb, var(--persona-po) 80%, var(--text-primary)); }
 .dg-role-bg.dg-role-po { fill: color-mix(in srgb, var(--persona-po) 14%, transparent); }
+.dg-n-sp text.dg-role-po { fill: color-mix(in srgb, var(--persona-po) 60%, var(--text-primary)); }
+.dg-n-sp text.dg-role-designer { fill: color-mix(in srgb, var(--persona-designer) 60%, var(--text-primary)); }
+.dg-n-sp text.dg-role-developer { fill: color-mix(in srgb, var(--persona-dev) 60%, var(--text-primary)); }
+.dg-n-sp text.dg-role-qa { fill: color-mix(in srgb, var(--persona-qa) 60%, var(--text-primary)); }
 .dg-role-user { fill: var(--bg-surface-base); }
 .dg-role-bg.dg-role-user { fill: var(--text-primary); }
 .dg-role-other { fill: var(--text-secondary); }
