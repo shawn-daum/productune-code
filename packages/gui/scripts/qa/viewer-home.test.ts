@@ -155,6 +155,28 @@ describe('home screen — T-796 acceptance in the generated page', () => {
     expect(before.home).not.toContain('dg-chip-sp')
     expect(connected.home).not.toContain('메인 패스가 아직 이어지지 않았어요')
   })
+  it('T-904 B: 0 open tickets shows only 「열린 티켓이 없어요.」 at define, build and ship', () => {
+    for (const stage of ['define', 'build', 'ship']) {
+      const h = page([tk({ id: 'T-1', status: 'done' })], { stage }).home
+      expect(h).toContain('열린 티켓이 없어요.')
+      expect(h).not.toContain('메인 패스가 아직 이어지지 않았어요')
+      expect(h).not.toContain('Build 진입 전')
+    }
+  })
+  it('T-904 C: Build 진입 때 notice only at define; build and ship get the 아직 없어요 wording', () => {
+    const open = [tk({ id: 'T-1' }), tk({ id: 'T-2', deps: ['T-1'] })]
+    const built = '합격선 티켓과 설계 → 구현 → QA → 배포 deps 가 아직 없어요. 지금은 「크리티컬 패스」만 보여요.'
+    const def = page(open, { stage: 'define' }).home
+    expect(def).toContain('Build 진입 때 생겨요')
+    expect(def).toContain('Build 진입 전')
+    expect(def).not.toContain(built)
+    for (const stage of ['build', 'ship']) {
+      const h = page(open, { stage }).home
+      expect(h).toContain('메인 패스가 아직 이어지지 않았어요 — ' + built)
+      expect(h).not.toContain('Build 진입 때 생겨요')
+      expect(h).not.toContain('Build 진입 전')
+    }
+  })
   it('chips: 「메인 패스」 above the spine, 「합격선」 on the gate; no explanatory tail in the legend', () => {
     expect(connected.home).toContain('>메인 패스</text>')
     expect(connected.home).toContain('>합격선</text>')

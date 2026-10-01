@@ -25,7 +25,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { execFile } from 'child_process'
+import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
 import { atomicWriteFileSync } from '../fs/atomic-write'
 import {
@@ -193,10 +193,19 @@ export function metaGitDir(projectDir: string): string {
   return path.join(stateDir(projectDir), 'meta.git')
 }
 
-/** True if the meta repo has been initialized. */
+/**
+ * True if the meta repo has been initialized — or something a meta command must
+ * answer for stands at `meta.git` (a gitfile / dangling symlink: T-848 fix1),
+ * so the caller reaches `metaGit`'s refusal instead of a silent "not split".
+ */
 export function metaRepoExists(projectDir: string): boolean {
+  const gd = metaGitDir(projectDir)
   try {
-    return fs.existsSync(path.join(metaGitDir(projectDir), 'HEAD'))
+    if (fs.existsSync(path.join(gd, 'HEAD'))) return true
+    const st = fs.lstatSync(gd)
+    if (st.isSymbolicLink() || !st.isDirectory()) return true
+    // refs/ or objects/ without a HEAD: the trust check refuses it by name (T-848 fix2)
+    return fs.existsSync(path.join(gd, 'refs')) || fs.existsSync(path.join(gd, 'objects'))
   } catch {
     return false
   }
@@ -226,6 +235,208 @@ export function scrubbedGitEnv(): NodeJS.ProcessEnv {
   return env
 }
 
+// ── clone-carried meta.git (T-848) ─────────────────────────────────────────────
+//
+// `<stateDir>/meta.git` sits in the project tree, so a cloned repository can
+// carry one. Observed by running (git 2.54): a carried `core.fsmonitor`,
+// `core.hooksPath`, `$GIT_DIR/hooks/*`, an `include.path`, and a
+// `filter.<x>.clean` named by `$GIT_DIR/info/attributes` each RUN a command on
+// plain `status` / `add` / `commit`. Two layers, mirrored in `scripts/prdt`
+// (`_meta_git` — keep both in step): command-line pins for the knobs that can
+// be pinned, and an allowlist over the repo's own config for the driver keys
+// that can't be neutralised by name.
+
+/** Command-line config outranks every config file. */
+export const META_GIT_HARDEN: readonly string[] = [
+  '-c', 'core.fsmonitor=false',
+  '-c', 'core.hooksPath=/dev/null',
+  '-c', 'commit.gpgsign=false',
+]
+
+const META_CONFIG_ALLOWED = new RegExp(
+  '^(?:core\\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase' +
+    '|precomposeunicode|symlinks|worktree|hookspath)' +
+    '|extensions\\.(?:objectformat|refstorage)' +
+    '|user\\.(?:name|email)|commit\\.gpgsign|push\\.(?:followtags|default)' +
+    '|remote\\..+\\.(?:url|pushurl|fetch)|branch\\..+\\.(?:remote|merge))$',
+  's',
+)
+
+/** Thrown by `metaGit` instead of running git on an untrusted meta repo. */
+export class MetaGitUntrustedError extends Error {
+  readonly problem: string
+  constructor(problem: string) {
+    super(metaGitRefusal(problem))
+    this.name = 'MetaGitUntrustedError'
+    this.problem = problem
+  }
+}
+
+export function metaGitRefusal(problem: string): string {
+  return (
+    `prdt does not run git on this project's .prdt/meta.git: ${problem}` +
+    ' — prdt never writes this, so it may have come with a cloned repository.' +
+    ' Check it, remove it, then run `prdt doctor`.'
+  )
+}
+
+function metaRemoteUrlProblem(projectDir: string, url: string): string | null {
+  if (url.split('/', 1)[0].includes('::')) return 'a remote-helper URL'
+  const isFile = url.startsWith('file://')
+  const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//.exec(url)?.[1]?.toLowerCase()
+  // any other `<scheme>://` runs `git-remote-<scheme>` (ext:// included)
+  if (!isFile && scheme) return META_URL_SCHEMES.has(scheme) ? null : 'a remote-helper URL'
+
+  if (!isFile && /^[^/]+:/.test(url)) return null // scp-like host:path
+  const p = isFile ? url.slice('file://'.length) : url
+  let base: string
+  let target: string
+  try {
+    base = fs.realpathSync(projectDir)
+    const abs = path.isAbsolute(p) ? p : path.join(base, p)
+    try {
+      target = fs.realpathSync(abs)
+    } catch {
+      target = path.resolve(abs)
+    }
+  } catch {
+    return 'an unresolvable local remote'
+  }
+  if (target === base || target.startsWith(base + path.sep)) return 'a local remote inside this project'
+  return null
+}
+
+/** `meta.git` as a FILE: git follows a `gitdir: <path>` file to a repository anywhere. */
+function gitfileProblem(gd: string, relGd: string): string {
+  let head = ''
+  try {
+    head = fs.readFileSync(gd, 'utf-8').slice(0, 4096)
+  } catch {
+    /* unreadable — still not a directory */
+  }
+  if (head.startsWith('gitdir:')) {
+    const tgt = head.slice('gitdir:'.length).trim().split('\n')[0] || '?'
+    return `${relGd} is a file pointing elsewhere (gitdir: ${tgt})`
+  }
+  return `${relGd} is a file, not a directory`
+}
+
+const META_URL_SCHEMES = new Set(['https', 'http', 'ssh', 'git', 'git+ssh', 'ssh+git', 'ftp', 'ftps'])
+
+const trustCache = new Map<string, string | null>()
+
+/**
+ * Null when the meta repo may be handed to git, else why not (one English
+ * line). Never throws; never runs a command the repo could name
+ * (`git config --file` reads one file and follows no include).
+ */
+export function metaGitTrustProblem(projectDir: string): string | null {
+  const sd = stateDir(projectDir)
+  const gd = metaGitDir(projectDir)
+  const rel = (p: string) => path.relative(projectDir, p) || '.'
+  const cfg = path.join(gd, 'config')
+  // Order (T-848 fix1): every structural check runs BEFORE the "no config yet"
+  // answer — a config-less repo with a `commondir` reads THAT repo's config.
+  for (const p of [sd, gd]) {
+    let st: fs.Stats
+    try {
+      st = fs.lstatSync(p)
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null // no meta repo yet
+      return `cannot inspect ${rel(p)}`
+    }
+    if (st.isSymbolicLink()) return `${rel(p)} is a symbolic link`
+    if (p === gd && !st.isDirectory()) return gitfileProblem(gd, rel(gd))
+  }
+  for (const name of ['commondir', 'config.worktree']) {
+    try {
+      fs.lstatSync(path.join(gd, name))
+      return `${rel(gd)}/${name} exists`
+    } catch {
+      /* absent — fine */
+    }
+  }
+  try {
+    if (fs.lstatSync(cfg).isSymbolicLink()) return `${rel(cfg)} is a symbolic link`
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return `cannot inspect ${rel(cfg)}`
+    for (const name of ['HEAD', 'objects', 'refs']) {
+      try {
+        fs.lstatSync(path.join(gd, name))
+        return `${rel(gd)} has ${name} but no config`
+      } catch {
+        /* absent */
+      }
+    }
+    return null // empty / not-yet-initialised dir — git sees no repo there
+  }
+  let key: string
+  try {
+    const st = fs.statSync(cfg)
+    key = `${gd}\0${st.ino}\0${st.size}\0${st.mtimeMs}`
+  } catch {
+    return `cannot read ${rel(cfg)}`
+  }
+  const cached = trustCache.get(key)
+  if (cached !== undefined) return cached
+  let problem: string | null = null
+  let out: string
+  try {
+    out = execFileSync('git', ['config', '--file', cfg, '--no-includes', '--list', '-z'], {
+      cwd: projectDir,
+      env: scrubbedGitEnv(),
+      encoding: 'utf-8',
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+  } catch {
+    out = ''
+    problem = `cannot parse ${rel(cfg)}`
+  }
+  if (!problem) {
+    for (const ent of out.split('\0')) {
+      if (!ent) continue
+      const nl = ent.indexOf('\n')
+      const k = nl < 0 ? ent : ent.slice(0, nl)
+      const v = nl < 0 ? '' : ent.slice(nl + 1)
+      if (!META_CONFIG_ALLOWED.test(k)) {
+        problem = `${rel(cfg)} sets ${k}`
+        break
+      }
+      if (k.startsWith('remote.') && (k.endsWith('.url') || k.endsWith('.pushurl'))) {
+        const why = metaRemoteUrlProblem(projectDir, v)
+        if (why) {
+          problem = `${rel(cfg)} ${k} is ${why}`
+          break
+        }
+      }
+    }
+  }
+  if (!problem) {
+    // branch.<b>.remote may name a URL/path instead of a remote (T-848 fix1)
+    const ents = out.split('\0').filter(Boolean).map((e) => {
+      const nl = e.indexOf('\n')
+      return nl < 0 ? [e, ''] : [e.slice(0, nl), e.slice(nl + 1)]
+    })
+    const names = new Set<string>()
+    for (const [k] of ents) {
+      const m = /^remote\.(.+)\.(?:url|pushurl|fetch)$/s.exec(k)
+      if (m) names.add(m[1])
+    }
+    for (const [k, v] of ents) {
+      if (k.startsWith('branch.') && k.endsWith('.remote') && !names.has(v)) {
+        const why = metaRemoteUrlProblem(projectDir, v)
+        if (why) {
+          problem = `${rel(cfg)} ${k} is ${why}`
+          break
+        }
+      }
+    }
+  }
+  trustCache.set(key, problem)
+  return problem
+}
+
 /**
  * Run a git command scoped to the meta repo (git-dir + work-tree). Local ops
  * use the default 10s timeout; network ops (fetch/push/set-head) MUST pass
@@ -241,9 +452,11 @@ export async function metaGit(
   opts: { timeout?: number; maxBuffer?: number; env?: Record<string, string> } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   const gitDir = metaGitDir(projectDir)
+  const problem = metaGitTrustProblem(projectDir)
+  if (problem) throw new MetaGitUntrustedError(problem)
   return execFileAsync(
     'git',
-    ['--git-dir', gitDir, '--work-tree', projectDir, ...args],
+    [...META_GIT_HARDEN, '--git-dir', gitDir, '--work-tree', projectDir, ...args],
     {
       cwd: projectDir,
       timeout: opts.timeout ?? 10_000,
@@ -493,10 +706,16 @@ export async function initMetaRepo(projectDir: string): Promise<MetaInitResult> 
 
   try {
     const env = scrubbedGitEnv()
+    // T-848 fix1: refuse BEFORE `git init` — it follows a gitfile `meta.git`.
+    const early = metaGitTrustProblem(projectDir)
+    if (early) throw new MetaGitUntrustedError(early)
     if (!alreadyExisted) {
       fs.mkdirSync(path.dirname(gitDir), { recursive: true })
       await execFileAsync('git', ['init', '--bare', gitDir], { timeout: 10_000, env })
     }
+    // T-848: never write config into (or exclude next to) a clone-carried repo.
+    const problem = metaGitTrustProblem(projectDir)
+    if (problem) throw new MetaGitUntrustedError(problem)
 
     // Two-git/one-worktree config — non-bare with an explicit work-tree so all
     // meta commands operate on the project root. Idempotent (re-run repropagates
@@ -540,6 +759,8 @@ export type MetaCommitSkipReason =
   | 'meta-repo-missing'
   | 'nothing-allowlisted'
   | 'manager-error'
+  /** T-848: `metaGitTrustProblem` refused the repo; `detail` is the refusal text. */
+  | 'meta-untrusted'
 
 export interface MetaCommitResult {
   committed: boolean
@@ -644,6 +865,8 @@ export async function commitMeta(
   if (!metaRepoExists(projectDir)) {
     return { committed: false, skipReason: 'meta-repo-missing' }
   }
+  const problem = metaGitTrustProblem(projectDir)
+  if (problem) return { committed: false, skipReason: 'meta-untrusted', detail: metaGitRefusal(problem) }
 
   // Self-heal info/exclude before staging so an EXISTING meta repo (created
   // before a new exclude entry or before its code.dir was recorded) never
@@ -711,6 +934,7 @@ export async function scanMetaHistory(
     const { stdout } = await metaGit(projectDir, args)
     return parseLogOutput(stdout)
   } catch (err) {
+    if (err instanceof MetaGitUntrustedError) throw err // said, never "(no history)"
     const msg = err instanceof Error ? err.message : String(err)
     // Non-fatal — repo may have no commits yet (`log` errors on empty HEAD).
     console.warn('[meta-git] scanMetaHistory: git log failed —', msg)
@@ -744,6 +968,11 @@ export async function addMetaRemote(
   if (!metaRepoExists(projectDir)) {
     return { ok: false, error: 'meta repo not initialized' }
   }
+  // Same check the trust gate applies on read: never write a URL it would refuse (T-848 fix2).
+  const urlProblem = metaRemoteUrlProblem(projectDir, url)
+  if (urlProblem) {
+    return { ok: false, error: `${url} is ${urlProblem}; prdt would refuse the whole meta repo afterwards` }
+  }
   try {
     const existing = await listMetaRemotes(projectDir)
     if (existing.some((r) => r.name === name)) {
@@ -771,7 +1000,8 @@ export async function listMetaRemotes(projectDir: string): Promise<MetaRemote[]>
       if (m) seen.set(m[1], m[2])
     }
     return [...seen].map(([name, url]) => ({ name, url }))
-  } catch {
+  } catch (err) {
+    if (err instanceof MetaGitUntrustedError) throw err // said, never "(no remotes)"
     return []
   }
 }
@@ -805,7 +1035,12 @@ export async function pushMetaRemote(
   if (!metaRepoExists(projectDir)) {
     return { ok: false, error: 'meta repo not initialized' }
   }
-  const remotes = await listMetaRemotes(projectDir)
+  let remotes: MetaRemote[]
+  try {
+    remotes = await listMetaRemotes(projectDir)
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
   if (!remotes.some((r) => r.name === name)) {
     return {
       ok: false,

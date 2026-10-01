@@ -60,6 +60,7 @@ export const HOME = {
   dependency: 'dependency',
   beforeBuild: 'Build 진입 전',
   notConnected: '메인 패스가 아직 이어지지 않았어요 — 합격선 티켓과 설계 → 구현 → QA → 배포 deps 가 Build 진입 때 생겨요. 지금은 「크리티컬 패스」만 보여요.',
+  notConnectedBuilt: '메인 패스가 아직 이어지지 않았어요 — 합격선 티켓과 설계 → 구현 → QA → 배포 deps 가 아직 없어요. 지금은 「크리티컬 패스」만 보여요.',
   // The screen set draws no state for "no open ticket at all"; this line is a
   // developer-written gap, reported in T-881 unresolved for the designer.
   dependencyEmpty: '열린 티켓이 없어요.',
@@ -162,6 +163,7 @@ export const FEATURE = {
   linksHeading: '함께 쓰는 기능',
   linksEmpty: '연결된 기능이 아직 없어요.',
   evidenceHeading: '근거 티켓',
+  evidenceEmpty: '근거 티켓이 아직 없어요.',
   specHeading: '스펙 파일',
   back: '← 돌아가기 · ',
   ticketUnit: '건',
