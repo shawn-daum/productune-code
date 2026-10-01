@@ -189,6 +189,8 @@ describe.skipIf(!PY)('T-779 — a worktree-dispatched worker cannot write the sh
     for (const c of [
       'tar -xf archive.tar -C code',
       'tar --extract -f archive.tar --directory=code',
+      'tar xf archive.tar -C code',                    // T-834 fix2: old-style bundle, same parser as the records rule
+      'unzip archive.zip -dcode',
       'patch -p1 -d code < a.patch',
       'patch --directory=code -p1 < a.patch',
       'unzip -d code archive.zip',
@@ -203,6 +205,8 @@ describe.skipIf(!PY)('T-779 — a worktree-dispatched worker cannot write the sh
   test('T-786 (F5) — a tar create (read-only for -C) stays silent, like cat', () => {
     expect(bash('tar -cf archive.tar -C code file.txt', root)).toBe('')
     expect(bash('tar --create -f archive.tar --directory=code file.txt', root)).toBe('')
+    expect(bash('tar cf archive.tar -C code README', root)).toBe('')           // old-style create
+    expect(bash('tar -cf archive.tar -C code README', root)).toBe('')          // `README` is a member, not a mode bundle
   })
 
   test('T-786 (F5) — variable and command-substitution destinations are an accepted gap, stay silent', () => {
@@ -512,6 +516,41 @@ describe.skipIf(!PY)('T-834 — no worker writes the track records', () => {
       `rsync -a ${tracks}/ ${scratch}/t/`,
     ]) {
       expect(bash(c), c).toBe('')
+    }
+  })
+
+  test('T-834 grill [D] fix2 — every tar / unzip destination spelling, and install -d, is denied', () => {
+    const run_ = path.join(prdtHome, 'run')
+    const dests = [run_, tracks, '$PRDT_HOME', 'run', 'run/tracks']
+    for (const d of dests) {
+      for (const c of [
+        `tar xf f.tar -C ${d}`,
+        `tar xzf f.tgz -C ${d}`,
+        `tar x -C ${d} -f f.tar`,
+        `tar -C ${d} xf f.tar`,
+        `tar xf f.tar --directory=${d}`,
+        `unzip -d${d} f.zip`,
+        `unzip f.zip -d${d}`,
+      ]) {
+        expect(why(bash(`cd ${prdtHome} && ${c}`)), c).toBeTruthy()
+      }
+    }
+    // install -d creates directories like mkdir — judged the same
+    why(bash(`cd ${prdtHome} && install -d run/tracks/x`))
+    why(bash(`install -d -m 755 ${tracks}/x`))
+    for (const c of [
+      'tar xf x.tar -C /tmp/scratch',
+      'tar -C ~ -xf x.tar',
+      'unzip f.zip -d /tmp/x',
+      `tar cf out.tar -C ${run_} tracks`,                     // a create only reads run/
+      `install -d ${scratch}/x`,
+      `install -m 644 ${rec} ${scratch}/r.json`,              // install FROM the records is a read
+    ]) {
+      expect(bash(c), c).toBe('')
+    }
+    // the PO main session is never denied
+    for (const c of [`tar xf f.tar -C ${run_}`, `unzip f.zip -d${tracks}`, `install -d ${tracks}/x`]) {
+      expect(run({ tool: 'Bash', aid: null, atype: null, input: { command: c } }), c).toBe('')
     }
   })
 

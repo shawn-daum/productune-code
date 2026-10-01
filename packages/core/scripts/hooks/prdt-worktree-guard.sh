@@ -54,8 +54,11 @@
 #   `tar`'s `-C`/`--directory` destination (only in an extract/append mode —
 #   `x`/`r`/`u`/`A` or `--extract`/`--get`/`--append`/`--update`/
 #   `--concatenate`/`--catenate`; a plain `-c` create is a read of that
-#   directory, left silent like `cat`), `patch`'s `-d`/`--directory` and
-#   `unzip`'s `-d` destination, and `npm`'s `--prefix` destination (T-786:
+#   directory, left silent like `cat`; options are walked with their values,
+#   so the old-style bundle `tar xf f.tar -C DIR` / `tar -C DIR xf f.tar` and
+#   `--directory=DIR` count — T-834 fix2), `patch`'s `-d`/`--directory` and
+#   `unzip`'s `-d DIR` / `-dDIR` destination, `install -d DIR…` operands
+#   (created like `mkdir`), and `npm`'s `--prefix` destination (T-786:
 #   F5). `eval`'s body recurses like `bash -c` (T-786: F5). `cd`, `pushd`/
 #   `popd` and a `( … )` subshell (scoped: a `cd` inside one does not leak
 #   out) move the effective cwd — a bare `cd` (no operand) goes to `$HOME`,
@@ -934,6 +937,18 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch):
         elif name in ("chmod", "chown", "chgrp"):
             for a in ops[1:]:
                 check(a, f"Bash {name}")
+        elif name == "install" and any(a == "--directory" or (a.startswith("-") and not a.startswith("--")
+                                                              and "d" in a[1:]) for a in args):
+            # T-834 fix2: `install -d DIR…` creates every operand, like mkdir
+            j = 0
+            while j < len(args):
+                a = args[j]
+                if a in ("-m", "-o", "-g", "--mode", "--owner", "--group"):
+                    j += 2
+                    continue
+                if not a.startswith("-"):
+                    check(a, "Bash install -d")
+                j += 1
         elif name in ("cp", "mv", "install", "ln", "rsync", "ditto"):
             dest, uses_target_flag = None, False
             for j, a in enumerate(args):
@@ -1022,23 +1037,59 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch):
             # T-786 (F5): -C/--directory is a write target only in an
             # extract/append mode — a plain create (-c) only READS that
             # directory, same as `cat`, and stays silent.
+            # T-834 fix2: a real option walk — value-taking letters consume
+            # their value (so `-C run` never reads `run` as mode letters),
+            # and the old-style bundle (`tar xf f.tar`, `tar -C d xf f.tar`:
+            # the first bare word while no mode is set yet) counts as flags.
             TAR_WRITE_LONG = {"--extract", "--get", "--append", "--update", "--concatenate", "--catenate"}
-            write = any(
-                (a.startswith("--") and a in TAR_WRITE_LONG)
-                or (a.startswith("-") and not a.startswith("--") and a != "-" and any(ch in a[1:] for ch in "xruA"))
-                for a in args
-            )
-            if write:
-                j = 0
-                while j < len(args):
-                    a = args[j]
-                    if a in ("-C", "--directory") and j + 1 < len(args):
-                        check(args[j + 1], "Bash tar -C", removal=True)
+            TAR_MODE_LONG = TAR_WRITE_LONG | {"--create", "--list", "--diff", "--compare", "--delete"}
+            TAR_VALUE_LONG = {"--file", "--directory", "--files-from", "--exclude-from", "--blocking-factor",
+                              "--exclude", "--format", "--owner", "--group", "--mode", "--transform"}
+            TAR_VALUE_LETTERS = set("fCbTX")
+            write, mode, dests, pending = False, False, [], []
+            j = 0
+            while j < len(args):
+                a = args[j]
+                if pending:                       # old-style bundle values, in letter order
+                    if pending.pop(0) == "C":
+                        dests.append(a)
+                    j += 1
+                    continue
+                if a.startswith("--"):
+                    if a in TAR_MODE_LONG:
+                        mode = True
+                        write = write or a in TAR_WRITE_LONG
+                    if a.startswith("--directory="):
+                        dests.append(a.split("=", 1)[1])
+                    elif a in TAR_VALUE_LONG and j + 1 < len(args):
+                        if a == "--directory":
+                            dests.append(args[j + 1])
                         j += 2
                         continue
-                    if a.startswith("--directory="):
-                        check(a.split("=", 1)[1], "Bash tar -C", removal=True)
                     j += 1
+                    continue
+                dashed = a.startswith("-") and a != "-"
+                if dashed or (not mode and re.fullmatch(r"[A-Za-z]+", a)):
+                    letters = a[1:] if dashed else a
+                    for k, ch in enumerate(letters):
+                        if ch in "ctxruAd":
+                            mode = True
+                            write = write or ch in "xruA"
+                        if ch in TAR_VALUE_LETTERS:
+                            if not dashed:
+                                pending.append(ch)
+                                continue
+                            val = letters[k + 1:]
+                            if not val and j + 1 < len(args):
+                                val = args[j + 1]
+                                j += 1
+                            if ch == "C" and val:
+                                dests.append(val)
+                            break
+                j += 1
+            if write:
+                for d in dests:
+                    check(d, "Bash tar -C", removal=True)
         elif name == "patch":
             j = 0
             while j < len(args):
@@ -1054,10 +1105,15 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch):
             j = 0
             while j < len(args):
                 a = args[j]
-                if a == "-d" and j + 1 < len(args):
-                    check(args[j + 1], "Bash unzip -d", removal=True)
-                    j += 2
-                    continue
+                # T-834 fix2: `-d DIR`, `-dDIR` and a bundle ending in d
+                # (`-od DIR`); `-P` takes the password, never a d
+                if a.startswith("-") and not a.startswith("--") and "d" in a[1:].split("P", 1)[0]:
+                    val = a[a.index("d") + 1:]
+                    if not val and j + 1 < len(args):
+                        val = args[j + 1]
+                        j += 1
+                    if val:
+                        check(val, "Bash unzip -d", removal=True)
                 j += 1
         elif name == "npm":
             j = 0
