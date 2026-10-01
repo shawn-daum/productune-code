@@ -38,3 +38,6 @@ packages/*/dist-electron/
 # (`pnpm --filter @productune/viewer viewer`) and carries docs/ content into a
 # code-side file — it must not ride the code repo (PO decision, T-665 slice 2).
 packages/viewer/viewer.html
+# T-885: past-version ticket bodies are split into sibling data files
+# (viewer.tickets-<bucket>.js) carrying the same docs/ content — same reason.
+packages/viewer/viewer.tickets-*.js

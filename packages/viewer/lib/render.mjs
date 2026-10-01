@@ -741,6 +741,57 @@ function ticketDetailEntries(tickets, repoRootHref) {
   return entries
 }
 
+// T-885 (T-876 = D): a past-version bucket name becomes part of a sibling
+// file name, so only a plain directory name qualifies; anything else keeps
+// today's file-link note and gets no data file.
+const PAST_BUCKET_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+// The one global a data file writes into, and the only thing it does.
+export const PAST_TICKET_GLOBAL = '__PRDT_VIEWER_DATA__'
+
+/**
+ * T-885 (T-876 = D): one sibling `.js` data file per past-version bucket,
+ * holding that bucket's rendered ticket bodies — loaded only when a reader
+ * opens one of its tickets (INTERACTION_SCRIPT's `loadPastTickets`), so
+ * `viewer.html` itself never carries them. Each file is
+ * `(window.__PRDT_VIEWER_DATA__ = … || {})["<bucket>"] = <json>;`
+ * (`pastTicketDataContent`). `src` is `<prefix>.tickets-<bucket>.js` next to
+ * the page; renderPage receives the bucket → src map (`pastTicketSrc`) and the
+ * loader takes a src from that map only.
+ * @returns {Array<{ bucket: string, name: string, tickets: Record<string,{path:string,body:string}>, bodies: string[] }>}
+ */
+export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer' } = {}) {
+  pageViewerAbsPath = viewerAbsPath
+  const files = []
+  for (const bucket of tickets.omitted) {
+    if (!bucket.bodies || !PAST_BUCKET_RE.test(bucket.bucket)) continue
+    const rows = {}
+    const bodies = []
+    for (const t of bucket.tickets) {
+      const raw = Object.prototype.hasOwnProperty.call(bucket.bodies, t.rel) ? bucket.bodies[t.rel] : undefined
+      if (typeof raw !== 'string') continue
+      const id = t.frontmatter.id || t.rel
+      const body = md(raw, path.dirname(t.rel), repoRootHref)
+      rows[id] = { path: t.rel, body }
+      bodies.push(body)
+    }
+    if (bodies.length === 0) continue
+    files.push({ bucket: bucket.bucket, name: `${prefix}.tickets-${bucket.bucket}.js`, tickets: rows, bodies })
+  }
+  return files
+}
+
+/**
+ * The text of one past-version data file. `payload` = `{ tickets, font? }`
+ * (`font` = `{ range, regular, semibold }`: the glyphs this bucket's bodies
+ * use that the page's own subset lacks). The JSON keeps the same
+ * every-`<`-escaped form as `detailDataScript`, so no body can close or
+ * reopen a tag around it.
+ */
+export function pastTicketDataContent(bucket, payload) {
+  const json = JSON.stringify(payload).replace(/</g, '\\u003c')
+  return `(window.${PAST_TICKET_GLOBAL} = window.${PAST_TICKET_GLOBAL} || {})[${JSON.stringify(bucket)}] = ${json};\n`
+}
+
 function ticketSection(tickets, currentVersion) {
   return storeSection('ticket', { innerHtml: ticketStoreInner(tickets, currentVersion) })
 }
@@ -1665,6 +1716,60 @@ const INTERACTION_SCRIPT = `
   var THEME_TOGGLE = ${JSON.stringify(THEME_TOGGLE)};
   var THEME_KEY = ${JSON.stringify(THEME_STORAGE_PREFIX)} + location.pathname;
   var URL_KEYS = ['view', 'group', 'kind', 'id'];
+  // T-885 (T-876 = D): past-version ticket bodies live in sibling data files.
+  // A src comes ONLY from the generator-written map; a bucket the map does not
+  // name, or a file that fails to load, keeps the file-link note.
+  var PAST = DETAIL_DATA.pastTickets || {};
+  // Null-prototype: a bucket named constructor/hasOwnProperty must not read an inherited member.
+  var PAST_LOADS = Object.create(null);
+  function own(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
+  function pastTicketRef(fields) {
+    var parts = String(fields.path || '').split('/');
+    if (parts[0] !== 'docs' || parts[1] !== 'tickets' || !own(PAST, parts[2])) return null;
+    return { key: parts[2], src: PAST[parts[2]] };
+  }
+  function pastSettled(ref) { return PAST_LOADS[ref.key] === 'done' || PAST_LOADS[ref.key] === 'failed'; }
+  // The page's embedded font subset covers the page; a data file brings the
+  // glyphs only its own bodies use, limited to exactly those code points.
+  function applyPastFont(f) {
+    if (!f || !f.range || typeof FontFace === 'undefined' || !document.fonts) return;
+    [['400', f.regular], ['600 700', f.semibold]].forEach(function (w) {
+      if (!w[1]) return;
+      try {
+        var face = new FontFace('Pretendard', 'url(data:font/woff2;base64,' + w[1] + ')', { weight: w[0], style: 'normal', display: 'swap', unicodeRange: f.range });
+        document.fonts.add(face);
+        face.load().then(null, function () {});
+      } catch (e) { /* the system fallback font still paints the text */ }
+    });
+  }
+  function applyPastTickets(key) {
+    var store = window[${JSON.stringify(PAST_TICKET_GLOBAL)}];
+    var payload = own(store, key) ? store[key] : null;
+    var rows = payload && payload.tickets;
+    if (!rows) return;
+    applyPastFont(payload.font);
+    Object.keys(rows).forEach(function (id) {
+      var r = rows[id];
+      var e = own(DETAIL_DATA.ticket, id) ? DETAIL_DATA.ticket[id] : null;
+      if (e && r && typeof r.body === 'string' && r.path === e.path) e.body = r.body;
+    });
+  }
+  function loadPastTickets(ref, done) {
+    if (pastSettled(ref)) { done(); return; }
+    if (PAST_LOADS[ref.key]) { PAST_LOADS[ref.key].push(done); return; }
+    PAST_LOADS[ref.key] = [done];
+    var s = document.createElement('script');
+    function finish(ok) {
+      var waiting = PAST_LOADS[ref.key];
+      if (ok) applyPastTickets(ref.key);
+      PAST_LOADS[ref.key] = ok ? 'done' : 'failed';
+      waiting.forEach(function (f) { f(); });
+    }
+    s.onload = function () { finish(true); };
+    s.onerror = function () { finish(false); };
+    s.src = ref.src;
+    document.head.appendChild(s);
+  }
 
   function closeDetailPanel(section) {
     if (!section) return;
@@ -1691,7 +1796,14 @@ const INTERACTION_SCRIPT = `
     // T-666 slice 1b acceptance line 2: an artifact with no inlinable body
     // (.html/.json) says so and links the file, instead of an empty panel.
     var docHtml;
-    if (fields.body) {
+    var past = kind === 'ticket' && !fields.body ? pastTicketRef(fields) : null;
+    if (past && !pastSettled(past)) {
+      docHtml = '';
+      loadPastTickets(past, function () {
+        var p = section.querySelector('.detail-panel');
+        if (p && p.classList.contains('active') && p.getAttribute('data-open-kind') === kind && p.getAttribute('data-open-id') === id) openDetailPanel(section, kind, id);
+      });
+    } else if (fields.body) {
       docHtml = '<div class="detail-doc body-prose">' + fields.body + '</div>';
     } else if (fields.fileHref) {
       docHtml = '<div class="detail-doc detail-nobody"><p>' + ${JSON.stringify(FILE_HREF_NOTE)} + '</p><p><a href="' +
@@ -1946,7 +2058,10 @@ const THEME_HEAD_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(THEME
 const INTERACTION_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT, 'utf8').digest('base64')
 const CSP_CONTENT = [
   "default-src 'none'",
-  `script-src 'sha256-${THEME_HEAD_SCRIPT_SHA256_BASE64}' 'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}'`,
+  // T-885 (T-876 = D): 'strict-dynamic' lets the hash-trusted interaction
+  // script add a past-version data file's <script src>; a parser-inserted or
+  // innerHTML-inserted script (a document body) still never runs.
+  `script-src 'sha256-${THEME_HEAD_SCRIPT_SHA256_BASE64}' 'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`,
   "style-src 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src data:",
@@ -1990,6 +2105,7 @@ export function renderPage({
   artifactsBaseHref = '../../../docs/artifacts',
   repoRootHref = DEFAULT_REPO_ROOT_HREF,
   viewerAbsPath = DEFAULT_VIEWER_ABS_PATH,
+  pastTicketSrc = {},
 }) {
   pageViewerAbsPath = viewerAbsPath
   const detailData = {
@@ -2002,6 +2118,8 @@ export function renderPage({
     // (prdStoreInner) — so DETAIL_DATA never needs one.
     anchors: buildAnchors(data),
     maxTicket: maxTicketNumber(data),
+    // T-885: bucket → sibling data-file src, written by the generator only.
+    pastTickets: pastTicketSrc,
   }
 
   return `<!doctype html>
