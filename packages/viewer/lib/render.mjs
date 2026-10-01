@@ -1548,6 +1548,8 @@ function fitText(str, max) {
   }
   return out + '…'
 }
+/** How far a wrapped chip row may run past a box's right edge — the column gap is 28px. */
+const CHIP_OVERHANG = 20
 function chipWidth(label) {
   let w = 14
   for (const ch of label) w += ch === ' ' ? 3 : 9
@@ -1608,15 +1610,28 @@ function dependencyDiagram(graph, layout) {
         }
         if (label) chips.push(diagramChip(label[0], label[1], n.x, n.y - 15))
       } else {
+        // The gap between rows fits two chip rows, never three. When wrapping inside the box's own
+        // width would take a third row, the rows may run past the box's right edge (into the column
+        // gap, short of the next box) so they stay at two.
         const order = [...state, label]
-        let x = n.x
-        let row = 0
-        for (const [kind, l] of order) {
-          const w = chipWidth(l)
-          if (x > n.x && x + w > n.x + NODE_W) { row += 1; x = n.x }
-          chips.push(diagramChip(kind, l, x, n.y - 15 - row * 17))
-          x += w + 4
+        const flow = (limit) => {
+          const placed = []
+          let x = n.x
+          let row = 0
+          for (const [kind, l] of order) {
+            const w = chipWidth(l)
+            if (x > n.x && x + w > limit) { row += 1; x = n.x }
+            placed.push([kind, l, x, row])
+            x += w + 4
+          }
+          return { placed, rows: row + 1 }
         }
+        let flowed = flow(n.x + NODE_W)
+        if (flowed.rows > 2) {
+          const wide = flow(n.x + NODE_W + CHIP_OVERHANG)
+          if (wide.rows < flowed.rows) flowed = wide
+        }
+        for (const [kind, l, x, row] of flowed.placed) chips.push(diagramChip(kind, l, x, n.y - 15 - row * 17))
       }
       const idText = `${n.id}${n.done ? ' ✓' : ''}`
       return (

@@ -242,4 +242,27 @@ describe('home fix round 1 (T-881 grill) — what a DOM-free test can pin; width
       expect(overlap).toBe(false)
     }
   })
+
+  it('(5) a rider that waits on the user and carries the critical-path label draws 3 chips in two rows, none over the box above or another chip', () => {
+    // Main path T-1 → gate (short); rider chain T-5 → T-8 is longer, so it draws as the critical path.
+    // T-5 is the first rider, assigned to the user (3 chips), and sits under the main-path box T-1 in its column.
+    const home = page(
+      [
+        tk({ id: 'T-1' }), gate(['T-1']),
+        tk({ id: 'T-5', prd_item: 'docs/prd/PRD.md#riders', assignee: 'user' }),
+        tk({ id: 'T-6', deps: ['T-5'], prd_item: 'docs/prd/PRD.md#riders' }),
+        tk({ id: 'T-7', deps: ['T-6'], prd_item: 'docs/prd/PRD.md#riders' }),
+        tk({ id: 'T-8', deps: ['T-7'], prd_item: 'docs/prd/PRD.md#riders' }),
+      ],
+      { gatePath: GATE },
+    ).home
+    const chips = [...home.matchAll(/<rect class="dg-chip dg-chip-(\w+)" height="15" rx="7.5" width="([\d.]+)" x="([\d.-]+)" y="([\d.-]+)">/g)].map((m) => ({ kind: m[1], x: Number(m[3]), y: Number(m[4]), w: Number(m[2]), h: 15 }))
+    const boxes = [...home.matchAll(/<rect class="dg-box" height="40" rx="8" width="112" x="([\d.-]+)" y="([\d.-]+)"/g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]), w: 112, h: 40 }))
+    const hit = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    expect(chips.map((c) => c.kind).sort()).toEqual(expect.arrayContaining(['turn', 'rider', 'cp']))
+    const threeChip = chips.filter((c) => ['turn', 'rider', 'cp'].includes(c.kind))
+    expect(new Set(threeChip.map((c) => c.y)).size).toBeLessThanOrEqual(2)
+    for (const c of chips) for (const b of boxes) expect(hit(c, b)).toBe(false)
+    for (const a of chips) for (const b of chips) if (a !== b) expect(hit(a, b)).toBe(false)
+  })
 })
