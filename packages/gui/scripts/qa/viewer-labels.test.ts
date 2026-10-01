@@ -25,10 +25,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
-import { renderPage } from '../../viewer/lib/render.mjs'
-import { generate, missingMetaRootReason } from '../../viewer/generate.mjs'
-import { WIKI, FEATURE } from '../../viewer/lib/labels.mjs'
-import * as labels from '../../viewer/lib/labels.mjs'
+import { renderPage } from '@productune/viewer/lib/render.mjs'
+import { generate, missingMetaRootReason } from '@productune/viewer/generate.mjs'
+import { WIKI, FEATURE } from '@productune/viewer/lib/labels.mjs'
+import * as labels from '@productune/viewer/lib/labels.mjs'
 
 // T-718: the real generated page, built HERE in-process rather than read
 // back off the gitignored `viewer/viewer.html` (a fresh checkout never has
@@ -46,7 +46,7 @@ beforeAll(async () => {
   ;({ html: realHtml } = await generate())
 }, 30000)
 
-const RENDER_MJS_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../viewer/lib/render.mjs')
+const RENDER_MJS_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../viewer/lib/render.mjs')
 
 // These two declarations are legitimate opaque-blob exceptions, not gaps in
 // the label discipline: `TEMPLATE_CSS` is stylesheet text (CSS keywords, not

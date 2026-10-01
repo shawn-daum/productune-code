@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// viewer/cli.mjs — `pnpm --filter @productune/gui viewer` (generate) /
+// cli.mjs — `pnpm --filter @productune/viewer viewer` (generate) /
 // `viewer --check` (verify regeneration is byte-identical, T-665 acceptance
 // line 4). NOT wired into `lint` (unlike `ds --check`): unlike tokens.css,
 // this generator's input is the whole evolving docs/ corpus, so checking it
@@ -9,7 +9,7 @@
 // T-746: `--repo-root <dir> --out <file>` generate ANY project's viewer from
 // this checkout — the installed `prdt` calls it that way (`prdt viewer`,
 // `prdt tickets --link`, the auto-open hook), so a project with no
-// `code/packages/gui` of its own still gets one. Without them, the defaults
+// `code/packages/viewer` of its own still gets one. Without them, the defaults
 // are this repo's own layout, unchanged.
 import fs from 'node:fs'
 import path from 'node:path'
@@ -36,7 +36,7 @@ async function main() {
   if (checkMode) {
     const { upToDate } = await checkUpToDate({ repoRoot, outputPath })
     if (!upToDate) {
-      console.error(`viewer --check: ${outputPath} is stale. Re-run \`pnpm --filter @productune/gui viewer\`.`)
+      console.error(`viewer --check: ${outputPath} is stale. Re-run \`pnpm --filter @productune/viewer viewer\`.`)
       process.exitCode = 1
       return
     }

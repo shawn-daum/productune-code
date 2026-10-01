@@ -18,8 +18,8 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { TEMPLATE_CSS } from '../../viewer/lib/render.mjs'
-import { missingMetaRootReason } from '../../viewer/generate.mjs'
+import { TEMPLATE_CSS } from '@productune/viewer/lib/render.mjs'
+import { missingMetaRootReason } from '@productune/viewer/generate.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MOCKUP_PATH = path.resolve(__dirname, '../../../../../docs/artifacts/v1.10/define-screen-set.html')

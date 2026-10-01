@@ -4415,7 +4415,8 @@ def cmd_tickets_fmt(args, root):
 
 
 # ── T-746: hand-offs open the static viewer at the item ──────────────────────
-# The viewer generator lives in the prdt CHECKOUT (`packages/gui/viewer/`),
+# The viewer generator lives in the prdt CHECKOUT (`packages/viewer/`, its own
+# workspace package since T-871),
 # never in the project: found the same way the drift checks find their repo
 # (self-reference first, then PRDT_REPO), so a project with no code checkout
 # of its own still gets a viewer. Output is a derived cache under the
@@ -4428,21 +4429,26 @@ VIEWER_REL = Path(".prdt") / "scratch" / "viewer"
 VIEWER_JUMP_DIR = "at"
 
 
-# The generator's own inputs under the checkout's `packages/gui`: the bare
-# imports (`marked`, `subset-font` — render.mjs / ds/lib/font-subset.mjs), the
-# Pretendard woff2 files it embeds, and the tokens file it reads. Ordered as
-# reported. Read from the CHECKOUT, never from `.prdt/scratch`.
-VIEWER_GUI_PACKAGES = ("marked", "subset-font")
+# The generator's own inputs (T-871: `packages/viewer` is its own workspace
+# package): the bare imports (`marked`, `subset-font` — lib/render.mjs ·
+# lib/font-subset.mjs) and the Pretendard woff2 files it embeds, all under
+# `packages/viewer/node_modules`, plus the tokens file it reads from the
+# sibling `packages/gui`. Ordered as reported. Read from the CHECKOUT, never
+# from `.prdt/scratch`. The fix is the exact command install.sh §1c runs
+# (`prdt update` re-runs it), which installs only these — never electron.
+VIEWER_PACKAGES = ("marked", "subset-font")
 VIEWER_PRETENDARD_REL = Path("node_modules") / "pretendard" / "dist" / "web" / "static" / "woff2"
-VIEWER_TOKENS_REL = Path("src") / "styles" / "tokens.css"
+VIEWER_TOKENS_REL = Path("gui") / "src" / "styles" / "tokens.css"
+VIEWER_INSTALL_CMD = "pnpm install --frozen-lockfile --filter @productune/viewer --ignore-scripts"
 
 
 def _viewer_diagnose():
     """T-868: `(cli, None)` when this machine can run the viewer generator, or
     `(None, "<cause as a fact> — <the one fix>")` naming the first cause that
     stops it: node not on PATH · no prdt checkout · `cli.mjs` missing · a named
-    input missing under `packages/gui`. Static — it never runs the generator
-    (a run that fails is `viewer_generate`'s cause)."""
+    input missing under `packages/viewer` (T-871) or the tokens file under
+    `packages/gui`. Static — it never runs the generator (a run that fails is
+    `viewer_generate`'s cause)."""
     if shutil.which("node") is None:
         return None, "node 가 PATH 에 없어요 — node 를 설치한 뒤 다시 실행하세요 (예: `brew install node`)"
     bases = list(_repo_root_candidates())
@@ -4455,27 +4461,28 @@ def _viewer_diagnose():
             fact = f"prdt 체크아웃을 찾지 못했어요 — {env} 에 PRDT_REPO 가 없어요"
         return None, f"{fact}. prdt 체크아웃에서 `packages/core/scripts/install.sh` 를 다시 실행하세요"
     for base in bases:
-        gui = base.parent / "gui"
-        if (gui / "viewer" / "cli.mjs").is_file():
+        viewer = base.parent / "viewer"
+        if (viewer / "cli.mjs").is_file():
             break
     else:
-        cli = bases[0].parent / "gui" / "viewer" / "cli.mjs"
+        cli = bases[0].parent / "viewer" / "cli.mjs"
         return None, (f"뷰어 생성기 {cli} 가 없어요 — 이 체크아웃이 불완전해요. "
                       f"`prdt update` 로 체크아웃을 갱신하세요")
     code = base.parent.parent
-    fix = f"`cd {code} && pnpm install`"
-    modules = gui / "node_modules"
+    fix = f"`cd {code} && {VIEWER_INSTALL_CMD}`"
+    modules = viewer / "node_modules"
     if not modules.is_dir():
-        return None, f"{modules} 가 없어요 — 의존성이 설치되지 않았어요. {fix}"
-    missing = [pkg for pkg in VIEWER_GUI_PACKAGES if not (modules / pkg / "package.json").is_file()]
-    if not (gui / VIEWER_PRETENDARD_REL).is_dir():
+        return None, f"{modules} 가 없어요 — 뷰어 의존성이 설치되지 않았어요. {fix}"
+    missing = [pkg for pkg in VIEWER_PACKAGES if not (modules / pkg / "package.json").is_file()]
+    if not (viewer / VIEWER_PRETENDARD_REL).is_dir():
         missing.append("pretendard")
     if missing:
         return None, (f"{modules} 에 {', '.join(missing)} 가 없어요 — 설치된 의존성이 뷰어 생성기보다 오래됐어요. {fix}")
-    if not (gui / VIEWER_TOKENS_REL).is_file():
-        return None, (f"{gui / VIEWER_TOKENS_REL} 가 없어요 — 이 체크아웃이 불완전해요. "
+    tokens = base.parent / VIEWER_TOKENS_REL
+    if not tokens.is_file():
+        return None, (f"{tokens} 가 없어요 — 이 체크아웃이 불완전해요. "
                       f"`prdt update` 로 체크아웃을 갱신하세요")
-    return gui / "viewer" / "cli.mjs", None
+    return viewer / "cli.mjs", None
 
 
 def _viewer_generator():
@@ -13133,7 +13140,7 @@ def cmd_doctor(_args):
         ("hook command targets", FAMILY_DE, lambda: hook_dangling_command_warnings()),
         # statusline registration — user + project-level (T-500)
         ("statusline registration", FAMILY_DE, lambda: statusline_warnings(root)),
-        # viewer generator (T-868) — node · checkout · cli.mjs · packages/gui inputs;
+        # viewer generator (T-868) — node · checkout · cli.mjs · packages/viewer inputs (T-871);
         # FAMILY_PROJECT: a missing local dependency is this machine's setup, not a
         # discipline↔execution mismatch, so it never moves the verdict tail.
         ("viewer generator", FAMILY_PROJECT, lambda: viewer_doctor_warnings()),

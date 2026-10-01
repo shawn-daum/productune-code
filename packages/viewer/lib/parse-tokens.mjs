@@ -1,4 +1,4 @@
-// ds/lib/parse-tokens.mjs — the ONE parser for the token file.
+// lib/parse-tokens.mjs (@productune/viewer; the GUI's ds/ imports it too) — the ONE parser for the token file.
 //
 // Per T-659 Outcome §확정 DS HTML 생성 명세: "파서 · 테마 재방출 · 글꼴 부분집합은
 // 한 모듈이고 T-665 뷰어 생성기가 같은 모듈로 제품의 얼굴을 입는다(파서가 둘이

@@ -1,4 +1,4 @@
-// ds/lib/font-subset.mjs — the Pretendard subsetting procedure from
+// lib/font-subset.mjs (@productune/viewer; the GUI's ds/ imports it too) — the Pretendard subsetting procedure from
 // docs/design.md §4.7, run inside the generator (T-659 Outcome §생성 명세
 // "글꼴": "docs/design.md §4.7 절차를 생성기 안에서"). Shared with T-665's
 // viewer generator (same module — no second parser/subsetter).

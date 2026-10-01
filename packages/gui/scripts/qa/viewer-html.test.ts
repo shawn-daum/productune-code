@@ -21,11 +21,11 @@
 // href>` (never auto-fetched), or inside a `<code>`/`<pre>` span is not any
 // of those and is correctly left alone.
 import { describe, it, expect, beforeAll } from 'vitest'
-import { generate, missingMetaRootReason } from '../../viewer/generate.mjs'
-import { renderPage } from '../../viewer/lib/render.mjs'
+import { generate, missingMetaRootReason } from '@productune/viewer/generate.mjs'
+import { renderPage } from '@productune/viewer/lib/render.mjs'
 
 // T-718: the real generated page is now built HERE, in-process (`generate()`
-// — the same function `pnpm --filter @productune/gui viewer` itself calls),
+// — the same function `pnpm --filter @productune/viewer viewer` itself calls),
 // never read back off disk. `viewer/viewer.html` is gitignored (a build
 // artifact) — a fresh checkout (a `git worktree add --detach`, in
 // particular) never has it on disk until something runs `pnpm viewer`

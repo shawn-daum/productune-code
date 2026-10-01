@@ -1,8 +1,8 @@
 // viewer/lib/render.mjs — builds the one-page viewer HTML.
 //
 // Wears the product's tokens per dispatch: imports the SAME parser the DS
-// generator uses (ds/lib/parse-tokens.mjs) rather than a second one, and the
-// same font-subsetting module (ds/lib/font-subset.mjs) — T-659 Outcome
+// generator uses (lib/parse-tokens.mjs) rather than a second one, and the
+// same font-subsetting module (lib/font-subset.mjs) — T-659 Outcome
 // §확정 DS HTML 생성 명세: "파서 · 테마 재방출 · 글꼴 부분집합은 한 모듈이고
 // T-665 뷰어 생성기가 같은 모듈로 제품의 얼굴을 입는다".
 //
@@ -162,7 +162,7 @@ hardenedRenderer.paragraph = function ({ tokens }) {
 // as if it still lived at its own repo path (docs/prd/PRD.md links to
 // `./versions/v1.9.md`, meaning "next to me"); marked's default renderer
 // passes that href straight through, which the BROWSER then resolves against
-// `viewer.html`'s own directory (`code/packages/gui/viewer/`) — a file that
+// `viewer.html`'s own directory (`code/packages/viewer/`) — a file that
 // does not exist there. `repoRootHref` (the path from the generated page's
 // own directory back to the repo root, computed once in generate.mjs from
 // OUTPUT_PATH — see `renderPage`) plus the source document's own
@@ -170,7 +170,7 @@ hardenedRenderer.paragraph = function ({ tokens }) {
 // file, chosen over "open inside the viewer" (also legal per the acceptance
 // line) because the viewer has no per-document-kind in-page router today —
 // doctrine #1, build what's needed now.
-const DEFAULT_REPO_ROOT_HREF = '../../../..'
+const DEFAULT_REPO_ROOT_HREF = '../../..'
 
 // T-711 slice 4 (T-722 결정, 사용자 verbatim "722 a"): B1 (%2e%2e), B3
 // (manifest %-encoded dot segments) and B4 (a trailing `..?x`/`..#x` segment)
@@ -447,7 +447,7 @@ function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF) {
  * always renders dark regardless of the OS setting — the exact defect this
  * ticket reports. `dark`/`light` are `resolveVarChains(buildRawThemeMaps(…))`
  * output — the same parser tokens.css's own DS generator consumes
- * (ds/lib/parse-tokens.mjs) — so the light set here can never drift from
+ * (lib/parse-tokens.mjs) — so the light set here can never drift from
  * tokens.css as a hand copy.
  */
 function emitRootThemeCss(dark, light) {
@@ -1972,7 +1972,7 @@ export function detailDataScript(obj) {
  * @param {Map<string,string>} args.light resolved light token map
  * @param {string} args.fontFaceCss
  * @param {string} args.tokensSha256
- * @param {string} [args.artifactsBaseHref] path from the generated page's own directory to `docs/artifacts/` — defaults to this repo's real, current OUTPUT_PATH layout (`code/packages/gui/viewer/viewer.html` → repo root) so a fixture/test that omits it still gets a working link.
+ * @param {string} [args.artifactsBaseHref] path from the generated page's own directory to `docs/artifacts/` — defaults to this repo's real, current OUTPUT_PATH layout (`code/packages/viewer/viewer.html` → repo root) so a fixture/test that omits it still gets a working link.
  * @param {string} [args.repoRootHref] path from the generated page's own directory back to the repo root — T-666 slice 2b: every relative link inside a rendered document body is rewritten onto this (see `resolveDocLink`), rather than being left to resolve against the page's own folder. Defaults to this repo's real, current OUTPUT_PATH layout, same as `artifactsBaseHref`'s default (`artifactsBaseHref` = `${repoRootHref}/docs/artifacts`, computed once in generate.mjs from the same OUTPUT_PATH — not a second relative-path calculation).
  */
 export function renderPage({
@@ -1981,7 +1981,7 @@ export function renderPage({
   light,
   fontFaceCss,
   tokensSha256,
-  artifactsBaseHref = '../../../../docs/artifacts',
+  artifactsBaseHref = '../../../docs/artifacts',
   repoRootHref = DEFAULT_REPO_ROOT_HREF,
   viewerAbsPath = DEFAULT_VIEWER_ABS_PATH,
 }) {

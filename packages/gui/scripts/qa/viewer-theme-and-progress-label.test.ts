@@ -7,8 +7,8 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildRawThemeMaps, resolveVarChains } from '../../ds/lib/parse-tokens.mjs'
-import { renderPage, TEMPLATE_CSS } from '../../viewer/lib/render.mjs'
+import { buildRawThemeMaps, resolveVarChains } from '@productune/viewer/lib/parse-tokens.mjs'
+import { renderPage, TEMPLATE_CSS } from '@productune/viewer/lib/render.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TOKENS_PATH = path.resolve(__dirname, '../../src/styles/tokens.css')

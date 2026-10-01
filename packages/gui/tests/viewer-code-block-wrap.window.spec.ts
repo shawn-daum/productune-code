@@ -53,7 +53,7 @@ test.describe('viewer code blocks wrap in the card and the ticket panel @window'
     file = path.join(userDataDir, 'viewer.html')
     // render.mjs is ESM; Playwright's CJS spec loader cannot import it, so a
     // node child renders the page from the fixture and prints it.
-    const script = `import { renderPage } from ${JSON.stringify(path.resolve(__dirname, '../viewer/lib/render.mjs'))};
+    const script = `import { renderPage } from ${JSON.stringify(path.resolve(__dirname, '../../viewer/lib/render.mjs'))};
       process.stdout.write(renderPage({ data: JSON.parse(process.env.FX), dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' }))`
     fs.writeFileSync(file, execFileSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, FX: JSON.stringify(DATA) }, maxBuffer: 64 * 1024 * 1024 }))
     const port = await freePort()

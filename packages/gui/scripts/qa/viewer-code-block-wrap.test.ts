@@ -6,7 +6,7 @@
 // actually emits; the measured render (420/1400 px, light/dark, real T-828)
 // is `tests/viewer-code-block-wrap.window.spec.ts` (@window, VM).
 import { describe, it, expect } from 'vitest'
-import { TEMPLATE_CSS, renderPage } from '../../viewer/lib/render.mjs'
+import { TEMPLATE_CSS, renderPage } from '@productune/viewer/lib/render.mjs'
 
 const LONG = 'x'.repeat(500)
 const fixture = {
