@@ -139,7 +139,7 @@ describe('renderPrdReading', () => {
   it('What cards show key, title, tickets, one-liner and 「N줄」', () => {
     const html = render()
     expect(html).toContain('<span class="pr-key mono">alpha</span>')
-    expect(html).toContain('<span class="pr-tk mono">T-1 · T-2</span>')
+    expect(html).toContain('<span class="pr-tk mono"><span class="pr-id">T-1</span> · <span class="pr-id">T-2</span></span>')
     expect(html).toContain('<span class="pr-one">alpha one-liner</span>')
     expect(html).toContain(`<span class="pr-meta mono">${PRD_READING.lineCount(4)}</span>`)
     expect(html).toContain(PRD_READING.cardsHeading(2))
@@ -225,7 +225,7 @@ describe('plainInline — unbackticked underscores (T-884 fix2)', () => {
     expect(html).toContain('Success metrics → version_outcome')
     expect(html).not.toContain('versionoutcome')
     expect(html).toMatch(/pr-key mono">feature_name_with_underscores<\/span>/)
-    expect(html).toMatch(/pr-tk[^>]*>T-808/)
+    expect(html).toMatch(/pr-tk[^>]*><span class="pr-id">T-808/)
   })
   it('.pr-key is shrinkable and clipped inside the card (layout rule)', () => {
     expect(PRD_READING_CSS).toMatch(/\.pr-key \{[^}]*flex: 0 1 auto;[^}]*max-width: 100%;[^}]*text-overflow: ellipsis;/)
@@ -257,8 +257,14 @@ describe('What-card title width (layout rule; measured in headless chromium by Q
     expect(rule).toMatch(/min-width: 0;/)
     expect(rule).toMatch(/max-width: 100%;/)
     expect(rule).toMatch(/white-space: normal;/)
-    expect(rule).toMatch(/overflow-wrap: anywhere;/)
+    expect(rule).not.toMatch(/overflow-wrap: anywhere;/)
     expect(rule).not.toMatch(/flex: 0 0 auto/)
+  })
+  it('a ticket id never splits (T-888): ids are nowrap, the pill breaks only between them', () => {
+    expect(PRD_READING_CSS).toMatch(/\.pr-tk \.pr-id \{[^}]*white-space: nowrap;/)
+  })
+  it('card titles wrap Korean by word (T-888)', () => {
+    expect(PRD_READING_CSS).toMatch(/\.pr-t \{[^}]*word-break: keep-all;/)
   })
 })
 
