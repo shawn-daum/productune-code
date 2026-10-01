@@ -425,7 +425,7 @@ export const PRD_READING_CSS = `
 .pr-card[open] { border-color: var(--border-hover); box-shadow: var(--shadow-low); }
 .pr-card > summary { flex-wrap: wrap; padding: var(--space-10) var(--space-12); }
 .pr-key { font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: var(--radius-100); background: var(--accent-subtle); color: var(--text-primary); flex: 0 1 auto; min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pr-tk { font-size: 10.5px; color: var(--text-secondary); border: 1px solid var(--border-inline); border-radius: var(--radius-100); padding: 0 7px; flex: 0 0 auto; }
+.pr-tk { font-size: 10.5px; color: var(--text-secondary); border: 1px solid var(--border-inline); border-radius: var(--radius-100); padding: 0 7px; flex: 0 1 auto; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .pr-one { flex-basis: 100%; font-size: 12px; color: var(--text-secondary); padding-left: calc(34px + var(--space-8) + 9px); line-height: 1.5; }
 .pr-card > .pr-body { padding: var(--space-8) var(--space-16) var(--space-12) var(--space-16); border-top: 1px solid var(--border-item); margin-left: 0; }
 .pr-card.is-target, .pr-sec.is-target > summary { background: color-mix(in srgb, var(--accent) 12%, transparent); }

@@ -251,6 +251,15 @@ describe('What-card title width (layout rule; measured in headless chromium by Q
     expect(PRD_READING_CSS).toMatch(/\.pr-card > summary \.pr-t \{[^}]*flex: 1 1 14em;[^}]*min-width: 10em;/)
     expect(PRD_READING_CSS).toMatch(/\.pr-card > summary \{[^}]*flex-wrap: wrap;/)
   })
+  it('.pr-tk may shrink and wrap inside the card (many tickets), every id stays visible', () => {
+    const rule = PRD_READING_CSS.match(/\.pr-tk \{([^}]*)\}/)?.[1] ?? ''
+    expect(rule).toMatch(/flex: 0 1 auto;/)
+    expect(rule).toMatch(/min-width: 0;/)
+    expect(rule).toMatch(/max-width: 100%;/)
+    expect(rule).toMatch(/white-space: normal;/)
+    expect(rule).toMatch(/overflow-wrap: anywhere;/)
+    expect(rule).not.toMatch(/flex: 0 0 auto/)
+  })
 })
 
 describe('fold state script', () => {
