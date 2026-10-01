@@ -129,7 +129,7 @@ describe('T-803: scroll position survives the reload', () => {
     b.mainEl.scrollTop = 420
     b.detailEl.scrollTop = 135
     b.poll('bbbb2222')
-    expect(JSON.parse(b.store.get('prdt-viewer-scroll:/v.html')!)).toEqual({ main: 420, detail: 135 })
+    expect(JSON.parse(b.store.get('prdt-viewer-scroll:/v.html')!)).toEqual({ main: 420, detail: 135, detailKey: 'ticket:T-1' })
   })
   it('saves nothing when nothing changed', () => {
     const b = boot()
@@ -138,7 +138,7 @@ describe('T-803: scroll position survives the reload', () => {
     expect(b.store.size).toBe(0)
   })
   it('restores main and detail scroll after load, and consumes the saved value', () => {
-    const b = boot({ saved: { main: 420, detail: 135 }, detailOpen: true })
+    const b = boot({ saved: { main: 420, detail: 135, detailKey: 'ticket:T-1' }, detailOpen: true })
     expect(b.mainEl.scrollTop).toBe(420)
     expect(b.detailEl.scrollTop).toBe(135)
     expect(b.store.size).toBe(0)
@@ -151,6 +151,17 @@ describe('T-803: scroll position survives the reload', () => {
     b.mainEl.scrollTop = 77 // reader scrolls on
     b.loads.forEach((f) => f())
     expect(b.mainEl.scrollTop).toBe(77)
+  })
+  it('does not restore the detail scroll onto a different ticket', () => {
+    const b = boot({ saved: { main: 420, detail: 600, detailKey: 'ticket:T-901' }, detailOpen: true })
+    expect(b.mainEl.scrollTop).toBe(420)
+    expect(b.detailEl.scrollTop).toBe(0)
+    b.loads.forEach((f) => f())
+    expect(b.detailEl.scrollTop).toBe(0)
+  })
+  it('a saved value without a ticket key restores no detail scroll', () => {
+    const b = boot({ saved: { main: 0, detail: 600 }, detailOpen: true })
+    expect(b.detailEl.scrollTop).toBe(0)
   })
   it('a plain visit with nothing saved leaves scroll alone', () => {
     const b = boot()

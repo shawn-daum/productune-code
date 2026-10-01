@@ -2047,9 +2047,15 @@ const INTERACTION_SCRIPT = `
   var SCROLL_KEY = ${JSON.stringify(SCROLL_STORAGE_PREFIX)} + location.pathname;
   function mainScroller() { return document.querySelector('.store-section.active .frame-body'); }
   function detailScroller() { return document.querySelector('.store-section.active .detail-panel.active .detail-panel-body'); }
+  // The detail scroll belongs to the item that was open ('<kind>:<id>'); it is
+  // restored onto that same item only.
+  function openDetailKey() {
+    var p = document.querySelector('.store-section.active .detail-panel.active');
+    return p ? p.getAttribute('data-open-kind') + ':' + p.getAttribute('data-open-id') : null;
+  }
   function saveScroll() {
     var m = mainScroller(), d = detailScroller();
-    try { sessionStorage.setItem(SCROLL_KEY, JSON.stringify({ main: m ? m.scrollTop : 0, detail: d ? d.scrollTop : 0 })); } catch (e) { /* storage blocked: the reload still keeps the URL state */ }
+    try { sessionStorage.setItem(SCROLL_KEY, JSON.stringify({ main: m ? m.scrollTop : 0, detail: d ? d.scrollTop : 0, detailKey: d ? openDetailKey() : null })); } catch (e) { /* storage blocked: the reload still keeps the URL state */ }
   }
   var RESTORE = null;
   try {
@@ -2065,7 +2071,10 @@ const INTERACTION_SCRIPT = `
     if (m && !RESTORE.mainDone) m.scrollTop = RESTORE.main || 0;
     if (final) RESTORE.mainDone = true;
     var d = detailScroller();
-    if (d && !PAST_PENDING()) { d.scrollTop = RESTORE.detail || 0; RESTORE.detailDone = true; }
+    if (d && !RESTORE.detailDone) {
+      if (!RESTORE.detailKey || RESTORE.detailKey !== openDetailKey()) RESTORE.detailDone = true; // another item: starts at 0
+      else if (!PAST_PENDING()) { d.scrollTop = RESTORE.detail || 0; RESTORE.detailDone = true; }
+    }
     if (RESTORE.mainDone && (RESTORE.detailDone || !document.querySelector('.detail-panel.active'))) RESTORE = null;
   }
   // A past-version ticket body arrives from its data file after the panel
