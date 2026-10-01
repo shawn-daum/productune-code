@@ -14,7 +14,7 @@
 // formal '-다' register.
 
 // ---------- A. kept verbatim (relocated only — T-705 §A) ----------
-export const STORE_LABEL = { home: '현재 버전', prd: 'PRD', ticket: '티켓', wiki: '위키', feature: '기능', artifact: '아티팩트' }
+export const STORE_LABEL = { home: '현재 버전', prd: 'PRD', ticket: '티켓', wiki: '위키', feature: '기능', artifact: '아티팩트', glossary: '용어 사전', release: '릴리즈 노트' }
 
 export const COMMON = {
   close: '닫기',
@@ -157,7 +157,7 @@ export const FEATURE = {
   allLabel: '전체',
   empty: '기능 분류가 없어요.<br><span style="font-size:11px;">분류가 만들어지면 여기 나타나요.</span>',
   countUnit: '개',
-  fields: { kind: '종류', area: '영역', tickets: '티켓', version: '버전' },
+  fields: { kind: '종류', area: '영역', tickets: '티켓', version: '버전', read: '읽기' },
   linksHeading: '함께 쓰는 기능',
   linksEmpty: '연결된 기능이 아직 없어요.',
   evidenceHeading: '근거 티켓',
@@ -166,6 +166,34 @@ export const FEATURE = {
   ticketUnit: '건',
   // mockup 상세 「티켓」 칸 실측: 「3건 · 완료 2 · 열림 1」, 근거 티켓 「T-353(열림)」.
   ticketStatus: { done: '완료', open: '열림', dropped: '취소' },
+}
+
+// ---------- glossary store (T-883) ----------
+// Approved mockup docs/artifacts/v1.12/define-screen-set.html (screens
+// 「용어 사전」 · 「릴리즈 노트」 · 「기능 상세 · 읽기 칸」) and T-873's approved
+// strings: 「릴리즈 노트」, count unit 「개」, 「용어 사전 · N개」.
+export const GLOSSARY = {
+  sidebarLabel: '용어 사전',
+  countLabel: '용어',
+  countUnit: '개',
+  tableHeaders: ['용어', '분류', '정의'],
+  fields: { category: '분류', status: '상태' },
+  empty: '용어 문서가 없어요.<br><span style="font-size:11px;">위키에 용어(term) 문서가 생기면 여기 나타나요.</span>',
+}
+
+// ---------- release-notes store (T-883) ----------
+export const RELEASE = {
+  sidebarLabel: '릴리즈 노트',
+  countLabel: '릴리즈 노트',
+  countUnit: '개',
+  tableHeaders: ['버전', '제목', '날짜'],
+  fields: { version: '버전', date: '날짜' },
+  empty: '릴리즈 노트가 없어요.<br><span style="font-size:11px;">릴리즈 노트 파일에 버전 절이 생기면 여기 나타나요.</span>',
+}
+
+/** 「읽기」 칸 값 — 「용어 사전 · 5개」 · 「릴리즈 노트 · 18개」. */
+export function readFieldValue(label, count, unit) {
+  return `${label} · ${count}${unit}`
 }
 
 // ---------- artifact store ----------
@@ -189,6 +217,35 @@ export const ARTIFACT = {
 // zero-closed-round repo just has fewer rows, never an empty list to caption).
 export const PRD = {
   openLabelPrefix: '열린 섹션 · ',
+}
+
+// T-884 (T-860 / T-874): the open PRD's reading screen — outline, folds, 「결정할 것」 box,
+// What cards. Strings are the T-874-approved set (docs/artifacts/v1.12/prd-reading.html;
+// 「열린 질문」 → 「남은 질문」 and 「N줄」 kept per the T-874 log).
+export const PRD_READING = {
+  outlineHeading: '목차',
+  decideHeading: '결정할 것',
+  questionsHeading: '남은 질문',
+  ticketsHeading: '결정 대기 티켓',
+  goToPrd: 'PRD 로 이동',
+  expandAll: '모두 펼치기',
+  collapseAll: '모두 접기',
+  resetFolds: '처음 상태로',
+  openMark: '펼침',
+  closedMark: '접힘',
+  noDecide: '지금 정할 것이 없어요.',
+  noQuestions: '남은 질문이 없어요.',
+  noTickets: '기다리는 결정 티켓이 없어요.',
+  reviewQuestions: (n) => `화면 승인 때 볼 것 ${n}건`,
+  cardsHeading: (n) => `항목 ${n}개`,
+  lineCount: (n) => `${n}줄`,
+  // The PRD contract's own section names this screen keys off (never copy shown to a reader):
+  // sections folded open at first (under the open version), the §Open Questions heading,
+  // the §What heading, and the question-group titles.
+  initialOpen: /^(합격선|What|Open Questions)(\s|$)/,
+  questionsSection: /^Open Questions(\s|$)/,
+  whatSection: /^What(\s|$)/,
+  reviewGroup: /승인/,
 }
 
 // ---------- interaction script strings (embedded into the browser-side JS
