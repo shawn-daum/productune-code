@@ -80,6 +80,16 @@ describe('collectDiscipline', () => {
     expect(d.find((x) => x.rel === 'contracts.md').differs).toBe(0)
     expect(countChangedLines(['a', 'b', 'c'], ['a', 'x', 'c'])).toBe(1)
   })
+
+  it('T-904 D: a document with no repository original gets differs = 0 while the original root exists', () => {
+    const f = fixture()
+    const src = path.join(f.repo, 'code/packages/core/discipline')
+    fs.mkdirSync(src, { recursive: true })
+    fs.writeFileSync(path.join(src, 'contracts.md'), FILES['contracts.md'])
+    const d = collectDiscipline(f.repo, { disciplineRoot: f.applied }) as any[]
+    expect(d.find((x) => x.rel === 'po/playbooks/retro.md').differs).toBe(0)
+    expect(d.find((x) => x.rel === 'contracts.md').differs).toBe(0)
+  })
 })
 
 describe('the five notations (T-877 D3)', () => {
