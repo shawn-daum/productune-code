@@ -32,12 +32,18 @@ const FILTERED = 'install --frozen-lockfile --filter @productune/viewer --ignore
 const STUB = `#!/bin/bash
 printf '%s\\t%s\\n' "$PWD" "$*" >> "$STUB_LOG"
 if [ "$STUB_MODE" = fail ]; then
+  echo " WARN  GET https://registry.npmjs.org/marked error (ENOTFOUND). Will retry in 10 seconds. 2 retries left." >&2
   echo " ERR_PNPM_META_FETCH_FAIL  GET https://registry.npmjs.org/marked: request failed, reason: getaddrinfo ENOTFOUND" >&2
   exit 1
 fi
 nm="$PWD/packages/viewer/node_modules"
 mkdir -p "$nm/marked" "$nm/subset-font" "$nm/pretendard/dist/web/static/woff2"
 echo '{}' > "$nm/marked/package.json"; echo '{}' > "$nm/subset-font/package.json"
+case "$*" in *"--filter ./packages/gui"*)
+  mkdir -p "$PWD/packages/gui/node_modules/@productune/viewer"
+  echo '{}' > "$PWD/packages/gui/node_modules/@productune/viewer/package.json";;
+esac
+if [ -n "$STUB_NOLINK" ]; then rm -rf "$PWD/packages/gui/node_modules/@productune"; fi
 `
 
 let templateDir: string | undefined
@@ -129,6 +135,7 @@ describe.skipIf(!hasJq())('install.sh §1c — viewer-only dependency install (T
     expect(r.status, r.out).toBe(0)
     expect(r.out).toContain('viewer dependencies install FAILED')
     expect(r.out).toContain('ERR_PNPM_META_FETCH_FAIL')
+    expect(r.out).not.toContain('FAILED ( WARN')
     expect(r.out).toContain(`cd ${sb.code} && pnpm install --frozen-lockfile --filter @productune/viewer --ignore-scripts`)
     expect(fs.existsSync(path.join(sb.viewer, 'node_modules', '.prdt-deps-stamp'))).toBe(false)
     expect(fs.existsSync(path.join(sb.prdtHome, 'prdt.env'))).toBe(true) // §2 still ran
@@ -143,5 +150,43 @@ describe.skipIf(!hasJq())('install.sh §1c — viewer-only dependency install (T
     expect(r.status, r.out).toBe(0)
     expect(r.out).not.toContain('1c)')
     expect(calls(sb)).toEqual([])
+  }, 120000)
+
+  test('full checkout (gui/node_modules present, no viewer link): the install also links gui->viewer, and the stamp is written only once that link exists', () => {
+    const sb = sandbox()
+    const gui = path.join(sb.code, 'packages', 'gui')
+    fs.mkdirSync(path.join(gui, 'node_modules'), { recursive: true })
+    fs.writeFileSync(path.join(gui, 'package.json'), '{"name":"@productune/gui"}\n')
+    const stamp = path.join(sb.viewer, 'node_modules', '.prdt-deps-stamp')
+    const link = path.join(gui, 'node_modules', '@productune', 'viewer', 'package.json')
+
+    // link not produced -> no stamp, so the next run retries (heals)
+    const bad = spawnSync('bash', [path.join(sb.code, 'packages', 'core', 'scripts', 'install.sh')], {
+      env: { ...sb.env, STUB_MODE: 'ok', STUB_NOLINK: '1' }, encoding: 'utf8',
+    })
+    expect(bad.status).toBe(0)
+    expect(fs.existsSync(stamp)).toBe(false)
+
+    const r = install(sb)
+    expect(r.status, r.out).toBe(0)
+    expect(fs.existsSync(link)).toBe(true)
+    expect(fs.existsSync(stamp)).toBe(true)
+    expect(calls(sb).at(-1)).toContain('--filter @productune/viewer --filter ./packages/gui')
+
+    // link later lost (stamp matching) -> re-run heals
+    fs.rmSync(path.join(gui, 'node_modules', '@productune'), { recursive: true })
+    const n = calls(sb).length
+    install(sb)
+    expect(calls(sb)).toHaveLength(n + 1)
+    expect(fs.existsSync(link)).toBe(true)
+  }, 120000)
+
+  test('viewer-only checkout (no gui/node_modules): no gui filter, no gui/node_modules created', () => {
+    const sb = sandbox()
+    fs.mkdirSync(path.join(sb.code, 'packages', 'gui'), { recursive: true })
+    fs.writeFileSync(path.join(sb.code, 'packages', 'gui', 'package.json'), '{"name":"@productune/gui"}\n')
+    install(sb)
+    expect(calls(sb)).toEqual([`${sb.code}\t${FILTERED}`])
+    expect(fs.existsSync(path.join(sb.code, 'packages', 'gui', 'node_modules'))).toBe(false)
   }, 120000)
 })

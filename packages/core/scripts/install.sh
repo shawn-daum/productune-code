@@ -481,13 +481,24 @@ if [ -f "$VIEWER_PKG/package.json" ] && [ -f "$ROOT/../../pnpm-lock.yaml" ]; the
   VIEWER_PKG="$CODE_ROOT/packages/viewer"
   VIEWER_STAMP="$VIEWER_PKG/node_modules/.prdt-deps-stamp"
   VIEWER_INSTALL_CMD="pnpm install --frozen-lockfile --filter @productune/viewer --ignore-scripts"
+  # A checkout whose GUI is already installed (packages/gui/node_modules): the
+  # GUI's ds/ scripts import @productune/viewer, and a viewer-only filter does
+  # not link it into gui/node_modules. Add the GUI to the filter so pnpm links
+  # it (its own deps are already there — nothing new is fetched, no scripts).
+  # No gui/node_modules → viewer-only, and none is created.
+  VIEWER_GUI_LINK=""
+  if [ -d "$CODE_ROOT/packages/gui/node_modules" ] && [ -f "$CODE_ROOT/packages/gui/package.json" ]; then
+    VIEWER_GUI_LINK="$CODE_ROOT/packages/gui/node_modules/@productune/viewer"
+    VIEWER_INSTALL_CMD="pnpm install --frozen-lockfile --filter @productune/viewer --filter ./packages/gui --ignore-scripts"
+  fi
   viewer_deps_key() {
     cat "$VIEWER_PKG/package.json" "$CODE_ROOT/pnpm-lock.yaml" | shasum -a 256 | cut -d' ' -f1
   }
   viewer_deps_present() {
     [ -f "$VIEWER_PKG/node_modules/marked/package.json" ] \
       && [ -f "$VIEWER_PKG/node_modules/subset-font/package.json" ] \
-      && [ -d "$VIEWER_PKG/node_modules/pretendard/dist/web/static/woff2" ]
+      && [ -d "$VIEWER_PKG/node_modules/pretendard/dist/web/static/woff2" ] \
+      && { [ -z "$VIEWER_GUI_LINK" ] || [ -f "$VIEWER_GUI_LINK/package.json" ]; }
   }
   VIEWER_KEY="$(viewer_deps_key)"
   if viewer_deps_present && [ "$(cat "$VIEWER_STAMP" 2>/dev/null || true)" = "$VIEWER_KEY" ]; then
@@ -502,7 +513,7 @@ if [ -f "$VIEWER_PKG/package.json" ] && [ -f "$ROOT/../../pnpm-lock.yaml" ]; the
       printf '%s\n' "$VIEWER_KEY" > "$VIEWER_STAMP" 2>/dev/null || true
       say "   installed into $VIEWER_PKG/node_modules"
     else
-      VIEWER_ERR="$(grep -m1 -E 'ERR_|Error|error' "$VIEWER_LOG" 2>/dev/null || tail -1 "$VIEWER_LOG" 2>/dev/null || true)"
+      VIEWER_ERR="$({ grep -E 'ERR_PNPM' "$VIEWER_LOG" | tail -1; } 2>/dev/null | grep . || grep -m1 -E 'Error|error' "$VIEWER_LOG" 2>/dev/null || tail -1 "$VIEWER_LOG" 2>/dev/null || true)"
       say "   viewer dependencies install FAILED (${VIEWER_ERR:-no output}) — the rest of the install continues; \`prdt viewer\` / \`prdt doctor\` name what is missing (retry: \`cd $CODE_ROOT && $VIEWER_INSTALL_CMD\`)"
     fi
     rm -f "$VIEWER_LOG"
