@@ -33,6 +33,9 @@ import {
   TICKET,
   WIKI,
   FEATURE,
+  GLOSSARY,
+  RELEASE,
+  readFieldValue,
   ARTIFACT,
   PRD,
   FILE_HREF_NOTE,
@@ -470,13 +473,18 @@ function fmtBytes(n) {
 // is an independent static frame). Icons copied byte-for-byte from the
 // approved mockup (docs/artifacts/v1.10/define-screen-set.html ~line
 // 621-627) — doctrine #2, don't re-draw what is already signed off.
-const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact']
+// T-880 = A: 현재 버전(home) · PRD · 티켓 · 위키 · 기능 · 아티팩트 · 용어 사전 ·
+// 릴리즈 노트 · 규율 — the discipline store (T-886) lands last, after 'release'.
+const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release']
 const STORE_ICON_PATHS = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
   prd: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/>',
   ticket: '<path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/>',
   wiki: '<path d="M12 7c-2-2-5-3-9-3v14c4 0 7 1 9 3 2-2 5-3 9-3V4c-4 0-7 1-9 3Z"/><path d="M12 7v14"/>',
   feature: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22V4"/>',
+  // T-883: copied from the approved mockup (define-screen-set.html 「용어 사전」 · 「릴리즈 노트」 activity buttons).
+  glossary: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m8 13 4-7 4 7"/><path d="M9.1 11h5.7"/>',
+  release: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
   artifact:
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
 }
@@ -967,6 +975,127 @@ function wikiSection(pages) {
   return storeSection('wiki', { innerHtml: wikiStoreInner(pages) })
 }
 
+// ---------- glossary store (T-883) ----------
+// Source: the wiki's `term` documents (data.wiki, type: term) — no second
+// copy; the wiki store still lists them too. Table 용어 · 분류 · 정의 (the
+// 분류 chip is the first `tags` value, the 정의 is the document's h1 after
+// its 「— 」), detail = h1 as lead, 분류 · 상태 fields, the body below the h1.
+function termPages(wiki) {
+  return (wiki || []).filter((p) => p.frontmatter.type === 'term')
+}
+
+function termParts(p) {
+  const file = p.rel.split('/').pop().replace(/\.md$/, '')
+  const id = file.replace(/^term--/, '')
+  const title = String(p.frontmatter.title || id)
+  const m = /^(.*?)\s*\((.*)\)\s*$/.exec(title)
+  const name = m ? m[1] : title
+  const gloss = m ? m[2] : ''
+  const lines = String(p.body || '').split('\n')
+  const h1 = lines.findIndex((l) => /^#\s+\S/.test(l))
+  const lead = h1 === -1 ? '' : lines[h1].replace(/^#\s+/, '').trim()
+  const rest = h1 === -1 ? p.body : lines.slice(h1 + 1).join('\n')
+  const def = lead.includes('—') ? lead.slice(lead.indexOf('—') + 1).trim() : lead
+  const tags = Array.isArray(p.frontmatter.tags) ? p.frontmatter.tags : []
+  return { id, name, gloss, lead, def, rest, category: tags.length ? String(tags[0]) : '' }
+}
+
+function glossaryStoreInner(wiki) {
+  const pages = termPages(wiki)
+  if (pages.length === 0) {
+    const groups = [{ key: 'all', label: '', count: 0, bodyHtml: `<p class="v-note">${GLOSSARY.empty}</p>` }]
+    return groupedStore({ sidebarSubLabel: GLOSSARY.sidebarLabel, crumbLabel: GLOSSARY.sidebarLabel, groups, noGroupUnit: GLOSSARY.countUnit })
+  }
+  const rows = pages.map((p) => {
+    const t = termParts(p)
+    const chip = t.category ? `<span class="kp kp-component">${escapeHtml(t.category)}</span>` : '—'
+    return `<tr class="detail-row" data-detail-kind="glossary" data-detail-id="${escapeHtml(t.id)}" tabindex="0">` +
+      `<td><span class="nm">${escapeHtml(t.name)}</span>${t.gloss ? `<span class="nm-gloss">${escapeHtml(t.gloss)}</span>` : ''}</td>` +
+      `<td>${chip}</td><td class="def-col">${escapeHtml(t.def)}</td></tr>\n`
+  }).join('')
+  const head = `<tr>${GLOSSARY.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr>`
+  const bodyHtml = `<div class="count-line section-meta"><span class="count-badge">${escapeHtml(GLOSSARY.countLabel)} <b>${pages.length}</b>${escapeHtml(GLOSSARY.countUnit)}</span></div>\n` +
+    `<div class="table-wrap"><table class="t-gl"><thead>${head}</thead><tbody>\n${rows}</tbody></table></div>\n`
+  const groups = [{ key: 'all', label: '', count: pages.length, bodyHtml }]
+  return groupedStore({ sidebarSubLabel: GLOSSARY.sidebarLabel, crumbLabel: GLOSSARY.sidebarLabel, groups, noGroupUnit: GLOSSARY.countUnit })
+}
+
+function glossaryDetailEntries(wiki, repoRootHref) {
+  const field = (label, value) => `<div class="detail-field"><span class="detail-field-label">${escapeHtml(label)}</span><span class="detail-field-value">${value}</span></div>`
+  const entries = {}
+  for (const p of termPages(wiki)) {
+    const t = termParts(p)
+    const meta = '<div class="detail-meta">' +
+      (t.category ? field(GLOSSARY.fields.category, `<span class="kp kp-component">${escapeHtml(t.category)}</span>`) : '') +
+      field(GLOSSARY.fields.status, escapeHtml(wikiFeatureStatusText(p.frontmatter.status))) +
+      '</div>'
+    entries[t.id] = {
+      title: t.gloss ? `${t.name} · ${t.gloss}` : t.name,
+      html: `${t.lead ? `<p class="def-lead">${escapeHtml(t.lead)}</p>` : ''}${meta}<div class="detail-doc rb">${md(t.rest, path.dirname(p.rel), repoRootHref)}</div>`,
+    }
+  }
+  return entries
+}
+
+function glossarySection(wiki) {
+  return storeSection('glossary', { innerHtml: glossaryStoreInner(wiki) })
+}
+
+// ---------- release-notes store (T-883) ----------
+// Source: data.releases — the sections of code/docs/RELEASES.md (collect.mjs
+// `collectReleases`: read path and symlink containment live there). Table
+// 버전 · 제목 · 날짜; detail = 버전 · 날짜 fields, the section's opening note
+// (a leading `>` block) as a note box, each `###` group as a heading pill.
+// Links inside a section body go through the same `md()` containment as
+// every other document (source dir `code/docs`).
+function releaseBodyHtml(section, repoRootHref) {
+  let body = section.body
+  let note = ''
+  const quote = /^((?:>[^\n]*(?:\n|$))+)/.exec(body)
+  if (quote) {
+    const inner = md(quote[1].replace(/^>[ ]?/gm, '').trim(), 'code/docs', repoRootHref)
+    note = `<div class="v-note">${inner.replace(/^<p>/, '').replace(/<\/p>\s*$/, '').replace(/\n/g, '<br>')}</div>\n`
+    body = body.slice(quote[1].length)
+  }
+  const html = md(body, 'code/docs', repoRootHref).replace(/<h3 class="pill pill-heading-3">/g, '<h3 class="pill pill-heading-2">')
+  return `${note}${html}`
+}
+
+function releaseStoreInner(releases) {
+  if (releases.length === 0) {
+    const groups = [{ key: 'all', label: '', count: 0, bodyHtml: `<p class="v-note">${RELEASE.empty}</p>` }]
+    return groupedStore({ sidebarSubLabel: RELEASE.sidebarLabel, crumbLabel: RELEASE.sidebarLabel, groups, noGroupUnit: RELEASE.countUnit })
+  }
+  const rows = releases.map((r) =>
+    `<tr class="detail-row" data-detail-kind="release" data-detail-id="${escapeHtml(r.version)}" tabindex="0">` +
+    `<td class="id-col ver">${escapeHtml(r.version)}</td><td class="def-col t-title">${escapeHtml(r.title)}</td>` +
+    `<td class="num-col">${escapeHtml(r.date || '—')}</td></tr>\n`).join('')
+  const head = `<tr>${RELEASE.tableHeaders.map((h, i) => `<th${i === 2 ? ' class="num-col"' : ''}>${escapeHtml(h)}</th>`).join('')}</tr>`
+  const bodyHtml = `<div class="count-line section-meta"><span class="count-badge">${escapeHtml(RELEASE.countLabel)} <b>${releases.length}</b>${escapeHtml(RELEASE.countUnit)}</span></div>\n` +
+    `<div class="table-wrap"><table class="t-rel"><thead>${head}</thead><tbody>\n${rows}</tbody></table></div>\n`
+  const groups = [{ key: 'all', label: '', count: releases.length, bodyHtml }]
+  return groupedStore({ sidebarSubLabel: RELEASE.sidebarLabel, crumbLabel: RELEASE.sidebarLabel, groups, noGroupUnit: RELEASE.countUnit })
+}
+
+function releaseDetailEntries(releases, repoRootHref) {
+  const field = (label, value, cls = '') => `<div class="detail-field"><span class="detail-field-label">${escapeHtml(label)}</span><span class="detail-field-value${cls}">${value}</span></div>`
+  const entries = {}
+  for (const r of releases) {
+    if (Object.prototype.hasOwnProperty.call(entries, r.version)) continue
+    const meta = '<div class="detail-meta">' + field(RELEASE.fields.version, escapeHtml(r.version), ' ver') +
+      (r.date ? field(RELEASE.fields.date, escapeHtml(r.date)) : '') + '</div>'
+    entries[r.version] = {
+      title: r.title ? `${r.version} · ${r.title}` : r.version,
+      html: `${meta}<div class="detail-doc rb">${releaseBodyHtml(r, repoRootHref)}</div>`,
+    }
+  }
+  return entries
+}
+
+function releaseSection(releases) {
+  return storeSection('release', { innerHtml: releaseStoreInner(releases) })
+}
+
 // ---------- feature store (T-882: the T-808 feature screen) ----------
 // Source: `data.featureTaxonomy` (collect.mjs, read from .prdt/config.json
 // features.taxonomy + features.vocab — decision recorded in T-882 outcome).
@@ -1153,7 +1282,19 @@ function featureEvidence(e, anchors) {
 }
 
 /** Detail order (T-808 outcome): definition and 「함께 쓰는 기능」 first, then the spec body (spec file present) or 근거 티켓. */
-function featureDetailHtml(model, e, anchors, repoRootHref) {
+// T-883: feature keys whose detail carries a 「읽기」 field, and the store each opens.
+const FEATURE_READ_STORE = { glossary: 'glossary', 'release-notes': 'release' }
+
+function featureReadField(data, e) {
+  if (!Object.prototype.hasOwnProperty.call(FEATURE_READ_STORE, e.key)) return ''
+  const store = FEATURE_READ_STORE[e.key]
+  const count = store === 'glossary' ? termPages(data.wiki).length : (data.releases || []).length
+  const unit = store === 'glossary' ? GLOSSARY.countUnit : RELEASE.countUnit
+  const text = readFieldValue(STORE_LABEL[store], count, unit)
+  return `<button type="button" class="area-a read-link" data-open-store="${store}">${escapeHtml(text)}</button>`
+}
+
+function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
   const area = model.areas.find((a) => a.key === e.area)
   const kind = model.kinds.find((k) => k.key === e.kind)
   const field = (label, value) => `<div class="detail-field"><span class="detail-field-label">${escapeHtml(label)}</span><span class="detail-field-value">${value}</span></div>`
@@ -1162,6 +1303,7 @@ function featureDetailHtml(model, e, anchors, repoRootHref) {
     field(FEATURE.fields.area, `<button type="button" class="area-a" data-feature-area="${escapeHtml(e.area)}">${escapeHtml(area.name)}</button>`) +
     field(FEATURE.fields.tickets, escapeHtml(featureTicketsLabel(e))) +
     (e.versions ? field(FEATURE.fields.version, escapeHtml(e.versions)) : '') +
+    (readHtml ? field(FEATURE.fields.read, readHtml) : '') +
     '</div>'
   const kdef = kind ? `<p class="kind-def">${escapeHtml(kind.name)} — ${escapeHtml(kind.def || '')}</p>` : ''
   const items = [
@@ -1188,7 +1330,7 @@ function featureDetailEntries(data, anchors, repoRootHref) {
     return entries
   }
   for (const e of model.entries) {
-    entries[e.key] = { title: `${e.name || e.key} · ${e.key}`, name: e.name || e.key, html: featureDetailHtml(model, e, anchors, repoRootHref) }
+    entries[e.key] = { title: `${e.name || e.key} · ${e.key}`, name: e.name || e.key, html: featureDetailHtml(model, e, anchors, repoRootHref, featureReadField(data, e)) }
   }
   return entries
 }
@@ -1929,6 +2071,34 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .store-section[data-store="feature"] .cn-empty { font-size: 12.5px; color: var(--text-tertiary); margin: 0; }
 .store-section[data-store="feature"] .ev-text { font-size: 13px; color: var(--text-secondary); line-height: 1.7; margin: 0; }
 .store-section[data-store="feature"] .ev-text code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
+.store-section[data-store="feature"] .read-link { font-size: 12px; font-weight: 600; }
+/* T-883: glossary + release-notes screens (approved mockup docs/artifacts/v1.12/define-screen-set.html) */
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) table { table-layout: fixed; }
+.store-section[data-store="glossary"] table.t-gl th:nth-child(1) { width: 230px; }
+.store-section[data-store="glossary"] table.t-gl th:nth-child(2) { width: 112px; }
+.store-section[data-store="release"] table.t-rel th:nth-child(1) { width: 112px; }
+.store-section[data-store="release"] table.t-rel th:nth-child(3) { width: 112px; }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) th.num-col, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.num-col { text-align: right; }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.num-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .nm { font-weight: 600; display: block; }
+.store-section[data-store="glossary"] .nm-gloss { display: block; font-size: 11.5px; color: var(--text-quaternary); margin-top: 1px; }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.def-col { color: var(--text-secondary); line-height: 1.5; }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.t-title { color: var(--text-primary); font-size: 13px; }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .ver { font-family: var(--font-mono); font-weight: 600; font-size: 12.5px; color: var(--text-primary); }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-field-value.ver { font-size: 12.5px; }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .count-line { display: flex; align-items: baseline; gap: var(--space-12); }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row.is-open td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .def-lead { font-size: 14.5px; line-height: 1.65; color: var(--text-primary); margin: 0 0 var(--space-16); }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb p { margin: 0 0 var(--space-12); font-size: 13.5px; line-height: 1.7; }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb ul { margin: 0 0 var(--space-8); padding-left: 20px; }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb li { margin: 0 0 var(--space-6); font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb li b { color: var(--text-primary); }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb code { background: var(--bg-surface-on); padding: 0 4px; border-radius: var(--radius-4); }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill { display: block; width: max-content; max-width: 100%; margin: var(--space-24) 0 var(--space-8); }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill:first-child, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note + h3.pill { margin-top: var(--space-16); }
+:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note { font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 var(--space-4); }
+@media (prefers-reduced-motion: reduce) { :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row td { transition: none; } }
 ${PRD_READING_CSS}
 `
 
@@ -2306,6 +2476,15 @@ ${PRD_READING_SCRIPT}
       return;
     }
 
+    // T-883: a 「읽기」 field value opens the store it names (용어 사전 · 릴리즈 노트).
+    var readBtn = ev.target.closest('[data-open-store]');
+    if (readBtn) {
+      ev.preventDefault();
+      selectStore(readBtn.getAttribute('data-open-store'));
+      clearHashMarks();
+      return;
+    }
+
     if (featureClick(ev)) return;
     if (prdClick(ev)) return;
 
@@ -2502,6 +2681,8 @@ export function renderPage({
     ticket: ticketDetailEntries(data.tickets, repoRootHref),
     wiki: wikiDetailEntries(data.wiki, repoRootHref),
     feature: featureDetailEntries(data, anchors, repoRootHref),
+    glossary: glossaryDetailEntries(data.wiki, repoRootHref),
+    release: releaseDetailEntries(data.releases || [], repoRootHref),
     artifact: artifactDetailEntries(data.artifacts, artifactsBaseHref, repoRootHref),
     // No "prd" bucket (T-709 결정 2): a closed PRD round is no longer a
     // detail-row — its body renders directly in its own sidebar group's pane
@@ -2538,6 +2719,8 @@ ${ticketSection(data.tickets, data.currentVersion)}
 ${wikiSection(data.wiki)}
 ${featuresSection(data)}
 ${artifactsSection(data.artifacts, data.currentVersion)}
+${glossarySection(data.wiki)}
+${releaseSection(data.releases || [])}
 </div>
 ${detailDataScript(detailData)}
 <script>${INTERACTION_SCRIPT}</script>
