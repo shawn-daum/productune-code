@@ -1,8 +1,9 @@
 // T-884 (T-860 / T-874): the open PRD's reading screen — outline hierarchy, folds with the approved
 // initial open set, the 「결정할 것」 box, What cards with 「N줄」, and the h3/h4 heading split.
 import { describe, it, expect } from 'vitest'
+import { PRD_READING_SCRIPT } from '@productune/viewer/lib/prd-reading.mjs'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
-import { parsePrdTree, parseQuestions, openDecisionTickets, renderPrdReading, PRD_READING_CSS } from '@productune/viewer/lib/prd-reading.mjs'
+import { plainInline, parsePrdTree, parseQuestions, openDecisionTickets, renderPrdReading, PRD_READING_CSS } from '@productune/viewer/lib/prd-reading.mjs'
 import { PRD_READING } from '@productune/viewer/lib/labels.mjs'
 
 const PRD = `# PRD: demo
@@ -124,10 +125,10 @@ describe('openDecisionTickets', () => {
 describe('renderPrdReading', () => {
   it('opens exactly the approved set: open version, 합격선, What, Open Questions', () => {
     const html = render()
-    const open = [...html.matchAll(/<details class="pr-sec ([^"]*)" id="([^"]+)" data-open0="1" open>/g)].length
+    const open = [...html.matchAll(/<details class="pr-sec ([^"]*)" id="([^"]+)" data-fold="[^"]*" data-open0="1" open>/g)].length
     expect(open).toBe(4)
     expect(html).toMatch(/data-open0="0"><summary><span class="pr-mark mono">##<\/span><span class="pr-t">Why/)
-    expect(html).toMatch(/pr-card" id="prd-s\d+" data-open0="0"><summary>/)
+    expect(html).toMatch(/pr-card" id="prd-s\d+" data-fold="[^"]*" data-open0="0"><summary>/)
   })
   it('outline carries ##, ###, #### marks with hierarchy classes, What badge and card keys', () => {
     const html = render()
@@ -196,5 +197,58 @@ describe('generated page', () => {
     const csp = /Content-Security-Policy" content="([^"]+)"/.exec(html)![1]
     expect(csp).toContain("default-src 'none'")
     expect(/script-src[^;]*/.exec(csp)![0]).not.toContain('unsafe-inline')
+  })
+})
+
+describe('plainInline', () => {
+  it('keeps _ and * inside code spans, strips emphasis markers outside', () => {
+    expect(plainInline('`version_outcome` and **bold** *it* `a*b`')).toBe('version_outcome and bold it a*b')
+    expect(plainInline('[`snake_case`](x.md) tail')).toBe('snake_case tail')
+  })
+  it('outline entries and 「남은 질문」 lines carry the code text intact', () => {
+    const body = '## v1.12 — r\n\n### Open Questions\n\n**사용자가 답할 것**\n\n1. pick `version_outcome` now\n\n#### `my_key` — T\n'
+    expect(parseQuestions(body.slice(body.indexOf('**사용자가'))).main[0].text).toBe('pick version_outcome now')
+    expect(render({ body })).toContain('version_outcome')
+    expect(render({ body })).not.toContain('versionoutcome')
+  })
+})
+
+describe('fold identity', () => {
+  const foldKeys = (html: string) => [...html.matchAll(/<details [^>]*id="([^"]+)" data-fold="([^"]*)"/g)].map((m) => [m[1], m[2]])
+  it('keys by heading path, not by sequence; repeats get ~n', () => {
+    const base = foldKeys(render())
+    const shifted = foldKeys(render({ body: PRD.replace('## Why', '## Inserted\n\nx\n\n## Why') }))
+    const keyOf = (rows: string[][], k: string) => rows.find((r) => r[1] === k)
+    expect(keyOf(base, '/v1.12 — round/What — 스코프 두 항목')).toBeTruthy()
+    for (const [, k] of base) expect(keyOf(shifted, k)).toBeTruthy()
+    expect(keyOf(base, '/Why — 비전')![0]).not.toBe(keyOf(shifted, '/Why — 비전')![0])
+    const dup = foldKeys(render({ body: '## v1.12\n\n### A\n\n### A\n' })).map((r) => r[1])
+    expect(dup).toEqual(['/v1.12', '/v1.12/A', '/v1.12/A~2'])
+  })
+})
+
+describe('What-card title width (layout rule; measured in headless chromium by QA/dev, not launchable under the vitest isolation tripwire)', () => {
+  it('.pr-t in a card summary is a wrapping flex item with a floor, so chips never crush it', () => {
+    expect(PRD_READING_CSS).toMatch(/\.pr-card > summary \.pr-t \{[^}]*flex: 1 1 14em;[^}]*min-width: 10em;/)
+    expect(PRD_READING_CSS).toMatch(/\.pr-card > summary \{[^}]*flex-wrap: wrap;/)
+  })
+})
+
+describe('fold state script', () => {
+  it('saves and restores by data-fold key; unknown keys keep the section default', () => {
+    expect(PRD_READING_SCRIPT).toContain("getAttribute('data-fold')")
+    expect(PRD_READING_SCRIPT).toContain('hasOwnProperty.call(state, k)')
+    // run the restore against a minimal DOM stand-in
+    const mk = (fold: string, open: boolean) => ({ id: `prd-s-${fold}`, open, getAttribute: (a: string) => (a === 'data-fold' ? fold : null) })
+    const secs = [mk('/A', true), mk('/B', false), mk('/NEW', true)]
+    const wrap = { querySelectorAll: (sel: string) => (sel === 'details.pr-sec' ? secs : []) }
+    const doc = { querySelectorAll: (sel: string) => (sel === '.pr-wrap' ? [wrap] : secs) }
+    const fn = new Function('document', `${PRD_READING_SCRIPT}; function findByAttr(){return null}; return { prdRestoreFolds: prdRestoreFolds, prdFoldState: prdFoldState };`)
+    // prdSyncDots needs links; give it none
+    const api = fn(Object.assign(doc, {}))
+    const saved = { '/A': false, '/B': true }
+    api.prdRestoreFolds(saved)
+    expect(secs.map((x) => x.open)).toEqual([false, true, true])
+    expect(api.prdFoldState()).toEqual({ '/A': false, '/B': true, '/NEW': true })
   })
 })
