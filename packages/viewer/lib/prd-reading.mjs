@@ -346,7 +346,7 @@ export const PRD_READING_CSS = `
 .ol:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .ol[aria-current="true"] { background: var(--accent); color: var(--accent-contrast); }
 .ol[aria-current="true"] .ol-mark, .ol[aria-current="true"] .ol-tk { color: var(--accent-contrast); opacity: .85; }
-.ol-mark { font-size: 10px; color: var(--text-quaternary); flex: 0 0 auto; width: 30px; }
+.ol-mark { font-size: 10px; color: var(--text-tertiary); flex: 0 0 auto; width: 30px; }
 .ol-t { flex: 1; min-width: 0; }
 .ol-l1 { font-weight: 700; color: var(--text-primary); margin-top: var(--space-4); }
 .ol-l2 { font-weight: 700; color: var(--text-primary); margin-top: var(--space-8); font-size: 12.5px; }
@@ -399,9 +399,9 @@ export const PRD_READING_CSS = `
 .pr-sec[open] > summary::before { transform: rotate(45deg) translate(-2px, -2px); }
 .pr-sec > summary:hover { background: var(--bg-state-hover); }
 .pr-sec > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.pr-mark { font-size: 11px; color: var(--text-quaternary); flex: 0 0 auto; }
+.pr-mark { font-size: 11px; color: var(--text-tertiary); flex: 0 0 auto; }
 .pr-t { flex: 1; min-width: 0; color: var(--text-primary); overflow-wrap: anywhere; }
-.pr-meta { font-size: 10.5px; color: var(--text-quaternary); flex: 0 0 auto; }
+.pr-meta { font-size: 10.5px; color: var(--text-tertiary); flex: 0 0 auto; }
 .pr-body { padding: var(--space-4) 0 var(--space-8) var(--space-20); font-size: 13.5px; }
 .pr-body > :first-child { margin-top: 0; }
 .pr-body table { font-size: 12.5px; }
