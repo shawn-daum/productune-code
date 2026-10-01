@@ -10,9 +10,10 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { buildRawThemeMaps, resolveVarChains } from './lib/parse-tokens.mjs'
+import subsetFont from 'subset-font'
 import { collectUsedChars, buildPretendardFontFaceCss } from './lib/font-subset.mjs'
 import { collectAll } from './lib/collect.mjs'
-import { renderPage, templateGuardErrors } from './lib/render.mjs'
+import { renderPage, templateGuardErrors, pastTicketDataFiles, pastTicketDataContent } from './lib/render.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // T-718: computed relative to THIS file's own location, never from a
@@ -66,7 +67,9 @@ const SEMIBOLD_WOFF2 = path.join(PRETENDARD_STATIC_DIR, 'Pretendard-SemiBold.wof
  * acceptance line 4). No timestamps, no generation-time randomness — the
  * only "when" information on the page is data already on disk (ticket
  * `created`/`closed`, artifact `added_at`, etc.), never "generated at".
- * @returns {Promise<{ html: string }>}
+ * T-885: also returns `dataFiles` — one past-version ticket data file per
+ * bucket, written NEXT TO `outputPath` (`name` is a bare file name).
+ * @returns {Promise<{ html: string, dataFiles: Array<{ name: string, content: string }> }>}
  */
 export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH } = {}) {
   const tokensBuf = fs.readFileSync(TOKENS_PATH)
@@ -104,20 +107,57 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH 
   const artifactsBaseHref = `${repoRootHref}/docs/artifacts`
 
   const viewerAbsPath = path.resolve(outputPath)
-  const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath })
+  // T-885 (T-876 = D): past-version ticket bodies go to sibling data files;
+  // the page carries only the bucket → src map, generator-written.
+  const prefix = path.basename(outputPath).replace(/\.html?$/i, '')
+  const pastFiles = pastTicketDataFiles(data.tickets, { repoRootHref, viewerAbsPath, prefix })
+  const pastTicketSrc = {}
+  for (const f of pastFiles) pastTicketSrc[f.bucket] = encodeURIComponent(f.name)
+  const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc })
   const usedText = collectUsedChars(draft)
 
   const regularBuffer = fs.readFileSync(REGULAR_WOFF2)
   const semiboldBuffer = fs.readFileSync(SEMIBOLD_WOFF2)
   const fontFaceCss = await buildPretendardFontFaceCss({ regularBuffer, semiboldBuffer, usedText })
 
-  const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath })
-  return { html }
+  const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc })
+  // The data-file bodies render in this page, so the font must paint them
+  // too — but folding every past body's glyphs into the page's own subset
+  // would grow viewer.html by ~80KB (measured). Each data file instead
+  // carries the glyphs its bodies use that the page subset lacks.
+  const pageChars = new Set(usedText)
+  const dataFiles = []
+  for (const f of pastFiles) {
+    const extra = [...new Set(collectUsedChars(f.bodies.join('\n')))].filter((c) => !pageChars.has(c) && !/\s/.test(c))
+    const payload = { tickets: f.tickets }
+    if (extra.length > 0) payload.font = await supplementFont(extra, regularBuffer, semiboldBuffer)
+    dataFiles.push({ name: f.name, content: pastTicketDataContent(f.bucket, payload) })
+  }
+  return { html, dataFiles }
+}
+
+async function supplementFont(chars, regularBuffer, semiboldBuffer) {
+  const cps = chars.map((c) => c.codePointAt(0)).sort((a, b) => a - b)
+  const text = cps.map((cp) => String.fromCodePoint(cp)).join('')
+  const [regular, semibold] = await Promise.all([
+    subsetFont(regularBuffer, text, { targetFormat: 'woff2' }),
+    subsetFont(semiboldBuffer, text, { targetFormat: 'woff2' }),
+  ])
+  const range = cps.map((cp) => `U+${cp.toString(16).toUpperCase()}`).join(',')
+  return { range, regular: regular.toString('base64'), semibold: semibold.toString('base64') }
+}
+
+/** T-885: matches only this page's own data files (`<prefix>.tickets-<bucket>.js`). */
+export function isPastTicketDataFileName(outputPath, name) {
+  const prefix = path.basename(outputPath).replace(/\.html?$/i, '')
+  return name.startsWith(`${prefix}.tickets-`) && name.endsWith('.js')
 }
 
 /** @returns {Promise<{ upToDate: boolean, html: string }>} */
 export async function checkUpToDate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH } = {}) {
-  const { html } = await generate({ repoRoot, outputPath })
-  const committed = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf8') : null
-  return { upToDate: committed === html, html }
+  const { html, dataFiles } = await generate({ repoRoot, outputPath })
+  const read = (p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null)
+  const dir = path.dirname(outputPath)
+  const upToDate = read(outputPath) === html && dataFiles.every((f) => read(path.join(dir, f.name)) === f.content)
+  return { upToDate, html }
 }

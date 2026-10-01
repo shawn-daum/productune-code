@@ -13,7 +13,7 @@
 // are this repo's own layout, unchanged.
 import fs from 'node:fs'
 import path from 'node:path'
-import { generate, checkUpToDate, OUTPUT_PATH, REPO_ROOT } from './generate.mjs'
+import { generate, checkUpToDate, isPastTicketDataFileName, OUTPUT_PATH, REPO_ROOT } from './generate.mjs'
 
 function argValue(name) {
   const i = process.argv.indexOf(name)
@@ -44,8 +44,23 @@ async function main() {
     return
   }
 
-  const { html } = await generate({ repoRoot, outputPath })
+  const { html, dataFiles } = await generate({ repoRoot, outputPath })
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
+  // T-885: the past-version data files land before the page that names them.
+  const dir = path.dirname(outputPath)
+  for (const f of dataFiles) writeAtomic(path.join(dir, f.name), f.content)
+  writeAtomic(outputPath, html)
+  // A bucket that no longer exists leaves no stale data file behind; only
+  // this page's own `<prefix>.tickets-*.js` names are ever removed.
+  const keep = new Set(dataFiles.map((f) => f.name))
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.isFile() && isPastTicketDataFileName(outputPath, e.name) && !keep.has(e.name)) fs.unlinkSync(path.join(dir, e.name))
+  }
+  const dataBytes = dataFiles.reduce((n, f) => n + Buffer.byteLength(f.content, 'utf8'), 0)
+  console.log(`viewer: wrote ${outputPath} (${Buffer.byteLength(html, 'utf8')} bytes) + ${dataFiles.length} data files (${dataBytes} bytes)`)
+}
+
+function writeAtomic(target, content) {
   // Write-then-rename: a browser tab opening the page mid-write never reads
   // a half-written file.
   // T-842: the temp is created exclusively ('wx' = O_CREAT|O_EXCL, which
@@ -53,16 +68,15 @@ async function main() {
   // output directory is removed, never written through; renameSync replaces
   // a symlinked `viewer.html` itself rather than its target. The directory
   // chain is checked by the caller (`prdt` refuses a symlinked one).
-  const tmp = `${outputPath}.${process.pid}.tmp`
+  const tmp = `${target}.${process.pid}.tmp`
   try {
-    fs.writeFileSync(tmp, html, { flag: 'wx' })
+    fs.writeFileSync(tmp, content, { flag: 'wx' })
   } catch (err) {
     if (!err || err.code !== 'EEXIST') throw err
     fs.unlinkSync(tmp)
-    fs.writeFileSync(tmp, html, { flag: 'wx' })
+    fs.writeFileSync(tmp, content, { flag: 'wx' })
   }
-  fs.renameSync(tmp, outputPath)
-  console.log(`viewer: wrote ${outputPath} (${Buffer.byteLength(html, 'utf8')} bytes)`)
+  fs.renameSync(tmp, target)
 }
 
 main().catch((err) => {
