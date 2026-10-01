@@ -1585,18 +1585,39 @@ function dependencyDiagram(graph, layout) {
     .map((n) => {
       const cls = `dg-n${n.sp ? ' dg-n-sp' : n.cp ? ' dg-n-cp' : ''}${n.gate ? ' dg-n-gate' : ''}${n.done ? ' dg-n-done' : ''}`
       const chips = []
-      let right = n.x + NODE_W
-      const addRight = (kind, label) => {
-        const w = chipWidth(label)
-        chips.push(diagramChip(kind, label, right - w, n.y - 15))
-        right -= w + 4
-      }
-      if (n.waits) { addRight('turn', HOME.chipTurn); uses.turn = true }
-      if (n.gate) { addRight('gate', HOME.chipGate); uses.gate = true }
-      if (n.rider) { addRight('rider', HOME.chipRider); uses.rider = true }
+      // Chips sit on the row above the box. State chips (사용자를 기다림 · 합격선 · 라이더) and the
+      // route label (메인 패스 / 크리티컬 패스) share it: label left, state chips right-aligned
+      // when they all fit; otherwise they flow left to right from the box's left edge, 사용자를
+      // 기다림 first, and what does not fit moves up one row — never over another chip.
+      const state = []
+      if (n.waits) { state.push(['turn', HOME.chipTurn]); uses.turn = true }
+      if (n.gate) { state.push(['gate', HOME.chipGate]); uses.gate = true }
+      if (n.rider) { state.push(['rider', HOME.chipRider]); uses.rider = true }
       if (n.done) uses.done = true
-      if (spineFirst && n.id === spineFirst.id) chips.push(diagramChip('sp', HOME.chipMain, n.x, n.y - 15))
-      if (cpFirst && n.id === cpFirst.id) chips.push(diagramChip('cp', HOME.chipCritical, n.x, n.y - 15))
+      let label = null
+      if (spineFirst && n.id === spineFirst.id) label = ['sp', HOME.chipMain]
+      else if (cpFirst && n.id === cpFirst.id) label = ['cp', HOME.chipCritical]
+      const rightW = state.reduce((s, [, l]) => s + chipWidth(l) + 4, -4)
+      const leftW = label ? chipWidth(label[1]) : 0
+      if (!label || state.length === 0 || leftW + rightW + 4 <= NODE_W) {
+        let right = n.x + NODE_W
+        for (const [kind, l] of state) {
+          const w = chipWidth(l)
+          chips.push(diagramChip(kind, l, right - w, n.y - 15))
+          right -= w + 4
+        }
+        if (label) chips.push(diagramChip(label[0], label[1], n.x, n.y - 15))
+      } else {
+        const order = [...state, label]
+        let x = n.x
+        let row = 0
+        for (const [kind, l] of order) {
+          const w = chipWidth(l)
+          if (x > n.x && x + w > n.x + NODE_W) { row += 1; x = n.x }
+          chips.push(diagramChip(kind, l, x, n.y - 15 - row * 17))
+          x += w + 4
+        }
+      }
       const idText = `${n.id}${n.done ? ' ✓' : ''}`
       return (
         `<g class="dg-a dg-btn" ${ticketButtonAttrs(n.id)} aria-label="${escapeHtml(HOME.nodeOpen(n.id))}"><title>${escapeHtml(`${n.id} ${n.slug}`.trim())}</title>` +
@@ -1795,11 +1816,11 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .dash-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
 .dash-card { border: 1px solid var(--border-item); border-radius: var(--radius-12); background: var(--bg-surface-base); padding: var(--space-20); }
 .dash-card-title { font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-tertiary); margin: 0 0 var(--space-12); display: flex; align-items: center; gap: var(--space-8); }
-.sb { display: flex; align-items: center; gap: 0; margin: var(--space-4) 0 var(--space-4); flex-wrap: nowrap; }
+.sb { display: flex; align-items: center; gap: 0; margin: var(--space-4) 0 var(--space-4); flex-wrap: nowrap; min-width: 0; max-width: 100%; }
 .sb-tick { width: 2px; height: 34px; background: var(--text-secondary); border-radius: 1px; margin-right: var(--space-6); flex: 0 0 auto; }
-.sb-seg { display: grid; grid-template-rows: 20px 14px 20px; padding: 0 var(--space-6) 0 0; margin-right: var(--space-6); border-right: 1px dashed var(--border-inline); }
+.sb-seg { display: grid; grid-template-rows: 20px auto 20px; align-content: start; padding: 0 var(--space-6) 0 0; margin-right: var(--space-6); border-right: 1px dashed var(--border-inline); flex: 0 1 auto; min-width: 56px; }
 .sb-seg:last-of-type { border-right: none; }
-.sb-sq { display: flex; gap: 3px; align-items: center; }
+.sb-sq { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-height: 14px; }
 .sb-seg-cur .sb-sq { box-shadow: 0 2px 0 0 var(--accent); padding-bottom: 3px; }
 .sb-up { display: flex; align-items: flex-end; }
 .sb-dn { display: flex; align-items: flex-start; }
@@ -1808,19 +1829,19 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .sb-n { color: var(--text-quaternary); font-size: 10px; font-weight: 400; }
 .sb-here { font-family: var(--font-family); font-size: 10px; font-weight: 600; color: var(--accent-contrast); background: var(--accent); border-radius: var(--radius-100); padding: 0 6px; line-height: 15px; }
 .sb-seg-empty .sb-sq::before { content: ""; width: 1px; height: 10px; background: var(--border-inline); }
-.sb-total { font-size: 11px; color: var(--text-secondary); margin-left: var(--space-4); }
+.sb-total { font-size: 11px; color: var(--text-secondary); margin-left: var(--space-4); flex: 0 0 auto; }
 .stage-sq { width: 10px; height: 10px; border-radius: 2px; background: var(--bg-interaction-neutral); border: 1px solid var(--border-inline); flex: 0 0 auto; }
 .stage-sq.sq-done { background: var(--accent); border-color: var(--accent); }
 .sc { border-top: 1px solid var(--border-item); margin: var(--space-16) 0 0; padding: var(--space-16) 0 0; }
-.sc-grid { display: grid; grid-template-columns: auto minmax(220px, 1fr); gap: var(--space-32); }
-.sc-row { display: grid; grid-template-columns: 180px auto auto; justify-content: start; align-items: center; gap: var(--space-10); height: 20px; }
+.sc-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(200px, 220px); gap: var(--space-24); }
+.sc-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: center; gap: var(--space-10); min-height: 20px; }
 .sc-lab { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sc-out .sc-lab { color: var(--text-tertiary); }
-.sc-sq { display: flex; gap: 3px; align-items: center; }
+.sc-sq { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-width: 0; }
 .sc-n { font-size: 10.5px; color: var(--text-tertiary); }
 .sc-btn { cursor: pointer; }
 .sc-btn.is-open { outline: 2px solid var(--text-primary); outline-offset: 1px; }
-.sc-waits { display: flex; flex-direction: column; gap: var(--space-16); border-left: 1px solid var(--border-item); padding-left: var(--space-24); }
+.sc-waits { min-width: 0; display: flex; flex-direction: column; gap: var(--space-16); border-left: 1px solid var(--border-item); padding-left: var(--space-24); }
 .cp-block { border-top: 1px solid var(--border-item); margin: var(--space-16) 0 0; padding: var(--space-16) 0 0; }
 .cp-h { font-size: 12px; font-weight: 600; color: var(--text-primary); margin: 0 0 var(--space-10); display: flex; align-items: baseline; gap: var(--space-8); flex-wrap: wrap; }
 .cp-sub { font-weight: 400; color: var(--text-tertiary); font-size: 11.5px; }
@@ -2117,7 +2138,7 @@ const INTERACTION_SCRIPT = `
     if (!section) return;
     var panel = section.querySelector('.detail-panel');
     if (panel) { panel.classList.remove('active'); panel.removeAttribute('data-open-kind'); panel.removeAttribute('data-open-id'); }
-    section.querySelectorAll('.detail-row.is-open').forEach(function (r) { r.classList.remove('is-open'); });
+    section.querySelectorAll('.detail-row.is-open, [data-detail-kind].is-open').forEach(function (r) { r.classList.remove('is-open'); });
   }
 
   // T-882: feature screen moves — follow a 「함께 쓰는 기능」 link, go back, pick the area.
@@ -2217,7 +2238,7 @@ const INTERACTION_SCRIPT = `
     }
     panel.querySelector('.detail-panel-body').innerHTML = bodyHtml;
     panel.querySelector('.detail-panel-body').scrollTop = 0;
-    section.querySelectorAll('.detail-row.is-open').forEach(function (r) { r.classList.remove('is-open'); });
+    section.querySelectorAll('.detail-row.is-open, [data-detail-kind].is-open').forEach(function (r) { r.classList.remove('is-open'); });
     section.querySelectorAll('.view-pane.active [data-detail-kind]').forEach(function (r) {
       if (r.getAttribute('data-detail-kind') === kind && r.getAttribute('data-detail-id') === id) r.classList.add('is-open');
     });
