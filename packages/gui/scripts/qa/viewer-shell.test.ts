@@ -144,12 +144,12 @@ function detailBody(html, id) {
 }
 
 describe('viewer/lib/render.mjs — heading chip rule (T-666)', () => {
-  it('h1/h2/h3 get pill-heading-1/2/3, and h4 collapses to pill-heading-3 — same renderer for every document kind', () => {
+  it('h1/h2/h3/h4 get pill-heading-1/2/3/4 — h4 no longer shares the h3 chip (T-884), same renderer for every document kind', () => {
     const body = detailBody(render(), 'T-901')
     expect(body).toContain('<h1 class="pill pill-heading-1">Title one</h1>')
     expect(body).toContain('<h2 class="pill pill-heading-2">Section two</h2>')
     expect(body).toContain('<h3 class="pill pill-heading-3">Sub three</h3>')
-    expect(body).toContain('<h4 class="pill pill-heading-3">Deep four</h4>')
+    expect(body).toContain('<h4 class="pill pill-heading-4">Deep four</h4>')
   })
 
   it('applies to a second, independently-rendered ticket body too — one shared rule, not a per-document special case', () => {

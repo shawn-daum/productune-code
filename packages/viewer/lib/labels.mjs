@@ -169,6 +169,35 @@ export const PRD = {
   openLabelPrefix: '열린 섹션 · ',
 }
 
+// T-884 (T-860 / T-874): the open PRD's reading screen — outline, folds, 「결정할 것」 box,
+// What cards. Strings are the T-874-approved set (docs/artifacts/v1.12/prd-reading.html;
+// 「열린 질문」 → 「남은 질문」 and 「N줄」 kept per the T-874 log).
+export const PRD_READING = {
+  outlineHeading: '목차',
+  decideHeading: '결정할 것',
+  questionsHeading: '남은 질문',
+  ticketsHeading: '결정 대기 티켓',
+  goToPrd: 'PRD 로 이동',
+  expandAll: '모두 펼치기',
+  collapseAll: '모두 접기',
+  resetFolds: '처음 상태로',
+  openMark: '펼침',
+  closedMark: '접힘',
+  noDecide: '지금 정할 것이 없어요.',
+  noQuestions: '남은 질문이 없어요.',
+  noTickets: '기다리는 결정 티켓이 없어요.',
+  reviewQuestions: (n) => `화면 승인 때 볼 것 ${n}건`,
+  cardsHeading: (n) => `항목 ${n}개`,
+  lineCount: (n) => `${n}줄`,
+  // The PRD contract's own section names this screen keys off (never copy shown to a reader):
+  // sections folded open at first (under the open version), the §Open Questions heading,
+  // the §What heading, and the question-group titles.
+  initialOpen: /^(합격선|What|Open Questions)(\s|$)/,
+  questionsSection: /^Open Questions(\s|$)/,
+  whatSection: /^What(\s|$)/,
+  reviewGroup: /승인/,
+}
+
 // ---------- interaction script strings (embedded into the browser-side JS
 // via JSON.stringify at generation time — still this ONE label layer, never
 // a second copy hand-typed inside the template string) ----------

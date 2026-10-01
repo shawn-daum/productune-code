@@ -40,6 +40,7 @@ import {
   THEME_TOGGLE,
   noGroupLabel,
 } from './labels.mjs'
+import { renderPrdReading, openDecisionTickets, PRD_READING_CSS, PRD_READING_SCRIPT } from './prd-reading.mjs'
 
 function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
@@ -127,13 +128,14 @@ hardenedRenderer.html = (token) => escapeHtml(typeof token === 'string' ? token 
 // (docs/artifacts/v1.10/define-screen-set.html ~line 343-348, user-approved
 // 2026-09-21); h4+ (real ticket bodies use `####` for their `###`-nested
 // amendments, per contracts §Tickets, one level deeper than this generator's
-// own h1-wrapped titles) collapses to the same weight as h3 rather than
-// falling off the shared rule's end. marked 16.4.2's token-object renderer
+// own h1-wrapped titles) used to collapse to the same chip as h3 — T-884 (root
+// cause of "h3 and h4 look the same", T-860): `Math.min(depth, 3)` below.
+// h4+ now has its own, quieter style (`.pill-heading-4`). marked 16.4.2's token-object renderer
 // API (`{tokens, depth}`, not the older `(text, level)` pair) — verified
 // against this repo's installed marked (16.4.2) before writing this.
 hardenedRenderer.heading = function ({ tokens, depth }) {
   const text = this.parser.parseInline(tokens)
-  const level = Math.min(depth, 3)
+  const level = Math.min(depth, 4)
   return `<h${depth} class="pill pill-heading-${level}">${text}</h${depth}>\n`
 }
 
@@ -1196,12 +1198,18 @@ function featuresSection(data) {
 }
 
 /** PRD store: the ONE named content nuance (not a structural deviation — same activity-bar → sidebar-group → main-pane shell as every other store). The "open" group's single, currently-relevant document renders inline directly rather than as a one-row list a reader must click; "closed" behaves exactly like every other store's list→detail. Both strings below ("열린 섹션" / "닫힌 버전") are lifted verbatim from the user-approved mockup (docs/artifacts/v1.10/define-screen-set.html), not new copy. */
-function prdOpenBody(prd, repoRootHref) {
-  // 'docs/prd' is the fixed path (contracts §Fixed paths — PRD.md is a single
-  // standing file, never per-version), not derived from `prd.current.rel` —
-  // a fixture that omits `.rel` (this module's own tests do) still resolves
-  // links correctly.
-  return `<div class="v-body">${md(prd.current.body, 'docs/prd', repoRootHref)}</div>`
+function prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix }) {
+  // T-884: the open PRD is the reading screen (outline · folds · 「결정할 것」 box · What cards).
+  // `idPrefix` keeps ids unique when the same body sits in two panes (PRD store and home).
+  const sourceDir = 'docs/prd'
+  const inlineMd = (t) => md(t, sourceDir, repoRootHref).replace(/^<p>/, '').replace(/<\/p>\s*$/, '')
+  return renderPrdReading({
+    body: prd.current.body,
+    currentVersion,
+    decisionTickets: openDecisionTickets(tickets),
+    idPrefix,
+    deps: { md: (t) => md(t, sourceDir, repoRootHref), inline: inlineMd, esc: escapeHtml, sameVersion, ticketPill: ticketRolePill },
+  })
 }
 
 /**
@@ -1217,12 +1225,12 @@ function prdOpenBody(prd, repoRootHref) {
  * heading-chip rule, so a second, separately-extracted copy of that same
  * text was never needed as a list column once the row IS the document.
  */
-function prdStoreInner(prd, currentVersion, repoRootHref) {
+function prdStoreInner(prd, currentVersion, repoRootHref, tickets) {
   const closedRounds = [...prd.closed].sort((a, b) =>
     compareVersionIdsDesc(a.name.replace(/\.md$/, ''), b.name.replace(/\.md$/, '')),
   )
   const groups = [
-    { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref) },
+    { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix: 'prd' }) },
     ...closedRounds.map((c) => {
       const id = c.name.replace(/\.md$/, '')
       return { key: id, label: id, bodyHtml: `<div class="v-body">${md(c.body, path.dirname(c.rel), repoRootHref)}</div>` }
@@ -1231,8 +1239,8 @@ function prdStoreInner(prd, currentVersion, repoRootHref) {
   return groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups })
 }
 
-function prdSection(prd, currentVersion, repoRootHref) {
-  return storeSection('prd', { innerHtml: prdStoreInner(prd, currentVersion, repoRootHref) })
+function prdSection(prd, currentVersion, repoRootHref, tickets) {
+  return storeSection('prd', { innerHtml: prdStoreInner(prd, currentVersion, repoRootHref, tickets) })
 }
 
 /** Raw artifact status (pending/approved/archived) → its T-705 §B/§D pill class + Korean text — a third store on the shared todo/done/abandoned CSS vocabulary (§D: same class, different word per store). */
@@ -1596,7 +1604,7 @@ function homeSection(data, repoRootHref) {
   const groups = [
     { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
-    { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref) },
+    { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
   ]
@@ -1730,6 +1738,9 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   padding: 3px 10px; border-radius: var(--radius-8); }
 .pill-heading-3 { text-transform: none; letter-spacing: 0; white-space: normal; font-size: 11px; font-weight: 600;
   background: var(--bg-interaction-neutral); color: var(--text-tertiary); padding: 2px 8px; border-radius: var(--radius-4); }
+/* T-884: h4 and deeper — a plain text rule, never the h3 chip, so the hierarchy reads at a glance. */
+.pill-heading-4 { text-transform: none; letter-spacing: 0; white-space: normal; font-size: 11px; font-weight: 600;
+  background: none; color: var(--text-secondary); padding: 0 0 0 var(--space-8); border-radius: 0; border-left: 2px solid var(--border-hover); }
 
 /* ---------- home dashboard (T-666 slice 2a) — T-675's assignee x PRD-item
    matrix, copied class-for-class from the user-approved mockup
@@ -1918,6 +1929,7 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .store-section[data-store="feature"] .cn-empty { font-size: 12.5px; color: var(--text-tertiary); margin: 0; }
 .store-section[data-store="feature"] .ev-text { font-size: 13px; color: var(--text-secondary); line-height: 1.7; margin: 0; }
 .store-section[data-store="feature"] .ev-text code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
+${PRD_READING_CSS}
 `
 
 /**
@@ -2010,6 +2022,7 @@ const INTERACTION_SCRIPT = `
     document.head.appendChild(s);
   }
 
+${PRD_READING_SCRIPT}
   function closeDetailPanel(section) {
     if (!section) return;
     var panel = section.querySelector('.detail-panel');
@@ -2294,6 +2307,7 @@ const INTERACTION_SCRIPT = `
     }
 
     if (featureClick(ev)) return;
+    if (prdClick(ev)) return;
 
     var noticeClose = ev.target.closest('.notice-close');
     if (noticeClose) {
@@ -2336,6 +2350,7 @@ const INTERACTION_SCRIPT = `
   paintToggle();
   route();
   syncUrl(true);
+  prdInit();
 
   // T-803 (T-897 = B): reload only when the viewer file changed, back at the
   // same main-pane and detail-panel scroll position.
@@ -2351,7 +2366,7 @@ const INTERACTION_SCRIPT = `
   }
   function saveScroll() {
     var m = mainScroller(), d = detailScroller();
-    try { sessionStorage.setItem(SCROLL_KEY, JSON.stringify({ main: m ? m.scrollTop : 0, detail: d ? d.scrollTop : 0, detailKey: d ? openDetailKey() : null })); } catch (e) { /* storage blocked: the reload still keeps the URL state */ }
+    try { sessionStorage.setItem(SCROLL_KEY, JSON.stringify({ main: m ? m.scrollTop : 0, detail: d ? d.scrollTop : 0, detailKey: d ? openDetailKey() : null, folds: prdFoldState() })); } catch (e) { /* storage blocked: the reload still keeps the URL state */ }
   }
   var RESTORE = null;
   try {
@@ -2359,6 +2374,8 @@ const INTERACTION_SCRIPT = `
     sessionStorage.removeItem(SCROLL_KEY);
     if (raw) RESTORE = JSON.parse(raw);
   } catch (e) { RESTORE = null; }
+  // The PRD folds come back as they were, so the saved scroll lands on the same text.
+  if (RESTORE && RESTORE.folds) prdRestoreFolds(RESTORE.folds);
   // Main scroll is applied for the first paint and again at window load (fonts
   // and layout settle); the detail scroll once its panel body is in.
   function applyScroll(final) {
@@ -2516,7 +2533,7 @@ ${emitRootThemeCss(dark, light)}
 <div class="app-shell">
 ${activityBar('home')}
 ${homeSection(data, repoRootHref)}
-${prdSection(data.prd, data.currentVersion, repoRootHref)}
+${prdSection(data.prd, data.currentVersion, repoRootHref, data.tickets)}
 ${ticketSection(data.tickets, data.currentVersion)}
 ${wikiSection(data.wiki)}
 ${featuresSection(data)}
