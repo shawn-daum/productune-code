@@ -35,6 +35,7 @@ import {
   FEATURE,
   GLOSSARY,
   RELEASE,
+  DISCIPLINE,
   readFieldValue,
   ARTIFACT,
   PRD,
@@ -43,6 +44,7 @@ import {
   THEME_TOGGLE,
   noGroupLabel,
 } from './labels.mjs'
+import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
 import { HOME_STAGES, stageSegments, buildHomeGraph, layoutHomeGraph, waitLists, compareTicketIds, NODE_W, NODE_H } from './home-graph.mjs'
 import { renderPrdReading, openDecisionTickets, PRD_READING_CSS, PRD_READING_SCRIPT } from './prd-reading.mjs'
 
@@ -375,7 +377,11 @@ function isAllowedRawHref(href) {
 // page's repoRootHref here right before parsing — safe because generation
 // is single-threaded and synchronous (no md() call is ever in flight while
 // another starts).
-let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF }
+let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF, disc: null }
+// T-886: the discipline documents' name index (discipline-links.mjs), built once per
+// page from the collected documents; a body links names only when its md() call asks
+// (ticket · wiki · PRD bodies — the three the acceptance names).
+let pageDisciplineIndex = null
 // T-746: where the page being rendered will live on disk — every containment
 // check below judges an href against THIS location (the installed `prdt`
 // writes a project's viewer under its own `.prdt/scratch/viewer/`, not next
@@ -383,8 +389,28 @@ let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF }
 // synchronous-generation reasoning as `linkContext` above.
 let pageViewerAbsPath = DEFAULT_VIEWER_ABS_PATH
 
+// T-886: discipline names in running text and in a code span that is just one name
+// become links (discipline-links.mjs). Never inside another link's text (no anchor
+// inside an anchor — `link` below switches it off while it renders its own text)
+// and never in a fenced block, whose renderer this does not touch.
+const defaultTextRender = Renderer.prototype.text
+hardenedRenderer.text = function (token) {
+  if (linkContext.disc && !('tokens' in token && token.tokens) && !token.escaped) {
+    const linked = linkDisciplineText(token.text, linkContext.disc, (seg) => defaultTextRender.call(this, { type: 'text', raw: seg, text: seg, escaped: false }))
+    if (linked !== null) return linked
+  }
+  return defaultTextRender.call(this, token)
+}
+hardenedRenderer.codespan = function ({ text }) {
+  const linked = linkContext.disc ? linkDisciplineCode(text, linkContext.disc) : null
+  return linked ?? `<code>${escapeHtml(text)}</code>`
+}
+
 hardenedRenderer.link = function ({ href, title, tokens }) {
+  const outerDisc = linkContext.disc
+  linkContext.disc = null
   const text = this.parser.parseInline(tokens)
+  linkContext.disc = outerDisc
   const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath)
   if (rewritten !== null) {
     const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
@@ -429,9 +455,10 @@ hardenedRenderer.image = function ({ href, title, text, tokens }) {
  *   `text` contains is resolved against this, never against viewer.html's own.
  * @param {string} [repoRootHref] path from the generated page's own directory
  *   back to the repo root (see `renderPage`).
+ * @param {{discipline?: boolean}} [opts] `discipline`: link the names of discipline documents (T-886).
  */
-function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF) {
-  linkContext = { sourceDirRel, repoRootHref }
+function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF, { discipline = false } = {}) {
+  linkContext = { sourceDirRel, repoRootHref, disc: discipline ? pageDisciplineIndex : null }
   return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
 }
 
@@ -476,7 +503,7 @@ function fmtBytes(n) {
 // 621-627) — doctrine #2, don't re-draw what is already signed off.
 // T-880 = A: 현재 버전(home) · PRD · 티켓 · 위키 · 기능 · 아티팩트 · 용어 사전 ·
 // 릴리즈 노트 · 규율 — the discipline store (T-886) lands last, after 'release'.
-const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release']
+const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release', 'disc']
 const STORE_ICON_PATHS = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
   prd: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/>',
@@ -486,6 +513,8 @@ const STORE_ICON_PATHS = {
   // T-883: copied from the approved mockup (define-screen-set.html 「용어 사전」 · 「릴리즈 노트」 activity buttons).
   glossary: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m8 13 4-7 4 7"/><path d="M9.1 11h5.7"/>',
   release: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
+  // T-886: copied from the approved screen set (define-screen-set.html 「규율」 activity button).
+  disc: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
   artifact:
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
 }
@@ -732,7 +761,7 @@ function ticketDetailEntries(tickets, repoRootHref) {
       assignee: fm.assignee || '',
       created: fm.created || '',
       path: t.rel,
-      body: md(t.body, path.dirname(t.rel), repoRootHref),
+      body: md(t.body, path.dirname(t.rel), repoRootHref, { discipline: true }),
     }
   }
   for (const bucket of tickets.omitted) {
@@ -770,8 +799,9 @@ export const PAST_TICKET_GLOBAL = '__PRDT_VIEWER_DATA__'
  * loader takes a src from that map only.
  * @returns {Array<{ bucket: string, name: string, tickets: Record<string,{path:string,body:string}>, bodies: string[] }>}
  */
-export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer' } = {}) {
+export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [] } = {}) {
   pageViewerAbsPath = viewerAbsPath
+  pageDisciplineIndex = buildDisciplineIndex(discipline)
   const files = []
   for (const bucket of tickets.omitted) {
     if (!bucket.bodies || !PAST_BUCKET_RE.test(bucket.bucket)) continue
@@ -781,7 +811,7 @@ export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_
       const raw = Object.prototype.hasOwnProperty.call(bucket.bodies, t.rel) ? bucket.bodies[t.rel] : undefined
       if (typeof raw !== 'string') continue
       const id = t.frontmatter.id || t.rel
-      const body = md(raw, path.dirname(t.rel), repoRootHref)
+      const body = md(raw, path.dirname(t.rel), repoRootHref, { discipline: true })
       rows[id] = { path: t.rel, body }
       bodies.push(body)
     }
@@ -966,7 +996,7 @@ function wikiDetailEntries(pages, repoRootHref) {
       status: fm.status || '',
       version: fm.version || '',
       path: p.rel,
-      body: md(p.body, path.dirname(p.rel), repoRootHref),
+      body: md(p.body, path.dirname(p.rel), repoRootHref, { discipline: true }),
     }
   }
   return entries
@@ -1095,6 +1125,68 @@ function releaseDetailEntries(releases, repoRootHref) {
 
 function releaseSection(releases) {
   return storeSection('release', { innerHtml: releaseStoreInner(releases) })
+}
+
+// ---------- discipline store (T-886: T-832 / T-877) ----------
+// Source: data.discipline — the discipline documents applied on this machine
+// (collect.mjs `collectDiscipline`: which files, containment, the repository-
+// original comparison). Table 문서 · 구분 · 줄, sidebar groups 전체 · 계약 ·
+// po · designer · developer · qa; a row opens the document as numbered source
+// lines in the detail panel (built by the page script from DETAIL_DATA.disc —
+// the lines travel once as data, never twice as markup). A link in a ticket /
+// wiki / PRD body (discipline-links.mjs) opens the same panel at its line.
+function discGroupLabel(key) {
+  return key === 'contracts' ? DISCIPLINE.contractsGroup : key
+}
+
+function discKindChip(doc) {
+  return `<span class="kp kp-component">${escapeHtml(DISCIPLINE.kind[doc.kind] ?? doc.kind)}</span>`
+}
+
+function discRowsTable(docs) {
+  const rows = docs.map((d) =>
+    `<tr class="detail-row" data-detail-kind="disc" data-detail-id="${escapeHtml(d.rel)}" tabindex="0">` +
+    `<td><span class="nm">${escapeHtml(d.name)}</span><span class="nm-key">${escapeHtml(d.rel)}</span></td>` +
+    `<td>${discKindChip(d)}</td><td class="num-col">${d.lines.length}</td></tr>\n`).join('')
+  const head = `<tr>${DISCIPLINE.tableHeaders.map((h, i) => `<th${i === 2 ? ' class="num-col"' : ''}>${escapeHtml(h)}</th>`).join('')}</tr>`
+  return `<div class="table-wrap"><table class="t-disc"><thead>${head}</thead><tbody>\n${rows}</tbody></table></div>\n`
+}
+
+function discStoreInner(docs) {
+  if (docs.length === 0) {
+    const bodyHtml = `<p class="empty-note"><span>${escapeHtml(DISCIPLINE.emptyLine1)}</span><br><span>${escapeHtml(DISCIPLINE.emptyLine2)}</span></p>`
+    const groups = [{ key: 'all', label: DISCIPLINE.allLabel, count: 0, bodyHtml }]
+    return groupedStore({ sidebarSubLabel: DISCIPLINE.sidebarLabel, crumbLabel: DISCIPLINE.sidebarLabel, groups, noGroupUnit: DISCIPLINE.countUnit })
+  }
+  const pane = (list) =>
+    `<div class="count-line section-meta"><span class="count-badge">${escapeHtml(DISCIPLINE.countLabel)} <b>${list.length}</b>${escapeHtml(DISCIPLINE.countUnit)}</span></div>\n${discRowsTable(list)}`
+  const groups = [{ key: 'all', label: DISCIPLINE.allLabel, count: docs.length, bodyHtml: pane(docs) }]
+  const keys = []
+  for (const d of docs) if (!keys.includes(d.group)) keys.push(d.group)
+  for (const key of keys) {
+    const list = docs.filter((d) => d.group === key)
+    groups.push({ key, label: discGroupLabel(key), count: list.length, bodyHtml: pane(list) })
+  }
+  return groupedStore({ sidebarSubLabel: DISCIPLINE.sidebarLabel, crumbLabel: DISCIPLINE.sidebarLabel, groups, noGroupUnit: DISCIPLINE.countUnit })
+}
+
+function discDetailEntries(docs) {
+  const entries = {}
+  for (const d of docs) {
+    entries[d.rel] = {
+      title: d.name + (d.kind === 'habit' || d.kind === 'index' ? ` · ${discGroupLabel(d.group)}` : ''),
+      name: d.name,
+      group: d.group,
+      kind: DISCIPLINE.kind[d.kind] ?? d.kind,
+      differs: d.differs,
+      lines: d.lines,
+    }
+  }
+  return entries
+}
+
+function discSection(docs) {
+  return storeSection('disc', { innerHtml: discStoreInner(docs) })
 }
 
 // ---------- feature store (T-882: the T-808 feature screen) ----------
@@ -1345,13 +1437,13 @@ function prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix }) {
   // T-884: the open PRD is the reading screen (outline · folds · 「결정할 것」 box · What cards).
   // `idPrefix` keeps ids unique when the same body sits in two panes (PRD store and home).
   const sourceDir = 'docs/prd'
-  const inlineMd = (t) => md(t, sourceDir, repoRootHref).replace(/^<p>/, '').replace(/<\/p>\s*$/, '')
+  const inlineMd = (t) => md(t, sourceDir, repoRootHref, { discipline: true }).replace(/^<p>/, '').replace(/<\/p>\s*$/, '')
   return renderPrdReading({
     body: prd.current.body,
     currentVersion,
     decisionTickets: openDecisionTickets(tickets),
     idPrefix,
-    deps: { md: (t) => md(t, sourceDir, repoRootHref), inline: inlineMd, esc: escapeHtml, sameVersion, ticketPill: ticketRolePill },
+    deps: { md: (t) => md(t, sourceDir, repoRootHref, { discipline: true }), inline: inlineMd, esc: escapeHtml, sameVersion, ticketPill: ticketRolePill },
   })
 }
 
@@ -1376,7 +1468,7 @@ function prdStoreInner(prd, currentVersion, repoRootHref, tickets) {
     { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix: 'prd' }) },
     ...closedRounds.map((c) => {
       const id = c.name.replace(/\.md$/, '')
-      return { key: id, label: id, bodyHtml: `<div class="v-body">${md(c.body, path.dirname(c.rel), repoRootHref)}</div>` }
+      return { key: id, label: id, bodyHtml: `<div class="v-body">${md(c.body, path.dirname(c.rel), repoRootHref, { discipline: true })}</div>` }
     }),
   ]
   return groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups })
@@ -2249,6 +2341,38 @@ details.v-fold[open] summary { color: var(--text-primary); }
 :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill:first-child, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note + h3.pill { margin-top: var(--space-16); }
 :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note { font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 var(--space-4); }
 @media (prefers-reduced-motion: reduce) { :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row td { transition: none; } }
+/* T-886: discipline screens (approved screen set docs/artifacts/v1.12/define-screen-set.html 「규율」) */
+a.dl { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+a.dl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.store-section[data-store="disc"] table { table-layout: fixed; }
+.store-section[data-store="disc"] table.t-disc th:nth-child(1) { width: 220px; }
+.store-section[data-store="disc"] table.t-disc th:nth-child(2) { width: 110px; }
+.store-section[data-store="disc"] table.t-disc th:nth-child(3) { width: 70px; }
+.store-section[data-store="disc"] th.num-col { text-align: right; }
+.store-section[data-store="disc"] td.num-col { text-align: right; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
+.store-section[data-store="disc"] .nm { font-weight: 600; display: block; }
+.store-section[data-store="disc"] .nm-key { display: block; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-quaternary); }
+.store-section[data-store="disc"] .detail-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.store-section[data-store="disc"] .detail-row.is-open td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.store-section[data-store="disc"] .detail-row td { transition: background 900ms ease; }
+@media (prefers-reduced-motion: reduce) { .store-section[data-store="disc"] .detail-row td, .store-section[data-store="disc"] .detail-panel { transition: none; } }
+.store-section[data-store="disc"] .count-line { display: flex; align-items: baseline; gap: var(--space-12); }
+.store-section[data-store="disc"] .back { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; color: var(--accent); background: none; border: none; padding: 0; margin: 0 0 var(--space-12); cursor: pointer; }
+.store-section[data-store="disc"] .back:hover { text-decoration: underline; }
+.store-section[data-store="disc"] .back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.store-section[data-store="disc"] .path-line { font-family: var(--font-mono); font-size: 11px; color: var(--text-quaternary); margin: 0 0 var(--space-12); word-break: break-all; }
+.store-section[data-store="disc"] table.src { table-layout: fixed; font-size: 12px; }
+.store-section[data-store="disc"] table.src td { padding: 1px 0; border-bottom: none; vertical-align: top; }
+.store-section[data-store="disc"] table.src tbody tr:hover td { background: transparent; }
+.store-section[data-store="disc"] table.src td.ln { width: 46px; text-align: right; padding-right: 12px; font-family: var(--font-mono); font-size: 11px; color: var(--text-quaternary); user-select: none; }
+.store-section[data-store="disc"] table.src td.lt { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; padding-right: var(--space-8); }
+.store-section[data-store="disc"] table.src tr.is-target td { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.store-section[data-store="disc"] table.src tr.is-target td.ln { color: var(--text-primary); font-weight: 700; }
+.store-section[data-store="disc"] table.src tr.is-target td.lt { color: var(--text-primary); }
+.store-section[data-store="disc"] .src-wrap { border: 1px solid var(--border-item); border-radius: var(--radius-8); padding: var(--space-8) var(--space-4); background: var(--bg-surface-base); }
+.store-section[data-store="disc"] .empty-note { margin: var(--space-48) 0; text-align: center; color: var(--text-tertiary); font-size: 13px; }
+.store-section[data-store="disc"] .empty-note span { font-size: 11px; }
+.store-section[data-store="disc"] .sidebar .nav-item:not(.nav-item-clickable) { cursor: default; }
 ${PRD_READING_CSS}
 `
 
@@ -2284,8 +2408,11 @@ const INTERACTION_SCRIPT = `
   var HASH_NOTICE = ${JSON.stringify(HASH_NOTICE)};
   var THEME_TOGGLE = ${JSON.stringify(THEME_TOGGLE)};
   var THEME_KEY = ${JSON.stringify(THEME_STORAGE_PREFIX)} + location.pathname;
-  var URL_KEYS = ['view', 'group', 'kind', 'id'];
+  var URL_KEYS = ['view', 'group', 'kind', 'id', 'line'];
   var FEATURE_BACK = ${JSON.stringify(FEATURE.back)};
+  var STORE_LABEL = ${JSON.stringify(STORE_LABEL)};
+  var DISC = ${JSON.stringify(DISCIPLINE)};
+  var INFO_ICON = ${JSON.stringify(INFO_ICON_SVG)};
 
   // T-885 (T-876 = D): past-version ticket bodies live in sibling data files.
   // A src comes ONLY from the generator-written map; a bucket the map does not
@@ -2346,8 +2473,85 @@ ${PRD_READING_SCRIPT}
   function closeDetailPanel(section) {
     if (!section) return;
     var panel = section.querySelector('.detail-panel');
-    if (panel) { panel.classList.remove('active'); panel.removeAttribute('data-open-kind'); panel.removeAttribute('data-open-id'); }
+    if (panel) { panel.classList.remove('active'); panel.removeAttribute('data-open-kind'); panel.removeAttribute('data-open-id'); panel.removeAttribute('data-open-line'); }
     section.querySelectorAll('.detail-row.is-open, [data-detail-kind].is-open').forEach(function (r) { r.classList.remove('is-open'); });
+    if (section.getAttribute('data-store') === 'disc') discOrigin = null;
+  }
+
+  // T-886: the discipline document panel — numbered source lines, the linked line
+  // highlighted, 「돌아가기」 to where the link was clicked, one-line notices.
+  var discOrigin = null;
+  function escHtml(v) { return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function fillN(t, n) { return t.replace('{N}', String(n)); }
+  function discField(label, value) {
+    return '<div class="detail-field"><span class="detail-field-label">' + escHtml(label) + '</span><span class="detail-field-value">' + escHtml(value) + '</span></div>';
+  }
+  function discNotice(text) {
+    return '<div class="notice"><span class="notice-icon">' + INFO_ICON + '</span><div class="notice-body">' + escHtml(text) + '</div></div>';
+  }
+  function discHtml(rel, d, line) {
+    var over = !!line && line > d.lines.length;
+    var target = line && !over ? line : null;
+    var back = discOrigin ? '<button type="button" class="back" data-disc-back>' + escHtml(FEATURE_BACK + discOrigin.label) + '</button>' : '';
+    var meta = '<div class="detail-meta">' + discField(DISC.fields.kind, d.kind) + discField(DISC.fields.copy, DISC.copyValue) +
+      discField(DISC.fields.lines, fillN(DISC.linesValue, d.lines.length)) + '</div>';
+    var pathLine = '<p class="path-line">' + escHtml(DISC.copyPathPrefix + rel) + '</p>';
+    var notes = (d.differs > 0 ? discNotice(fillN(DISC.differs, d.differs)) : '') + (over ? discNotice(fillN(DISC.overLine, d.lines.length)) : '');
+    var rows = d.lines.map(function (t, i) {
+      return '<tr data-ln="' + (i + 1) + '"' + (target === i + 1 ? ' class="is-target"' : '') + '><td class="ln">' + (i + 1) + '</td><td class="lt">' + escHtml(t) + '</td></tr>';
+    }).join('');
+    return back + meta + pathLine + notes + '<div class="src-wrap"><table class="src"><tbody>' + rows + '</tbody></table></div>';
+  }
+  function discOriginLabel(a, from) {
+    var panel = a.closest('.detail-panel');
+    if (panel && panel.getAttribute('data-open-id')) return panel.getAttribute('data-open-id').replace(/[.]md$/, '');
+    var active = from.querySelector('.nav-item-clickable.active span');
+    var store = STORE_LABEL[from.getAttribute('data-store')] || '';
+    return active && active.textContent ? store + ' · ' + active.textContent : store;
+  }
+  function discGo(a) {
+    var rel = a.getAttribute('data-doc');
+    var d = own(DETAIL_DATA.disc, rel) ? DETAIL_DATA.disc[rel] : null;
+    var target = document.querySelector('.store-section[data-store="disc"]');
+    var from = a.closest('.store-section');
+    if (!d || !target || !from) return;
+    var line = parseInt(a.getAttribute('data-line') || '', 10);
+    if (!(line > 0)) line = null;
+    var fromPanel = a.closest('.detail-panel');
+    var fromPane = from.querySelector('.view-pane.active');
+    var fromBody = from.querySelector('.frame-body');
+    var origin = {
+      store: from.getAttribute('data-store'),
+      group: fromPane ? fromPane.getAttribute('data-group') : null,
+      kind: fromPanel ? fromPanel.getAttribute('data-open-kind') : null,
+      id: fromPanel ? fromPanel.getAttribute('data-open-id') : null,
+      label: discOriginLabel(a, from),
+      main: fromBody ? fromBody.scrollTop : 0,
+      detail: fromPanel ? fromPanel.querySelector('.detail-panel-body').scrollTop : 0
+    };
+    selectStore('disc');
+    var pane = target.querySelector('.view-pane.active');
+    var group = pane ? pane.getAttribute('data-group') : 'all';
+    if (group !== 'all' && group !== d.group) selectGroup(target, d.group);
+    clearHashMarks();
+    discOrigin = origin;
+    openDetailPanel(target, 'disc', rel, false, line);
+    var row = findByAttr('.view-pane.active [data-detail-kind="disc"]', 'data-detail-id', rel, target);
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center' });
+  }
+  function discBack() {
+    var o = discOrigin;
+    if (!o) return;
+    closeDetailPanel(document.querySelector('.store-section[data-store="disc"]'));
+    var sec = selectStore(o.store);
+    if (!sec) return;
+    var cur = sec.querySelector('.view-pane.active');
+    if (o.group && findByAttr('.view-pane', 'data-group', o.group, sec) && (!cur || cur.getAttribute('data-group') !== o.group)) selectGroup(sec, o.group);
+    if (o.kind && o.id) openDetailPanel(sec, o.kind, o.id, true);
+    var body = sec.querySelector('.frame-body');
+    if (body) body.scrollTop = o.main;
+    var pb = sec.querySelector('.detail-panel.active .detail-panel-body');
+    if (pb && o.kind) pb.scrollTop = o.detail;
   }
 
   // T-882: feature screen moves — follow a 「함께 쓰는 기능」 link, go back, pick the area.
@@ -2395,7 +2599,7 @@ ${PRD_READING_SCRIPT}
     return false;
   }
 
-  function openDetailPanel(section, kind, id, keepTrail) {
+  function openDetailPanel(section, kind, id, keepTrail, line) {
     if (!section) return;
     var bucket = DETAIL_DATA[kind];
     var fields = bucket && bucket[id];
@@ -2445,6 +2649,7 @@ ${PRD_READING_SCRIPT}
       var prev = featureTrail.length > 1 ? bucket[featureTrail[featureTrail.length - 2]] : null;
       if (prev) bodyHtml = '<button type="button" class="back" data-feature-back>' + FEATURE_BACK + String(prev.name).replace(/</g, '&lt;') + '</button>' + bodyHtml;
     }
+    if (kind === 'disc') bodyHtml = discHtml(id, fields, line);
     panel.querySelector('.detail-panel-body').innerHTML = bodyHtml;
     panel.querySelector('.detail-panel-body').scrollTop = 0;
     section.querySelectorAll('.detail-row.is-open, [data-detail-kind].is-open').forEach(function (r) { r.classList.remove('is-open'); });
@@ -2453,7 +2658,13 @@ ${PRD_READING_SCRIPT}
     });
     panel.setAttribute('data-open-kind', kind);
     panel.setAttribute('data-open-id', id);
+    if (kind === 'disc' && line) panel.setAttribute('data-open-line', String(line)); else panel.removeAttribute('data-open-line');
     panel.classList.add('active');
+    if (kind === 'disc' && line) {
+      var hit = panel.querySelector('tr.is-target');
+      var pbody = panel.querySelector('.detail-panel-body');
+      if (hit && pbody) pbody.scrollTop = Math.max(0, hit.getBoundingClientRect().top - pbody.getBoundingClientRect().top - 140);
+    }
     if (typeof applyScroll === 'function') applyScroll(false);
   }
 
@@ -2522,14 +2733,14 @@ ${PRD_READING_SCRIPT}
     if (a.k) focusItem(section, a.k, a.i);
   }
 
-  function focusItem(section, kind, id) {
+  function focusItem(section, kind, id, line) {
     section.querySelectorAll('.view-pane.active [data-detail-kind]').forEach(function (r) {
       if (r.getAttribute('data-detail-kind') === kind && r.getAttribute('data-detail-id') === id) {
         r.classList.add('hash-target');
         if (r.scrollIntoView) r.scrollIntoView({ block: 'center' });
       }
     });
-    openDetailPanel(section, kind, id);
+    openDetailPanel(section, kind, id, false, line);
   }
 
   // T-797 개정: the URL carries the screen as ?view=<store>&group=<sidebar
@@ -2548,7 +2759,7 @@ ${PRD_READING_SCRIPT}
     var pane = section.querySelector('.view-pane.active');
     if (pane && pane.getAttribute('data-group')) st.group = pane.getAttribute('data-group');
     var panel = section.querySelector('.detail-panel.active');
-    if (panel && panel.getAttribute('data-open-kind')) { st.kind = panel.getAttribute('data-open-kind'); st.id = panel.getAttribute('data-open-id'); }
+    if (panel && panel.getAttribute('data-open-kind')) { st.kind = panel.getAttribute('data-open-kind'); st.id = panel.getAttribute('data-open-id'); if (panel.getAttribute('data-open-line')) st.line = panel.getAttribute('data-open-line'); }
     return st;
   }
 
@@ -2576,7 +2787,9 @@ ${PRD_READING_SCRIPT}
     var id = p.get('id');
     if (kind && id) {
       var bucket = Object.prototype.hasOwnProperty.call(DETAIL_DATA, kind) ? DETAIL_DATA[kind] : null;
-      if (bucket && Object.prototype.hasOwnProperty.call(bucket, id)) focusItem(section, kind, id);
+      var rawLine = p.get('line');
+      var line = rawLine && /^[0-9]{1,7}$/.test(rawLine) ? parseInt(rawLine, 10) : null;
+      if (bucket && Object.prototype.hasOwnProperty.call(bucket, id)) focusItem(section, kind, id, line);
       else showHashNotice(id);
     }
     return true;
@@ -2610,6 +2823,11 @@ ${PRD_READING_SCRIPT}
     if (stalePanel && !stalePanel.contains(ev.target)) {
       closeDetailPanel(stalePanel.closest('.store-section'));
     }
+
+    // T-886: a discipline-document link opens the 「규율」 panel; its 「돌아가기」 returns.
+    var discLink = ev.target.closest('a.dl[data-doc]');
+    if (discLink) { ev.preventDefault(); discGo(discLink); clearHashMarks(); return; }
+    if (ev.target.closest('[data-disc-back]')) { ev.preventDefault(); discBack(); return; }
 
     // T-666 slice 1a defect fix: '.store-section' ALSO carries 'data-store'
     // (it's what this branch toggles), so a bare '[data-store]' closest()
@@ -2657,6 +2875,7 @@ ${PRD_READING_SCRIPT}
     var detailRow = ev.target.closest('[data-detail-kind]');
     if (detailRow) {
       ev.preventDefault();
+      if (detailRow.getAttribute('data-detail-kind') === 'disc') discOrigin = null;
       openDetailPanel(detailRow.closest('.store-section'), detailRow.getAttribute('data-detail-kind'), detailRow.getAttribute('data-detail-id'));
       return;
     }
@@ -2670,6 +2889,7 @@ ${PRD_READING_SCRIPT}
   document.addEventListener('keydown', function (ev) {
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('tr.detail-row[data-detail-kind], [role="button"][data-detail-kind]')) {
       ev.preventDefault();
+      if (ev.target.getAttribute('data-detail-kind') === 'disc') discOrigin = null;
       openDetailPanel(ev.target.closest('.store-section'), ev.target.getAttribute('data-detail-kind'), ev.target.getAttribute('data-detail-id'));
       syncUrl(false);
       return;
@@ -2834,6 +3054,8 @@ export function renderPage({
   build = null,
 }) {
   pageViewerAbsPath = viewerAbsPath
+  const discipline = data.discipline || []
+  pageDisciplineIndex = buildDisciplineIndex(discipline)
   const anchors = buildAnchors(data)
   const detailData = {
     ticket: ticketDetailEntries(data.tickets, repoRootHref),
@@ -2841,6 +3063,7 @@ export function renderPage({
     feature: featureDetailEntries(data, anchors, repoRootHref),
     glossary: glossaryDetailEntries(data.wiki, repoRootHref),
     release: releaseDetailEntries(data.releases || [], repoRootHref),
+    disc: discDetailEntries(discipline),
     artifact: artifactDetailEntries(data.artifacts, artifactsBaseHref, repoRootHref),
     // No "prd" bucket (T-709 결정 2): a closed PRD round is no longer a
     // detail-row — its body renders directly in its own sidebar group's pane
@@ -2879,6 +3102,7 @@ ${featuresSection(data)}
 ${artifactsSection(data.artifacts, data.currentVersion)}
 ${glossarySection(data.wiki)}
 ${releaseSection(data.releases || [])}
+${discSection(discipline)}
 </div>
 ${detailDataScript(detailData)}
 <script>${INTERACTION_SCRIPT}</script>

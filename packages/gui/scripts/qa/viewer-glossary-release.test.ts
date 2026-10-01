@@ -81,11 +81,11 @@ function section(html: string, store: string): string {
 }
 
 describe('activity bar (T-880 = A)', () => {
-  it('lists the stores in the decided order with 용어 사전 and 릴리즈 노트 after 아티팩트', () => {
+  it('lists the stores in the decided order with 용어 사전 and 릴리즈 노트 after 아티팩트 and 규율 last', () => {
     const html = render(data())
     const nav = html.slice(html.indexOf('<nav class="activity">'), html.indexOf('</nav>'))
     const keys = [...nav.matchAll(/data-store="([^"]+)" title="([^"]+)"/g)].map((m) => m[1])
-    expect(keys).toEqual(['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release'])
+    expect(keys).toEqual(['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release', 'disc'])
     expect(nav).toContain('title="용어 사전" aria-label="용어 사전"')
     expect(nav).toContain('title="릴리즈 노트" aria-label="릴리즈 노트"')
   })
