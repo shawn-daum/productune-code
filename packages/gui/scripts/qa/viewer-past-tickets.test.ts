@@ -124,6 +124,25 @@ describe('generate.mjs + cli.mjs — sibling files on disk', () => {
   })
 })
 
+describe('render.mjs — ticket detail status shows the approved words (T-888)', () => {
+  it('current and past-version tickets carry 진행 중 / 완료 / 중단, never the raw value', () => {
+    const fm = (id: string, status: string) => ({ bucket: 'v2.0', rel: `docs/tickets/x/${id}.md`, frontmatter: { id, slug: id, type: 'impl', status }, body: 'b' })
+    const data: any = {
+      currentVersion: 'v2.0', stage: 'build',
+      tickets: {
+        included: [fm('T-1', 'open'), fm('T-2', 'done'), fm('T-3', 'dropped')],
+        omitted: [{ bucket: 'v1.0', count: 2, bytes: 1, tickets: [fm('T-4', 'done'), fm('T-5', 'open')].map(({ body, ...r }) => r) }],
+      },
+      wiki: [], features: [], artifacts: { entries: [] },
+      prd: { current: { rel: 'docs/prd/PRD.md', frontmatter: {}, body: '' }, closed: [], openItems: [] },
+    }
+    const html = renderPage({ data, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '', pastTicketSrc: {} })
+    const blob = JSON.parse(/<script id="detail-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)![1])
+    const got = Object.fromEntries(['T-1', 'T-2', 'T-3', 'T-4', 'T-5'].map((i) => [i, blob.ticket[i].status]))
+    expect(got).toEqual({ 'T-1': '진행 중', 'T-2': '완료', 'T-3': '중단', 'T-4': '완료', 'T-5': '진행 중' })
+  })
+})
+
 describe('render.mjs — loader state is safe for bucket names that collide with Object.prototype members', () => {
   it.each(['constructor', 'hasOwnProperty', 'toString', '__proto__'])('opening a ticket in bucket "%s" loads without throwing', (bucket) => {
     const data: any = {

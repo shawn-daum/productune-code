@@ -246,7 +246,7 @@ export function renderPrdReading({ body, currentVersion, decisionTickets, idPref
       summary =
         `<span class="pr-mark mono">${marks}</span><span class="pr-key mono">${esc(key)}</span>` +
         `<span class="pr-t">${inline(rest.join(' — '))}</span>` +
-        (row?.tickets ? `<span class="pr-tk mono">${esc(row.tickets)}</span>` : '') +
+        (row?.tickets ? `<span class="pr-tk mono">${esc(row.tickets).split(' · ').map((i) => `<span class="pr-id">${i}</span>`).join(' · ')}</span>` : '') +
         meta +
         (row?.one ? `<span class="pr-one">${esc(row.one)}</span>` : '')
       inner = bodyHtml(md(node.ownText))
@@ -400,7 +400,7 @@ export const PRD_READING_CSS = `
 .pr-sec > summary:hover { background: var(--bg-state-hover); }
 .pr-sec > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .pr-mark { font-size: 11px; color: var(--text-tertiary); flex: 0 0 auto; }
-.pr-t { flex: 1; min-width: 0; color: var(--text-primary); overflow-wrap: anywhere; }
+.pr-t { flex: 1; min-width: 0; color: var(--text-primary); overflow-wrap: anywhere; word-break: keep-all; }
 .pr-meta { font-size: 10.5px; color: var(--text-tertiary); flex: 0 0 auto; }
 .pr-body { padding: var(--space-4) 0 var(--space-8) var(--space-20); font-size: 13.5px; }
 .pr-body > :first-child { margin-top: 0; }
@@ -425,7 +425,8 @@ export const PRD_READING_CSS = `
 .pr-card[open] { border-color: var(--border-hover); box-shadow: var(--shadow-low); }
 .pr-card > summary { flex-wrap: wrap; padding: var(--space-10) var(--space-12); }
 .pr-key { font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: var(--radius-100); background: var(--accent-subtle); color: var(--text-primary); flex: 0 1 auto; min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pr-tk { font-size: 10.5px; color: var(--text-secondary); border: 1px solid var(--border-inline); border-radius: var(--radius-100); padding: 0 7px; flex: 0 1 auto; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.pr-tk { font-size: 10.5px; color: var(--text-secondary); border: 1px solid var(--border-inline); border-radius: var(--radius-12); padding: 2px 9px; line-height: 1.5; flex: 0 1 auto; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: normal; }
+.pr-tk .pr-id { white-space: nowrap; }
 .pr-one { flex-basis: 100%; font-size: 12px; color: var(--text-secondary); padding-left: calc(34px + var(--space-8) + 9px); line-height: 1.5; }
 .pr-card > .pr-body { padding: var(--space-8) var(--space-16) var(--space-12) var(--space-16); border-top: 1px solid var(--border-item); margin-left: 0; }
 .pr-card.is-target, .pr-sec.is-target > summary { background: color-mix(in srgb, var(--accent) 12%, transparent); }
