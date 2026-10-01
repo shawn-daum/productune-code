@@ -51,6 +51,8 @@ export interface MetaAutosaveTickResult {
   transitions: TicketTransition[]
   /** Present when not committed. */
   skipReason?: MetaCommitSkipReason
+  /** commitMeta's detail on a failed beat (the refusal text on `meta-untrusted`). */
+  detail?: string
 }
 
 /** List every ticket markdown file: docs/tickets/<version-dir>/*.md. */
@@ -132,5 +134,5 @@ export async function metaAutosaveTick(projectDir: string): Promise<MetaAutosave
     return { committed: true, sha: res.sha, message, transitions }
   }
   if (res.skipReason === 'diff-empty') persist()
-  return { committed: false, transitions, skipReason: res.skipReason }
+  return { committed: false, transitions, skipReason: res.skipReason, ...(res.detail ? { detail: res.detail } : {}) }
 }

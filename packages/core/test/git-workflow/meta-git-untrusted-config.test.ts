@@ -12,7 +12,7 @@
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { execFileSync } from 'child_process'
+import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import {
   metaGit,
@@ -248,6 +248,178 @@ describe('trust check edges', () => {
       expect(py().problem).toMatch(/commondir/)
     } finally {
       fs.rmSync(elsewhere, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── T-848 fix1: config-less carried repos, gitfile meta.git, refusal on every surface ──
+
+const CORE = path.resolve(__dirname, '..', '..')
+const BRIDGE = path.join(CORE, 'dist', 'bin', 'meta-cli.cjs')
+
+/** QA's repro: a meta.git with NO config whose commondir names a sibling repo that plants a filter + diff.external. */
+function plantCommondirNoConfig(gd: string): void {
+  const ev = path.join(W, '.prdt', 'evil.git')
+  git(['init', '-q', '--bare', ev])
+  git(['--git-dir', ev, 'config', 'filter.cd.clean', prog('commondir-filter', 'cat')])
+  git(['--git-dir', ev, 'config', 'diff.external', prog('commondir-diffext')])
+  git(['--git-dir', ev, 'config', 'core.bare', 'false'])
+  git(['--git-dir', ev, 'config', 'user.name', 'x'])
+  git(['--git-dir', ev, 'config', 'user.email', 'x@x'])
+  fs.mkdirSync(path.join(ev, 'info'), { recursive: true })
+  fs.writeFileSync(path.join(ev, 'info', 'attributes'), '*.md filter=cd\n')
+  for (const n of ['objects', 'refs']) {
+    fs.rmSync(path.join(ev, n), { recursive: true, force: true })
+    fs.renameSync(path.join(gd, n), path.join(ev, n))
+    fs.mkdirSync(path.join(gd, n))
+  }
+  fs.rmSync(path.join(gd, 'config'))
+  fs.writeFileSync(path.join(gd, 'commondir'), '../evil.git\n')
+}
+
+function plantGitfile(gd: string): void {
+  const real = path.join(W, '.prdt', 'real.git')
+  fs.renameSync(gd, real)
+  git(['--git-dir', real, 'config', 'core.fsmonitor', prog('gitfile-fsmon')])
+  git(['--git-dir', real, 'config', 'filter.gf.clean', prog('gitfile-filter', 'cat')])
+  fs.mkdirSync(path.join(real, 'info'), { recursive: true })
+  fs.writeFileSync(path.join(real, 'info', 'attributes'), '*.md filter=gf\n')
+  fs.writeFileSync(gd, `gitdir: ${real}\n`)
+}
+
+function plantNoConfigHook(gd: string): void {
+  fs.rmSync(path.join(gd, 'config'))
+  plantHook(gd)
+}
+
+const SHAPES: Array<{ name: string; plant: (gd: string) => void; says: RegExp }> = [
+  { name: 'config-less meta.git with commondir (QA repro)', plant: plantCommondirNoConfig, says: /commondir exists/ },
+  { name: 'config-less meta.git with HEAD + hook', plant: plantNoConfigHook, says: /has HEAD but no config/ },
+  { name: 'gitfile meta.git', plant: plantGitfile, says: /is a file pointing elsewhere \(gitdir: / },
+]
+
+describe.each(SHAPES)('T-848 fix1 — $name', ({ plant, says }) => {
+  let HOME: string
+  let env: NodeJS.ProcessEnv
+  const cli = (args: string[]) => {
+    const r = spawnSync('python3', [PRDT_CLI, ...args], { cwd: W, env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] })
+    return { rc: r.status, out: `${r.stdout}${r.stderr}` }
+  }
+  const bridge = (cmd: string): any => {
+    let o: string
+    try {
+      o = execFileSync('node', [BRIDGE, cmd, W], { cwd: W, env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] })
+    } catch (e: any) {
+      o = e.stdout
+    }
+    return JSON.parse(o)
+  }
+
+  beforeEach(() => {
+    HOME = W + '-home'
+    fs.mkdirSync(path.join(HOME, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(HOME, '.prdt', 'prdt.env'), `PRDT_REPO=${CORE}\n`)
+    env = { ...process.env, HOME, PRDT_HOME: path.join(HOME, '.prdt'), PRDT_META_BACKUP: '0', GIT_CONFIG_NOSYSTEM: '1' }
+    for (const k of Object.keys(env)) if (k.startsWith('GIT_') && k !== 'GIT_CONFIG_NOSYSTEM') delete env[k]
+    execFileSync('git', ['init', '-q'], { cwd: W, env })
+    cli(['init', '--yes', '--slug', 't848'])
+    const gd = path.join(W, '.prdt', 'meta.git')
+    // a backup remote + a commit so push would otherwise proceed
+    const remote = W + '-remote.git'
+    git(['init', '-q', '--bare', remote])
+    git(['--git-dir', gd, 'remote', 'add', 'backup', remote])
+    fs.mkdirSync(path.join(W, 'docs'), { recursive: true })
+    fs.writeFileSync(path.join(W, 'docs', 'a.md'), 'a\n')
+    plant(gd)
+    fs.appendFileSync(path.join(W, 'docs', 'a.md'), 'b\n')
+  })
+  afterEach(() => {
+    for (const p of [HOME, W + '-remote.git']) fs.rmSync(p, { recursive: true, force: true })
+  })
+
+  test('both trust checks refuse; TS metaGit and CLI _meta_git run nothing', async () => {
+    expect(metaGitTrustProblem(W)).toMatch(says)
+    const errs = await tsRun()
+    expect(errs).toHaveLength(OPS.length)
+    for (const e of errs) expect(e).toBeInstanceOf(MetaGitUntrustedError)
+    const r = py()
+    expect(r.problem).toMatch(says)
+    expect(r.rc.every(([rc, err]) => rc === 128 && err.includes('does not run git'))).toBe(true)
+    expect(marks()).toEqual([])
+  })
+
+  test('every surface says the refusal and runs nothing', () => {
+    const tick = bridge('tick')
+    expect(tick.skipReason).toBe('meta-untrusted')
+    expect(tick.detail).toMatch(says)
+    const backup = bridge('backup')
+    expect(backup.reason).toBe('meta-untrusted')
+    expect(backup.error).toMatch(says)
+    for (const args of [['meta', 'log'], ['meta', 'remote'], ['meta', 'push']]) {
+      const r = cli(args)
+      expect(r.rc).not.toBe(0)
+      expect(r.out).toMatch(says)
+      expect(r.out).not.toMatch(/no meta history|no meta remotes|not configured|add it first/)
+    }
+    expect(cli(['doctor']).out).toMatch(says)
+    fs.rmSync(path.join(W, '.prdt', 'po-state.json'))
+    const init = cli(['init', '--yes', '--slug', 't848'])
+    expect(init.rc).toBe(0)
+    expect(init.out).toMatch(says)
+    expect(marks()).toEqual([])
+  })
+})
+
+describe('T-848 fix1 — trust edges', () => {
+  test('an empty meta.git dir (no HEAD/objects/refs) is not a repo — nothing to refuse', () => {
+    fs.mkdirSync(path.join(W, '.prdt', 'meta.git'), { recursive: true })
+    expect(metaGitTrustProblem(W)).toBeNull()
+    expect(py().problem).toBeNull()
+  })
+
+  test.each([
+    ['branch.<b>.remote naming a local path inside the project', './evil.git', true],
+    ['branch.<b>.remote "."', '.', true],
+    ['branch.<b>.remote naming a configured remote', 'backup', false],
+  ])('%s', (_label, value, refused) => {
+    const gd = carriedMetaRepo()
+    git(['--git-dir', gd, 'remote', 'add', 'backup', 'https://example.invalid/x.git'])
+    git(['--git-dir', gd, 'config', 'branch.main.remote', value])
+    expect(metaGitTrustProblem(W) !== null).toBe(refused)
+    expect(py().problem !== null).toBe(refused)
+  })
+
+  test('ext:// (any non-builtin scheme) remote is refused; ssh:// is not', () => {
+    const gd = carriedMetaRepo()
+    git(['--git-dir', gd, 'remote', 'add', 'backup', 'ext://sh -c touch% /tmp/x'])
+    expect(metaGitTrustProblem(W)).toMatch(/remote-helper/)
+    expect(py().problem).toMatch(/remote-helper/)
+    git(['--git-dir', gd, 'remote', 'set-url', 'backup', 'ssh://git@example.invalid/x.git'])
+    expect(metaGitTrustProblem(W)).toBeNull()
+    expect(py().problem).toBeNull()
+  })
+
+  test('prdt-made repo: status/add/commit/log and push to a local bare remote still work', async () => {
+    git(['init', '-q'])
+    expect((await initMetaRepo(W)).error).toBeUndefined()
+    fs.mkdirSync(path.join(W, 'docs', 'prd'), { recursive: true })
+    fs.writeFileSync(path.join(W, 'docs', 'prd', 'a.md'), 'a\n')
+    const { commitMeta, scanMetaHistory, addMetaRemote, pushMetaRemote, listMetaRemotes } = await import('../../src/git-workflow/meta-git')
+    const c = await commitMeta(W, 'snap')
+    expect(c.committed).toBe(true)
+    expect((await scanMetaHistory(W)).length).toBe(1)
+    const remote = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t848-bk-')))
+    try {
+      git(['init', '-q', '--bare', remote])
+      expect((await addMetaRemote(W, 'backup', remote)).ok).toBe(true)
+      expect(await listMetaRemotes(W)).toEqual([{ name: 'backup', url: remote }])
+      const p = await pushMetaRemote(W, 'backup')
+      expect(p.error).toBeUndefined()
+      expect(p.ok).toBe(true)
+      expect(metaGitTrustProblem(W)).toBeNull() // branch.<b>.remote=backup after --set-upstream
+      expect(py().problem).toBeNull()
+    } finally {
+      fs.rmSync(remote, { recursive: true, force: true })
     }
   })
 })

@@ -193,10 +193,17 @@ export function metaGitDir(projectDir: string): string {
   return path.join(stateDir(projectDir), 'meta.git')
 }
 
-/** True if the meta repo has been initialized. */
+/**
+ * True if the meta repo has been initialized — or something a meta command must
+ * answer for stands at `meta.git` (a gitfile / dangling symlink: T-848 fix1),
+ * so the caller reaches `metaGit`'s refusal instead of a silent "not split".
+ */
 export function metaRepoExists(projectDir: string): boolean {
+  const gd = metaGitDir(projectDir)
   try {
-    return fs.existsSync(path.join(metaGitDir(projectDir), 'HEAD'))
+    if (fs.existsSync(path.join(gd, 'HEAD'))) return true
+    const st = fs.lstatSync(gd)
+    return st.isSymbolicLink() || !st.isDirectory()
   } catch {
     return false
   }
@@ -274,7 +281,10 @@ export function metaGitRefusal(problem: string): string {
 function metaRemoteUrlProblem(projectDir: string, url: string): string | null {
   if (url.split('/', 1)[0].includes('::')) return 'a remote-helper URL'
   const isFile = url.startsWith('file://')
-  if (!isFile && /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(url)) return null
+  const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//.exec(url)?.[1]?.toLowerCase()
+  // any other `<scheme>://` runs `git-remote-<scheme>` (ext:// included)
+  if (!isFile && scheme) return META_URL_SCHEMES.has(scheme) ? null : 'a remote-helper URL'
+
   if (!isFile && /^[^/]+:/.test(url)) return null // scp-like host:path
   const p = isFile ? url.slice('file://'.length) : url
   let base: string
@@ -294,6 +304,23 @@ function metaRemoteUrlProblem(projectDir: string, url: string): string | null {
   return null
 }
 
+/** `meta.git` as a FILE: git follows a `gitdir: <path>` file to a repository anywhere. */
+function gitfileProblem(gd: string, relGd: string): string {
+  let head = ''
+  try {
+    head = fs.readFileSync(gd, 'utf-8').slice(0, 4096)
+  } catch {
+    /* unreadable — still not a directory */
+  }
+  if (head.startsWith('gitdir:')) {
+    const tgt = head.slice('gitdir:'.length).trim().split('\n')[0] || '?'
+    return `${relGd} is a file pointing elsewhere (gitdir: ${tgt})`
+  }
+  return `${relGd} is a file, not a directory`
+}
+
+const META_URL_SCHEMES = new Set(['https', 'http', 'ssh', 'git', 'git+ssh', 'ssh+git', 'ftp', 'ftps'])
+
 const trustCache = new Map<string, string | null>()
 
 /**
@@ -306,18 +333,18 @@ export function metaGitTrustProblem(projectDir: string): string | null {
   const gd = metaGitDir(projectDir)
   const rel = (p: string) => path.relative(projectDir, p) || '.'
   const cfg = path.join(gd, 'config')
-  for (const p of [sd, gd, cfg]) {
+  // Order (T-848 fix1): every structural check runs BEFORE the "no config yet"
+  // answer — a config-less repo with a `commondir` reads THAT repo's config.
+  for (const p of [sd, gd]) {
     let st: fs.Stats
     try {
       st = fs.lstatSync(p)
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
-        if (p === cfg) return null // no repo yet — nothing to trust
-        continue
-      }
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null // no meta repo yet
       return `cannot inspect ${rel(p)}`
     }
     if (st.isSymbolicLink()) return `${rel(p)} is a symbolic link`
+    if (p === gd && !st.isDirectory()) return gitfileProblem(gd, rel(gd))
   }
   for (const name of ['commondir', 'config.worktree']) {
     try {
@@ -326,6 +353,20 @@ export function metaGitTrustProblem(projectDir: string): string | null {
     } catch {
       /* absent — fine */
     }
+  }
+  try {
+    if (fs.lstatSync(cfg).isSymbolicLink()) return `${rel(cfg)} is a symbolic link`
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return `cannot inspect ${rel(cfg)}`
+    for (const name of ['HEAD', 'objects', 'refs']) {
+      try {
+        fs.lstatSync(path.join(gd, name))
+        return `${rel(gd)} has ${name} but no config`
+      } catch {
+        /* absent */
+      }
+    }
+    return null // empty / not-yet-initialised dir — git sees no repo there
   }
   let key: string
   try {
@@ -361,6 +402,27 @@ export function metaGitTrustProblem(projectDir: string): string | null {
         break
       }
       if (k.startsWith('remote.') && (k.endsWith('.url') || k.endsWith('.pushurl'))) {
+        const why = metaRemoteUrlProblem(projectDir, v)
+        if (why) {
+          problem = `${rel(cfg)} ${k} is ${why}`
+          break
+        }
+      }
+    }
+  }
+  if (!problem) {
+    // branch.<b>.remote may name a URL/path instead of a remote (T-848 fix1)
+    const ents = out.split('\0').filter(Boolean).map((e) => {
+      const nl = e.indexOf('\n')
+      return nl < 0 ? [e, ''] : [e.slice(0, nl), e.slice(nl + 1)]
+    })
+    const names = new Set<string>()
+    for (const [k] of ents) {
+      const m = /^remote\.(.+)\.(?:url|pushurl|fetch)$/s.exec(k)
+      if (m) names.add(m[1])
+    }
+    for (const [k, v] of ents) {
+      if (k.startsWith('branch.') && k.endsWith('.remote') && !names.has(v)) {
         const why = metaRemoteUrlProblem(projectDir, v)
         if (why) {
           problem = `${rel(cfg)} ${k} is ${why}`
@@ -642,6 +704,9 @@ export async function initMetaRepo(projectDir: string): Promise<MetaInitResult> 
 
   try {
     const env = scrubbedGitEnv()
+    // T-848 fix1: refuse BEFORE `git init` — it follows a gitfile `meta.git`.
+    const early = metaGitTrustProblem(projectDir)
+    if (early) throw new MetaGitUntrustedError(early)
     if (!alreadyExisted) {
       fs.mkdirSync(path.dirname(gitDir), { recursive: true })
       await execFileAsync('git', ['init', '--bare', gitDir], { timeout: 10_000, env })
@@ -692,6 +757,8 @@ export type MetaCommitSkipReason =
   | 'meta-repo-missing'
   | 'nothing-allowlisted'
   | 'manager-error'
+  /** T-848: `metaGitTrustProblem` refused the repo; `detail` is the refusal text. */
+  | 'meta-untrusted'
 
 export interface MetaCommitResult {
   committed: boolean
@@ -796,6 +863,8 @@ export async function commitMeta(
   if (!metaRepoExists(projectDir)) {
     return { committed: false, skipReason: 'meta-repo-missing' }
   }
+  const problem = metaGitTrustProblem(projectDir)
+  if (problem) return { committed: false, skipReason: 'meta-untrusted', detail: metaGitRefusal(problem) }
 
   // Self-heal info/exclude before staging so an EXISTING meta repo (created
   // before a new exclude entry or before its code.dir was recorded) never
@@ -863,6 +932,7 @@ export async function scanMetaHistory(
     const { stdout } = await metaGit(projectDir, args)
     return parseLogOutput(stdout)
   } catch (err) {
+    if (err instanceof MetaGitUntrustedError) throw err // said, never "(no history)"
     const msg = err instanceof Error ? err.message : String(err)
     // Non-fatal — repo may have no commits yet (`log` errors on empty HEAD).
     console.warn('[meta-git] scanMetaHistory: git log failed —', msg)
@@ -923,7 +993,8 @@ export async function listMetaRemotes(projectDir: string): Promise<MetaRemote[]>
       if (m) seen.set(m[1], m[2])
     }
     return [...seen].map(([name, url]) => ({ name, url }))
-  } catch {
+  } catch (err) {
+    if (err instanceof MetaGitUntrustedError) throw err // said, never "(no remotes)"
     return []
   }
 }
@@ -957,7 +1028,12 @@ export async function pushMetaRemote(
   if (!metaRepoExists(projectDir)) {
     return { ok: false, error: 'meta repo not initialized' }
   }
-  const remotes = await listMetaRemotes(projectDir)
+  let remotes: MetaRemote[]
+  try {
+    remotes = await listMetaRemotes(projectDir)
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
   if (!remotes.some((r) => r.name === name)) {
     return {
       ok: false,
