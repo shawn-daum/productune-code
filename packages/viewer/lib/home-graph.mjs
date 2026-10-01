@@ -204,9 +204,12 @@ export function buildHomeGraph({ tickets, gatePath = '', riderKey = 'riders' }) 
 export const NODE_W = 112
 export const NODE_H = 40
 export const COL_PITCH = 140
-export const ROW_PITCH = 62
+/** Per extra edge into one node: the gap between neighbouring vertical channels. */
+const CHANNEL_STEP = 7
+const CHANNEL_LEAD = 12
+export const ROW_PITCH = 72
 const PAD_X = 6
-const PAD_TOP = 20
+const PAD_TOP = 36
 
 /** Weakly connected components, each `{ids}`, in the order of their smallest member. */
 function components(ids, edges) {
@@ -298,7 +301,13 @@ export function layoutHomeGraph(graph) {
 
   const cols = Math.max(...[...pos.values()].map((p) => p.col)) + 1
   const rows = Math.max(...[...pos.values()].map((p) => p.row)) + 1
-  const nodes = graph.nodes.map((n) => ({ ...n, x: PAD_X + pos.get(n.id).col * COL_PITCH, y: PAD_TOP + pos.get(n.id).row * ROW_PITCH }))
+  // A node with many incoming edges needs one vertical channel per edge in the gap
+  // before its column; widen the column pitch until every channel clears the source column.
+  const fanIn = new Map()
+  for (const e of graph.edges) fanIn.set(e.to, (fanIn.get(e.to) || 0) + 1)
+  const maxIn = Math.max(1, ...fanIn.values())
+  const pitch = Math.max(COL_PITCH, NODE_W + CHANNEL_LEAD + CHANNEL_STEP * (maxIn - 1) + 2 * 5 + 6)
+  const nodes = graph.nodes.map((n) => ({ ...n, x: PAD_X + pos.get(n.id).col * pitch, y: PAD_TOP + pos.get(n.id).row * ROW_PITCH }))
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
 
   // arrows: leave the right edge, enter the left edge; ports of one node fan out evenly
@@ -324,7 +333,7 @@ export function layoutHomeGraph(graph) {
     const tx = b.x
     const ty = port(ins.get(e.to), e, b)
     const incoming = ins.get(e.to).slice().sort((p, q) => nodeById.get(p.from).y - nodeById.get(q.from).y)
-    const mx = tx - 12 - 7 * (incoming.length - 1 - incoming.indexOf(e))
+    const mx = tx - CHANNEL_LEAD - CHANNEL_STEP * (incoming.length - 1 - incoming.indexOf(e))
     const fx = (n) => Number(n.toFixed(1))
     let d
     if (Math.abs(sy - ty) < 0.05 || tx - sx < 2 * R + 2) {
@@ -338,7 +347,7 @@ export function layoutHomeGraph(graph) {
     const bothSpine = graph.spine.has(e.from) && graph.spine.has(e.to)
     return { ...e, d, sp: bothSpine, cp: graph.cp.has(e.from) && graph.cp.has(e.to) && !bothSpine }
   })
-  return { nodes, edges, width: PAD_X * 2 + (cols - 1) * COL_PITCH + NODE_W, height: PAD_TOP + (rows - 1) * ROW_PITCH + NODE_H + 8 }
+  return { nodes, edges, width: PAD_X * 2 + (cols - 1) * pitch + NODE_W, height: PAD_TOP + (rows - 1) * ROW_PITCH + NODE_H + 8 }
 }
 
 // ---------- wait lists ----------

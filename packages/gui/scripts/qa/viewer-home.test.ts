@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import { renderPage, TEMPLATE_CSS, buildAnchors } from '@productune/viewer/lib/render.mjs'
 import { collectPrdGatePath } from '@productune/viewer/lib/collect.mjs'
-import { buildHomeGraph, layoutHomeGraph, waitLists, stageSegments, stageOfTicketType } from '@productune/viewer/lib/home-graph.mjs'
+import { buildHomeGraph, layoutHomeGraph, waitLists, stageSegments, stageOfTicketType, NODE_W } from '@productune/viewer/lib/home-graph.mjs'
 
 type T = { id: string; type?: string; status?: string; assignee?: string; deps?: string[]; prd_item?: string; body?: string }
 const tk = (o: T) => ({
@@ -189,5 +189,57 @@ describe('home screen — T-796 acceptance in the generated page', () => {
   it('keeps the strict CSP (no inline-script relaxation) for the new home markup', () => {
     expect(connected.html).toMatch(/Content-Security-Policy" content="default-src 'none'; script-src 'sha256-/)
     expect(/script-src [^;]*'unsafe-inline'/.test(connected.html)).toBe(false)
+  })
+})
+
+describe('home fix round 1 (T-881 grill) — what a DOM-free test can pin; widths are browser-only', () => {
+  it('(1) the stage bar and the scope rows wrap inside the card instead of forcing a fixed width (measured in Chromium, not here)', () => {
+    expect(TEMPLATE_CSS).toMatch(/\.sb \{[^}]*max-width: 100%/)
+    expect(TEMPLATE_CSS).toMatch(/\.sb-seg \{[^}]*flex: 0 1 auto; min-width: 56px/)
+    expect(TEMPLATE_CSS).toMatch(/\.sb-sq \{[^}]*flex-wrap: wrap/)
+    expect(TEMPLATE_CSS).toMatch(/\.sb-total \{[^}]*flex: 0 0 auto/)
+    expect(TEMPLATE_CSS).toMatch(/\.sc-grid \{[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(200px, 220px\)/)
+    expect(TEMPLATE_CSS).toMatch(/\.sc-sq \{[^}]*flex-wrap: wrap/)
+    expect(TEMPLATE_CSS).toMatch(/\.sc-waits \{ min-width: 0;/)
+  })
+
+  it('(2) six edges into one node get six separate vertical channels, all in the gap before the target column', () => {
+    const srcs = ['T-1', 'T-2', 'T-3', 'T-4', 'T-5', 'T-6']
+    const g = buildHomeGraph({ tickets: [...srcs.map((id) => tk({ id })), tk({ id: 'T-7', deps: srcs }), gate(['T-7'])], gatePath: GATE })
+    const lay = layoutHomeGraph(g)
+    const target = lay.nodes.find((n) => n.id === 'T-7')!
+    const xs: number[] = []
+    for (const e of lay.edges) {
+      const a = lay.nodes.find((n) => n.id === e.from)!
+      const q = /Q([\d.]+),/.exec(e.d)
+      if (!q) continue
+      const vert = [Number(q[1])]
+      expect(vert[0]).toBeGreaterThan(a.x + NODE_W + 5)
+      expect(vert[0]).toBeLessThan(target.x - 5)
+      xs.push(vert[0])
+    }
+    expect(xs.length).toBeGreaterThanOrEqual(5)
+    const sorted = [...xs].sort((p, q) => p - q)
+    for (let i = 1; i < sorted.length; i++) expect(sorted[i] - sorted[i - 1]).toBeGreaterThanOrEqual(6)
+  })
+
+  it('(3) opening a ticket clears the outline from every clickable [data-detail-kind] that is not a table row, on open and on close', () => {
+    const { html } = page([tk({ id: 'T-1' })])
+    const clears = html.match(/querySelectorAll\('\.detail-row\.is-open, \[data-detail-kind\]\.is-open'\)/g) || []
+    expect(clears.length).toBe(2)
+  })
+
+  it('(4) a first main-path node that also waits on the user keeps 사용자를 기다림 top-left and no two chips overlap', () => {
+    const { home } = page([tk({ id: 'T-1', type: 'decision', assignee: 'user' }), tk({ id: 'T-2', deps: ['T-1'] }), gate(['T-2'])], { gatePath: GATE })
+    const chips = [...home.matchAll(/<rect class="dg-chip dg-chip-(\w+)" height="15" rx="7.5" width="([\d.]+)" x="([\d.-]+)" y="([\d.-]+)">/g)].map((m) => ({ kind: m[1], w: Number(m[2]), x: Number(m[3]), y: Number(m[4]) }))
+    const turn = chips.find((c) => c.kind === 'turn')!
+    const box = /<rect class="dg-box" height="40" rx="8" width="112" x="([\d.-]+)" y="([\d.-]+)"/.exec(home)!
+    expect(turn.x).toBe(Number(box[1]))
+    expect(chips.some((c) => c.kind === 'sp')).toBe(true)
+    for (const a of chips) for (const b of chips) {
+      if (a === b) continue
+      const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + 15 && b.y < a.y + 15
+      expect(overlap).toBe(false)
+    }
   })
 })
