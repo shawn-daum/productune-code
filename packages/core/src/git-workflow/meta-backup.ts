@@ -66,6 +66,8 @@ import { stateDir } from '../state/project-kind'
 import {
   metaGit,
   metaGitDir,
+  metaGitRefusal,
+  metaGitTrustProblem,
   metaRepoExists,
   listMetaRemotes,
   scrubbedGitEnv,
@@ -111,6 +113,8 @@ export type BackupSkipReason =
   | 'backoff'
   | 'already-today'
   | 'concurrent'
+  /** T-848: the meta repo was refused (`error` carries the refusal text). */
+  | 'meta-untrusted'
 
 export type BackupPushReason = 'stage-boundary' | 'daily'
 
@@ -382,6 +386,9 @@ export async function metaBackupTick(
 ): Promise<MetaBackupTickResult> {
   const now = opts.now ?? new Date()
   if (!metaRepoExists(projectDir)) return { attempted: false, pushed: false, reason: 'meta-repo-missing' }
+  // T-848: refused before any git call; nothing written into the refused repo.
+  const untrusted = metaGitTrustProblem(projectDir)
+  if (untrusted) return { attempted: false, pushed: false, reason: 'meta-untrusted', error: metaGitRefusal(untrusted) }
 
   const remote = metaBackupRemoteName(projectDir)
   // Refused BEFORE any git call on the meta repo: config may pick a registered

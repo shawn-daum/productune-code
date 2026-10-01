@@ -550,7 +550,7 @@ export function collectDiscipline(repoRoot, { disciplineRoot = defaultDiscipline
     let differs = 0
     if (sourceRoot !== null) {
       const original = readContainedText(sourceRoot, e.rel)
-      differs = original === null ? lines.length : countChangedLines(lines, splitLines(original))
+      differs = original === null ? 0 : countChangedLines(lines, splitLines(original))
     }
     docs.push({ rel: e.rel, name: e.rel.split('/').pop().replace(/\.md$/, ''), group: e.group, kind: e.kind, lines, differs })
   }
