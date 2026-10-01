@@ -58,7 +58,8 @@ describe('anchor table', () => {
     expect(a['docs/prd/PRD.md']).toEqual({ s: 'home', g: 'prd' })
     expect(a['PRD']).toEqual({ s: 'home', g: 'prd' })
     expect(a['docs/prd/versions/v1.9.md']).toEqual({ s: 'prd', g: 'v1.9' })
-    expect(a['docs/features/viewer.md']).toEqual({ s: 'feature', g: 'all', k: 'feature', i: 'viewer.md' })
+    // T-882: a spec file anchors only through its taxonomy entry (viewer-feature-screen.test.ts); no taxonomy here → none
+    expect(a['docs/features/viewer.md']).toBeUndefined()
     expect(a['docs/artifacts/v1.10/notes.md']).toEqual({ s: 'home', g: 'artifact', k: 'artifact', i: 'v1.10/notes.md' })
     expect(a['docs/artifacts/v1.9/old.md']).toEqual({ s: 'artifact', g: 'v1.9', k: 'artifact', i: 'v1.9/old.md' })
   })

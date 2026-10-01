@@ -259,8 +259,7 @@ describe('viewer/lib/render.mjs — T-705 §G structures the approved mockup sho
     const html = renderStructureFixture()
     // wiki: one group ("decision (decision)") with 2 pages, unit 장
     expect(html).toMatch(/class="count-badge">결정 \(decision\) · <b>2<\/b>장/)
-    // feature: 1 page, unit 개
-    expect(html).toMatch(/class="count-badge">기능 · <b>1<\/b>개/)
+    // feature: T-882 — the feature screen's badge is covered in viewer-feature-screen.test.ts
     // artifact: bucket "v1.10", suffix " 버킷", 1 entry, unit 건
     expect(html).toMatch(/class="count-badge">v1\.10 버킷 · <b>1<\/b>건/)
   })
@@ -291,11 +290,11 @@ function renderEmptyGroupFixture(): string {
 }
 
 describe('viewer/lib/render.mjs — T-707: an empty group shows the Designer\'s two-line empty note', () => {
-  it('FEATURE.empty (both lines, verbatim, unescaped as HTML) renders when the store has zero specs', () => {
+  it('FEATURE.empty (both lines, verbatim, unescaped as HTML) renders when there is no feature taxonomy (T-882)', () => {
     const html = renderEmptyGroupFixture()
     expect(html).toContain(`<p class="v-note">${FEATURE.empty}</p>`)
-    expect(html).toContain('기능 스펙이 없어요')
-    expect(html).toContain('Designer 가 스펙 파일을 만들면 여기 나타나요')
+    expect(html).toContain('기능 분류가 없어요.')
+    expect(html).toContain('분류가 만들어지면 여기 나타나요.')
   })
 
   // T-709 결정 2: PRD.empty (the old "닫힌 버전이 없다" table caption) is

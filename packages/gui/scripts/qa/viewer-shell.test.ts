@@ -97,6 +97,12 @@ const fixtureData = {
       body: '## Feature body\n\nprose.',
     },
   ],
+  // T-882: the feature screen draws taxonomy entries, not bare spec files.
+  featureTaxonomy: {
+    areas: [{ key: 'a', name: 'A', def: '' }],
+    kinds: [{ key: 'feature', name: 'K', def: '' }],
+    entries: [{ key: 'fixture-feature', name: 'F', kind: 'feature', area: 'a', def: 'd', aliases: [], links: [] }],
+  },
   artifacts: {
     entries: [
       {

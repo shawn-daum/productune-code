@@ -9034,6 +9034,68 @@ def feature_vocab_warnings(root, tickets, cfg, vocab, problems, specs):
         if vocab[key]["kind"] == "area" and key in specs:
             warns.append(f"feature: config features.vocab '{key}' is kind: area but "
                          f"docs/features/{key}.md exists — set kind: feature or remove the spec")
+    warns.extend(feature_taxonomy_warnings(cfg, vocab))
+    return warns
+
+
+def feature_taxonomy_warnings(cfg, vocab):
+    """T-882 — the feature taxonomy the viewer's feature screen draws lives in
+    the vocab block itself (`features.taxonomy` {areas, kinds} + each vocab
+    entry's `label` · `taxonomy` {kind, area, def, links}), so W4 above
+    already checks every ticket's `feature:` value against the taxonomy's
+    keys. These lines catch the entries the screen would drop or mis-draw.
+    Silent when `features.taxonomy` is absent (a project that has none)."""
+    feat = cfg.get("features") if isinstance(cfg.get("features"), dict) else {}
+    tax = feat.get("taxonomy")
+    if tax is None:
+        return []
+    pre = "feature: config features.taxonomy"
+    if not isinstance(tax, dict):
+        return [f"{pre} is not an object"]
+    warns, keys = [], {}
+    for name in ("areas", "kinds"):
+        lst = tax.get(name)
+        if not isinstance(lst, list) or not lst:
+            warns.append(f"{pre}.{name} is missing or empty")
+            keys[name] = set()
+            continue
+        seen = set()
+        for i, it in enumerate(lst):
+            k = it.get("key") if isinstance(it, dict) else None
+            if not isinstance(k, str) or not FEATURE_KEY_RE.match(k):
+                warns.append(f"{pre}.{name}[{i}] has no kebab-case key")
+                continue
+            if k in seen:
+                warns.append(f"{pre}.{name} key '{k}' appears twice")
+            seen.add(k)
+            if not isinstance(it.get("name"), str) or not it["name"].strip():
+                warns.append(f"{pre}.{name} '{k}' has no name")
+        keys[name] = seen
+    raw = feat.get("vocab") if isinstance(feat.get("vocab"), dict) else {}
+    for key in raw:
+        ent = raw[key] if isinstance(raw[key], dict) else {}
+        t = ent.get("taxonomy")
+        where = f"feature: config features.vocab '{key}'"
+        if not isinstance(t, dict):
+            warns.append(f"{where} has no taxonomy — the viewer's feature screen leaves it out")
+            continue
+        if t.get("area") not in keys["areas"]:
+            warns.append(f"{where} taxonomy area '{t.get('area')}' is not a features.taxonomy.areas key"
+                         " — the viewer's feature screen leaves it out")
+        if t.get("kind") not in keys["kinds"]:
+            warns.append(f"{where} taxonomy kind '{t.get('kind')}' is not a features.taxonomy.kinds key")
+        if not isinstance(ent.get("label"), str) or not ent["label"].strip():
+            warns.append(f"{where} has no label — the feature screen shows the key instead")
+        if not isinstance(t.get("def"), str) or not t["def"].strip():
+            warns.append(f"{where} taxonomy has no def")
+        links = t.get("links", [])
+        if not isinstance(links, list):
+            warns.append(f"{where} taxonomy links is not a list")
+            continue
+        for l in links:
+            to = l.get("to") if isinstance(l, dict) else None
+            if to not in vocab or to == key:
+                warns.append(f"{where} taxonomy link to '{to}' names no other vocab key")
     return warns
 
 
