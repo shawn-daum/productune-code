@@ -15,12 +15,20 @@ const FENCE_RE = /^\s*(```|~~~)/
 const NUMBERED_RE = /^\s{0,3}(\d+)\.\s+(.*)$/
 const BOLD_LINE_RE = /^\*\*(.+?)\*\*\s*[:：]?\s*$/
 
+// Outside code spans: `*` is always emphasis; `_` only when it opens/closes a whole word, so an
+// intraword `_` (version_outcome) stays, as in the body heading.
+const WORD = String.raw`[\p{L}\p{N}_]`
+const UNDERSCORE_EM_RE = new RegExp(String.raw`(?<!${WORD})(_{1,2})(?=\S)(.+?)(?<=\S)\1(?!${WORD})`, 'gu')
+function stripEmphasis(part) {
+  return part.replace(/[`*]/g, '').replace(UNDERSCORE_EM_RE, '$2')
+}
+
 /** Plain text of a short inline-markdown string (outline entries, question lines). */
 export function plainInline(text) {
   return String(text ?? '')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .split(/(`[^`]*`)/)
-    .map((part, i) => (i % 2 ? part.replace(/`/g, '') : part.replace(/[`*_]/g, '')))
+    .map((part, i) => (i % 2 ? part.replace(/`/g, '') : stripEmphasis(part)))
     .join('')
     .replace(/\s+/g, ' ')
     .trim()
@@ -416,7 +424,7 @@ export const PRD_READING_CSS = `
 .pr-card { border: 1px solid var(--border-inline); border-radius: var(--radius-12); background: var(--bg-surface-base); }
 .pr-card[open] { border-color: var(--border-hover); box-shadow: var(--shadow-low); }
 .pr-card > summary { flex-wrap: wrap; padding: var(--space-10) var(--space-12); }
-.pr-key { font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: var(--radius-100); background: var(--accent-subtle); color: var(--text-primary); flex: 0 0 auto; }
+.pr-key { font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: var(--radius-100); background: var(--accent-subtle); color: var(--text-primary); flex: 0 1 auto; min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pr-tk { font-size: 10.5px; color: var(--text-secondary); border: 1px solid var(--border-inline); border-radius: var(--radius-100); padding: 0 7px; flex: 0 0 auto; }
 .pr-one { flex-basis: 100%; font-size: 12px; color: var(--text-secondary); padding-left: calc(34px + var(--space-8) + 9px); line-height: 1.5; }
 .pr-card > .pr-body { padding: var(--space-8) var(--space-16) var(--space-12) var(--space-16); border-top: 1px solid var(--border-item); margin-left: 0; }
