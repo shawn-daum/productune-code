@@ -91,6 +91,13 @@ describe('feature screen (T-882)', () => {
     expect(h).toContain('<span class="cn-t">설치가 뷰어를 연다</span><span class="cn-g">티켓 근거 · <a href="#T-2"><code>T-2</code></a></span>')
   })
 
+  it('T-904 A: a feature with 0 evidence tickets says 「근거 티켓이 아직 없어요.」 as cn-empty, not a dash', () => {
+    const h: string = detailData(render(data())).feature.gui.html
+    expect(h).toContain(FEATURE.evidenceHeading)
+    expect(h).toContain('<p class="cn-empty">근거 티켓이 아직 없어요.</p>')
+    expect(h).not.toContain('<p class="ev-text">—</p>')
+  })
+
   it('a link written on one side shows on the other side name-only; a spec file replaces 근거 티켓 with its body', () => {
     const v: string = detailData(render(data())).feature.viewer.html
     expect(v).toContain('<button type="button" class="cn-a" data-feature-go="install-cli">설치</button><span class="kp kp-feature">기능</span></span><span></span></li>')

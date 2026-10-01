@@ -1364,7 +1364,6 @@ function featureLinkItem(model, key, text, ground, anchors) {
 }
 
 function featureEvidence(e, anchors) {
-  if (e.tickets.length === 0) return '—'
   return e.tickets
     .map((t) => {
       const id = String(t.fm.id || '')
@@ -1407,7 +1406,7 @@ function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
     (items.length ? `<ul class="cn-list">${items.join('')}</ul>` : `<p class="cn-empty">${escapeHtml(FEATURE.linksEmpty)}</p>`)
   const tail = e.spec
     ? `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.specHeading)}</h2><div class="v-body">${md(e.spec.body, path.dirname(e.spec.rel), repoRootHref)}</div>`
-    : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2><p class="ev-text">${featureEvidence(e, anchors)}</p>`
+    : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
   return `<p class="def-lead">${escapeHtml(e.def || '')}</p>${meta}${kdef}<div class="detail-doc body-prose">${links}${tail}</div>`
 }
 
@@ -1903,9 +1902,10 @@ function dependencyDiagram(graph, layout) {
 function homeDependency(data, currentTickets) {
   const graph = buildHomeGraph({ tickets: currentTickets, gatePath: data.prd.gatePath || '' })
   const drawable = graph.connected && graph.spine.size > 0
-  const sub = !graph.connected && data.poState?.stage === 'define' ? ` <span class="cp-sub">${HOME.beforeBuild}</span>` : ''
+  const stage = data.poState?.stage
+  const sub = !graph.connected && stage === 'define' && graph.nodes.length > 0 ? ` <span class="cp-sub">${HOME.beforeBuild}</span>` : ''
   const head = `<div class="cp-h">${HOME.dependency}${sub}</div>`
-  const notice = graph.connected ? '' : `<div class="cp-spine-none">${HOME.notConnected}</div>`
+  const notice = graph.connected || graph.nodes.length === 0 ? '' : `<div class="cp-spine-none">${stage === 'define' ? HOME.notConnected : HOME.notConnectedBuilt}</div>`
   if (graph.nodes.length === 0) return `<div class="cp-block">${head}${notice}<p class="cp-empty">${HOME.dependencyEmpty}</p></div>`
   void drawable
   return `<div class="cp-block">${head}${notice}${dependencyDiagram(graph, layoutHomeGraph(graph))}</div>`
