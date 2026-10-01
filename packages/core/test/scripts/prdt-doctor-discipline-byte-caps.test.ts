@@ -211,7 +211,9 @@ describe.skipIf(!PYTHON3)('prdt doctor — discipline byte caps are a GATE, not 
         && w.includes('CAPS[\'persona_total_bytes\']["developer"]'))).toBe(true)
       // the per-document habit check must stay silent — this is the OTHER gate
       expect(r.warnings.some((w) => w.includes('developer/habit.md is') && w.includes("CAPS['worker_habit_bytes']"))).toBe(false)
-      expect(r.violations).toBe(base.violations + 1)
+      // T-790: name the lines that moved, so a count off by one says WHICH check moved it
+      const moved = r.warnings.filter((w) => !base.warnings.includes(w))
+      expect(r.violations, `new ⚠ lines:\n${moved.join('\n')}`).toBe(base.violations + 1)
     })
   })
 })

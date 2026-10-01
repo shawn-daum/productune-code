@@ -102,13 +102,6 @@ import fs from 'fs'
 import { spawnSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
-import { createRequire } from 'node:module'
-
-const cjs = createRequire(import.meta.url)
-const timeouts = cjs('../../../../scripts/vitest-timeouts.cjs') as {
-  scale(): { value: number }
-  autoScale(load1?: number, cpus?: number): number
-}
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-secret-guard.sh')
@@ -1028,49 +1021,63 @@ describe('no prdt-project / cwd gate (T-684)', () => {
 })
 
 // ── latency budget ────────────────────────────────────────────────────────────
+//
+// T-790: every row below is a RATIO between two medians sampled INTERLEAVED in
+// the same loop, never an absolute millisecond figure. Why: the absolute
+// budgets (8 ms · 100/300/500 ms × a load-derived scale) failed in full-suite
+// runs at load 6–12/14 and passed alone — the scale is a 1-minute load average,
+// while the CPU share this worker actually got moves within seconds (measured:
+// 39 ms against a 15.2 ms budget, T-677 S3). Two subprocess kinds sampled in
+// alternation see the same CPU contention, so their ratio stays put while both
+// absolute numbers move. What each row protects is unchanged:
+//   • miss path — "costs no fork": compared with a bare `bash` that only reads
+//     stdin. Measured 2026-10-02, load 5–6/14, 200 interleaved rounds: miss
+//     8.6–8.9 ms, bare 6.6–7.5 ms → ratio 1.19–1.29. One extra process spawn
+//     costs about one bare bash (ratio ≥ ~2), a jq fork far more (the hit path
+//     reads 6.9–7.3× bare) — so < 2 still fails on the first fork added.
+//   • hit paths — "judgment stays linear": compared with the SAME hook on a
+//     tiny hit (one `node -e "process.env.X"`, which forks jq + perl exactly
+//     like the big payloads do). Measured same day, 7 interleaved rounds: 20 KB
+//     heredoc 0.99× · 60 KB heredoc 1.19× · 60 KB `node -e` 1.74× · 60 KB
+//     `git commit -m` 1.82× · 1000 args 1.43×. The regressions these rows exist
+//     for were 7.8 s / 21.7 s / 1000 `tr` forks against a ~50 ms tiny hit —
+//     two orders of magnitude, so a 4× ceiling still catches each of them.
+
+type Sample = () => void
+
+/** Median wall time (ms) of each named sampler, the samplers run in
+ *  alternation round by round so every one of them sees the same load. */
+function interleavedMedians(samplers: Record<string, Sample>, rounds: number): Record<string, number> {
+  const times: Record<string, number[]> = {}
+  for (const k of Object.keys(samplers)) times[k] = []
+  for (let r = 0; r < rounds; r++) {
+    for (const [k, fn] of Object.entries(samplers)) {
+      const t0 = process.hrtime.bigint()
+      fn()
+      times[k].push(Number(process.hrtime.bigint() - t0) / 1e6)
+    }
+  }
+  const out: Record<string, number> = {}
+  for (const [k, xs] of Object.entries(times)) {
+    xs.sort((a, b) => a - b)
+    out[k] = xs[Math.floor(xs.length / 2)]
+  }
+  return out
+}
+
+/** A bash that reads the same stdin and forks nothing — the miss path's floor. */
+function bareBash(payload: unknown): void {
+  const res = spawnSync('bash', ['-c', 'IFS= read -r -d "" x; :'], {
+    input: JSON.stringify(payload), encoding: 'utf8', timeout: subprocessTimeout('hook'),
+  })
+  expect(res.status).toBe(0)
+}
 
 describe('latency', () => {
-  test('a miss (no target substring anywhere in the payload) costs no fork — median stays under the T-677 budget', () => {
+  test('a miss (no target substring anywhere in the payload) costs no fork — median stays under 2× a bare bash reading the same stdin', () => {
     const payload = readEvent('src/index.ts')
-    const samples: number[] = []
-    for (let i = 0; i < 200; i++) {
-      const t0 = process.hrtime.bigint()
-      run(payload)
-      samples.push(Number(process.hrtime.bigint() - t0) / 1e6)
-    }
-    samples.sort((a, b) => a - b)
-    const median = samples[Math.floor(samples.length / 2)]
-    // Measured (this machine, 2026-09-24, spawnSync round trip incl. node +
-    // bash startup, idle box): median 5.83ms, p90 7.87ms. The T-677 Outcome
-    // §2 raw bash+read figure (no node/spawn overhead) was 5.6ms. Scaled by
-    // the SAME load-derived factor every other timeout in this suite uses
-    // (scripts/vitest-timeouts.cjs `scale()`) — an unscaled 8ms flaked under
-    // full-suite parallel load (measured 13.8ms median at scale ~2.6-3.7,
-    // same run, unrelated tests hogging CPU) though the hook's own cost did
-    // not change; every OTHER subprocess budget in this repo scales the same
-    // way for the same reason. S2b added `shopt -s/-u nocasematch` around the
-    // pre-filter (M5 fix) — a builtin, no fork, measured no change to this
-    // budget.
-    //
-    // S3 (T-677 Outcome §S2b, ③): `scale()` is resolved ONCE at run start and
-    // pinned into the env for every worker (`vitest-timeouts.cjs` `pin()`) —
-    // it is a snapshot, not a live reading. Under a full-suite run this loop's
-    // 200 real spawns take real wall time, and a CPU spike from an unrelated
-    // parallel worker can land AFTER that snapshot — measured: 39ms against a
-    // 15.2ms budget (scale 1.9 at run start) in a full-suite run, while the
-    // SAME file run alone moments later, at a HIGHER measured load (scale
-    // 2.7), passed clean at 134/134 — the hook's own cost never changed, only
-    // which scale the stale snapshot happened to catch. So this budget alone
-    // re-derives the scale from the CURRENT 1-minute load average right where
-    // it is used — the exact formula (`autoScale`) every other budget in this
-    // repo is built from, just resampled instead of read from the pinned
-    // snapshot — and takes whichever of the two readings is larger, so a
-    // genuinely quieter run-start scale can never mask a live spike, and a
-    // real regression (this hook doing meaningfully more work per call, not
-    // just noisier CPU sharing) still has to clear 8ms times a real,
-    // currently-observed scale to pass.
-    const liveScale = Math.max(timeouts.scale().value, timeouts.autoScale())
-    expect(median).toBeLessThan(8 * liveScale)
+    const m = interleavedMedians({ hook: () => run(payload), bare: () => bareBash(payload) }, 200)
+    expect(m.hook / m.bare, `hook ${m.hook.toFixed(2)} ms vs bare bash ${m.bare.toFixed(2)} ms`).toBeLessThan(2)
   })
 })
 
@@ -1100,35 +1107,26 @@ function heredocCommand(targetBytes: number): string {
   return `cat > generated.js <<'EOF'\n${lines.join('\n')}\nEOF`
 }
 
-function medianMs(payload: unknown, samples: number): number {
-  const times: number[] = []
-  for (let i = 0; i < samples; i++) {
-    const t0 = process.hrtime.bigint()
-    run(payload)
-    times.push(Number(process.hrtime.bigint() - t0) / 1e6)
-  }
-  times.sort((a, b) => a - b)
-  return times[Math.floor(times.length / 2)]
+/** The tiny hit every large hit-path row is measured against (same forks: jq + perl). */
+const TINY_HIT = bashEvent('node -e "process.env.X"')
+const LINEAR_CEILING = 4
+
+/** Ratio of `payload`'s median to the tiny hit's, sampled interleaved. */
+function hitRatio(payload: unknown, rounds: number): { ratio: number; note: string } {
+  const m = interleavedMedians({ big: () => run(payload), tiny: () => run(TINY_HIT) }, rounds)
+  return { ratio: m.big / m.tiny, note: `big ${m.big.toFixed(1)} ms vs tiny hit ${m.tiny.toFixed(1)} ms` }
 }
 
 describe('latency — hit-path heredoc stays linear (H2 fix)', () => {
-  test('20KB heredoc body containing process.env finishes within the scaled budget', () => {
-    const command = heredocCommand(20_000)
-    const median = medianMs(bashEvent(command), 7)
-    // Base budget from the S2a-fix acceptance: ≤100ms for 20KB, scaled the
-    // same way as every other subprocess budget in this suite. Measured (this
-    // machine, 2026-09-24, spawnSync round trip incl. node + bash startup,
-    // idle box): ~15-30ms.
-    expect(median).toBeLessThan(100 * timeouts.scale().value)
+  test('20KB heredoc body containing process.env stays within 4× a tiny hit', () => {
+    const r = hitRatio(bashEvent(heredocCommand(20_000)), 7)
+    expect(r.ratio, r.note).toBeLessThan(LINEAR_CEILING)
   })
 
-  test('60KB heredoc body containing process.env finishes within the scaled budget', () => {
-    const command = heredocCommand(60_000)
-    const median = medianMs(bashEvent(command), 5)
-    // Proportional to the 20KB budget (linear judgment) rather than the
-    // O(n^2) blowup the grill measured (7.8s at this exact size pre-fix) — 3x
-    // the 20KB base is still a small fraction of that failure, with margin.
-    expect(median).toBeLessThan(300 * timeouts.scale().value)
+  test('60KB heredoc body containing process.env stays within 4× a tiny hit', () => {
+    // 7.8 s pre-fix at this exact size — the O(n^2) blowup, not a few ×.
+    const r = hitRatio(bashEvent(heredocCommand(60_000)), 5)
+    expect(r.ratio, r.note).toBeLessThan(LINEAR_CEILING)
   })
 })
 
@@ -1141,15 +1139,9 @@ describe('latency — hit-path heredoc stays linear (H2 fix)', () => {
 // used to fork `tr` once per argument (via `is_target`'s old `to_lower`
 // helper) — fork count must not grow with argument count either.
 //
-// S2b-perf: the S2b-fix run-slicing rewrite left these three rows RED
-// (17.0s / 17.0s / 7.5s in the suite; 21.3s / 21.5s / 1.31s as raw hook wall
-// time) because bash 3.2's `${s:i:1}` is itself O(n) — the judgment now runs
-// in one perl process per hit (see the hook's SHAPE header). Measured after
-// (this machine, 2026-09-24, raw hook wall time, load ~26 on 14 cpus): 0.09s /
-// 0.09s / 0.06s. Budgets below are UNCHANGED (300/300/500ms base); the scale
-// is re-derived live, same as the miss-path row above, so a CPU spike from an
-// unrelated worker landing after the run-start snapshot cannot flake them —
-// the margin is in the scale reading, never in the base. ───────────────────
+// S2b-perf: the judgment runs in one perl process per hit (see the hook's
+// SHAPE header). Measured after (this machine, 2026-09-24, raw hook wall time,
+// load ~26 on 14 cpus): 0.09s / 0.09s / 0.06s. ───────────────────────────────
 
 function longSingleLine(targetBytes: number, filler: string): string {
   let out = ''
@@ -1157,41 +1149,31 @@ function longSingleLine(targetBytes: number, filler: string): string {
   return out
 }
 
-/** The miss-path row's live scale reading (see its comment): the larger of the
- *  pinned run-start snapshot and a fresh 1-minute-load derivation. */
-function liveScale(): number {
-  return Math.max(timeouts.scale().value, timeouts.autoScale())
-}
-
 describe('latency — every hit path stays linear, not only heredocs (S2b-fix HIGH)', () => {
-  test('60KB single-line `node -e` argument mentioning process.env finishes within the scaled budget', () => {
+  test('60KB single-line `node -e` argument mentioning process.env stays within 4× a tiny hit', () => {
     const body = longSingleLine(60_000, 'const x = process.env.SOME_VAR; // padding padding padding ')
     const command = `node -e "${body.replace(/"/g, '\\"')}"`
-    const median = medianMs(bashEvent(command), 5)
     // node is not a printer/pattern command, so this is a jq-forking HIT
     // (`.env` inside "process.env" passes the pre-filter) that never denies —
-    // pure judgment-pipeline cost. Same order of budget as the 60KB heredoc
-    // case above (that one is linear too; this proves the OTHER, non-heredoc
-    // hit paths are as well) — was 21.7s pre-fix at this exact size/shape.
-    expect(median).toBeLessThan(300 * liveScale())
+    // pure judgment-pipeline cost. Was 21.7s pre-fix at this exact size/shape.
+    const r = hitRatio(bashEvent(command), 5)
+    expect(r.ratio, r.note).toBeLessThan(LINEAR_CEILING)
   })
 
-  test('60KB single-line `git commit -m` body mentioning .env finishes within the scaled budget', () => {
+  test('60KB single-line `git commit -m` body mentioning .env stays within 4× a tiny hit', () => {
     const body = longSingleLine(60_000, 'touched .env handling in this commit, see notes below. ')
-    const command = `git commit -m "${body.replace(/"/g, '\\"')}"`
-    const median = medianMs(bashEvent(command), 5)
-    expect(median).toBeLessThan(300 * liveScale())
+    const r = hitRatio(bashEvent(`git commit -m "${body.replace(/"/g, '\\"')}"`), 5)
+    expect(r.ratio, r.note).toBeLessThan(LINEAR_CEILING)
   })
 
-  test('1000 file arguments finish within a scaled budget (fork count must not grow per argument)', () => {
+  test('1000 file arguments stay within 4× a tiny hit (fork count must not grow per argument)', () => {
     const args: string[] = []
     for (let i = 0; i < 1000; i++) args.push(`file${i}.txt`) // none are targets — scans all 1000
     const command = `cat ${args.join(' ')} .env.local` // target LAST so all 1000 non-targets are scanned first
-    const median = medianMs(bashEvent(command), 5)
     // is_target used to fork `tr` once per argument (via to_lower) — 1000
-    // forks alone dwarfs everything else in this hook. Now a fixed fork count
-    // (jq once, perl once) whatever the argument count, so this budget is
-    // generous headroom, not a tight measurement of the fix.
-    expect(median).toBeLessThan(500 * liveScale())
+    // forks alone dwarf a tiny hit by far more than 4×. Now a fixed fork
+    // count (jq once, perl once) whatever the argument count.
+    const r = hitRatio(bashEvent(command), 5)
+    expect(r.ratio, r.note).toBeLessThan(LINEAR_CEILING)
   })
 })
