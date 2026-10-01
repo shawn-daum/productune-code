@@ -11279,7 +11279,19 @@ def _track_base(code, branch):
 # `main` only refuses, a forged/deleted `dev` falls back to the pre-T-833 dev
 # default — `main` still moves only on an explicit `--base main` (T-784).
 # Unreadable/corrupt/mismatched/symlinked → fail closed (refuse a bare land).
+# T-834: a worker's writes there are denied by prdt-worktree-guard.sh; a
+# record with a key given twice (`{"base":"main",…,"base":"dev"}` — json.loads
+# keeps the last) is BAD, never silently read as its last value.
 TRACK_RECORD_MISSING, TRACK_RECORD_BAD = object(), object()
+
+
+def _no_dup_keys(pairs):
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            raise ValueError(f"duplicate key {k!r}")
+        out[k] = v
+    return out
 
 
 def _track_record_path(code, tid):
@@ -11308,7 +11320,7 @@ def _track_record_read(code, tid, branch):
     try:
         fd = os.open(str(p), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         with os.fdopen(fd, "r", encoding="utf-8") as f:
-            rec = json.loads(f.read(65536))
+            rec = json.loads(f.read(65536), object_pairs_hook=_no_dup_keys)
     except (OSError, ValueError):
         return TRACK_RECORD_BAD
     if not (isinstance(rec, dict) and rec.get("ticket") == tid and rec.get("branch") == branch
@@ -11430,7 +11442,18 @@ def _track_records(root, tid):
 def cmd_track_review(args):
     root, code, tid, wt, branch = _track_ctx(args)
     _track_require_open(code, wt, branch, tid)
-    base = _track_base(code, branch)
+    # T-834: the comparison base comes from the PO-side open record, which a
+    # worker cannot write; `branch.<b>.prdtbase` git config (worker-writable)
+    # is read only for a track with no record (opened before T-833).
+    rec = _track_record_read(code, tid, branch)
+    if rec in TRACK_BASES:
+        base = rec
+    else:
+        base = _track_base(code, branch)
+        if rec is TRACK_RECORD_BAD:
+            print(f"warning: the open record for {tid} ({_track_record_path(code, tid)}) is unreadable or does "
+                  f"not match this track — comparing against {base} from git config; a bare land will refuse",
+                  file=sys.stderr)
     mb = _tgit(["merge-base", base, branch], code).stdout.strip()
     if not mb:
         _track_die(f"{branch} shares no history with {base}")

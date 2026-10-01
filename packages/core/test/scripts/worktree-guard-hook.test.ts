@@ -63,13 +63,13 @@ function marker(aid: string, checkout: string | null, pairing: 'confirmed' | 'un
   }))
 }
 
-interface Ev { aid?: string | null; atype?: string | null; tool: string; input: Record<string, unknown>; cwd?: string }
+interface Ev { aid?: string | null; atype?: string | null; tool: string; input: Record<string, unknown>; cwd?: string; env?: NodeJS.ProcessEnv }
 function run(e: Ev): string {
   const ev: Record<string, unknown> = { session_id: SID, transcript_path: parentTranscript, cwd: e.cwd ?? root }
   if (e.aid !== null) ev.agent_id = e.aid ?? 'agent-w'
   if (e.atype !== null) ev.agent_type = e.atype ?? 'prdt-developer'
   Object.assign(ev, { hook_event_name: 'PreToolUse', tool_name: e.tool, tool_input: e.input, tool_use_id: 'toolu_1' })
-  const r = spawnSync('bash', [HOOK], { input: JSON.stringify(ev), encoding: 'utf8', env: { ...process.env, PRDT_HOME: prdtHome } })
+  const r = spawnSync('bash', [HOOK], { input: JSON.stringify(ev), encoding: 'utf8', env: e.env ?? { ...process.env, PRDT_HOME: prdtHome } })
   expect(r.status).toBe(0)
   return r.stdout
 }
@@ -295,5 +295,136 @@ describe.skipIf(!PY)('T-779 — legacy layout (code root == meta root)', () => {
 
   test('T-786 (code review #3) — a bare `cd` moves the effective cwd to $HOME, so a later relative write no longer false-denies', () => {
     expect(bash('cd; echo x > notes.txt', root)).toBe('')
+  })
+})
+
+/**
+ * T-834: the track records `prdt track open` writes (T-833) live under
+ * $PRDT_HOME/run/tracks/. Every worker persona — with or without
+ * [ctx].worktree — is denied a write there; the PO (main session, no
+ * agent_type) and a sandbox PRDT_HOME are not.
+ */
+describe.skipIf(!PY)('T-834 — no worker writes the track records', () => {
+  let tracks: string, rec: string
+  beforeEach(() => {
+    mk()
+    workerTranscript('agent-w', { slug: 's', dispatch_id: 'd-1' })   // no worktree: the T-779 rule is off
+    tracks = path.join(prdtHome, 'run', 'tracks')
+    rec = path.join(tracks, 'abcd', 'T-2.json')
+    fs.mkdirSync(path.dirname(rec), { recursive: true })
+    fs.writeFileSync(rec, '{"schema":1,"ticket":"T-2","branch":"track/T-2","base":"main"}\n')
+  })
+  const why = (out: string) => {
+    const r = denied(out)
+    expect(r).toContain('T-834')
+    expect(r).toContain('tooling-owned')
+    return r
+  }
+
+  test('Write / Edit / MultiEdit / NotebookEdit on a record are denied, naming the reason', () => {
+    expect(why(run({ tool: 'Write', input: { file_path: rec, content: '{}' } }))).toContain(rec)
+    why(run({ tool: 'Edit', input: { file_path: rec, old_string: 'main', new_string: 'dev' } }))
+    why(run({ tool: 'MultiEdit', input: { file_path: rec, edits: [] } }))
+    why(run({ tool: 'Write', input: { file_path: path.join(tracks, 'abcd', 'T-3.json'), content: '{}' } }))
+  })
+
+  test('the three T-833 QA forgeries and the Bash shapes the guard recognises are denied', () => {
+    for (const c of [
+      `rm ${rec}`,                                                                       // forgery 1: delete
+      `echo '{"ticket":"T-2","branch":"track/T-2","base":"dev"}' > ${rec}`,              // forgery 2: base=dev
+      `printf '{"ticket":"T-2","branch":"track/T-2","base":"main","base":"dev"}' > ${rec}`, // forgery 3: dup key
+      'rm $PRDT_HOME/run/tracks/abcd/T-2.json',
+      'rm -f ${PRDT_HOME}/run/tracks/abcd/T-2.json',
+      `rm -rf ${tracks}`,
+      `rm -rf ${path.join(prdtHome, 'run')}`,                                            // an ancestor inside PRDT_HOME
+      `cat x | tee ${rec}`,
+      `cp /tmp/forged.json ${rec}`,
+      `mv ${rec} /tmp/gone.json`,
+      `cd ${path.dirname(rec)} && rm T-2.json`,
+      `sed -i '' s/main/dev/ ${rec}`,
+      `find ${path.join(prdtHome, 'run')} -name '*.json' -delete`,
+      `bash -c "rm ${rec}"`,
+      `if true; then truncate -s 0 ${rec}; fi`,
+      `cat > ${rec} <<EOF\n{"base":"dev"}\nEOF`,
+    ]) {
+      why(bash(c))
+    }
+  })
+
+  test('interpreter programs naming the track records are denied (-c, -e, heredoc, here-string)', () => {
+    for (const c of [
+      `python3 -c "import os; os.remove(os.environ['PRDT_HOME'] + '/run/tracks/abcd/T-2.json')"`,
+      `python3 -c "open('${rec}','w').write('{}')"`,
+      "python3 - <<'EOF'\nimport os, pathlib\np = pathlib.Path(os.environ['PRDT_HOME']) / 'run' / 'tracks'\nfor f in p.rglob('*.json'): f.unlink()\nEOF",
+      `node -e "require('fs').unlinkSync(process.env.PRDT_HOME + '/run/tracks/abcd/T-2.json')"`,
+      `perl -e 'unlink "$ENV{PRDT_HOME}/run/tracks/abcd/T-2.json"'`,
+      `python3 <<< "import os; os.remove(os.path.join(os.environ['PRDT_HOME'], 'run', 'tracks', 'abcd', 'T-2.json'))"`,
+      `bash <<EOF\nrm ${rec}\nEOF`,
+    ]) {
+      why(bash(c))
+    }
+  })
+
+  test('a worker running `prdt track open|land|drop` is denied; `review` is not', () => {
+    for (const c of [
+      'prdt track drop T-2 --force',
+      'prdt track land T-2',
+      'prdt track open T-3 --base dev',
+      '~/.prdt/bin/prdt track land T-2 --base dev',
+      `PRDT_HOME=${prdtHome} prdt track drop T-2`,
+      'cd /tmp && prdt track drop T-2',
+    ]) {
+      expect(why(bash(c)), c).toContain('PO command')
+    }
+    expect(bash('prdt track review T-2')).toBe('')
+  })
+
+  test('every worker persona is guarded; the PO (main session) is not', () => {
+    const w = { tool: 'Write', input: { file_path: rec, content: '{}' } }
+    why(run({ ...w, atype: 'prdt-qa' }))
+    why(run({ ...w, atype: 'prdt-designer' }))
+    why(run({ ...w, aid: 'agent-unknown' }))                          // no transcript at all: still denied
+    expect(run({ ...w, aid: null, atype: null })).toBe('')
+    expect(run({ tool: 'Bash', aid: null, atype: null, input: { command: 'prdt track open T-3 --base main' } })).toBe('')
+    expect(run({ tool: 'Bash', aid: null, atype: null, input: { command: `rm ${rec}` } })).toBe('')
+  })
+
+  test('reads, other run/ files and a sandbox PRDT_HOME stay silent', () => {
+    const sbx = path.join(sb, 'qa-sandbox', 'prdt')
+    for (const c of [
+      `cat ${rec}`,
+      `ls -la ${tracks}`,
+      `jq . ${rec}`,
+      `cp ${rec} ${scratch}/rec.json`,
+      'grep -rn "run/tracks" packages/core/scripts/prdt',
+      'python3 -m pytest -q',
+      `PRDT_HOME=${sbx} prdt track open T-1 --base main`,
+      `PRDT_HOME=${sbx} python3 packages/core/scripts/prdt track drop T-1 --force`,
+      `export PRDT_HOME=${sbx}; prdt track land T-1`,
+      `rm -rf ${sbx}/run/tracks`,
+      `python3 -c "open('${sbx}/run/tracks/k/T-1.json','w')"`,
+      'PRDT_HOME=$S/prdt prdt track drop T-1',                       // unresolvable sandbox: accepted gap, silent
+    ]) {
+      expect(bash(c), c).toBe('')
+    }
+  })
+
+  test('the default PRDT_HOME (~/.prdt via HOME) is resolved for ~ and $HOME spellings', () => {
+    const fakeHome = path.join(sb, 'home')
+    const r2 = path.join(fakeHome, '.prdt', 'run', 'tracks', 'abcd', 'T-2.json')
+    fs.mkdirSync(path.dirname(r2), { recursive: true })
+    const env = { ...process.env, HOME: fakeHome }
+    delete env.PRDT_HOME
+    for (const c of ['rm ~/.prdt/run/tracks/abcd/T-2.json', 'rm $HOME/.prdt/run/tracks/abcd/T-2.json', 'prdt track drop T-2']) {
+      why(run({ tool: 'Bash', input: { command: c }, env }))
+    }
+    why(run({ tool: 'Write', input: { file_path: r2, content: '{}' }, env }))
+  })
+
+  test('with a worktree, both rules apply: the shared checkout and the records', () => {
+    workerTranscript('agent-w', { slug: 's', dispatch_id: 'd-1', worktree: wt })
+    expect(denied(bash('touch code/x.ts'))).toContain('T-779')
+    why(bash(`rm ${rec}`))
+    expect(bash(`touch ${wt}/x.ts`)).toBe('')
   })
 })
