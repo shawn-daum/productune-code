@@ -557,12 +557,23 @@ export function collectDiscipline(repoRoot, { disciplineRoot = defaultDiscipline
   return docs
 }
 
+/** T-809: the project slug from the meta repo's `.prdt/config.json`; null when absent. */
+export function collectProjectSlug(repoRoot) {
+  try {
+    const slug = readJson(path.join(repoRoot, '.prdt/config.json')).slug
+    return typeof slug === 'string' && slug.trim() ? slug.trim() : null
+  } catch {
+    return null
+  }
+}
+
 /** Everything the generator needs, gathered once. */
 export function collectAll(repoRoot, { disciplineRoot } = {}) {
   const poState = readPoState(repoRoot)
   const currentVersion = poState.version
   return {
     poState,
+    project: collectProjectSlug(repoRoot),
     currentVersion,
     prd: collectPrd(repoRoot, currentVersion),
     tickets: collectTickets(repoRoot, currentVersion),

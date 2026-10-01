@@ -2752,7 +2752,20 @@ ${PRD_READING_SCRIPT}
     return st;
   }
 
+  // T-809: the tab title names the project and, with a detail panel open, the
+  // item id exactly as the URL state carries it. The static head title is the
+  // no-item form; its text is the base every later title is built from.
+  var BASE_TITLE = document.title;
+  var ogTitle = document.querySelector('meta[property="og:title"]');
+  function syncTitle() {
+    var st = readState();
+    var t = st && st.id ? BASE_TITLE + ' - ' + st.id : BASE_TITLE;
+    document.title = t;
+    if (ogTitle) ogTitle.setAttribute('content', t);
+  }
+
   function syncUrl(replace) {
+    syncTitle();
     var st = readState();
     if (!st) return;
     var p = new URLSearchParams();
@@ -2892,7 +2905,7 @@ ${PRD_READING_SCRIPT}
   // A '#<key>' link keeps working: it routes, then the URL is rewritten to
   // the same screen's query form so a refresh reopens it.
   window.addEventListener('hashchange', function () { routeHash(); syncUrl(true); });
-  window.addEventListener('popstate', function () { if (!location.hash) routeParams(); });
+  window.addEventListener('popstate', function () { if (!location.hash) routeParams(); syncTitle(); });
   paintToggle();
   route();
   syncUrl(true);
@@ -3030,6 +3043,11 @@ export function detailDataScript(obj) {
  * @param {string} [args.artifactsBaseHref] path from the generated page's own directory to `docs/artifacts/` — defaults to this repo's real, current OUTPUT_PATH layout (`code/packages/viewer/viewer.html` → repo root) so a fixture/test that omits it still gets a working link.
  * @param {string} [args.repoRootHref] path from the generated page's own directory back to the repo root — T-666 slice 2b: every relative link inside a rendered document body is rewritten onto this (see `resolveDocLink`), rather than being left to resolve against the page's own folder. Defaults to this repo's real, current OUTPUT_PATH layout, same as `artifactsBaseHref`'s default (`artifactsBaseHref` = `${repoRootHref}/docs/artifacts`, computed once in generate.mjs from the same OUTPUT_PATH — not a second relative-path calculation).
  */
+/** T-809: `[prdt] {project}` — the no-item tab / share title. */
+export function pageTitleText(project) {
+  return `${PAGE.titlePrefix} ${project || PAGE.titleFallback}`
+}
+
 export function renderPage({
   data,
   dark,
@@ -3043,6 +3061,7 @@ export function renderPage({
   build = null,
 }) {
   pageViewerAbsPath = viewerAbsPath
+  const pageTitle = escapeHtml(pageTitleText(data.project))
   const discipline = data.discipline || []
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   const anchors = buildAnchors(data)
@@ -3071,7 +3090,8 @@ export function renderPage({
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${CSP_CONTENT}">
-<title>${PAGE.title}</title>
+<title>${pageTitle}</title>
+<meta property="og:title" content="${pageTitle}">
 <script>${THEME_HEAD_SCRIPT}</script>
 <style>
 ${fontFaceCss}
