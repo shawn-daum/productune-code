@@ -94,6 +94,9 @@ export default defineConfig({
     // rewrites ~/.claude.json) or call `getDefault()` (which auto-creates
     // ~/.productune/git-rules.default.json) with an inherited real HOME.
     // T-450: the same file now also carries the run's VERDICT.
-    setupFiles: ['../../scripts/vitest-home-sandbox.ts'],
+    // T-790: then pin `uptime` / `memory_pressure` on PATH so `prdt doctor`'s
+    // load-gated resident-resource check never moves a test's violation count
+    // with the HOST's load (test/helpers/machine-state-stub.ts has the repro).
+    setupFiles: ['../../scripts/vitest-home-sandbox.ts', './test/helpers/machine-state-stub.ts'],
   },
 })
