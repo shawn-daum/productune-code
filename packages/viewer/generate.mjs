@@ -13,7 +13,7 @@ import { buildRawThemeMaps, resolveVarChains } from './lib/parse-tokens.mjs'
 import subsetFont from 'subset-font'
 import { collectUsedChars, buildPretendardFontFaceCss } from './lib/font-subset.mjs'
 import { collectAll } from './lib/collect.mjs'
-import { renderPage, templateGuardErrors, pastTicketDataFiles, pastTicketDataContent } from './lib/render.mjs'
+import { renderPage, templateGuardErrors, pastTicketDataFiles, pastTicketDataContent, buildFileContent } from './lib/render.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // T-718: computed relative to THIS file's own location, never from a
@@ -69,7 +69,7 @@ const SEMIBOLD_WOFF2 = path.join(PRETENDARD_STATIC_DIR, 'Pretendard-SemiBold.wof
  * `created`/`closed`, artifact `added_at`, etc.), never "generated at".
  * T-885: also returns `dataFiles` — one past-version ticket data file per
  * bucket, written NEXT TO `outputPath` (`name` is a bare file name).
- * @returns {Promise<{ html: string, dataFiles: Array<{ name: string, content: string }> }>}
+ * @returns {Promise<{ html: string, dataFiles: Array<{ name: string, content: string }>, buildFile: { name: string, content: string } }>}
  */
 export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH } = {}) {
   const tokensBuf = fs.readFileSync(TOKENS_PATH)
@@ -120,7 +120,7 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH 
   const semiboldBuffer = fs.readFileSync(SEMIBOLD_WOFF2)
   const fontFaceCss = await buildPretendardFontFaceCss({ regularBuffer, semiboldBuffer, usedText })
 
-  const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc })
+  const htmlNoBuild = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc })
   // The data-file bodies render in this page, so the font must paint them
   // too — but folding every past body's glyphs into the page's own subset
   // would grow viewer.html by ~80KB (measured). Each data file instead
@@ -133,7 +133,15 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH 
     if (extra.length > 0) payload.font = await supplementFont(extra, regularBuffer, semiboldBuffer)
     dataFiles.push({ name: f.name, content: pastTicketDataContent(f.bucket, payload) })
   }
-  return { html, dataFiles }
+  // T-803 (T-897 = B): the build id is a content hash of the page and its data
+  // files, so it moves exactly when the viewer file's content does. The page
+  // embeds it; the sibling build file (written LAST) carries the same id.
+  const hash = crypto.createHash('sha256').update(htmlNoBuild)
+  for (const f of dataFiles) hash.update('\0' + f.name + '\0' + f.content)
+  const id = hash.digest('hex').slice(0, 16)
+  const buildName = `${prefix}.build.js`
+  const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc, build: { id, src: encodeURIComponent(buildName) } })
+  return { html, dataFiles, buildFile: { name: buildName, content: buildFileContent(id) } }
 }
 
 async function supplementFont(chars, regularBuffer, semiboldBuffer) {
@@ -155,9 +163,9 @@ export function isPastTicketDataFileName(outputPath, name) {
 
 /** @returns {Promise<{ upToDate: boolean, html: string }>} */
 export async function checkUpToDate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH } = {}) {
-  const { html, dataFiles } = await generate({ repoRoot, outputPath })
+  const { html, dataFiles, buildFile } = await generate({ repoRoot, outputPath })
   const read = (p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null)
   const dir = path.dirname(outputPath)
-  const upToDate = read(outputPath) === html && dataFiles.every((f) => read(path.join(dir, f.name)) === f.content)
+  const upToDate = read(outputPath) === html && [...dataFiles, buildFile].every((f) => read(path.join(dir, f.name)) === f.content)
   return { upToDate, html }
 }
