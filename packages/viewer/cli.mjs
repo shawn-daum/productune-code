@@ -44,12 +44,15 @@ async function main() {
     return
   }
 
-  const { html, dataFiles } = await generate({ repoRoot, outputPath })
+  const { html, dataFiles, buildFile } = await generate({ repoRoot, outputPath })
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
   // T-885: the past-version data files land before the page that names them.
   const dir = path.dirname(outputPath)
   for (const f of dataFiles) writeAtomic(path.join(dir, f.name), f.content)
   writeAtomic(outputPath, html)
+  // T-803: the build-id file lands after the page, so an open tab that sees the
+  // new id always reloads into the new page.
+  writeAtomic(path.join(dir, buildFile.name), buildFile.content)
   // A bucket that no longer exists leaves no stale data file behind; only
   // this page's own `<prefix>.tickets-*.js` names are ever removed.
   const keep = new Set(dataFiles.map((f) => f.name))

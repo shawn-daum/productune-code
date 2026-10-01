@@ -1702,14 +1702,24 @@ details.v-fold[open] summary { color: var(--text-primary); }
  */
 // T-797 개정: localStorage key prefix for the remembered theme — one key per viewer file (location.pathname appended at runtime).
 const THEME_STORAGE_PREFIX = 'prdt-viewer-theme:'
-// T-803: a visible tab re-reads the (possibly regenerated) file on this interval;
-// a hidden tab never reloads. location.reload() keeps the URL (query state), and
-// needs no fetch/connect-src, so the CSP and its script hash stay the only gate.
+// T-803 (T-897 = B): a visible tab checks on this interval whether the viewer
+// file was regenerated, and reloads only when it was; a hidden tab never checks.
+// The check loads a tiny sibling \`<prefix>.build.js\` (window[BUILD_GLOBAL] =
+// "<id>") through a script the hash-trusted interaction script inserts — the
+// same strict-dynamic path T-885 opened — so no fetch/connect-src exists. The
+// page carries its own id in DETAIL_DATA.build; a different id = a new file.
+// location.reload() keeps the URL (query state); main and detail-panel scroll
+// are saved to sessionStorage just before it and restored after route().
 export const VIEWER_AUTO_REFRESH_MS = 30000
+export const BUILD_GLOBAL = '__PRDT_VIEWER_BUILD__'
+const SCROLL_STORAGE_PREFIX = 'prdt-viewer-scroll:'
+/** The sibling build-id file's content: the only thing it does is set one global. */
+export function buildFileContent(id) {
+  return `window.${BUILD_GLOBAL} = ${JSON.stringify(String(id))};\n`
+}
 
 const INTERACTION_SCRIPT = `
 (function () {
-  setInterval(function () { if (document.visibilityState === 'visible') location.reload(); }, ${VIEWER_AUTO_REFRESH_MS});
   var DETAIL_DATA = JSON.parse(document.getElementById('detail-data').textContent);
   var DETAIL_FIELD_LABELS = ${JSON.stringify(DETAIL_FIELD_LABELS)};
   var HASH_NOTICE = ${JSON.stringify(HASH_NOTICE)};
@@ -1815,6 +1825,7 @@ const INTERACTION_SCRIPT = `
     panel.setAttribute('data-open-kind', kind);
     panel.setAttribute('data-open-id', id);
     panel.classList.add('active');
+    if (typeof applyScroll === 'function') applyScroll(false);
   }
 
   function selectStore(key) {
@@ -2029,6 +2040,61 @@ const INTERACTION_SCRIPT = `
   paintToggle();
   route();
   syncUrl(true);
+
+  // T-803 (T-897 = B): reload only when the viewer file changed, back at the
+  // same main-pane and detail-panel scroll position.
+  var BUILD = DETAIL_DATA.build || null;
+  var SCROLL_KEY = ${JSON.stringify(SCROLL_STORAGE_PREFIX)} + location.pathname;
+  function mainScroller() { return document.querySelector('.store-section.active .frame-body'); }
+  function detailScroller() { return document.querySelector('.store-section.active .detail-panel.active .detail-panel-body'); }
+  function saveScroll() {
+    var m = mainScroller(), d = detailScroller();
+    try { sessionStorage.setItem(SCROLL_KEY, JSON.stringify({ main: m ? m.scrollTop : 0, detail: d ? d.scrollTop : 0 })); } catch (e) { /* storage blocked: the reload still keeps the URL state */ }
+  }
+  var RESTORE = null;
+  try {
+    var raw = sessionStorage.getItem(SCROLL_KEY);
+    sessionStorage.removeItem(SCROLL_KEY);
+    if (raw) RESTORE = JSON.parse(raw);
+  } catch (e) { RESTORE = null; }
+  // Main scroll is applied for the first paint and again at window load (fonts
+  // and layout settle); the detail scroll once its panel body is in.
+  function applyScroll(final) {
+    if (!RESTORE) return;
+    var m = mainScroller();
+    if (m && !RESTORE.mainDone) m.scrollTop = RESTORE.main || 0;
+    if (final) RESTORE.mainDone = true;
+    var d = detailScroller();
+    if (d && !PAST_PENDING()) { d.scrollTop = RESTORE.detail || 0; RESTORE.detailDone = true; }
+    if (RESTORE.mainDone && (RESTORE.detailDone || !document.querySelector('.detail-panel.active'))) RESTORE = null;
+  }
+  // A past-version ticket body arrives from its data file after the panel
+  // opens; the detail scroll waits until that body is in.
+  function PAST_PENDING() {
+    var panel = document.querySelector('.store-section.active .detail-panel.active');
+    if (!panel || panel.getAttribute('data-open-kind') !== 'ticket') return false;
+    var fields = own(DETAIL_DATA.ticket, panel.getAttribute('data-open-id')) ? DETAIL_DATA.ticket[panel.getAttribute('data-open-id')] : null;
+    var ref = fields && !fields.body ? pastTicketRef(fields) : null;
+    return !!ref && !pastSettled(ref);
+  }
+  applyScroll(false);
+  window.addEventListener('load', function () { applyScroll(true); });
+
+  if (BUILD && BUILD.id && BUILD.src) {
+    var probe = null;
+    setInterval(function () {
+      if (document.visibilityState !== 'visible') return;
+      if (probe && probe.parentNode) probe.parentNode.removeChild(probe);
+      try { delete window[${JSON.stringify(BUILD_GLOBAL)}]; } catch (e) { window[${JSON.stringify(BUILD_GLOBAL)}] = undefined; }
+      probe = document.createElement('script');
+      probe.onload = function () {
+        var id = window[${JSON.stringify(BUILD_GLOBAL)}];
+        if (typeof id === 'string' && id !== BUILD.id && document.visibilityState === 'visible') { saveScroll(); location.reload(); }
+      };
+      probe.src = BUILD.src + '?' + Date.now();
+      document.head.appendChild(probe);
+    }, ${VIEWER_AUTO_REFRESH_MS});
+  }
 })();
 `
 
@@ -2106,6 +2172,7 @@ export function renderPage({
   repoRootHref = DEFAULT_REPO_ROOT_HREF,
   viewerAbsPath = DEFAULT_VIEWER_ABS_PATH,
   pastTicketSrc = {},
+  build = null,
 }) {
   pageViewerAbsPath = viewerAbsPath
   const detailData = {
@@ -2120,6 +2187,9 @@ export function renderPage({
     maxTicket: maxTicketNumber(data),
     // T-885: bucket → sibling data-file src, written by the generator only.
     pastTickets: pastTicketSrc,
+    // T-803 (T-897 = B): { id, src } — this file's build id and its sibling
+    // build-id file, generator-written; null = no auto-refresh check.
+    build,
   }
 
   return `<!doctype html>
