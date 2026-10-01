@@ -129,7 +129,7 @@ describe('T-803: scroll position survives the reload', () => {
     b.mainEl.scrollTop = 420
     b.detailEl.scrollTop = 135
     b.poll('bbbb2222')
-    expect(JSON.parse(b.store.get('prdt-viewer-scroll:/v.html')!)).toEqual({ main: 420, detail: 135, detailKey: 'ticket:T-1', folds: [] })
+    expect(JSON.parse(b.store.get('prdt-viewer-scroll:/v.html')!)).toEqual({ main: 420, detail: 135, detailKey: 'ticket:T-1', folds: {} })
   })
   it('saves nothing when nothing changed', () => {
     const b = boot()

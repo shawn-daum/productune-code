@@ -19,7 +19,9 @@ const BOLD_LINE_RE = /^\*\*(.+?)\*\*\s*[:：]?\s*$/
 export function plainInline(text) {
   return String(text ?? '')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/[`*_]/g, '')
+    .split(/(`[^`]*`)/)
+    .map((part, i) => (i % 2 ? part.replace(/`/g, '') : part.replace(/[`*_]/g, '')))
+    .join('')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -202,8 +204,15 @@ export function renderPrdReading({ body, currentVersion, decisionTickets, idPref
   const bodyHtml = (text) => (text.trim() === '' ? '' : `<div class="pr-body v-body">${text}</div>`)
 
   /** @returns {string} html of one foldable section; also appends its outline entry */
+  const foldSeen = new Map()
   const section = (node, ctx) => {
     const id = `${idPrefix}-s${++seq}`
+    // Stable fold identity: the heading path (plain titles), `~n` for the n-th repeat of the same path —
+    // never the sequence number, which shifts when a `##` is inserted or removed above.
+    const path = `${ctx.path ?? ''}/${plainInline(node.title)}`
+    const nth = (foldSeen.get(path) ?? 0) + 1
+    foldSeen.set(path, nth)
+    const foldKey = nth > 1 ? `${path}~${nth}` : path
     const marks = '#'.repeat(node.level)
     const isOpenSection = node.level === 2 && isOpenVersion(node.title)
     const isQuestions = node.level === 3 && L.questionsSection.test(node.title)
@@ -245,16 +254,16 @@ export function renderPrdReading({ body, currentVersion, decisionTickets, idPref
       let kids = ''
       if (isWhat) {
         const table = whatTable(node.ownText)
-        const cards = node.children.map((c) => section(c, { ...ctx, what: table })).join('')
+        const cards = node.children.map((c) => section(c, { ...ctx, path, what: table })).join('')
         slot.badge = String(node.children.length)
         kids = node.children.length ? `<div class="pr-cards-h">${esc(L.cardsHeading(node.children.length))}</div><div class="pr-cards">${cards}</div>` : ''
       } else {
-        const nextCtx = { ...ctx, underOpen: ctx.underOpen || isOpenSection }
+        const nextCtx = { ...ctx, path, underOpen: ctx.underOpen || isOpenSection }
         kids = node.children.map((c) => section(c, nextCtx)).join('')
       }
       inner = bodyHtml(own + kids)
     }
-    return `<details class="${cls}" id="${id}" data-open0="${open0 ? 1 : 0}"${open0 ? ' open' : ''}><summary>${summary}</summary>${inner}</details>`
+    return `<details class="${cls}" id="${id}" data-fold="${esc(foldKey)}" data-open0="${open0 ? 1 : 0}"${open0 ? ' open' : ''}><summary>${summary}</summary>${inner}</details>`
   }
 
   const sectionsHtml = tree.sections.map((s) => section(s, { underOpen: false, what: new Map() })).join('')
@@ -400,7 +409,7 @@ export const PRD_READING_CSS = `
 .pr-l4 > summary .pr-t { font-size: 13px; font-weight: 600; }
 .pr-l4 > summary .pr-mark { width: 34px; }
 .pr-l4 > .pr-body { border-left: 1px solid var(--border-item); margin-left: var(--space-12); }
-.pr-card > summary .pr-t { font-size: 13px; font-weight: 600; }
+.pr-card > summary .pr-t { font-size: 13px; font-weight: 600; flex: 1 1 14em; min-width: 10em; }
 .pr-card > summary .pr-mark { width: 34px; }
 .pr-what > .pr-body > .pr-cards-h { font-size: 11px; color: var(--text-tertiary); font-weight: 600; margin: var(--space-12) 0 var(--space-8); }
 .pr-cards { display: flex; flex-direction: column; gap: var(--space-8); }
@@ -417,7 +426,7 @@ li.is-target { background: color-mix(in srgb, var(--accent) 14%, transparent); b
 `
 
 // ---------- browser side (spliced into INTERACTION_SCRIPT; ES5, no labels, no inline handlers) ----------
-// Functions it defines: prdClick(ev) → bool, prdFoldState() → [open ids], prdRestoreFolds(ids), prdInit().
+// Functions it defines: prdClick(ev) → bool, prdFoldState() → {foldKey: open}, prdRestoreFolds(ids), prdInit().
 export const PRD_READING_SCRIPT = `
   // T-884: PRD reading screen — folds, outline jump, scroll spy. Every id is compared, never spliced into a selector.
   function prdWrap(el) { return el && el.closest ? el.closest('.pr-wrap') : null; }
@@ -500,17 +509,20 @@ export const PRD_READING_SCRIPT = `
     }
     return false;
   }
+  // Fold state is keyed by data-fold (the heading path), so a regenerated PRD with a section added or
+  // removed above restores the same sections; a section the saved state never saw keeps its default.
   function prdFoldState() {
-    var open = [];
-    document.querySelectorAll('.pr-wrap details.pr-sec').forEach(function (s) { if (s.open) open.push(s.id); });
-    return open;
+    var state = {};
+    document.querySelectorAll('.pr-wrap details.pr-sec').forEach(function (s) { state[s.getAttribute('data-fold') || s.id] = s.open; });
+    return state;
   }
-  function prdRestoreFolds(ids) {
-    if (!ids || typeof ids.length !== 'number') return;
-    var set = Object.create(null);
-    ids.forEach(function (i) { set[i] = true; });
+  function prdRestoreFolds(state) {
+    if (!state || typeof state !== 'object' || typeof state.length === 'number') return;
     document.querySelectorAll('.pr-wrap').forEach(function (wrap) {
-      prdSecs(wrap).forEach(function (s) { s.open = set[s.id] === true; });
+      prdSecs(wrap).forEach(function (s) {
+        var k = s.getAttribute('data-fold') || s.id;
+        if (Object.prototype.hasOwnProperty.call(state, k)) s.open = state[k] === true;
+      });
       prdSyncDots(wrap);
     });
   }
