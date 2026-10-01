@@ -421,6 +421,100 @@ describe.skipIf(!PY)('T-834 — no worker writes the track records', () => {
     why(run({ tool: 'Write', input: { file_path: r2, content: '{}' }, env }))
   })
 
+  test('T-834 grill [A] — a glob or brace target under $PRDT_HOME/run is denied', () => {
+    const run_ = path.join(prdtHome, 'run')
+    for (const c of [
+      `rm -f ${run_}/track*/abcd/T-2.json`,
+      `rm -rf ${run_}/t*`,
+      `echo x > ${run_}/tr?cks/abcd/T-2.json`,
+      `rm ${run_}/{tracks,x}/abcd/T-2.json`,
+      `rm -f ${run_}/tr[a]cks/abcd/T-2.json`,
+      `rm -rf ${run_}/dispatch*`,                           // any glob under run/: tooling-owned
+      `rm -rf ${prdtHome}/r*`,                              // an ancestor of run/tracks inside PRDT_HOME
+      'rm -rf $PRDT_HOME/run/t*',
+    ]) {
+      why(bash(c))
+    }
+    // a glob elsewhere, or one in PRDT_HOME that cannot reach run/tracks, stays silent
+    for (const c of [`rm -f ${scratch}/*.json`, `touch ${prdtHome}/*.log`, `rm -f ${prdtHome}/w*`]) {
+      expect(bash(c), c).toBe('')
+    }
+  })
+
+  test('T-834 grill [B] — only a real assignment reassigns PRDT_HOME / HOME', () => {
+    const py = `python3 -c "import os; os.remove(os.environ['PRDT_HOME'] + '/run/tracks/abcd/T-2.json')"`
+    for (const c of [
+      `echo PRDT_HOME=/tmp/x; ${py}`,
+      `# PRDT_HOME=/tmp/x\n${py}`,
+      'PRDT_HOME=/tmp/x true; prdt track drop T-2',
+      '(export PRDT_HOME=/tmp/x); prdt track drop T-2',
+    ]) {
+      expect(why(bash(c)), c).toBeTruthy()
+    }
+    const fakeHome = path.join(sb, 'home')
+    const env = { ...process.env, HOME: fakeHome }
+    delete env.PRDT_HOME
+    for (const c of [
+      'HOME=/tmp/x true; rm $HOME/.prdt/run/tracks/abcd/T-2.json',
+      'echo HOME=/tmp/x; rm $HOME/.prdt/run/tracks/abcd/T-2.json',
+      '# HOME=/tmp/x\npython3 -c "import os; os.remove(os.path.expanduser(\'~/.prdt/run/tracks/abcd/T-2.json\'))"',
+      'HOME=/tmp/x rm $HOME/.prdt/run/tracks/abcd/T-2.json',   // a prefix does not change its own args' expansion
+    ]) {
+      expect(why(run({ tool: 'Bash', input: { command: c }, env })), c).toBeTruthy()
+    }
+    // real reassignments still count: export, a standalone assignment, a prefix on the same command, env VAR=
+    const sbx = path.join(sb, 'qa-sandbox', 'prdt')
+    for (const c of [
+      `export PRDT_HOME=${sbx}; prdt track drop T-1`,
+      `PRDT_HOME=${sbx}; prdt track drop T-1`,
+      `PRDT_HOME=${sbx} prdt track drop T-1`,
+      `env PRDT_HOME=${sbx} prdt track drop T-1`,
+      `HOME=/tmp/x; rm $HOME/.prdt/run/tracks/abcd/T-2.json`,
+    ]) {
+      expect(bash(c), c).toBe('')
+    }
+  })
+
+  test('T-834 grill [C] — combined shell flags, dash/ksh and an env-path wrapper are unwrapped', () => {
+    for (const c of [
+      `bash -lc "rm ${rec}"`,
+      `bash -ec "rm ${rec}"`,
+      `bash -e -c "rm ${rec}"`,
+      `dash -c "rm ${rec}"`,
+      `ksh -c "rm ${rec}"`,
+      `/usr/bin/env bash -c "rm ${rec}"`,
+      `/bin/sh -c "rm ${rec}"`,
+      `/usr/bin/env -i bash --noprofile -c "rm ${rec}"`,
+    ]) {
+      why(bash(c))
+    }
+    expect(bash('bash -lc "echo hi"')).toBe('')
+    expect(bash('bash -e script.sh')).toBe('')
+  })
+
+  test('T-834 grill [D] — copy / extract INTO run/, PRDT_HOME or run/tracks is denied', () => {
+    const run_ = path.join(prdtHome, 'run')
+    for (const c of [
+      `cp -R /tmp/forged/tracks ${run_}/`,
+      `rsync -a /tmp/forged/ ${run_}/`,
+      `tar -xf f.tar -C ${run_}`,
+      `unzip -o f.zip -d ${prdtHome}`,
+      `ditto /tmp/forged ${run_}`,
+      `cp -R /tmp/forged ${tracks}`,
+      `mv /tmp/forged/run ${prdtHome}/`,
+      'cp -R /tmp/forged/tracks ~/.prdt/run/'.replace('~/.prdt', prdtHome),
+    ]) {
+      why(bash(c))
+    }
+    for (const c of [
+      `cp -R ${run_} ${scratch}/run-copy`,                 // a copy FROM run/ is a read
+      `tar -xf f.tar -C ${scratch}`,
+      `rsync -a ${tracks}/ ${scratch}/t/`,
+    ]) {
+      expect(bash(c), c).toBe('')
+    }
+  })
+
   test('with a worktree, both rules apply: the shared checkout and the records', () => {
     workerTranscript('agent-w', { slug: 's', dispatch_id: 'd-1', worktree: wt })
     expect(denied(bash('touch code/x.ts'))).toContain('T-779')
