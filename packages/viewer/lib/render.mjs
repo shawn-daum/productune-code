@@ -855,7 +855,7 @@ ${sidebarButtons}
 
   const defaultLabel = groups.length > 0 ? groups[defaultIndex].label : ''
   const mainCol = `<div class="frame-main-col">
-<div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)} · <span class="js-group-label">${escapeHtml(defaultLabel)}</span></b></span></div>
+<div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)}${defaultLabel === '' ? '' : ` · <span class="js-group-label">${escapeHtml(defaultLabel)}</span>`}</b></span></div>
 <div class="frame-body"><div class="main-inner">${topHtml}${panes}</div></div>
 <div class="detail-panel" role="dialog" aria-label="${COMMON.detailPanel}">
 <div class="detail-panel-header"><span class="detail-panel-title"></span><button type="button" class="detail-panel-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 14)}</button></div>
@@ -965,54 +965,234 @@ function wikiSection(pages) {
   return storeSection('wiki', { innerHtml: wikiStoreInner(pages) })
 }
 
-function featureRowsTable(pages) {
-  if (pages.length === 0) return `<p class="v-note">${FEATURE.empty}</p>`
-  let html = `<div class="table-wrap"><table><thead><tr>${FEATURE.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
+// ---------- feature store (T-882: the T-808 feature screen) ----------
+// Source: `data.featureTaxonomy` (collect.mjs, read from .prdt/config.json
+// features.taxonomy + features.vocab — decision recorded in T-882 outcome).
+// Ticket counts, statuses, versions and 근거 티켓 are computed here from the
+// tickets themselves (every bucket), never copied from the taxonomy. A link
+// written on one side only also shows on the other side, as a name-only
+// link (T-808 outcome). No taxonomy → the pre-T-882 spec-file list (T-901 = B);
+// no taxonomy and no spec file → the approved empty state.
+const TICKET_ID_RE = /\bT-(?:P\d+-)?\d+\b/g
+
+function ticketIdLinks(escapedText, anchors) {
+  return escapedText.replace(TICKET_ID_RE, (id) =>
+    Object.prototype.hasOwnProperty.call(anchors, id) ? `<a href="#${id}"><code>${id}</code></a>` : `<code>${id}</code>`,
+  )
+}
+
+function allTicketRows(tickets) {
+  const rows = tickets.included.map((t) => ({ bucket: t.bucket, fm: t.frontmatter }))
+  for (const b of tickets.omitted) for (const t of b.tickets) rows.push({ bucket: b.bucket, fm: t.frontmatter })
+  return rows
+}
+
+const isVersionBucket = (b) => /^v\d/.test(b)
+const compareVersionIdsAsc = (a, b) => compareVersionIdsDesc(b, a)
+
+/** Bucket list → "v1.1 · v1.4 ~ v1.11 · backlog": a run of 3+ buckets adjacent in the repo's own version order folds to "first ~ last". */
+function versionsLabel(buckets, allVersions) {
+  const vs = [...new Set(buckets.filter(isVersionBucket))].sort(compareVersionIdsAsc)
+  const rest = [...new Set(buckets.filter((b) => !isVersionBucket(b)))].sort()
+  const parts = []
+  let i = 0
+  while (i < vs.length) {
+    let j = i
+    while (j + 1 < vs.length && allVersions.indexOf(vs[j + 1]) === allVersions.indexOf(vs[j]) + 1) j++
+    if (j - i >= 2) parts.push(`${vs[i]} ~ ${vs[j]}`)
+    else for (let k = i; k <= j; k++) parts.push(vs[k])
+    i = j + 1
+  }
+  return [...parts, ...rest].join(' · ')
+}
+
+function ticketNumber(id) {
+  return (String(id).match(/\d+/g) || []).map(Number)
+}
+
+/** Everything the screen shows per feature, computed once from taxonomy + tickets + spec files. */
+export function featureScreenModel(data) {
+  const tax = data.featureTaxonomy
+  if (!tax || !tax.areas || tax.areas.length === 0) return null
+  const areaKeys = new Set(tax.areas.map((a) => a.key))
+  const entries = tax.entries.filter((e) => areaKeys.has(e.area))
+  const byKey = new Map(entries.map((e) => [e.key, e]))
+  const owner = new Map()
+  for (const e of entries) {
+    owner.set(e.key, e.key)
+    for (const a of e.aliases || []) if (!owner.has(a)) owner.set(a, e.key)
+  }
+  const tickets = new Map(entries.map((e) => [e.key, []]))
+  const rows = allTicketRows(data.tickets)
+  for (const r of rows) {
+    const v = typeof r.fm.feature === 'string' ? r.fm.feature.trim() : ''
+    const k = owner.get(v)
+    if (k) tickets.get(k).push(r)
+  }
+  const allVersions = [...new Set(rows.map((r) => r.bucket).filter(isVersionBucket))].sort(compareVersionIdsAsc)
+  const rev = new Map(entries.map((e) => [e.key, []]))
+  for (const e of entries) {
+    for (const l of e.links) {
+      const other = byKey.get(l.to)
+      if (other && !other.links.some((x) => x.to === e.key) && !rev.get(l.to).includes(e.key)) rev.get(l.to).push(e.key)
+    }
+  }
+  const specs = new Map(data.features.map((p) => [p.rel.split('/').pop().replace(/\.md$/, ''), p]))
+  const model = entries.map((e) => {
+    const ts = tickets.get(e.key).sort((a, b) => {
+      const pa = ticketNumber(a.fm.id)
+      const pb = ticketNumber(b.fm.id)
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0)
+      return 0
+    })
+    return {
+      ...e,
+      links: e.links.filter((l) => byKey.has(l.to)),
+      rev: rev.get(e.key),
+      tickets: ts,
+      versions: versionsLabel(ts.map((t) => t.bucket), allVersions),
+      spec: specs.get(e.key) || null,
+    }
+  })
+  return { areas: tax.areas, kinds: tax.kinds || [], entries: model, byKey: new Map(model.map((m) => [m.key, m])) }
+}
+
+function kindChip(model, kindKey) {
+  const k = model.kinds.find((x) => x.key === kindKey)
+  return k ? `<span class="kp kp-${escapeHtml(k.key)}">${escapeHtml(k.name)}</span>` : ''
+}
+
+function featureRow(model, e) {
+  return `<tr class="detail-row" data-area="${escapeHtml(e.area)}" data-detail-kind="feature" data-detail-id="${escapeHtml(e.key)}" tabindex="0">` +
+    `<td><span class="nm">${escapeHtml(e.name || e.key)}</span><span class="nm-key">${escapeHtml(e.key)}</span></td>` +
+    `<td>${kindChip(model, e.kind)}</td><td class="def-col">${escapeHtml(e.def || '')}</td><td class="num-col">${e.tickets.length}</td></tr>\n`
+}
+
+function featureAreaRows(model, area) {
+  const items = model.entries.filter((e) => e.area === area.key)
+  return `<tr class="grp-row" data-area="${escapeHtml(area.key)}"><td colspan="4"><span class="grp-name">${escapeHtml(area.name)}</span>` +
+    `<span class="grp-n">${items.length}</span><span class="grp-def">${escapeHtml(area.def || '')}</span></td></tr>\n` +
+    items.map((e) => featureRow(model, e)).join('')
+}
+
+function featurePane(model, areas, count) {
+  const head = `<tr>${FEATURE.tableHeaders.map((h, i) => `<th${i === 3 ? ' class="num-col"' : ''}>${escapeHtml(h)}</th>`).join('')}</tr>`
+  return `<div class="count-line section-meta"><span class="count-badge">${escapeHtml(FEATURE.sidebarLabel)} <b>${count}</b>${escapeHtml(FEATURE.countUnit)}</span></div>\n` +
+    `<div class="table-wrap"><table class="feature-table"><thead>${head}</thead><tbody>\n${areas.map((a) => featureAreaRows(model, a)).join('')}</tbody></table></div>\n`
+}
+
+/** T-901 = B — no taxonomy: the pre-T-882 spec-file list (`docs/features/` is flat, one group). */
+function featureSpecListRows(pages) {
+  let html = `<div class="table-wrap"><table><thead><tr>${FEATURE.specList.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
   for (const p of pages) {
     const fm = p.frontmatter
     const id = p.rel.split('/').pop()
+    const text = FEATURE.specList.statusText[fm.status || ''] ?? fm.status ?? ''
     html += `<tr class="detail-row" data-detail-kind="feature" data-detail-id="${escapeHtml(id)}">`
     html += `<td class="id-col">${escapeHtml(fm.feature || id)}</td>`
     html += `<td>${escapeHtml(fm.title || id)}</td>`
-    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(wikiFeatureStatusText(fm.status))}</span></td>`
+    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(text)}</span></td>`
     html += `<td class="num-col">${escapeHtml(fm.spec_since || '—')}</td>`
     html += '</tr>\n'
   }
-  html += '</tbody></table></div>\n'
-  return html
+  return html + '</tbody></table></div>\n'
 }
 
-/** Feature store: `docs/features/` is flat (contracts §Fixed paths — "no index file, `ls` is the index") — one group, same list→detail model as every other store rather than a bespoke no-sidebar layout. */
-function featureStoreInner(pages) {
-  const groups = [
-    {
+function featureStoreInner(data) {
+  const model = featureScreenModel(data)
+  if (!model && data.features.length > 0) {
+    const groups = [{
       key: 'all',
       label: STORE_LABEL.feature,
-      count: pages.length,
-      bodyHtml: countBadge(FEATURE.sidebarLabel, pages.length, FEATURE.countUnit) + featureRowsTable(pages),
-    },
+      count: data.features.length,
+      bodyHtml: countBadge(FEATURE.sidebarLabel, data.features.length, FEATURE.countUnit) + featureSpecListRows(data.features),
+    }]
+    return groupedStore({ sidebarSubLabel: STORE_LABEL.feature, crumbLabel: STORE_LABEL.feature, groups, noGroupUnit: FEATURE.countUnit })
+  }
+  if (!model) {
+    const groups = [{ key: 'all', label: '', count: 0, bodyHtml: `<p class="v-note">${FEATURE.empty}</p>` }]
+    return groupedStore({ sidebarSubLabel: STORE_LABEL.feature, crumbLabel: STORE_LABEL.feature, groups, noGroupUnit: FEATURE.countUnit })
+  }
+  const groups = [
+    { key: 'all', label: FEATURE.allLabel, count: model.entries.length, bodyHtml: featurePane(model, model.areas, model.entries.length) },
+    ...model.areas.map((a) => {
+      const n = model.entries.filter((e) => e.area === a.key).length
+      return { key: a.key, label: a.name, count: n, bodyHtml: featurePane(model, [a], n) }
+    }),
   ]
   return groupedStore({ sidebarSubLabel: STORE_LABEL.feature, crumbLabel: STORE_LABEL.feature, groups, noGroupUnit: FEATURE.countUnit })
 }
 
-function featureDetailEntries(pages, repoRootHref) {
+function featureTicketsLabel(e) {
+  const n = e.tickets.length
+  if (n === 0) return `0${FEATURE.ticketUnit}`
+  const count = (s) => e.tickets.filter((t) => t.fm.status === s).length
+  const parts = [`${FEATURE.ticketStatus.done} ${count('done')}`]
+  for (const s of ['open', 'dropped']) if (count(s) > 0) parts.push(`${FEATURE.ticketStatus[s]} ${count(s)}`)
+  return `${n}${FEATURE.ticketUnit} · ${parts.join(' · ')}`
+}
+
+function featureLinkItem(model, key, text, ground, anchors) {
+  const to = model.byKey.get(key)
+  const desc = text === undefined ? '<span></span>'
+    : `<span><span class="cn-t">${escapeHtml(text)}</span>${ground ? `<span class="cn-g">${ticketIdLinks(escapeHtml(ground), anchors)}</span>` : ''}</span>`
+  return `<li class="cn-item"><span class="cn-head"><button type="button" class="cn-a" data-feature-go="${escapeHtml(key)}">${escapeHtml(to.name || key)}</button>${kindChip(model, to.kind)}</span>${desc}</li>`
+}
+
+function featureEvidence(e, anchors) {
+  if (e.tickets.length === 0) return '—'
+  return e.tickets
+    .map((t) => {
+      const id = String(t.fm.id || '')
+      const mark = t.fm.status === 'open' || t.fm.status === 'dropped' ? `(${FEATURE.ticketStatus[t.fm.status]})` : ''
+      return `${ticketIdLinks(escapeHtml(id), anchors)}${escapeHtml(mark)} ${escapeHtml(t.fm.slug || '')}`.trim()
+    })
+    .join(' · ')
+}
+
+/** Detail order (T-808 outcome): definition and 「함께 쓰는 기능」 first, then the spec body (spec file present) or 근거 티켓. */
+function featureDetailHtml(model, e, anchors, repoRootHref) {
+  const area = model.areas.find((a) => a.key === e.area)
+  const kind = model.kinds.find((k) => k.key === e.kind)
+  const field = (label, value) => `<div class="detail-field"><span class="detail-field-label">${escapeHtml(label)}</span><span class="detail-field-value">${value}</span></div>`
+  const meta = '<div class="detail-meta">' +
+    field(FEATURE.fields.kind, kindChip(model, e.kind)) +
+    field(FEATURE.fields.area, `<button type="button" class="area-a" data-feature-area="${escapeHtml(e.area)}">${escapeHtml(area.name)}</button>`) +
+    field(FEATURE.fields.tickets, escapeHtml(featureTicketsLabel(e))) +
+    (e.versions ? field(FEATURE.fields.version, escapeHtml(e.versions)) : '') +
+    '</div>'
+  const kdef = kind ? `<p class="kind-def">${escapeHtml(kind.name)} — ${escapeHtml(kind.def || '')}</p>` : ''
+  const items = [
+    ...e.links.map((l) => featureLinkItem(model, l.to, l.text || '', l.ground || '', anchors)),
+    ...e.rev.map((k) => featureLinkItem(model, k, undefined, undefined, anchors)),
+  ]
+  const links = `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.linksHeading)}</h2>` +
+    (items.length ? `<ul class="cn-list">${items.join('')}</ul>` : `<p class="cn-empty">${escapeHtml(FEATURE.linksEmpty)}</p>`)
+  const tail = e.spec
+    ? `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.specHeading)}</h2><div class="v-body">${md(e.spec.body, path.dirname(e.spec.rel), repoRootHref)}</div>`
+    : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2><p class="ev-text">${featureEvidence(e, anchors)}</p>`
+  return `<p class="def-lead">${escapeHtml(e.def || '')}</p>${meta}${kdef}<div class="detail-doc body-prose">${links}${tail}</div>`
+}
+
+function featureDetailEntries(data, anchors, repoRootHref) {
+  const model = featureScreenModel(data)
   const entries = {}
-  for (const p of pages) {
-    const fm = p.frontmatter
-    const id = p.rel.split('/').pop()
-    entries[id] = {
-      title: fm.title || id,
-      status: fm.status || '',
-      spec_since: fm.spec_since || '',
-      path: p.rel,
-      body: md(p.body, path.dirname(p.rel), repoRootHref),
+  if (!model) {
+    for (const p of data.features) {
+      const fm = p.frontmatter
+      const id = p.rel.split('/').pop()
+      entries[id] = { title: fm.title || id, status: fm.status || '', spec_since: fm.spec_since || '', path: p.rel, body: md(p.body, path.dirname(p.rel), repoRootHref) }
     }
+    return entries
+  }
+  for (const e of model.entries) {
+    entries[e.key] = { title: `${e.name || e.key} · ${e.key}`, name: e.name || e.key, html: featureDetailHtml(model, e, anchors, repoRootHref) }
   }
   return entries
 }
 
-function featuresSection(pages) {
-  return storeSection('feature', { innerHtml: featureStoreInner(pages) })
+function featuresSection(data) {
+  return storeSection('feature', { innerHtml: featureStoreInner(data) })
 }
 
 /** PRD store: the ONE named content nuance (not a structural deviation — same activity-bar → sidebar-group → main-pane shell as every other store). The "open" group's single, currently-relevant document renders inline directly rather than as a one-row list a reader must click; "closed" behaves exactly like every other store's list→detail. Both strings below ("열린 섹션" / "닫힌 버전") are lifted verbatim from the user-approved mockup (docs/artifacts/v1.10/define-screen-set.html), not new copy. */
@@ -1196,8 +1376,11 @@ export function buildAnchors(data) {
     put(file.replace(/\.md$/, ''), entry)
     put(p.rel, entry)
   }
-  for (const p of data.features) {
-    put(p.rel, { s: 'feature', g: 'all', k: 'feature', i: p.rel.split('/').pop() })
+  const featureModel = featureScreenModel(data)
+  if (featureModel) {
+    for (const e of featureModel.entries) if (e.spec) put(e.spec.rel, { s: 'feature', g: 'all', k: 'feature', i: e.key })
+  } else {
+    for (const p of data.features) put(p.rel, { s: 'feature', g: 'all', k: 'feature', i: p.rel.split('/').pop() })
   }
   for (const c of data.prd.closed) {
     put(c.rel, { s: 'prd', g: c.name.replace(/\.md$/, '') })
@@ -1691,6 +1874,50 @@ details.v-fold[open] summary { color: var(--text-primary); }
   color: var(--text-tertiary); cursor: pointer; border-radius: var(--radius-4); display: flex; align-items: center; justify-content: center; }
 .notice-close:hover { background: var(--bg-state-hover); color: var(--text-primary); }
 .detail-row.hash-target td { background: var(--bg-state-hover); }
+/* T-882: feature screen (approved mockup docs/artifacts/v1.12/feature-screen.html) */
+.kp { display: inline-block; font-size: 11px; font-weight: 600; line-height: 1.5; padding: 2px 9px; border-radius: var(--radius-100); white-space: nowrap; border: 1px solid transparent; }
+.kp-feature { background: var(--accent-subtle); color: var(--text-primary); }
+.kp-component { border-color: var(--border-hover); color: var(--text-secondary); }
+.kp-cross { border-color: var(--border-hover); color: var(--text-secondary); background: var(--bg-surface-on); }
+.kp-internal { border: 1px dashed var(--border-hover); color: var(--text-tertiary); }
+.store-section[data-store="feature"] table.feature-table { table-layout: fixed; }
+.store-section[data-store="feature"] table.feature-table th:nth-child(1) { width: 220px; }
+.store-section[data-store="feature"] table.feature-table th:nth-child(2) { width: 96px; }
+.store-section[data-store="feature"] table.feature-table th:nth-child(4) { width: 64px; }
+.store-section[data-store="feature"] th.num-col, .store-section[data-store="feature"] td.num-col { text-align: right; }
+.store-section[data-store="feature"] td.num-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
+.store-section[data-store="feature"] .nm { font-weight: 600; display: block; }
+.store-section[data-store="feature"] .nm-key { display: block; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-quaternary); }
+.store-section[data-store="feature"] td.def-col { color: var(--text-secondary); line-height: 1.5; }
+.store-section[data-store="feature"] .grp-row td { background: var(--bg-surface-on); padding: var(--space-10) var(--space-10) var(--space-8); }
+.store-section[data-store="feature"] tbody tr.grp-row:hover td { background: var(--bg-surface-on); }
+.store-section[data-store="feature"] .grp-name { font-weight: 700; font-size: 12.5px; }
+.store-section[data-store="feature"] .grp-n { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-quaternary); margin-left: var(--space-8); }
+.store-section[data-store="feature"] .grp-def { display: block; font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
+.store-section[data-store="feature"] .detail-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.store-section[data-store="feature"] .detail-row.is-open td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.store-section[data-store="feature"] .detail-row.flash td { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.store-section[data-store="feature"] .detail-row td { transition: background 900ms ease; }
+@media (prefers-reduced-motion: reduce) { .store-section[data-store="feature"] .detail-row td { transition: none; } }
+.store-section[data-store="feature"] .count-line { display: flex; align-items: baseline; gap: var(--space-12); }
+.store-section[data-store="feature"] .back { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; color: var(--accent); background: none; border: none; padding: 0; margin: 0 0 var(--space-12); cursor: pointer; }
+.store-section[data-store="feature"] .back:hover { text-decoration: underline; }
+.store-section[data-store="feature"] .back:focus-visible, .store-section[data-store="feature"] .cn-a:focus-visible, .store-section[data-store="feature"] .area-a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.store-section[data-store="feature"] .area-a { color: var(--accent); text-decoration: underline; cursor: pointer; background: none; border: none; padding: 0; font: inherit; }
+.store-section[data-store="feature"] .kind-def { margin: calc(-1 * var(--space-4)) 0 var(--space-16); font-size: 12px; color: var(--text-tertiary); }
+.store-section[data-store="feature"] .def-lead { font-size: 14.5px; line-height: 1.65; color: var(--text-primary); margin: 0 0 var(--space-16); }
+.store-section[data-store="feature"] .detail-doc h2.pill { margin: var(--space-24) 0 var(--space-8); }
+.store-section[data-store="feature"] .detail-doc h2.pill:first-child { margin-top: 0; }
+.store-section[data-store="feature"] .cn-list { list-style: none; margin: 0; padding: 0; }
+.store-section[data-store="feature"] .cn-item { display: grid; grid-template-columns: minmax(180px, auto) 1fr; gap: 2px var(--space-16); align-items: baseline; padding: var(--space-10) 0; border-bottom: 1px solid var(--border-item); }
+.store-section[data-store="feature"] .cn-item:last-child { border-bottom: none; }
+.store-section[data-store="feature"] .cn-a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; background: none; border: none; padding: 0; font: inherit; font-weight: 600; text-align: left; }
+.store-section[data-store="feature"] .cn-head { display: inline-flex; align-items: center; gap: var(--space-8); flex-wrap: wrap; }
+.store-section[data-store="feature"] .cn-t { font-size: 13px; color: var(--text-secondary); }
+.store-section[data-store="feature"] .cn-g { display: block; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-quaternary); margin-top: 2px; }
+.store-section[data-store="feature"] .cn-empty { font-size: 12.5px; color: var(--text-tertiary); margin: 0; }
+.store-section[data-store="feature"] .ev-text { font-size: 13px; color: var(--text-secondary); line-height: 1.7; margin: 0; }
+.store-section[data-store="feature"] .ev-text code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
 `
 
 /**
@@ -1726,6 +1953,8 @@ const INTERACTION_SCRIPT = `
   var THEME_TOGGLE = ${JSON.stringify(THEME_TOGGLE)};
   var THEME_KEY = ${JSON.stringify(THEME_STORAGE_PREFIX)} + location.pathname;
   var URL_KEYS = ['view', 'group', 'kind', 'id'];
+  var FEATURE_BACK = ${JSON.stringify(FEATURE.back)};
+
   // T-885 (T-876 = D): past-version ticket bodies live in sibling data files.
   // A src comes ONLY from the generator-written map; a bucket the map does not
   // name, or a file that fails to load, keeps the file-link note.
@@ -1785,9 +2014,55 @@ const INTERACTION_SCRIPT = `
     if (!section) return;
     var panel = section.querySelector('.detail-panel');
     if (panel) { panel.classList.remove('active'); panel.removeAttribute('data-open-kind'); panel.removeAttribute('data-open-id'); }
+    section.querySelectorAll('.detail-row.is-open').forEach(function (r) { r.classList.remove('is-open'); });
   }
 
-  function openDetailPanel(section, kind, id) {
+  // T-882: feature screen moves — follow a 「함께 쓰는 기능」 link, go back, pick the area.
+  var featureTrail = [];
+  var flashTimer = null;
+  function flashRow(section, key) {
+    section.querySelectorAll('.view-pane.active [data-detail-kind="feature"]').forEach(function (r) {
+      if (r.getAttribute('data-detail-id') !== key) return;
+      if (r.scrollIntoView) r.scrollIntoView({ block: 'center' });
+      r.classList.add('flash');
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(function () { r.classList.remove('flash'); }, 1400);
+    });
+  }
+  function showFeature(section, key) {
+    var fields = DETAIL_DATA.feature && DETAIL_DATA.feature[key];
+    if (!fields) return;
+    var pane = section.querySelector('.view-pane.active');
+    var group = pane ? pane.getAttribute('data-group') : 'all';
+    var row = findByAttr('.view-pane.active [data-detail-kind="feature"]', 'data-detail-id', key, section);
+    if (group !== 'all' && !row) {
+      var trail = featureTrail;
+      var target = findByAttr('.view-pane [data-detail-kind="feature"]', 'data-detail-id', key, section);
+      var area = target ? target.getAttribute('data-area') : null;
+      if (area) selectGroup(section, area);
+      featureTrail = trail;
+    }
+    openDetailPanel(section, 'feature', key, true);
+    flashRow(section, key);
+  }
+  function featureClick(ev) {
+    var go = ev.target.closest('[data-feature-go]');
+    var section = ev.target.closest('.store-section');
+    if (go && section) { ev.preventDefault(); featureTrail.push(go.getAttribute('data-feature-go')); showFeature(section, featureTrail[featureTrail.length - 1]); return true; }
+    if (ev.target.closest('[data-feature-back]') && section && featureTrail.length > 1) { ev.preventDefault(); featureTrail.pop(); showFeature(section, featureTrail[featureTrail.length - 1]); return true; }
+    var areaBtn = ev.target.closest('[data-feature-area]');
+    if (areaBtn && section) {
+      ev.preventDefault();
+      var open = featureTrail.slice();
+      selectGroup(section, areaBtn.getAttribute('data-feature-area'));
+      featureTrail = open;
+      if (open.length) openDetailPanel(section, 'feature', open[open.length - 1], true);
+      return true;
+    }
+    return false;
+  }
+
+  function openDetailPanel(section, kind, id, keepTrail) {
     if (!section) return;
     var bucket = DETAIL_DATA[kind];
     var fields = bucket && bucket[id];
@@ -1821,7 +2096,20 @@ const INTERACTION_SCRIPT = `
     } else {
       docHtml = '';
     }
-    panel.querySelector('.detail-panel-body').innerHTML = metaHtml + docHtml;
+    var bodyHtml = fields.html !== undefined ? fields.html : metaHtml + docHtml;
+    // T-882: a feature reached through a 「함께 쓰는 기능」 link keeps the
+    // trail and offers 「돌아가기 · <previous feature>」; any other open starts it over.
+    if (kind === 'feature') {
+      if (!keepTrail) featureTrail = [id];
+      var prev = featureTrail.length > 1 ? bucket[featureTrail[featureTrail.length - 2]] : null;
+      if (prev) bodyHtml = '<button type="button" class="back" data-feature-back>' + FEATURE_BACK + String(prev.name).replace(/</g, '&lt;') + '</button>' + bodyHtml;
+    }
+    panel.querySelector('.detail-panel-body').innerHTML = bodyHtml;
+    panel.querySelector('.detail-panel-body').scrollTop = 0;
+    section.querySelectorAll('.detail-row.is-open').forEach(function (r) { r.classList.remove('is-open'); });
+    section.querySelectorAll('.view-pane.active [data-detail-kind]').forEach(function (r) {
+      if (r.getAttribute('data-detail-kind') === kind && r.getAttribute('data-detail-id') === id) r.classList.add('is-open');
+    });
     panel.setAttribute('data-open-kind', kind);
     panel.setAttribute('data-open-id', id);
     panel.classList.add('active');
@@ -2005,6 +2293,8 @@ const INTERACTION_SCRIPT = `
       return;
     }
 
+    if (featureClick(ev)) return;
+
     var noticeClose = ev.target.closest('.notice-close');
     if (noticeClose) {
       ev.preventDefault();
@@ -2027,6 +2317,12 @@ const INTERACTION_SCRIPT = `
   document.addEventListener('click', function (ev) { onClick(ev); syncUrl(false); });
 
   document.addEventListener('keydown', function (ev) {
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('tr.detail-row[data-detail-kind]')) {
+      ev.preventDefault();
+      openDetailPanel(ev.target.closest('.store-section'), ev.target.getAttribute('data-detail-kind'), ev.target.getAttribute('data-detail-id'));
+      syncUrl(false);
+      return;
+    }
     if (ev.key === 'Escape') {
       var openPanel = document.querySelector('.detail-panel.active');
       if (openPanel) { closeDetailPanel(openPanel.closest('.store-section')); syncUrl(false); }
@@ -2184,15 +2480,16 @@ export function renderPage({
   build = null,
 }) {
   pageViewerAbsPath = viewerAbsPath
+  const anchors = buildAnchors(data)
   const detailData = {
     ticket: ticketDetailEntries(data.tickets, repoRootHref),
     wiki: wikiDetailEntries(data.wiki, repoRootHref),
-    feature: featureDetailEntries(data.features, repoRootHref),
+    feature: featureDetailEntries(data, anchors, repoRootHref),
     artifact: artifactDetailEntries(data.artifacts, artifactsBaseHref, repoRootHref),
     // No "prd" bucket (T-709 결정 2): a closed PRD round is no longer a
     // detail-row — its body renders directly in its own sidebar group's pane
     // (prdStoreInner) — so DETAIL_DATA never needs one.
-    anchors: buildAnchors(data),
+    anchors,
     maxTicket: maxTicketNumber(data),
     // T-885: bucket → sibling data-file src, written by the generator only.
     pastTickets: pastTicketSrc,
@@ -2222,7 +2519,7 @@ ${homeSection(data, repoRootHref)}
 ${prdSection(data.prd, data.currentVersion, repoRootHref)}
 ${ticketSection(data.tickets, data.currentVersion)}
 ${wikiSection(data.wiki)}
-${featuresSection(data.features)}
+${featuresSection(data)}
 ${artifactsSection(data.artifacts, data.currentVersion)}
 </div>
 ${detailDataScript(detailData)}

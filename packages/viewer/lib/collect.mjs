@@ -82,7 +82,7 @@ function readDoc(repoRoot, absPath) {
 // reaching for `.body` on one of these: the value simply is not there to read.
 function ticketLite(doc) {
   const fm = doc.frontmatter
-  return { rel: doc.rel, frontmatter: { id: fm.id, slug: fm.slug, type: fm.type, status: fm.status, assignee: fm.assignee } }
+  return { rel: doc.rel, frontmatter: { id: fm.id, slug: fm.slug, type: fm.type, status: fm.status, assignee: fm.assignee, feature: fm.feature } }
 }
 
 /**
@@ -158,6 +158,49 @@ export function collectWiki(repoRoot) {
 export function collectFeatures(repoRoot) {
   const dir = path.join(repoRoot, 'docs/features')
   return listMarkdownFiles(dir).map((f) => readDoc(repoRoot, path.join(dir, f)))
+}
+
+// T-882: the feature taxonomy the feature screen draws — `.prdt/config.json`
+// `features.taxonomy` ({areas, kinds}, ordered) + each `features.vocab`
+// entry's `label` and `taxonomy` ({kind, area, def, links}). The vocab block
+// is the ONE list of feature keys `prdt doctor` already checks tickets'
+// `feature:` values against (W4), so the screen and that check read the same
+// keys. Null when the config has no `features.taxonomy.areas` (the screen's
+// empty state); a malformed config is the same null — doctor names the fault.
+export function collectFeatureTaxonomy(repoRoot) {
+  const cfgPath = path.join(repoRoot, '.prdt/config.json')
+  if (!fs.existsSync(cfgPath)) return null
+  let cfg
+  try {
+    cfg = readJson(cfgPath)
+  } catch {
+    return null
+  }
+  const feat = cfg && typeof cfg.features === 'object' && cfg.features ? cfg.features : {}
+  const tax = feat.taxonomy && typeof feat.taxonomy === 'object' ? feat.taxonomy : null
+  if (!tax || !Array.isArray(tax.areas) || tax.areas.length === 0) return null
+  const pick = (list) =>
+    (Array.isArray(list) ? list : [])
+      .filter((x) => x && typeof x.key === 'string')
+      .map((x) => ({ key: x.key, name: typeof x.name === 'string' ? x.name : x.key, def: typeof x.def === 'string' ? x.def : '' }))
+  const vocab = feat.vocab && typeof feat.vocab === 'object' ? feat.vocab : {}
+  const entries = []
+  for (const [key, ent] of Object.entries(vocab)) {
+    const t = ent && typeof ent.taxonomy === 'object' && ent.taxonomy ? ent.taxonomy : null
+    if (!t || typeof t.area !== 'string') continue
+    entries.push({
+      key,
+      name: typeof ent.label === 'string' ? ent.label : key,
+      kind: typeof t.kind === 'string' ? t.kind : '',
+      area: t.area,
+      def: typeof t.def === 'string' ? t.def : '',
+      aliases: Array.isArray(ent.aliases) ? ent.aliases.filter((a) => typeof a === 'string') : [],
+      links: (Array.isArray(t.links) ? t.links : [])
+        .filter((l) => l && typeof l.to === 'string')
+        .map((l) => ({ to: l.to, text: typeof l.text === 'string' ? l.text : '', ground: typeof l.ground === 'string' ? l.ground : '' })),
+    })
+  }
+  return { areas: pick(tax.areas), kinds: pick(tax.kinds), entries }
 }
 
 // T-795: the home progress matrix's row set + labels read the open PRD
@@ -330,6 +373,7 @@ export function collectAll(repoRoot) {
     tickets: collectTickets(repoRoot, currentVersion),
     wiki: collectWiki(repoRoot),
     features: collectFeatures(repoRoot),
+    featureTaxonomy: collectFeatureTaxonomy(repoRoot),
     artifacts: collectArtifacts(repoRoot),
   }
 }
