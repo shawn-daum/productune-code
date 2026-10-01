@@ -180,7 +180,7 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     // re-breaking this test.
     expect(CONTRACTS).toMatch(/^## Secrets — .+\(EVERY persona, PO included\)$/m)
     expect(CONTRACTS).toContain('## Overrides — precedence and the non-overridable floor')
-    expect(CONTRACTS).toContain('- Carve-out: `~/.prdt/register` · `auto-open` · `plan-tier` (keys `register.*` · `viewer.auto-open` · `plan.tier`) are PO-writable only via `prdt settings set|unset <key>`')
+    expect(CONTRACTS).toContain('- Carve-out: `~/.prdt/register` · `auto-open` · `plan-tier` · `dispatch-caps.json` (keys `register.*` · `viewer.auto-open` · `plan.tier` · `dispatch.*`) are PO-writable only via `prdt settings set|unset <key>`')
     // T-613: re-pinned to the current wording. T-586 added the playbook-scoped
     // override path to this carve-out; the carve-out clause is floor text, so
     // the test follows contracts.md, never the reverse. Every path the line
@@ -191,7 +191,7 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
       '`~/.prdt/overrides/playbooks/<name>.md`',
       '`~/.prdt/wiki/`',
       '`~/.prdt/resource-stop.json`',
-      '`~/.prdt/register` · `auto-open` · `plan-tier` (keys `register.*` · `viewer.auto-open` · `plan.tier`)',
+      '`~/.prdt/register` · `auto-open` · `plan-tier` · `dispatch-caps.json` (keys `register.*` · `viewer.auto-open` · `plan.tier` · `dispatch.*`)',
     ])
       pin(CONTRACTS, p, {
         file: 'discipline/contracts.md',
