@@ -14,7 +14,7 @@
 // formal '-다' register.
 
 // ---------- A. kept verbatim (relocated only — T-705 §A) ----------
-export const STORE_LABEL = { home: '홈', prd: 'PRD', ticket: '티켓', wiki: '위키', feature: '기능', artifact: '아티팩트' }
+export const STORE_LABEL = { home: '현재 버전', prd: 'PRD', ticket: '티켓', wiki: '위키', feature: '기능', artifact: '아티팩트' }
 
 export const COMMON = {
   close: '닫기',
@@ -44,11 +44,33 @@ export const PAGE = {
 // 함께 제거.
 export const HOME = {
   working: '진행 상황',
-  legendMain: '담당',
-  legendDerived: '검수',
-  overall: '전체',
   // T-792: 홈의 이번 버전 결정 묶음 — 사용자 표현 "결정은 홈에 신설하자" 그대로.
   decision: '결정',
+  // T-881: the approved screen set's 「현재 버전」 screen (docs/artifacts/v1.12/
+  // define-screen-set.html, home-progress · home-cases; T-796 outcome). The
+  // matrix labels (담당 · 검수 · 전체) went with the matrix.
+  here: 'now',
+  scope: '스코프',
+  scopeSub: (n) => `이번 버전 ${n}항목`,
+  waitDec: '내 결정 대기',
+  waitDecEmpty: '기다리는 결정이 없어요.',
+  waitReq: '사용자 작업 대기',
+  waitReqEmpty: '지금 할 일이 없어요.',
+  dependency: 'dependency',
+  beforeBuild: 'Build 진입 전',
+  notConnected: '메인 패스가 아직 이어지지 않았어요 — 합격선 티켓과 설계 → 구현 → QA → 배포 deps 가 Build 진입 때 생겨요. 지금은 「크리티컬 패스」만 보여요.',
+  // The screen set draws no state for "no open ticket at all"; this line is a
+  // developer-written gap, reported in T-881 unresolved for the designer.
+  dependencyEmpty: '열린 티켓이 없어요.',
+  chipMain: '메인 패스',
+  chipCritical: '크리티컬 패스',
+  chipGate: '합격선',
+  chipRider: '라이더',
+  chipTurn: '사용자를 기다림',
+  legendMainCritical: '메인 패스 · 크리티컬 패스',
+  legendRider: '메인 패스 외의 best effort 작업',
+  legendDone: '끝난 티켓',
+  nodeOpen: (id) => `${id} 상세 열기`,
 }
 
 // T-795: the progress matrix's per-item row labels no longer live here as a
