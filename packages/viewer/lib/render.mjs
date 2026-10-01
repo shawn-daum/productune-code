@@ -1651,8 +1651,14 @@ details.v-fold[open] summary { color: var(--text-primary); }
  */
 // T-797 개정: localStorage key prefix for the remembered theme — one key per viewer file (location.pathname appended at runtime).
 const THEME_STORAGE_PREFIX = 'prdt-viewer-theme:'
+// T-803: a visible tab re-reads the (possibly regenerated) file on this interval;
+// a hidden tab never reloads. location.reload() keeps the URL (query state), and
+// needs no fetch/connect-src, so the CSP and its script hash stay the only gate.
+export const VIEWER_AUTO_REFRESH_MS = 30000
+
 const INTERACTION_SCRIPT = `
 (function () {
+  setInterval(function () { if (document.visibilityState === 'visible') location.reload(); }, ${VIEWER_AUTO_REFRESH_MS});
   var DETAIL_DATA = JSON.parse(document.getElementById('detail-data').textContent);
   var DETAIL_FIELD_LABELS = ${JSON.stringify(DETAIL_FIELD_LABELS)};
   var HASH_NOTICE = ${JSON.stringify(HASH_NOTICE)};
