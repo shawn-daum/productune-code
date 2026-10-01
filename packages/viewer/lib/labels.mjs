@@ -119,15 +119,26 @@ export const WIKI = {
 }
 
 // ---------- feature store ----------
+// T-882: the feature screen reads the feature taxonomy (.prdt/config.json
+// features.taxonomy + vocab) — strings below are the approved copy of
+// T-808 outcome 「승인 문구」 and the approved mockup
+// docs/artifacts/v1.12/feature-screen.html. Area / kind names and
+// definitions are project data (config), never copy kept here.
 export const FEATURE = {
-  // T-705 §B: 4번째 헤더 'spec_since'(영문 그대로) → '시작 버전'.
-  tableHeaders: ['기능', '제목', '상태', '시작 버전'],
+  tableHeaders: ['이름', '종류', '정의', '티켓'],
   sidebarLabel: '기능',
-  // T-705 §E: 원문 '기능 스펙이 없다.'를 해요체로. 둘째 줄은 T-707 확정.
-  empty:
-    '기능 스펙이 없어요.<br><span style="font-size:11px;">Designer 가 스펙 파일을 만들면 여기 나타나요.</span>',
-  statusText: { live: '유효', superseded: '대체됨', '': '미기재' },
+  allLabel: '전체',
+  empty: '기능 분류가 없어요.<br><span style="font-size:11px;">분류가 만들어지면 여기 나타나요.</span>',
   countUnit: '개',
+  fields: { kind: '종류', area: '영역', tickets: '티켓', version: '버전' },
+  linksHeading: '함께 쓰는 기능',
+  linksEmpty: '연결된 기능이 아직 없어요.',
+  evidenceHeading: '근거 티켓',
+  specHeading: '스펙 파일',
+  back: '← 돌아가기 · ',
+  ticketUnit: '건',
+  // mockup 상세 「티켓」 칸 실측: 「3건 · 완료 2 · 열림 1」, 근거 티켓 「T-353(열림)」.
+  ticketStatus: { done: '완료', open: '열림', dropped: '취소' },
 }
 
 // ---------- artifact store ----------
