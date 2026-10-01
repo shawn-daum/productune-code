@@ -86,7 +86,7 @@ function ticketLite(doc) {
 }
 
 /**
- * @returns {{ included: Array, omitted: Array<{bucket:string, count:number, bytes:number, tickets:Array}> }}
+ * @returns {{ included: Array, omitted: Array<{bucket:string, count:number, bytes:number, tickets:Array, bodies:Record<string,string>}> }}
  */
 export function collectTickets(repoRoot, currentVersion) {
   const ticketsRoot = path.join(repoRoot, 'docs/tickets')
@@ -118,14 +118,20 @@ export function collectTickets(repoRoot, currentVersion) {
       // T-709 결정 1 (옵션 C): every other bucket gets its own sidebar row
       // too, so its files are now READ (frontmatter only, never `body` —
       // see `ticketLite` above) rather than only stat'd for a byte count.
+      // T-885 (T-876 = D): the bodies ride BESIDE the rows, keyed by `rel`,
+      // never on the row itself — render.mjs writes them only into this
+      // bucket's sibling data file, never into viewer.html.
       let bytes = 0
       const tickets = []
+      const bodies = {}
       for (const f of files) {
         const filePath = path.join(bucketDir, f)
         bytes += fs.statSync(filePath).size
-        tickets.push(ticketLite(readDoc(repoRoot, filePath)))
+        const doc = readDoc(repoRoot, filePath)
+        tickets.push(ticketLite(doc))
+        bodies[doc.rel] = doc.body
       }
-      omitted.push({ bucket, count: files.length, bytes, tickets })
+      omitted.push({ bucket, count: files.length, bytes, tickets, bodies })
     }
   }
   // Deterministic order: current version's own tickets first (id order),
