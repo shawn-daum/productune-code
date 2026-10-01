@@ -43,6 +43,7 @@ import {
   THEME_TOGGLE,
   noGroupLabel,
 } from './labels.mjs'
+import { HOME_STAGES, stageSegments, buildHomeGraph, layoutHomeGraph, waitLists, compareTicketIds, NODE_W, NODE_H } from './home-graph.mjs'
 import { renderPrdReading, openDecisionTickets, PRD_READING_CSS, PRD_READING_SCRIPT } from './prd-reading.mjs'
 
 function escapeHtml(str) {
@@ -609,7 +610,7 @@ function rolePillClass(assignee) {
 
 function ticketRolePill(assignee) {
   const cls = rolePillClass(assignee)
-  const pillClass = cls ? `pill-role-${cls}` : 'pill-neutral'
+  const pillClass = cls ? `pill-role-${cls}` : assignee === 'user' ? 'pill-user-ink' : 'pill-neutral'
   return `<span class="pill ${pillClass}">${escapeHtml(assignee || '')}</span>`
 }
 
@@ -868,7 +869,7 @@ ${sidebarButtons}
 <div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)}${defaultLabel === '' ? '' : ` · <span class="js-group-label">${escapeHtml(defaultLabel)}</span>`}</b></span></div>
 <div class="frame-body"><div class="main-inner">${topHtml}${panes}</div></div>
 <div class="detail-panel" role="dialog" aria-label="${COMMON.detailPanel}">
-<div class="detail-panel-header"><span class="detail-panel-title"></span><button type="button" class="detail-panel-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 14)}</button></div>
+<div class="detail-panel-header"><button type="button" class="detail-panel-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 14)}</button><span class="detail-panel-title"></span></div>
 <div class="detail-panel-body"></div>
 </div>
 </div>`
@@ -1590,38 +1591,6 @@ function artifactsSection(artifacts, currentVersion) {
 // needs the activity bar, i.e. leaving home for the ticket/PRD/artifact store
 // proper — never a home control.
 
-// Column order and set are FIXED — always all five, whether or not today's
-// data has a ticket in that column (T-675 round 2, user verbatim: "user po
-// designer developer qa 순으로 배치해줘 열 순서는").
-const PROGRESS_ASSIGNEE_ORDER = ['user', 'po', 'designer', 'developer', 'qa']
-
-// T-795: row keys + labels come from `data.prd.openItems` — the OPEN PRD
-// version section's own `#### <key> — <label>` headings, read at generation
-// time by collect.mjs's `collectPrdOpenItems` (never a fixed list hand-typed
-// here — that used to be productune's own v1.10 item keys, so a v1.11 item,
-// or another project's own items, had no row at all: this ticket's defect).
-//
-// T-666 slice 2b: a ticket with NO matching `prd_item` (today T-677/678/679
-// — measured 2026-09-26, `grep -L prd_item: docs/tickets/v1.10`) used to be
-// silently omitted from the matrix (slice 2a scope, "leave room for them,
-// build neither"). This slice appends one more trailing row for those —
-// `PROGRESS_OUT_OF_SCOPE_LABEL` (./labels.mjs), the one row label that is
-// NOT PRD-derived (no `prd_item` means no PRD heading to read at all) — so a
-// ticket never disappears from the card for lacking an item address
-// (acceptance line 2).
-
-// T-766: T-755 dropped statusline-prdt.sh's own per-type "which stage is
-// this ticket in" guess (the old `TYPE_TO_STAGE` dict) — a `design`-typed
-// ticket read as Build work broke that guess, so the statusline now shows
-// ONE version-wide done/total over every open+done ticket in the current
-// version, every type included (`decision` too), and never estimates a stage
-// from a ticket's `type` at all. This viewer carried its own copy of the
-// retired guess (the old `TYPE_TO_STAGE` export + `homeStageLine`'s
-// per-stage `n/m` cells below) until this ticket — the exact regression
-// `scripts/qa/type-to-stage-parity.test.ts` catches. The home progress line
-// now mirrors statusline-prdt.sh's rule exactly instead: the current po-state
-// stage name, plus that same version-wide count.
-
 /**
  * Version-wide done/total over every open+done ticket (`status: dropped` or
  * any other value counts toward neither) — the SAME counting rule as
@@ -1640,107 +1609,231 @@ export function versionProgressCounts(currentTickets) {
   return { done, total: counted.length }
 }
 
-/**
- * One line, `<stage> | <done>/<total>` — the current po-state stage name
- * (never guessed from ticket type) plus the version-wide count above.
- * @param {Array} currentTickets current-version tickets (any status)
- * @param {string} stage current po-state stage (define|build|ship|retro|idle|'?')
- */
-function homeStageLine(currentTickets, stage) {
+// ---------- Home 「현재 버전」 (T-881; design T-796 / T-865) ----------
+// Stage bar · 스코프 · wait lists · dependency diagram, drawn from the
+// approved screen set (docs/artifacts/v1.12/define-screen-set.html,
+// home-progress + home-cases). The graph logic is home-graph.mjs; this block
+// only draws what it returns. The assignee × PRD-item matrix is gone.
+
+function stageSquare(t) {
+  return `<span class="stage-sq${t.done ? ' sq-done' : ''}" title="${escapeHtml(t.id)}"></span>`
+}
+
+function homeStageBar(currentTickets, stage) {
   const { done, total } = versionProgressCounts(currentTickets)
-  return `<div class="stage-line mono">${escapeHtml(`${stage} | ${done}/${total}`)}</div>`
+  const segs = stageSegments(currentTickets)
+  const labelOf = (seg) => {
+    const cur = seg.stage === stage
+    return `<span class="sb-lab${cur ? ' sb-lab-cur' : ''}">${seg.stage}${cur ? `<span class="sb-here">${HOME.here}</span>` : ''} <span class="mono sb-n">${seg.tickets.length}</span></span>`
+  }
+  const cells = segs
+    .map((seg, i) => {
+      const cls = `sb-seg${seg.stage === stage ? ' sb-seg-cur' : ''}${seg.tickets.length === 0 ? ' sb-seg-empty' : ''}`
+      const lab = labelOf(seg)
+      return `<div class="${cls}"><div class="sb-up">${i % 2 === 0 ? lab : ''}</div><div class="sb-sq">${seg.tickets.map(stageSquare).join('')}</div><div class="sb-dn">${i % 2 === 1 ? lab : ''}</div></div>`
+    })
+    .join('')
+  return `<div class="sb"><span class="sb-tick" aria-hidden="true"></span>${cells}<span class="mono sb-total">${done}/${total}</span></div>`
 }
 
-function progressSquare(done) {
-  return `<span class="stage-sq${done ? ' sq-done' : ''}"></span>`
+function ticketButtonAttrs(id) {
+  return `data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}" role="button" tabindex="0"`
 }
 
-// A ticket's PARTICIPATION (not assignment) shows as a dashed-stroke square —
-// the stroke itself is dashed (an SVG <rect stroke-dasharray>), never a
-// dashed CSS outline drawn around a solid square (T-675 round 3, user
-// verbatim: "점선이 네모를 점선이 감싸는게 아니라 stroke를 점선으로
-// 표시하는걸 의미한거야" — a round-2 attempt that used `outline:dashed`
-// produced a rounded-corner "scalloped flower" artifact at 10px, fixed by
-// moving the dash onto the shape's own stroke path instead).
-function progressDashedSquare(done) {
-  return `<svg class="stage-sq-svg" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1" class="stage-sq-dashed-rect${done ? ' sq-done' : ''}"></rect></svg>`
-}
-
-// T-708 결함 3 최종 결정 (Designer, T-709 겸임, 2026-09-27) — 택1 중 (b) "+N"
-// 접기: 한 칸의 정사각형 표시 상한은 폭·칸과 무관한 상수 10개. 크기를 줄이는
-// (a)안은 상한이 없어 미래 개수 증가에 못 버틴다는 이유로 기각됐다(티켓
-// outcome §결함 3 참고) — 이 상수만 바뀌면 규칙 전체가 따라온다.
-const PROGRESS_MATRIX_FOLD_LIMIT = 10
-
-/** One (item, assignee) matrix cell: `–` when empty (drawn even at 0 — the fixed-column rule extends to fixed cells, never a collapsed column), else one square per ticket + a `done/total` count. Beyond PROGRESS_MATRIX_FOLD_LIMIT squares, only the first N draw — the rest fold into one `+{count-N}` text fragment on the same line (never a second row: `.stage-matrix-sq-wrap` is `flex-wrap: nowrap` — T-708 결함 3). */
-function progressCell(solidTickets, dashedTickets) {
-  const total = solidTickets.length + dashedTickets.length
-  if (total === 0) return '<span class="stage-matrix-cell stage-matrix-cell-empty">–</span>'
-  const isDone = (t) => t.frontmatter.status === 'done'
-  const done = solidTickets.filter(isDone).length + dashedTickets.filter(isDone).length
-  const squares = [...solidTickets.map((t) => progressSquare(isDone(t))), ...dashedTickets.map((t) => progressDashedSquare(isDone(t)))]
-  const shownHtml = squares.slice(0, PROGRESS_MATRIX_FOLD_LIMIT).join('')
-  const foldHtml =
-    squares.length > PROGRESS_MATRIX_FOLD_LIMIT
-      ? `<span class="stage-matrix-fold">+${squares.length - PROGRESS_MATRIX_FOLD_LIMIT}</span>`
-      : ''
-  return `<span class="stage-matrix-cell"><span class="stage-matrix-sq-wrap">${shownHtml}${foldHtml}</span><span class="stage-matrix-count mono">${done}/${total}</span></span>`
-}
-
-function progressMatrixHeadRow() {
-  const cols = PROGRESS_ASSIGNEE_ORDER.map((role) => `<span class="stage-matrix-col">${escapeHtml(role)}</span>`).join('')
-  return `<div class="stage-matrix-row stage-matrix-head"><span class="stage-matrix-label"></span>${cols}</div>`
-}
-
-/** `ticketsForItem` = every current-version ticket whose `prd_item:` resolves to this row's key. `label` is already resolved (the PRD heading's own label text, or `PROGRESS_OUT_OF_SCOPE_LABEL` for the trailing row) — this function has no label lookup of its own. The `qa` column is always the dashed/derived one — contracts §Dispatch: QA never gets its own ticket, so an `assignee: qa` solid square is a possibility this code still handles correctly, but never observed in this repo (T-675 round 2). T-798: `role="row"` + `aria-label={label}` gives the row its own accessible name from the FULL, untruncated label text — independent of whatever the visible `.stage-matrix-label` cell does (wrap, or a future truncation), so a screen reader never depends on the visual layout to read the whole PRD heading. */
-function progressMatrixRow(label, ticketsForItem) {
-  const cells = PROGRESS_ASSIGNEE_ORDER.map((role) => {
-    const solid = ticketsForItem.filter((t) => t.frontmatter.assignee === role)
-    const dashed = role === 'qa' ? ticketsForItem.filter((t) => t.frontmatter.assignee !== 'qa' && /^### QA/m.test(t.body || '')) : []
-    return progressCell(solid, dashed)
-  }).join('')
-  return `<div class="stage-matrix-row" role="row" aria-label="${escapeHtml(label)}"><span class="stage-matrix-label">${escapeHtml(label)}</span>${cells}</div>`
-}
-
-/** The straight overall line above the matrix — one square per current-version ticket, once each, regardless of assignee or prd_item (T-675 round 3: "전체는... 일직선으로 쭉... assignee상관없이"). */
-function progressOverall(currentTickets) {
-  const done = currentTickets.filter((t) => t.frontmatter.status === 'done').length
-  const squares = currentTickets.map((t) => progressSquare(t.frontmatter.status === 'done')).join('')
-  return `<div class="stage-overall"><span class="stage-matrix-label">${HOME.overall}</span><span class="stage-matrix-sq-wrap stage-overall-sq-wrap">${squares}</span><span class="stage-matrix-count mono">${done}/${currentTickets.length}</span></div>`
-}
-
-const PROGRESS_LEGEND = `<div class="stage-matrix-legend"><span class="stage-matrix-legend-item">${progressSquare(true)} <span>${HOME.legendMain}</span></span><span class="stage-matrix-legend-item">${progressDashedSquare(true)} <span>${HOME.legendDerived}</span></span></div>`
-
-/** The "진행 상황" pane: T-766's own version-wide stage line, above T-675's assignee x PRD-item matrix (a trailing "항목 밖" row included) — two different questions ("which lifecycle stage" vs "which PRD item"), not the same component, per this ticket's two separate acceptance lines. */
-function homeProgressBody(data) {
-  const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
+/** 스코프: one row per PRD item of the open section (label up to its colon; the full heading is the tooltip), then 「항목 밖」. */
+function homeScope(data, currentTickets) {
   const openItems = data.prd.openItems || []
   const byItem = new Map(openItems.map((i) => [i.key, []]))
   const outOfScope = []
   for (const t of currentTickets) {
+    if (t.frontmatter.status !== 'open' && t.frontmatter.status !== 'done') continue
     const key = prdItemKey(t.frontmatter.prd_item || '', data.currentVersion)
     if (key && byItem.has(key)) byItem.get(key).push(t)
-    else outOfScope.push(t) // no prd_item, or one this version's §What items don't name — the trailing row
+    else outOfScope.push(t)
   }
-  const rows =
-    openItems.map((i) => progressMatrixRow(i.label, byItem.get(i.key))).join('') +
-    progressMatrixRow(PROGRESS_OUT_OF_SCOPE_LABEL, outOfScope)
+  const row = (label, title, tickets, extra = '') => {
+    const sorted = [...tickets.filter((t) => t.frontmatter.status === 'done'), ...tickets.filter((t) => t.frontmatter.status !== 'done')]
+      .map((t) => t)
+      .sort((x, y) => (x.frontmatter.status === 'done' ? 0 : 1) - (y.frontmatter.status === 'done' ? 0 : 1) || compareTicketIds(x.frontmatter.id, y.frontmatter.id))
+    const done = tickets.filter((t) => t.frontmatter.status === 'done').length
+    const sq = sorted
+      .map((t) => `<span class="stage-sq sc-btn${t.frontmatter.status === 'done' ? ' sq-done' : ''}" ${ticketButtonAttrs(t.frontmatter.id)} aria-label="${escapeHtml(t.frontmatter.id)}" title="${escapeHtml(t.frontmatter.id)}"></span>`)
+      .join('')
+    return `<div class="sc-row${extra}"><span class="sc-lab" title="${escapeHtml(title)}">${escapeHtml(label)}</span><span class="sc-sq">${sq}</span><span class="mono sc-n">${done}/${tickets.length}</span></div>`
+  }
+  const rows = openItems.map((i) => {
+    const plain = i.label.replace(/`/g, '')
+    return row(plain.split(/[:：]/)[0].trim(), plain, byItem.get(i.key))
+  })
+  if (outOfScope.length > 0) rows.push(row(PROGRESS_OUT_OF_SCOPE_LABEL, PROGRESS_OUT_OF_SCOPE_LABEL, outOfScope, ' sc-out'))
+  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div>${rows.join('')}</div>`
+}
+
+function homeWaits(data) {
+  const { dec, req } = waitLists(allTicketRows(data.tickets))
+  const block = (label, list, empty) =>
+    `<div><div class="cp-h">${label} <span class="mono cp-n">${list.length}</span></div>` +
+    (list.length === 0
+      ? `<p class="cp-empty">${empty}</p>`
+      : `<div class="cp-wlist">${list
+          .map((fm) => `<button type="button" class="cp-went" data-detail-kind="ticket" data-detail-id="${escapeHtml(fm.id)}"><span class="mono">${escapeHtml(fm.id)}</span> ${escapeHtml(fm.slug || '')} ${ticketRolePill(fm.assignee)}</button>`)
+          .join('')}</div>`) +
+    '</div>'
+  return `<div class="sc-waits">${block(HOME.waitDec, dec, HOME.waitDecEmpty)}${block(HOME.waitReq, req, HOME.waitReqEmpty)}</div>`
+}
+
+// ---- dependency diagram ----
+const DG_ID = 'home-dg'
+function textWidth(str) {
+  let w = 0
+  for (const ch of str) w += /[\u0000-ÿ]/.test(ch) ? 5.4 : 10.5
+  return w
+}
+function fitText(str, max) {
+  if (textWidth(str) <= max) return str
+  let out = ''
+  for (const ch of str) {
+    if (textWidth(out + ch + '…') > max) break
+    out += ch
+  }
+  return out + '…'
+}
+/** How far a wrapped chip row may run past a box's right edge — the column gap is 28px. */
+const CHIP_OVERHANG = 20
+function chipWidth(label) {
+  let w = 14
+  for (const ch of label) w += ch === ' ' ? 3 : 9
+  return w
+}
+function diagramChip(kind, label, x, y) {
+  const w = chipWidth(label)
+  return `<rect class="dg-chip dg-chip-${kind}" height="15" rx="7.5" width="${w}" x="${x.toFixed(1)}" y="${y.toFixed(1)}"></rect><text class="dg-chip-t dg-chip-t-${kind}" text-anchor="middle" x="${(x + w / 2).toFixed(1)}" y="${(y + 10.5).toFixed(1)}">${escapeHtml(label)}</text>`
+}
+function diagramRole(role, x, y) {
+  const w = Number((5.4 * role.length + 8).toFixed(1))
+  const rx = x + NODE_W - 5 - w
+  const cls = ['po', 'designer', 'developer', 'qa', 'user'].includes(role) ? role : 'other'
+  return `<rect class="dg-role-bg dg-role-${cls}" height="13" rx="6.5" width="${w}" x="${rx.toFixed(1)}" y="${y + 4}"></rect><text class="dg-role dg-role-${cls}" text-anchor="middle" x="${(rx + w / 2).toFixed(1)}" y="${y + 13.5}">${escapeHtml(role)}</text>`
+}
+
+/** The ticket diagram's markup, and which legend entries it needs. */
+function dependencyDiagram(graph, layout) {
+  const nodes = layout.nodes
+  const firstBy = (pred, key) => nodes.filter(pred).sort(key)[0]
+  const topLeft = (a, b) => a.y - b.y || a.x - b.x
+  const leftTop = (a, b) => a.x - b.x || a.y - b.y
+  const spineFirst = graph.cpIsSpine || graph.spine.size > 0 ? firstBy((n) => n.sp, topLeft) : null
+  const cpFirst = graph.cpIsSpine ? null : firstBy((n) => n.cp && !n.sp, leftTop)
+  const uses = { gate: false, rider: false, turn: false, done: false }
+  const marker = (suffix) =>
+    `<marker id="${DG_ID}${suffix}" markerheight="6" markerunits="userSpaceOnUse" markerwidth="6" orient="auto" refx="9" refy="5" viewBox="0 0 10 10"><path class="dg-ah${suffix ? `-${suffix.slice(1)}` : ''}" d="M0,0 L10,5 L0,10 z"></path></marker>`
+  const edgeSvg = layout.edges
+    .map((e) => {
+      const kind = e.sp ? 'sp' : e.cp ? 'cp' : ''
+      return `<path class="dg-e${kind ? ` dg-e-${kind}` : ''}" d="${e.d}" marker-end="url(#${DG_ID}${kind ? `-${kind}` : ''})"></path>`
+    })
+    .join('')
+  const nodeSvg = nodes
+    .map((n) => {
+      const cls = `dg-n${n.sp ? ' dg-n-sp' : n.cp ? ' dg-n-cp' : ''}${n.gate ? ' dg-n-gate' : ''}${n.done ? ' dg-n-done' : ''}`
+      const chips = []
+      // Chips sit on the row above the box. State chips (사용자를 기다림 · 합격선 · 라이더) and the
+      // route label (메인 패스 / 크리티컬 패스) share it: label left, state chips right-aligned
+      // when they all fit; otherwise they flow left to right from the box's left edge, 사용자를
+      // 기다림 first, and what does not fit moves up one row — never over another chip.
+      const state = []
+      if (n.waits) { state.push(['turn', HOME.chipTurn]); uses.turn = true }
+      if (n.gate) { state.push(['gate', HOME.chipGate]); uses.gate = true }
+      if (n.rider) { state.push(['rider', HOME.chipRider]); uses.rider = true }
+      if (n.done) uses.done = true
+      let label = null
+      if (spineFirst && n.id === spineFirst.id) label = ['sp', HOME.chipMain]
+      else if (cpFirst && n.id === cpFirst.id) label = ['cp', HOME.chipCritical]
+      const rightW = state.reduce((s, [, l]) => s + chipWidth(l) + 4, -4)
+      const leftW = label ? chipWidth(label[1]) : 0
+      if (!label || state.length === 0 || leftW + rightW + 4 <= NODE_W) {
+        let right = n.x + NODE_W
+        for (const [kind, l] of state) {
+          const w = chipWidth(l)
+          chips.push(diagramChip(kind, l, right - w, n.y - 15))
+          right -= w + 4
+        }
+        if (label) chips.push(diagramChip(label[0], label[1], n.x, n.y - 15))
+      } else {
+        // The gap between rows fits two chip rows, never three. When wrapping inside the box's own
+        // width would take a third row, the rows may run past the box's right edge (into the column
+        // gap, short of the next box) so they stay at two.
+        const order = [...state, label]
+        const flow = (limit) => {
+          const placed = []
+          let x = n.x
+          let row = 0
+          for (const [kind, l] of order) {
+            const w = chipWidth(l)
+            if (x > n.x && x + w > limit) { row += 1; x = n.x }
+            placed.push([kind, l, x, row])
+            x += w + 4
+          }
+          return { placed, rows: row + 1 }
+        }
+        let flowed = flow(n.x + NODE_W)
+        if (flowed.rows > 2) {
+          const wide = flow(n.x + NODE_W + CHIP_OVERHANG)
+          if (wide.rows < flowed.rows) flowed = wide
+        }
+        for (const [kind, l, x, row] of flowed.placed) chips.push(diagramChip(kind, l, x, n.y - 15 - row * 17))
+      }
+      const idText = `${n.id}${n.done ? ' ✓' : ''}`
+      return (
+        `<g class="dg-a dg-btn" ${ticketButtonAttrs(n.id)} aria-label="${escapeHtml(HOME.nodeOpen(n.id))}"><title>${escapeHtml(`${n.id} ${n.slug}`.trim())}</title>` +
+        `<g class="${cls}"><rect class="dg-box" height="${NODE_H}" rx="8" width="${NODE_W}" x="${n.x}" y="${n.y}"></rect>` +
+        `<text class="dg-id" x="${n.x + 8}" y="${n.y + 14}">${escapeHtml(idText)}</text>` +
+        `<text class="dg-t" x="${n.x + 8}" y="${n.y + 31}">${escapeHtml(fitText(n.slug, NODE_W - 16))}</text>` +
+        `${diagramRole(n.assignee, n.x, n.y)}</g>${chips.join('')}</g>`
+      )
+    })
+    .join('')
+  const svg = `<svg class="dg" height="${layout.height}" style="width:${layout.width}px;height:${layout.height}px;max-width:none" viewBox="0 0 ${layout.width} ${layout.height}" width="${layout.width}"><defs>${marker('')}${marker('-cp')}${marker('-sp')}</defs>${edgeSvg}${nodeSvg}</svg>`
+  const sw = (cls) => `<i class="lg ${cls}"></i>`
+  const legend = []
+  if (graph.spine.size > 0 && graph.connected) {
+    legend.push(graph.cpIsSpine ? `<span>${sw('lg-sp')}${HOME.legendMainCritical}</span>` : `<span>${sw('lg-sp')}${HOME.chipMain}</span><span>${sw('lg-cp')}${HOME.chipCritical}</span>`)
+  } else {
+    legend.push(`<span>${sw('lg-cp')}${HOME.chipCritical}</span>`)
+  }
+  if (uses.gate) legend.push(`<span><span class="lgc lgc-gate">${HOME.chipGate}</span></span>`)
+  if (uses.done) legend.push(`<span>${sw('lg-done')}${HOME.legendDone}</span>`)
+  if (uses.rider) legend.push(`<span><span class="lgc lgc-rider">${HOME.chipRider}</span> ${HOME.legendRider}</span>`)
+  if (uses.turn) legend.push(`<span><span class="lgr">user</span><span class="lgc lgc-turn">${HOME.chipTurn}</span></span>`)
+  return `<div class="dg-wrap">${svg}</div><div class="dg-legend">${legend.join('')}</div>`
+}
+
+function homeDependency(data, currentTickets) {
+  const graph = buildHomeGraph({ tickets: currentTickets, gatePath: data.prd.gatePath || '' })
+  const drawable = graph.connected && graph.spine.size > 0
+  const sub = !graph.connected && data.poState?.stage === 'define' ? ` <span class="cp-sub">${HOME.beforeBuild}</span>` : ''
+  const head = `<div class="cp-h">${HOME.dependency}${sub}</div>`
+  const notice = graph.connected ? '' : `<div class="cp-spine-none">${HOME.notConnected}</div>`
+  if (graph.nodes.length === 0) return `<div class="cp-block">${head}${notice}<p class="cp-empty">${HOME.dependencyEmpty}</p></div>`
+  void drawable
+  return `<div class="cp-block">${head}${notice}${dependencyDiagram(graph, layoutHomeGraph(graph))}</div>`
+}
+
+function homeProgressBody(data) {
+  const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
-${homeStageLine(currentTickets, data.poState?.stage || '?')}
-${progressOverall(currentTickets)}
-<div class="stage-matrix">${progressMatrixHeadRow()}${rows}</div>
-${PROGRESS_LEGEND}
+${homeStageBar(currentTickets, data.poState?.stage || '?')}
+<div class="sc sc-grid">${homeScope(data, currentTickets)}${homeWaits(data)}</div>
+${homeDependency(data, currentTickets)}
 </div>`
 }
 
 function homeSection(data, repoRootHref) {
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   // T-713 scope note: `e.fields.bucket` matching stays literal (never
-  // `sameVersion`) — this ticket's acceptance line names ticket buckets and
-  // `prd_item` prefixes only; an artifact-manifest bucket spelled
-  // differently from po-state's version string is the same latent bug class
-  // but out of scope here (see this dispatch's `unresolved[]`).
+  // `sameVersion`) — an artifact-manifest bucket spelled differently from
+  // po-state's version string is a latent bug class out of this scope.
   const currentArtifacts = currentArtifactEntries(data.artifacts, data.currentVersion)
   const currentDecisions = currentDecisionPages(data.wiki, data.currentVersion)
   const groups = [
@@ -1750,7 +1843,9 @@ function homeSection(data, repoRootHref) {
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
   ]
-  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups, topHtml: HASH_NOTICE_HTML }) })
+  // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
+  const heading = `${STORE_LABEL.home} · ${data.currentVersion}`
+  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: heading, crumbLabel: heading, groups, topHtml: HASH_NOTICE_HTML }) })
 }
 
 export const TEMPLATE_CSS = `
@@ -1836,7 +1931,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 }
 .detail-panel.active { transform: translateX(0); }
 .detail-panel-header {
-  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: var(--space-8);
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-start; gap: var(--space-8);
   padding: var(--space-16) var(--space-20); border-bottom: 1px solid var(--border-item);
 }
 .detail-panel-title { font-size: 15px; font-weight: 700; color: var(--text-primary); min-width: 0; overflow-wrap: break-word; }
@@ -1884,64 +1979,108 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .pill-heading-4 { text-transform: none; letter-spacing: 0; white-space: normal; font-size: 11px; font-weight: 600;
   background: none; color: var(--text-secondary); padding: 0 0 0 var(--space-8); border-radius: 0; border-left: 2px solid var(--border-hover); }
 
-/* ---------- home dashboard (T-666 slice 2a) — T-675's assignee x PRD-item
-   matrix, copied class-for-class from the user-approved mockup
-   (docs/artifacts/v1.10/define-screen-set.html ~line 402-465, T-675
-   round 1-4) so the same visual spec that went through four user rounds of
-   review lands unchanged in the real product. ---------- */
-.dash-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-16); }
+/* ---------- Home 「현재 버전」 (T-881) — ported from the approved screen set
+   (docs/artifacts/v1.12/define-screen-set.html, home-progress + home-cases). ---------- */
+.dash-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
 .dash-card { border: 1px solid var(--border-item); border-radius: var(--radius-12); background: var(--bg-surface-base); padding: var(--space-20); }
 .dash-card-title { font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-tertiary); margin: 0 0 var(--space-12); display: flex; align-items: center; gap: var(--space-8); }
-.stage-line { font-size: 11px; color: var(--text-secondary); margin-bottom: var(--space-12); }
-.stage-overall { display: flex; align-items: center; gap: var(--space-8); margin-bottom: var(--space-12); padding-bottom: var(--space-10); border-bottom: 1px solid var(--border-item); }
-.stage-overall .stage-matrix-label { font-weight: 700; color: var(--text-primary); flex: 0 0 auto; }
-.stage-overall .stage-matrix-count { font-weight: 700; color: var(--text-primary); }
-/* T-708 결함 10 (PO 결정, 사용자 축자 "전체의 네모 크기랑 아래 배정된 네모
-   크기가 달라"): '전체' 줄 네모도 행렬과 같은 크기(10x10, gap 3px) — 아래
-   '.stage-matrix-sq-wrap'의 기본값을 그대로 물려받는다(더 이상 6px/2px로
-   덮어쓰지 않는다). 유일하게 남는 차이는 접지 않고(결함 3의 +N 규칙은 이 줄의
-   대상이 아니다) 넘치면 줄을 바꾼다는 것뿐이라 wrap 오버라이드 하나만 남긴다. */
-.stage-matrix-sq-wrap.stage-overall-sq-wrap { flex-wrap: wrap; }
-/* T-798: was a fixed 60px label column with the label cell itself clipped
-   (white-space: nowrap; overflow: hidden) — a PRD heading longer than ~4
-   Korean syllables cut off mid-word with no hover to recover it (user
-   screenshot: 「"두 단계"가 시」 · 「리스크가 정하」). minmax(60px, 140px)
-   lets the column grow to fit a short-to-medium heading (home's own
-   .main-inner has no max-width — plenty of room beside the 5 fixed 1fr
-   assignee columns); the label cell itself now wraps instead of clipping
-   (see .stage-matrix-label below), so even a heading past 140px still
-   reads in full, on a second/third line, never cut. */
-.stage-matrix { display: grid; grid-template-columns: minmax(60px, 140px) repeat(5, 1fr); column-gap: var(--space-6); row-gap: 4px; align-items: center; margin-bottom: var(--space-8); }
-.stage-matrix-row { display: contents; }
-.stage-matrix-head .stage-matrix-col { font-size: 9px; text-transform: none; letter-spacing: 0.02em; color: var(--text-quaternary);
-  font-weight: 600; text-align: center; padding-bottom: var(--space-6); border-bottom: 1px solid var(--border-item); }
-.stage-matrix-head .stage-matrix-label { border-bottom: 1px solid var(--border-item); padding-bottom: var(--space-6); }
-/* T-798: was white-space: nowrap; overflow: hidden — a label longer than
-   the column clipped mid-word with nothing to recover it (no hover, no
-   tooltip). word-break: keep-all keeps a Korean word/quoted-phrase whole
-   where a normal break opportunity exists (space, punctuation) rather than
-   snapping mid-syllable-block; overflow-wrap: anywhere is still the
-   fallback for one token literally wider than the 140px column cap above. */
-.stage-matrix-label { display: flex; align-items: center; gap: 3px; color: var(--text-tertiary); font-size: 11px;
-  text-transform: none; white-space: normal; overflow: visible; word-break: keep-all; overflow-wrap: anywhere; line-height: 1.3; }
-.stage-matrix-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 0; }
-/* T-708 결함 3: was 'flex-wrap: wrap', letting a cell with >10 tickets fold
-   onto a 2nd row and grow taller than every other cell in the same row —
-   nowrap + the 10-square cap/"+N" fold in progressCell() above keeps every
-   row at a constant single line regardless of count. */
-.stage-matrix-sq-wrap { display: flex; flex-wrap: nowrap; gap: 3px; justify-content: center; max-width: 100%; }
+.sb { display: flex; align-items: center; gap: 0; margin: var(--space-4) 0 var(--space-4); flex-wrap: nowrap; min-width: 0; max-width: 100%; }
+.sb-tick { width: 2px; height: 34px; background: var(--text-secondary); border-radius: 1px; margin-right: var(--space-6); flex: 0 0 auto; }
+.sb-seg { display: grid; grid-template-rows: 20px auto 20px; align-content: start; padding: 0 var(--space-6) 0 0; margin-right: var(--space-6); border-right: 1px dashed var(--border-inline); flex: 0 1 auto; min-width: 56px; }
+.sb-seg:last-of-type { border-right: none; }
+.sb-sq { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-height: 14px; }
+.sb-seg-cur .sb-sq { box-shadow: 0 2px 0 0 var(--accent); padding-bottom: 3px; }
+.sb-up { display: flex; align-items: flex-end; }
+.sb-dn { display: flex; align-items: flex-start; }
+.sb-lab { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); white-space: nowrap; display: inline-flex; align-items: center; gap: var(--space-4); }
+.sb-lab-cur { color: var(--text-primary); font-weight: 600; }
+.sb-n { color: var(--text-quaternary); font-size: 10px; font-weight: 400; }
+.sb-here { font-family: var(--font-family); font-size: 10px; font-weight: 600; color: var(--accent-contrast); background: var(--accent); border-radius: var(--radius-100); padding: 0 6px; line-height: 15px; }
+.sb-seg-empty .sb-sq::before { content: ""; width: 1px; height: 10px; background: var(--border-inline); }
+.sb-total { font-size: 11px; color: var(--text-secondary); margin-left: var(--space-4); flex: 0 0 auto; }
 .stage-sq { width: 10px; height: 10px; border-radius: 2px; background: var(--bg-interaction-neutral); border: 1px solid var(--border-inline); flex: 0 0 auto; }
 .stage-sq.sq-done { background: var(--accent); border-color: var(--accent); }
-.stage-sq-svg { width: 10px; height: 10px; flex: 0 0 auto; display: block; overflow: visible; }
-.stage-sq-dashed-rect { fill: var(--bg-interaction-neutral); stroke: var(--text-quaternary); stroke-width: 1; stroke-dasharray: 2 1.2; }
-.stage-sq-dashed-rect.sq-done { fill: var(--accent); stroke: var(--text-primary); }
-.stage-matrix-count { font-size: 9.5px; color: var(--text-secondary); font-family: var(--font-mono); }
-/* T-708 결함 3: the "+N" fold fragment — same line as the squares it follows
-   (its '.stage-matrix-sq-wrap' parent is nowrap), never its own row. */
-.stage-matrix-fold { font-size: 9.5px; color: var(--text-tertiary); font-family: var(--font-mono); white-space: nowrap; flex: 0 0 auto; }
-.stage-matrix-cell-empty { color: var(--text-disabled); font-size: 11px; }
-.stage-matrix-legend { display: flex; flex-direction: column; gap: 2px; margin: var(--space-4) 0 var(--space-2); font-size: 10px; color: var(--text-quaternary); }
-.stage-matrix-legend-item { display: flex; align-items: center; gap: 5px; }
+.sc { border-top: 1px solid var(--border-item); margin: var(--space-16) 0 0; padding: var(--space-16) 0 0; }
+.sc-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(200px, 220px); gap: var(--space-24); }
+.sc-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: center; gap: var(--space-10); min-height: 20px; }
+.sc-lab { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-out .sc-lab { color: var(--text-tertiary); }
+.sc-sq { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-width: 0; }
+.sc-n { font-size: 10.5px; color: var(--text-tertiary); }
+.sc-btn { cursor: pointer; }
+.sc-btn.is-open { outline: 2px solid var(--text-primary); outline-offset: 1px; }
+.sc-waits { min-width: 0; display: flex; flex-direction: column; gap: var(--space-16); border-left: 1px solid var(--border-item); padding-left: var(--space-24); }
+.cp-block { border-top: 1px solid var(--border-item); margin: var(--space-16) 0 0; padding: var(--space-16) 0 0; }
+.cp-h { font-size: 12px; font-weight: 600; color: var(--text-primary); margin: 0 0 var(--space-10); display: flex; align-items: baseline; gap: var(--space-8); flex-wrap: wrap; }
+.cp-sub { font-weight: 400; color: var(--text-tertiary); font-size: 11.5px; }
+.cp-n { font-size: 10.5px; color: var(--text-quaternary); font-weight: 400; }
+.cp-empty { font-size: 11.5px; color: var(--text-tertiary); margin: var(--space-4) 0 0; }
+.cp-wlist { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.cp-went { font: inherit; font-size: 12px; text-align: left; display: inline-flex; align-items: center; gap: 6px; background: var(--bg-surface-base); color: var(--text-primary); border: 1px solid var(--border-inline); border-radius: var(--radius-8); padding: 4px 8px; cursor: pointer; }
+.cp-went.is-open { border-color: var(--text-primary); box-shadow: 0 0 0 1px var(--text-primary); }
+.cp-spine-none { font-size: 12px; color: var(--text-primary); background: var(--bg-interaction-subtle); border: 1px dashed var(--border-inline); border-radius: var(--radius-8); padding: var(--space-6) var(--space-10); margin: 0 0 var(--space-12); }
+.dg { display: block; overflow: visible; }
+.dg-wrap { overflow-x: auto; min-width: 0; max-width: 100%; }
+.dg-n .dg-box { fill: var(--bg-surface-base); stroke: var(--border-inline); stroke-width: 1; }
+.dg-n-sp .dg-box { fill: color-mix(in srgb, var(--accent) 22%, var(--bg-surface-base)); stroke: var(--accent); stroke-width: 2; }
+.dg-n-cp .dg-box { fill: var(--bg-surface-base); stroke: var(--text-quaternary); stroke-width: 1.5; }
+.dg-n-gate .dg-box { stroke: var(--status-done); stroke-width: 2; fill: color-mix(in srgb, var(--status-done) 14%, var(--bg-surface-base)); }
+.dg-n-done .dg-box { fill: var(--bg-interaction-subtle); stroke: var(--text-quaternary); stroke-dasharray: 3 2; }
+.dg-id { font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; fill: var(--text-secondary); }
+.dg-n-sp .dg-id { fill: color-mix(in srgb, var(--accent) 50%, var(--text-primary)); }
+.dg-n-sp .dg-t { font-weight: 600; }
+.dg-t { font-family: var(--font-family); font-size: 10.5px; fill: var(--text-primary); }
+.dg-n-done .dg-t, .dg-n-done .dg-id { fill: var(--text-tertiary); }
+.dg-btn { cursor: pointer; }
+.dg-btn:hover .dg-box { stroke-width: 2.5; }
+.dg-btn:focus { outline: none; }
+.dg-btn:focus-visible .dg-box { stroke: var(--accent); stroke-width: 2.5; }
+.dg-btn.is-open .dg-box { stroke: var(--text-primary); stroke-width: 2.5; }
+.dg-e { fill: none; stroke: var(--text-quaternary); stroke-width: 1; }
+.dg-e-sp { stroke: var(--accent); stroke-width: 1.25; }
+.dg-e-cp { stroke: var(--text-tertiary); stroke-width: 1; }
+.dg-ah { fill: var(--text-quaternary); }
+.dg-ah-cp { fill: var(--text-tertiary); }
+.dg-ah-sp { fill: var(--accent); }
+.dg-chip-t { font-family: var(--font-family); font-size: 9.5px; font-weight: 600; }
+.dg-chip-sp { fill: var(--accent); }
+.dg-chip-t-sp { fill: var(--accent-contrast); }
+.dg-chip-cp { fill: var(--bg-surface-base); stroke: var(--text-quaternary); stroke-width: 1; }
+.dg-chip-t-cp { fill: var(--text-secondary); }
+.dg-chip-gate { fill: color-mix(in srgb, var(--status-done) 22%, var(--bg-surface-base)); stroke: var(--status-done); stroke-width: 1.5; }
+.dg-chip-t-gate { fill: var(--text-primary); }
+.dg-chip-rider { fill: var(--bg-interaction-neutral); }
+.dg-chip-t-rider { fill: var(--text-primary); }
+.dg-chip-turn { fill: color-mix(in srgb, var(--status-review) 18%, var(--bg-surface-base)); stroke: var(--status-review); }
+.dg-chip-t-turn { fill: var(--text-primary); }
+.dg-role { font-family: var(--font-mono); font-size: 9px; font-weight: 600; }
+.dg-role-bg { stroke: none; }
+.dg-role-designer { fill: color-mix(in srgb, var(--persona-designer) 80%, var(--text-primary)); }
+.dg-role-bg.dg-role-designer { fill: color-mix(in srgb, var(--persona-designer) 14%, transparent); }
+.dg-role-developer { fill: color-mix(in srgb, var(--persona-dev) 80%, var(--text-primary)); }
+.dg-role-bg.dg-role-developer { fill: color-mix(in srgb, var(--persona-dev) 14%, transparent); }
+.dg-role-qa { fill: color-mix(in srgb, var(--persona-qa) 80%, var(--text-primary)); }
+.dg-role-bg.dg-role-qa { fill: color-mix(in srgb, var(--persona-qa) 14%, transparent); }
+.dg-role-po { fill: color-mix(in srgb, var(--persona-po) 80%, var(--text-primary)); }
+.dg-role-bg.dg-role-po { fill: color-mix(in srgb, var(--persona-po) 14%, transparent); }
+.dg-role-user { fill: var(--bg-surface-base); }
+.dg-role-bg.dg-role-user { fill: var(--text-primary); }
+.dg-role-other { fill: var(--text-secondary); }
+.dg-role-bg.dg-role-other { fill: var(--bg-interaction-neutral); }
+.dg-legend { display: flex; flex-wrap: wrap; gap: var(--space-6) var(--space-16); font-size: 11px; color: var(--text-tertiary); margin: var(--space-10) 0 0; align-items: center; }
+.dg-legend span { display: inline-flex; align-items: center; gap: var(--space-6); }
+.lg { display: inline-block; width: 18px; height: 10px; border-radius: 3px; border: 1px solid var(--border-inline); background: var(--bg-surface-base); }
+.lg.lg-sp { border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 22%, var(--bg-surface-base)); }
+.lg.lg-cp { border: 1.5px solid var(--text-quaternary); background: var(--bg-surface-base); }
+.lg.lg-done { border: 1px dashed var(--text-quaternary); background: var(--bg-interaction-subtle); }
+.lgc { font-size: 10px; font-weight: 600; border-radius: var(--radius-100); padding: 0 7px; line-height: 15px; color: var(--text-primary); }
+.lgc-rider { background: var(--bg-interaction-neutral); }
+.lgc-gate { border: 1.5px solid var(--status-done); background: color-mix(in srgb, var(--status-done) 22%, var(--bg-surface-base)); }
+.lgc-turn { border: 1px solid var(--status-review); background: color-mix(in srgb, var(--status-review) 18%, var(--bg-surface-base)); }
+.lgr { font-family: var(--font-mono); font-size: 9px; font-weight: 600; border-radius: var(--radius-100); padding: 0 6px; line-height: 13px; margin-right: 4px; color: var(--bg-surface-base); background: var(--text-primary); }
+/* T-796: role pills read lowercase everywhere (the base .pill uppercases); the user pill is a solid ink chip. */
+.pill-user-ink { background: var(--text-primary); color: var(--bg-surface-base); }
+.pill[class*="pill-role-"], .pill-user-ink { text-transform: none; letter-spacing: 0; font-family: var(--font-mono); }
 /* ---------- tables ---------- */
 table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-quaternary);
@@ -2201,7 +2340,7 @@ ${PRD_READING_SCRIPT}
     if (!section) return;
     var panel = section.querySelector('.detail-panel');
     if (panel) { panel.classList.remove('active'); panel.removeAttribute('data-open-kind'); panel.removeAttribute('data-open-id'); }
-    section.querySelectorAll('.detail-row.is-open').forEach(function (r) { r.classList.remove('is-open'); });
+    section.querySelectorAll('.detail-row.is-open, [data-detail-kind].is-open').forEach(function (r) { r.classList.remove('is-open'); });
   }
 
   // T-882: feature screen moves — follow a 「함께 쓰는 기능」 link, go back, pick the area.
@@ -2261,8 +2400,16 @@ ${PRD_READING_SCRIPT}
     Object.keys(DETAIL_FIELD_LABELS).forEach(function (k) {
       var v = fields[k];
       if (v === undefined || v === null || v === '') return;
+      var text = String(v).replace(/</g, '&lt;');
+      // T-796: an assignee reads as a role pill (lowercase; user is a solid ink chip), like the ticket table.
+      var shown = text;
+      if (k === 'assignee') {
+        shown = text === 'user' ? '<span class="pill pill-user-ink">user</span>'
+          : ['po', 'designer', 'developer', 'qa'].indexOf(text) >= 0 ? '<span class="pill pill-role-' + text + '">' + text + '</span>'
+          : '<span class="pill pill-neutral">' + text + '</span>';
+      }
       metaRows.push('<div class="detail-field"><span class="detail-field-label">' + DETAIL_FIELD_LABELS[k] +
-        '</span><span class="detail-field-value">' + String(v).replace(/</g, '&lt;') + '</span></div>');
+        '</span><span class="detail-field-value">' + shown + '</span></div>');
     });
     var metaHtml = metaRows.length ? '<div class="detail-meta">' + metaRows.join('') + '</div>' : '';
     // T-666 slice 1b acceptance line 2: an artifact with no inlinable body
@@ -2293,7 +2440,7 @@ ${PRD_READING_SCRIPT}
     }
     panel.querySelector('.detail-panel-body').innerHTML = bodyHtml;
     panel.querySelector('.detail-panel-body').scrollTop = 0;
-    section.querySelectorAll('.detail-row.is-open').forEach(function (r) { r.classList.remove('is-open'); });
+    section.querySelectorAll('.detail-row.is-open, [data-detail-kind].is-open').forEach(function (r) { r.classList.remove('is-open'); });
     section.querySelectorAll('.view-pane.active [data-detail-kind]').forEach(function (r) {
       if (r.getAttribute('data-detail-kind') === kind && r.getAttribute('data-detail-id') === id) r.classList.add('is-open');
     });
@@ -2514,7 +2661,7 @@ ${PRD_READING_SCRIPT}
   document.addEventListener('click', function (ev) { onClick(ev); syncUrl(false); });
 
   document.addEventListener('keydown', function (ev) {
-    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('tr.detail-row[data-detail-kind]')) {
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('tr.detail-row[data-detail-kind], [role="button"][data-detail-kind]')) {
       ev.preventDefault();
       openDetailPanel(ev.target.closest('.store-section'), ev.target.getAttribute('data-detail-kind'), ev.target.getAttribute('data-detail-id'));
       syncUrl(false);
