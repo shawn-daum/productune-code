@@ -11614,7 +11614,12 @@ def _track_exclude(code, root):
     nests `tracks/` inside the code work tree, so that repo's own
     info/exclude needs the same line."""
     gd_meta = meta_git_dir(root)
-    if gd_meta.is_dir():
+    # T-911: a symlinked / untrusted meta.git could point the write outside the
+    # project (is_dir follows links) — skip it, say so in one line.
+    prob = meta_git_trust_problem(root)
+    if prob:
+        print(f"meta exclude skipped: {prob}", file=sys.stderr)
+    elif gd_meta.is_dir():
         _exclude_add(gd_meta)
     if Path(code).resolve() != Path(root).resolve():
         return
