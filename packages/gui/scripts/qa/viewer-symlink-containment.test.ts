@@ -118,6 +118,35 @@ describe('generate: no outside value reaches viewer.html or any data file', () =
     expect(all).not.toMatch(/MARKER_OUT_/)
   })
 
+  // A top directory that is itself a link must not widen the allowed region.
+  const topShapes: Array<[string, (root: string) => void]> = [
+    ['docs -> elsewhere/ (in-repo)', (root) => {
+      write(path.join(root, 'elsewhere/prd/PRD.md'), 'FAKE_ELSEWHERE_MARK\n')
+      write(path.join(root, 'elsewhere/wiki/a.md'), '---\ntitle: A\n---\nFAKE_ELSEWHERE_MARK\n')
+      fs.symlinkSync(path.join(root, 'elsewhere'), path.join(root, 'docs'))
+    }],
+    ['docs -> . (repo root)', (root) => {
+      write(path.join(root, 'prd/PRD.md'), 'FAKE_ELSEWHERE_MARK\n')
+      write(path.join(root, 'wiki/a.md'), '---\ntitle: A\n---\nFAKE_ELSEWHERE_MARK\n')
+      fs.symlinkSync('.', path.join(root, 'docs'))
+    }],
+    ['.prdt -> . (repo root)', (root) => {
+      fs.rmSync(path.join(root, '.prdt'), { recursive: true })
+      write(path.join(root, 'po-state.json'), JSON.stringify({ schema_version: 1, stage: 'build', version: 'v1.0', current_task: null }))
+      write(path.join(root, 'config.json'), JSON.stringify({ slug: 'FAKE_ELSEWHERE_MARK' }))
+      fs.symlinkSync('.', path.join(root, '.prdt'))
+    }],
+  ]
+  for (const [label, build] of topShapes) {
+    it(`top dir link ${label} embeds nothing outside the real top`, async () => {
+      const root = makeRepo('top' + label.replace(/\W+/g, '_'))
+      build(root)
+      const { html, dataFiles, buildFile } = await generate({ repoRoot: root, outputPath: path.join(tmp, 'out-top/viewer.html'), disciplineRoot: path.join(tmp, 'nodisc') })
+      const all = [html, buildFile.content, ...dataFiles.map((f: any) => f.content)].join('\n')
+      expect(all).not.toContain('FAKE_ELSEWHERE_MARK')
+    })
+  }
+
   it('F3: a repo dir named with a quote injects no element via the detail-panel file link', async () => {
     const root = path.join(tmp, 'q"><img src=x onerror=alert(1)>')
     write(path.join(root, '.prdt/po-state.json'), JSON.stringify({ schema_version: 1, stage: 'build', version: 'v1.0', current_task: null }))
