@@ -83,11 +83,18 @@ describe('collect: links resolving outside the repo are skipped', () => {
     expect(readPoState(root).version).toBe('')
     expect(collectAll(root, { disciplineRoot: path.join(tmp, 'nodisc') }).project).toBeNull()
   })
-  it('a link resolving INSIDE the repo still works', () => {
+  it('PRD.md linked to an in-repo file outside docs/ (root .env.local) is refused', () => {
+    const root = makeRepo('rootenv')
+    write(path.join(root, '.env.local'), `${SECRET}\n`)
+    fs.mkdirSync(path.join(root, 'docs/prd'), { recursive: true })
+    fs.symlinkSync('../../.env.local', path.join(root, 'docs/prd/PRD.md'))
+    expect(collectPrd(root, 'v1.0').current.body).toBe('')
+  })
+  it('a link resolving inside docs/ still works', () => {
     const root = makeRepo('inside')
-    write(path.join(root, 'real-wiki/a.md'), '---\ntitle: A\n---\nINSIDE_WIKI\n')
+    write(path.join(root, 'docs/real-wiki/a.md'), '---\ntitle: A\n---\nINSIDE_WIKI\n')
     fs.mkdirSync(path.join(root, 'docs'), { recursive: true })
-    fs.symlinkSync(path.join(root, 'real-wiki'), path.join(root, 'docs/wiki'))
+    fs.symlinkSync(path.join(root, 'docs/real-wiki'), path.join(root, 'docs/wiki'))
     write(path.join(root, 'docs/features/f.md'), 'F\n')
     fs.symlinkSync(path.join(root, 'docs/features/f.md'), path.join(root, 'docs/features/g.md'))
     expect(collectWiki(root).map((d: any) => d.body.trim())).toEqual(['INSIDE_WIKI'])
@@ -100,7 +107,7 @@ describe('generate: no outside value reaches viewer.html or any data file', () =
     const root = makeRepo('repro')
     write(path.join(root, '.env.local'), `${SECRET}\n`)
     fs.mkdirSync(path.join(root, 'docs/prd'), { recursive: true })
-    fs.symlinkSync(path.join(outside, '.env.local'), path.join(root, 'docs/prd/PRD.md'))
+    fs.symlinkSync('../../.env.local', path.join(root, 'docs/prd/PRD.md'))
     for (const [link, target] of [['docs/wiki', 'wiki'], ['docs/tickets', 'tickets'], ['docs/prd/versions', 'versions'], ['docs/features', 'features']]) {
       fs.symlinkSync(path.join(outside, target), path.join(root, link))
     }

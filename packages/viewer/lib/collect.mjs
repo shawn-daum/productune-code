@@ -55,13 +55,22 @@ import { sameVersion, decodePathSegments } from './render.mjs'
 // T-912 F1: every read under the repo root passes through realpath containment
 // (the RELEASES.md / discipline rule, T-883 / T-842 class): a path whose REAL
 // location (every symlink resolved) is outside the REAL repo root reads as
-// absent. A symlink resolving INSIDE the repo root still works — the risk is
-// leaving the project, not linking within it.
+// absent. A symlink resolving inside the same top directory (`docs/` or
+// `.prdt/`) still works; one reaching another in-repo file (root `.env.local`)
+// does not.
 function realInsideRepo(repoRoot, abs) {
   try {
     const realRoot = fs.realpathSync(repoRoot)
     const real = fs.realpathSync(abs)
-    return real === realRoot || real.startsWith(realRoot + path.sep) ? real : null
+    if (!(real === realRoot || real.startsWith(realRoot + path.sep))) return null
+    // Narrower than the repo: the viewer reads only under `docs/` and `.prdt/`,
+    // so a link to another in-repo file (e.g. a root `.env.local`) is refused too.
+    const top = path.relative(repoRoot, abs).split(path.sep)[0]
+    if (top && top !== '..') {
+      const realTop = fs.realpathSync(path.join(repoRoot, top))
+      if (!(real === realTop || real.startsWith(realTop + path.sep))) return null
+    }
+    return real
   } catch {
     return null
   }
