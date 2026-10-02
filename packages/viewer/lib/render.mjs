@@ -2626,6 +2626,9 @@ ${PRD_READING_SCRIPT}
     var metaHtml = metaRows.length ? '<div class="detail-meta">' + metaRows.join('') + '</div>' : '';
     // T-666 slice 1b acceptance line 2: an artifact with no inlinable body
     // (.html/.json) says so and links the file, instead of an empty panel.
+    // T-912 F3: fileHref embeds repoRootHref, a raw path (a repo dir may be named
+    // with a quote) — escaped for the attribute AND the link text.
+    function escAttr(v) { return String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
     var docHtml;
     var past = kind === 'ticket' && !fields.body ? pastTicketRef(fields) : null;
     if (past && !pastSettled(past)) {
@@ -2638,7 +2641,7 @@ ${PRD_READING_SCRIPT}
       docHtml = '<div class="detail-doc body-prose">' + fields.body + '</div>';
     } else if (fields.fileHref) {
       docHtml = '<div class="detail-doc detail-nobody"><p>' + ${JSON.stringify(FILE_HREF_NOTE)} + '</p><p><a href="' +
-        fields.fileHref + '" target="_blank" rel="noopener">' + (fields.path || fields.fileHref).replace(/</g, '&lt;') + '</a></p></div>';
+        escAttr(fields.fileHref) + '" target="_blank" rel="noopener">' + escAttr(fields.path || fields.fileHref) + '</a></p></div>';
     } else {
       docHtml = '';
     }
