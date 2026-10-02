@@ -1,5 +1,5 @@
-// T-721 acceptance line 1: every `.pill-*` rule in render.mjs's TEMPLATE_CSS
-// must equal the approved mockup's rule body for the same class, so the
+// T-721 acceptance line 1: every `.pill-*` class in render.mjs's TEMPLATE_CSS
+// must resolve to the approved mockup's declarations for the same class, so the
 // viewer's status/role pills keep the mockup's tinted backgrounds instead of
 // silently drifting back to a flat neutral fill. This test parses both CSS
 // sources and diffs them property-by-property (whitespace-insensitive) —
@@ -14,16 +14,20 @@
 // viewer-labels.test.ts / viewer-shell.test.ts: skip (with a visible reason)
 // instead of crashing when the meta root isn't there; run for real whenever
 // it is.
+// T-900: the reference is the v1.12 screen set (viewer-polish sheet), the one
+// that approved T-797's light 80%-mix text and T-887's dark tints. Its pills are
+// scoped per theme (`.frame:not(.theme-dark)` / `.frame.theme-dark`), render.mjs's
+// per `:root` theme, so both sides are reduced to the EFFECTIVE declarations per
+// theme (base, then the theme's own overrides) and compared for light and dark.
+// Meta root: META_ROOT (tracks/T-NNN worktrees resolve to their parent).
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { TEMPLATE_CSS } from '@productune/viewer/lib/render.mjs'
-import { missingMetaRootReason } from '@productune/viewer/generate.mjs'
+import { META_ROOT, META_SKIP_REASON } from './meta-root'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const MOCKUP_PATH = path.resolve(__dirname, '../../../../../docs/artifacts/v1.10/define-screen-set.html')
-const metaMissingReason = missingMetaRootReason()
+const MOCKUP_PATH = META_ROOT ? path.join(META_ROOT, 'docs/artifacts/v1.12/define-screen-set.html') : ''
+const metaMissingReason = META_SKIP_REASON
 
 // The pill classes the ticket names explicitly.
 const PILL_CLASSES = [
@@ -42,48 +46,80 @@ const PILL_CLASSES = [
   'pill-error',
 ]
 
-/** Pull `.<cls>{...}` or `.<cls> {...}` rule bodies out of a CSS-bearing text blob. */
-function extractRuleBodies(cssText) {
-  const bodies = new Map()
-  const re = /\.([\w-]+)\s*\{([^}]*)\}/g
+type Theme = 'base' | 'light' | 'dark'
+type Rule = { cls: string; theme: Theme; body: string }
+
+// A selector is a plain `[scope][theme-qualifier] .pill-x`; anything else (screen-
+// scoped :is(...) rules, nested descendants) is not a pill definition and is ignored.
+const RENDER_SEL = /^(?::root(:not\(\[data-theme="dark"\]\)|\[data-theme="dark"\]))?\s*\.(pill-[\w-]+)$/
+const MOCKUP_SEL = /^\.frame(:not\(\.theme-dark\)|\.theme-dark)?\s+\.(pill-[\w-]+)$|^\.(pill-[\w-]+)$/
+
+function themeOf(q: string | undefined): Theme {
+  if (!q) return 'base'
+  return q.startsWith(':not') ? 'light' : 'dark'
+}
+
+/** Every `.pill-*` rule in `cssText`, in source order, one entry per selector of a list. */
+function extractRules(cssText: string, selRe: RegExp): Rule[] {
+  const rules: Rule[] = []
+  const re = /([^{}]+)\{([^}]*)\}/g
   let m
-  while ((m = re.exec(cssText))) {
-    bodies.set(m[1], m[2])
+  while ((m = re.exec(cssText.replace(/\/\*[\s\S]*?\*\//g, '')))) {
+    for (const sel of m[1].split(',')) {
+      const sm = selRe.exec(sel.trim())
+      if (!sm) continue
+      const cls = sm[2] ?? sm[3]
+      rules.push({ cls, theme: themeOf(sm[1]), body: m[2] })
+    }
   }
-  return bodies
+  return rules
 }
 
 /** A rule body → { property: normalized-value } map, so declaration-order and
  *  whitespace differences between the mockup's compact CSS and render.mjs's
  *  spaced-out CSS never register as a mismatch. */
-function declMap(body) {
-  const out = {}
+function declMap(body: string): Record<string, string> {
+  const out: Record<string, string> = {}
   for (const decl of body.split(';')) {
     const trimmed = decl.trim()
     if (!trimmed) continue
     const idx = trimmed.indexOf(':')
     if (idx === -1) continue
     const prop = trimmed.slice(0, idx).trim()
-    const value = trimmed
+    out[prop] = trimmed
       .slice(idx + 1)
       .trim()
       .replace(/\s+/g, ' ')
       .replace(/,\s*/g, ', ')
-    out[prop] = value
   }
   return out
 }
 
-describe('viewer pills — render.mjs TEMPLATE_CSS matches the approved mockup (T-721)', () => {
-  const renderRules = extractRuleBodies(TEMPLATE_CSS)
-  const mockupRules = metaMissingReason ? new Map() : extractRuleBodies(fs.readFileSync(MOCKUP_PATH, 'utf8'))
+/** What the class actually paints in one theme: base rules, then that theme's
+ *  own rules (higher specificity, so they win whatever the source order). */
+function effective(rules: Rule[], cls: string, theme: 'light' | 'dark'): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const layer of ['base', theme] as Theme[])
+    for (const r of rules) if (r.cls === cls && r.theme === layer) Object.assign(out, declMap(r.body))
+  return out
+}
+
+function mockupStyleText(html: string): string {
+  return [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+}
+
+describe('viewer pills — render.mjs TEMPLATE_CSS matches the approved v1.12 screen set (T-721, T-900)', () => {
+  const renderRules = extractRules(TEMPLATE_CSS, RENDER_SEL)
+  const mockupRules = metaMissingReason ? [] : extractRules(mockupStyleText(fs.readFileSync(MOCKUP_PATH, 'utf8')), MOCKUP_SEL)
 
   it.skipIf(metaMissingReason).each(PILL_CLASSES)(
-    `.%s: render.mjs rule body equals the mockup rule body${metaMissingReason ? ` — SKIPPED: ${metaMissingReason}` : ''}`,
+    `.%s: render.mjs resolves to the mockup's declarations in light and dark${metaMissingReason ? ` — SKIPPED: ${metaMissingReason}` : ''}`,
     (cls) => {
-      expect(mockupRules.has(cls)).toBe(true) // fixture sanity — mockup must actually define this class
-      expect(renderRules.has(cls)).toBe(true) // render.mjs must actually define this class
-      expect(declMap(renderRules.get(cls))).toEqual(declMap(mockupRules.get(cls)))
+      expect(mockupRules.some((r) => r.cls === cls)).toBe(true) // fixture sanity — mockup must actually define this class
+      expect(renderRules.some((r) => r.cls === cls)).toBe(true) // render.mjs must actually define this class
+      for (const theme of ['light', 'dark'] as const) {
+        expect(effective(renderRules, cls, theme), `${cls} ${theme}`).toEqual(effective(mockupRules, cls, theme))
+      }
     },
   )
 })

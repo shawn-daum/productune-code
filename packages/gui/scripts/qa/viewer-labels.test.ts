@@ -26,7 +26,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
-import { generate, missingMetaRootReason } from '@productune/viewer/generate.mjs'
+import { generate } from '@productune/viewer/generate.mjs'
+import { META_ROOT, META_SKIP_REASON } from './meta-root'
 import { WIKI, FEATURE } from '@productune/viewer/lib/labels.mjs'
 import * as labels from '@productune/viewer/lib/labels.mjs'
 
@@ -39,11 +40,11 @@ import * as labels from '@productune/viewer/lib/labels.mjs'
 // (see viewer-html.test.ts's header) — `generate()` throws ENOENT there.
 // Checked once, up front, so only the one test below that needs `realHtml`
 // skips (with a visible reason); every fixture-based case here still runs.
-const metaMissingReason = missingMetaRootReason()
+const metaMissingReason = META_SKIP_REASON
 let realHtml: string
 beforeAll(async () => {
   if (metaMissingReason) return
-  ;({ html: realHtml } = await generate())
+  ;({ html: realHtml } = await generate({ repoRoot: META_ROOT! }))
 }, 30000)
 
 const RENDER_MJS_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../viewer/lib/render.mjs')
