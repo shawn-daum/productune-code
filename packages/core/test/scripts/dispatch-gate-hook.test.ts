@@ -1285,10 +1285,14 @@ describe('T-695: the machine resource cap', () => {
     expect(run({ cwd: proj }, { machine: { ps: [PS_QUIET, ...noise, ...tree].join('\n') } })).toBe('')  // cap 1: one suite admits
   })
 
-  // A REAL process tree, never a shim: the suite starts `pnpm exec vitest run` /
-  // `pnpm test` / `vitest watch` in a scratch root (node_modules symlinked to this
-  // package's), reads the gate's count off the host's real `ps` before and after,
-  // and asserts the delta is exactly 1 — the host may be running other suites.
+  // A REAL process tree, never a hand-written fixture: the suite starts `pnpm exec
+  // vitest run` / `pnpm test` / `vitest watch` in a scratch root (node_modules
+  // symlinked to this package's), takes the host's real `ps` rows, keeps only the
+  // rows of THAT child's own process tree, feeds them to the gate through the
+  // machine.ps stub, and asserts the count is exactly 1. T-790: the earlier form
+  // read the whole host `ps` before and after and asserted the delta — any other
+  // suite starting or ending on the host in that window moved the delta (seen
+  // as 0 and 2 on a busy machine running parallel full runs).
   const VARIANTS: Array<[string, string, string[]]> = [
     ['pnpm exec vitest run', 'pnpm', ['exec', 'vitest', 'run']],
     ['pnpm test', 'pnpm', ['test']],
@@ -1308,26 +1312,47 @@ describe('T-695: the machine resource cap', () => {
     walk(rootPid)
     for (const pid of order) { try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ } }
   }
+  /** The `args` of every live process in `rootPid`'s tree (itself included), read off
+   *  the host's real `ps` — the rows the gate would see if this child were alone. */
+  function treeArgs(rootPid: number): string {
+    const ps = spawnSync('ps', ['-axww', '-o', 'pid=,ppid=,args='], { encoding: 'utf8' }).stdout
+    const rows = new Map<number, { ppid: number; args: string }>()
+    for (const line of ps.split('\n')) {
+      const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line)
+      if (m) rows.set(Number(m[1]), { ppid: Number(m[2]), args: m[3] })
+    }
+    const inTree = (pid: number): boolean => {
+      for (let p = pid, hops = 0; p > 1 && hops < 64; hops++) {
+        if (p === rootPid) return true
+        const r = rows.get(p)
+        if (!r) return false
+        p = r.ppid
+      }
+      return false
+    }
+    return [...rows].filter(([pid]) => inTree(pid)).map(([, r]) => r.args).join('\n')
+  }
   test.each(VARIANTS)('real process tree: one `%s` counts as exactly 1 on the host ps', async (_label, cmd, cmdArgs) => {
     const root = tmp('prdt-t695-vt-')
     fs.symlinkSync(path.join(CORE_ROOT, 'node_modules'), path.join(root, 'node_modules'))
     fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'vt', private: true, type: 'module', scripts: { test: 'vitest run' } }))
     fs.writeFileSync(path.join(root, 'sleep.test.ts'), 'import { test } from "vitest"\ntest("sleep", async () => { await new Promise(r => setTimeout(r, 40000)) }, 60000)\n')
     fsCaps(-1)
-    const count = () => Number(/running full test suites: (-?\d+) \//.exec(report({ machine: { realPs: true }, home: capsHome }))![1])
-    const before = count()
+    const count = (ps: string) => Number(/running full test suites: (-?\d+) \//.exec(report({ machine: { ps: [PS_QUIET, ps].join('\n') }, home: capsHome }))![1])
     // never `detached` (T-442 isolation rule): the tree is reaped by walking `ps` from the child's pid
     const child = spawn(cmd, cmdArgs, { cwd: root, stdio: 'ignore', env: { ...process.env, CI: '1' } })
     try {
-      // wait until the vitest entry process of THIS root is up (its cwd is the scratch root; ps shows the entry script)
+      // wait until the vitest entry process of THIS tree is up (ps shows the entry script)
       const deadline = Date.now() + 30_000
-      let after = before
+      let n = 0
+      let rows = ''
       while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 500))
-        after = count()
-        if (after !== before) break
+        rows = treeArgs(child.pid!)
+        n = count(rows)
+        if (n !== 0) break
       }
-      expect(after - before).toBe(1)
+      expect(n, rows).toBe(1)
     } finally {
       // reap the whole process group before returning — the suite's shim fails a test that leaves a child behind
       const exited = new Promise<void>(resolve => { child.once('exit', () => resolve()); setTimeout(resolve, 8_000) })
