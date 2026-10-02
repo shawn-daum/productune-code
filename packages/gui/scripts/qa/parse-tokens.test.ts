@@ -13,7 +13,7 @@
 // and therefore from `ds/design-system.html`'s "Legacy aliases" list.
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
-import { findLegacyAliasNames, buildRawThemeMaps } from '../../ds/lib/parse-tokens.mjs'
+import { findLegacyAliasNames, buildRawThemeMaps } from '@productune/viewer/lib/parse-tokens.mjs'
 import { TOKENS_PATH } from '../../ds/generate.mjs'
 
 // A minimal fixture shaped exactly like tokens.css's own alias block: the

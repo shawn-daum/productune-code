@@ -460,6 +460,66 @@ if [ -f "$ROOT/package.json" ] && [ -f "$SRC_ENTRY" ]; then
   fi
 fi
 
+# 1c. install the viewer generator's dependencies — T-871.
+#     WHY: `prdt viewer` / `prdt tickets --link` / the auto-open hook run the
+#     generator in packages/viewer, which needs marked · subset-font ·
+#     pretendard. It is its own workspace package so this step installs ONLY
+#     those (~130MB), never the GUI's (electron alone is ~750MB): a filtered,
+#     frozen-lockfile install with scripts off (the root postinstall would
+#     build core, which this step does not need).
+#     Up to date (the three packages present AND the stamp matches the
+#     current package.json + lockfile) → nothing runs, no network. A machine
+#     with the full workspace installed keeps it: the filtered install only
+#     adds the viewer package's links (measured, T-871: electron stays).
+#     Never a failure of the install: pnpm absent, offline or a failed install
+#     → one line, and `prdt viewer` / `prdt doctor` name the missing piece
+#     (T-868). Silence when this checkout has no packages/viewer (the
+#     scripts-only payload install-fail-loud.test.ts runs).
+VIEWER_PKG="$ROOT/../viewer"
+if [ -f "$VIEWER_PKG/package.json" ] && [ -f "$ROOT/../../pnpm-lock.yaml" ]; then
+  CODE_ROOT="$(cd "$ROOT/../.." && pwd)"
+  VIEWER_PKG="$CODE_ROOT/packages/viewer"
+  VIEWER_STAMP="$VIEWER_PKG/node_modules/.prdt-deps-stamp"
+  VIEWER_INSTALL_CMD="pnpm install --frozen-lockfile --filter @productune/viewer --ignore-scripts"
+  # A checkout whose GUI is already installed (packages/gui/node_modules): the
+  # GUI's ds/ scripts import @productune/viewer, and a viewer-only filter does
+  # not link it into gui/node_modules. Add the GUI to the filter so pnpm links
+  # it (its own deps are already there — nothing new is fetched, no scripts).
+  # No gui/node_modules → viewer-only, and none is created.
+  VIEWER_GUI_LINK=""
+  if [ -d "$CODE_ROOT/packages/gui/node_modules" ] && [ -f "$CODE_ROOT/packages/gui/package.json" ]; then
+    VIEWER_GUI_LINK="$CODE_ROOT/packages/gui/node_modules/@productune/viewer"
+    VIEWER_INSTALL_CMD="pnpm install --frozen-lockfile --filter @productune/viewer --filter ./packages/gui --ignore-scripts"
+  fi
+  viewer_deps_key() {
+    cat "$VIEWER_PKG/package.json" "$CODE_ROOT/pnpm-lock.yaml" | shasum -a 256 | cut -d' ' -f1
+  }
+  viewer_deps_present() {
+    [ -f "$VIEWER_PKG/node_modules/marked/package.json" ] \
+      && [ -f "$VIEWER_PKG/node_modules/subset-font/package.json" ] \
+      && [ -d "$VIEWER_PKG/node_modules/pretendard/dist/web/static/woff2" ] \
+      && { [ -z "$VIEWER_GUI_LINK" ] || [ -f "$VIEWER_GUI_LINK/package.json" ]; }
+  }
+  VIEWER_KEY="$(viewer_deps_key)"
+  if viewer_deps_present && [ "$(cat "$VIEWER_STAMP" 2>/dev/null || true)" = "$VIEWER_KEY" ]; then
+    say "1c) viewer dependencies already up to date"
+  elif ! command -v pnpm >/dev/null 2>&1; then
+    say "1c) viewer dependencies NOT installed — pnpm not on PATH (\`npm install -g pnpm\`, then \`cd $CODE_ROOT && $VIEWER_INSTALL_CMD\`); \`prdt viewer\` / \`prdt doctor\` name what is missing"
+  else
+    say "1c) Installing viewer dependencies (marked · subset-font · pretendard only — no GUI/electron)"
+    VIEWER_LOG="$(mktemp "${TMPDIR:-/tmp}/prdt-viewer-deps.XXXXXX")"
+    if (cd "$CODE_ROOT" && $VIEWER_INSTALL_CMD --config.fetch-retries=1 </dev/null) >"$VIEWER_LOG" 2>&1 \
+        && viewer_deps_present; then
+      printf '%s\n' "$VIEWER_KEY" > "$VIEWER_STAMP" 2>/dev/null || true
+      say "   installed into $VIEWER_PKG/node_modules"
+    else
+      VIEWER_ERR="$({ grep -E 'ERR_PNPM' "$VIEWER_LOG" | tail -1; } 2>/dev/null | grep . || grep -m1 -E 'Error|error' "$VIEWER_LOG" 2>/dev/null || tail -1 "$VIEWER_LOG" 2>/dev/null || true)"
+      say "   viewer dependencies install FAILED (${VIEWER_ERR:-no output}) — the rest of the install continues; \`prdt viewer\` / \`prdt doctor\` name what is missing (retry: \`cd $CODE_ROOT && $VIEWER_INSTALL_CMD\`)"
+    fi
+    rm -f "$VIEWER_LOG"
+  fi
+fi
+
 # 2. prdt.env (잠정 확정 — 열린 항목 ①: 미니멀 계승)
 ENV_FILE="$PRDT_HOME/prdt.env"
 if [ ! -f "$ENV_FILE" ]; then

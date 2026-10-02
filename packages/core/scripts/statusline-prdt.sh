@@ -9,15 +9,21 @@
 # The state/cost recording that full's statusline smuggled in lives in
 # hooks/prdt-post-dispatch.sh.
 #
-# Format: <slug> | <version> | <stage> | <vdone>/<vtotal> | T-NNN <task>→<persona> | branch: <branch>
+# Format: <slug> <stage> <vdone>/<vtotal> T-NNN <task>→<persona> branch: <branch> | running … | dec … | req …
+#   - T-849: the leading segments are space-joined (no version segment, no `|`
+#     between them); the slug is an OSC 8 link to `.prdt/scratch/viewer/viewer.html`
+#     when that file exists, plain text otherwise. ` | ` only opens the footer.
 #   - <vdone>/<vtotal> is ONE version-wide count over every ticket (open+done)
 #     in the current version dir, every type included (`decision` too) — T-755:
 #     a per-type "which stage is this ticket in" guess (the old TYPE_TO_STAGE
 #     map) read wrong the moment a `design`-typed ticket was actually Build
 #     work, so the count no longer estimates a stage from ticket type at all.
 #   - <task> slug is capped at 16 chars (+ …) so a long slug can't blow out the line.
-#   - Trailing footer (T-682): `running T-NNN[»T-NNN…] | waiting T-NNN[»T-NNN…] | CP T-NNN→T-NNN`
-#     — CP (T-776) is the ≤2-id head of `prdt schedule`'s own critical_path.
+#   - Trailing footer (T-682, T-849): `running T-NNN[»T-NNN…] | dec T-NNN[»T-NNN…] | req T-NNN[»T-NNN…]`
+#     — `dec` = every open `type: decision` ticket, `req` = every open
+#     `assignee: user` ticket that is not a decision, across EVERY version
+#     directory under docs/tickets (backlog excluded) — the same rule as the
+#     viewer Home (`waitLists`, packages/viewer/lib/home-graph.mjs, T-881).
 # Missing pieces degrade silently (init is deterministic, so slug/stage exist from 0s).
 
 set +e
@@ -125,44 +131,66 @@ parts = [slug]
 # to narrow this to a stage-matched subset; a ticket's `type` no longer affects
 # the count at all, only its `status`.
 vdone = vtotal = 0
-# `version` reaches the filesystem here, so only a SHAPE-MATCHED value is used
-# (`<withheld>` / off-shape → no counting, and no `../` reaching os.listdir).
-tdir = os.path.join(root, "docs", "tickets", version) if VERSION_RE.match(version or "") else ""
-# T-682 "waiting": open `type: decision` and open `assignee: user` tickets —
-# scoped to this SAME current-version directory (not a repo-wide walk on every
-# prompt): reused from the loop below that already opens every ticket file
-# here for the version count, so this costs no extra file reads.
-waiting = []
-if tdir and os.path.isdir(tdir):
-    for fn in os.listdir(tdir):
+# Directory names reach the filesystem here only SHAPE-MATCHED (VERSION_RE), so
+# no `../` and no `<withheld>` ever reaches os.listdir/os.path.join.
+# T-849 `dec` / `req`: open `type: decision` tickets, and open `assignee: user`
+# tickets that are not decisions, over EVERY version directory (not only the
+# current one — a ticket left open in an earlier version folder still waits on
+# the user). `backlog` and any non-version-shaped directory are skipped; the
+# current version dir is also the one the done/total count reads.
+dec = []
+req = []
+tickets_root = os.path.join(root, "docs", "tickets")
+try:
+    vdirs = sorted(d for d in os.listdir(tickets_root)
+                   if VERSION_RE.match(d) and os.path.isdir(os.path.join(tickets_root, d)))
+except OSError:
+    vdirs = []
+for vd in vdirs:
+    dpath = os.path.join(tickets_root, vd)
+    try:
+        names = os.listdir(dpath)
+    except OSError:
+        continue
+    is_current = vd == version
+    for fn in names:
         if not (fn.startswith("T-") and fn.endswith(".md")):
             continue
         try:
-            head = open(os.path.join(tdir, fn)).read(600)
+            head = open(os.path.join(dpath, fn)).read(600)
         except OSError:
             continue
         ms = re.search(r"^status:\s*(\S+)", head, re.M)
         s = ms.group(1) if ms else ""
         if s not in ("done", "open"):
             continue
-        is_done = s == "done"
-        vtotal += 1
-        vdone += is_done
+        if is_current:
+            vtotal += 1
+            vdone += s == "done"
+        if s != "open":
+            continue
         mt = re.search(r"^(?:type|stage):\s*(\S+)", head, re.M)
         ttype = mt.group(1) if mt else ""
-        if s == "open":
-            ma = re.search(r"^assignee:\s*(\S+)", head, re.M)
-            tassignee = ma.group(1) if ma else ""
-            if ttype == "decision" or tassignee == "user":
-                tid = fn[:-3]
-                if TICKET_RE.match(tid):
-                    waiting.append(tid)
-waiting = sorted(set(waiting))
+        ma = re.search(r"^assignee:\s*(\S+)", head, re.M)
+        tassignee = ma.group(1) if ma else ""
+        tid = fn[:-3]
+        if not TICKET_RE.match(tid):
+            continue
+        if ttype == "decision":
+            dec.append(tid)
+        elif tassignee == "user":
+            req.append(tid)
 
-if version and version != slug:
-    parts.append(version)
+
+def _tid_key(t):
+    return int(t[2:])
+
+
+dec = sorted(set(dec), key=_tid_key)
+req = sorted(set(req), key=_tid_key)
+
 if vtotal:
-    parts.append(f"{stage} | {vdone}/{vtotal}")
+    parts.append(f"{stage} {vdone}/{vtotal}")
 else:
     parts.append(stage)
 
@@ -434,60 +462,10 @@ links = {}  # ticket_id -> resolved viewer link target (T-805), filled in as seg
             # strip the OSC 8 escape bytes as control characters, same as it
             # strips any other Cc/Cf/Zl/Zp — see the wrap step's own note).
 
-# ── T-776: critical-path head, "from the SAME computation as `prdt schedule`" ─
-# Reimplementing compute_schedule() here would drift from it the next time
-# S1's graph rules (T-747/763/764/765) change; shelling out to the project's
-# own `prdt schedule --json` instead can't drift, at the cost of one child
-# python process per render (~0.2s measured) — accepted per design (SoT:
-# docs/artifacts/v1.11/critical-path.html §4: "statusline critical path 표시
-# … 매 갱신 계산", computed fresh every render, nothing cached).
-def _find_prdt_script():
-    """This project's own `scripts/prdt`, same non-split-root-then-code-dir
-    order as git_branch() above (T-426 split). None when not found — no CP
-    segment, same silent degrade as every other piece here."""
-    for base in (root, os.path.join(root, code_dir_name() or CODE_DIR_DEFAULT)):
-        p = os.path.join(base, "packages", "core", "scripts", "prdt")
-        if os.path.isfile(p):
-            return p
-    return None
-
-
-def critical_path_head():
-    """Up to 2 ids — the head of `prdt schedule`'s own `critical_path` — or
-    [] on any degrade (script missing, non-zero exit, timeout, bad JSON;
-    a dependency cycle also computes as [] on the `prdt schedule` side, so it
-    degrades the same way here, silently). PRDT_META_BACKUP=0: this script is
-    pure display (file header, "No writes, no side effects") and every `prdt`
-    subcommand but `meta` fires the detached meta-backup tick otherwise — the
-    same kill switch the ticket's own observed command used."""
-    script = _find_prdt_script()
-    if not script:
-        return []
-    env = dict(os.environ)
-    env["PRDT_META_BACKUP"] = "0"
-    try:
-        r = subprocess.run([sys.executable, script, "schedule", "--json"],
-                            cwd=root, capture_output=True, text=True, timeout=2, env=env)
-    except Exception:
-        return []
-    if r.returncode != 0:
-        return []
-    try:
-        chain = json.loads(r.stdout).get("critical_path")
-    except Exception:
-        return []
-    if not isinstance(chain, list):
-        return []
-    return [t for t in chain[:2] if isinstance(t, str) and TICKET_RE.match(t)]
-
-
 running = running_dispatches()
-cp = critical_path_head()
-idx = open_index_ro() if (running or waiting or ct_tid or cp) else None
+idx = open_index_ro() if (running or dec or req or ct_tid) else None
 if ct_tid:
     links[ct_tid] = ticket_link_target(idx, ct_tid)  # F4: the current_task id links too
-for _cp_tid in cp:
-    links.setdefault(_cp_tid, ticket_link_target(idx, _cp_tid))
 
 
 def fmt_group(ids, limit, succ_limit, with_persona=None):
@@ -517,10 +495,10 @@ def tail_segments(limits):
     if running:
         personas = {tid: ps for tid, ps in running}
         out.append("running " + fmt_group([tid for tid, _ in running], run_lim, succ_lim, personas))
-    if waiting:
-        out.append("waiting " + fmt_group(waiting, wait_lim, succ_lim))
-    if cp:
-        out.append("CP " + "→".join(cp))  # T-776: beside `waiting`, always the ≤2-id head (never collapsed)
+    if dec:
+        out.append("dec " + fmt_group(dec, wait_lim, succ_lim))
+    if req:
+        out.append("req " + fmt_group(req, wait_lim, succ_lim))
     return out
 
 
@@ -530,10 +508,11 @@ def tail_segments(limits):
 # (running/waiting/successors = 3/3/2) and, when the line would still exceed
 # the cap, rebuilt tighter (2/2/1, then 1/1/0) before the belt ever sees it:
 # collapsing to counts is the rule the acceptance names, truncation is not.
-line = clean(" | ".join(parts), cap=LINE_CAP, bar=True)
-if running or waiting or cp:
+head = " ".join(parts)
+line = clean(head, cap=LINE_CAP, bar=True)
+if running or dec or req:
     for limits in ((3, 3, 2), (2, 2, 1), (1, 1, 0)):
-        candidate = " | ".join(parts + tail_segments(limits))
+        candidate = " | ".join([head] + tail_segments(limits))
         if len(candidate) <= LINE_CAP:
             break
     # Belt: the assembled line is sanitized once more and length-capped, so this
@@ -568,6 +547,21 @@ def wrap_links(text, link_map):
     return text
 
 
-print(wrap_links(line, links))
+def wrap_slug(text):
+    """T-849: the project slug (always the first token of the line) as an OSC 8
+    link to `.prdt/scratch/viewer/viewer.html` when that file exists; plain
+    text otherwise. Pure display — only an isfile check, no write. Run AFTER
+    wrap_links (the viewer path may itself contain a `T-NNN` directory name),
+    and only when the line still opens with the plain slug."""
+    viewer = os.path.join(root, VIEWER_HTML_REL)
+    if not (slug and os.path.isfile(viewer) and text.startswith(slug)):
+        return text
+    uri = "file://" + quote(viewer, safe="/")
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in uri):
+        return text
+    return f"\x1b]8;;{uri}\x1b\\{slug}\x1b]8;;\x1b\\" + text[len(slug):]
+
+
+print(wrap_slug(wrap_links(line, links)))
 PYEOF
 exit 0

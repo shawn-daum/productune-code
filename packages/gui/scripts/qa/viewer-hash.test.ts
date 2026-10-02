@@ -9,8 +9,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, it, expect } from 'vitest'
-import { generate } from '../../viewer/generate.mjs'
-import { buildAnchors, maxTicketNumber, renderPage } from '../../viewer/lib/render.mjs'
+import { generate } from '@productune/viewer/generate.mjs'
+import { buildAnchors, maxTicketNumber, renderPage } from '@productune/viewer/lib/render.mjs'
 
 const fixture = {
   poState: { stage: 'build', version: 'v1.10', current_task: null },
@@ -58,6 +58,7 @@ describe('anchor table', () => {
     expect(a['docs/prd/PRD.md']).toEqual({ s: 'home', g: 'prd' })
     expect(a['PRD']).toEqual({ s: 'home', g: 'prd' })
     expect(a['docs/prd/versions/v1.9.md']).toEqual({ s: 'prd', g: 'v1.9' })
+    // T-901 = B: no taxonomy → a spec file anchors to its spec-list row, as before T-882
     expect(a['docs/features/viewer.md']).toEqual({ s: 'feature', g: 'all', k: 'feature', i: 'viewer.md' })
     expect(a['docs/artifacts/v1.10/notes.md']).toEqual({ s: 'home', g: 'artifact', k: 'artifact', i: 'v1.10/notes.md' })
     expect(a['docs/artifacts/v1.9/old.md']).toEqual({ s: 'artifact', g: 'v1.9', k: 'artifact', i: 'v1.9/old.md' })

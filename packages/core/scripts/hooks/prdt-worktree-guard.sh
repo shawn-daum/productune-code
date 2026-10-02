@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prdt — worktree guard (T-779). Registered (hook-manifest.json) on PreToolUse,
+# prdt — worktree guard (T-779) + track-record guard (T-834). Registered (hook-manifest.json) on PreToolUse,
 # matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`; exercised directly by
 # test/scripts/worktree-guard-hook.test.ts spawning it.
 #
@@ -54,8 +54,11 @@
 #   `tar`'s `-C`/`--directory` destination (only in an extract/append mode —
 #   `x`/`r`/`u`/`A` or `--extract`/`--get`/`--append`/`--update`/
 #   `--concatenate`/`--catenate`; a plain `-c` create is a read of that
-#   directory, left silent like `cat`), `patch`'s `-d`/`--directory` and
-#   `unzip`'s `-d` destination, and `npm`'s `--prefix` destination (T-786:
+#   directory, left silent like `cat`; options are walked with their values,
+#   so the old-style bundle `tar xf f.tar -C DIR` / `tar -C DIR xf f.tar` and
+#   `--directory=DIR` count — T-834 fix2), `patch`'s `-d`/`--directory` and
+#   `unzip`'s `-d DIR` / `-dDIR` destination, `install -d DIR…` operands
+#   (created like `mkdir`), and `npm`'s `--prefix` destination (T-786:
 #   F5). `eval`'s body recurses like `bash -c` (T-786: F5). `cd`, `pushd`/
 #   `popd` and a `( … )` subshell (scoped: a `cd` inside one does not leak
 #   out) move the effective cwd — a bare `cd` (no operand) goes to `$HOME`,
@@ -79,9 +82,53 @@
 #   directory the path resolves under — guessed as a plain relative path, it
 #   could resolve to the wrong directory entirely and false-deny a legacy-
 #   layout write that never touches the checkout (T-786: code review #3,
-#   `$TMPDIR/x` · `$S/x`). A reference elsewhere in the path (`code/$f`)
+#   `$TMPDIR/x` · `$S/x`) — unless the SAME command assigned it first
+#   (`T=~/.prdt/run/tracks; rm -rf "$T"` · `export T=…`; scoped to its
+#   `( … )` subshell, dropped by `unset`; a prefix `T=… cmd` never sets it):
+#   then the assigned value is spliced in and judged (T-910). A wrapper
+#   (sudo, doas, nice, env, timeout, caffeinate, stdbuf, time, exec, nohup,
+#   setsid, command, builtin) is stripped with its flags AND their values
+#   (`nice -n 5 rm` · `sudo -u me rm` · `timeout 5 rm`) — T-910; this covers
+#   both rules. A reference elsewhere in the path (`code/$f`)
 #   still resolves literally, unchanged. Backtick substitution is one more
 #   shape this gap covers, not parsed.
+#
+# TRACK RECORDS (T-834): a second rule in the same hook, for EVERY worker
+#   persona (`prdt-developer` / `prdt-qa` / `prdt-designer`), with or without
+#   `[ctx].worktree`: no write, move or delete under $PRDT_HOME/run/tracks/ —
+#   the "cut from main" records `prdt track open --base main` writes (T-833),
+#   whose deletion or forgery to `base=dev` turns a refused bare `land` into a
+#   silent merge to dev. The same target shapes as above are judged (Edit/
+#   Write/MultiEdit/NotebookEdit paths; Bash redirects, tee, cp/mv/rm/…,
+#   sed -i, find -delete, bash -c / bash <<EOF bodies); a target spelled
+#   `$PRDT_HOME/…` / `${PRDT_HOME}/…` / `$HOME/…` / `~/…` is expanded here
+#   (unlike other variables, these are known); a REMOVAL of a directory
+#   inside $PRDT_HOME that holds the records (`rm -rf ~/.prdt/run`) is denied
+#   too, and so is a copy/extract DESTINATION that holds them (`cp -R x
+#   ~/.prdt/run/`, rsync, ditto, `tar -C`, `unzip -d`). A `{a,b}` list is
+#   expanded and each alternative judged; a glob target (`*` `?` `[…]`) is
+#   denied when its literal part sits under $PRDT_HOME/run or it can match
+#   run/tracks (or, for a removal/destination, an ancestor inside
+#   $PRDT_HOME: `rm -rf ~/.prdt/r*`). `bash`/`sh`/`zsh`/`dash`/`ksh` with a
+#   `-c` alone or combined (`-lc`, `-ec`) recurse, and a wrapper is matched
+#   by basename (`/usr/bin/env bash -c`) (T-834 grill A/C/D).
+#   Beyond the T-779 shapes, two more are denied for this directory only:
+#   an interpreter (python/node/perl/ruby/…) whose inline program — `-c`/`-e`
+#   argument, heredoc body, here-string — names it, and a worker's own
+#   `prdt track open|land|drop` (PO commands; `review` stays allowed). A
+#   real reassignment of PRDT_HOME / HOME — a prefix on the SAME command
+#   (`PRDT_HOME=… prdt track …`, `env PRDT_HOME=…`; it reaches that child,
+#   not its own `$VAR` arguments), `export X=…`, or a bare `X=…` statement
+#   (scoped to its `( … )` subshell); never text inside `echo …` or a
+#   comment (T-834 grill B) — is judged against the value it assigns: the real
+#   one is still denied, a sandbox one (QA reproductions) is silent, an
+#   unresolvable one (`$S/prdt`) is unknown → silent. Reads (cat, ls, jq, a
+#   cp FROM the directory) are never denied. Still NOT recognised: a script
+#   FILE that writes it (`python3 x.py`), a path built so that no literal
+#   spelling of it appears, a target reached via stdin/xargs/find -exec.
+#   What a bare `land` does if a record is changed anyway: `prdt` treats a
+#   record with a repeated key as untrusted (refuses); a deleted or
+#   well-formed `base=dev` record still lands to dev (main never moves).
 #
 # Fails OPEN everywhere: python3 missing, unparsable JSON, no project, an
 # unreadable config — exit 0, no output.
@@ -91,18 +138,22 @@ LC_ALL=C
 IFS= read -r -d '' EV 2>/dev/null
 [ -n "$EV" ] || exit 0
 
-# fork-0 pre-filter: only a developer / qa worker's event can ever be denied.
+# fork-0 pre-filter: only a worker persona's event can ever be denied.
 case "$EV" in
   *'"agent_type":"prdt-developer"'*|*'"agent_type": "prdt-developer"'*|*'"agent_type":"prdt-qa"'*|*'"agent_type": "prdt-qa"'*) ;;
+  *'"agent_type":"prdt-designer"'*|*'"agent_type": "prdt-designer"'*) ;;
   *) exit 0 ;;
 esac
 command -v python3 >/dev/null 2>&1 || exit 0
 
 PRDT_EVENT_JSON="$EV" python3 - <<'PYEOF'
-import hashlib, json, os, shlex, sys
+import hashlib, json, os, re, shlex, sys
 
 def out_open():
     sys.exit(0)
+
+
+WORKERS = ("prdt-developer", "prdt-qa", "prdt-designer")
 
 try:
     ev = json.loads(os.environ.get("PRDT_EVENT_JSON", ""))
@@ -114,7 +165,7 @@ if not isinstance(ev, dict):
 # Structural: only TOP-LEVEL members identify the worker (a forged key nested
 # in tool_input passed the bash pre-filter, never this).
 atype, aid = ev.get("agent_type"), ev.get("agent_id")
-if atype not in ("prdt-developer", "prdt-qa") or not isinstance(aid, str) or not aid or "/" in aid:
+if atype not in WORKERS or not isinstance(aid, str) or not aid or "/" in aid:
     out_open()
 tool = ev.get("tool_name")
 tin = ev.get("tool_input") if isinstance(ev.get("tool_input"), dict) else {}
@@ -123,6 +174,13 @@ if tool not in ("Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"):
 cwd = ev.get("cwd") if isinstance(ev.get("cwd"), str) and ev.get("cwd").startswith("/") else None
 
 prdt_home = os.environ.get("PRDT_HOME") or os.path.expanduser("~/.prdt")
+real_home = os.environ.get("HOME") or os.path.expanduser("~")
+# T-834: the track records `prdt track open` writes (T-833). Every worker
+# persona is guarded here, with or without [ctx].worktree.
+tracks_abs = os.path.realpath(os.path.join(prdt_home, "run", "tracks"))
+prdt_home_abs = os.path.realpath(prdt_home)
+# Only the shared-checkout rule (T-779) needs a worktree; it covers dev/qa.
+guard_co = atype in ("prdt-developer", "prdt-qa")
 
 
 def ctx_worktree(prompt):
@@ -157,40 +215,6 @@ def first_prompt(path):
     return content if isinstance(content, str) else None
 
 
-marker = None
-try:
-    mp = os.path.join(prdt_home, "run", "dispatches", hashlib.sha256(aid.encode("utf-8")).hexdigest() + ".json")
-    with open(mp, encoding="utf-8") as f:
-        m = json.load(f)
-    if isinstance(m, dict) and m.get("agent_id") == aid:
-        marker = m
-except Exception:
-    pass
-
-# 1. the worker's own transcript
-cands = []
-tp, sid = ev.get("transcript_path"), ev.get("session_id")
-if isinstance(tp, str) and tp:
-    if os.path.basename(tp) == f"agent-{aid}.jsonl":
-        cands.append(tp)
-    elif isinstance(sid, str) and sid and "/" not in sid:
-        cands.append(os.path.join(os.path.dirname(tp), sid, "subagents", f"agent-{aid}.jsonl"))
-if marker and isinstance(marker.get("transcript"), str):
-    cands.append(marker["transcript"])
-known, wt = False, None
-for c in cands:
-    p = first_prompt(c)
-    if p is not None:
-        known, wt = ctx_worktree(p)
-        if known:
-            break
-# 2. a CONFIRMED marker only
-if not known and marker and marker.get("pairing") == "confirmed" and isinstance(marker.get("checkout"), str):
-    known, wt = True, (None if marker["checkout"].strip() in ("", "code") else marker["checkout"].strip())
-if not known or wt is None or wt == "code":
-    out_open()
-
-
 def find_root(start):
     d = os.path.realpath(start) if start else None
     root = None
@@ -204,29 +228,71 @@ def find_root(start):
     return root
 
 
-root = None
-if wt.startswith("/"):
-    root = find_root(wt)
-if not root and cwd:
-    root = find_root(cwd)
-if not root and marker and isinstance(marker.get("project_root"), str):
-    root = find_root(marker["project_root"])
-if not root:
-    out_open()
+def resolve_checkout():
+    """(wt_abs, code_abs, root, legacy) for the T-779 rule, or None."""
+    marker = None
+    try:
+        mp = os.path.join(prdt_home, "run", "dispatches", hashlib.sha256(aid.encode("utf-8")).hexdigest() + ".json")
+        with open(mp, encoding="utf-8") as f:
+            m = json.load(f)
+        if isinstance(m, dict) and m.get("agent_id") == aid:
+            marker = m
+    except Exception:
+        pass
+    # 1. the worker's own transcript
+    cands = []
+    tp, sid = ev.get("transcript_path"), ev.get("session_id")
+    if isinstance(tp, str) and tp:
+        if os.path.basename(tp) == f"agent-{aid}.jsonl":
+            cands.append(tp)
+        elif isinstance(sid, str) and sid and "/" not in sid:
+            cands.append(os.path.join(os.path.dirname(tp), sid, "subagents", f"agent-{aid}.jsonl"))
+    if marker and isinstance(marker.get("transcript"), str):
+        cands.append(marker["transcript"])
+    known, wt = False, None
+    for c in cands:
+        p = first_prompt(c)
+        if p is not None:
+            known, wt = ctx_worktree(p)
+            if known:
+                break
+    # 2. a CONFIRMED marker only
+    if not known and marker and marker.get("pairing") == "confirmed" and isinstance(marker.get("checkout"), str):
+        known, wt = True, (None if marker["checkout"].strip() in ("", "code") else marker["checkout"].strip())
+    if not known or wt is None or wt == "code":
+        return None
+    root = None
+    if wt.startswith("/"):
+        root = find_root(wt)
+    if not root and cwd:
+        root = find_root(cwd)
+    if not root and marker and isinstance(marker.get("project_root"), str):
+        root = find_root(marker["project_root"])
+    if not root:
+        return None
+    wt_abs = os.path.realpath(wt if wt.startswith("/") else os.path.join(root, wt))
+    code_dir = None
+    try:
+        with open(os.path.join(root, ".prdt", "config.json"), encoding="utf-8") as f:
+            cd_ = ((json.load(f) or {}).get("code") or {}).get("dir")
+        if isinstance(cd_, str) and cd_.strip() and not cd_.startswith("/") and ".." not in cd_.split("/"):
+            code_dir = cd_.strip().rstrip("/")
+    except Exception:
+        pass
+    code_abs = os.path.realpath(os.path.join(root, code_dir)) if code_dir else root
+    if wt_abs == code_abs:
+        return None  # its "worktree" IS the shared checkout: nothing to guard
+    return wt_abs, code_abs, root, code_abs == root
 
-wt_abs = os.path.realpath(wt if wt.startswith("/") else os.path.join(root, wt))
-code_dir = None
-try:
-    with open(os.path.join(root, ".prdt", "config.json"), encoding="utf-8") as f:
-        cd_ = ((json.load(f) or {}).get("code") or {}).get("dir")
-    if isinstance(cd_, str) and cd_.strip() and not cd_.startswith("/") and ".." not in cd_.split("/"):
-        code_dir = cd_.strip().rstrip("/")
-except Exception:
-    pass
-code_abs = os.path.realpath(os.path.join(root, code_dir)) if code_dir else root
-legacy = code_abs == root
-if wt_abs == code_abs:
-    out_open()  # its "worktree" IS the shared checkout: nothing to guard
+
+wt_abs = code_abs = root = None
+legacy = False
+if guard_co:
+    _co = resolve_checkout()
+    if _co is None:
+        guard_co = False
+    else:
+        wt_abs, code_abs, root, legacy = _co
 
 
 def under(p, d):
@@ -277,7 +343,7 @@ def has_unresolved_ref(path):
 
 def shared(path, base):
     """The realpath of `path` if it is a guarded shared-checkout path, else None."""
-    if not isinstance(path, str) or not path:
+    if not guard_co or not isinstance(path, str) or not path:
         return None
     if has_unresolved_ref(path):
         return None
@@ -294,6 +360,182 @@ def shared(path, base):
     return rp
 
 
+# ── T-834: the track records ─────────────────────────────────────────────────
+# `env` = what this command does to PRDT_HOME / HOME before using them:
+#   {"PRDT_HOME": value-or-None, "HOME": value-or-None} — a key absent means
+#   "not reassigned" (the hook's own environment applies); None means
+#   "reassigned to something this hook cannot resolve" (unknown → silent).
+ENV0 = {}
+
+
+def _resolve_literal(val, env, base):
+    """An assignment value / path prefix as bash would see it, or None."""
+    if val is None:
+        return None
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+        val = val[1:-1]
+    h = env.get("HOME", real_home) if "HOME" in env else real_home
+    for pre in ("${HOME}", "$HOME"):
+        if val == pre or val.startswith(pre + "/"):
+            if h is None:
+                return None
+            val = h + val[len(pre):]
+            break
+    if val == "~" or val.startswith("~/"):
+        if h is None:
+            return None
+        val = h + val[1:]
+    if "$" in val or "`" in val or not val:
+        return None
+    if not val.startswith("/"):
+        if not base:
+            return None
+        val = os.path.join(base, val)
+    return val
+
+
+def eff_prdt_home(env):
+    """The PRDT_HOME this command's `prdt` would use, or None when unknown."""
+    if "PRDT_HOME" in env:
+        return env["PRDT_HOME"]
+    if os.environ.get("PRDT_HOME"):
+        return prdt_home
+    if "HOME" in env:
+        return None if env["HOME"] is None else os.path.join(env["HOME"], ".prdt")
+    return prdt_home
+
+
+def same_home(env):
+    h = eff_prdt_home(env)
+    return h is not None and fold(os.path.realpath(h)) == fold(prdt_home_abs)
+
+
+run_abs = os.path.realpath(os.path.join(prdt_home, "run"))
+GLOB_CH = "*?[{"
+MAX_BRACE = 64
+
+
+def brace_expand(s):
+    """bash brace expansion of `{a,b}` lists (T-834 grill [A]); a `{x..y}`
+    range or an unbalanced brace is left as-is (judged as a glob later)."""
+    out, todo = [], [s]
+    while todo and len(out) + len(todo) <= MAX_BRACE:
+        cur = todo.pop(0)
+        found = False
+        for i, c in enumerate(cur):
+            if c != "{":
+                continue
+            depth, commas, j = 0, [], i
+            while j < len(cur):
+                if cur[j] == "{":
+                    depth += 1
+                elif cur[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                elif cur[j] == "," and depth == 1:
+                    commas.append(j)
+                j += 1
+            if j < len(cur) and commas:
+                parts, k = [], i + 1
+                for cm in commas + [j]:
+                    parts.append(cur[k:cm])
+                    k = cm + 1
+                todo.extend(cur[:i] + p + cur[j + 1:] for p in parts)
+                found = True
+                break
+        if not found:
+            out.append(cur)
+    return out + todo
+
+
+def glob_reaches(pat, ancestor):
+    """Can the absolute glob `pat` (`*` `?` `[…]` per component, as bash
+    matches them) name run/tracks or something inside it — or, when
+    `ancestor`, a directory inside $PRDT_HOME that holds it?"""
+    import fnmatch
+    pc = [c for c in fold(pat).split("/") if c]
+    tc = [c for c in fold(tracks_abs).split("/") if c]
+    hc = [c for c in fold(prdt_home_abs).split("/") if c]
+    n = min(len(pc), len(tc))
+    if not all(fnmatch.fnmatchcase(tc[i], pc[i]) for i in range(n)):
+        return False
+    if len(pc) >= len(tc):
+        return True
+    return ancestor and tc[:len(hc)] == hc and len(pc) >= len(hc)
+
+
+def tracks_target(path, base, env, removal=False):
+    """realpath of `path` if it names the track records (or, for a removal /
+    a copy-or-extract destination, a directory inside $PRDT_HOME that holds
+    them), else None. A `{a,b}` list is expanded and each alternative judged;
+    a glob is denied when it sits under $PRDT_HOME/run or can match the
+    records (T-834 grill [A])."""
+    if not isinstance(path, str) or not path:
+        return None
+    for alt in brace_expand(path):
+        rp = _tracks_target1(alt, base, env, removal)
+        if rp:
+            return rp
+    return None
+
+
+def _tracks_target1(path, base, env, removal):
+    p = path
+    for pre, key in (("${PRDT_HOME}", "PRDT_HOME"), ("$PRDT_HOME", "PRDT_HOME")):
+        if p == pre or p.startswith(pre + "/"):
+            h = env["PRDT_HOME"] if "PRDT_HOME" in env else os.environ.get("PRDT_HOME")
+            if h is None:
+                return None
+            p = h + p[len(pre):]
+            break
+    else:
+        for pre in ("${HOME}", "$HOME"):
+            if p == pre or p.startswith(pre + "/"):
+                h = env["HOME"] if "HOME" in env else real_home
+                if h is None:
+                    return None
+                p = h + p[len(pre):]
+                break
+    if has_unresolved_ref(p):
+        return None
+    p = expand_pwd(p, base)
+    if p == "~" or p.startswith("~/"):
+        h = env["HOME"] if "HOME" in env else real_home  # bash's `~` is $HOME
+        if h is None:
+            return None
+        p = h + p[1:]
+    if not p.startswith("/"):
+        if not base:
+            return None
+        p = os.path.join(base, p)
+    if any(ch in p for ch in GLOB_CH):
+        comps = os.path.normpath(p).split("/")
+        k = next(i for i, c in enumerate(comps) if any(ch in c for ch in GLOB_CH))
+        lit = os.path.realpath("/".join(comps[:k]) or "/")
+        pat = re.sub(r"\{[^{}]*\}", "*", "/".join([lit] + comps[k:]))
+        if under_ci(lit, run_abs) or glob_reaches(pat, removal):
+            return pat
+        return None
+    rp = os.path.realpath(p)
+    if under_ci(rp, tracks_abs):
+        return rp
+    if removal and under_ci(tracks_abs, rp) and under_ci(rp, prdt_home_abs):
+        return rp  # `rm -rf ~/.prdt/run` removes the records too
+    return None
+
+
+def deny_tracks(rp, how):
+    msg = (f"prdt write guard (T-834): {tracks_abs} holds the PO's track records — `prdt track open` "
+           f"writes them, `land` and `drop` remove them, and $PRDT_HOME/run/ is tooling-owned "
+           f"(contracts §Return), so a worker cannot write, move or delete anything there — denied {how}: {rp}. "
+           f"Reading it (cat, ls) is allowed; report a wrong record to the PO instead of changing it.")
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                             "permissionDecision": "deny",
+                                             "permissionDecisionReason": msg}}))
+    sys.exit(0)
+
+
 def deny(rp, how):
     rel = os.path.relpath(rp, code_abs)
     msg = (f"prdt worktree guard (T-779): this worker was dispatched with [ctx].worktree {wt_abs}, "
@@ -307,6 +549,9 @@ def deny(rp, how):
 
 if tool != "Bash":
     target = tin.get("notebook_path") if tool == "NotebookEdit" else tin.get("file_path")
+    rp = tracks_target(target, cwd, ENV0)
+    if rp:
+        deny_tracks(rp, tool)
     rp = shared(target, cwd)
     if rp:
         deny(rp, tool)
@@ -318,7 +563,27 @@ if not isinstance(cmd, str) or not cmd.strip():
     out_open()
 
 SEPS = {";", "&&", "||", "|", "&", "|&", "\n", "{", "}"}
-WRAPPERS = {"sudo", "command", "time", "nice", "nohup", "env", "exec", "builtin"}
+# T-910: a wrapper → (short flags that take a value, long flags that take a
+# separate value, leading operands before the command). A value is skipped
+# with its flag (`nice -n 5 rm` · `sudo -u me rm` — reading `5`/`me` as the
+# command word let the real `rm` through); `timeout DURATION` likewise.
+WRAPPERS = {
+    "sudo": ("ugpCDrtURT", {"--user", "--group", "--prompt", "--close-from", "--chdir", "--role",
+                            "--type", "--other-user", "--command-timeout", "--chroot"}, 0),
+    "doas": ("uC", set(), 0),
+    "nice": ("n", {"--adjustment"}, 0),
+    "env": ("uCSP", {"--unset", "--chdir", "--split-string"}, 0),
+    "timeout": ("sk", {"--signal", "--kill-after"}, 1),
+    "gtimeout": ("sk", {"--signal", "--kill-after"}, 1),
+    "caffeinate": ("tw", set(), 0),
+    "stdbuf": ("ioe", {"--input", "--output", "--error"}, 0),
+    "time": ("fo", {"--format", "--output"}, 0),
+    "exec": ("a", set(), 0),
+    "nohup": ("", set(), 0),
+    "setsid": ("", set(), 0),
+    "command": ("", set(), 0),
+    "builtin": ("", set(), 0),
+}
 # bash reserved words that can front a command word (T-783: `then rm …`,
 # `do rm …`, `else`/`elif`/`!` — a segment split on `;`/`&&`/… still starts
 # with the keyword, not the command, unless stripped first)
@@ -330,6 +595,54 @@ XARGS_VALUE_FLAGS = {"-I", "-n", "-P", "-L", "-l", "-s", "-a", "-d", "-E", "-J",
 GIT_MUT = {"add", "commit", "checkout", "switch", "reset", "restore", "stash", "merge", "rebase",
            "apply", "am", "cherry-pick", "revert", "rm", "mv", "clean", "pull"}
 MAX_SUBSHELL_DEPTH = 4  # `bash -c '…'` recursion cap (T-783)
+# T-834: an interpreter whose inline program names the track records is
+# denied — the generic gap (a write from inside an interpreter's own source)
+# stays open for every other path, but this directory is small and named.
+INTERP_RE = re.compile(r"^(python[0-9.]*|pypy[0-9.]*|node|nodejs|deno|bun|perl|ruby|php|osascript|lua|Rscript|awk|gawk)$")
+JOIN_RE = re.compile(r"""['"]run['"]\s*[,/+]\s*['"]/?tracks['"]""")
+ENV_KEYS = ("PRDT_HOME", "HOME")
+REMOVERS = {"rm", "rmdir", "unlink", "shred"}
+# T-834 grill [C]: POSIX-family shells whose `-c` (alone or combined, `-lc`)
+# runs its first operand as a script.
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "mksh", "yash", "posh"}
+
+
+def shell_script(args):
+    """(has_c, script-or-None, operands) for a shell's own argv."""
+    j, has_c = 0, False
+    while j < len(args):
+        a = args[j]
+        if a == "--":
+            j += 1
+            break
+        if a in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file"):
+            j += 2
+            continue
+        if a.startswith("--"):
+            j += 1
+            continue
+        if len(a) > 1 and a[0] in "-+":
+            if a[0] == "-" and "c" in a[1:]:
+                has_c = True
+            j += 1
+            continue
+        break
+    rest = args[j:]
+    return has_c, (rest[0] if has_c and rest else None), rest
+
+
+def names_tracks(text):
+    """Does an inline program mention the REAL track records directory?"""
+    t = fold(text)
+    for sp in (tracks_abs, os.path.join(prdt_home, "run", "tracks"), "~/.prdt/run/tracks",
+               "$PRDT_HOME/run/tracks", "${PRDT_HOME}/run/tracks", ".prdt/run/tracks"):
+        if fold(sp) in t:
+            return True
+    if "run/tracks" in t or JOIN_RE.search(text):
+        tl = text.lower()
+        return ("prdt_home" in tl or ".prdt" in tl or fold(prdt_home_abs) in t
+                or fold(prdt_home) in t)
+    return False
 
 
 def scan_line(ln):
@@ -400,16 +713,25 @@ def scan_line(ln):
 
 
 def strip_heredocs(s):
-    lines, out, pend = s.split("\n"), [], []
+    """(text-without-bodies, bodies) — bodies[k] belongs to the k-th unquoted
+    `<<` operator left in the text (T-834: an interpreter reading its program
+    from a heredoc, `python3 - <<EOF`, is judged on that body)."""
+    lines, out, pend, bodies, cur = s.split("\n"), [], [], [], []
     for ln in lines:
         if pend:
             if ln.strip() == pend[0]:
                 pend.pop(0)
+                bodies.append("\n".join(cur))
+                cur = []
+            else:
+                cur.append(ln)
             continue
         kept, words = scan_line(ln)
         out.append(kept)
         pend.extend(words)
-    return "\n".join(out)
+    if pend:
+        bodies.append("\n".join(cur))  # unterminated: bash reads to EOF
+    return "\n".join(out), bodies
 
 
 def tokens(s):
@@ -426,9 +748,12 @@ def tokens(s):
     return out
 
 
-def strip_prefixes(words):
+def strip_prefixes(words, assigns=None):
     """Pop leading keywords / assignments / wrapper-and-its-flags, in any
-    combination (T-783: `then sudo rm …`), until the command word is first."""
+    combination (T-783: `then sudo rm …`), until the command word is first.
+    Every popped assignment is appended to `assigns` as (name, value); the
+    caller decides which count (T-834 grill [B]: PRDT_HOME= / HOME= as a
+    reassignment; T-910: any other name as a path variable)."""
     changed = True
     while changed and words:
         changed = False
@@ -437,28 +762,75 @@ def strip_prefixes(words):
             changed = True
             continue
         if "=" in words[0] and not words[0].startswith("=") and words[0].split("=", 1)[0].isidentifier():
-            words.pop(0)
+            k, v = words.pop(0).split("=", 1)
+            if assigns is not None:
+                assigns.append((k, v))
             changed = True
             continue
-        if words[0] in WRAPPERS:
+        w = os.path.basename(words[0])
+        if w in WRAPPERS:
+            vshort, vlong, npos = WRAPPERS[w]
             words.pop(0)
-            while words and words[0].startswith("-") and words[0] != "-":
-                words.pop(0)
+            while words and words[0].startswith("-"):
+                a = words.pop(0)
+                if a == "--":
+                    break
+                if a == "-":
+                    continue  # `env -` = `env -i`
+                if a.startswith("--"):
+                    if a in vlong and words:
+                        words.pop(0)
+                    continue
+                for k, c in enumerate(a[1:]):
+                    if c in vshort:
+                        if k == len(a) - 2 and words:
+                            words.pop(0)  # `-u me`: the value is the next word
+                        break             # `-n5` / `-uo`: the rest of this word is the value
+            for _ in range(npos):
+                if words and "=" not in words[0]:
+                    words.pop(0)
             changed = True
             continue
     return words
 
 
-def run_command(raw_cmd, base_cwd, depth):
+def sub_var(path, lv):
+    """T-910: a path STARTING WITH `$NAME` / `${NAME}` whose NAME this command
+    assigned a value earlier (`T=~/.prdt/run/tracks; rm -rf "$T"`) → that
+    value spliced in; anything else is returned unchanged."""
+    if not isinstance(path, str) or not lv:
+        return path
+    m = re.match(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))", path)
+    if not m:
+        return path
+    k = m.group(1) or m.group(2)
+    if k not in lv:
+        return path
+    return lv[k] + path[m.end():]
+
+
+def run_command(raw_cmd, base_cwd, depth, sh, ch, lv=None):
+    """`sh` = PRDT_HOME / HOME as this shell expands `$VAR` / `~`; `ch` = as a
+    child process sees them (exported). Both are mutated in place by a real
+    assignment (T-834 grill [B]); a caller passes copies where bash would.
+    `lv` (T-910) = every other variable this command assigned a value
+    (`T=…` · `export T=…`), followed where a target starts with `$T`."""
+    if lv is None:
+        lv = {}
     if depth > MAX_SUBSHELL_DEPTH or not isinstance(raw_cmd, str):
         return
-    text = strip_heredocs(raw_cmd).replace("\\\n", " ").replace("\n", " ; ")
+    text, bodies = strip_heredocs(raw_cmd)
+    text = text.replace("\\\n", " ").replace("\n", " ; ")
+    hd_idx = 0
     toks = tokens(text)
     if toks is None:
         return
 
     # group into simple commands; "(" / ")" become their own marker segments
     # so a subshell's `cd` (T-783: `(cd code) ; touch rel.txt`) scopes to it
+    # shlex merges adjacent punctuation (`);` · `&&(`): split a paren out
+    toks = [x for t in toks for x in (
+        re.findall(r"[()]|[^()]+", t) if t and set(t) <= set(";&|()") and set(t) & set("()") else [t])]
     segs, cur = [], []
     for t in toks:
         if t in ("(", ")"):
@@ -479,24 +851,39 @@ def run_command(raw_cmd, base_cwd, depth):
     ecwd = base_cwd
     paren_stack, dir_stack = [], []
 
-    def check(path, how, base=None):
-        rp = shared(path, base if base is not None else ecwd)
+    def check(path, how, base=None, removal=False):
+        b = base if base is not None else ecwd
+        path = sub_var(path, lv)
+        rp = tracks_target(path, b, sh, removal)
+        if rp:
+            deny_tracks(rp, how)
+        rp = shared(path, b)
         if rp:
             deny(rp, how)
 
+    def set_var(k, v):
+        if k == "PWD":
+            return
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+            v = v[1:-1]
+        lv[k] = sub_var(v, lv)
+
     for seg in segs:
         if seg == ["("]:
-            paren_stack.append(ecwd)
+            paren_stack.append((ecwd, dict(sh), dict(ch), dict(lv)))
             continue
         if seg == [")"]:
             if paren_stack:
-                ecwd = paren_stack.pop()
+                ecwd, s0, c0, l0 = paren_stack.pop()
+                sh.clear(); sh.update(s0)
+                ch.clear(); ch.update(c0)
+                lv.clear(); lv.update(l0)
             continue
         if seg and seg[0] == "[[":
             # `[[ … ]]`: `>` / `<` inside are string comparisons, not
             # redirects (T-783: `[[ "a" > "b" ]]` is not a write to "b")
             continue
-        words, i = [], 0
+        words, i, stdin_texts = [], 0, []
         while i < len(seg):
             t = seg[i]
             # redirect operators (punctuation_chars splits `2>` into "2" + ">")
@@ -511,12 +898,36 @@ def run_command(raw_cmd, base_cwd, depth):
                     continue
                 i += 1
                 continue
-            if t in ("<", "<<", "<<<"):
+            if t == "<<":
+                if hd_idx < len(bodies):
+                    stdin_texts.append(bodies[hd_idx])
+                hd_idx += 1
+                i += 2
+                continue
+            if t == "<<<":
+                if i + 1 < len(seg):
+                    stdin_texts.append(seg[i + 1])
+                i += 2
+                continue
+            if t == "<":
                 i += 2
                 continue
             words.append(t)
             i += 1
-        words = strip_prefixes(words)
+        assigns = []
+        words = strip_prefixes(words, assigns)
+        if not words:
+            # a bare `X=v` changes this shell; the child sees it when X is
+            # exported (HOME always is; PRDT_HOME when set or exported before)
+            for k, v in assigns:
+                if k not in ENV_KEYS:
+                    set_var(k, v)
+                    continue
+                rv = _resolve_literal(v, sh, ecwd)
+                sh[k] = rv
+                if k == "HOME" or k in ch or os.environ.get(k):
+                    ch[k] = rv
+            continue
         if words and os.path.basename(words[0]) == "xargs":
             words.pop(0)
             while words and words[0].startswith("-") and words[0] != "-":
@@ -526,21 +937,43 @@ def run_command(raw_cmd, base_cwd, depth):
                     words.pop(0)
                 else:
                     words.pop(0)
-            words = strip_prefixes(words)
+            words = strip_prefixes(words, assigns)
         if not words:
             continue
         name, args = os.path.basename(words[0]), words[1:]
         ops = [a for a in args if not a.startswith("-")]
+        # a prefix assignment reaches this command's child only — never its
+        # own arguments' expansion, never a later command
+        env = dict(ch)
+        for k, v in assigns:
+            if k in ENV_KEYS:
+                env[k] = _resolve_literal(v, sh, ecwd)
+        if name == "unset":
+            for a in ops:
+                lv.pop(a, None)
+            continue
+        if name == "export":
+            for a in args:
+                k, eq, v = a.partition("=")
+                if k not in ENV_KEYS:
+                    if eq and k.isidentifier():
+                        set_var(k, v)
+                elif k in ENV_KEYS:
+                    if eq:
+                        sh[k] = ch[k] = _resolve_literal(v, sh, ecwd)
+                    elif k in sh:
+                        ch[k] = sh[k]
+            continue
         if name == "cd":
             # T-786 (code review #3): bare `cd` (no operand) goes to $HOME,
             # same as real bash — leaving ecwd unchanged let a later relative
             # write resolve against the OLD cwd and false-deny inside it.
-            nd = os.path.expanduser(ops[0]) if ops else os.path.expanduser("~")
+            nd = os.path.expanduser(sub_var(ops[0], lv)) if ops else os.path.expanduser("~")
             ecwd = nd if nd.startswith("/") else (os.path.join(ecwd, nd) if ecwd else None)
             continue
         if name == "pushd":
             if ops:
-                nd = os.path.expanduser(ops[0])
+                nd = os.path.expanduser(sub_var(ops[0], lv))
                 dir_stack.append(ecwd)
                 ecwd = nd if nd.startswith("/") else (os.path.join(ecwd, nd) if ecwd else None)
             continue
@@ -548,18 +981,34 @@ def run_command(raw_cmd, base_cwd, depth):
             if dir_stack:
                 ecwd = dir_stack.pop()
             continue
-        if name in ("bash", "sh", "zsh") and "-c" in args:
-            ci = args.index("-c")
-            if ci + 1 < len(args):
-                run_command(args[ci + 1], ecwd, depth + 1)
-            continue
+        if name in SHELLS:
+            has_c, script, rest = shell_script(args)
+            if has_c:
+                if script is not None:
+                    run_command(script, ecwd, depth + 1, dict(env), dict(env), dict(lv))
+                continue
+            if stdin_texts and not rest:
+                # T-834: `bash <<EOF … EOF` runs the body as a script
+                for st in stdin_texts:
+                    run_command(st, ecwd, depth + 1, dict(env), dict(env), dict(lv))
+                continue
         if name == "eval":
             # T-786 (F5): `eval "echo x > code/a"` hides its redirect inside a
             # single quoted token, invisible to the outer redirect scan —
             # recurse into the reassembled body like `bash -c` does.
             if args:
-                run_command(" ".join(args), ecwd, depth + 1)
+                run_command(" ".join(args), ecwd, depth + 1, sh, ch, lv)
             continue
+        if INTERP_RE.match(name) and same_home(env):
+            # T-834: the inline program (-c/-e argument, heredoc, here-string)
+            if names_tracks(" ".join(args + stdin_texts)):
+                deny_tracks(tracks_abs, f"Bash {name} program naming the track records")
+        if name == "prdt" or (INTERP_RE.match(name) and ops and os.path.basename(ops[0]) == "prdt"):
+            # T-834: `prdt track open|land|drop` writes or removes the record —
+            # PO acts (contracts/git.md); a worker may still run `review`.
+            pa = [a for a in (args if name == "prdt" else args[args.index(ops[0]) + 1:]) if not a.startswith("-")]
+            if len(pa) >= 2 and pa[0] == "track" and pa[1] in ("open", "land", "drop") and same_home(env):
+                deny_tracks(tracks_abs, f"Bash prdt track {pa[1]} (a PO command)")
         if name == "tee":
             for a in ops:
                 check(a, "Bash tee")
@@ -569,10 +1018,22 @@ def run_command(raw_cmd, base_cwd, depth):
                     continue
                 if name == "truncate" and j > 0 and args[j - 1] in ("-s", "--size", "-r", "--reference"):
                     continue
-                check(a, f"Bash {name}")
+                check(a, f"Bash {name}", removal=name in REMOVERS)
         elif name in ("chmod", "chown", "chgrp"):
             for a in ops[1:]:
                 check(a, f"Bash {name}")
+        elif name == "install" and any(a == "--directory" or (a.startswith("-") and not a.startswith("--")
+                                                              and "d" in a[1:]) for a in args):
+            # T-834 fix2: `install -d DIR…` creates every operand, like mkdir
+            j = 0
+            while j < len(args):
+                a = args[j]
+                if a in ("-m", "-o", "-g", "--mode", "--owner", "--group"):
+                    j += 2
+                    continue
+                if not a.startswith("-"):
+                    check(a, "Bash install -d")
+                j += 1
         elif name in ("cp", "mv", "install", "ln", "rsync", "ditto"):
             dest, uses_target_flag = None, False
             for j, a in enumerate(args):
@@ -583,13 +1044,15 @@ def run_command(raw_cmd, base_cwd, depth):
             if dest is None and len(ops) >= 2:
                 dest = ops[-1]
             if dest is not None:
-                check(dest, f"Bash {name}")
+                # T-834 grill [D]: a destination DIRECTORY holding run/tracks
+                # (run/, $PRDT_HOME) receives a copied-in tracks/ tree
+                check(dest, f"Bash {name}", removal=name != "ln")
             if name == "mv":
                 # T-783: mv also WRITES its source (removes it) — a worker
                 # moving a file OUT of the shared checkout is still a write
                 srcs = ops if uses_target_flag else ops[:-1]
                 for s in srcs:
-                    check(s, "Bash mv (source)")
+                    check(s, "Bash mv (source)", removal=True)
         elif name in ("sed", "gsed", "perl"):
             # T-783: perl's arg-taking flags (-m/-M module, -I include path, …)
             # swallow the rest of that token as their OWN argument — a plain
@@ -639,7 +1102,7 @@ def run_command(raw_cmd, base_cwd, depth):
                 paths.append(a)
             if "-delete" in args:
                 for p in paths:
-                    check(p, "Bash find -delete")
+                    check(p, "Bash find -delete", removal=True)
         elif name == "dd":
             for a in args:
                 if a.startswith("of="):
@@ -659,23 +1122,59 @@ def run_command(raw_cmd, base_cwd, depth):
             # T-786 (F5): -C/--directory is a write target only in an
             # extract/append mode — a plain create (-c) only READS that
             # directory, same as `cat`, and stays silent.
+            # T-834 fix2: a real option walk — value-taking letters consume
+            # their value (so `-C run` never reads `run` as mode letters),
+            # and the old-style bundle (`tar xf f.tar`, `tar -C d xf f.tar`:
+            # the first bare word while no mode is set yet) counts as flags.
             TAR_WRITE_LONG = {"--extract", "--get", "--append", "--update", "--concatenate", "--catenate"}
-            write = any(
-                (a.startswith("--") and a in TAR_WRITE_LONG)
-                or (a.startswith("-") and not a.startswith("--") and a != "-" and any(ch in a[1:] for ch in "xruA"))
-                for a in args
-            )
-            if write:
-                j = 0
-                while j < len(args):
-                    a = args[j]
-                    if a in ("-C", "--directory") and j + 1 < len(args):
-                        check(args[j + 1], "Bash tar -C")
+            TAR_MODE_LONG = TAR_WRITE_LONG | {"--create", "--list", "--diff", "--compare", "--delete"}
+            TAR_VALUE_LONG = {"--file", "--directory", "--files-from", "--exclude-from", "--blocking-factor",
+                              "--exclude", "--format", "--owner", "--group", "--mode", "--transform"}
+            TAR_VALUE_LETTERS = set("fCbTX")
+            write, mode, dests, pending = False, False, [], []
+            j = 0
+            while j < len(args):
+                a = args[j]
+                if pending:                       # old-style bundle values, in letter order
+                    if pending.pop(0) == "C":
+                        dests.append(a)
+                    j += 1
+                    continue
+                if a.startswith("--"):
+                    if a in TAR_MODE_LONG:
+                        mode = True
+                        write = write or a in TAR_WRITE_LONG
+                    if a.startswith("--directory="):
+                        dests.append(a.split("=", 1)[1])
+                    elif a in TAR_VALUE_LONG and j + 1 < len(args):
+                        if a == "--directory":
+                            dests.append(args[j + 1])
                         j += 2
                         continue
-                    if a.startswith("--directory="):
-                        check(a.split("=", 1)[1], "Bash tar -C")
                     j += 1
+                    continue
+                dashed = a.startswith("-") and a != "-"
+                if dashed or (not mode and re.fullmatch(r"[A-Za-z]+", a)):
+                    letters = a[1:] if dashed else a
+                    for k, ch in enumerate(letters):
+                        if ch in "ctxruAd":
+                            mode = True
+                            write = write or ch in "xruA"
+                        if ch in TAR_VALUE_LETTERS:
+                            if not dashed:
+                                pending.append(ch)
+                                continue
+                            val = letters[k + 1:]
+                            if not val and j + 1 < len(args):
+                                val = args[j + 1]
+                                j += 1
+                            if ch == "C" and val:
+                                dests.append(val)
+                            break
+                j += 1
+            if write:
+                for d in dests:
+                    check(d, "Bash tar -C", removal=True)
         elif name == "patch":
             j = 0
             while j < len(args):
@@ -691,10 +1190,15 @@ def run_command(raw_cmd, base_cwd, depth):
             j = 0
             while j < len(args):
                 a = args[j]
-                if a == "-d" and j + 1 < len(args):
-                    check(args[j + 1], "Bash unzip -d")
-                    j += 2
-                    continue
+                # T-834 fix2: `-d DIR`, `-dDIR` and a bundle ending in d
+                # (`-od DIR`); `-P` takes the password, never a d
+                if a.startswith("-") and not a.startswith("--") and "d" in a[1:].split("P", 1)[0]:
+                    val = a[a.index("d") + 1:]
+                    if not val and j + 1 < len(args):
+                        val = args[j + 1]
+                        j += 1
+                    if val:
+                        check(val, "Bash unzip -d", removal=True)
                 j += 1
         elif name == "npm":
             j = 0
@@ -730,14 +1234,14 @@ def run_command(raw_cmd, base_cwd, depth):
             sub = args[j] if j < len(args) else ""
             if sub == "stash" and j + 1 < len(args) and args[j + 1] in ("list", "show"):
                 sub = ""
-            if sub in GIT_MUT and repo:
+            if sub in GIT_MUT and repo and guard_co:
                 rp = os.path.realpath(repo)
                 if under_ci(rp, code_abs) and not under_ci(rp, wt_abs) and not (legacy and any(
                         under_ci(rp, os.path.join(root, x)) for x in ("docs", ".prdt", "tracks"))):
                     deny(rp, f"Bash git {sub} in the shared checkout")
 
 
-run_command(cmd, cwd, 0)
+run_command(cmd, cwd, 0, {}, {})
 out_open()
 PYEOF
 exit 0

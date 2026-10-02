@@ -18,14 +18,14 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { renderPage, resolveDocLink, safeEncodeURI, encodeFsPathHref, detailDataScript, isHrefContained } from '../../viewer/lib/render.mjs'
-import { collectArtifacts, isContainedArtifactPath, collectTickets, collectWiki } from '../../viewer/lib/collect.mjs'
+import { renderPage, resolveDocLink, safeEncodeURI, encodeFsPathHref, detailDataScript, isHrefContained } from '@productune/viewer/lib/render.mjs'
+import { collectArtifacts, isContainedArtifactPath, collectTickets, collectWiki } from '@productune/viewer/lib/collect.mjs'
 // REPO_ROOT/OUTPUT_PATH: generate.mjs's OWN, independent path arithmetic
 // (never render.mjs's internal DEFAULT_VIEWER_ABS_PATH) — the property test
 // below (T-711 slice 4) re-derives "does this href stay inside the repo?"
 // from these via `new URL()` directly, so it is not just re-asserting
 // whatever `isHrefContained` itself already believes.
-import { REPO_ROOT, OUTPUT_PATH } from '../../viewer/generate.mjs'
+import { REPO_ROOT, OUTPUT_PATH } from '@productune/viewer/generate.mjs'
 
 const REPO_ROOT_PATHNAME = pathToFileURL(REPO_ROOT).pathname.replace(/\/$/, '') + '/'
 
@@ -149,7 +149,7 @@ describe('render.mjs — link scheme allowlist: only http:, https:, mailto:, #an
 
   it('a repo-relative link still resolves like before (regression, not narrowed by the allowlist)', () => {
     const { bodyHtml } = renderTicketBody('[sibling](./sibling.md)')
-    expect(bodyHtml).toContain('<a href="../../../../docs/tickets/v1.10/sibling.md" target="_blank" rel="noopener">sibling</a>')
+    expect(bodyHtml).toContain('<a href="../../../docs/tickets/v1.10/sibling.md" target="_blank" rel="noopener">sibling</a>')
   })
 })
 
@@ -170,7 +170,7 @@ describe('render.mjs — images never produce a live <img> to an external URL', 
 
   it('a relative in-repo image resolves like a rewritten doc link, same rule as resolveDocLink', () => {
     const { bodyHtml } = renderTicketBody('![pic](./img.png)')
-    const rewritten = resolveDocLink('./img.png', 'docs/tickets/v1.10', '../../../..')
+    const rewritten = resolveDocLink('./img.png', 'docs/tickets/v1.10', '../../..')
     expect(bodyHtml).toBe(`<p><img src="${rewritten}" alt="pic"></p>\n`)
   })
 
@@ -302,7 +302,7 @@ describe('render.mjs — resolveDocLink refuses a percent-encoded/mixed dot-segm
   })
 
   it('resolveDocLink itself returns null for the decoded escape directly (unit-level, not just through renderTicketBody)', () => {
-    expect(resolveDocLink('./%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/OUTSIDE.png', 'docs/tickets/v1.10', '../../../..')).toBeNull()
+    expect(resolveDocLink('./%2e%2e/%2e%2e/%2e%2e/%2e%2e/%2e%2e/OUTSIDE.png', 'docs/tickets/v1.10', '../../..')).toBeNull()
   })
 
   // T-711 slice 4 correction: slice 2's decode-based check refused this one
@@ -335,7 +335,7 @@ describe('render.mjs — resolveDocLink refuses a percent-encoded/mixed dot-segm
 
   it('a real relative link with a literal single dot segment (./sibling.md) still resolves exactly as before', () => {
     const { bodyHtml } = renderTicketBody('[sibling](./sibling.md)')
-    expect(bodyHtml).toContain('<a href="../../../../docs/tickets/v1.10/sibling.md" target="_blank" rel="noopener">sibling</a>')
+    expect(bodyHtml).toContain('<a href="../../../docs/tickets/v1.10/sibling.md" target="_blank" rel="noopener">sibling</a>')
   })
 })
 
@@ -372,21 +372,21 @@ describe('render.mjs — resolveDocLink refuses a trailing `..?x`/`..#x` escape 
   }
 
   it('resolveDocLink itself returns null for the exact QA repro forms (unit-level)', () => {
-    expect(resolveDocLink('../../../..?a', 'docs/tickets/v1.10', '../../../..')).toBeNull()
-    expect(resolveDocLink('../../../%2e%2e?b', 'docs/tickets/v1.10', '../../../..')).toBeNull()
+    expect(resolveDocLink('../../../..?a', 'docs/tickets/v1.10', '../../..')).toBeNull()
+    expect(resolveDocLink('../../../%2e%2e?b', 'docs/tickets/v1.10', '../../..')).toBeNull()
   })
 
   // The PRD's own image path — QA's exact repro shape, a DIFFERENT
   // sourceDirRel ('docs/prd', 2 segments, not 'docs/tickets/v1.10', 3).
   it('a PRD image with a mixed dot + query suffix (QA repro shape) is refused too, regardless of sourceDirRel depth', () => {
-    expect(resolveDocLink('../%2e%2e/.%2E?w', 'docs/prd', '../../../..')).toBeNull()
+    expect(resolveDocLink('../%2e%2e/.%2E?w', 'docs/prd', '../../..')).toBeNull()
   })
 
   it('the same literal-dot depth WITHOUT a query/hash suffix still resolves normally (only the suffix shape is the bug — no over-eager rejection)', () => {
     // Exactly 3 "../" cancels docs/tickets/v1.10 entirely, landing (still
     // inside the repo) at its root — same depth as the B4 cases above, minus
     // the `?`/`#` suffix that hides the extra level.
-    expect(resolveDocLink('../../../OUTSIDE.png', 'docs/tickets/v1.10', '../../../..')).not.toBeNull()
+    expect(resolveDocLink('../../../OUTSIDE.png', 'docs/tickets/v1.10', '../../..')).not.toBeNull()
   })
 })
 
@@ -403,7 +403,7 @@ describe('render.mjs — resolveDocLink refuses a trailing `..?x`/`..#x` escape 
 // meant.
 describe('render.mjs — property: every resolveDocLink decision matches the browser\'s own new URL() resolution (T-711 slice 4)', () => {
   const SOURCE_DIR_REL = 'docs/tickets/v1.10' // 3 segments
-  const REPO_ROOT_HREF = '../../../..'
+  const REPO_ROOT_HREF = '../../..'
   const DOT_ENCODINGS = ['..', '%2e%2e', '%2E%2E', '.%2e', '%2e.', '.%2E', '%2E.']
   const SUFFIXES = ['', '?tail', '#tail', '?q#f']
   const DEPTHS = [3, 4] as const // 3 = exactly at repo root (contained); 4 = one past it (escaped)
@@ -436,25 +436,37 @@ describe('render.mjs — property: every resolveDocLink decision matches the bro
 
 // ---------- isHrefContained itself, and the ticket/artifact fileHref channels it also gates (T-711 slice 4) ----------
 describe('render.mjs — isHrefContained is the one check every emitted href is judged by', () => {
-  it('true for a plain in-repo relative href, false once it climbs one level past repoRootHref', () => {
-    expect(isHrefContained('../../../../docs/tickets/v1.10/T-1.md', { repoRootHref: '../../../..' })).toBe(true)
-    expect(isHrefContained('../../../../../docs/tickets/v1.10/T-1.md', { repoRootHref: '../../../..' })).toBe(false)
+  // Probes are derived from the repoRootHref itself (never hand-counted `..`
+  // strings), so a re-base of the viewer's depth cannot silently shift them
+  // off the boundary their comments name (T-914).
+  const ROOT_HREF = '../../..'
+  const ROOT_DEPTH = ROOT_HREF.split('/').length
+  const up = (n: number) => Array(n).fill('..').join('/')
+  const atRoot = up(ROOT_DEPTH) // exactly the repo root
+  const pastRoot = up(ROOT_DEPTH + 1) // one level past the repo root
+
+  it('true for a plain in-repo relative href, false once it climbs exactly one level past repoRootHref', () => {
+    expect(isHrefContained(`${atRoot}/docs/tickets/v1.10/T-1.md`, { repoRootHref: ROOT_HREF })).toBe(true)
+    expect(isHrefContained(`${pastRoot}/docs/tickets/v1.10/T-1.md`, { repoRootHref: ROOT_HREF })).toBe(false)
   })
 
   it('rootSubpath narrows the allowed root (docs/ for a fileHref) without widening past repoRootHref', () => {
-    expect(isHrefContained('../../../../docs/tickets/v1.10/T-1.md', { repoRootHref: '../../../..', rootSubpath: 'docs' })).toBe(true)
-    // Still inside the repo root, but NOT inside docs/ — refused when a
-    // fileHref channel asks for the narrower root.
-    expect(isHrefContained('../../../../package.json', { repoRootHref: '../../../..', rootSubpath: 'docs' })).toBe(false)
+    expect(isHrefContained(`${atRoot}/docs/tickets/v1.10/T-1.md`, { repoRootHref: ROOT_HREF, rootSubpath: 'docs' })).toBe(true)
+    // Inside the repo root, but NOT inside docs/ — refused when a fileHref
+    // channel asks for the narrower root, accepted for the whole-repo root.
+    expect(isHrefContained(`${atRoot}/package.json`, { repoRootHref: ROOT_HREF })).toBe(true)
+    expect(isHrefContained(`${atRoot}/package.json`, { repoRootHref: ROOT_HREF, rootSubpath: 'docs' })).toBe(false)
   })
 
-  it('the B4 QA-repro shape (trailing `..?x`) is refused by this same function directly', () => {
-    expect(isHrefContained('../../../../..?a', { repoRootHref: '../../../..' })).toBe(false)
+  it('the B4 QA-repro shape (trailing `..?x` at the root edge) is refused one level past the root, accepted at the root', () => {
+    expect(isHrefContained(`${pastRoot}?a`, { repoRootHref: ROOT_HREF })).toBe(false)
+    expect(isHrefContained(`${pastRoot}#a`, { repoRootHref: ROOT_HREF })).toBe(false)
+    expect(isHrefContained(`${atRoot}?a`, { repoRootHref: ROOT_HREF })).toBe(true)
   })
 
   it('a real file:// URL is what it actually resolves against — verified against generate.mjs\'s own REPO_ROOT/OUTPUT_PATH', () => {
-    const href = '../../../../docs/tickets/v1.10/T-1.md'
-    expect(isHrefContained(href, { repoRootHref: '../../../..' })).toBe(true)
+    const href = '../../../docs/tickets/v1.10/T-1.md'
+    expect(isHrefContained(href, { repoRootHref: '../../..' })).toBe(true)
     expect(realBrowserPathnameInsideRepoRoot(href)).toBe(true)
   })
 })
@@ -491,7 +503,7 @@ describe('render.mjs — ticket/artifact fileHref is gated by the same containme
     ]
     const html = renderPage({ data, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
     const detail = extractDetailData(html)
-    expect(detail.ticket['T-1'].fileHref).toBe('../../../../docs/tickets/v1.9/T-1.md')
+    expect(detail.ticket['T-1'].fileHref).toBe('../../../docs/tickets/v1.9/T-1.md')
   })
 })
 

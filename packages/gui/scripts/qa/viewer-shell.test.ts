@@ -3,9 +3,10 @@
 // document kind" · "a test asserts that every ticket row resolves to a
 // detail entry" (the shell's list → detail proof, ticket store).
 import { describe, it, expect, beforeAll } from 'vitest'
-import { generate, missingMetaRootReason } from '../../viewer/generate.mjs'
-import { renderPage, resolveDocLink } from '../../viewer/lib/render.mjs'
-import { collectPrdOpenItems } from '../../viewer/lib/collect.mjs'
+import { generate } from '@productune/viewer/generate.mjs'
+import { META_ROOT, META_SKIP_REASON } from './meta-root'
+import { renderPage, resolveDocLink } from '@productune/viewer/lib/render.mjs'
+import { collectPrdOpenItems } from '@productune/viewer/lib/collect.mjs'
 
 // T-718: the real generated page, built HERE in-process rather than read
 // back off the gitignored `viewer/viewer.html` (a fresh checkout never has
@@ -16,11 +17,11 @@ import { collectPrdOpenItems } from '../../viewer/lib/collect.mjs'
 // (see viewer-html.test.ts's header) — `generate()` throws ENOENT there.
 // Checked once, up front, so only the one test below that needs `realHtml`
 // skips (with a visible reason); every fixture-based case here still runs.
-const metaMissingReason = missingMetaRootReason()
+const metaMissingReason = META_SKIP_REASON
 let realHtml: string
 beforeAll(async () => {
   if (metaMissingReason) return
-  ;({ html: realHtml } = await generate())
+  ;({ html: realHtml } = await generate({ repoRoot: META_ROOT! }))
 }, 30000)
 
 // T-795: real `#### <key> — <label>` headings, matching a fixture ticket's
@@ -97,6 +98,12 @@ const fixtureData = {
       body: '## Feature body\n\nprose.',
     },
   ],
+  // T-882: the feature screen draws taxonomy entries, not bare spec files.
+  featureTaxonomy: {
+    areas: [{ key: 'a', name: 'A', def: '' }],
+    kinds: [{ key: 'feature', name: 'K', def: '' }],
+    entries: [{ key: 'fixture-feature', name: 'F', kind: 'feature', area: 'a', def: 'd', aliases: [], links: [] }],
+  },
   artifacts: {
     entries: [
       {
@@ -138,12 +145,12 @@ function detailBody(html, id) {
 }
 
 describe('viewer/lib/render.mjs — heading chip rule (T-666)', () => {
-  it('h1/h2/h3 get pill-heading-1/2/3, and h4 collapses to pill-heading-3 — same renderer for every document kind', () => {
+  it('h1/h2/h3/h4 get pill-heading-1/2/3/4 — h4 no longer shares the h3 chip (T-884), same renderer for every document kind', () => {
     const body = detailBody(render(), 'T-901')
     expect(body).toContain('<h1 class="pill pill-heading-1">Title one</h1>')
     expect(body).toContain('<h2 class="pill pill-heading-2">Section two</h2>')
     expect(body).toContain('<h3 class="pill pill-heading-3">Sub three</h3>')
-    expect(body).toContain('<h4 class="pill pill-heading-3">Deep four</h4>')
+    expect(body).toContain('<h4 class="pill pill-heading-4">Deep four</h4>')
   })
 
   it('applies to a second, independently-rendered ticket body too — one shared rule, not a per-document special case', () => {
@@ -272,6 +279,13 @@ describe('viewer/lib/render.mjs — home is the shared-model, version-scoped wor
     expect(home).not.toContain('data-group-select="closed"')
   })
 
+  it('home sidebar lists its groups in the order 진행 상황 · 아티팩트 · PRD · 티켓 · 결정, progress staying the default-open one (T-866)', () => {
+    const home = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(render())![0]
+    const order = [...home.matchAll(/data-group-select="([^"]+)"/g)].map((m) => m[1])
+    expect(order).toEqual(['progress', 'artifact', 'prd', 'ticket', 'decision'])
+    expect(/data-group-select="progress"[^>]*class="[^"]*active|class="[^"]*active[^"]*"[^>]*data-group-select="progress"/.test(home)).toBe(true)
+  })
+
   it('a ticket row inside home resolves against the SAME global ticket detail-data the ticket store itself uses — no duplicated data', () => {
     const html = render()
     const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
@@ -279,29 +293,6 @@ describe('viewer/lib/render.mjs — home is the shared-model, version-scoped wor
     const blobMatch = /<script id="detail-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)
     const data = JSON.parse(blobMatch![1])
     expect(data.ticket['T-901']).toBeDefined()
-  })
-
-  it('the T-675 progress matrix places a fixture ticket in its prd_item row and assignee column', () => {
-    const html = render()
-    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
-    const home = homeMatch![0]
-    // T-901: prd_item v1.10#viewer, assignee developer, status open — its row
-    // must carry a non-empty (not "–") cell somewhere (the exact column
-    // isn't re-derived here; progressCell's own emptiness rule is what's
-    // under test — see the non-vacuous control below for the failure mode).
-    expect(home).toContain('stage-matrix')
-    expect(home).toContain('stage-sq') // at least one square drawn (fixture is non-vacuous)
-  })
-
-  // Non-vacuous control: an empty cell really does render "–", so the
-  // assertion above (a non-empty cell exists) is capable of failing.
-  it('checker fixture: a version with zero tickets renders every matrix cell empty ("–"), never a bare square', () => {
-    const emptyData = { ...fixtureData, currentVersion: 'v1.11', tickets: { included: [], omitted: [] } }
-    const html = renderPage({ data: emptyData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
-    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
-    const home = homeMatch![0]
-    expect(home).not.toContain('stage-sq"') // no bare `<span class="stage-sq">` anywhere
-    expect(home).toContain('stage-matrix-cell-empty')
   })
 
   it('home carries no fact about the viewer\'s own build (what it collected/inlined) — a product screen only says what the tickets/artifacts/PRD themselves say', () => {
@@ -325,73 +316,6 @@ describe('viewer/lib/render.mjs — home is the shared-model, version-scoped wor
     expect(m![0]).toContain('인라인')
   })
 
-  // T-766: the stage line shows the current po-state stage name plus ONE
-  // version-wide done/total, never a per-type stage guess (T-755's fix to
-  // statusline-prdt.sh, carried into the viewer by this ticket).
-  it('the stage line shows the po-state stage and a version-wide done/total, never a per-type count', () => {
-    const html = render()
-    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
-    const home = homeMatch![0]
-    expect(home).toContain('class="stage-line')
-    // fixtureData's poState.stage is 'build'; T-901 and T-903 are this
-    // fixture's only current-version (v1.10) tickets, both `status: open` —
-    // T-902 is backlog (excluded from home) and never counts here.
-    expect(home).toMatch(/build \| 0\/2/)
-    // never the retired per-type cells (any of the four stage words followed
-    // by its own "n/m" the old TYPE_TO_STAGE line used to print)
-    expect(home).not.toMatch(/define \d+\/\d+/)
-    expect(home).not.toMatch(/ship \d+\/\d+/)
-    expect(home).not.toMatch(/retro \d+\/\d+/)
-  })
-
-  // Non-vacuous control: a version with zero tickets must still show the
-  // stage name with an explicit 0/0, never omit the count.
-  it('checker fixture: a version with zero tickets still shows the stage line at 0/0', () => {
-    const emptyData = { ...fixtureData, currentVersion: 'v1.11', tickets: { included: [], omitted: [] } }
-    const html = renderPage({ data: emptyData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
-    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
-    const home = homeMatch![0]
-    expect(home).toMatch(/build \| 0\/0/)
-  })
-
-  // T-666 slice 2b acceptance line 2: the matrix's trailing row for a
-  // ticket carrying no `prd_item` — today's real T-677/678/679, fixture T-903.
-  it('the matrix gets a trailing "항목 밖" row for a ticket with no prd_item — it never disappears from the card', () => {
-    const html = render()
-    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
-    const home = homeMatch![0]
-    const rowMatch = /<div class="stage-matrix-row"[^>]*><span class="stage-matrix-label">항목 밖<\/span>([\s\S]*?)<\/div>/.exec(home)
-    expect(rowMatch, 'no trailing "항목 밖" row found in the matrix').not.toBeNull()
-    // T-903 (assignee: user, status: open) draws a real square in this row
-    // — never all "–", or the ticket would still be effectively invisible.
-    expect(rowMatch![1]).toContain('stage-sq')
-  })
-
-  // T-795: the defect this ticket fixes — row labels used to come from a
-  // map hand-typed with productune's own v1.10 item keys, so any other
-  // project/version's items had no real label at all. Now every row's label
-  // is the open PRD section's own heading text (`fixtureData.prd.current`
-  // above), for any key.
-  it('a progress row label is the open PRD section\'s own heading text, not a hardcoded map', () => {
-    const html = render()
-    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
-    const home = homeMatch![0]
-    expect(home).toContain('Viewer row fixture label')
-    expect(home).toContain('North star fixture label')
-    // T-901 (prd_item v1.10#viewer) draws its square inside the "Viewer row
-    // fixture label" row specifically, not merely somewhere in the matrix.
-    const viewerRow = /<div class="stage-matrix-row"[^>]*><span class="stage-matrix-label">Viewer row fixture label<\/span>([\s\S]*?)<\/div>/.exec(home)
-    expect(viewerRow, 'no row for the "viewer" PRD item').not.toBeNull()
-    expect(viewerRow![1]).toContain('stage-sq')
-  })
-
-  // T-795 acceptance: "a key with no heading falls back to the key itself" —
-  // here, a heading present but missing its ` — <label>` part.
-  it('a PRD item heading with no " — label" part falls back to its own key as the row label', () => {
-    const html = render()
-    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
-    expect(homeMatch![0]).toContain('<span class="stage-matrix-label">bare-key</span>')
-  })
 })
 
 describe('viewer/lib/collect.mjs — collectPrdOpenItems reads the open PRD section\'s own item headings (T-795)', () => {
@@ -503,31 +427,31 @@ describe('viewer/lib/render.mjs — ticket sidebar orders buckets by NUMERIC ver
     expect(blobMatch).not.toBeNull()
     const data = JSON.parse(blobMatch![1])
     expect(data.ticket['T-800'].body).toBeUndefined()
-    expect(data.ticket['T-800'].fileHref).toBe('../../../../docs/tickets/v1.9/T-800.md')
+    expect(data.ticket['T-800'].fileHref).toBe('../../../docs/tickets/v1.9/T-800.md')
   })
 })
 
 describe('viewer/lib/render.mjs — resolveDocLink (T-666 slice 2b)', () => {
   it('resolves a same-repo relative link against the source directory and repoRootHref, matching the real hrefs measured in PRD.md', () => {
-    expect(resolveDocLink('./versions/v1.9.md', 'docs/prd', '../../../..')).toBe('../../../../docs/prd/versions/v1.9.md')
-    expect(resolveDocLink('../artifacts/v1.9/phase4-terminal-free-gui.md', 'docs/prd', '../../../..')).toBe(
-      '../../../../docs/artifacts/v1.9/phase4-terminal-free-gui.md',
+    expect(resolveDocLink('./versions/v1.9.md', 'docs/prd', '../../..')).toBe('../../../docs/prd/versions/v1.9.md')
+    expect(resolveDocLink('../artifacts/v1.9/phase4-terminal-free-gui.md', 'docs/prd', '../../..')).toBe(
+      '../../../docs/artifacts/v1.9/phase4-terminal-free-gui.md',
     )
   })
 
   it('leaves an anchor, a protocol-relative link, a scheme link, and a site-absolute link untouched (returns null)', () => {
-    expect(resolveDocLink('#section', 'docs/prd', '../../../..')).toBeNull()
-    expect(resolveDocLink('//example.com/x', 'docs/prd', '../../../..')).toBeNull()
-    expect(resolveDocLink('https://example.com/x', 'docs/prd', '../../../..')).toBeNull()
-    expect(resolveDocLink('mailto:a@b.com', 'docs/prd', '../../../..')).toBeNull()
-    expect(resolveDocLink('/docs/prd/PRD.md', 'docs/prd', '../../../..')).toBeNull()
+    expect(resolveDocLink('#section', 'docs/prd', '../../..')).toBeNull()
+    expect(resolveDocLink('//example.com/x', 'docs/prd', '../../..')).toBeNull()
+    expect(resolveDocLink('https://example.com/x', 'docs/prd', '../../..')).toBeNull()
+    expect(resolveDocLink('mailto:a@b.com', 'docs/prd', '../../..')).toBeNull()
+    expect(resolveDocLink('/docs/prd/PRD.md', 'docs/prd', '../../..')).toBeNull()
   })
 
   // Non-vacuous control: a link that would resolve outside the repo root
   // really is caught, or "leave untouched if it escapes the repo root"
   // could be passing only because no fixture ever exercises that branch.
   it('checker fixture: a link that would escape the repo root is left untouched, never rewritten past it', () => {
-    expect(resolveDocLink('../../../../../etc/passwd', 'docs/prd', '../../../..')).toBeNull()
+    expect(resolveDocLink('../../../../../etc/passwd', 'docs/prd', '../../..')).toBeNull()
   })
 })
 
@@ -541,7 +465,7 @@ describe("viewer/lib/render.mjs — relative document links resolve against the 
   it("rewrites a relative link inside a wiki body against the wiki page's own directory, using the default repoRootHref", () => {
     const html = renderPage({ data: fixtureData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
     const body = detailData(html).wiki['fact--fixture-link.md'].body
-    expect(body).toContain('href="../../../../docs/prd/versions/v1.1.md"')
+    expect(body).toContain('href="../../../docs/prd/versions/v1.1.md"')
     expect(body).toContain('target="_blank"')
     expect(body).toContain('rel="noopener"')
     expect(body).toContain('href="#foo"')
@@ -559,63 +483,6 @@ describe("viewer/lib/render.mjs — relative document links resolve against the 
     })
     const body = detailData(html).wiki['fact--fixture-link.md'].body
     expect(body).toContain('href="../../custom/docs/prd/versions/v1.1.md"')
-  })
-})
-
-// T-708 slice 2 결함 3/11: the 10-square fold cap (a real logic branch, not
-// pure markup) and the removed dash-actions buttons. Real-browser layout
-// (nowrap never producing a 2nd row, the overall row's square size/gap
-// matching the matrix's, the frame filling the viewport) is asserted in
-// tests/viewer-html.window.spec.ts instead — vitest has no layout engine.
-describe('viewer/lib/render.mjs — home progress matrix folds beyond 10 squares (T-708 결함 3)', () => {
-  function fixtureWithCellCount(n) {
-    const included = Array.from({ length: n }, (_, i) => ({
-      bucket: 'v1.10',
-      rel: `docs/tickets/v1.10/T-fold-${i}.md`,
-      frontmatter: { id: `T-fold-${i}`, slug: `fold-${i}`, type: 'impl', status: 'open', assignee: 'developer', prd_item: 'v1.10#viewer' },
-      body: 'x',
-    }))
-    return { ...fixtureData, tickets: { included, omitted: [] } }
-  }
-
-  function homeSectionHtml(n) {
-    const html = renderPage({ data: fixtureWithCellCount(n), dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
-    return /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)![0]
-  }
-
-  it('a cell with exactly 10 tickets draws 10 squares and no fold fragment (boundary — not yet over the cap)', () => {
-    const home = homeSectionHtml(10)
-    const cellMatch = /<span class="stage-matrix-sq-wrap">((?:<span class="stage-sq[^>]*><\/span>)+)<\/span>/.exec(home)
-    expect(cellMatch).not.toBeNull()
-    expect((cellMatch![1].match(/class="stage-sq/g) ?? []).length).toBe(10)
-    expect(home).not.toContain('stage-matrix-fold')
-  })
-
-  it('a cell with 15 tickets draws only 10 squares plus one "+5" fold fragment, same wrap, and the done/total count still counts all 15', () => {
-    const home = homeSectionHtml(15)
-    const cellMatch = /<span class="stage-matrix-sq-wrap">([\s\S]*?)<\/span><span class="stage-matrix-count mono">(\d+)\/(\d+)<\/span>/.exec(home)
-    expect(cellMatch).not.toBeNull()
-    const [, sqWrapInner, done, total] = cellMatch!
-    expect((sqWrapInner.match(/class="stage-sq/g) ?? []).length).toBe(10)
-    expect(sqWrapInner).toContain('<span class="stage-matrix-fold">+5</span>')
-    expect(total).toBe('15')
-    expect(Number(done)).toBeLessThanOrEqual(15)
-  })
-
-  // Non-vacuous control: a cell that should NOT fold (5 tickets) really
-  // produces no fold fragment, or the "not.toContain" assertion above could
-  // be passing for the wrong reason (e.g. a typo in the class name checked).
-  it('checker fixture: a cell with fewer than 10 tickets never gets a fold fragment', () => {
-    const home = homeSectionHtml(5)
-    expect(home).not.toContain('stage-matrix-fold')
-  })
-
-  it("the overall progress line never folds even with far more than 10 tickets — only the per-item matrix cells do", () => {
-    const html = renderPage({ data: fixtureWithCellCount(15), dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
-    const overallMatch = /<div class="stage-overall">[\s\S]*?<\/div>/.exec(html)
-    expect(overallMatch).not.toBeNull()
-    expect(overallMatch![0]).not.toContain('stage-matrix-fold')
-    expect((overallMatch![0].match(/class="stage-sq/g) ?? []).length).toBe(15)
   })
 })
 

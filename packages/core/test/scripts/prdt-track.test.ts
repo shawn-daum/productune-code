@@ -192,6 +192,17 @@ describe('prdt track open', () => {
     expect(metaGit(proj, 'status', '--porcelain')).not.toContain('tracks')
   })
 
+  test('T-911: a symlinked .prdt/meta.git is not written through — nothing lands outside the project, one line says why', () => {
+    const scratch = tmp('prdt-t911-scratch-')
+    fs.mkdirSync(path.join(scratch, 'info'), { recursive: true })
+    fs.symlinkSync(scratch, path.join(proj, '.prdt', 'meta.git'))
+    const r = cli('track', 'open', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(fs.existsSync(path.join(scratch, 'info', 'exclude'))).toBe(false)
+    expect(r.err).toContain('meta exclude skipped')
+    expect(r.err).toContain('symbolic link')
+  })
+
   test('legacy layout: tracks/ is kept out of the META repo\'s git status too', () => {
     makeProject(false)
     initMetaGit(proj)
@@ -441,6 +452,41 @@ describe('prdt track land', () => {
       expect(git(code, 'show', 'main:m.txt')).toBe('main only')
     })
 
+    // T-834 (T-833 QA forgery #3): json.loads keeps the LAST of a repeated key,
+    // so `…"base":"main",…,"base":"dev"}` used to read as dev and land there.
+    test('T-834: a record with a key given twice is untrusted — a bare land is refused, nothing merges', () => {
+      const rec = recordOf('T-2')!
+      const before = refs()
+      fs.writeFileSync(rec, '{"schema":1,"ticket":"T-2","branch":"track/T-2","base":"main","base":"dev"}\n')
+      const r = cli('track', 'land', 'T-2')
+      expectRefusal(r)
+      expect(r.err).toContain('unreadable or does not match')
+      expect(refs()).toEqual(before)
+      fs.writeFileSync(rec, '{"schema":1,"ticket":"T-2","ticket":"T-2","branch":"track/T-2","base":"main"}\n')
+      expectRefusal(cli('track', 'land', 'T-2'))
+      expect(refs()).toEqual(before)
+    })
+
+    test('T-834: review compares against the record\'s base, not a worker-rewritten prdtbase git config', () => {
+      git(wt('T-2'), 'config', 'branch.track/T-2.prdtbase', 'dev')     // worker rewrites git config
+      git(wt(), 'config', 'branch.track/T-1.prdtbase', 'main')
+      const r2 = cli('track', 'review', 'T-2')
+      expect(r2.status, r2.err).toBe(0)
+      expect(r2.out).toContain('track/T-2 vs main')
+      const r1 = cli('track', 'review', 'T-1')
+      expect(r1.status, r1.err).toBe(0)
+      expect(r1.out).toContain('track/T-1 vs dev')
+      // no record (a track opened before T-833): git config is all there is, as before
+      fs.rmSync(recordOf('T-1')!)
+      expect(cli('track', 'review', 'T-1').out).toContain('track/T-1 vs main')
+      // an untrusted record: config, with a warning that a bare land refuses
+      fs.writeFileSync(recordOf('T-2')!, '{not json')
+      const bad = cli('track', 'review', 'T-2')
+      expect(bad.status, bad.err).toBe(0)
+      expect(bad.out).toContain('track/T-2 vs dev')
+      expect(bad.err).toContain('a bare land will refuse')
+    })
+
     test('a worker rewriting the record to dev cannot move main; deleting it falls back to the pre-T-833 dev default — main still untouched', () => {
       const before = refs()
       fs.writeFileSync(recordOf('T-2')!, JSON.stringify({ ticket: 'T-2', branch: 'track/T-2', base: 'dev' }))
@@ -647,6 +693,105 @@ describe('prdt track drop', () => {
   })
 })
 
+// T-915 (ship-entry review, sandbox repro): git resolves a bare `dev` / `main` /
+// `track/T-NNN` to refs/tags/<name> BEFORE refs/heads/<name>. A worker can make
+// a tag in the shared code repo from inside its worktree (`git tag dev <sha>`);
+// before this fix that tag became review's comparison base (a commit under it
+// vanished from the diff and still landed) and land's merge source. Every git
+// call in open/review/land/drop now names refs/heads/<name>.
+describe('T-915: a tag named like the base or the track branch never stands in for it', () => {
+  beforeEach(() => makeProject())
+
+  const has = (rev: string, ref: string) =>
+    spawnSync('git', ['merge-base', '--is-ancestor', rev, ref], { cwd: code }).status === 0
+
+  /** A commit X on the track that a `<base>` tag then hides, plus a visible commit Y on top. */
+  const hideUnderTag = (base: string, t = 'T-1') => {
+    commit(wt(t), 'x.txt', 'hidden\n', 'feat: x')
+    const x = git(wt(t), 'rev-parse', 'HEAD')
+    git(wt(t), 'tag', base, x)
+    commit(wt(t), 'y.txt', 'visible\n', 'feat: y')
+    return x
+  }
+
+  for (const base of ['dev', 'main']) {
+    const flag = base === 'main' ? ['--base', 'main'] : []
+
+    test(`open: a ${base} tag at another commit does not change where the track is cut`, () => {
+      commit(code, 'b.txt', 'dev only\n', 'feat: b')
+      git(code, 'tag', base, git(code, 'rev-parse', 'HEAD~1'))
+      expect(cli('track', 'open', 'T-1', ...flag).status).toBe(0)
+      expect(git(wt(), 'rev-parse', 'HEAD')).toBe(git(code, 'rev-parse', `refs/heads/${base}`))
+    })
+
+    test(`review: a ${base} tag at a track commit does not hide that commit from the diff, the counts or the preview`, () => {
+      cli('track', 'open', 'T-1', ...flag)
+      hideUnderTag(base)
+      const r = cli('track', 'review', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toContain(`track/T-1 vs ${base} (merge-base ${git(code, 'rev-parse', `refs/heads/${base}`).slice(0, 12)})`)
+      expect(r.out).toContain('2 commit(s) ahead')
+      expect(r.out).toContain('A  x.txt')
+      expect(r.out).toContain('+hidden')
+    })
+
+    test(`land: a ${base} tag at the track tip does not skip merging the real ${base} that moved`, () => {
+      cli('track', 'open', 'T-1', ...flag)
+      commit(wt(), 'c.txt', 'new\n', 'feat: c')
+      git(wt(), 'tag', base, git(wt(), 'rev-parse', 'HEAD'))
+      git(code, 'checkout', '-q', base)
+      commit(code, 'b.txt', `${base} moved\n`, 'feat: b')
+      const moved = git(code, 'rev-parse', 'HEAD')
+      git(code, 'checkout', '-q', 'dev')
+      const r = cli('track', 'land', 'T-1', ...flag)
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toContain(`merged ${base} (${moved.slice(0, 12)})`)
+      expect(r.out).toContain(`${base} fast-forwarded`)
+      expect(has(moved, `refs/heads/${base}`)).toBe(true)
+      expect(git(code, 'show', `refs/heads/${base}:c.txt`)).toBe('new')
+    })
+
+    test(`land: a ${base} tag at an unrelated commit is never merged into the track or ${base}`, () => {
+      cli('track', 'open', 'T-1', ...flag)
+      commit(wt(), 'c.txt', 'new\n', 'feat: c')
+      git(code, 'checkout', '-q', '-b', 'side', `refs/heads/${base}`)
+      commit(code, 'z.txt', 'unreviewed\n', 'feat: z')
+      const z = git(code, 'rev-parse', 'HEAD')
+      git(code, 'checkout', '-q', 'dev')
+      git(code, 'branch', '-q', '-D', 'side')
+      git(code, 'tag', base, z)
+      const r = cli('track', 'land', 'T-1', ...flag)
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).not.toContain(`merged ${base} (`)
+      expect(has(z, `refs/heads/${base}`)).toBe(false)
+      expect(git(code, 'show', `refs/heads/${base}:c.txt`)).toBe('new')
+      expect(git(code, 'rev-parse', `refs/tags/${base}`)).toBe(z)   // the tag itself is left alone
+    })
+  }
+
+  test('drop: a track/T-1 tag at dev does not make a track with unlanded commits look merged', () => {
+    cli('track', 'open', 'T-1')
+    commit(wt(), 'c.txt', 'new\n', 'feat: c')
+    git(code, 'tag', 'track/T-1', git(code, 'rev-parse', 'refs/heads/dev'))
+    const r = cli('track', 'drop', 'T-1')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('holds commits not on dev or main')
+    expect(fs.existsSync(wt())).toBe(true)
+  })
+
+  test('review and land: a track/T-1 tag does not stand in for the track branch', () => {
+    cli('track', 'open', 'T-1')
+    commit(wt(), 'c.txt', 'new\n', 'feat: c')
+    const tip = git(wt(), 'rev-parse', 'HEAD')
+    git(code, 'tag', 'track/T-1', git(code, 'rev-parse', 'refs/heads/dev'))
+    expect(cli('track', 'review', 'T-1').out).toContain('1 commit(s) ahead')
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(git(code, 'rev-parse', 'refs/heads/dev')).toBe(tip)
+    expect(r.out).toContain('branch track/T-1 deleted')
+  })
+})
+
 // ── the gate: one live developer/qa dispatch per checkout ────────────────────
 
 const REAL_LAST = '{"type":"assistant","message":{"model":"claude-sonnet-5","role":"assistant","content":[{"type":"text","text":"Working."}]}}'
@@ -783,7 +928,7 @@ describe('T-814: a QA dispatch that writes only meta documents occupies no check
       const t = path.join(home, 'transcripts', 'subagents', `agent-qs${i}.jsonl`)
       fs.writeFileSync(t, '{"type":"summary"}\n' + REAL_LAST + '\n')
     }
-    expect(denied(gate(ctx()))).toContain('in-flight dispatches 6 machine-wide')
+    expect(denied(gate(ctx()))).toContain('in-flight dispatches 6 / cap 5')
   })
 
   test('a project that persists no meta allowlist exempts nothing', () => {

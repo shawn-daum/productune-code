@@ -89,14 +89,14 @@ describe.skipIf(!PYTHON3)('the statusline shows version-wide progress, not a per
     const out = runStatusline()
 
     // one version-wide count: 4 done of 17, decision ticket included in the total
-    expect(out).toContain('define | 4/17')
+    expect(out).toContain('define 4/17')
     // never a stage-matched subset count (the old `define 1/5` shape, or any
     // other N/5 the design-only bucket would have produced)
     expect(out).not.toMatch(/define \d+\/5(?!\d)/)
-    expect(out).not.toMatch(/\bdefine \d+\/\d+ \| total \d+\/\d+/)
-    // the open `decision` ticket surfaces (as "waiting"), proving it was read
+    expect(out).not.toMatch(/\bdefine \d+\/\d+ total \d+\/\d+/)
+    // the open `decision` ticket surfaces (as "dec"), proving it was read
     // and counted, not skipped the way TYPE_TO_STAGE used to skip it
-    expect(out).toContain('waiting T-17')
+    expect(out).toContain('dec T-17')
   })
 
   test('a stage with zero type-matched tickets still shows the full version total, not zero', () => {
@@ -110,7 +110,7 @@ describe.skipIf(!PYTHON3)('the statusline shows version-wide progress, not a per
     writeTicket('T-22', 'design', 'open')
 
     const out = runStatusline()
-    expect(out).toContain('ship | 1/3')
+    expect(out).toContain('ship 1/3')
     expect(out).not.toContain('total')
   })
 

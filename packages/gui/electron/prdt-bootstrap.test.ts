@@ -40,6 +40,9 @@ afterEach(() => {
 })
 
 const APP_V = '0.5.0'
+// Real install.sh run: ~1.4 s alone, up to ~4.5 s while core vitest runs in parallel (`prdt track land`);
+// vitest's 5 s default timed out (T-849).
+const INSTALL_SH_TEST_TIMEOUT_MS = 15_000
 const paths = (over: Partial<{ appVersion: string }> = {}) => ({
   payloadRoot: PAYLOAD,
   homeDir: home,
@@ -289,7 +292,7 @@ test('T-431: runBootstrap leaves the same machine state as install.sh (mirror/ag
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true })
   }
-})
+}, INSTALL_SH_TEST_TIMEOUT_MS)
 
 test('T-431: missing payload → fails with payload-missing, nothing written', () => {
   const res = runBootstrap({ ...paths(), payloadRoot: path.join(home, 'nowhere') })

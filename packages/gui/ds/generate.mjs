@@ -5,9 +5,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { buildRawThemeMaps, resolveVarChains } from './lib/parse-tokens.mjs'
+import { buildRawThemeMaps, resolveVarChains } from '@productune/viewer/lib/parse-tokens.mjs'
 import { renderPage, templateCssVarNames, templateCssHasHexOrRgbLiteral } from './lib/render.mjs'
-import { collectUsedChars, buildPretendardFontFaceCss } from './lib/font-subset.mjs'
+import { collectUsedChars, buildPretendardFontFaceCss } from '@productune/viewer/lib/font-subset.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const GUI_ROOT = path.resolve(__dirname, '..')

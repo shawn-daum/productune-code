@@ -35,6 +35,11 @@ packages/*/dist-electron/
 .prdt/index.db
 
 # T-665: the one-page repo viewer is regenerated from live repo state
-# (`pnpm --filter @productune/gui viewer`) and carries docs/ content into a
+# (`pnpm --filter @productune/viewer viewer`) and carries docs/ content into a
 # code-side file — it must not ride the code repo (PO decision, T-665 slice 2).
-packages/gui/viewer/viewer.html
+packages/viewer/viewer.html
+# T-885: past-version ticket bodies are split into sibling data files
+# (viewer.tickets-<bucket>.js) carrying the same docs/ content — same reason.
+packages/viewer/viewer.tickets-*.js
+# T-803: the build-id file carries no docs content but is regenerated per run.
+packages/viewer/viewer.build.js
