@@ -65,6 +65,9 @@ function sandbox() {
     'if [ "${1:-}" = "viewer" ] && [ "${2:-}" = "--no-open" ]; then',
     '  [ -n "$PRDT_TEST_COUNT" ] && printf x >> "$PRDT_TEST_COUNT"',
     '  [ -n "$PRDT_TEST_SLEEP" ] && sleep "$PRDT_TEST_SLEEP"',
+    // T-790: hold the run until the test creates the release file (capped at
+    // ~60 s so a test that dies early never leaves a stub spinning forever).
+    '  if [ -n "$PRDT_TEST_RELEASE" ]; then i=0; while [ ! -e "$PRDT_TEST_RELEASE" ] && [ $i -lt 1200 ]; do sleep 0.05; i=$((i+1)); done; fi',
     '  mkdir -p "$(pwd)/.prdt/scratch/viewer"',
     '  echo "<!doctype html>" > "$(pwd)/.prdt/scratch/viewer/viewer.html"',
     '  echo "[viewer](file://$(pwd)/.prdt/scratch/viewer/viewer.html)"',
@@ -84,6 +87,7 @@ function sandbox() {
   }
   delete env.PRDT_GUI_SESSION
   delete env.PRDT_TEST_SLEEP
+  delete env.PRDT_TEST_RELEASE
   return { dir, openLog, countFile, env, prdtHome }
 }
 
@@ -186,7 +190,13 @@ describe.skipIf(!RUN)('T-802 — background regen on any docs/**/*.md write', ()
   test('a burst of rapid writes regenerates once or a few times, never once per write', async () => {
     const s = sandbox()
     const root = project(s.dir)
-    const env = { ...s.env, PRDT_TEST_SLEEP: '0.3' }
+    // T-790: the first regen is HELD (the stub waits on a release file) until
+    // every write has landed and every worker it spawned has either taken the
+    // lock or exited on it. The earlier form slept 0.3 s per regen, so on a
+    // loaded host a worker that took longer than that to start found the lock
+    // free and ran again — coalescing then depended on spawn speed.
+    const release = path.join(s.dir, 'release')
+    const env = { ...s.env, PRDT_TEST_RELEASE: release }
     const N = 6
     // A ticket path on purpose: it is outside the T-746 VIEWER_DOC open
     // allowlist, so this exercises ONLY the new background regen path, never
@@ -198,6 +208,13 @@ describe.skipIf(!RUN)('T-802 — background regen on any docs/**/*.md write', ()
     for (let i = 0; i < N; i++) {
       execFileSync('bash', [HOOK], { input: writeEvent('Write', target, i % 2 ? 'developer' : undefined), env })
     }
+    // Every hook call has returned, so every worker process already exists.
+    // Release only once exactly one worker of this root is left (the lock
+    // holder, parked in the stub) — the rest saw the lock and exited.
+    const workers = () => execFileSync('ps', ['-axww', '-o', 'args='], { encoding: 'utf8' })
+      .split('\n').filter((l) => l.includes(' -c ') && l.includes(root)).length
+    expect(await waitFor(() => countOf(s.countFile) === 1 && workers() === 1, 30000)).toBe(true)
+    fs.writeFileSync(release, '')
     // Wait until the count file goes quiet (no growth for two consecutive polls)
     // — proves the single-flight loop has drained, not just "at least one ran".
     let last = -1
@@ -211,6 +228,8 @@ describe.skipIf(!RUN)('T-802 — background regen on any docs/**/*.md write', ()
     }
     const finalCount = countOf(s.countFile)
     expect(finalCount).toBeGreaterThan(0)
+    // the holder's run + at most one more for the dirty flag the others set
+    expect(finalCount).toBeLessThanOrEqual(2)
     expect(finalCount).toBeLessThan(N)
     expect(readLog(s.openLog)).toBe('')
   })
@@ -236,6 +255,9 @@ function cliSandbox(opts: { fail?: boolean; sleep?: string; viewer?: boolean } =
     'if [ "${1:-}" = "viewer" ] && [ "${2:-}" = "--no-open" ]; then',
     '  printf x >> "$PRDT_TEST_COUNT"',
     '  [ -n "$PRDT_TEST_SLEEP" ] && sleep "$PRDT_TEST_SLEEP"',
+    // T-790: hold the run until the test creates the release file (capped at
+    // ~60 s so a test that dies early never leaves a stub spinning forever).
+    '  if [ -n "$PRDT_TEST_RELEASE" ]; then i=0; while [ ! -e "$PRDT_TEST_RELEASE" ] && [ $i -lt 1200 ]; do sleep 0.05; i=$((i+1)); done; fi',
     '  [ -n "$PRDT_TEST_FAIL" ] && exit 1',
     '  echo "<!doctype html>" > "$(pwd)/.prdt/scratch/viewer/viewer.html"',
     '  find "$(pwd)/docs/tickets" -name "T-*.md" | sed "s#.*/##" >> "$(pwd)/.prdt/scratch/viewer/viewer.html"',
@@ -259,6 +281,7 @@ function cliSandbox(opts: { fail?: boolean; sleep?: string; viewer?: boolean } =
   }
   delete env.PRDT_GUI_SESSION
   delete env.PRDT_TEST_SLEEP
+  delete env.PRDT_TEST_RELEASE
   delete env.PRDT_TEST_FAIL
   delete env.PRDT_VIEWER_REGEN_BACKOFF_SECS
   const run = (args: string[], extra: NodeJS.ProcessEnv = {}, input = '') =>
