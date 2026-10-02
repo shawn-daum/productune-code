@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import { renderPage, TEMPLATE_CSS, buildAnchors } from '@productune/viewer/lib/render.mjs'
 import { collectPrdGatePath } from '@productune/viewer/lib/collect.mjs'
-import { buildHomeGraph, layoutHomeGraph, waitLists, stageSegments, stageOfTicketType, NODE_W } from '@productune/viewer/lib/home-graph.mjs'
+import { buildHomeGraph, findGateTicket, layoutHomeGraph, waitLists, stageSegments, stageOfTicketType, NODE_W } from '@productune/viewer/lib/home-graph.mjs'
 
 type T = { id: string; type?: string; status?: string; assignee?: string; deps?: string[]; prd_item?: string; body?: string }
 const tk = (o: T) => ({
@@ -111,6 +111,28 @@ describe('home stage bar and PRD gate path', () => {
     const prd = '## v1.12 — x\n\n| **합격선** | **`docs/artifacts/v1.12/obs.md` 가 존재하고** |\n\n## v1.13\n| **합격선** | `docs/other.md` |'
     expect(collectPrdGatePath(prd, 'v1.12')).toBe('docs/artifacts/v1.12/obs.md')
     expect(collectPrdGatePath('## v1.12\nnothing', 'v1.12')).toBe('')
+  })
+})
+
+describe('findGateTicket — the real gate survives later tickets that merely mention the path (T-914)', () => {
+  const mention = (id: string, o: Partial<T> = {}) => tk({ id, body: `see \`${GATE}\``, ...o })
+  const pick = (ts: ReturnType<typeof tk>[]) => findGateTicket(ts, GATE)?.frontmatter.id ?? null
+  const chain = [tk({ id: 'T-1' }), tk({ id: 'T-2', deps: ['T-1'] })]
+
+  it('a later open or done ticket that only mentions the path does not displace the end of the dependency chain', () => {
+    expect(pick([...chain, gate(['T-2']), mention('T-95')])).toBe('T-90')
+    expect(pick([...chain, gate(['T-2']), mention('T-95', { status: 'done' })])).toBe('T-90')
+    expect(pick([...chain, gate(['T-2']), mention('T-95', { deps: ['T-1'] })])).toBe('T-90') // shorter chain behind it
+  })
+  it('a dropped ticket is never the gate, however late or deep', () => {
+    expect(pick([...chain, gate(['T-2']), mention('T-95', { status: 'dropped', deps: ['T-2', 'T-90'] })])).toBe('T-90')
+    expect(pick([mention('T-95', { status: 'dropped' })])).toBeNull()
+  })
+  it('null without a path or without any live ticket naming it; ties go to the higher number; cycles do not hang', () => {
+    expect(findGateTicket([gate([])], '')).toBeNull()
+    expect(pick([tk({ id: 'T-1' })])).toBeNull()
+    expect(pick([mention('T-3'), mention('T-7')])).toBe('T-7')
+    expect(pick([mention('T-1', { deps: ['T-2'] }), mention('T-2', { deps: ['T-1'] })])).not.toBeNull()
   })
 })
 
