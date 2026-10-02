@@ -450,7 +450,9 @@ export const DISCIPLINE_SOURCE_REL = 'code/packages/core/discipline'
 const DISCIPLINE_PERSONAS = ['po', 'designer', 'developer', 'qa']
 
 export function defaultDisciplineRoot() {
-  return path.join(os.homedir(), '.prdt', 'discipline')
+  // same resolution as prdt_home(): PRDT_HOME redirects the tool home (T-911)
+  const home = process.env.PRDT_HOME || path.join(os.homedir(), '.prdt')
+  return path.join(home, 'discipline')
 }
 
 function readContainedText(realRoot, rel) {
