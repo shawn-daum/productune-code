@@ -67,7 +67,9 @@ function realInsideRepo(repoRoot, abs) {
     // so a link to another in-repo file (e.g. a root `.env.local`) is refused too.
     const top = path.relative(repoRoot, abs).split(path.sep)[0]
     if (top && top !== '..') {
-      const realTop = fs.realpathSync(path.join(repoRoot, top))
+      // Anchor at <realRoot>/<top>, not realpath(<top>): a `docs/` or `.prdt/`
+      // that is itself a link must not widen the allowed region.
+      const realTop = path.join(realRoot, top)
       if (!(real === realTop || real.startsWith(realTop + path.sep))) return null
     }
     return real
