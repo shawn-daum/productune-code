@@ -82,7 +82,14 @@
 #   directory the path resolves under — guessed as a plain relative path, it
 #   could resolve to the wrong directory entirely and false-deny a legacy-
 #   layout write that never touches the checkout (T-786: code review #3,
-#   `$TMPDIR/x` · `$S/x`). A reference elsewhere in the path (`code/$f`)
+#   `$TMPDIR/x` · `$S/x`) — unless the SAME command assigned it first
+#   (`T=~/.prdt/run/tracks; rm -rf "$T"` · `export T=…`; scoped to its
+#   `( … )` subshell, dropped by `unset`; a prefix `T=… cmd` never sets it):
+#   then the assigned value is spliced in and judged (T-910). A wrapper
+#   (sudo, doas, nice, env, timeout, caffeinate, stdbuf, time, exec, nohup,
+#   setsid, command, builtin) is stripped with its flags AND their values
+#   (`nice -n 5 rm` · `sudo -u me rm` · `timeout 5 rm`) — T-910; this covers
+#   both rules. A reference elsewhere in the path (`code/$f`)
 #   still resolves literally, unchanged. Backtick substitution is one more
 #   shape this gap covers, not parsed.
 #
@@ -556,7 +563,27 @@ if not isinstance(cmd, str) or not cmd.strip():
     out_open()
 
 SEPS = {";", "&&", "||", "|", "&", "|&", "\n", "{", "}"}
-WRAPPERS = {"sudo", "command", "time", "nice", "nohup", "env", "exec", "builtin"}
+# T-910: a wrapper → (short flags that take a value, long flags that take a
+# separate value, leading operands before the command). A value is skipped
+# with its flag (`nice -n 5 rm` · `sudo -u me rm` — reading `5`/`me` as the
+# command word let the real `rm` through); `timeout DURATION` likewise.
+WRAPPERS = {
+    "sudo": ("ugpCDrtURT", {"--user", "--group", "--prompt", "--close-from", "--chdir", "--role",
+                            "--type", "--other-user", "--command-timeout", "--chroot"}, 0),
+    "doas": ("uC", set(), 0),
+    "nice": ("n", {"--adjustment"}, 0),
+    "env": ("uCSP", {"--unset", "--chdir", "--split-string"}, 0),
+    "timeout": ("sk", {"--signal", "--kill-after"}, 1),
+    "gtimeout": ("sk", {"--signal", "--kill-after"}, 1),
+    "caffeinate": ("tw", set(), 0),
+    "stdbuf": ("ioe", {"--input", "--output", "--error"}, 0),
+    "time": ("fo", {"--format", "--output"}, 0),
+    "exec": ("a", set(), 0),
+    "nohup": ("", set(), 0),
+    "setsid": ("", set(), 0),
+    "command": ("", set(), 0),
+    "builtin": ("", set(), 0),
+}
 # bash reserved words that can front a command word (T-783: `then rm …`,
 # `do rm …`, `else`/`elif`/`!` — a segment split on `;`/`&&`/… still starts
 # with the keyword, not the command, unless stripped first)
@@ -724,8 +751,9 @@ def tokens(s):
 def strip_prefixes(words, assigns=None):
     """Pop leading keywords / assignments / wrapper-and-its-flags, in any
     combination (T-783: `then sudo rm …`), until the command word is first.
-    A popped PRDT_HOME= / HOME= assignment is appended to `assigns` as
-    (name, value) — T-834 grill [B]: only these count as a reassignment."""
+    Every popped assignment is appended to `assigns` as (name, value); the
+    caller decides which count (T-834 grill [B]: PRDT_HOME= / HOME= as a
+    reassignment; T-910: any other name as a path variable)."""
     changed = True
     while changed and words:
         changed = False
@@ -735,23 +763,60 @@ def strip_prefixes(words, assigns=None):
             continue
         if "=" in words[0] and not words[0].startswith("=") and words[0].split("=", 1)[0].isidentifier():
             k, v = words.pop(0).split("=", 1)
-            if assigns is not None and k in ENV_KEYS:
+            if assigns is not None:
                 assigns.append((k, v))
             changed = True
             continue
-        if os.path.basename(words[0]) in WRAPPERS:
+        w = os.path.basename(words[0])
+        if w in WRAPPERS:
+            vshort, vlong, npos = WRAPPERS[w]
             words.pop(0)
-            while words and words[0].startswith("-") and words[0] != "-":
-                words.pop(0)
+            while words and words[0].startswith("-"):
+                a = words.pop(0)
+                if a == "--":
+                    break
+                if a == "-":
+                    continue  # `env -` = `env -i`
+                if a.startswith("--"):
+                    if a in vlong and words:
+                        words.pop(0)
+                    continue
+                for k, c in enumerate(a[1:]):
+                    if c in vshort:
+                        if k == len(a) - 2 and words:
+                            words.pop(0)  # `-u me`: the value is the next word
+                        break             # `-n5` / `-uo`: the rest of this word is the value
+            for _ in range(npos):
+                if words and "=" not in words[0]:
+                    words.pop(0)
             changed = True
             continue
     return words
 
 
-def run_command(raw_cmd, base_cwd, depth, sh, ch):
+def sub_var(path, lv):
+    """T-910: a path STARTING WITH `$NAME` / `${NAME}` whose NAME this command
+    assigned a value earlier (`T=~/.prdt/run/tracks; rm -rf "$T"`) → that
+    value spliced in; anything else is returned unchanged."""
+    if not isinstance(path, str) or not lv:
+        return path
+    m = re.match(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))", path)
+    if not m:
+        return path
+    k = m.group(1) or m.group(2)
+    if k not in lv:
+        return path
+    return lv[k] + path[m.end():]
+
+
+def run_command(raw_cmd, base_cwd, depth, sh, ch, lv=None):
     """`sh` = PRDT_HOME / HOME as this shell expands `$VAR` / `~`; `ch` = as a
     child process sees them (exported). Both are mutated in place by a real
-    assignment (T-834 grill [B]); a caller passes copies where bash would."""
+    assignment (T-834 grill [B]); a caller passes copies where bash would.
+    `lv` (T-910) = every other variable this command assigned a value
+    (`T=…` · `export T=…`), followed where a target starts with `$T`."""
+    if lv is None:
+        lv = {}
     if depth > MAX_SUBSHELL_DEPTH or not isinstance(raw_cmd, str):
         return
     text, bodies = strip_heredocs(raw_cmd)
@@ -788,6 +853,7 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch):
 
     def check(path, how, base=None, removal=False):
         b = base if base is not None else ecwd
+        path = sub_var(path, lv)
         rp = tracks_target(path, b, sh, removal)
         if rp:
             deny_tracks(rp, how)
@@ -795,15 +861,23 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch):
         if rp:
             deny(rp, how)
 
+    def set_var(k, v):
+        if k == "PWD":
+            return
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+            v = v[1:-1]
+        lv[k] = sub_var(v, lv)
+
     for seg in segs:
         if seg == ["("]:
-            paren_stack.append((ecwd, dict(sh), dict(ch)))
+            paren_stack.append((ecwd, dict(sh), dict(ch), dict(lv)))
             continue
         if seg == [")"]:
             if paren_stack:
-                ecwd, s0, c0 = paren_stack.pop()
+                ecwd, s0, c0, l0 = paren_stack.pop()
                 sh.clear(); sh.update(s0)
                 ch.clear(); ch.update(c0)
+                lv.clear(); lv.update(l0)
             continue
         if seg and seg[0] == "[[":
             # `[[ … ]]`: `>` / `<` inside are string comparisons, not
@@ -846,6 +920,9 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch):
             # a bare `X=v` changes this shell; the child sees it when X is
             # exported (HOME always is; PRDT_HOME when set or exported before)
             for k, v in assigns:
+                if k not in ENV_KEYS:
+                    set_var(k, v)
+                    continue
                 rv = _resolve_literal(v, sh, ecwd)
                 sh[k] = rv
                 if k == "HOME" or k in ch or os.environ.get(k):
@@ -869,11 +946,19 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch):
         # own arguments' expansion, never a later command
         env = dict(ch)
         for k, v in assigns:
-            env[k] = _resolve_literal(v, sh, ecwd)
+            if k in ENV_KEYS:
+                env[k] = _resolve_literal(v, sh, ecwd)
+        if name == "unset":
+            for a in ops:
+                lv.pop(a, None)
+            continue
         if name == "export":
             for a in args:
                 k, eq, v = a.partition("=")
-                if k in ENV_KEYS:
+                if k not in ENV_KEYS:
+                    if eq and k.isidentifier():
+                        set_var(k, v)
+                elif k in ENV_KEYS:
                     if eq:
                         sh[k] = ch[k] = _resolve_literal(v, sh, ecwd)
                     elif k in sh:
@@ -883,12 +968,12 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch):
             # T-786 (code review #3): bare `cd` (no operand) goes to $HOME,
             # same as real bash — leaving ecwd unchanged let a later relative
             # write resolve against the OLD cwd and false-deny inside it.
-            nd = os.path.expanduser(ops[0]) if ops else os.path.expanduser("~")
+            nd = os.path.expanduser(sub_var(ops[0], lv)) if ops else os.path.expanduser("~")
             ecwd = nd if nd.startswith("/") else (os.path.join(ecwd, nd) if ecwd else None)
             continue
         if name == "pushd":
             if ops:
-                nd = os.path.expanduser(ops[0])
+                nd = os.path.expanduser(sub_var(ops[0], lv))
                 dir_stack.append(ecwd)
                 ecwd = nd if nd.startswith("/") else (os.path.join(ecwd, nd) if ecwd else None)
             continue
@@ -900,19 +985,19 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch):
             has_c, script, rest = shell_script(args)
             if has_c:
                 if script is not None:
-                    run_command(script, ecwd, depth + 1, dict(env), dict(env))
+                    run_command(script, ecwd, depth + 1, dict(env), dict(env), dict(lv))
                 continue
             if stdin_texts and not rest:
                 # T-834: `bash <<EOF … EOF` runs the body as a script
                 for st in stdin_texts:
-                    run_command(st, ecwd, depth + 1, dict(env), dict(env))
+                    run_command(st, ecwd, depth + 1, dict(env), dict(env), dict(lv))
                 continue
         if name == "eval":
             # T-786 (F5): `eval "echo x > code/a"` hides its redirect inside a
             # single quoted token, invisible to the outer redirect scan —
             # recurse into the reassembled body like `bash -c` does.
             if args:
-                run_command(" ".join(args), ecwd, depth + 1, sh, ch)
+                run_command(" ".join(args), ecwd, depth + 1, sh, ch, lv)
             continue
         if INTERP_RE.match(name) and same_home(env):
             # T-834: the inline program (-c/-e argument, heredoc, here-string)
