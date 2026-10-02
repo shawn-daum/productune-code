@@ -436,20 +436,32 @@ describe('render.mjs — property: every resolveDocLink decision matches the bro
 
 // ---------- isHrefContained itself, and the ticket/artifact fileHref channels it also gates (T-711 slice 4) ----------
 describe('render.mjs — isHrefContained is the one check every emitted href is judged by', () => {
-  it('true for a plain in-repo relative href, false once it climbs one level past repoRootHref', () => {
-    expect(isHrefContained('../../../docs/tickets/v1.10/T-1.md', { repoRootHref: '../../..' })).toBe(true)
-    expect(isHrefContained('../../../../../docs/tickets/v1.10/T-1.md', { repoRootHref: '../../..' })).toBe(false)
+  // Probes are derived from the repoRootHref itself (never hand-counted `..`
+  // strings), so a re-base of the viewer's depth cannot silently shift them
+  // off the boundary their comments name (T-914).
+  const ROOT_HREF = '../../..'
+  const ROOT_DEPTH = ROOT_HREF.split('/').length
+  const up = (n: number) => Array(n).fill('..').join('/')
+  const atRoot = up(ROOT_DEPTH) // exactly the repo root
+  const pastRoot = up(ROOT_DEPTH + 1) // one level past the repo root
+
+  it('true for a plain in-repo relative href, false once it climbs exactly one level past repoRootHref', () => {
+    expect(isHrefContained(`${atRoot}/docs/tickets/v1.10/T-1.md`, { repoRootHref: ROOT_HREF })).toBe(true)
+    expect(isHrefContained(`${pastRoot}/docs/tickets/v1.10/T-1.md`, { repoRootHref: ROOT_HREF })).toBe(false)
   })
 
   it('rootSubpath narrows the allowed root (docs/ for a fileHref) without widening past repoRootHref', () => {
-    expect(isHrefContained('../../../docs/tickets/v1.10/T-1.md', { repoRootHref: '../../..', rootSubpath: 'docs' })).toBe(true)
-    // Still inside the repo root, but NOT inside docs/ — refused when a
-    // fileHref channel asks for the narrower root.
-    expect(isHrefContained('../../../../package.json', { repoRootHref: '../../..', rootSubpath: 'docs' })).toBe(false)
+    expect(isHrefContained(`${atRoot}/docs/tickets/v1.10/T-1.md`, { repoRootHref: ROOT_HREF, rootSubpath: 'docs' })).toBe(true)
+    // Inside the repo root, but NOT inside docs/ — refused when a fileHref
+    // channel asks for the narrower root, accepted for the whole-repo root.
+    expect(isHrefContained(`${atRoot}/package.json`, { repoRootHref: ROOT_HREF })).toBe(true)
+    expect(isHrefContained(`${atRoot}/package.json`, { repoRootHref: ROOT_HREF, rootSubpath: 'docs' })).toBe(false)
   })
 
-  it('the B4 QA-repro shape (trailing `..?x`) is refused by this same function directly', () => {
-    expect(isHrefContained('../../../../..?a', { repoRootHref: '../../..' })).toBe(false)
+  it('the B4 QA-repro shape (trailing `..?x` at the root edge) is refused one level past the root, accepted at the root', () => {
+    expect(isHrefContained(`${pastRoot}?a`, { repoRootHref: ROOT_HREF })).toBe(false)
+    expect(isHrefContained(`${pastRoot}#a`, { repoRootHref: ROOT_HREF })).toBe(false)
+    expect(isHrefContained(`${atRoot}?a`, { repoRootHref: ROOT_HREF })).toBe(true)
   })
 
   it('a real file:// URL is what it actually resolves against — verified against generate.mjs\'s own REPO_ROOT/OUTPUT_PATH', () => {
