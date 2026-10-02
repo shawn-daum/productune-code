@@ -192,6 +192,17 @@ describe('prdt track open', () => {
     expect(metaGit(proj, 'status', '--porcelain')).not.toContain('tracks')
   })
 
+  test('T-911: a symlinked .prdt/meta.git is not written through — nothing lands outside the project, one line says why', () => {
+    const scratch = tmp('prdt-t911-scratch-')
+    fs.mkdirSync(path.join(scratch, 'info'), { recursive: true })
+    fs.symlinkSync(scratch, path.join(proj, '.prdt', 'meta.git'))
+    const r = cli('track', 'open', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(fs.existsSync(path.join(scratch, 'info', 'exclude'))).toBe(false)
+    expect(r.err).toContain('meta exclude skipped')
+    expect(r.err).toContain('symbolic link')
+  })
+
   test('legacy layout: tracks/ is kept out of the META repo\'s git status too', () => {
     makeProject(false)
     initMetaGit(proj)
