@@ -757,7 +757,7 @@ function ticketDetailEntries(tickets, repoRootHref) {
     entries[id] = {
       title: fm.slug || id,
       type: fm.type || '',
-      status: fm.status || '',
+      status: ticketStatusText(fm.status || ''),
       assignee: fm.assignee || '',
       created: fm.created || '',
       path: t.rel,
@@ -771,7 +771,7 @@ function ticketDetailEntries(tickets, repoRootHref) {
       entries[id] = {
         title: fm.slug || id,
         type: fm.type || '',
-        status: fm.status || '',
+        status: ticketStatusText(fm.status || ''),
         assignee: fm.assignee || '',
         path: t.rel,
         fileHref: containedFileHref(`${repoRootHref}/${encodeFsPathHref(t.rel)}`, repoRootHref),
