@@ -1942,7 +1942,7 @@ function homeSection(data, repoRootHref) {
 
 export const TEMPLATE_CSS = `
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
+html, body { margin: 0; padding: 0; overflow-x: hidden; }
 body {
   font-family: var(--font-family);
   background: var(--bg-base);
@@ -1955,7 +1955,7 @@ body {
 code { font-family: var(--font-mono); font-size: 0.9em; }
 
 /* ---------- app shell (T-666 slice 1a) — activity bar | sidebar | main | detail panel ---------- */
-.app-shell { flex: 1; min-height: 0; display: flex; }
+.app-shell { flex: 1; min-height: 0; display: flex; overflow: clip; }
 .activity {
   width: 48px; flex: 0 0 48px; background: var(--bg-base); border-right: 1px solid var(--border-item);
   display: flex; flex-direction: column; align-items: center; padding-top: 12px; gap: 4px;
@@ -1994,14 +1994,15 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .view-pane { display: none; }
 .view-pane.active { display: block; }
 
-.frame-main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; position: relative; }
+/* T-909: overflow: clip — the closed detail panel parks at translateX(100%) inside this column; without a clip a horizontal swipe / shift-wheel scrolled the page and showed it. clip (unlike hidden) is not user- or focus-scrollable. */
+.frame-main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; position: relative; overflow: clip; }
 .topstrip {
   height: 44px; flex: 0 0 44px; display: flex; align-items: center; gap: var(--space-8);
   padding: 0 var(--space-20); border-bottom: 1px solid var(--border-item); background: var(--bg-surface-base);
 }
 .topstrip-crumb { font-size: 12px; color: var(--text-tertiary); }
 .topstrip-crumb b { color: var(--text-primary); font-weight: 600; }
-.frame-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-32) var(--space-40); }
+.frame-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: var(--space-32) var(--space-40); }
 .main-inner { max-width: 1040px; margin: 0 auto; }
 /* T-708 결함 1: home is the one dashboard-card screen (progress stats +
    matrix, table-shaped data with no paragraph-readability reason for a cap)
@@ -2093,7 +2094,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .stage-sq { width: 10px; height: 10px; border-radius: 2px; background: var(--bg-interaction-neutral); border: 1px solid var(--border-inline); flex: 0 0 auto; }
 .stage-sq.sq-done { background: var(--accent); border-color: var(--accent); }
 .sc { border-top: 1px solid var(--border-item); margin: var(--space-16) 0 0; padding: var(--space-16) 0 0; }
-.sc-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(200px, 220px); gap: var(--space-24); }
+.sc-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); gap: var(--space-24); }
 .sc-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: center; gap: var(--space-10); min-height: 20px; }
 .sc-lab { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sc-out .sc-lab { color: var(--text-tertiary); }
@@ -2230,7 +2231,7 @@ details.v-fold[open] summary { color: var(--text-primary); }
    every store tab, and any item open. margin-top: auto (not margin-left,
    T-797's horizontal-flex value) pushes it to the rail's bottom edge in the
    rail's own column flex. ) ---------- */
-.activity-theme-toggle { margin-top: auto; width: 28px; height: 28px; border: none; background: none; padding: 0; cursor: pointer;
+.activity-theme-toggle { margin-top: auto; margin-bottom: var(--space-16); width: 28px; height: 28px; border: none; background: none; padding: 0; cursor: pointer;
   color: var(--text-tertiary); border-radius: var(--radius-4); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .activity-theme-toggle:hover { background: var(--bg-state-hover); color: var(--text-primary); }
 .activity-theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
