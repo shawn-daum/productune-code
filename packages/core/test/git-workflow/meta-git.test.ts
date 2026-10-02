@@ -33,6 +33,7 @@ import {
 import { runMetaMigration } from '../../src/git-workflow/meta-migrate'
 import { naturalizeCommit } from '../../src/history/naturalize'
 import { buildAutosaveMessage } from '../../src/git-workflow/autosave'
+import { networkAlias } from '../helpers/network-remote'
 
 let projectDir: string
 
@@ -358,7 +359,7 @@ test('pushMetaRemote refuses when the remote is not configured', async () => {
 
 test('pushMetaRemote refuses when there are no commits yet', async () => {
   await initMetaRepo(projectDir)
-  await addMetaRemote(projectDir, 'backup', makeBareRemote())
+  await addMetaRemote(projectDir, 'backup', networkAlias(makeBareRemote()))
   const res = await pushMetaRemote(projectDir, 'backup')
   expect(res.ok).toBe(false)
   expect(res.error).toMatch(/no commits/)
@@ -368,7 +369,7 @@ test('pushMetaRemote sends the meta branch to the backup; no --force', async () 
   const backup = makeBareRemote()
   await initMetaRepo(projectDir)
   await commitMeta(projectDir, 'T-374 [manual: →] snapshot')
-  await addMetaRemote(projectDir, 'backup', backup)
+  await addMetaRemote(projectDir, 'backup', networkAlias(backup))
 
   const res = await pushMetaRemote(projectDir, 'backup')
   expect(res.ok).toBe(true)
@@ -400,7 +401,7 @@ test('two-machine cycle: A splits + pushes → B (split-pulled, meta gone) boots
   git(['push', '-q', 'origin', branch], A) // publish the untrack commit
 
   // A backs the meta history up to the shared backup remote (explicit push).
-  expect((await addMetaRemote(A, 'backup', backup)).ok).toBe(true)
+  expect((await addMetaRemote(A, 'backup', networkAlias(backup))).ok).toBe(true)
   expect((await pushMetaRemote(A, 'backup')).ok).toBe(true)
 
   // Machine B: clone the already-split CODE repo — the meta files are untracked
@@ -413,7 +414,7 @@ test('two-machine cycle: A splits + pushes → B (split-pulled, meta gone) boots
   expect(metaRepoExists(B)).toBe(false)
 
   // B bootstraps from the backup remote.
-  const boot = await bootstrapMetaRepo(B, backup, 'backup')
+  const boot = await bootstrapMetaRepo(B, networkAlias(backup), 'backup')
   expect(boot.ok).toBe(true)
   expect(boot.conflicts).toEqual([])
   expect(boot.restoredCount).toBeGreaterThan(0)
@@ -450,7 +451,7 @@ test('T-378 re-anchor: code cloned into code/ (no .prdt yet) → meta.git at pro
   git(['push', '-q', 'origin', branch], A)
   expect((await runMetaMigration(A)).ok).toBe(true)
   git(['push', '-q', 'origin', branch], A)
-  await addMetaRemote(A, 'backup', backup)
+  await addMetaRemote(A, 'backup', networkAlias(backup))
   await pushMetaRemote(A, 'backup')
 
   // Machine B: fresh — projectRoot has NO .prdt and is NOT itself a git repo.
@@ -464,7 +465,7 @@ test('T-378 re-anchor: code cloned into code/ (no .prdt yet) → meta.git at pro
   // bootstrap is invoked with projectRoot (the python CLI re-anchors to it). The
   // chicken-egg fix lets bootstrapCodeRepoExists find the code/ clone even though
   // config.code.dir has not been restored yet.
-  const boot = await bootstrapMetaRepo(B, backup, 'backup')
+  const boot = await bootstrapMetaRepo(B, networkAlias(backup), 'backup')
   expect(boot.ok).toBe(true)
 
   // meta.git landed at projectRoot/.prdt — NEVER under code/.prdt.
@@ -479,14 +480,14 @@ test('T-378 re-anchor: code cloned into code/ (no .prdt yet) → meta.git at pro
 test('bootstrap refuses to clobber an existing local meta.git', async () => {
   const backup = makeBareRemote()
   await initMetaRepo(projectDir)
-  const res = await bootstrapMetaRepo(projectDir, backup, 'backup')
+  const res = await bootstrapMetaRepo(projectDir, networkAlias(backup), 'backup')
   expect(res.ok).toBe(false)
   expect(res.refusal).toBe('meta-repo-exists')
 })
 
 test('bootstrap rolls back and refuses on an unreachable backup remote', async () => {
   const bogus = path.join(os.tmpdir(), 'core-meta-nope-' + crypto.randomUUID())
-  const res = await bootstrapMetaRepo(projectDir, bogus, 'backup')
+  const res = await bootstrapMetaRepo(projectDir, networkAlias(bogus), 'backup')
   expect(res.ok).toBe(false)
   expect(res.refusal).toBe('fetch-failed')
   // the freshly-created git-dir is rolled back so a corrected re-run is clean
@@ -499,7 +500,7 @@ test('bootstrap on a not-yet-pulled machine leaves a differing local file UNTOUC
   const A = projectDir
   await initMetaRepo(A)
   await commitMeta(A, 'T-374 [manual: →] snapshot')
-  await addMetaRemote(A, 'backup', backup)
+  await addMetaRemote(A, 'backup', networkAlias(backup))
   await pushMetaRemote(A, 'backup')
 
   // Machine B: a separate project that has NOT pulled the split — a local meta
@@ -513,7 +514,7 @@ test('bootstrap on a not-yet-pulled machine leaves a differing local file UNTOUC
   fs.mkdirSync(path.join(B, '.prdt'), { recursive: true })
   fs.writeFileSync(path.join(B, '.prdt', 'config.json'), JSON.stringify({ slug: 'proj' }))
 
-  const boot = await bootstrapMetaRepo(B, backup, 'backup')
+  const boot = await bootstrapMetaRepo(B, networkAlias(backup), 'backup')
 
   // meta.git IS created (non-destructive), but the differing file is a conflict
   expect(metaRepoExists(B)).toBe(true)
@@ -729,7 +730,7 @@ test('C3: bootstrap restores config THEN refreshes info/exclude with <code.dir>/
   )
   await initMetaRepo(A)
   await commitMeta(A, 'T-386 [manual: →] snapshot')
-  await addMetaRemote(A, 'backup', backup)
+  await addMetaRemote(A, 'backup', networkAlias(backup))
   await pushMetaRemote(A, 'backup')
 
   // Machine B: fresh split clone — code cloned into code/, projectRoot has no .prdt
@@ -738,7 +739,7 @@ test('C3: bootstrap restores config THEN refreshes info/exclude with <code.dir>/
   bareRepos.push(B)
   execFileSync('git', ['init', '-q', path.join(B, 'code')])
 
-  const boot = await bootstrapMetaRepo(B, backup, 'backup')
+  const boot = await bootstrapMetaRepo(B, networkAlias(backup), 'backup')
   expect(boot.ok).toBe(true)
   // config.json was restored, carrying code.dir …
   expect(fs.existsSync(path.join(B, '.prdt', 'config.json'))).toBe(true)
