@@ -184,11 +184,13 @@ afterEach(() => {
 })
 
 describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer segments', () => {
-  test('none running, none waiting: every footer segment omitted, not shown empty', () => {
+  test('T-922: none running, none waiting: running/dec/req still render, as an em dash', () => {
     const out = runStatusline()
-    expect(out).not.toMatch(/\brunning\b/)
-    expect(out).not.toMatch(/\b(dec|req|waiting|CP)\b/)
-    expect(out).toContain('build') // rest of the line still renders
+    expect(segment(out, 'running')).toBe('\u2014')
+    expect(segment(out, 'dec')).toBe('\u2014')
+    expect(segment(out, 'req')).toBe('\u2014')
+    expect(out).not.toMatch(/\b(waiting|CP)\b/)
+    expect(out).toContain('| build |') // rest of the line still renders
   })
 
   test('several of each, with successors/blocks from the edges table', () => {
@@ -213,8 +215,8 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
 
     const out = runStatusline()
     const running = segment(out, 'running')
-    expect(running).toBe('T-700→developer»T-720 T-701→qa')
-    expect(segment(out, 'dec')).toBe('T-710»T-730')
+    expect(running).toBe('T-700→developer>T-720 T-701→qa')
+    expect(segment(out, 'dec')).toBe('T-710>T-730')
     expect(segment(out, 'req')).toBe('T-711')
     expect(out).not.toMatch(/\bwaiting\b/)
   })
@@ -261,8 +263,8 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const out = runStatusline()
     const running = segment(out, 'running')
     const dec = segment(out, 'dec')
-    expect(running).toBe('T-750→developer»T-760,T-761+1 T-751→qa T-752→developer +1')
-    expect(dec).toBe('T-770»T-780 T-771 T-772 +1')
+    expect(running).toBe('T-750→developer>T-760,T-761+1 T-751→qa T-752→developer +1')
+    expect(dec).toBe('T-770>T-780 T-771 T-772 +1')
   })
 
   test('a dispatch marker with no resolvable ticket_id never surfaces (belt: statusline itself still requires TICKET_RE)', () => {
@@ -277,7 +279,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
       project_root: root, since: isoAgo(60_000),
     }))
     const out = runStatusline()
-    expect(out).not.toMatch(/\brunning\b/)
+    expect(segment(out, 'running')).toBe('\u2014')
   })
 
   test('T-805: OSC 8 link targets the viewer jump page (never the raw ticket md) when a viewer exists', () => {
@@ -352,20 +354,31 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(out).not.toMatch(/\b(waiting|CP)\b/)
   })
 
-  test('T-849: the project slug is an OSC 8 link to viewer.html when it exists, plain text when it does not; no version, no leading bars', () => {
+  test('T-922: `<slug> <version>` is ONE OSC 8 link to viewer.html when it exists, plain text when it does not; full layout with empty lists', () => {
     const plain = runStatusline().trim()
     const slug = path.basename(root)
-    expect(plain.startsWith(slug)).toBe(true)
     expect(plain).not.toContain(OSC8_OPEN)
-    expect(plain).not.toContain(VERSION)
-    expect(plain).not.toContain(' | ') // nothing running/dec/req: no footer, no bars at all
-    expect(plain).toBe(`${slug} build`)
+    // no tickets, no branch (tmp dir is no git repo): ticket segment and branch segment degrade away
+    expect(plain).toBe(`${slug} ${VERSION} | build | running \u2014 | dec \u2014 | req \u2014`)
 
     stubViewerHtml()
     const linked = runStatusline().trim()
     const viewer = path.join(root, '.prdt', 'scratch', 'viewer', 'viewer.html')
-    expect(linked.startsWith(`${OSC8_OPEN}file://${viewer}\x1b\\${slug}${OSC8_CLOSE}`)).toBe(true)
-    expect(unwrapLinks(linked)).toBe(`${slug} build`)
+    expect(linked.startsWith(`${OSC8_OPEN}file://${viewer}\x1b\\${slug} ${VERSION}${OSC8_CLOSE} | build`)).toBe(true)
+    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | build | running \u2014 | dec \u2014 | req \u2014`)
+  })
+
+  test('T-922: full layout order — ticket count, current task, running/dec/req, branch last; persona arrow is \u2192 and never \u00bb', () => {
+    root = makeProject('prdt-t922-full-', { ticket_id: 'T-890', slug: 'restore', assignee: 'developer' })
+    fs.mkdirSync(path.join(root, 'docs', 'tickets', VERSION), { recursive: true })
+    writeTicket('T-890', {}, 'open')
+    writeTicket('T-891', {}, 'done')
+    writeMarker({ agentId: 'a', ticketId: 'T-890', persona: 'qa', ageMs: 60_000 })
+    execFileSync('git', ['init', '-q', '-b', 'dev', root])
+    execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init'])
+    const plain = unwrapLinks(runStatusline()).trim()
+    expect(plain).toBe(`${path.basename(root)} ${VERSION} | build | ticket 1/2 | T-890 restore\u2192developer | running T-890\u2192qa | dec \u2014 | req \u2014 | branch: dev`)
+    expect(plain).not.toContain('\u00bb')
   })
 
   test('F3: two workers on the same ticket are ONE running row, personas joined', () => {
@@ -438,7 +451,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(plain).not.toContain('\u2026') // never the belt's truncation mark
     const waiting = segment(out, 'dec')
     expect(waiting).toBeDefined()
-    expect(waiting).toMatch(/^T-770(»T-\d+(,T-\d+)?(\+\d+)?)? .*\+\d+$/) // first id(s) + a count tail, intact
+    expect(waiting).toMatch(/^T-770(>T-\d+(,T-\d+)?(\+\d+)?)? .*\+\d+$/) // first id(s) + a count tail, intact
     expect(segment(out, 'running')).toMatch(/\+\d+$/)
   })
 
