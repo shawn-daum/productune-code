@@ -220,7 +220,7 @@ describe('home fix round 1 (T-881 grill) — what a DOM-free test can pin; width
     expect(TEMPLATE_CSS).toMatch(/\.sb-seg \{[^}]*flex: 0 1 auto; min-width: 56px/)
     expect(TEMPLATE_CSS).toMatch(/\.sb-sq \{[^}]*flex-wrap: wrap/)
     expect(TEMPLATE_CSS).toMatch(/\.sb-total \{[^}]*flex: 0 0 auto/)
-    expect(TEMPLATE_CSS).toMatch(/\.sc-grid \{[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(200px, 220px\)/)
+    expect(TEMPLATE_CSS).toMatch(/\.sc-grid \{[^}]*grid-template-columns: minmax\(0, 3fr\) minmax\(300px, 2fr\)/)
     expect(TEMPLATE_CSS).toMatch(/\.sc-sq \{[^}]*flex-wrap: wrap/)
     expect(TEMPLATE_CSS).toMatch(/\.sc-waits \{ min-width: 0;/)
   })
