@@ -44,6 +44,7 @@ import {
   BACKUP_LOCK_STALE_MS,
   type MetaBackupState,
 } from '../../src/git-workflow/meta-backup'
+import { networkAlias } from '../helpers/network-remote'
 
 let projectDir: string
 let tmpDirs: string[] = []
@@ -192,7 +193,7 @@ test('no remote at all → remote-missing, quiet: no state written, nothing atte
 
 test('QA F2 — configured remote renamed away → remote-missing IS recorded in the latch (last_ok:false, git\'s names), nothing pushed', async () => {
   const backup = makeBare('backup')
-  metaGitSync(['remote', 'add', 'backup', backup])
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
   expect((await metaBackupTick(projectDir, { now: new Date('2026-09-11T02:00:00Z') })).pushed).toBe(true)
   const remoteHead = bareHead(backup, metaGitSync(['symbolic-ref', '--short', 'HEAD']))
 
@@ -215,7 +216,7 @@ test('QA F2 — configured remote renamed away → remote-missing IS recorded in
 // Split from the test above so each stays inside the 15s budget under load.
 test('QA F2, recovery — the remote renamed back past the backoff → pushes, latch failure cleared', async () => {
   const backup = makeBare('backup')
-  metaGitSync(['remote', 'add', 'vault', backup]) // registered under the wrong name; config says `backup`
+  metaGitSync(['remote', 'add', 'vault', networkAlias(backup)]) // registered under the wrong name; config says `backup`
   const t = new Date('2026-09-11T03:00:00Z')
   const miss = await metaBackupTick(projectDir, { now: t })
   expect(miss).toMatchObject({ attempted: false, reason: 'remote-missing', remote: 'backup' })
@@ -256,15 +257,15 @@ async function divergeFrom(backup: string, branch: string): Promise<string> {
 
 test('QA F1 fixture — `--force` in config + forged `[remote "--force"]` and colon-named sections: refused, diverged remote byte-identical', async () => {
   const backup = makeBare('backup')
-  metaGitSync(['remote', 'add', 'backup', backup])
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
   expect((await metaBackupTick(projectDir, { now: new Date('2026-09-11T02:00:00Z') })).pushed).toBe(true)
   const branch = metaGitSync(['symbolic-ref', '--short', 'HEAD'])
   const remoteHead = await divergeFrom(backup, branch)
   const remoteRefsBefore = git(['for-each-ref', '--format=%(refname) %(objectname)'], backup)
 
   // exactly QA's forgery: git lists both sections as remotes, `git remote add` never would
-  forgeRemoteSection('--force', '/nonexistent')
-  forgeRemoteSection(`refs/heads/${branch}:refs/heads/${branch}`, backup)
+  forgeRemoteSection('--force', networkAlias('/nonexistent'))
+  forgeRemoteSection(`refs/heads/${branch}:refs/heads/${branch}`, networkAlias(backup))
   setBackupRemoteConfig('--force')
   expect(metaGitSync(['remote'])).toContain('--force')
   writePoState('ship') // a boundary — the decision alone would say push
@@ -303,10 +304,10 @@ test('QA F1 sibling — flag-shaped and refspec-shaped names are refused before 
   // through the tick: each forged name is registered in the git-dir and named
   // by config, the remote is real, the stage is a boundary — still refused, nothing lands
   const backup = makeBare('backup')
-  metaGitSync(['remote', 'add', 'backup', backup])
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
   const branch = metaGitSync(['symbolic-ref', '--short', 'HEAD'])
   for (const bad of ['--mirror', '--tags', '--all', `refs/heads/${branch}:refs/heads/${branch}`]) {
-    forgeRemoteSection(bad, backup)
+    forgeRemoteSection(bad, networkAlias(backup))
     setBackupRemoteConfig(bad)
     const res = await metaBackupTick(projectDir, { now: new Date('2026-09-11T03:00:00Z') })
     expect(res, bad).toMatchObject({ attempted: false, pushed: false, reason: 'remote-name-invalid', remote: bad })
@@ -320,8 +321,8 @@ test('scope: pushes the meta branch to the backup remote ONLY — code remote, o
   const other = makeBare('other')
   const codeOrigin = makeBare('code-origin')
   git(['remote', 'add', 'origin', codeOrigin])
-  metaGitSync(['remote', 'add', 'backup', backup])
-  metaGitSync(['remote', 'add', 'other', other])
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
+  metaGitSync(['remote', 'add', 'other', networkAlias(other)])
   // A tag on the meta repo AND push.followTags=true in its config: the
   // automatic argv must still leave the tag home.
   metaGitSync(['tag', 'v9.9'])
@@ -353,8 +354,8 @@ test('scope: pushes the meta branch to the backup remote ONLY — code remote, o
 test('a configured non-default remote name is honored; the `backup`-named remote is then NOT pushed', async () => {
   const vault = makeBare('vault')
   const decoy = makeBare('decoy')
-  metaGitSync(['remote', 'add', 'vault', vault])
-  metaGitSync(['remote', 'add', 'backup', decoy])
+  metaGitSync(['remote', 'add', 'vault', networkAlias(vault)])
+  metaGitSync(['remote', 'add', 'backup', networkAlias(decoy)])
   fs.writeFileSync(path.join(projectDir, '.prdt', 'config.json'), JSON.stringify({ slug: 'proj', meta: { backup_remote: 'vault' } }))
   const res = await metaBackupTick(projectDir)
   expect(res).toMatchObject({ pushed: true, remote: 'vault' })
@@ -366,7 +367,7 @@ test('a configured non-default remote name is honored; the `backup`-named remote
 // parallel load (each push round-trip is a real git subprocess pair).
 test('trigger, same day: up-to-date skips, a new commit is already-today (no network), a stage change pushes', async () => {
   const backup = makeBare('backup')
-  metaGitSync(['remote', 'add', 'backup', backup])
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
   const day1 = new Date('2026-09-11T02:00:00Z')
   expect((await metaBackupTick(projectDir, { now: day1 })).pushed).toBe(true)
 
@@ -376,11 +377,11 @@ test('trigger, same day: up-to-date skips, a new commit is already-today (no net
   // new commit, same stage, same day → already-today (no network). Prove "no
   // network" by pointing the remote at a dead url first: an attempt would fail.
   await metaCommit('second')
-  metaGitSync(['remote', 'set-url', 'backup', path.join(os.tmpdir(), 'does-not-exist-' + process.pid)])
+  metaGitSync(['remote', 'set-url', 'backup', networkAlias(path.join(os.tmpdir(), 'does-not-exist-' + process.pid))])
   const sameDay = await metaBackupTick(projectDir, { now: new Date('2026-09-11T09:00:00Z') })
   expect(sameDay).toMatchObject({ attempted: false, reason: 'already-today', ahead: 1 })
   expect(readMetaBackupState(projectDir).last_ok).toBe(true)
-  metaGitSync(['remote', 'set-url', 'backup', backup])
+  metaGitSync(['remote', 'set-url', 'backup', networkAlias(backup)])
 
   // stage boundary the same day → pushes (the daily latch does not block it)
   writePoState('ship')
@@ -391,7 +392,7 @@ test('trigger, same day: up-to-date skips, a new commit is already-today (no net
 
 test('trigger, next UTC day: same stage, one more commit → daily push', async () => {
   const backup = makeBare('backup')
-  metaGitSync(['remote', 'add', 'backup', backup])
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
   expect((await metaBackupTick(projectDir, { now: new Date('2026-09-11T02:00:00Z') })).pushed).toBe(true)
   await metaCommit('third')
   const daily = await metaBackupTick(projectDir, { now: new Date('2026-09-12T00:30:00Z') })
@@ -402,7 +403,7 @@ test('trigger, next UTC day: same stage, one more commit → daily push', async 
 
 test('failure: unreachable remote is recorded with git\'s words, backs off, and a later success clears it', async () => {
   const backup = makeBare('backup')
-  metaGitSync(['remote', 'add', 'backup', path.join(os.tmpdir(), 'no-such-remote-' + process.pid)])
+  metaGitSync(['remote', 'add', 'backup', networkAlias(path.join(os.tmpdir(), 'no-such-remote-' + process.pid))])
   const t = new Date('2026-09-11T02:00:00Z')
   const fail = await metaBackupTick(projectDir, { now: t })
   expect(fail).toMatchObject({ attempted: true, pushed: false })
@@ -418,7 +419,7 @@ test('failure: unreachable remote is recorded with git\'s words, backs off, and 
   expect(soon).toMatchObject({ attempted: false, reason: 'backoff' })
 
   // remote fixed, past the backoff → success, failure fields gone
-  metaGitSync(['remote', 'set-url', 'backup', backup])
+  metaGitSync(['remote', 'set-url', 'backup', networkAlias(backup)])
   const ok = await metaBackupTick(projectDir, { now: new Date(t.getTime() + BACKUP_RETRY_BACKOFF_MS + 1000) })
   expect(ok.pushed).toBe(true)
   const st2 = readMetaBackupState(projectDir)
@@ -428,7 +429,7 @@ test('failure: unreachable remote is recorded with git\'s words, backs off, and 
 
 test('T-643: nothing ahead but the latch says failed → clears without a network attempt (backup became current by another route)', async () => {
   const backup = makeBare('backup')
-  metaGitSync(['remote', 'add', 'backup', backup])
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
   expect((await metaBackupTick(projectDir, { now: new Date('2026-09-21T02:00:00Z') })).pushed).toBe(true)
   const goodState = readMetaBackupState(projectDir)
 
@@ -460,7 +461,7 @@ test('T-643: nothing ahead but the latch says failed → clears without a networ
 
 test('never force: a diverged backup remote rejects the push and keeps its own history', async () => {
   const backup = makeBare('backup')
-  metaGitSync(['remote', 'add', 'backup', backup])
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
   expect((await metaBackupTick(projectDir, { now: new Date('2026-09-11T02:00:00Z') })).pushed).toBe(true)
   const branch = metaGitSync(['symbolic-ref', '--short', 'HEAD'])
 
@@ -531,7 +532,7 @@ describe('T-686 — two prdt processes triggering the auto-backup at once', () =
 
   test('a held (non-stale) lock makes a concurrent tick defer quietly — no push attempted, nothing latched as failed', async () => {
     const backup = makeBare('backup')
-    metaGitSync(['remote', 'add', 'backup', backup])
+    metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
     const t = new Date('2026-09-26T02:10:00Z')
     const held = acquireBackupLock(projectDir, t.getTime())
     expect(held).not.toBeNull()
@@ -555,7 +556,7 @@ describe('T-686 — two prdt processes triggering the auto-backup at once', () =
   // still leave exactly one push landed and NEITHER call reporting a failure.
   test('two concurrent metaBackupTick calls on the same meta git-dir: exactly one push lands, neither reports a failure', async () => {
     const backup = makeBare('backup')
-    metaGitSync(['remote', 'add', 'backup', backup])
+    metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
     const t = new Date('2026-09-26T02:10:00Z')
 
     const [a, b] = await Promise.all([metaBackupTick(projectDir, { now: t }), metaBackupTick(projectDir, { now: t })])
@@ -591,7 +592,7 @@ describe('T-686 — two prdt processes triggering the auto-backup at once', () =
   // never masks or force-resolves an actual divergence.
   test('a real failure under concurrency still reports: the lock serializes, it does not paper over a genuine divergence', async () => {
     const backup = makeBare('backup')
-    metaGitSync(['remote', 'add', 'backup', backup])
+    metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
     expect((await metaBackupTick(projectDir, { now: new Date('2026-09-26T02:00:00Z') })).pushed).toBe(true)
     const branch = metaGitSync(['symbolic-ref', '--short', 'HEAD'])
 

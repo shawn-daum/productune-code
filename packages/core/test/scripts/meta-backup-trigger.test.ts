@@ -20,6 +20,7 @@ import os from 'os'
 import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
+import { networkAlias } from '../helpers/network-remote'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -145,7 +146,7 @@ describe.skipIf(!PYTHON3 || !NODE)('prdt CLI main — detached backup tick (T-50
     })
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t504-bare-'))
     execFileSync('git', ['init', '--bare', '-q', bare])
-    metaGit(['remote', 'add', 'backup', bare])
+    metaGit(['remote', 'add', 'backup', networkAlias(bare)])
     fs.writeFileSync(path.join(projectDir, '.prdt', 'meta.git', 'prdt-backup-state.json'), JSON.stringify({
       remote: 'backup', branch: 'main', last_attempt_at: '2026-09-11T01:02:03.000Z', last_ok: false,
       last_error: 'fatal: unable to access — could not resolve host',
@@ -177,7 +178,7 @@ describe.skipIf(!PYTHON3 || !NODE)('prdt CLI main — detached backup tick (T-50
     })
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t504-bare-'))
     execFileSync('git', ['init', '--bare', '-q', bare])
-    metaGit(['remote', 'add', 'backup', bare])
+    metaGit(['remote', 'add', 'backup', networkAlias(bare)])
     metaGit(['push', '-q', 'backup', 'HEAD'])
     metaGit(['remote', 'rename', 'backup', 'vault'])
     // no latch at all — the tick never ran here; doctor must still say it
@@ -225,7 +226,7 @@ describe.skipIf(!PYTHON3 || !NODE)('prdt CLI main — detached backup tick (T-50
     })
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t504-bare-'))
     execFileSync('git', ['init', '--bare', '-q', bare])
-    metaGit(['remote', 'add', 'backup', bare])
+    metaGit(['remote', 'add', 'backup', networkAlias(bare)])
     fs.writeFileSync(path.join(projectDir, '.prdt', 'config.json'), JSON.stringify({ slug: 'proj', meta: { backup_remote: '--force' } }))
     const d = runPrdt(['doctor'], { PRDT_META_BACKUP: '0' })
     expect(d.stdout).toMatch(/meta: `meta\.backup_remote` = '--force' is not a legal remote name/)
