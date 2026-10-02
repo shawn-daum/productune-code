@@ -693,6 +693,105 @@ describe('prdt track drop', () => {
   })
 })
 
+// T-915 (ship-entry review, sandbox repro): git resolves a bare `dev` / `main` /
+// `track/T-NNN` to refs/tags/<name> BEFORE refs/heads/<name>. A worker can make
+// a tag in the shared code repo from inside its worktree (`git tag dev <sha>`);
+// before this fix that tag became review's comparison base (a commit under it
+// vanished from the diff and still landed) and land's merge source. Every git
+// call in open/review/land/drop now names refs/heads/<name>.
+describe('T-915: a tag named like the base or the track branch never stands in for it', () => {
+  beforeEach(() => makeProject())
+
+  const has = (rev: string, ref: string) =>
+    spawnSync('git', ['merge-base', '--is-ancestor', rev, ref], { cwd: code }).status === 0
+
+  /** A commit X on the track that a `<base>` tag then hides, plus a visible commit Y on top. */
+  const hideUnderTag = (base: string, t = 'T-1') => {
+    commit(wt(t), 'x.txt', 'hidden\n', 'feat: x')
+    const x = git(wt(t), 'rev-parse', 'HEAD')
+    git(wt(t), 'tag', base, x)
+    commit(wt(t), 'y.txt', 'visible\n', 'feat: y')
+    return x
+  }
+
+  for (const base of ['dev', 'main']) {
+    const flag = base === 'main' ? ['--base', 'main'] : []
+
+    test(`open: a ${base} tag at another commit does not change where the track is cut`, () => {
+      commit(code, 'b.txt', 'dev only\n', 'feat: b')
+      git(code, 'tag', base, git(code, 'rev-parse', 'HEAD~1'))
+      expect(cli('track', 'open', 'T-1', ...flag).status).toBe(0)
+      expect(git(wt(), 'rev-parse', 'HEAD')).toBe(git(code, 'rev-parse', `refs/heads/${base}`))
+    })
+
+    test(`review: a ${base} tag at a track commit does not hide that commit from the diff, the counts or the preview`, () => {
+      cli('track', 'open', 'T-1', ...flag)
+      hideUnderTag(base)
+      const r = cli('track', 'review', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toContain(`track/T-1 vs ${base} (merge-base ${git(code, 'rev-parse', `refs/heads/${base}`).slice(0, 12)})`)
+      expect(r.out).toContain('2 commit(s) ahead')
+      expect(r.out).toContain('A  x.txt')
+      expect(r.out).toContain('+hidden')
+    })
+
+    test(`land: a ${base} tag at the track tip does not skip merging the real ${base} that moved`, () => {
+      cli('track', 'open', 'T-1', ...flag)
+      commit(wt(), 'c.txt', 'new\n', 'feat: c')
+      git(wt(), 'tag', base, git(wt(), 'rev-parse', 'HEAD'))
+      git(code, 'checkout', '-q', base)
+      commit(code, 'b.txt', `${base} moved\n`, 'feat: b')
+      const moved = git(code, 'rev-parse', 'HEAD')
+      git(code, 'checkout', '-q', 'dev')
+      const r = cli('track', 'land', 'T-1', ...flag)
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toContain(`merged ${base} (${moved.slice(0, 12)})`)
+      expect(r.out).toContain(`${base} fast-forwarded`)
+      expect(has(moved, `refs/heads/${base}`)).toBe(true)
+      expect(git(code, 'show', `refs/heads/${base}:c.txt`)).toBe('new')
+    })
+
+    test(`land: a ${base} tag at an unrelated commit is never merged into the track or ${base}`, () => {
+      cli('track', 'open', 'T-1', ...flag)
+      commit(wt(), 'c.txt', 'new\n', 'feat: c')
+      git(code, 'checkout', '-q', '-b', 'side', `refs/heads/${base}`)
+      commit(code, 'z.txt', 'unreviewed\n', 'feat: z')
+      const z = git(code, 'rev-parse', 'HEAD')
+      git(code, 'checkout', '-q', 'dev')
+      git(code, 'branch', '-q', '-D', 'side')
+      git(code, 'tag', base, z)
+      const r = cli('track', 'land', 'T-1', ...flag)
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).not.toContain(`merged ${base} (`)
+      expect(has(z, `refs/heads/${base}`)).toBe(false)
+      expect(git(code, 'show', `refs/heads/${base}:c.txt`)).toBe('new')
+      expect(git(code, 'rev-parse', `refs/tags/${base}`)).toBe(z)   // the tag itself is left alone
+    })
+  }
+
+  test('drop: a track/T-1 tag at dev does not make a track with unlanded commits look merged', () => {
+    cli('track', 'open', 'T-1')
+    commit(wt(), 'c.txt', 'new\n', 'feat: c')
+    git(code, 'tag', 'track/T-1', git(code, 'rev-parse', 'refs/heads/dev'))
+    const r = cli('track', 'drop', 'T-1')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('holds commits not on dev or main')
+    expect(fs.existsSync(wt())).toBe(true)
+  })
+
+  test('review and land: a track/T-1 tag does not stand in for the track branch', () => {
+    cli('track', 'open', 'T-1')
+    commit(wt(), 'c.txt', 'new\n', 'feat: c')
+    const tip = git(wt(), 'rev-parse', 'HEAD')
+    git(code, 'tag', 'track/T-1', git(code, 'rev-parse', 'refs/heads/dev'))
+    expect(cli('track', 'review', 'T-1').out).toContain('1 commit(s) ahead')
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(git(code, 'rev-parse', 'refs/heads/dev')).toBe(tip)
+    expect(r.out).toContain('branch track/T-1 deleted')
+  })
+})
+
 // ── the gate: one live developer/qa dispatch per checkout ────────────────────
 
 const REAL_LAST = '{"type":"assistant","message":{"model":"claude-sonnet-5","role":"assistant","content":[{"type":"text","text":"Working."}]}}'
