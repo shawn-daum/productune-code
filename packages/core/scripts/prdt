@@ -11644,7 +11644,7 @@ def cmd_track_open(args):
         _track_die(f"branch {branch} already exists with no worktree at {wt} — land or drop it first")
     _track_exclude(code, root)
     wt.parent.mkdir(parents=True, exist_ok=True)
-    r = _tgit(["worktree", "add", str(wt), "-b", branch, base], code)
+    r = _tgit(["worktree", "add", str(wt), "-b", branch, f"refs/heads/{base}"], code)
     if r.returncode != 0:
         _track_die("git worktree add failed: " + (r.stderr.strip() or r.stdout.strip()))
     _tgit(["config", f"branch.{branch}.prdtbase", base], code)
@@ -11706,12 +11706,16 @@ def cmd_track_review(args):
             print(f"warning: the open record for {tid} ({_track_record_path(code, tid)}) is unreadable or does "
                   f"not match this track — comparing against {base} from git config; a bare land will refuse",
                   file=sys.stderr)
-    mb = _tgit(["merge-base", base, branch], code).stdout.strip()
+    # T-915: every git argument names the branch by its full ref — a bare
+    # `dev`/`main`/`track/T-NNN` resolves refs/tags/<name> before
+    # refs/heads/<name>, so a worker-made tag would move the comparison base.
+    bref, tref = f"refs/heads/{base}", f"refs/heads/{branch}"
+    mb = _tgit(["merge-base", bref, tref], code).stdout.strip()
     if not mb:
         _track_die(f"{branch} shares no history with {base}")
     changed = _track_changed(wt, mb)
-    ahead = _tgit(["rev-list", "--count", f"{base}..{branch}"], code).stdout.strip() or "0"
-    behind = _tgit(["rev-list", "--count", f"{branch}..{base}"], code).stdout.strip() or "0"
+    ahead = _tgit(["rev-list", "--count", f"{bref}..{tref}"], code).stdout.strip() or "0"
+    behind = _tgit(["rev-list", "--count", f"{tref}..{bref}"], code).stdout.strip() or "0"
     dirty = [p for p in changed if _tgit(["diff", "--quiet", "HEAD", "--", p], wt).returncode != 0 or changed[p] == "??"]
     print(f"track {tid} review — {branch} vs {base} (merge-base {mb[:12]}): "
           f"{ahead} commit(s) ahead, {base} {behind} commit(s) ahead, {len(dirty)} uncommitted file(s)")
@@ -11727,7 +11731,7 @@ def cmd_track_review(args):
         outside = sorted(p for p in changed if p not in declared)
         print("   outside the dispatch record's change_meta.files: " + (", ".join(outside) if outside else "(none)"))
     # 2 merge preview
-    r = _tgit(["merge-tree", "--write-tree", "--name-only", "--no-messages", base, branch], code)
+    r = _tgit(["merge-tree", "--write-tree", "--name-only", "--no-messages", bref, tref], code)
     conflicts = r.stdout.splitlines()[1:] if r.returncode == 1 else []
     if r.returncode == 0:
         verdict = "clean"
@@ -11739,12 +11743,12 @@ def cmd_track_review(args):
     if dirty:
         print(f"   {len(dirty)} uncommitted file(s) are not in this preview — commit on {branch} first")
     # 3 overlap
-    base_changed = set(_tgit(["diff", "--name-only", "--no-renames", mb, base], code).stdout.split("\n")) - {""}
+    base_changed = set(_tgit(["diff", "--name-only", "--no-renames", mb, bref], code).stdout.split("\n")) - {""}
     overlap = sorted(base_changed & set(changed))
     print(f"\n3. overlap — files {base} changed since the merge-base that this track also changed: "
           + (", ".join(overlap) if overlap else "(none)"))
     if overlap:
-        print(_tgit(["diff", mb, base, "--", *overlap], code).stdout.rstrip("\n"))
+        print(_tgit(["diff", mb, bref, "--", *overlap], code).stdout.rstrip("\n"))
     # 4 verification
     print(f"\n4. verification — dispatch records for {tid}:")
     if not recs:
@@ -11830,6 +11834,7 @@ def cmd_track_land(args):
                        f"not match this track — pass --base main to merge it to main, or --base dev to "
                        f"merge it to dev; nothing was merged")
     base = args.base or "dev"
+    bref, tref = f"refs/heads/{base}", f"refs/heads/{branch}"   # T-915: never a bare name a tag can shadow
     st = _tgit(["status", "--porcelain"], wt)
     if st.returncode != 0 or st.stdout.strip():
         _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or drop them, then land")
@@ -11839,10 +11844,12 @@ def cmd_track_land(args):
                    "or give package.json a test script")
     lock = _track_lock(code)
     try:
-        old = _tgit(["rev-parse", f"refs/heads/{base}"], code).stdout.strip()
+        old = _tgit(["rev-parse", "--verify", "--quiet", bref], code).stdout.strip()
+        if not old:
+            _track_die(f"base branch {base} does not exist in the code repo")
         before = _lockfile_sig(wt)
-        if _tgit(["merge-base", "--is-ancestor", base, branch], wt).returncode != 0:
-            r = _tgit(["merge", "--no-edit", "--no-ff", base], wt)
+        if _tgit(["merge-base", "--is-ancestor", old, tref], wt).returncode != 0:
+            r = _tgit(["merge", "--no-edit", "--no-ff", bref], wt)
             if r.returncode != 0:
                 un = _tgit(["diff", "--name-only", "--diff-filter=U"], wt).stdout.split()
                 _tgit(["merge", "--abort"], wt)
@@ -11866,8 +11873,8 @@ def cmd_track_land(args):
             left = [ln[3:] if len(ln) > 3 else ln for ln in dirty.stdout.splitlines() if ln]
             _track_die(f"tests left the merged tree dirty ({', '.join(left) or '?'}) — {base} is unchanged; "
                        f"{branch} keeps the merge, clean it up there and land again")
-        new = _tgit(["rev-parse", branch], code).stdout.strip()
-        if _tgit(["merge-base", "--is-ancestor", f"refs/heads/{base}", new], code).returncode != 0:
+        new = _tgit(["rev-parse", "--verify", "--quiet", tref], code).stdout.strip()
+        if not new or _tgit(["merge-base", "--is-ancestor", bref, new], code).returncode != 0:
             _track_die(f"{base} moved during the land — land again")
         holder = None
         cur = None
@@ -11879,7 +11886,7 @@ def cmd_track_land(args):
         if holder:
             r = _tgit(["merge", "--ff-only", new], holder)
         else:
-            r = _tgit(["update-ref", f"refs/heads/{base}", new, old], code)
+            r = _tgit(["update-ref", bref, new, old], code)
         if r.returncode != 0:
             _track_die(f"fast-forwarding {base} failed: " + (r.stderr.strip() or r.stdout.strip())
                        + f" — {base} is unchanged")
@@ -11904,7 +11911,7 @@ def cmd_track_land(args):
     # (T-775 grill). We just fast-forwarded `base` to `branch`'s own tip, so
     # `branch` is provably contained in `base`: check that directly and delete
     # accordingly, never against whatever `code` happens to have checked out.
-    if _tgit(["merge-base", "--is-ancestor", branch, f"refs/heads/{base}"], code).returncode == 0:
+    if _tgit(["merge-base", "--is-ancestor", tref, bref], code).returncode == 0:
         r = _tgit(["branch", "-D", branch], code)
         print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
     else:
@@ -11923,8 +11930,9 @@ def cmd_track_drop(args):
         if st.returncode != 0 or st.stdout.strip():
             _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or "
                        f"`prdt track drop {tid} --force` to discard them")
-        on_dev = _tgit(["merge-base", "--is-ancestor", branch, "refs/heads/dev"], code).returncode == 0
-        on_main = _tgit(["merge-base", "--is-ancestor", branch, "refs/heads/main"], code).returncode == 0
+        tref = f"refs/heads/{branch}"   # T-915: a tag named like the branch never stands in for it
+        on_dev = _tgit(["merge-base", "--is-ancestor", tref, "refs/heads/dev"], code).returncode == 0
+        on_main = _tgit(["merge-base", "--is-ancestor", tref, "refs/heads/main"], code).returncode == 0
         if not (on_dev or on_main):
             _track_die(f"branch {branch} holds commits not on dev or main — `prdt track drop {tid} --force` "
                        f"to drop it anyway, or `prdt track land {tid}` to keep them")
