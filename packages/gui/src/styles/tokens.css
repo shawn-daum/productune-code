@@ -65,7 +65,7 @@
   --brand-accent: #A48AF8;                                        /* ← SWAP POINT (dark). violet → #1E84FF for Anchor blue */
   --accent: var(--brand-accent);                                  /* Anchor interaction.primary role */
   --accent-hover: color-mix(in srgb, var(--brand-accent) 84%, #000);  /* derived darker fill for hover */
-  --accent-contrast: #FFFFFF;                                     /* text/icon ON accent — text.static.white.primary */
+  --accent-contrast: #161718;                                     /* text/icon ON accent — dark accent #A48AF8 is light, so ink text (T-887: white measured 2.77:1, ink 6.47:1) */
   --accent-subtle: color-mix(in srgb, var(--brand-accent) 15%, transparent);  /* accent tint bg (pill/chip/highlight) */
 
   /* ── Surface (background depth) — Anchor background.* (§0.2 Surface) ── */
@@ -229,6 +229,7 @@
 @media (prefers-color-scheme: light) {
   :root:not(.theme-dark) {
     --brand-accent: #7C3AED;   /* ← SWAP POINT (light). violet → #1E84FF for Anchor blue */
+    --accent-contrast: #FFFFFF;   /* white on the deep light accent (5.70:1) — the dark base is ink (T-887) */
 
     --bg-base:            #F1F0EE;
     --bg-surface-base:    #FAFAF9;
@@ -309,6 +310,7 @@
 /* Explicit in-app toggle → .theme-light wins over OS preference (§0.7). */
 :root.theme-light {
   --brand-accent: #7C3AED;   /* ← SWAP POINT (light). violet → #1E84FF for Anchor blue */
+  --accent-contrast: #FFFFFF;   /* white on the deep light accent (5.70:1) — the dark base is ink (T-887) */
 
   --bg-base:            #F1F0EE;
   --bg-surface-base:    #FAFAF9;

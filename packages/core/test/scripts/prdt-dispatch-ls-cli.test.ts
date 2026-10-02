@@ -162,24 +162,20 @@ function eventJson(sessionId: string): string {
   })
 }
 
-/** Runs the gate against the SAME `$PRDT_HOME`, `inflight_max: -1` so its
- *  dispatches count is always printed (deny or not). Returns the gate's
+/** Runs the gate's caps report against the SAME `$PRDT_HOME`. Returns the gate's
  *  in-flight number, or `null` when the gate calls the axis `unmeasured`. */
 function gateInFlight(sessionId = 'sess-gate'): number | null {
-  fs.writeFileSync(path.join(machineHome, 'dispatch-caps.json'), JSON.stringify({ inflight_max: -1 }))
   const bin = shimBin()
+  // T-893: the deny line no longer carries measurements — read the gate's caps report
+  // (same measurement code, every axis printed, no event to judge).
   const res = spawnSync('bash', [HOOK], {
-    input: eventJson(sessionId), encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PRDT_HOME: machineHome },
+    input: '', encoding: 'utf8',
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PRDT_HOME: machineHome, PRDT_GATE_CAPS_REPORT: '1' },
   })
   expect(res.stderr).toBe('')
-  const out = JSON.parse(res.stdout).hookSpecificOutput
-  const text: string = out.permissionDecision === 'deny' ? out.permissionDecisionReason : out.additionalContext
-  // Full deny text names the axis as "in-flight dispatches: unmeasured (…)";
-  // an under-cap run instead gets the short per-session note "unmeasured
-  // dispatches" (no other axis over cap to force a full deny reason).
-  if (/in-flight dispatches: unmeasured/.test(text) || /unmeasured dispatches\b/.test(text)) return null
-  const m = text.match(/in-flight dispatches (\d+) machine-wide/)
+  const text: string = res.stdout
+  if (/in-flight dispatches: unmeasured/.test(text)) return null
+  const m = text.match(/in-flight dispatches: (\d+) \/ cap/)
   expect(m, `no in-flight count found in: ${text}`).toBeTruthy()
   return Number(m![1])
 }

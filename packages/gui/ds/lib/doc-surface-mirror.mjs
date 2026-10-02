@@ -22,7 +22,7 @@ export const MIRRORED_NAMES = ['accent', 'health-success', 'health-error']
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { stripComments, parseDeclarations, buildRawThemeMaps, resolveVarChains } from './parse-tokens.mjs'
+import { stripComments, parseDeclarations, buildRawThemeMaps, resolveVarChains } from '@productune/viewer/lib/parse-tokens.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const GUI_ROOT = path.resolve(__dirname, '../..')

@@ -395,7 +395,62 @@ if isinstance(ct, dict):
 else:
     task = "none"
 
-lines = [f"[prdt state] stage={stage} · version={version} · current_task={task}"]
+# ── T-849: `dec` / `req` — what is waiting on the user, same sets as the statusline ──
+# dec = open `type: decision` tickets; req = open `assignee: user` tickets that
+# are not decisions; every version directory, `backlog` and any non-version-shaped
+# directory skipped. Ids match TICKET_RE (an off-shape file name is dropped, the
+# same shape check the po-state tokens get), sorted NUMERICALLY, at most 5 then
+# `+N`. Empty → `none`; a failed walk → `?` (so "nothing waiting" and "could not
+# compute" stay distinguishable). A missing `docs/tickets` is "no tickets", not a
+# failure. Source is the markdown files, not `.prdt/index.db` (derived, can be stale).
+def waiting_lists(root):
+    dec, req = set(), set()
+    tickets_root = os.path.join(root, "docs", "tickets")
+    try:
+        vdirs = [d for d in os.listdir(tickets_root)
+                 if VERSION_RE.match(d) and os.path.isdir(os.path.join(tickets_root, d))]
+    except FileNotFoundError:
+        return [], []
+    for vd in vdirs:
+        dpath = os.path.join(tickets_root, vd)
+        for fn in os.listdir(dpath):          # an unreadable version dir raises → `?`
+            tid = fn[:-3]
+            if not (fn.endswith(".md") and TICKET_RE.match(tid)):
+                continue
+            try:
+                with open(os.path.join(dpath, fn), errors="replace") as f:
+                    head = f.read(600)
+            except OSError:
+                continue
+            ms = re.search(r"^status:\s*(\S+)", head, re.M)
+            if not ms or ms.group(1) != "open":
+                continue
+            mt = re.search(r"^(?:type|stage):\s*(\S+)", head, re.M)
+            ma = re.search(r"^assignee:\s*(\S+)", head, re.M)
+            if mt and mt.group(1) == "decision":
+                dec.add(tid)
+            elif ma and ma.group(1) == "user":
+                req.add(tid)
+    key = lambda t: int(t[2:])
+    return sorted(dec, key=key), sorted(req, key=key)
+
+
+def fmt_waiting(ids):
+    if ids is None:
+        return "?"
+    if not ids:
+        return "none"
+    s = ",".join(ids[:5])
+    return s + (f"+{len(ids) - 5}" if len(ids) > 5 else "")
+
+
+try:
+    _dec, _req = waiting_lists(os.path.dirname(os.path.dirname(state_path)))
+except Exception:
+    _dec = _req = None
+
+lines = [f"[prdt state] stage={stage} · version={version} · current_task={task}"
+         f" · dec={fmt_waiting(_dec)} · req={fmt_waiting(_req)}"]
 
 # ── T-586: register binding — ONE line, from the resolver, every prompt ────────
 # The register object (`~/.prdt/register`: audience · form · structure · address)

@@ -113,8 +113,15 @@ LC_ALL=C
 # fork costs more than the syscalls it saves at every payload size we see, and
 # `read -d ''` still drains to EOF so the harness never sees an EPIPE).
 IFS= read -r -d '' EV 2>/dev/null
-[ -n "$EV" ] || exit 0
+# T-893: `prdt dispatch caps` runs THIS script with PRDT_GATE_CAPS_REPORT=1 and
+# no event — the same measurement code prints every axis instead of judging a
+# dispatch, so the full report never drifts from what the gate enforces. Every
+# part that reads the event (project gate · `[ctx]` verdict) is skipped.
+CAPS_REPORT=""
+[ "${PRDT_GATE_CAPS_REPORT:-}" = "1" ] && CAPS_REPORT=1
+[ -n "$EV" ] || [ -n "$CAPS_REPORT" ] || exit 0
 
+if [ -z "$CAPS_REPORT" ]; then   # T-893: event-reading part — skipped in report mode (closing `fi` before the resource cap section)
 # ── prdt-project gate: silence everywhere else ────────────────────────────────
 # The ONLY pre-jq check, and it is here so that outside a prdt project this hook
 # forks nothing at all. `hook_event_name` and `tool_name` are deliberately NOT
@@ -502,6 +509,9 @@ fi
 case "$GATE" in
   *'"permissionDecision":"deny"'*) printf '%s\n' "$GATE"; exit 0 ;;
 esac
+else   # T-893 report mode: no dispatch to judge
+  GATE=""; WANT_MODEL="default"; WANT_PERSONA=""; WANT_CO=""; WANT_FILES=""; DIR=""; SID=""
+fi
 
 # ── T-695: machine resource cap ───────────────────────────────────────────────
 # WHY: 2026-09-26 one session ran 5–7 workers + 2 full suites + the cua VM at
@@ -569,8 +579,9 @@ esac
 # CAPS — the measured value OVER the cap denies (memory: UNDER the minimum).
 # Defaults sized on this machine (14 CPU / 36 GB) from the incidents above; any
 # key can be overridden by `$PRDT_HOME/dispatch-caps.json`, a machine-scope
-# JSON object of numbers the USER writes (no persona writes it — a PO write
-# path needs its own contracts §Overrides carve-out first).
+# JSON object of numbers the USER writes — or `prdt settings set dispatch.<key>
+# <number>` (T-896) on the user's instruction; `prdt dispatch caps` (T-893)
+# prints every axis, its cap and the cap's source.
 #   load_ratio       1.5  (21 on 14 cores) — 1.0 is crossed by one full suite
 #                         alone (every dispatch would wait on any test run);
 #                         2.0 is the band where tests already time out.
@@ -836,7 +847,6 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
 | ({inflight_sonnet_max: $cap0.inflight_max, inflight_opus_max: $cap0.inflight_max,
     inflight_haiku_max: $cap0.inflight_max, inflight_fable_max: $cap0.inflight_max,
     inflight_default_max: $cap0.inflight_max} + $cap0) as $cap
-| $cap["inflight_\($want_model)_max"] as $tier_cap
 | ([$loadavg | scan("[0-9]+\\.[0-9]+")] | first | if . == null then null else num end) as $load1
 | ($ncpu | num | if . == 0 then null else . end) as $ncpu
 | ($memsize | num | if . == 0 then null else . end) as $memsize
@@ -897,36 +907,49 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
 # worker's dispatch maps to (or null, never guessed, when there is no worker
 # evidence yet or its true dispatch_id matches no known candidate) — so a
 # swapped foreground pair is counted on the tier it is ACTUALLY running at,
-# without ever trusting the (possibly wrong) pairing.
-| (if $live_cands == null then null else ($live_cands | map(select(.live and .tier_model == $want_model)) | length) end) as $tier_inflight
+# without ever trusting the (possibly wrong) pairing. The tier axis below
+# counts it per requested tier (every tier in report mode).
 | (if $load1 != null and $ncpu != null then ($load1 / $ncpu) else null end) as $ratio
 | (if $memsize != null then ($memsize / 1073741824 | r2) else null end) as $gb
-| [
-  {k: "load", ok: ($ratio != null), over: ($ratio != null and $ratio > $cap.load_ratio),
-   text: (if $ratio != null then "CPU load 1m \($load1 | r2) on \($ncpu) cores = ratio \($ratio | r2) (cap \($cap.load_ratio) — sysctl vm.loadavg / hw.ncpu)"
-          else "CPU load: unmeasured (sysctl vm.loadavg / hw.ncpu)" end),
+| ($caps | keys) as $capkeys
+| def src($key): if ($capkeys | index($key)) != null then "dispatch-caps.json" else "default" end;
+  def tier_axis($tm):
+    $cap["inflight_\($tm)_max"] as $tc
+    | (if $live_cands == null then null else ($live_cands | map(select(.live and .tier_model == $tm)) | length) end) as $ti
+    | {k: "model_tier", name: "in-flight dispatches on tier \"\($tm)\"", ok: ($ti != null), over: ($ti != null and $ti > $tc),
+       short: "in-flight on tier \"\($tm)\" \($ti) / cap \($tc)",
+       val: ($ti | tostring), cap: "cap \($tc)", key: "inflight_\($tm)_max", src: src("inflight_\($tm)_max"),
+       how: "same run/dispatches liveness rule as the dispatches axis, grouped by the requested model tier; a marker not yet paired with its own Agent call is grouped by the model of the dispatch its own worker's first prompt names, never its own possibly-swapped `model` field, and dropped from every tier when that cannot be read yet",
+       free: "wait for a worker on the same model tier to return, or dispatch on a different tier"};
+  ([
+  {k: "load", name: "CPU load ratio", ok: ($ratio != null), over: ($ratio != null and $ratio > $cap.load_ratio),
+   short: "CPU load ratio \(($ratio // 0) | r2) / cap \($cap.load_ratio)",
+   val: (if $ratio != null then "\($ratio | r2) (1m \($load1 | r2) on \($ncpu) cores)" else "" end),
+   cap: "cap \($cap.load_ratio)", key: "load_ratio", src: src("load_ratio"),
+   how: "sysctl vm.loadavg / hw.ncpu",
    free: "wait for load to fall (a running suite or worker finishing)"},
-  {k: "memory", ok: ($memfree != null), over: ($memfree != null and $memfree < $cap.mem_free_pct_min),
-   text: (if $memfree != null then "available memory \($memfree)%\(if $gb != null then " of \($gb) GB" else "" end) (min \($cap.mem_free_pct_min)% — memory_pressure free percentage × hw.memsize)"
-          else "available memory: unmeasured (memory_pressure × hw.memsize)" end),
+  {k: "memory", name: "free memory", ok: ($memfree != null), over: ($memfree != null and $memfree < $cap.mem_free_pct_min),
+   short: "free memory \($memfree)% / min \($cap.mem_free_pct_min)%",
+   val: (if $memfree != null then "\($memfree)%\(if $gb != null then " of \($gb) GB" else "" end)" else "" end),
+   cap: "min \($cap.mem_free_pct_min)%", key: "mem_free_pct_min", src: src("mem_free_pct_min"),
+   how: "memory_pressure free percentage × hw.memsize",
    free: "free memory: stop a VM whose job is done (`prdt resource ls` names its owner) or wait for a suite to finish"},
-  {k: "dispatches", ok: ($inflight != null), over: ($inflight != null and $inflight > $cap.inflight_max),
-   text: (if $inflight != null then "in-flight dispatches \($inflight) machine-wide, every project (cap \($cap.inflight_max) — run/dispatches markers with no stopped_at, since < \($stale_h) h, and a live worker transcript: not ended by the harness, written within \($idle_min) min)"
-          else "in-flight dispatches: unmeasured (a run/dispatches marker is unreadable or a liveness probe failed — `prdt dispatch ls` names it)" end),
+  {k: "dispatches", name: "in-flight dispatches", ok: ($inflight != null), over: ($inflight != null and $inflight > $cap.inflight_max),
+   short: "in-flight dispatches \($inflight) / cap \($cap.inflight_max)",
+   val: ($inflight | tostring), cap: "cap \($cap.inflight_max)", key: "inflight_max", src: src("inflight_max"),
+   how: "machine-wide, every project: run/dispatches markers with no stopped_at, since < \($stale_h) h, and a live worker transcript (not ended by the harness, written within \($idle_min) min); unmeasured when a marker is unreadable or a liveness probe failed — `prdt dispatch ls` names it",
    free: "wait for a worker to return (`prdt dispatch ls` lists every project's in-flight dispatches and each marker's state)"},
-  {k: "suites", ok: ($suites != null), over: ($suites != null and $suites > $cap.suites_max),
-   text: (if $suites != null then "running full test suites \($suites) (cap \($cap.suites_max) — vitest entry processes (node …/vitest/vitest.mjs) with no .test. file filter, from ps; pnpm wrappers and pool workers are not counted)"
-          else "running full test suites: unmeasured (ps)" end),
+  {k: "suites", name: "running full test suites", ok: ($suites != null), over: ($suites != null and $suites > $cap.suites_max),
+   short: "full test suites \($suites) / cap \($cap.suites_max)",
+   val: ($suites | tostring), cap: "cap \($cap.suites_max)", key: "suites_max", src: src("suites_max"),
+   how: "vitest entry processes (node …/vitest/vitest.mjs) with no .test. file filter, from ps; pnpm wrappers and pool workers are not counted",
    free: "wait for a full test suite to finish"},
-  {k: "vms", ok: ($vms != null), over: ($vms != null and $vms > $cap.vms_max),
-   text: (if $vms != null then "resident VMs \($vms) (cap \($cap.vms_max) — com.apple.Virtualization.VirtualMachine processes, from ps)"
-          else "resident VMs: unmeasured (ps)" end),
-   free: "stop a VM whose job is done (`prdt resource ls` names its owner; a VM no marker owns is the user's)"},
-  {k: "model_tier", ok: ($tier_inflight != null), over: ($tier_inflight != null and $tier_inflight > $tier_cap),
-   text: (if $tier_inflight != null then "in-flight dispatches on model tier \"\($want_model)\" \($tier_inflight) machine-wide (cap \($tier_cap) — same run/dispatches liveness rule as the dispatches axis; a marker not yet paired with its own Agent call is grouped by the model of the dispatch its own worker's first prompt names, never its own possibly-swapped `model` field, and dropped from every tier when that cannot be read yet)"
-          else "in-flight dispatches on model tier \"\($want_model)\": unmeasured (a run/dispatches marker is unreadable or a liveness probe failed — `prdt dispatch ls` names it)" end),
-   free: "wait for a worker on the same model tier to return, or dispatch on a different tier"}
-  ] as $axes
+  {k: "vms", name: "resident VMs", ok: ($vms != null), over: ($vms != null and $vms > $cap.vms_max),
+   short: "resident VMs \($vms) / cap \($cap.vms_max)",
+   val: ($vms | tostring), cap: "cap \($cap.vms_max)", key: "vms_max", src: src("vms_max"),
+   how: "com.apple.Virtualization.VirtualMachine processes, from ps",
+   free: "stop a VM whose job is done (`prdt resource ls` names its owner; a VM no marker owns is the user's)"}
+  ] + ((if $report == "1" then ["sonnet", "opus", "haiku", "fable", "default"] else [$want_model] end) | map(tier_axis(.)))) as $axes
 | ($axes | map(select(.ok | not) | .k)) as $unm_axes
 | (if $caps_bad == "1" then $unm_axes + ["caps-file"] else $unm_axes end) as $unm
 | (if ($unm | length) == 0 then "" else
@@ -948,14 +971,21 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
           + ") — one live developer/qa dispatch per checkout (T-775): two tracks in one checkout share its working tree and its test runs, whether or not their files overlap."
           + "\nOpen a track for this dispatch's ticket — `prdt track open <T-NNN>` — and set `[ctx].worktree` to the path it prints, or wait for that dispatch to return (`prdt dispatch ls`)."
           + "\nNothing was spawned and no dispatch tokens were spent.") | tojson end) as $co_deny
+# T-893: one line, user-approved wording — over-cap axes only; the full
+# measurement, sources and remedies are `prdt dispatch caps` (report mode below).
 | (if ($over | length) == 0 then "" else
-     deny("[prdt dispatch gate] WAITING — the machine is over cap; nothing was spawned and no dispatch tokens were spent."
-          + "\nmeasured: " + ($axes | map(.text) | join(" · "))
-          + "\nover cap: " + ($over | map(.k) | join(", "))
-          + "\nfrees it: " + ($over | map(.free) | join("; "))
-          + " — then re-dispatch the same prompt. Caps: defaults in prdt-dispatch-gate.sh, machine override `$PRDT_HOME/dispatch-caps.json` (keys load_ratio · mem_free_pct_min · inflight_max · suites_max · vms_max · inflight_sonnet_max · inflight_opus_max · inflight_haiku_max · inflight_fable_max · inflight_default_max, numbers only)."
+     deny("[prdt dispatch gate] WAITING — not spawned: " + ($over | map(.short) | join(", "))
+          + ". Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`."
           + (if $note == "" then "" else "\n" + $note end)) | tojson end) as $deny
-| "\($unm | join(","))\n\(if $co_deny != "" then $co_deny else $deny end)\n\($note)\nend"
+| ($axes | map(
+     "\(if .over then "OVER " elif .ok then "ok   " else "?    " end) \(.name): \(if .ok then "\(.val) / \(.cap)" else "unmeasured" end)"
+     + "\n       cap key: \(.key) (\(.src)) · source: \(.how)"
+     + "\n       to free: \(.free)") | join("\n")) as $axes_text
+| ("[prdt dispatch gate] caps — measured now, machine-wide; over a cap = the gate denies a dispatch until it clears.\n"
+   + $axes_text
+   + "\nCap keys (numbers only; default in prdt-dispatch-gate.sh, override `$PRDT_HOME/dispatch-caps.json`): load_ratio · mem_free_pct_min · inflight_max · suites_max · vms_max · inflight_sonnet_max · inflight_opus_max · inflight_haiku_max · inflight_fable_max · inflight_default_max. Change with `prdt settings set dispatch.<key> <number>`, remove with `prdt settings unset dispatch.<key>`."
+   + (if $caps_bad == "1" then "\n`dispatch-caps.json` is not a JSON object of numbers — defaults in force." else "" end)) as $report_text
+| if $report == "1" then $report_text else "\($unm | join(","))\n\(if $co_deny != "" then $co_deny else $deny end)\n\($note)\nend" end
 JQ
 
 RES="$(jq -rn \
@@ -963,10 +993,16 @@ RES="$(jq -rn \
   --arg ps "$PSOUT" --argjson caps "$CAPS" --arg caps_bad "$CAPS_BAD" \
   --arg mark_bad "$MARK_BAD" --arg cands "$MARK_CANDS" --arg mtimes "$MTIMES" --arg tails "$TAILS" --arg heads "$HEADS" \
   --argjson stale_h "$STALE_H" --argjson idle_min "$IDLE_MIN" --argjson grace "$GRACE_S" \
-  --arg want_model "$WANT_MODEL" \
+  --arg want_model "$WANT_MODEL" --arg report "$CAPS_REPORT" \
   --arg want_persona "$WANT_PERSONA" --arg want_co "$WANT_CO" --arg proj_root "$PROJ_ROOT" --arg code_abs "$CODE_ABS" \
   --arg want_files "$WANT_FILES" --arg code_rel "$CODE_REL" --argjson allow "$META_ALLOW" \
   "$RPROG" 2>/dev/null)"
+
+if [ -n "$CAPS_REPORT" ]; then
+  [ -n "$RES" ] || { echo "prdt dispatch caps: the resource program failed (jq missing or output unparsed)" >&2; exit 1; }
+  printf '%s\n' "$RES"
+  exit 0
+fi
 
 # ── T-773: the schedule record — one `dispatch` row per dispatch that passed ──
 # Reached only once every check above passed (a deny above never records: that

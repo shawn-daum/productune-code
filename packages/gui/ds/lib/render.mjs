@@ -8,7 +8,7 @@
 // TEMPLATE_CSS below (the static, hand-authored stylesheet) — never to the
 // `--name: value;` custom-property declarations under `.ds-dark`/`.ds-light`,
 // which ARE the generated token data, not template.
-import { contrastVerdict, parseColor } from './color.mjs'
+import { contrastRatio, contrastVerdict, parseColor } from './color.mjs'
 import { COLOR_GROUP_ORDER, COLOR_GROUP_LABELS, colorGroupOf, isFontToken, isRadiusToken, isSpaceToken, isShadowToken } from './groups.mjs'
 
 function escapeHtml(str) {
@@ -36,6 +36,16 @@ function emitThemeVarBlock(className, resolvedMap) {
   return `.${className} {\n${lines.join('\n')}\n}`
 }
 
+function pairRow(name, value, accentRaw) {
+  const fg = parseColor(value)
+  const bg = accentRaw ? parseColor(accentRaw) : null
+  if (!fg || !bg || fg.a < 1 || bg.a < 1) return null
+  const ratio = Math.round(contrastRatio(fg, bg) * 100) / 100
+  const verdict = ratio >= 4.5 ? 'Pass' : 'Fail'
+  const sample = `<span class="ds-swatch ds-pair-sample" style="background-color:var(--accent);color:var(--${name})">Aa</span>`
+  return `<tr><td>${sample}</td><td><code>--${name}</code></td><td><code>${escapeHtml(value)}</code></td><td>${ratio.toFixed(2)}:1 vs --accent<br><small>글자색 — <code>--accent</code> 위에서 잰다 (surface 대비 아님)</small></td><td>${verdict}</td></tr>\n`
+}
+
 function colorRows(resolvedMap, baseOpaque, legacyAliasNames) {
   const byGroup = new Map()
   for (const [name, value] of resolvedMap) {
@@ -53,6 +63,11 @@ function colorRows(resolvedMap, baseOpaque, legacyAliasNames) {
     html += `<h3>${escapeHtml(COLOR_GROUP_LABELS[group])}</h3>\n`
     html += '<table class="ds-color-table"><thead><tr><th>Swatch</th><th>Name</th><th>Value</th><th>Contrast vs --bg-surface-base</th><th>Verdict</th></tr></thead><tbody>\n'
     for (const [name, value] of rows) {
+      if (name === 'accent-contrast') {
+        // text-on-accent token: measured as the pair against --accent, never against the surface.
+        const pair = pairRow(name, value, resolvedMap.get('accent'))
+        if (pair) { html += pair; continue }
+      }
       const verdict = contrastVerdict(value, baseOpaque)
       const ratioText = verdict ? `${verdict.ratio}:1` : '—'
       const verdictText = verdict ? verdict.verdict : '(not a color)'
@@ -236,6 +251,7 @@ table.ds-color-table code, table.ds-demo-table code, .ds-alias-list code {
   border-radius: var(--radius-4);
   border: 1px solid var(--border-inline);
 }
+.ds-pair-sample { width: auto; min-width: 28px; padding: 0 var(--space-4); text-align: center; font-weight: 600; font-size: 0.8rem; line-height: 20px; }
 .ds-alias-list { list-style: none; padding: 0; margin: 0; font-family: var(--font-mono); font-size: 0.85rem; }
 .ds-alias-list li { padding: var(--space-4) 0; border-bottom: 1px solid var(--border-item); }
 .ds-font-sample { padding: var(--space-8) 0; margin: 0; }

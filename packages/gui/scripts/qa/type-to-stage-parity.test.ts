@@ -21,8 +21,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { describe, it, expect } from 'vitest'
-import { GUI_ROOT } from '../../viewer/generate.mjs'
-import { versionProgressCounts } from '../../viewer/lib/render.mjs'
+import { GUI_ROOT } from '@productune/viewer/generate.mjs'
+import { versionProgressCounts } from '@productune/viewer/lib/render.mjs'
 
 // T-718: statusline-prdt.sh lives at `packages/core/scripts/…` — a SIBLING of
 // this package (`packages/gui`) under `packages/`, found relative to
@@ -32,7 +32,7 @@ import { versionProgressCounts } from '../../viewer/lib/render.mjs'
 // `git worktree add --detach <scratchpad>/x <sha>` names that checkout
 // anything else, e.g. "x" — PO-observed failure, 2026-09-27).
 const STATUSLINE_PATH = path.join(GUI_ROOT, '../core/scripts/statusline-prdt.sh')
-const RENDER_PATH = path.join(GUI_ROOT, 'viewer/lib/render.mjs')
+const RENDER_PATH = path.join(GUI_ROOT, '../viewer/lib/render.mjs')
 
 function which(bin: string): string | null {
   try {
@@ -101,8 +101,8 @@ describe.skipIf(!PYTHON3)('viewer version-progress counting parity with statusli
   it("render.mjs's versionProgressCounts agrees with the real statusline-prdt.sh over one shared fixture", () => {
     expect(fs.existsSync(STATUSLINE_PATH), `${STATUSLINE_PATH} does not exist`).toBe(true)
     const out = runStatuslineOverFixture()
-    const m = new RegExp(`\\b${STAGE} \\| (\\d+)/(\\d+)`).exec(out)
-    expect(m, `statusline output "${out}" has no "${STAGE} | n/m" segment`).not.toBeNull()
+    const m = new RegExp(`^\\S+ ${STAGE} (\\d+)/(\\d+)\\b`).exec(out)
+    expect(m, `statusline output "${out}" head is not "<slug> ${STAGE} n/m"`).not.toBeNull()
     const [, shellDone, shellTotal] = m as RegExpExecArray
 
     const viewerTickets = FIXTURE_TICKETS.map((t) => ({ frontmatter: { type: t.type, status: t.status } }))

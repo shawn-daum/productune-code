@@ -46,7 +46,8 @@ function prdt(lang: 'ko' | 'en', ...args: string[]) {
 }
 const file = (name: string) => path.join(prdtHome, name)
 const read = (name: string) => (fs.existsSync(file(name)) ? fs.readFileSync(file(name), 'utf8') : null)
-const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang']
+const CAP_KEYS = ['load_ratio', 'mem_free_pct_min', 'inflight_max', 'suites_max', 'vms_max', 'inflight_sonnet_max', 'inflight_opus_max', 'inflight_haiku_max', 'inflight_fable_max', 'inflight_default_max'].map((k) => `dispatch.${k}`)
+const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang', ...CAP_KEYS]
 
 describe('message catalog', () => {
   test('ko and en carry the same keys, none empty', () => {
@@ -182,5 +183,63 @@ describe.skipIf(!READY)('prdt register stays working (alias acceptance)', () => 
     expect(prdt('en', 'register', 'show', '--json').out).toContain('"structure": "planner-tables"')
     // register keeps its own refusal text
     expect(prdt('en', 'register', 'set', 'audience', 'boss').err).toContain('is outside its domain')
+  })
+})
+
+// T-896: the dispatch gate's cap keys — `dispatch.<key>`, numbers only, written to
+// `$PRDT_HOME/dispatch-caps.json` (sandbox PRDT_HOME; the real ~/.prdt is never touched).
+describe.skipIf(!READY)('prdt settings — dispatch cap keys (T-896)', () => {
+  const caps = () => { const t = read('dispatch-caps.json'); return t === null ? null : JSON.parse(t) }
+
+  test('set writes the number into dispatch-caps.json; unset removes it, the last one removes the file', () => {
+    expect(prdt('en', 'settings', 'set', 'dispatch.inflight_max', '7').status).toBe(0)
+    expect(caps()).toEqual({ inflight_max: 7 })
+    expect(prdt('en', 'settings', 'set', 'dispatch.load_ratio', '2.5').status).toBe(0)
+    expect(caps()).toEqual({ inflight_max: 7, load_ratio: 2.5 })
+    const list = JSON.parse(prdt('en', 'settings', '--json').out)
+    expect(list.find((e: any) => e.key === 'dispatch.inflight_max').value).toBe('7')
+    expect(prdt('en', 'settings', 'unset', 'dispatch.inflight_max').status).toBe(0)
+    expect(caps()).toEqual({ load_ratio: 2.5 })
+    expect(prdt('en', 'settings', 'unset', 'dispatch.load_ratio').status).toBe(0)
+    expect(caps()).toBeNull()
+  })
+
+  test('every cap key is accepted', () => {
+    for (const k of CAP_KEYS) expect(prdt('en', 'settings', 'set', k, '3').status, k).toBe(0)
+    expect(Object.keys(caps()).sort()).toEqual(CAP_KEYS.map((k) => k.slice('dispatch.'.length)).sort())
+  })
+
+  test('a non-number, a negative, NaN or a memory floor over 100 is refused, file untouched', () => {
+    prdt('en', 'settings', 'set', 'dispatch.vms_max', '2')
+    for (const [k, v] of [['dispatch.vms_max', 'nine'], ['dispatch.vms_max', '-1'], ['dispatch.vms_max', 'nan'], ['dispatch.vms_max', 'inf'], ['dispatch.mem_free_pct_min', '101']]) {
+      const r = prdt('en', 'settings', 'set', k, v)
+      expect(r.status, `${k} ${v}`).not.toBe(0)
+    }
+    expect(caps()).toEqual({ vms_max: 2 })
+  })
+
+  test('other keys in the file are kept; an unreadable file is never overwritten', () => {
+    fs.writeFileSync(file('dispatch-caps.json'), JSON.stringify({ suites_max: 2, note: 'x' }))
+    prdt('en', 'settings', 'set', 'dispatch.vms_max', '4')
+    expect(caps()).toEqual({ suites_max: 2, note: 'x', vms_max: 4 })
+    fs.writeFileSync(file('dispatch-caps.json'), '{not json')
+    const r = prdt('en', 'settings', 'set', 'dispatch.vms_max', '4')
+    expect(r.status).not.toBe(0)
+    expect(read('dispatch-caps.json')).toBe('{not json')
+  })
+
+  test('the gate reads what settings wrote (caps report names the override as source)', () => {
+    prdt('en', 'settings', 'set', 'dispatch.inflight_max', '7')
+    const r = prdt('en', 'dispatch', 'caps')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('cap key: inflight_max (dispatch-caps.json)')
+    expect(r.out).toContain('/ cap 7')
+  })
+
+  test('prdt dispatch caps prints every axis, the cap keys and the remedies', () => {
+    const r = prdt('en', 'dispatch', 'caps')
+    expect(r.status, r.err).toBe(0)
+    for (const w of ['CPU load ratio', 'free memory', 'in-flight dispatches:', 'running full test suites', 'resident VMs', 'tier "sonnet"', 'to free:', 'cap key: suites_max (default)', 'prdt settings set dispatch.<key> <number>'])
+      expect(r.out).toContain(w)
   })
 })

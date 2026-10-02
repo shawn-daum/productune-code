@@ -1068,8 +1068,173 @@ def _git(args, cwd):
                           capture_output=True, text=True, timeout=10)
 
 
+# T-848: `.prdt/meta.git` sits in the project tree, so a cloned repository can
+# carry one — config, hooks and all. Observed by running (git 2.54): a carried
+# `core.fsmonitor`, `core.hooksPath`, `$GIT_DIR/hooks/*`, an `include.path`, and a
+# `filter.<x>.clean` named by `$GIT_DIR/info/attributes` each RUN a command on
+# plain `status` / `add` / `commit`. Two layers, same on the TS side
+# (meta-git.ts metaGit — keep both in step):
+#  1. every meta git run pins the hook / fsmonitor / signing knobs on the
+#     command line (command-line config outranks every file);
+#  2. before any run, the repo's own config must hold only keys prdt or
+#     `prdt meta remote add` write — a driver key (filter / diff / merge /
+#     pager / editor / sshCommand / gpg / credential / alias / include / …)
+#     can't be neutralised by name, so an unknown key refuses the run.
+META_GIT_HARDEN = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+                   "-c", "commit.gpgsign=false"]
+_META_CONFIG_ALLOWED = re.compile(
+    r"(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase"
+    r"|precomposeunicode|symlinks|worktree|hookspath)"
+    r"|extensions\.(objectformat|refstorage)"
+    r"|user\.(name|email)|commit\.gpgsign|push\.(followtags|default)"
+    r"|remote\..+\.(url|pushurl|fetch)|branch\..+\.(remote|merge))")
+_meta_trust_cache = {}
+_META_URL_SCHEMES = {"https", "http", "ssh", "git", "git+ssh", "ssh+git", "ftp", "ftps"}
+
+
+# T-917 (user decision T-913 = A): a meta backup remote is a NETWORK remote only.
+# A push to a local repository runs THAT repository's hooks on this machine
+# (`-c core.hooksPath=/dev/null` never reaches the receiving side), so every
+# local path is refused — relative, absolute, `~`, `file://` — inside the
+# project or not. Shared fixture list with meta-git.ts metaRemoteUrlProblem:
+# test/fixtures/meta-remote-urls.json (keep both sides in step).
+META_LOCAL_REMOTE_RULE = "meta backup allows only network remotes (https, ssh, git or user@host:path)"
+
+
+def _meta_remote_url_problem(url):
+    """None for a network remote URL git reaches over https/http/ssh/git (or
+    scp-like `user@host:path`), else why not: a `<helper>::` transport or a
+    non-network `<scheme>://` (runs `git-remote-<x>`; `ext::` runs its
+    argument), or any local path (its hooks run on push)."""
+    if "::" in url.split("/", 1)[0]:
+        return "a remote-helper URL"
+    m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*)://", url)
+    if m:
+        scheme = m.group(1).lower()
+        if scheme in _META_URL_SCHEMES:
+            return None
+        if scheme != "file":
+            return "a remote-helper URL"
+    elif re.match(r"^[^/]+:", url):
+        return None  # scp-like host:path — git's own rule: a colon before any slash
+    return "a local path — " + META_LOCAL_REMOTE_RULE
+
+
+def _meta_gitfile_problem(gd):
+    """`.prdt/meta.git` as a FILE: git follows a `gitdir: <path>` file to a
+    repository anywhere — never handed to git."""
+    try:
+        with open(gd, "rb") as fh:
+            head = fh.read(4096).decode("utf-8", "replace")
+    except OSError:
+        head = ""
+    if head.startswith("gitdir:"):
+        tgt = head[len("gitdir:"):].strip().splitlines()[0] if head[len("gitdir:"):].strip() else "?"
+        return f".prdt/meta.git is a file pointing elsewhere (gitdir: {tgt})"
+    return ".prdt/meta.git is a file, not a directory"
+
+
+def meta_repo_present(root):
+    """Something stands at `.prdt/meta.git` that a meta command must answer for:
+    a repo (HEAD) or a non-directory there (a gitfile / symlink — refused by
+    meta_git_trust_problem, never silently 'not split')."""
+    gd = meta_git_dir(Path(root))
+    if (gd / "HEAD").exists() or (os.path.lexists(gd) and not gd.is_dir()) or gd.is_symlink():
+        return True
+    # refs/ or objects/ without a HEAD is still something to answer for — the
+    # trust check says "has refs but no config" (T-848 fix2)
+    return (gd / "refs").exists() or (gd / "objects").exists()
+
+
+def meta_git_trust_problem(root):
+    """None when `.prdt/meta.git` may be handed to git, else why not (one
+    English line). Never raises; never runs a command the repo could name
+    (`git config --file` reads one file and follows no include).
+    Order (T-848 fix1): every structural check runs BEFORE the 'no config yet'
+    answer — a config-less repo with a `commondir` reads ITS config instead."""
+    root = Path(root)
+    gd = meta_git_dir(root)
+    for p in (root / ".prdt", gd):
+        try:
+            st_ = os.lstat(p)
+        except FileNotFoundError:
+            return None  # no meta repo yet — nothing to trust
+        except OSError:
+            return f"cannot inspect {p.relative_to(root)}"
+        if stat.S_ISLNK(st_.st_mode):
+            return f"{p.relative_to(root)} is a symbolic link"
+    if not stat.S_ISDIR(os.lstat(gd).st_mode):
+        return _meta_gitfile_problem(gd)
+    for name in ("commondir", "config.worktree"):
+        if os.path.lexists(gd / name):
+            return f".prdt/meta.git/{name} exists"
+    try:
+        if stat.S_ISLNK(os.lstat(gd / "config").st_mode):
+            return ".prdt/meta.git/config is a symbolic link"
+    except FileNotFoundError:
+        for name in ("HEAD", "objects", "refs"):
+            if os.path.lexists(gd / name):
+                return f".prdt/meta.git has {name} but no config"
+        return None  # empty / not-yet-initialised dir — git sees no repo there
+    except OSError:
+        return "cannot inspect .prdt/meta.git/config"
+    try:
+        st = os.stat(gd / "config")
+        key = (str(gd), st.st_ino, st.st_size, st.st_mtime_ns)
+    except OSError:
+        return "cannot read .prdt/meta.git/config"
+    if key in _meta_trust_cache:
+        return _meta_trust_cache[key]
+    r = _git(["config", "--file", str(gd / "config"), "--no-includes", "--list", "-z"], root)
+    if r.returncode != 0:
+        prob = "cannot parse .prdt/meta.git/config"
+    else:
+        prob = None
+        for ent in r.stdout.split("\0"):
+            if not ent:
+                continue
+            k, _, v = ent.partition("\n")
+            if not _META_CONFIG_ALLOWED.fullmatch(k):
+                prob = f".prdt/meta.git/config sets {k}"
+                break
+            if k.endswith((".url", ".pushurl")) and k.startswith("remote."):
+                why = _meta_remote_url_problem(v)
+                if why:
+                    prob = f".prdt/meta.git/config {k} ({v}) is {why}"
+                    break
+        if prob is None:
+            # branch.<b>.remote may name a URL/path instead of a remote (T-848 fix1)
+            ents = [e.partition("\n") for e in r.stdout.split("\0") if e]
+            names = {m.group(1) for k, _, _ in ents
+                     for m in [re.fullmatch(r"remote\.(.+)\.(?:url|pushurl|fetch)", k)] if m}
+            for k, _, v in ents:
+                if k.startswith("branch.") and k.endswith(".remote") and v not in names:
+                    why = _meta_remote_url_problem(v)
+                    if why:
+                        prob = f".prdt/meta.git/config {k} ({v}) is {why}"
+                        break
+    _meta_trust_cache[key] = prob
+    return prob
+
+
+def meta_git_refusal(prob):
+    if META_LOCAL_REMOTE_RULE in prob:
+        # T-917: an older prdt accepted a local backup remote, so this one may be
+        # the user's own — say how to repoint it, not "came with a clone".
+        return ("prdt does not run git on this project's .prdt/meta.git: " + prob
+                + ". Point the remote at a network URL (`git --git-dir=.prdt/meta.git "
+                  "remote set-url <name> <url>`) or remove it, then run `prdt doctor`.")
+    return ("prdt does not run git on this project's .prdt/meta.git: " + prob
+            + " — prdt never writes this, so it may have come with a cloned "
+              "repository. Check it, remove it, then run `prdt doctor`.")
+
+
 def _meta_git(root, args):
-    return _git(["--git-dir", str(meta_git_dir(root)), "--work-tree", str(root), *args], root)
+    prob = meta_git_trust_problem(root)
+    if prob:
+        return subprocess.CompletedProcess(["git", *args], 128, "", meta_git_refusal(prob))
+    return _git([*META_GIT_HARDEN, "--git-dir", str(meta_git_dir(root)),
+                 "--work-tree", str(root), *args], root)
 
 
 def read_meta_allowlist(root):
@@ -1113,8 +1278,11 @@ def meta_backup_lag_warnings(root):
     without a network call in a non-blocking lint."""
     root = Path(root)
     gd = meta_git_dir(root)
-    if not (gd / "HEAD").exists():
+    if not meta_repo_present(root):
         return []  # no meta split — nothing to back up
+    prob = meta_git_trust_problem(root)  # T-848: say it, never silently skip
+    if prob:
+        return ["meta: " + meta_git_refusal(prob)]
     r = _meta_git(root, ["remote"])
     remotes = [x for x in r.stdout.splitlines() if x.strip()] if r.returncode == 0 else []
     if not remotes:
@@ -1366,11 +1534,17 @@ def init_meta_split(root):
             if r.returncode != 0:
                 return (r.stderr or "git init failed").strip()
         gd = meta_git_dir(root)
+        prob = meta_git_trust_problem(root)  # T-848: before `git init` follows a gitfile
+        if prob:
+            return meta_git_refusal(prob)
         if not (gd / "HEAD").exists():
             gd.parent.mkdir(parents=True, exist_ok=True)
             r = _git(["init", "--bare", "-q", str(gd)], root)
             if r.returncode != 0:
                 return (r.stderr or "meta git init failed").strip()
+        prob = meta_git_trust_problem(root)  # T-848: a clone-carried meta.git
+        if prob:
+            return meta_git_refusal(prob)
         # Idempotent repo-local config — mirrors meta-git.ts initMetaRepo (identity;
         # gpgsign/hooksPath neutralize the user's global gitconfig). core.worktree
         # is projectRoot (meta work-tree — unchanged by the split, §1).
@@ -2197,6 +2371,8 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
         # Already initialized — no-op. The code `.gitignore` managed block was
         # retired (PRD §v1.3 설계 결정 2, T-377), so there is nothing to resync here.
         return {"status": "exists", "root": str(root)}
+    if os.path.lexists(prdt) and not prdt.is_dir():
+        sys.exit(f"prdt init: {prdt} is a file, not a directory — move or remove it, then run `prdt init` again.")
     slug = slug or root.name
     if interactive and sys.stdin.isatty():
         slug = input(f"project slug [{slug}]: ").strip() or slug
@@ -2268,6 +2444,9 @@ def cmd_init(args):
         print(f"already initialized: {res['root']}/.prdt")
     else:
         print(f"initialized {res['slug']} · {res['version']} · {res['stage']} at {res['root']}/.prdt")
+        if str(res.get("meta_git", "ok")).startswith("skipped: "):
+            print(f"prdt init: 메타 저장소(.prdt/meta.git)는 설정하지 않았어요 — {res['meta_git'][len('skipped: '):]}",
+                  file=sys.stderr)
 
 
 # ── wiki refs (T-448) ─────────────────────────────────────────────────────────
@@ -4032,6 +4211,70 @@ def _write_token(name, value):
     atomic_write_text(path, value + "\n", mode=0o644)
 
 
+# T-896: the dispatch gate's cap keys (prdt-dispatch-gate.sh · `dispatch-caps.json`),
+# settable as `dispatch.<key>`. Numbers only: non-negative and finite; the memory
+# floor is a percentage.
+DISPATCH_CAP_KEYS = ("load_ratio", "mem_free_pct_min", "inflight_max", "suites_max", "vms_max",
+                     "inflight_sonnet_max", "inflight_opus_max", "inflight_haiku_max",
+                     "inflight_fable_max", "inflight_default_max")
+
+
+def _dispatch_caps_file():
+    return prdt_home() / "dispatch-caps.json"
+
+
+def _dispatch_caps_read():
+    """The caps file's object ({} when absent); None when present but not a JSON
+    object — the caller refuses to overwrite what it cannot read."""
+    path = _dispatch_caps_file()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _dispatch_cap_number(text):
+    try:
+        n = float(text)
+    except ValueError:
+        return None
+    return n if math.isfinite(n) and n >= 0 else None
+
+
+def _dispatch_cap_check(key, text):
+    n = _dispatch_cap_number(text)
+    if n is None or (key == "mem_free_pct_min" and n > 100):
+        return "shape"
+    return None
+
+
+def _dispatch_cap_get(key):
+    data = _dispatch_caps_read()
+    v = (data or {}).get(key)
+    return None if isinstance(v, bool) or not isinstance(v, (int, float)) else str(v)
+
+
+def _dispatch_cap_put(key, text):
+    data = _dispatch_caps_read()
+    if data is None:
+        sys.exit(msg(load_messages(), "settings.error.capsfile", path=str(_dispatch_caps_file())))
+    if text is None:
+        data.pop(key, None)
+    else:
+        n = _dispatch_cap_number(text)
+        data[key] = int(n) if n == int(n) else n
+    path = _dispatch_caps_file()
+    if not data:
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", mode=0o644)
+
+
 def settings_entries(droot):
     """Every machine setting: key · kind (enum|text) · domain/shape · get() ·
     put(value or None to reset). None when the register resolver is absent."""
@@ -4073,6 +4316,14 @@ def settings_entries(droot):
         "get": lambda: "en" if _read_token("cli-lang") == "en" else "ko",
         "put": lambda v: _write_token("cli-lang", v),
     })
+    for ck in DISPATCH_CAP_KEYS:
+        entries.append({
+            "key": f"dispatch.{ck}", "kind": "number", "domain": None,
+            "shape": "a non-negative number" + (" up to 100" if ck == "mem_free_pct_min" else ""),
+            "check": (lambda v, ck=ck: _dispatch_cap_check(ck, v)),
+            "get": (lambda ck=ck: _dispatch_cap_get(ck)),
+            "put": (lambda v, ck=ck: _dispatch_cap_put(ck, v)),
+        })
     return entries
 
 
@@ -4415,7 +4666,8 @@ def cmd_tickets_fmt(args, root):
 
 
 # ── T-746: hand-offs open the static viewer at the item ──────────────────────
-# The viewer generator lives in the prdt CHECKOUT (`packages/gui/viewer/`),
+# The viewer generator lives in the prdt CHECKOUT (`packages/viewer/`, its own
+# workspace package since T-871),
 # never in the project: found the same way the drift checks find their repo
 # (self-reference first, then PRDT_REPO), so a project with no code checkout
 # of its own still gets a viewer. Output is a derived cache under the
@@ -4428,12 +4680,86 @@ VIEWER_REL = Path(".prdt") / "scratch" / "viewer"
 VIEWER_JUMP_DIR = "at"
 
 
+# The generator's own inputs (T-871: `packages/viewer` is its own workspace
+# package): the bare imports (`marked`, `subset-font` — lib/render.mjs ·
+# lib/font-subset.mjs) and the Pretendard woff2 files it embeds, all under
+# `packages/viewer/node_modules`, plus the tokens file it reads from the
+# sibling `packages/gui`. Ordered as reported. Read from the CHECKOUT, never
+# from `.prdt/scratch`. The fix is the exact command install.sh §1c runs
+# (`prdt update` re-runs it), which installs only these — never electron.
+VIEWER_PACKAGES = ("marked", "subset-font")
+VIEWER_PRETENDARD_REL = Path("node_modules") / "pretendard" / "dist" / "web" / "static" / "woff2"
+VIEWER_TOKENS_REL = Path("gui") / "src" / "styles" / "tokens.css"
+VIEWER_INSTALL_CMD = "pnpm install --frozen-lockfile --filter @productune/viewer --ignore-scripts"
+
+
+def _viewer_diagnose():
+    """T-868: `(cli, None)` when this machine can run the viewer generator, or
+    `(None, "<cause as a fact> — <the one fix>")` naming the first cause that
+    stops it: node not on PATH · no prdt checkout · `cli.mjs` missing · a named
+    input missing under `packages/viewer` (T-871) or the tokens file under
+    `packages/gui`. Static — it never runs the generator (a run that fails is
+    `viewer_generate`'s cause)."""
+    if shutil.which("node") is None:
+        return None, "node 가 PATH 에 없어요 — node 를 설치한 뒤 다시 실행하세요 (예: `brew install node`)"
+    bases = list(_repo_root_candidates())
+    if not bases:
+        env = prdt_home() / "prdt.env"
+        repo = prdt_repo_from_env()
+        if repo:
+            fact = f"prdt 체크아웃을 찾지 못했어요 — {env} 의 PRDT_REPO={repo} 에 scripts/prdt 가 없어요"
+        else:
+            fact = f"prdt 체크아웃을 찾지 못했어요 — {env} 에 PRDT_REPO 가 없어요"
+        return None, f"{fact}. prdt 체크아웃에서 `packages/core/scripts/install.sh` 를 다시 실행하세요"
+    for base in bases:
+        viewer = base.parent / "viewer"
+        if (viewer / "cli.mjs").is_file():
+            break
+    else:
+        cli = bases[0].parent / "viewer" / "cli.mjs"
+        return None, (f"뷰어 생성기 {cli} 가 없어요 — 이 체크아웃이 불완전해요. "
+                      f"`prdt update` 로 체크아웃을 갱신하세요")
+    code = base.parent.parent
+    fix = f"`cd {code} && {VIEWER_INSTALL_CMD}`"
+    modules = viewer / "node_modules"
+    if not modules.is_dir():
+        return None, f"{modules} 가 없어요 — 뷰어 의존성이 설치되지 않았어요. {fix}"
+    missing = [pkg for pkg in VIEWER_PACKAGES if not (modules / pkg / "package.json").is_file()]
+    if not (viewer / VIEWER_PRETENDARD_REL).is_dir():
+        missing.append("pretendard")
+    if missing:
+        return None, (f"{modules} 에 {', '.join(missing)} 가 없어요 — 설치된 의존성이 뷰어 생성기보다 오래됐어요. {fix}")
+    tokens = base.parent / VIEWER_TOKENS_REL
+    if not tokens.is_file():
+        return None, (f"{tokens} 가 없어요 — 이 체크아웃이 불완전해요. "
+                      f"`prdt update` 로 체크아웃을 갱신하세요")
+    return viewer / "cli.mjs", None
+
+
 def _viewer_generator():
-    for base in _repo_root_candidates():
-        cli = base.parent / "gui" / "viewer" / "cli.mjs"
-        if cli.is_file() and (base.parent / "gui" / "node_modules").is_dir():
-            return cli
-    return None
+    return _viewer_diagnose()[0]
+
+
+def viewer_problem():
+    """The cause text `_viewer_diagnose` names, or None when the generator can run."""
+    return _viewer_diagnose()[1]
+
+
+def viewer_doctor_warnings():
+    """`prdt doctor`: the same finding `prdt viewer` prints; silent when it works."""
+    problem = viewer_problem()
+    return [f"viewer: 뷰어를 만들 수 없어요 — {problem}"] if problem else []
+
+
+def _first_error_line(text):
+    """The first stderr line worth quoting: the first line naming an `Error`,
+    else the first non-empty one (node prints `node:internal/…:NN` and a code
+    frame ahead of the message)."""
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    for l in lines:
+        if re.search(r"\w*Error\b", l):
+            return l[:300]
+    return lines[0][:300] if lines else ""
 
 
 def _scratch_walk(root, parts):
@@ -4541,24 +4867,30 @@ def viewer_scratch_message(rel, kind):
     return f"prdt viewer: {rel} 를 열지 못해서 뷰어를 만들지 않았어요."
 
 
-def viewer_regenerate(root):
-    """Regenerate `<root>/.prdt/scratch/viewer/viewer.html`; the page's path,
-    or None when there is no generator / node, generation failed, or the
-    viewer directory chain holds a symlink (T-842 — nothing is written)."""
-    cli = _viewer_generator()
+def viewer_generate(root):
+    """`(page, None)` after regenerating `<root>/.prdt/scratch/viewer/viewer.html`,
+    or `(None, cause)` — the cause as `_viewer_diagnose` or the failed run names
+    it (T-868); a viewer directory chain holding a symlink (T-842) writes
+    nothing and answers with the scratch message."""
+    cli, problem = _viewer_diagnose()
+    if cli is None:
+        return None, problem
     node = shutil.which("node")
-    if cli is None or node is None:
-        return None
-    if not viewer_scratch_safe(root):
-        return None
+    scratch = viewer_scratch_problem(root)
+    if scratch:
+        return None, viewer_scratch_message(*scratch).replace("prdt viewer: ", "", 1)
     out = Path(root) / VIEWER_REL / "viewer.html"
+    fix = f"직접 실행해 전체 오류를 보세요: `{node} {cli} --repo-root {root} --out {out}`"
     try:
         r = subprocess.run([node, str(cli), "--repo-root", str(root), "--out", str(out)],
                            capture_output=True, text=True, timeout=120)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+    except subprocess.TimeoutExpired:
+        return None, f"뷰어 생성기가 120초 안에 끝나지 않았어요. {fix}"
+    except OSError as e:
+        return None, f"뷰어 생성기를 실행하지 못했어요 — {e}. {fix}"
     if r.returncode != 0 or not out.is_file():
-        return None
+        first = _first_error_line(r.stderr) or f"종료 코드 {r.returncode}, 오류 출력 없음"
+        return None, f"뷰어 생성기가 실패했어요 — {first}. {fix}"
     # T-850 (review C3): a success clears the regen worker's failure stamp, so
     # the next doc write regenerates at once instead of waiting out the backoff.
     # unlink never follows a link; the directory chain is re-walked with O_NOFOLLOW.
@@ -4570,7 +4902,12 @@ def viewer_regenerate(root):
             pass
         finally:
             os.close(fd)
-    return out
+    return out, None
+
+
+def viewer_regenerate(root):
+    """The regenerated page's path, or None (see `viewer_generate` for why)."""
+    return viewer_generate(root)[0]
 
 
 def _auto_open_hook():
@@ -4721,7 +5058,10 @@ def viewer_links(root, targets, labels=None):
     literal `--no-open` on that same command line."""
     labels = labels or {}
     keys = {t: viewer_anchor(root, t) for t in targets}
-    viewer = viewer_regenerate(root) if any(keys.values()) else None
+    viewer, problem = viewer_generate(root) if any(keys.values()) else (None, None)
+    if problem:
+        # T-868: the markdown fallback below stays; one stderr line says why.
+        print(f"prdt: 뷰어 링크 대신 파일 링크를 냈어요 — {problem}", file=sys.stderr)
     lines = []
     for t in targets:
         key = keys[t]
@@ -4749,9 +5089,9 @@ def cmd_viewer(args):
         problem = viewer_scratch_problem(root)
         if problem:
             sys.exit(viewer_scratch_message(*problem))
-        viewer = viewer_regenerate(root)
+        viewer, problem = viewer_generate(root)
         if viewer is None:
-            sys.exit("prdt viewer: 뷰어를 만들지 못했어요 — node 와 prdt 체크아웃의 packages/gui 의존성이 필요해요 (`prdt doctor`).")
+            sys.exit(f"prdt viewer: 뷰어를 만들지 못했어요 — {problem}")
         print(f"[viewer](file://{viewer})")
         return
     for line in viewer_links(root, args.targets):
@@ -6598,6 +6938,8 @@ def cmd_meta(args):
         cmd_meta_relocate(root, args)
     elif args.action == "log":
         res = _meta_call(root, "log", str(max(1, args.limit)))
+        if res.get("error"):
+            sys.exit(f"prdt meta log: {res['error']}")
         if not res.get("exists"):
             print("메타 분리가 아직 적용되지 않은 프로젝트예요 (.prdt/meta.git 없음)")
             return
@@ -6614,6 +6956,9 @@ def cmd_meta(args):
             if len(rest) != 3:
                 sys.exit("usage: prdt meta remote add <name> <url>")
             _, name, url = rest
+            why = _meta_remote_url_problem(url)
+            if why:  # same check the trust gate applies on read — never write what it would refuse
+                sys.exit(f"prdt meta: remote 설정 실패 — {url} is {why}; prdt would refuse the whole meta repo afterwards")
             res = _meta_call(root, "remote-add", name, url)
             if not res.get("ok"):
                 sys.exit(f"prdt meta: remote 설정 실패 — {res.get('error') or '?'}")
@@ -6625,6 +6970,8 @@ def cmd_meta(args):
             print(f"지금 바로 push: prdt meta push {name}")
         elif not rest:
             res = _meta_call(root, "remote-list")
+            if res.get("error"):
+                sys.exit(f"prdt meta remote: {res['error']}")
             if not res.get("exists"):
                 print("메타 분리가 아직 적용되지 않은 프로젝트예요 (.prdt/meta.git 없음)")
                 return
@@ -8945,6 +9292,75 @@ def feature_vocab_warnings(root, tickets, cfg, vocab, problems, specs):
         if vocab[key]["kind"] == "area" and key in specs:
             warns.append(f"feature: config features.vocab '{key}' is kind: area but "
                          f"docs/features/{key}.md exists — set kind: feature or remove the spec")
+    warns.extend(feature_taxonomy_warnings(cfg, vocab))
+    return warns
+
+
+def feature_taxonomy_warnings(cfg, vocab):
+    """T-882 — the feature taxonomy the viewer's feature screen draws lives in
+    the vocab block itself (`features.taxonomy` {areas, kinds} + each vocab
+    entry's `label` · `taxonomy` {kind, area, def, links}), so W4 above
+    already checks every ticket's `feature:` value against the taxonomy's
+    keys. These lines catch the entries the screen would drop or mis-draw.
+    Silent when `features.taxonomy` is absent (a project that has none)."""
+    feat = cfg.get("features") if isinstance(cfg.get("features"), dict) else {}
+    tax = feat.get("taxonomy")
+    if tax is None:
+        return []
+    pre = "feature: config features.taxonomy"
+    if not isinstance(tax, dict):
+        return [f"{pre} is not an object"]
+    warns, keys = [], {}
+    for name in ("areas", "kinds"):
+        lst = tax.get(name)
+        if not isinstance(lst, list) or not lst:
+            warns.append(f"{pre}.{name} is missing or empty")
+            keys[name] = set()
+            continue
+        seen = set()
+        for i, it in enumerate(lst):
+            k = it.get("key") if isinstance(it, dict) else None
+            if not isinstance(k, str) or not FEATURE_KEY_RE.match(k):
+                warns.append(f"{pre}.{name}[{i}] has no kebab-case key")
+                continue
+            if k in seen:
+                warns.append(f"{pre}.{name} key '{k}' appears twice")
+            seen.add(k)
+            if not isinstance(it.get("name"), str) or not it["name"].strip():
+                warns.append(f"{pre}.{name} '{k}' has no name")
+        keys[name] = seen
+    raw = feat.get("vocab") if isinstance(feat.get("vocab"), dict) else {}
+    for key in raw:
+        ent = raw[key] if isinstance(raw[key], dict) else {}
+        t = ent.get("taxonomy")
+        where = f"feature: config features.vocab '{key}'"
+        if not isinstance(t, dict):
+            warns.append(f"{where} has no taxonomy — the viewer's feature screen leaves it out")
+            continue
+        area, kind = t.get("area"), t.get("kind")
+        if not isinstance(area, str):
+            warns.append(f"{where} taxonomy area is not a string — the viewer's feature screen leaves it out")
+        elif area not in keys["areas"]:
+            warns.append(f"{where} taxonomy area '{area}' is not a features.taxonomy.areas key"
+                         " — the viewer's feature screen leaves it out")
+        if not isinstance(kind, str):
+            warns.append(f"{where} taxonomy kind is not a string")
+        elif kind not in keys["kinds"]:
+            warns.append(f"{where} taxonomy kind '{kind}' is not a features.taxonomy.kinds key")
+        if not isinstance(ent.get("label"), str) or not ent["label"].strip():
+            warns.append(f"{where} has no label — the feature screen shows the key instead")
+        if not isinstance(t.get("def"), str) or not t["def"].strip():
+            warns.append(f"{where} taxonomy has no def")
+        links = t.get("links", [])
+        if not isinstance(links, list):
+            warns.append(f"{where} taxonomy links is not a list")
+            continue
+        for l in links:
+            to = l.get("to") if isinstance(l, dict) else None
+            if not isinstance(to, str):
+                warns.append(f"{where} taxonomy link to is not a string")
+            elif to not in vocab or to == key:
+                warns.append(f"{where} taxonomy link to '{to}' names no other vocab key")
     return warns
 
 
@@ -11121,7 +11537,19 @@ def _track_base(code, branch):
 # `main` only refuses, a forged/deleted `dev` falls back to the pre-T-833 dev
 # default — `main` still moves only on an explicit `--base main` (T-784).
 # Unreadable/corrupt/mismatched/symlinked → fail closed (refuse a bare land).
+# T-834: a worker's writes there are denied by prdt-worktree-guard.sh; a
+# record with a key given twice (`{"base":"main",…,"base":"dev"}` — json.loads
+# keeps the last) is BAD, never silently read as its last value.
 TRACK_RECORD_MISSING, TRACK_RECORD_BAD = object(), object()
+
+
+def _no_dup_keys(pairs):
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            raise ValueError(f"duplicate key {k!r}")
+        out[k] = v
+    return out
 
 
 def _track_record_path(code, tid):
@@ -11150,7 +11578,7 @@ def _track_record_read(code, tid, branch):
     try:
         fd = os.open(str(p), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         with os.fdopen(fd, "r", encoding="utf-8") as f:
-            rec = json.loads(f.read(65536))
+            rec = json.loads(f.read(65536), object_pairs_hook=_no_dup_keys)
     except (OSError, ValueError):
         return TRACK_RECORD_BAD
     if not (isinstance(rec, dict) and rec.get("ticket") == tid and rec.get("branch") == branch
@@ -11197,7 +11625,12 @@ def _track_exclude(code, root):
     nests `tracks/` inside the code work tree, so that repo's own
     info/exclude needs the same line."""
     gd_meta = meta_git_dir(root)
-    if gd_meta.is_dir():
+    # T-911: a symlinked / untrusted meta.git could point the write outside the
+    # project (is_dir follows links) — skip it, say so in one line.
+    prob = meta_git_trust_problem(root)
+    if prob:
+        print(f"meta exclude skipped: {prob}", file=sys.stderr)
+    elif gd_meta.is_dir():
         _exclude_add(gd_meta)
     if Path(code).resolve() != Path(root).resolve():
         return
@@ -11222,7 +11655,7 @@ def cmd_track_open(args):
         _track_die(f"branch {branch} already exists with no worktree at {wt} — land or drop it first")
     _track_exclude(code, root)
     wt.parent.mkdir(parents=True, exist_ok=True)
-    r = _tgit(["worktree", "add", str(wt), "-b", branch, base], code)
+    r = _tgit(["worktree", "add", str(wt), "-b", branch, f"refs/heads/{base}"], code)
     if r.returncode != 0:
         _track_die("git worktree add failed: " + (r.stderr.strip() or r.stdout.strip()))
     _tgit(["config", f"branch.{branch}.prdtbase", base], code)
@@ -11272,13 +11705,28 @@ def _track_records(root, tid):
 def cmd_track_review(args):
     root, code, tid, wt, branch = _track_ctx(args)
     _track_require_open(code, wt, branch, tid)
-    base = _track_base(code, branch)
-    mb = _tgit(["merge-base", base, branch], code).stdout.strip()
+    # T-834: the comparison base comes from the PO-side open record, which a
+    # worker cannot write; `branch.<b>.prdtbase` git config (worker-writable)
+    # is read only for a track with no record (opened before T-833).
+    rec = _track_record_read(code, tid, branch)
+    if rec in TRACK_BASES:
+        base = rec
+    else:
+        base = _track_base(code, branch)
+        if rec is TRACK_RECORD_BAD:
+            print(f"warning: the open record for {tid} ({_track_record_path(code, tid)}) is unreadable or does "
+                  f"not match this track — comparing against {base} from git config; a bare land will refuse",
+                  file=sys.stderr)
+    # T-915: every git argument names the branch by its full ref — a bare
+    # `dev`/`main`/`track/T-NNN` resolves refs/tags/<name> before
+    # refs/heads/<name>, so a worker-made tag would move the comparison base.
+    bref, tref = f"refs/heads/{base}", f"refs/heads/{branch}"
+    mb = _tgit(["merge-base", bref, tref], code).stdout.strip()
     if not mb:
         _track_die(f"{branch} shares no history with {base}")
     changed = _track_changed(wt, mb)
-    ahead = _tgit(["rev-list", "--count", f"{base}..{branch}"], code).stdout.strip() or "0"
-    behind = _tgit(["rev-list", "--count", f"{branch}..{base}"], code).stdout.strip() or "0"
+    ahead = _tgit(["rev-list", "--count", f"{bref}..{tref}"], code).stdout.strip() or "0"
+    behind = _tgit(["rev-list", "--count", f"{tref}..{bref}"], code).stdout.strip() or "0"
     dirty = [p for p in changed if _tgit(["diff", "--quiet", "HEAD", "--", p], wt).returncode != 0 or changed[p] == "??"]
     print(f"track {tid} review — {branch} vs {base} (merge-base {mb[:12]}): "
           f"{ahead} commit(s) ahead, {base} {behind} commit(s) ahead, {len(dirty)} uncommitted file(s)")
@@ -11294,7 +11742,7 @@ def cmd_track_review(args):
         outside = sorted(p for p in changed if p not in declared)
         print("   outside the dispatch record's change_meta.files: " + (", ".join(outside) if outside else "(none)"))
     # 2 merge preview
-    r = _tgit(["merge-tree", "--write-tree", "--name-only", "--no-messages", base, branch], code)
+    r = _tgit(["merge-tree", "--write-tree", "--name-only", "--no-messages", bref, tref], code)
     conflicts = r.stdout.splitlines()[1:] if r.returncode == 1 else []
     if r.returncode == 0:
         verdict = "clean"
@@ -11306,12 +11754,12 @@ def cmd_track_review(args):
     if dirty:
         print(f"   {len(dirty)} uncommitted file(s) are not in this preview — commit on {branch} first")
     # 3 overlap
-    base_changed = set(_tgit(["diff", "--name-only", "--no-renames", mb, base], code).stdout.split("\n")) - {""}
+    base_changed = set(_tgit(["diff", "--name-only", "--no-renames", mb, bref], code).stdout.split("\n")) - {""}
     overlap = sorted(base_changed & set(changed))
     print(f"\n3. overlap — files {base} changed since the merge-base that this track also changed: "
           + (", ".join(overlap) if overlap else "(none)"))
     if overlap:
-        print(_tgit(["diff", mb, base, "--", *overlap], code).stdout.rstrip("\n"))
+        print(_tgit(["diff", mb, bref, "--", *overlap], code).stdout.rstrip("\n"))
     # 4 verification
     print(f"\n4. verification — dispatch records for {tid}:")
     if not recs:
@@ -11397,6 +11845,7 @@ def cmd_track_land(args):
                        f"not match this track — pass --base main to merge it to main, or --base dev to "
                        f"merge it to dev; nothing was merged")
     base = args.base or "dev"
+    bref, tref = f"refs/heads/{base}", f"refs/heads/{branch}"   # T-915: never a bare name a tag can shadow
     st = _tgit(["status", "--porcelain"], wt)
     if st.returncode != 0 or st.stdout.strip():
         _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or drop them, then land")
@@ -11406,10 +11855,12 @@ def cmd_track_land(args):
                    "or give package.json a test script")
     lock = _track_lock(code)
     try:
-        old = _tgit(["rev-parse", f"refs/heads/{base}"], code).stdout.strip()
+        old = _tgit(["rev-parse", "--verify", "--quiet", bref], code).stdout.strip()
+        if not old:
+            _track_die(f"base branch {base} does not exist in the code repo")
         before = _lockfile_sig(wt)
-        if _tgit(["merge-base", "--is-ancestor", base, branch], wt).returncode != 0:
-            r = _tgit(["merge", "--no-edit", "--no-ff", base], wt)
+        if _tgit(["merge-base", "--is-ancestor", old, tref], wt).returncode != 0:
+            r = _tgit(["merge", "--no-edit", "--no-ff", bref], wt)
             if r.returncode != 0:
                 un = _tgit(["diff", "--name-only", "--diff-filter=U"], wt).stdout.split()
                 _tgit(["merge", "--abort"], wt)
@@ -11433,8 +11884,8 @@ def cmd_track_land(args):
             left = [ln[3:] if len(ln) > 3 else ln for ln in dirty.stdout.splitlines() if ln]
             _track_die(f"tests left the merged tree dirty ({', '.join(left) or '?'}) — {base} is unchanged; "
                        f"{branch} keeps the merge, clean it up there and land again")
-        new = _tgit(["rev-parse", branch], code).stdout.strip()
-        if _tgit(["merge-base", "--is-ancestor", f"refs/heads/{base}", new], code).returncode != 0:
+        new = _tgit(["rev-parse", "--verify", "--quiet", tref], code).stdout.strip()
+        if not new or _tgit(["merge-base", "--is-ancestor", bref, new], code).returncode != 0:
             _track_die(f"{base} moved during the land — land again")
         holder = None
         cur = None
@@ -11446,7 +11897,7 @@ def cmd_track_land(args):
         if holder:
             r = _tgit(["merge", "--ff-only", new], holder)
         else:
-            r = _tgit(["update-ref", f"refs/heads/{base}", new, old], code)
+            r = _tgit(["update-ref", bref, new, old], code)
         if r.returncode != 0:
             _track_die(f"fast-forwarding {base} failed: " + (r.stderr.strip() or r.stdout.strip())
                        + f" — {base} is unchanged")
@@ -11471,7 +11922,7 @@ def cmd_track_land(args):
     # (T-775 grill). We just fast-forwarded `base` to `branch`'s own tip, so
     # `branch` is provably contained in `base`: check that directly and delete
     # accordingly, never against whatever `code` happens to have checked out.
-    if _tgit(["merge-base", "--is-ancestor", branch, f"refs/heads/{base}"], code).returncode == 0:
+    if _tgit(["merge-base", "--is-ancestor", tref, bref], code).returncode == 0:
         r = _tgit(["branch", "-D", branch], code)
         print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
     else:
@@ -11490,8 +11941,9 @@ def cmd_track_drop(args):
         if st.returncode != 0 or st.stdout.strip():
             _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or "
                        f"`prdt track drop {tid} --force` to discard them")
-        on_dev = _tgit(["merge-base", "--is-ancestor", branch, "refs/heads/dev"], code).returncode == 0
-        on_main = _tgit(["merge-base", "--is-ancestor", branch, "refs/heads/main"], code).returncode == 0
+        tref = f"refs/heads/{branch}"   # T-915: a tag named like the branch never stands in for it
+        on_dev = _tgit(["merge-base", "--is-ancestor", tref, "refs/heads/dev"], code).returncode == 0
+        on_main = _tgit(["merge-base", "--is-ancestor", tref, "refs/heads/main"], code).returncode == 0
         if not (on_dev or on_main):
             _track_die(f"branch {branch} holds commits not on dev or main — `prdt track drop {tid} --force` "
                        f"to drop it anyway, or `prdt track land {tid}` to keep them")
@@ -11791,12 +12243,36 @@ def _dispatch_state(data, now):
     return "live"
 
 
+def _gate_hook_path():
+    """prdt-dispatch-gate.sh — the bound install mirror first, the repo copy next
+    to this file as fallback (same order as `_register_hook_path`)."""
+    for cand in (prdt_home() / "hooks" / "prdt-dispatch-gate.sh",
+                 Path(__file__).resolve().parent / "hooks" / "prdt-dispatch-gate.sh"):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def cmd_dispatch_caps(args):
+    """`prdt dispatch caps` (T-893) — every dispatch-gate axis with its value, cap,
+    cap source, cap key and remedy. The gate script measures; it runs here in
+    report mode, so this output never drifts from what the gate enforces."""
+    hook = _gate_hook_path()
+    if hook is None:
+        sys.exit("prdt dispatch caps: prdt-dispatch-gate.sh not found — re-run install.sh")
+    sys.stdout.flush()
+    os.dup2(os.open(os.devnull, os.O_RDONLY), 0)   # the gate drains stdin: no event, EOF at once
+    os.execvpe("bash", ["bash", str(hook)], {**os.environ, "PRDT_GATE_CAPS_REPORT": "1", "PRDT_HOME": str(prdt_home())})
+
+
 def cmd_dispatch(args):
     """`prdt dispatch ls [--json] [--all]` — markers under
     `<PRDT_HOME>/run/dispatches/` across every project, each with the state the
     dispatch gate assigns it. Default hides `stopped` markers; `--all` shows them."""
+    if args.action == "caps":
+        return cmd_dispatch_caps(args)
     if args.action != "ls":
-        sys.exit("usage: prdt dispatch ls [--json] [--all]")
+        sys.exit("usage: prdt dispatch ls [--json] [--all] | prdt dispatch caps")
     d = prdt_home() / "run" / "dispatches"
     now = datetime.now(timezone.utc)
     rows, unreadable = [], []
@@ -12159,20 +12635,89 @@ def schedule_top(rows):
     return [r["id"] for r in ready if key(r) == best]
 
 
-def schedule_classify(ticket, sched, prior_tickets, top):
-    """followed · deviated · continuation · off-graph (design 「class 정의」).
-    off-graph: no ticket resolved, or it is not a node of this round's graph
-    (done · dropped · another version's ticket nothing here depends on).
-    continuation: an earlier recorded dispatch of the same ticket, or a live
-    marker already on it (auto QA · re-dispatch — resumes never reach the gate).
-    followed: in the top row. deviated: any other node (ready below the top,
-    blocked on deps, or a waiting/PO row)."""
-    by_id = {r["id"]: r for r in sched["rows"]}
-    if ticket is None or ticket not in by_id:
-        return "off-graph"
-    if ticket in prior_tickets or by_id[ticket]["state"] == "in-flight":
-        return "continuation"
-    return "followed" if ticket in top else "deviated"
+def _sched_path(f):
+    f = f.strip()
+    return f[len("code/"):] if f.startswith("code/") else f
+
+
+def _sched_files_overlap(a, b):
+    """T-812: same path, or one is a `/`-terminated directory holding the other
+    (a leading `code/` is dropped first — T-800's row wrote `code/packages/...`)."""
+    a, b = _sched_path(a), _sched_path(b)
+    if a == b:
+        return True
+    return (a.endswith("/") and b.startswith(a)) or (b.endswith("/") and a.startswith(b))
+
+
+def _sched_row_version_is(r, want):
+    return isinstance(r.get("version"), str) and _version_id_canon(r["version"]) == want
+
+
+def _sched_row_tickets(r):
+    """Every ticket a dispatch row sent: its own `ticket` plus its `bundle`."""
+    out = []
+    if r.get("ticket"):
+        out.append(r["ticket"])
+    if isinstance(r.get("bundle"), list):
+        out += [t for t in r["bundle"] if isinstance(t, str)]
+    return out
+
+
+def _sched_first_stops(rows):
+    """{index of a dispatch row: index of its FIRST stop row} (a resume's later
+    stop rows are ignored). Matched by tool_use_id, else dispatch_id."""
+    first = {}
+    for i, r in enumerate(rows):
+        if r.get("kind") != "dispatch":
+            continue
+        for j in range(i + 1, len(rows)):
+            s = rows[j]
+            if s.get("kind") != "stop":
+                continue
+            if (r.get("tool_use_id") and s.get("tool_use_id") == r.get("tool_use_id")) or \
+               (not r.get("tool_use_id") and r.get("dispatch_id") and s.get("dispatch_id") == r.get("dispatch_id")):
+                first[i] = j
+                break
+    return first
+
+
+def schedule_judge(ticket, state, top, files, sent, running_files, top_sent):
+    """The T-812 rule, first matching line wins. Returns (class, line, detail).
+    `sent` = tickets (and bundle members) of earlier dispatch rows of this
+    version; `running_files` = the `files` of every earlier dispatch with no
+    stop row yet; `top_sent` = a `top` ticket was sent before this dispatch (or,
+    at report time, before it ended)."""
+    if not ticket or state is None:
+        return "off-graph", 1, None
+    if ticket in sent or state == "in-flight":
+        return "continuation", 2, None
+    if state != "ready":
+        return "deviated", 3, "ready 아님"
+    if ticket in top:
+        return "followed", 4, None
+    if not top_sent:
+        return "deviated", 6, "top 미발주"
+    if not files:
+        return "deviated", 6, "files 비어 있음"
+    for rf in running_files:
+        for f in files:
+            for g in rf:
+                if _sched_files_overlap(f, g):
+                    return "deviated", 6, f"파일 겹침 {_sched_path(f)}"
+    return "followed", 5, None
+
+
+def schedule_classify(ticket, state, top, files, prior_rows, version):
+    """Record-time class: the same rule over the log so far — only 5(a)'s
+    'sent after this dispatch' half is unknowable at the gate."""
+    want = _version_id_canon(version)
+    mine = [(i, r) for i, r in enumerate(prior_rows) if r.get("kind") == "dispatch" and _sched_row_version_is(r, want)]
+    first = _sched_first_stops(prior_rows)
+    sent = set()
+    for _i, r in mine:
+        sent.update(_sched_row_tickets(r))
+    running = [[f for f in (r.get("files") or []) if isinstance(f, str)] for i, r in mine if i not in first]
+    return schedule_judge(ticket, state, top, files, sent, running, any(t in sent for t in top))
 
 
 def _safe_ids(ids):
@@ -12198,15 +12743,21 @@ def schedule_record(ev, now=None):
     sched = compute_schedule(root, tickets)
     ticket, source = schedule_ticket_for_ctx(ctx, tickets)
     prior, _bad = read_schedule_log(root)
-    prior_tickets = {r.get("ticket") for r in prior if r.get("kind") == "dispatch" and r.get("ticket")}
     top = schedule_top(sched["rows"])
-    cls = schedule_classify(ticket, sched, prior_tickets, top)
     by_id = {r["id"]: r for r in sched["rows"]}
+    cm = ctx.get("change_meta") if isinstance(ctx.get("change_meta"), dict) else {}
+    files = [f for f in (cm.get("files") or []) if isinstance(f, str)] if isinstance(cm.get("files"), list) else []
+    cls, _line, _detail = schedule_classify(ticket, by_id[ticket]["state"] if ticket in by_id else None,
+                                            top, files, prior, sched["version"])
+    raw_bundle = ctx.get("bundle")
+    bundle = []
+    if isinstance(raw_bundle, list):
+        for t in raw_bundle:
+            if isinstance(t, str) and SCHEDULE_ID_RE.match(t) and t != ticket and t not in bundle:
+                bundle.append(t)
     reason = ctx.get("schedule_reason")
     reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
     wt = ctx.get("worktree")
-    cm = ctx.get("change_meta") if isinstance(ctx.get("change_meta"), dict) else {}
-    files = [f for f in (cm.get("files") or []) if isinstance(f, str)] if isinstance(cm.get("files"), list) else []
     model = ti.get("model") if ti.get("model") in SCHEDULE_MODEL_TIERS else "default"
     str_or_none = lambda v: v if isinstance(v, str) and v else None
     row = {"kind": "dispatch", "ts": now or now_iso(),
@@ -12219,7 +12770,8 @@ def schedule_record(ev, now=None):
            "sent_slack": by_id[ticket]["slack"] if ticket in by_id else None,
            "sent_state": by_id[ticket]["state"] if ticket in by_id else None,
            "class": cls, "reason": reason,
-           "checkout": wt if isinstance(wt, str) and wt.strip() else "code", "files": files}
+           "checkout": wt if isinstance(wt, str) and wt.strip() else "code", "files": files,
+           "bundle": bundle}
     if sched["cycle"] is not None:
         row["cycle"] = sched["cycle"]
     append_schedule_row(root, row)
@@ -12261,11 +12813,37 @@ def _fmt_local(ts):
     return t.strftime("%Y-%m-%d %H:%M %Z").strip()
 
 
+def schedule_recompute(rows, version):
+    """[(row, class, detail)] for `version`'s dispatch rows, in log order — the
+    class is RECOMPUTED by the T-812 rule, never read from the row's `class`.
+    5(a) looks ahead: a `top` ticket sent after this dispatch but before its
+    first stop row counts. A legacy row with no `sent_state` key (written
+    before T-812's inputs existed) keeps its stored class."""
+    want = _version_id_canon(version)
+    first = _sched_first_stops(rows)
+    mine = [i for i, r in enumerate(rows) if r.get("kind") == "dispatch" and _sched_row_version_is(r, want)]
+    out, sent = [], set()
+    for i in mine:
+        r = rows[i]
+        top = [t for t in (r.get("top") or []) if isinstance(t, str)]
+        files = [f for f in (r.get("files") or []) if isinstance(f, str)]
+        end = first.get(i, math.inf)
+        running = [[f for f in (rows[j].get("files") or []) if isinstance(f, str)]
+                   for j in mine if j < i and first.get(j, math.inf) > i]
+        top_sent = any(t in _sched_row_tickets(rows[j]) for j in mine if j != i and (j < i or j < end) for t in top)
+        if "sent_state" in r:
+            cls, line, detail = schedule_judge(r.get("ticket"), r.get("sent_state"), top, files, sent, running, top_sent)
+        else:
+            cls, line, detail = (r.get("class") if r.get("class") in SCHEDULE_CLASSES else None), None, None
+        out.append((r, cls, line, detail))
+        sent.update(_sched_row_tickets(r))
+    return out
+
+
 def schedule_report_text(rows, version):
     """The generated section (markers included) for `version`'s dispatch rows."""
-    want = _version_id_canon(version)
-    disp = [r for r in rows if r.get("kind") == "dispatch" and isinstance(r.get("version"), str)
-            and _version_id_canon(r["version"]) == want]
+    judged = schedule_recompute(rows, version)
+    disp = [j[0] for j in judged]
     stops = [r for r in rows if r.get("kind") == "stop"]
     label = {"followed": "따름", "deviated": "벗어남", "continuation": "이어서 (같은 티켓)",
              "off-graph": "그래프 밖"}
@@ -12275,10 +12853,12 @@ def schedule_report_text(rows, version):
            "| 시각 | 발주 | 그 시점의 critical path | 실제로 보낸 작업 | 따랐는가 | 벗어났다면 이유 | 소요 시간 |",
            "|---|---|---|---|---|---|---|"]
     counts = {c: 0 for c in SCHEDULE_CLASSES}
-    for r in disp:
-        cls = r.get("class") if r.get("class") in SCHEDULE_CLASSES else None
+    ties = 0
+    for r, cls, line, detail in judged:
         if cls:
             counts[cls] += 1
+        if cls == "followed" and line == 4 and len(r.get("top") or []) > 1:
+            ties += 1
         mine = [s for s in stops
                 if (r.get("tool_use_id") and s.get("tool_use_id") == r.get("tool_use_id"))
                 or (not r.get("tool_use_id") and r.get("dispatch_id") and s.get("dispatch_id") == r.get("dispatch_id"))]
@@ -12295,14 +12875,14 @@ def schedule_report_text(rows, version):
             sent += f" `{_md_cell(r['slug'], 80)}`"
         reason = r.get("reason")
         if cls == "deviated":
-            why = _md_cell(reason) if reason else "이유 없음"
+            why = _md_cell(reason) if reason else "이유 없음" + (f" — {_md_cell(detail)}" if detail else "")
         else:
             why = _md_cell(reason) if reason else "—"
         out.append(f"| {_fmt_local(r.get('ts'))} | {who} | {cp} | {sent} | "
                    f"{label.get(cls, _md_cell(r.get('class') or '-'))} | {why} | {dur} |")
     f, d = counts["followed"], counts["deviated"]
     ratio = f"{f / (f + d) * 100:.0f}%" if (f + d) else "측정 불가 (분모 0)"
-    out += ["", f"측정 5 — critical path 를 따른 발주 비율: 따름 {f} ÷ (따름 {f} + 벗어남 {d}) = {ratio}. "
+    out += ["", f"측정 5 — critical path 를 따른 발주 비율: 따름 {f} (동점 top 에서 {ties}) ÷ (따름 {f} + 벗어남 {d}) = {ratio}. "
                 f"이어서 {counts['continuation']}건 · 그래프 밖 {counts['off-graph']}건은 분모에 넣지 않는다.",
             "", SCHEDULE_REPORT_END]
     return "\n".join(out) + "\n", len(disp)
@@ -13051,6 +13631,10 @@ def cmd_doctor(_args):
         ("hook command targets", FAMILY_DE, lambda: hook_dangling_command_warnings()),
         # statusline registration — user + project-level (T-500)
         ("statusline registration", FAMILY_DE, lambda: statusline_warnings(root)),
+        # viewer generator (T-868) — node · checkout · cli.mjs · packages/viewer inputs (T-871);
+        # FAMILY_PROJECT: a missing local dependency is this machine's setup, not a
+        # discipline↔execution mismatch, so it never moves the verdict tail.
+        ("viewer generator", FAMILY_PROJECT, lambda: viewer_doctor_warnings()),
         # prdt script mirror↔repo drift (T-507 follow-up) — independent of whether a
         # discipline mirror exists at all.
         ("prdt script mirror drift", FAMILY_DE, lambda: prdt_script_drift_warnings()),
@@ -14111,7 +14695,8 @@ def main():
     p.set_defaults(fn=cmd_register)
     p = sub.add_parser("settings", help="every machine setting in one place (T-750): list (no action) · "
                                         "set <key> <value> · unset <key> — keys register.audience · register.form · "
-                                        "register.structure · register.address · viewer.auto-open · plan.tier; "
+                                        "register.structure · register.address · viewer.auto-open · plan.tier · "
+                                        "dispatch.<cap key> (T-896); "
                                         "lines from prdt-messages.json, language PRDT_LANG=ko|en (default ko)")
     # No `choices=` here (unlike the subparsers around it): an out-of-domain
     # action must fall through to cmd_settings's own catalog-driven refusal
@@ -14124,8 +14709,9 @@ def main():
     p.set_defaults(fn=cmd_settings)
     p = sub.add_parser("dispatch", help="in-flight dispatch markers, every project (T-695): "
                                         "ls [--json] [--all] — each marker with the state the dispatch gate "
-                                        "gives it (live · phantom · stale · stopped); read-only")
-    p.add_argument("action", choices=("ls",))
+                                        "gives it (live · phantom · stale · stopped); caps — every gate axis "
+                                        "with value · cap · source · remedy (T-893); read-only")
+    p.add_argument("action", choices=("ls", "caps"))
     p.add_argument("--json", action="store_true", help="machine-readable output")
     p.add_argument("--all", action="store_true", help="include stopped markers")
     p.set_defaults(fn=cmd_dispatch)
