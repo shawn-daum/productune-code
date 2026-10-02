@@ -1092,27 +1092,32 @@ _meta_trust_cache = {}
 _META_URL_SCHEMES = {"https", "http", "ssh", "git", "git+ssh", "ssh+git", "ftp", "ftps"}
 
 
-def _meta_remote_url_problem(root, url):
-    """A remote URL that would make a push/fetch run a clone-carried program:
-    a `<helper>::` transport (`ext::` runs its argument) or a local repository
-    inside this project (its own hooks run on push)."""
+# T-917 (user decision T-913 = A): a meta backup remote is a NETWORK remote only.
+# A push to a local repository runs THAT repository's hooks on this machine
+# (`-c core.hooksPath=/dev/null` never reaches the receiving side), so every
+# local path is refused — relative, absolute, `~`, `file://` — inside the
+# project or not. Shared fixture list with meta-git.ts metaRemoteUrlProblem:
+# test/fixtures/meta-remote-urls.json (keep both sides in step).
+META_LOCAL_REMOTE_RULE = "meta backup allows only network remotes (https, ssh, git or user@host:path)"
+
+
+def _meta_remote_url_problem(url):
+    """None for a network remote URL git reaches over https/http/ssh/git (or
+    scp-like `user@host:path`), else why not: a `<helper>::` transport or a
+    non-network `<scheme>://` (runs `git-remote-<x>`; `ext::` runs its
+    argument), or any local path (its hooks run on push)."""
     if "::" in url.split("/", 1)[0]:
         return "a remote-helper URL"
     m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*)://", url)
-    if m and m.group(1).lower() != "file":
-        # any other `<scheme>://` runs `git-remote-<scheme>` (ext:// included)
-        return None if m.group(1).lower() in _META_URL_SCHEMES else "a remote-helper URL"
-    if not url.startswith("file://") and re.match(r"^[^/]+:", url):
-        return None  # scp-like host:path
-    p = url[len("file://"):] if url.startswith("file://") else url
-    try:
-        base = Path(root).resolve()
-        tgt = (base / p).resolve() if not os.path.isabs(p) else Path(p).resolve()
-    except (OSError, RuntimeError):
-        return "an unresolvable local remote"
-    if tgt == base or base in tgt.parents:
-        return "a local remote inside this project"
-    return None
+    if m:
+        scheme = m.group(1).lower()
+        if scheme in _META_URL_SCHEMES:
+            return None
+        if scheme != "file":
+            return "a remote-helper URL"
+    elif re.match(r"^[^/]+:", url):
+        return None  # scp-like host:path — git's own rule: a colon before any slash
+    return "a local path — " + META_LOCAL_REMOTE_RULE
 
 
 def _meta_gitfile_problem(gd):
@@ -1193,9 +1198,9 @@ def meta_git_trust_problem(root):
                 prob = f".prdt/meta.git/config sets {k}"
                 break
             if k.endswith((".url", ".pushurl")) and k.startswith("remote."):
-                why = _meta_remote_url_problem(root, v)
+                why = _meta_remote_url_problem(v)
                 if why:
-                    prob = f".prdt/meta.git/config {k} is {why}"
+                    prob = f".prdt/meta.git/config {k} ({v}) is {why}"
                     break
         if prob is None:
             # branch.<b>.remote may name a URL/path instead of a remote (T-848 fix1)
@@ -1204,15 +1209,21 @@ def meta_git_trust_problem(root):
                      for m in [re.fullmatch(r"remote\.(.+)\.(?:url|pushurl|fetch)", k)] if m}
             for k, _, v in ents:
                 if k.startswith("branch.") and k.endswith(".remote") and v not in names:
-                    why = _meta_remote_url_problem(root, v)
+                    why = _meta_remote_url_problem(v)
                     if why:
-                        prob = f".prdt/meta.git/config {k} is {why}"
+                        prob = f".prdt/meta.git/config {k} ({v}) is {why}"
                         break
     _meta_trust_cache[key] = prob
     return prob
 
 
 def meta_git_refusal(prob):
+    if META_LOCAL_REMOTE_RULE in prob:
+        # T-917: an older prdt accepted a local backup remote, so this one may be
+        # the user's own — say how to repoint it, not "came with a clone".
+        return ("prdt does not run git on this project's .prdt/meta.git: " + prob
+                + ". Point the remote at a network URL (`git --git-dir=.prdt/meta.git "
+                  "remote set-url <name> <url>`) or remove it, then run `prdt doctor`.")
     return ("prdt does not run git on this project's .prdt/meta.git: " + prob
             + " — prdt never writes this, so it may have come with a cloned "
               "repository. Check it, remove it, then run `prdt doctor`.")
@@ -6945,7 +6956,7 @@ def cmd_meta(args):
             if len(rest) != 3:
                 sys.exit("usage: prdt meta remote add <name> <url>")
             _, name, url = rest
-            why = _meta_remote_url_problem(root, url)
+            why = _meta_remote_url_problem(url)
             if why:  # same check the trust gate applies on read — never write what it would refuse
                 sys.exit(f"prdt meta: remote 설정 실패 — {url} is {why}; prdt would refuse the whole meta repo afterwards")
             res = _meta_call(root, "remote-add", name, url)
