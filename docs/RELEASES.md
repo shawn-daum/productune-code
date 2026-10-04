@@ -2,54 +2,63 @@
 
 Version-by-version release notes for this project.
 
-> **Format** — [Keep a Changelog](https://keepachangelog.com) style, adapted for prdt.
-> - One `## <version>` section per shipped version, **newest first**. `<version>` is the
->   exact git tag string (`v1.4`) as the first token after `## ` — this is the anchor the
->   prdt updater parses, so keep it verbatim.
-> - Optional ` — <title>` and date after the version token: `## v1.4 — release-notes (2026-07-22)`.
-> - Group changes under `### Added` / `### Changed` / `### Fixed` / `### Removed` (omit empty groups).
-> - **When**: written at release time. When you close a version, add its `## <version>` section
->   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
-> - Everything above the first `## ` heading is preamble and is ignored by the parser.
+> Format
+> - One `## <version>` line per shipped version, newest first. `<version>` is the exact
+>   git tag (`v1.4`), the first token after `## `. The updater and the viewer split
+>   sections on this line, so keep it verbatim. It is the only `#` line in a section.
+> - Optional ` — <title> (YYYY-MM-DD)` after the version token.
+> - Body: plain group labels `추가` · `변경` · `수정` · `알려진 한계`, each followed by one
+>   blank line and `- ` items. Omit an empty group. `알려진 한계` only for a security limit.
+> - One line per item: what changed, as the user sees it. No `###`, no bold, no backticks,
+>   no reasons, no ticket ids, no commands for the reader to type.
+> - When: written at release time, in the same change that cuts the `v*` tag.
+> - Everything above the first `## ` line is preamble and is ignored by the parser.
+
+## v1.12.1 — 상태줄 복원 (2026-10-04)
+
+수정
+
+- 상태줄에 버전과 | 구분자가 돌아왔어요
+- running · dec · req 가 비어도 — 로 보여요
+- branch 가 맨 뒤로 갔어요
+- 담당자 화살표가 → 로 나와요
 
 ## v1.12 — 뷰어 화면 재작업 · 대기 목록 · 쓰기 보안 (2026-10-02)
 
-> 적용: `prdt update` 또는 `packages/core/scripts/install.sh` 재실행. 재설치 뒤 `prdt doctor` 로 드리프트 경고가 없는지 확인하세요.
-> **조치가 필요합니다** — 메타 백업 원격이 로컬 경로인 프로젝트는 아래 「바뀐 동작」 의 명령으로 원격을 다시 지정하기 전까지 거부됩니다.
+추가
 
-### Added
-- **뷰어 홈 「현재 버전」** — 단계 막대와 「지금 여기」, 티켓 선후 그래프, 사용자가 정할 결정과 할 작업 대기 목록이 보입니다. (T-796 · T-881)
-- **PRD 읽기 화면** — 목차 · 접기 · 맨 위 「결정할 것」 상자 · 항목 카드로 정할 것을 먼저 보입니다. (T-860 · T-884)
-- **기능 화면** — 기능 전부가 영역별로 묶여 보이고, 기능마다 한 줄 정의와 함께 쓰는 기능 링크가 붙습니다. (T-808 · T-882)
-- **용어 사전 · 릴리즈 노트** 를 뷰어에서 읽습니다. (T-858 · T-883)
-- **지난 버전 폴더의 열린 티켓** 도 뷰어에 실립니다. 필요할 때 불러옵니다. (T-841 · T-885)
-- **규율 문서 이름이 링크** 가 되어 뷰어에서 바로 열립니다. (T-832 · T-886)
-- **뷰어 탭 자동 새로고침 · 탭 제목** — 새로고침 없이 새 내용이 보이고, 탭 제목이 프로젝트와 항목을 말합니다. 글자 대비도 올렸습니다. (T-803 · T-809 · T-753 · T-887)
-- **상태줄 `dec` · `req`** — 기다리는 결정과 사용자 작업이 따로 보입니다. 프로젝트 이름은 그 프로젝트의 뷰어 링크입니다. `[prdt state]` 줄에도 같은 `dec` · `req` 가 붙습니다(없으면 `none`, 5개 넘으면 `+N`). (T-849)
-- **`prdt dispatch caps`** 로 발주 한도를 보고, **`prdt settings set dispatch.*`** 로 바꿉니다. (T-895 · T-896)
+- 뷰어 홈 「현재 버전」: 단계 막대 · 지금 여기 · 티켓 선후 그래프 · 대기 목록
+- PRD 읽기 화면: 목차 · 접기 · 「결정할 것」 상자 · 항목 카드
+- 기능 화면: 영역별 묶음 · 기능마다 한 줄 정의 · 함께 쓰는 기능 링크
+- 뷰어에서 용어 사전과 릴리즈 노트를 읽어요
+- 지난 버전 폴더의 열린 티켓도 뷰어에 보여요
+- 규율 문서 이름을 누르면 뷰어에서 바로 열려요
+- 뷰어 탭이 저절로 새로고침되고, 탭 제목에 프로젝트와 항목이 나와요
+- 상태줄과 [prdt state] 줄에 기다리는 결정(dec)과 사용자 작업(req)이 따로 보여요
+- prdt dispatch caps 로 발주 한도를 보고 prdt settings set dispatch.* 로 바꿔요
 
-### Changed
-- **발주 대기 안내가 한 줄로 짧아졌습니다.** (T-892 · T-893)
-- **`prdt schedule report`** 가 발주 종류를 다시 계산해 기록과 맞춥니다. (T-824)
-- 뷰어 홈 왼쪽 패널 순서가 진행 상황 · 아티팩트 · PRD · 티켓 · 결정으로 바뀌었습니다. (T-866)
-- 상태줄의 작업 순서(`CP`) 표시와 홈의 진행 표(PRD 항목 × 담당자)는 없어졌습니다. 작업 순서는 뷰어 홈에서 봅니다.
-- **바뀐 동작 — 메타 백업 원격은 https · http · ssh · git · git+ssh · `user@host:path` 주소만 허용합니다.** 로컬 경로 원격은 설정과 `prdt meta remote add` 양쪽에서 거부됩니다. 이미 로컬 경로를 쓰는 프로젝트는 거부되므로 다시 지정하세요: `git --git-dir=.prdt/meta.git remote set-url <name> <url>` (T-913 · T-917)
+변경
 
-### Fixed
-- **클론에 딸려 온 설정으로 명령이 실행되던 문제.** 다른 저장소가 가져온 `.prdt/meta.git` 의 설정(`core.fsmonitor` · `core.hooksPath` · 훅 · `include.path` · 필터)이 평범한 `status` · `commit` 에서 명령을 돌릴 수 있었습니다. 이제 허용 목록 밖 설정이 있으면 git 을 돌리기 전에 거부하고 `prdt doctor` 가 `meta:` 줄로 알립니다. 직접 넣은 다른 설정 키가 있으면 거부되니 안내대로 지우세요. (T-848)
-- **뷰어가 프로젝트 밖 파일을 읽을 수 있던 문제.** 읽기를 실제 `docs/` · `.prdt/` 폴더 안으로 가둡니다. 폴더 자체가 링크여도 같습니다. (T-912 · T-911)
-- **워커가 `run/tracks` 기록을 쓸 수 있던 문제.** developer · qa · designer 의 쓰기는 `$PRDT_HOME/run/tracks/` 아래에서 거부됩니다. 같은 키가 두 번 적힌 기록은 믿지 않고 `land` 를 거부합니다. 쓰기 방어는 `nice -n` · `timeout` 같은 래퍼와 변수 경로까지 봅니다. (T-834 · T-910)
-- **브랜치와 같은 이름의 태그가 트랙 커밋을 가리던 문제.** 트랙 명령이 `refs/heads/<이름>` 으로 부릅니다. (T-915)
-- **업데이트한 기기에서 `viewer.html` 이 없고 티켓 번호에 링크가 걸리지 않던 문제.** 설치가 뷰어 의존성을 함께 설치합니다. (T-868 · T-870)
-- **범위 표기 `v0.1~v0.4` 가 취소선으로 그어져 깨져 보이던 문제.** (T-861)
+- 발주 대기 안내가 한 줄로 짧아졌어요
+- prdt schedule report 가 발주 종류를 다시 계산해 기록과 맞춰요
+- 뷰어 홈 왼쪽 패널 순서: 진행 상황 · 아티팩트 · PRD · 티켓 · 결정
+- 상태줄의 작업 순서(CP)와 홈의 진행 표가 빠졌어요. 작업 순서는 뷰어 홈에서 봐요
+- 메타 백업 원격은 https · http · ssh · git 주소만 받아요. 로컬 경로는 거부돼요
+- .prdt/meta.git 에 허용 목록 밖 설정이 있으면 git 을 돌리기 전에 거부해요
 
-### Known limits
-- 워커 쓰기 방어는 쉬운 형태만 막습니다. `declare` 대입 · `git -C "$VAR"` · 모르는 편집 도구 · 스크립트 파일 · 같은 명령에서 만든 링크는 남은 위험으로 받아들였습니다(`main` 은 어떤 경우에도 움직이지 않습니다). 설치 사본이 동기화되기 전까지 이 기기의 훅은 예전 규칙입니다.
-- Windows 경로 `C:/x` 는 ssh 주소로 읽혀 허용됩니다.
+수정
 
-### v1.13 으로 옮김
-- 링크 쓰기 방어의 나머지 조각(T-905 ~ T-908)과 남은 도구 후속(T-787 · T-789 · T-790 · T-846 · T-863 · T-864 · T-867 · T-869 · T-899).
+- 클론에 딸려 온 메타 저장소 설정으로 명령이 실행되던 문제
+- 뷰어가 프로젝트 밖 파일을 읽을 수 있던 문제
+- 워커가 트랙 기록을 쓸 수 있던 문제
+- 브랜치와 같은 이름의 태그가 트랙 커밋을 가리던 문제
+- 업데이트한 기기에서 viewer.html 이 없고 티켓 링크가 안 걸리던 문제
+- 범위 표기 v0.1~v0.4 가 취소선으로 깨져 보이던 문제
 
+알려진 한계
+
+- 워커 쓰기 방어는 흔한 형태만 막아요. 변수 경로 · 스크립트 파일 · 모르는 편집 도구는 못 막아요
+- Windows 경로 C:/x 는 ssh 주소로 읽혀 허용돼요
 ## v1.11.1 — 결정 티켓 · 링크 쓰기 방어 · 고스트 입력 (2026-09-30)
 
 > 패치 릴리스입니다. T-810 · T-813 · T-814 · T-818 · T-825 · T-826 · T-830 · T-833 · T-835 · T-838 · T-842 · T-843 · T-847 · T-850 을 반영합니다.

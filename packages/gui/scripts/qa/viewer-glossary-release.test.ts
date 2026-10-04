@@ -208,11 +208,22 @@ describe('collectReleases — read path and containment (T-883)', () => {
     fs.symlinkSync(outside, path.join(b, 'code/docs'))
     expect(collectReleases(b)).toEqual([])
   })
-  it('the real RELEASES.md parses to its 18 version sections', () => {
+  it('the real RELEASES.md parses to its version sections', () => {
     const here = path.dirname(fileURLToPath(import.meta.url))
     const file = path.resolve(here, '../../../../docs/RELEASES.md')
-    const r = parseReleases(fs.readFileSync(file, 'utf8'))
-    expect(r.length).toBe(18)
+    const text = fs.readFileSync(file, 'utf8')
+    // independent simple parse: `## v<digit>` headings outside code fences
+    let fenced = false
+    const heads: string[] = []
+    for (const line of text.split('\n')) {
+      if (/^\s*```/.test(line)) fenced = !fenced
+      else if (!fenced && /^## v\d/.test(line)) heads.push(line)
+    }
+    expect(heads.length).toBeGreaterThan(0)
+    const r = parseReleases(text)
+    expect(r.length).toBe(heads.length)
+    expect(heads[0]).toContain(r[0].version)
+    expect(r.map((x) => x.version)).toEqual(heads.map((h) => h.match(/^## (v\d\S*)/)![1]))
     expect(r[0].version).toMatch(/^v\d/)
     expect(r.every((x) => x.date !== '')).toBe(true)
   })
