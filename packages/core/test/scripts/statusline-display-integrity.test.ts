@@ -68,7 +68,7 @@ function unsanitizedCopy(): string {
     // marker, so `links` stays `{}` and `wrap_links(line, {})` is a no-op —
     // `print(wrap_links(line, links))` prints exactly `line` either way.
     // Slice 3 named the cap (`cap=LINE_CAP`); the literal follows it.
-    ['line = clean(head, cap=LINE_CAP, bar=True)', 'line = head'],
+    ['line = clean(candidate, cap=LINE_CAP, bar=True)', 'line = candidate'],
   ] as const) {
     expect(weak, `the production line must exist to be undone: ${from.slice(0, 40)}`).toContain(from)
     weak = weak.replace(from, to)
@@ -162,6 +162,6 @@ describe.skipIf(!READY)('the statusline cannot be made to misrepresent by file c
 
   test('a legitimate project renders exactly as before (nothing traded away)', () => {
     seed({ slug: 'realproj' }, GOOD_STATE)
-    expect(run().replace(/\n$/, '')).toBe('realproj build T-493 honest-injection→developer')
+    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | build | T-493 honest-injection→developer | running — | dec — | req —')
   })
 })

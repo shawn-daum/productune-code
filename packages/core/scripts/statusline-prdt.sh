@@ -9,17 +9,19 @@
 # The state/cost recording that full's statusline smuggled in lives in
 # hooks/prdt-post-dispatch.sh.
 #
-# Format: <slug> <stage> <vdone>/<vtotal> T-NNN <task>→<persona> branch: <branch> | running … | dec … | req …
-#   - T-849: the leading segments are space-joined (no version segment, no `|`
-#     between them); the slug is an OSC 8 link to `.prdt/scratch/viewer/viewer.html`
-#     when that file exists, plain text otherwise. ` | ` only opens the footer.
+# Format (T-922): <slug> <version> | <stage> | ticket <vdone>/<vtotal> | T-NNN <task>→<persona> | running <ids|—> | dec <ids|—> | req <ids|—> | branch: <branch>
+#   - T-922: `|` separates every segment (T-849 had dropped it and the version);
+#     `<slug> <version>` is ONE OSC 8 link to `.prdt/scratch/viewer/viewer.html`
+#     when that file exists, plain text otherwise. running/dec/req always
+#     render (`—` when empty); `branch:` is always last. Successor ids inside a
+#     group use `>` (was `»`, which read as a second persona arrow: `T-890»qa»`).
 #   - <vdone>/<vtotal> is ONE version-wide count over every ticket (open+done)
 #     in the current version dir, every type included (`decision` too) — T-755:
 #     a per-type "which stage is this ticket in" guess (the old TYPE_TO_STAGE
 #     map) read wrong the moment a `design`-typed ticket was actually Build
 #     work, so the count no longer estimates a stage from ticket type at all.
 #   - <task> slug is capped at 16 chars (+ …) so a long slug can't blow out the line.
-#   - Trailing footer (T-682, T-849): `running T-NNN[»T-NNN…] | dec T-NNN[»T-NNN…] | req T-NNN[»T-NNN…]`
+#   - Trailing footer (T-682, T-849): `running T-NNN[>T-NNN…] | dec T-NNN[>T-NNN…] | req T-NNN[>T-NNN…]`
 #     — `dec` = every open `type: decision` ticket, `req` = every open
 #     `assignee: user` ticket that is not a decision, across EVERY version
 #     directory under docs/tickets (backlog excluded) — the same rule as the
@@ -123,7 +125,10 @@ def clean(raw, cap=40, bar=False):
 slug = clean(cfg_slug) or clean(os.path.basename(root)) or "?"
 stage = token(st.get("stage"), lambda v: v in STAGES, absent="?") or "?"
 version = token(st.get("version"), lambda v: VERSION_RE.match(v) is not None)
-parts = [slug]
+# T-922: `<slug> <version>` is the line's first segment (one OSC 8 link, see
+# wrap_slug); version is omitted only when po-state carries none.
+slug_ver = f"{slug} {version}" if version else slug
+parts = [slug_ver, stage]
 
 # ticket progress for the current version dir: ONE version-wide count over
 # every open+done ticket, every type included (`decision` too) — T-755 removed
@@ -190,9 +195,7 @@ dec = sorted(set(dec), key=_tid_key)
 req = sorted(set(req), key=_tid_key)
 
 if vtotal:
-    parts.append(f"{stage} {vdone}/{vtotal}")
-else:
-    parts.append(stage)
+    parts.append(f"ticket {vdone}/{vtotal}")
 
 ct = st.get("current_task")
 ct_tid = None  # the TICKET_RE-matched current_task id, for the OSC 8 link step (F4)
@@ -245,8 +248,7 @@ br = git_branch(root)
 if br is None:
     br = git_branch(os.path.join(root, code_dir_name() or CODE_DIR_DEFAULT))
 br = clean(br)
-if br:
-    parts.append(f"branch: {br}")
+branch_seg = f"branch: {br}" if br else None  # T-922: always the LAST segment
 
 # ── T-682: "running" / "waiting" footer segments ────────────────────────────
 # running = dispatches in flight right now, machine-generated: markers written
@@ -482,7 +484,7 @@ def fmt_group(ids, limit, succ_limit, with_persona=None):
             for s in s_shown:
                 links.setdefault(s, ticket_link_target(idx, s))
             s_txt = ",".join(s_shown) + (f"+{s_extra}" if s_extra else "")
-            seg += f"»{s_txt}"
+            seg += f">{s_txt}"
         bits.append(seg)
     if extra:
         bits.append(f"+{extra}")
@@ -491,15 +493,13 @@ def fmt_group(ids, limit, succ_limit, with_persona=None):
 
 def tail_segments(limits):
     run_lim, wait_lim, succ_lim = limits
-    out = []
-    if running:
-        personas = {tid: ps for tid, ps in running}
-        out.append("running " + fmt_group([tid for tid, _ in running], run_lim, succ_lim, personas))
-    if dec:
-        out.append("dec " + fmt_group(dec, wait_lim, succ_lim))
-    if req:
-        out.append("req " + fmt_group(req, wait_lim, succ_lim))
-    return out
+    # T-922: all three always render, `—` when empty.
+    personas = {tid: ps for tid, ps in running}
+    return [
+        "running " + (fmt_group([tid for tid, _ in running], run_lim, succ_lim, personas) if running else "\u2014"),
+        "dec " + (fmt_group(dec, wait_lim, succ_lim) if dec else "\u2014"),
+        "req " + (fmt_group(req, wait_lim, succ_lim) if req else "\u2014"),
+    ]
 
 
 # Width budget (F6): the belt below caps the whole line at LINE_CAP, and at
@@ -508,16 +508,14 @@ def tail_segments(limits):
 # (running/waiting/successors = 3/3/2) and, when the line would still exceed
 # the cap, rebuilt tighter (2/2/1, then 1/1/0) before the belt ever sees it:
 # collapsing to counts is the rule the acceptance names, truncation is not.
-head = " ".join(parts)
-line = clean(head, cap=LINE_CAP, bar=True)
-if running or dec or req:
-    for limits in ((3, 3, 2), (2, 2, 1), (1, 1, 0)):
-        candidate = " | ".join([head] + tail_segments(limits))
-        if len(candidate) <= LINE_CAP:
-            break
-    # Belt: the assembled line is sanitized once more and length-capped, so this
-    # script emits exactly ONE line no matter what any input held.
-    line = clean(candidate, cap=LINE_CAP, bar=True)
+tail_end = [branch_seg] if branch_seg else []
+for limits in ((3, 3, 2), (2, 2, 1), (1, 1, 0)):
+    candidate = " | ".join(parts + tail_segments(limits) + tail_end)
+    if len(candidate) <= LINE_CAP:
+        break
+# Belt: the assembled line is sanitized once more and length-capped, so this
+# script emits exactly ONE line no matter what any input held.
+line = clean(candidate, cap=LINE_CAP, bar=True)
 
 
 def wrap_links(text, link_map):
@@ -548,18 +546,18 @@ def wrap_links(text, link_map):
 
 
 def wrap_slug(text):
-    """T-849: the project slug (always the first token of the line) as an OSC 8
+    """T-849/T-922: `<slug> <version>` (always the first segment of the line) as ONE OSC 8
     link to `.prdt/scratch/viewer/viewer.html` when that file exists; plain
     text otherwise. Pure display — only an isfile check, no write. Run AFTER
     wrap_links (the viewer path may itself contain a `T-NNN` directory name),
     and only when the line still opens with the plain slug."""
     viewer = os.path.join(root, VIEWER_HTML_REL)
-    if not (slug and os.path.isfile(viewer) and text.startswith(slug)):
+    if not (slug and os.path.isfile(viewer) and text.startswith(slug_ver)):
         return text
     uri = "file://" + quote(viewer, safe="/")
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in uri):
         return text
-    return f"\x1b]8;;{uri}\x1b\\{slug}\x1b]8;;\x1b\\" + text[len(slug):]
+    return f"\x1b]8;;{uri}\x1b\\{slug_ver}\x1b]8;;\x1b\\" + text[len(slug_ver):]
 
 
 print(wrap_slug(wrap_links(line, links)))
