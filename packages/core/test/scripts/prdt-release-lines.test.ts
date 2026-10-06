@@ -210,3 +210,29 @@ describe('single-line project — none of the line additions appear', () => {
     expect(Object.keys(marker).sort()).toEqual(['dispatch', 'project', 'resource', 'since'])
   }, T)
 })
+
+describe('po-state warnings (QA d-t960-qa1)', () => {
+  const run = (root: string, st: unknown) => {
+    const r = spawnSync('python3', ['-c', `
+import importlib.util, importlib.machinery, sys, json
+from pathlib import Path
+loader = importlib.machinery.SourceFileLoader("prdt_mod", sys.argv[1])
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+print(json.dumps(m.po_state_warnings(json.loads(sys.argv[3]), Path(sys.argv[2]))))
+`, PRDT_CLI, root, JSON.stringify(st)], { encoding: 'utf8', timeout: 60_000 })
+    return JSON.parse(r.stdout) as string[]
+  }
+  const base = { schema_version: 1, stage: 'build', version: 'v1.0', current_task: 'T-709' }
+
+  test('single-line: string current_task keeps the pre-T-960 text byte-for-byte', () => {
+    expect(run(makeProject(false), base)).toEqual(['state: current_task must be null or {ticket_id, slug, assignee}'])
+  }, T)
+
+  test('multi-line: the text names line?; an undeclared po-state line is reported', () => {
+    const w = run(makeProject(true), { ...base, lines: { android: { stage: 'build', version: 'v2.1' }, ios: { stage: 'idle', version: 'v1' } } })
+    expect(w).toContain('state: current_task must be null or {ticket_id, slug, assignee, line?}')
+    expect(w).toContain('state: lines.ios is not a line declared in .prdt/config.json `lines`')
+    expect(w.some((x) => x.includes('lines.android is not'))).toBe(false)
+  }, T)
+})
