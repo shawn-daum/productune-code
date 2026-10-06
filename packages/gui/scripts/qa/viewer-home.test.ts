@@ -99,6 +99,20 @@ describe('home wait lists — the T-849 rule the statusline dec / req uses', () 
   })
 })
 
+describe('home wait lists — req hides blocked user tasks (T-961)', () => {
+  const row = (bucket: string, o: T) => ({ bucket, fm: tk(o).frontmatter })
+  it('req keeps an assignee-user ticket only when no dep is still open', () => {
+    const r = waitLists([
+      row('v1.13', { id: 'T-1', type: 'impl', assignee: 'developer' }),
+      row('v1.13', { id: 'T-2', type: 'impl', assignee: 'developer', status: 'done' }),
+      row('v1.13', { id: 'T-10', type: 'ops', assignee: 'user', deps: ['T-1'] }),
+      row('v1.13', { id: 'T-11', type: 'ops', assignee: 'user', deps: ['T-2'] }),
+      row('v1.13', { id: 'T-12', type: 'ops', assignee: 'user' }),
+    ])
+    expect(r.req.map((f) => f.id)).toEqual(['T-11', 'T-12'])
+  })
+})
+
 describe('home stage bar and PRD gate path', () => {
   it('reads design and decision as define, qa and ops as ship, everything else as build; retro stays empty', () => {
     expect(['design', 'decision', 'impl', 'qa', 'ops', 'x'].map(stageOfTicketType)).toEqual(['define', 'define', 'build', 'ship', 'ship', 'build'])
@@ -176,6 +190,15 @@ describe('home screen — T-796 acceptance in the generated page', () => {
     expect(connected.home).toContain('dependency')
     expect(connected.home).toContain('메인 패스 · 크리티컬 패스')
   })
+  it('T-961: 내 결정 대기 · 사용자 작업 대기 sit left of 스코프, dependency stays below', () => {
+    const h = connected.home
+    const w = h.indexOf('class="sc-waits"')
+    const sc = h.indexOf('class="cp-h">스코프')
+    const dep = h.indexOf('class="cp-h">dependency')
+    expect(w).toBeGreaterThan(-1)
+    expect(w).toBeLessThan(sc)
+    expect(sc).toBeLessThan(dep)
+  })
   it('before Build: the not-connected notice and 「크리티컬 패스」 only', () => {
     expect(before.home).toContain('메인 패스가 아직 이어지지 않았어요')
     expect(before.home).toContain('Build 진입 전')
@@ -247,7 +270,7 @@ describe('home fix round 1 (T-881 grill) — what a DOM-free test can pin; width
     expect(TEMPLATE_CSS).toMatch(/\.sb-seg \{[^}]*flex: 0 1 auto; min-width: 56px/)
     expect(TEMPLATE_CSS).toMatch(/\.sb-sq \{[^}]*flex-wrap: wrap/)
     expect(TEMPLATE_CSS).toMatch(/\.sb-total \{[^}]*flex: 0 0 auto/)
-    expect(TEMPLATE_CSS).toMatch(/\.sc-grid \{[^}]*grid-template-columns: minmax\(0, 3fr\) minmax\(300px, 2fr\)/)
+    expect(TEMPLATE_CSS).toMatch(/\.sc-grid \{[^}]*grid-template-columns: 280px minmax\(0, 1fr\)/)
     expect(TEMPLATE_CSS).toMatch(/\.sc-sq \{[^}]*flex-wrap: wrap/)
     expect(TEMPLATE_CSS).toMatch(/\.sc-waits \{ min-width: 0;/)
   })

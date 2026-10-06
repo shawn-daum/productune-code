@@ -2079,7 +2079,7 @@ function homeProgressBody(data) {
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
 ${homeStageBar(currentTickets, data.poState?.stage || '?')}
-<div class="sc sc-grid">${homeScope(data, currentTickets)}${homeWaits(data)}</div>
+<div class="sc sc-grid">${homeWaits(data)}${homeScope(data, currentTickets)}</div>
 ${homeDependency(data, currentTickets)}
 </div>`
 }
@@ -2290,7 +2290,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .stage-sq { width: 10px; height: 10px; border-radius: 2px; background: var(--bg-interaction-neutral); border: 1px solid var(--border-inline); flex: 0 0 auto; }
 .stage-sq.sq-done { background: var(--accent); border-color: var(--accent); }
 .sc { border-top: 1px solid var(--border-item); margin: var(--space-16) 0 0; padding: var(--space-16) 0 0; }
-.sc-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); gap: var(--space-24); }
+.sc-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--space-24); }
 .sc-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: center; gap: var(--space-10); min-height: 20px; }
 .sc-lab { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sc-out .sc-lab { color: var(--text-tertiary); }
@@ -2298,7 +2298,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .sc-n { font-size: 10.5px; color: var(--text-tertiary); }
 .sc-btn { cursor: pointer; }
 .sc-btn.is-open { outline: 2px solid var(--text-primary); outline-offset: 1px; }
-.sc-waits { min-width: 0; display: flex; flex-direction: column; gap: var(--space-16); border-left: 1px solid var(--border-item); padding-left: var(--space-24); }
+.sc-waits { min-width: 0; display: flex; flex-direction: column; gap: var(--space-16); border-right: 1px solid var(--border-item); padding-right: var(--space-24); }
 .cp-block { border-top: 1px solid var(--border-item); margin: var(--space-16) 0 0; padding: var(--space-16) 0 0; }
 .cp-h { font-size: 12px; font-weight: 600; color: var(--text-primary); margin: 0 0 var(--space-10); display: flex; align-items: baseline; gap: var(--space-8); flex-wrap: wrap; }
 .cp-sub { font-weight: 400; color: var(--text-tertiary); font-size: 11.5px; }
