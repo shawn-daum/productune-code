@@ -74,13 +74,16 @@ exit 0
 import json, os, re, sys
 from datetime import datetime
 
-# Placeholder wording (T-985: designer inject-edit + user confirmation pending).
+# Wording confirmed by user (T-990 = A, 2026-10-06).
 # %s = the uncovered asks' line numbers ("3, 12").
 QUESTION_CHECK_REASON = (
     "[prdt question check] this reply asks the user to choose or confirm with no open decision "
-    "ticket behind it (line %s), and no decision ticket was created or changed this turn. "
-    "Open a `type: decision` ticket for each such ask, or cite its open ticket beside it, "
-    "then send the reply again."
+    "ticket cited beside the ask (line %s) — a choose/confirm question, a pick request, an A/B "
+    "option set, or an item under a waiting-for-your-answer heading — and no `type: decision` "
+    "ticket was created or changed this turn. Open a `type: decision` ticket for each ask or cite "
+    "its open ticket id beside it (a waiting item: `assignee: user` counts), then send the reply "
+    "again, opening with one line that the question now has its ticket — the user may already have "
+    "read this one."
 )
 LIST_CAP = 5
 
