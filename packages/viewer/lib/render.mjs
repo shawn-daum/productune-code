@@ -876,7 +876,7 @@ function lineHead(v) {
 
 /** `data` with tickets · PRD · version · stage scoped to one line. */
 function lineData(data, v) {
-  return { ...data, tickets: v.tickets, prd: v.prd, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined }
+  return { ...data, tickets: v.tickets, prd: v.prd, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, allLineTickets: allLineTickets(data) }
 }
 
 /** Flattens per-line `{groups, defaultKey}` into one group list: keys prefixed `<line>/` (home line bare), the first group of each line carrying the section head. `defaultKey` = the home line's default. */
@@ -1303,10 +1303,26 @@ function ticketNumber(id) {
   return (String(id).match(/\d+/g) || []).map(Number)
 }
 
+/** T-961: the taxonomy-less taxonomy — one area, one entry per distinct `feature:` value of the tickets in `data` (no kind, definition or links). */
+function derivedFeatureTaxonomy(data) {
+  const keys = [...new Set(allTicketRows(data.tickets).map((r) => (typeof r.fm.feature === 'string' ? r.fm.feature.trim() : '')).filter(Boolean))].sort()
+  return {
+    areas: [{ key: '_', name: FEATURE.allLabel, def: '' }],
+    kinds: [],
+    entries: keys.map((key) => ({ key, name: key, kind: '', area: '_', def: '', aliases: [], links: [] })),
+  }
+}
+
 /** Everything the screen shows per feature, computed once from taxonomy + tickets + spec files. */
 export function featureScreenModel(data) {
-  const tax = data.featureTaxonomy
-  if (!tax || !tax.areas || tax.areas.length === 0) return null
+  let tax = data.featureTaxonomy
+  let derived = false
+  if (!tax || !tax.areas || tax.areas.length === 0) {
+    // T-961: a multi-line project without `features.taxonomy` still lists features — the `feature:` values its tickets carry, one flat group per line.
+    if (lineViews(data).length === 0) return null
+    tax = derivedFeatureTaxonomy(data)
+    derived = true
+  }
   const areaKeys = new Set(tax.areas.map((a) => a.key))
   const entries = tax.entries.filter((e) => areaKeys.has(e.area))
   const byKey = new Map(entries.map((e) => [e.key, e]))
@@ -1347,7 +1363,7 @@ export function featureScreenModel(data) {
       spec: specs.get(e.key) || null,
     }
   })
-  return { areas: tax.areas, kinds: tax.kinds || [], entries: model, byKey: new Map(model.map((m) => [m.key, m])) }
+  return { derived, areas: tax.areas, kinds: tax.kinds || [], entries: model, byKey: new Map(model.map((m) => [m.key, m])) }
 }
 
 function kindChip(model, kindKey) {
@@ -1358,18 +1374,21 @@ function kindChip(model, kindKey) {
 function featureRow(model, e) {
   return `<tr class="detail-row" data-area="${escapeHtml(e.area)}" data-detail-kind="feature" data-detail-id="${escapeHtml(`${model.idPrefix || ''}${e.key}`)}" tabindex="0">` +
     `<td><span class="nm">${escapeHtml(e.name || e.key)}</span><span class="nm-key">${escapeHtml(e.key)}</span></td>` +
-    `<td>${kindChip(model, e.kind)}</td><td class="def-col">${escapeHtml(e.def || '')}</td><td class="num-col">${e.tickets.length}</td></tr>\n`
+    (model.derived ? '' : `<td>${kindChip(model, e.kind)}</td><td class="def-col">${escapeHtml(e.def || '')}</td>`) + `<td class="num-col">${e.tickets.length}</td></tr>\n`
 }
 
 function featureAreaRows(model, area) {
   const items = model.entries.filter((e) => e.area === area.key)
+  if (model.derived) return items.map((e) => featureRow(model, e)).join('')
   return `<tr class="grp-row" data-area="${escapeHtml(area.key)}"><td colspan="4"><span class="grp-name">${escapeHtml(area.name)}</span>` +
     `<span class="grp-n">${items.length}</span><span class="grp-def">${escapeHtml(area.def || '')}</span></td></tr>\n` +
     items.map((e) => featureRow(model, e)).join('')
 }
 
 function featurePane(model, areas, count) {
-  const head = `<tr>${FEATURE.tableHeaders.map((h, i) => `<th${i === 3 ? ' class="num-col"' : ''}>${escapeHtml(h)}</th>`).join('')}</tr>`
+  if (model.derived && count === 0) return `<p class="v-note">${FEATURE.empty}</p>`
+  const heads = model.derived ? [FEATURE.tableHeaders[0], FEATURE.tableHeaders[3]] : FEATURE.tableHeaders
+  const head = `<tr>${heads.map((h, i) => `<th${i === heads.length - 1 ? ' class="num-col"' : ''}>${escapeHtml(h)}</th>`).join('')}</tr>`
   return `<div class="count-line section-meta"><span class="count-badge">${escapeHtml(FEATURE.sidebarLabel)} <b>${count}</b>${escapeHtml(FEATURE.countUnit)}</span></div>\n` +
     `<div class="table-wrap"><table class="feature-table"><thead>${head}</thead><tbody>\n${areas.map((a) => featureAreaRows(model, a)).join('')}</tbody></table></div>\n`
 }
@@ -1395,8 +1414,9 @@ function featureSpecListRows(pages) {
 function featureLineGroups(data, v) {
   const full = featureScreenModel(lineData(data, v))
   if (!full) return null
-  const entries = v.line ? full.entries.filter((e) => e.tickets.length > 0) : full.entries
+  const entries = v.line || full.derived ? full.entries.filter((e) => e.tickets.length > 0) : full.entries
   const model = { ...full, entries, idPrefix: v.prefix }
+  if (full.derived) return { groups: [{ key: 'all', label: FEATURE.allLabel, count: entries.length, bodyHtml: featurePane(model, model.areas, entries.length) }], defaultKey: undefined, model }
   const groups = [
     { key: 'all', label: FEATURE.allLabel, count: entries.length, bodyHtml: featurePane(model, model.areas, entries.length) },
     ...model.areas.map((a) => {
@@ -1479,10 +1499,11 @@ function featureReadField(data, e) {
 function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
   const area = model.areas.find((a) => a.key === e.area)
   const kind = model.kinds.find((k) => k.key === e.kind)
+  const lean = model.derived  // T-961: no taxonomy — no kind, area or definition to show
   const field = (label, value) => `<div class="detail-field"><span class="detail-field-label">${escapeHtml(label)}</span><span class="detail-field-value">${value}</span></div>`
   const meta = '<div class="detail-meta">' +
-    field(FEATURE.fields.kind, kindChip(model, e.kind)) +
-    field(FEATURE.fields.area, `<button type="button" class="area-a" data-feature-area="${escapeHtml(e.area)}">${escapeHtml(area.name)}</button>`) +
+    (lean ? '' : field(FEATURE.fields.kind, kindChip(model, e.kind)) +
+    field(FEATURE.fields.area, `<button type="button" class="area-a" data-feature-area="${escapeHtml(e.area)}">${escapeHtml(area.name)}</button>`)) +
     field(FEATURE.fields.tickets, escapeHtml(featureTicketsLabel(e))) +
     (e.versions ? field(FEATURE.fields.version, escapeHtml(e.versions)) : '') +
     (readHtml ? field(FEATURE.fields.read, readHtml) : '') +
@@ -1492,12 +1513,12 @@ function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
     ...e.links.map((l) => featureLinkItem(model, l.to, l.text || '', l.ground || '', anchors)),
     ...e.rev.map((k) => featureLinkItem(model, k, undefined, undefined, anchors)),
   ]
-  const links = `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.linksHeading)}</h2>` +
+  const links = lean ? '' : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.linksHeading)}</h2>` +
     (items.length ? `<ul class="cn-list">${items.join('')}</ul>` : `<p class="cn-empty">${escapeHtml(FEATURE.linksEmpty)}</p>`)
   const tail = e.spec
     ? `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.specHeading)}</h2><div class="v-body">${md(e.spec.body, path.dirname(e.spec.rel), repoRootHref)}</div>`
     : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
-  return `<p class="def-lead">${escapeHtml(e.def || '')}</p>${meta}${kdef}<div class="detail-doc body-prose">${links}${tail}</div>`
+  return `${lean ? '' : `<p class="def-lead">${escapeHtml(e.def || '')}</p>`}${meta}${kdef}<div class="detail-doc body-prose">${links}${tail}</div>`
 }
 
 function featureDetailEntries(data, anchors, repoRootHref) {
@@ -1923,7 +1944,9 @@ function homeScope(data, currentTickets) {
 }
 
 function homeWaits(data) {
-  const { dec, req } = waitLists(allTicketRows(data.tickets))
+  // T-961: a blocking dep may be an open ticket in another line's folder — blockers are read across every line.
+  const all = (data.allLineTickets || [data.tickets]).flatMap(allTicketRows)
+  const { dec, req } = waitLists(allTicketRows(data.tickets), all)
   const block = (label, list, empty) =>
     `<div><div class="cp-h">${label} <span class="mono cp-n">${list.length}</span></div>` +
     (list.length === 0
@@ -2206,6 +2229,8 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
    data-store, not a second .main-inner variant class, since main-inner is
    shared markup across every groupedStore()/ticketStoreInner() call. */
 .store-section[data-store="home"] .main-inner { max-width: none; }
+/* T-961: with the waits column on screen (Home 「진행」 pane), the detail panel stops short of it: width = the main column minus (frame padding + card inset ~56, waits column 280, a ~24px gap), never under 520px; below that width it overlays the waits column (the panel needs room to read) and the user closes it to see the waits. */
+.store-section[data-store="home"]:has(.view-pane.active .sc-waits) .detail-panel { width: min(820px, 92%, max(520px, calc(100% - 360px))); }
 .section-meta { margin-bottom: var(--space-12); }
 .count-badge { font-size: 11.5px; color: var(--text-tertiary); }
 .count-badge b { color: var(--text-primary); font-weight: 600; }
