@@ -163,6 +163,11 @@ describe('home screen — T-796 acceptance in the generated page', () => {
     expect(connected.home).not.toContain('stage-matrix')
     expect(connected.home).not.toContain('>홈<')
   })
+  it('T-961: stage-bar labels read 「티켓 n」 per stage and 「티켓 완료 n/m」 for the version (v1.13 screen set, T-955)', () => {
+    expect(connected.home).toContain('<span class="sb-n">티켓 1</span>')
+    expect(connected.home).toContain('<span class="sb-n">티켓 0</span>')
+    expect(connected.home).toContain('<span class="sb-total">티켓 완료 0/3</span>')
+  })
   it('draws the stage bar, 스코프, both wait lists and the dependency block (named 「dependency」)', () => {
     expect(connected.home).toContain('class="sb"')
     expect(connected.home).toContain('스코프')

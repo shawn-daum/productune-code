@@ -1715,7 +1715,7 @@ function homeStageBar(currentTickets, stage) {
   const segs = stageSegments(currentTickets)
   const labelOf = (seg) => {
     const cur = seg.stage === stage
-    return `<span class="sb-lab${cur ? ' sb-lab-cur' : ''}">${seg.stage}${cur ? `<span class="sb-here">${HOME.here}</span>` : ''} <span class="mono sb-n">${seg.tickets.length}</span></span>`
+    return `<span class="sb-lab${cur ? ' sb-lab-cur' : ''}">${seg.stage}${cur ? `<span class="sb-here">${HOME.here}</span>` : ''} <span class="sb-n">${HOME.stageTickets(seg.tickets.length)}</span></span>`
   }
   const cells = segs
     .map((seg, i) => {
@@ -1724,7 +1724,7 @@ function homeStageBar(currentTickets, stage) {
       return `<div class="${cls}"><div class="sb-up">${i % 2 === 0 ? lab : ''}</div><div class="sb-sq">${seg.tickets.map(stageSquare).join('')}</div><div class="sb-dn">${i % 2 === 1 ? lab : ''}</div></div>`
     })
     .join('')
-  return `<div class="sb"><span class="sb-tick" aria-hidden="true"></span>${cells}<span class="mono sb-total">${done}/${total}</span></div>`
+  return `<div class="sb"><span class="sb-tick" aria-hidden="true"></span>${cells}<span class="sb-total">${HOME.stageDone(done, total)}</span></div>`
 }
 
 function ticketButtonAttrs(id) {
