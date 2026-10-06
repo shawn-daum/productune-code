@@ -10938,8 +10938,12 @@ def artifact_ticket_edge_warnings(root, tickets):
 # never graded (P1 is the open section's check alone; a closed section is an
 # immutable record, no retroactive grading).
 
-PRD_ASIS_HEADING = "### 이 버전 직전 (as-is)"
-PRD_TOBE_HEADING = "### 이 버전 직후 (to-be)"
+PRD_ASIS_HEADING = "### As-Is"
+PRD_TOBE_HEADING = "### To-Be"
+# The pair's previous strings (T-931/T-970). Closed sections keep them and are
+# never graded; an OPEN section still carrying them gets a rename advisory.
+PRD_ASIS_HEADING_OLD = "### 이 버전 직전 (as-is)"
+PRD_TOBE_HEADING_OLD = "### 이 버전 직후 (to-be)"
 PRD_REVERSED_HEADING = "### 이 버전이 뒤집은 것 (reversed)"
 PRD_REVERSED_NONE_ROW = "- 없음"
 # T-663 Outcome "개정 1 — 행 정규식의 slug 문자 집합" (2026-09-23), byte-exact
@@ -11066,7 +11070,7 @@ def _prd_reversed_section_warnings(root, version, body, tickets):
 def prd_form_warnings(root, st, tickets):
     """P1 — the OPEN `## v` section's form, graded exactly as T-663 Outcome's
     table (docs/tickets/v1.10/T-663.md "P1 넷째 줄이 내는 판정", design linkage
-    §2.4): ⓐ as-is/to-be pair present (advisory — an undeclared PRD is not a
+    §2.4): ⓐ As-Is/To-Be pair present, the old Korean pair → rename (advisory — an undeclared PRD is not a
     violation, T-599's own posture) ⓑ every H4 in the section is item-address
     form (warning; a duplicate key is a violation) ⓒ the reversed heading +
     its row grammar, incl. the `- 없음` empty marker (mixed grades per the
@@ -11080,9 +11084,15 @@ def prd_form_warnings(root, st, tickets):
         return []
     warns = []
     texts = {line for _, line in body}
-    if PRD_ASIS_HEADING not in texts or PRD_TOBE_HEADING not in texts:
-        warns.append(f'{version}: missing as-is/to-be pair ("{PRD_ASIS_HEADING}" / '
+    has_asis = PRD_ASIS_HEADING in texts or PRD_ASIS_HEADING_OLD in texts
+    has_tobe = PRD_TOBE_HEADING in texts or PRD_TOBE_HEADING_OLD in texts
+    if not (has_asis and has_tobe):
+        warns.append(f'{version}: missing As-Is/To-Be pair ("{PRD_ASIS_HEADING}" / '
                      f'"{PRD_TOBE_HEADING}")')
+    elif PRD_ASIS_HEADING_OLD in texts or PRD_TOBE_HEADING_OLD in texts:
+        warns.append(f'{version}: old as-is/to-be headings ("{PRD_ASIS_HEADING_OLD}" / '
+                     f'"{PRD_TOBE_HEADING_OLD}") — rename them to "{PRD_ASIS_HEADING}" / '
+                     f'"{PRD_TOBE_HEADING}"')
     seen = {}
     for ln, key, content in _prd_h4_items(body):
         if key is None:

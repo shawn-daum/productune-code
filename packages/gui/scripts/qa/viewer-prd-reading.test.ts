@@ -97,6 +97,17 @@ describe('parsePrdTree', () => {
     // table 4 rows + 0 text, plus two #### headings, plus their bodies (alpha: 4 incl. fence lines, beta: 1)
     expect(what.lines).toBe(4 + (1 + 4) + (1 + 1))
   })
+  it('reads both As-Is/To-Be heading forms — the open section\'s English pair and a closed section\'s Korean pair', () => {
+    const body = '## v1.13 — open\n\n### As-Is\n\n- a\n\n### To-Be\n\n- b\n\n'
+      + '## v1.12 — closed\n\n### 이 버전 직전 (as-is)\n\nold a\n\n### 이 버전 직후 (to-be)\n\nold b\n'
+    const t = parsePrdTree(body)
+    expect(t.sections.map((s: any) => s.children.map((c: any) => [c.level, c.title]))).toEqual([
+      [[3, 'As-Is'], [3, 'To-Be']],
+      [[3, '이 버전 직전 (as-is)'], [3, '이 버전 직후 (to-be)']],
+    ])
+    const html = renderPrdReading({ body, currentVersion: 'v1.13', decisionTickets: [], idPrefix: 'prd', deps }) as string
+    for (const s of ['As-Is', 'To-Be', '이 버전 직전 (as-is)', '이 버전 직후 (to-be)']) expect(html).toContain(s)
+  })
   it('a level jump hangs the node under the nearest shallower heading', () => {
     const t = parsePrdTree('## v1\n\n#### k — x\n\nbody\n')
     expect(t.sections[0].children[0].level).toBe(4)
