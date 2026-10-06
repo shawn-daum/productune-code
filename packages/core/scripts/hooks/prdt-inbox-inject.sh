@@ -52,16 +52,48 @@ except Exception:
 slug = str(slug) if slug else os.path.basename(root)
 if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", slug):
     sys.exit(0)
-LINE = re.compile(r"^- (r-[0-9a-f]{8}) · to: (\S+) · from: (\S+) · sent: (\d{4}-\d{2}-\d{2}) · open · (.*)$")
+# Same reading rules as `_inbox_read` / `_inbox_expired` in the CLI: a store
+# that is not exactly what `prdt inbox` writes (bad UTF-8, a malformed line, a
+# duplicate id) is corrupt and delivers nothing; an open line older than 180
+# days or dated in the future is skipped here, without waiting for a CLI write
+# to prune it; at most 10 lines render (the per-addressee cap of the CLI).
+from datetime import datetime, timezone
+LINE = re.compile(r"^- (r-[0-9a-f]{8}) · to: (\S+) · from: (\S+) · sent: (\d{4}-\d{2}-\d{2}) · "
+                  r"(open|adopted \d{4}-\d{2}-\d{2}|declined \d{4}-\d{2}-\d{2}) · (.*)$")
+SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+FOLD = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029\u0080-\u009f\u200b-\u200d\u202a-\u202e\u2066-\u2069\ufeff]")
+PROSE = "Written only by `prdt inbox`; one line per recommendation, addressed by project slug."
+TEXT_MAX, OPEN_KEEP_DAYS, SHOW_MAX = 300, 180, 10
 try:
-    text = open(inbox, encoding="utf-8").read()
+    with open(inbox, "rb") as fh:
+        text = fh.read().decode("utf-8")
 except Exception:
     sys.exit(0)
-rows = []
-for ln in text.split("\n"):
-    m = LINE.match(ln)
-    if m and m.group(2) == slug:
-        rows.append(m.groups())
+today = datetime.now(timezone.utc).date()
+def day(d):
+    return datetime.strptime(d, "%Y-%m-%d").date()
+rows, seen = [], set()
+try:
+    for ln in text.split("\n"):
+        m = LINE.match(ln)
+        if not m:
+            if ln == "" or ln.startswith("# ") or ln == PROSE:
+                continue
+            sys.exit(0)
+        rid, to, frm, sent, st, body = m.groups()
+        decided = st.split(" ")[1] if " " in st else ""
+        sent_d = day(sent)
+        decided_d = day(decided) if decided else None
+        if (not SLUG.match(to) or not SLUG.match(frm) or rid in seen or not body
+                or len(body) > TEXT_MAX or body != " ".join(FOLD.sub(" ", body).split())):
+            sys.exit(0)
+        seen.add(rid)
+        age = (today - sent_d).days
+        if (to == slug and st == "open" and 0 <= age <= OPEN_KEEP_DAYS
+                and len(rows) < SHOW_MAX):
+            rows.append((rid, to, frm, sent, body))
+except ValueError:
+    sys.exit(0)
 if not rows:
     sys.exit(0)
 out = [f"[prdt inbox — {len(rows)} open recommendation(s) from other projects to this project ({slug})]",
