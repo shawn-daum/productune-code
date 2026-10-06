@@ -9,7 +9,7 @@
 # The state/cost recording that full's statusline smuggled in lives in
 # hooks/prdt-post-dispatch.sh.
 #
-# Format (T-922): <slug> <version> | <stage> | ticket <vdone>/<vtotal> | T-NNN <task>→<persona> | running <ids|—> | dec <ids|—> | req <ids|—> | branch: <branch>
+# Format (T-922): <slug> <version> | <stage> | ticket <vdone>/<vtotal> | T-NNN <task>→<persona> | working <ids|—> | dec <ids|—> | req <ids|—> | branch: <branch>
 #   - T-922: `|` separates every segment (T-849 had dropped it and the version);
 #     `<slug> <version>` is ONE OSC 8 link to `.prdt/scratch/viewer/viewer.html`
 #     when that file exists, plain text otherwise. running/dec/req always
@@ -21,11 +21,16 @@
 #     map) read wrong the moment a `design`-typed ticket was actually Build
 #     work, so the count no longer estimates a stage from ticket type at all.
 #   - <task> slug is capped at 16 chars (+ …) so a long slug can't blow out the line.
-#   - Trailing footer (T-682, T-849): `running T-NNN[>T-NNN…] | dec T-NNN[>T-NNN…] | req T-NNN[>T-NNN…]`
+#   - Trailing footer (T-682, T-849): `working T-NNN(per)[>T-NNN…] | dec T-NNN[>T-NNN…] | req T-NNN[>T-NNN…]`
 #     — `dec` = every open `type: decision` ticket, `req` = every open
 #     `assignee: user` ticket that is not a decision, across EVERY version
 #     directory under docs/tickets (backlog excluded) — the same rule as the
 #     viewer Home (`waitLists`, packages/viewer/lib/home-graph.mjs, T-881).
+#   - T-965: the in-flight segment is `working` (was `running`); each id carries
+#     its persona abbreviated in parentheses right after the id (`T-959(des)`,
+#     two personas `T-700(dev+qa)`), and `>` successors list ONLY tickets whose
+#     file sits in the current version's folder — other versions and backlog are
+#     neither shown nor counted in `+n`.
 # Missing pieces degrade silently (init is deterministic, so slug/stage exist from 0s).
 
 set +e
@@ -335,17 +340,24 @@ def open_index_ro():
         return None
 
 
+PERSONA_ABBR = {"developer": "dev", "designer": "des", "qa": "qa", "po": "po", "user": "user"}
+
+
 def dependents(con, tid):
     """Tickets that name `tid` in THEIR OWN `deps` (edges: rel='deps' rows are
     (src depends on dst) — a ticket depending on X is the row (X's dependant,
     'deps', X)). One query answers both directions this ticket asks for: a
     running ticket's direct successors, and a waiting ticket's "what this
-    blocks" — both are "who has ME in their deps."."""
-    if con is None:
+    blocks" — both are "who has ME in their deps." T-965: only dependants whose
+    file lives in the CURRENT version's folder (index `tickets.path`); a
+    po-state without a version shows none."""
+    if con is None or not version:
         return []
     try:
         rows = con.execute(
-            "SELECT DISTINCT src FROM edges WHERE rel='deps' AND dst=? ORDER BY src", (tid,)
+            "SELECT DISTINCT e.src FROM edges e JOIN tickets t ON t.id = e.src "
+            "WHERE e.rel='deps' AND e.dst=? AND t.path LIKE ? ORDER BY e.src",
+            (tid, f"docs/tickets/{version}/%"),
         ).fetchall()
     except Exception:
         return []
@@ -477,7 +489,7 @@ def fmt_group(ids, limit, succ_limit, with_persona=None):
         links[tid] = ticket_link_target(idx, tid)
         seg = tid
         if with_persona is not None and with_persona.get(tid):
-            seg += "→" + "+".join(with_persona[tid])
+            seg += "(" + "+".join(PERSONA_ABBR.get(x, x) for x in with_persona[tid]) + ")"
         succ = dependents(idx, tid) if succ_limit else []
         if succ:
             s_shown, s_extra = collapse(succ, succ_limit)
@@ -496,7 +508,7 @@ def tail_segments(limits):
     # T-922: all three always render, `—` when empty.
     personas = {tid: ps for tid, ps in running}
     return [
-        "running " + (fmt_group([tid for tid, _ in running], run_lim, succ_lim, personas) if running else "\u2014"),
+        "working " + (fmt_group([tid for tid, _ in running], run_lim, succ_lim, personas) if running else "\u2014"),
         "dec " + (fmt_group(dec, wait_lim, succ_lim) if dec else "\u2014"),
         "req " + (fmt_group(req, wait_lim, succ_lim) if req else "\u2014"),
     ]

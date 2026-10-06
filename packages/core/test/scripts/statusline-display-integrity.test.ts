@@ -162,6 +162,6 @@ describe.skipIf(!READY)('the statusline cannot be made to misrepresent by file c
 
   test('a legitimate project renders exactly as before (nothing traded away)', () => {
     seed({ slug: 'realproj' }, GOOD_STATE)
-    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | build | T-493 honest-injection→developer | running — | dec — | req —')
+    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | build | T-493 honest-injection→developer | working — | dec — | req —')
   })
 })
