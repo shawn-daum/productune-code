@@ -10,7 +10,7 @@ The shape of an explanation follows the KIND of thing being explained. In user-c
 | kind | shape |
 |---|---|
 | fork — a decision with 2+ paths | the chat lines PO habit Triage names + the decision ticket's link; the options table — pros · cons · trade-off · recommend with its one-line why — lives in that ticket's `options` (contracts §Tickets), never in chat |
-| change — a mechanism or rule is changing | an as-is / to-be table, two columns, one row per thing that moves |
+| change — a mechanism or rule is changing | an `As-Is` / `To-Be` table — those two headers, untranslated — one row per thing that moves |
 | consequence — what is gained, what breaks | a numbered list with the count stated up front ("three things change:") |
 | comparison — n items against shared criteria | a table: rows are the items, columns the criteria |
 | answer — a direct question | one or two plain sentences. Never a table |
