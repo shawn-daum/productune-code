@@ -90,6 +90,16 @@ describe.skipIf(!READY)('statusline — T-961 req hides blocked user tasks', () 
   })
 })
 
+describe.skipIf(!READY)('statusline — T-961 req blocked rule spans lines', () => {
+  test('a dep that is an open ticket in another line folder blocks the user task', () => {
+    seed({ slug: 'ntf-pm', lines: [{ name: 'ntf-archive' }] }, { stage: 'build', version: 'v2.2', lines: { 'ntf-archive': { stage: 'build', version: 'v1.2' } } })
+    ticket('ntf-archive/v1.2', 'T-9102')
+    ticket('v2.2', 'T-720', { assignee: 'user', deps: '[T-9102]' })
+    ticket('v2.2', 'T-721', { assignee: 'user' })
+    expect(rows().at(-1)).toBe('dec — · req T-721')
+  })
+})
+
 describe.skipIf(!READY)('statusline — T-984 layout, single line', () => {
   test('dec and req both empty → line row + own last row `dec — · req —`', () => {
     seed({ slug: 'productune' }, { stage: 'build', version: 'v1.13', checks: { build: ['split', 'main-path', 'qa'] } })

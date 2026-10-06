@@ -247,6 +247,36 @@ describe('render — one sidebar section per line', () => {
   })
 })
 
+describe('multi-line project without features.taxonomy (T-961)', () => {
+  let h: string
+  const sec = (store: string) => h.split(`id="store-${store}"`)[1].split('</section>')[0]
+  const paneOf = (store: string, group: string) => { const x = sec(store); return x.slice(x.indexOf(`data-group="${group}"`)).split('<div class="view-pane')[0] }
+  beforeAll(() => {
+    h = render({ ...data, featureTaxonomy: null })
+  })
+  it('기능 keeps one section per line, headed `<line> <version>`, each listing the features its own tickets carry', () => {
+    const heads = [...sec('feature').matchAll(/<div class="ls-h"><b>([^<]*)<\/b>/g)].map((m) => m[1])
+    expect(heads).toEqual(['ntf-pm v2.2', 'ntf-archive v1.2'])
+    expect(paneOf('feature', 'all')).toContain('data-detail-id="login"')
+    expect(paneOf('feature', 'all')).not.toContain('search')
+    expect(paneOf('feature', 'ntf-archive/all')).toContain('data-detail-id="ntf-archive/search"')
+    expect(paneOf('feature', 'ntf-archive/all')).not.toContain('login')
+    const blob = JSON.parse(h.split('<script id="detail-data" type="application/json">')[1].split('</script>')[0])
+    expect(blob.feature['ntf-archive/search'].html).toContain('T-202')
+  })
+  it('Home waits read blockers across lines; the detail panel stops short of the waits column', () => {
+    const t = (x: typeof data.tickets) => x
+    const extra = { ...data, featureTaxonomy: null, tickets: t({ ...data.tickets, included: [...data.tickets.included, { rel: 'docs/tickets/v2.2/T-720.md', bucket: 'v2.2', frontmatter: { id: 'T-720', slug: 's', type: 'ops', status: 'open', assignee: 'user', deps: ['T-202'] }, body: '' }, { rel: 'docs/tickets/v2.2/T-721.md', bucket: 'v2.2', frontmatter: { id: 'T-721', slug: 's', type: 'ops', status: 'open', assignee: 'user', deps: [] }, body: '' }] }) }
+    const out = render(extra)
+    const home = out.split('id="store-home"')[1].split('</section>')[0]
+    const homeProgress = home.slice(home.indexOf('data-group="progress"')).split('<div class="view-pane')[0]
+    const waits = homeProgress.split('class="sc-waits"')[1].split('class="cp-h">스코프')[0]
+    expect(waits).toContain('data-detail-id="T-721"')
+    expect(waits).not.toContain('data-detail-id="T-720"')
+    expect(out).toContain('.store-section[data-store="home"]:has(.view-pane.active .sc-waits) .detail-panel { width: min(820px, 92%, max(520px, calc(100% - 360px))); }')
+  })
+})
+
 describe('single-line project — no section heads, unchanged output', () => {
   it('lineViews is empty and no line markup, CSS or script appears', () => {
     const one = { ...data, lines: [] }

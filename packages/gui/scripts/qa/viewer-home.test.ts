@@ -111,6 +111,12 @@ describe('home wait lists — req hides blocked user tasks (T-961)', () => {
     ])
     expect(r.req.map((f) => f.id)).toEqual(['T-11', 'T-12'])
   })
+  it('a dep that is open in another line blocks too (allRows spans every line); backlog never blocks', () => {
+    const mine = [row('v2.2', { id: 'T-720', type: 'ops', assignee: 'user', deps: ['T-9102'] }), row('v2.2', { id: 'T-721', type: 'ops', assignee: 'user', deps: ['T-9103'] })]
+    const other = [row('v1.2', { id: 'T-9102', type: 'impl', assignee: 'developer' }), row('backlog', { id: 'T-9103', type: 'impl', assignee: 'developer' })]
+    expect(waitLists(mine).req.map((f) => f.id)).toEqual(['T-720', 'T-721'])
+    expect(waitLists(mine, [...mine, ...other]).req.map((f) => f.id)).toEqual(['T-721'])
+  })
 })
 
 describe('home stage bar and PRD gate path', () => {
