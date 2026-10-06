@@ -10,8 +10,8 @@ Continues `contracts.md` §Tickets; binds every persona the same way, loaded on 
 ## The frame — H2 keys, this order, nothing else at H2
 | key | holds | writer |
 |---|---|---|
-| `problem` | `As-is` · `To-be` · the analysis | PO |
-| `options` | the scaffolded table filled — one row per option; columns `pros` · `cons` · `trade-off` · `recommend` with its 1-line why, plus one To-be column (§`type: decision`) | PO |
+| `problem` | `As-Is` · `To-Be` · the analysis | PO |
+| `options` | the scaffolded table filled — one row per option; columns `pros` · `cons` · `trade-off` · `recommend` with its 1-line why, plus one To-Be column (§`type: decision`) | PO |
 | `related` | hand-written: stakeholders · purpose · out-of-scope. Version position and feature map are DRAWN by the viewer from `prd_item` · `feature` · `deps` — never written | PO |
 | `acceptance` | the target; later additions as `###` | PO |
 | `evidence` | verbatim quotes · measurements | PO · designer |
@@ -29,8 +29,8 @@ Continues `contracts.md` §Tickets; binds every persona the same way, loaded on 
 ## `type: decision` — a fork the PO puts to the user
 - `assignee: user` always; `options` is its centre; every ticket the answer blocks names it in ITS `deps` — the viewer draws the reverse edge; no `blocks` key.
 - Any other `assignee: user` body: `contracts/user-tickets.md`.
-- `problem`, this order: one plain line — what goes wrong for the user, never tool names alone (worktree · land · patch-cycle line 32) · the observed instance — real ids · versions · commit hashes from the project record; not yet happened → say so + the observation the risk derives from; never invented ("v1.11.2", "pnpm test | head -50") · each term defined at first use, technical terms in English (contracts §Language): `hotfix` for "긴급 수정" · `merge` for "합치기" · `branch` · `As-is` · `To-be`, each an ASCII flow sketch in a code block · where the options diverge.
-- `options`: one added column ties each row to the To-be it produces — its procedure, or its result on the observed instance. An option proposing text carries its draft verbatim in its row; `[ctx].user_lang` ≠ English → the translation beside the original.
+- `problem`, this order: one plain line — what goes wrong for the user, never tool names alone (worktree · land · patch-cycle line 32) · the observed instance — real ids · versions · commit hashes from the project record; not yet happened → say so + the observation the risk derives from; never invented ("v1.11.2", "pnpm test | head -50") · each term defined at first use, technical terms in English (contracts §Language): `hotfix` for "긴급 수정" · `merge` for "합치기" · `branch` · `As-Is` · `To-Be`, each an ASCII flow sketch in a code block · where the options diverge.
+- `options`: one added column ties each row to the To-Be it produces — its procedure, or its result on the observed instance. An option proposing text carries its draft verbatim in its row; `[ctx].user_lang` ≠ English → the translation beside the original.
 - Closes only on the user's own reply, quoted verbatim into `outcome` by the PO. Its `done` records a direction: consent for push · deploy · destructive git is the user's own words in the live session (contracts §Overrides floor) — no option cell, `direction_pin` or ticket status is that consent.
 
 ## `feature:` — the graph key

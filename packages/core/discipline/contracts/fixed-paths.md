@@ -19,7 +19,7 @@ Continues `contracts.md` §Fixed paths; binds every persona the same way, loaded
 - Retiring a standing section that is NOT a version section (an inherited reference list, an open-questions list, an activity log the rounds outgrew): record the retirement in the standing head of `docs/prd/PRD.md` — what the section held, where its last state survives (a file that still carries the same content, or the commit that holds it), and what decided it — and then delete the section. It never becomes a file under `docs/prd/versions/`: that store holds rounds, and a check reads a file there as one. The two cases are opposites and never borrow each other's home — an absent round takes the stub above and no head line, a retired standing section takes the head line and no file.
 
 ## PRD — the open version section's fixed form
-- The transition heads the section as three H3s — as-is · to-be · reversed — strings fixed byte-for-byte at their authoring site, designer `prd-clarity` §as-is / to-be; a receiving pipe slices on the exact strings, so nothing is appended to them.
+- The transition heads the section as three H3s — `### As-Is` · `### To-Be` · reversed — strings fixed byte-for-byte at their authoring site, designer `prd-clarity` §as-is / to-be; a receiving pipe slices on the exact strings, so nothing is appended to them.
 - Scope items under What are H4s `#### <key> — <label>`: `<key>` matches `^[a-z0-9]+(-[a-z0-9]+)*$`, unique in the section, immutable once the section closes. A ticket addresses one with frontmatter `prd_item: v<N>.<m>#<key>` — never an ordinal, a heading string or a line number.
 
 ## PRD — closing a `## Phase N` section
