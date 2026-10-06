@@ -502,6 +502,14 @@ REGISTER_CHECK_NOTICE = (
     "(lines %s) — an unmarked line holding 2+ sentences, or 2+ unmarked lines in a row. "
     "Leave the sent reply as is; write this reply one point per marked line."
 )
+# T-869: the second form=outline notice — top-level point blocks run together with
+# no blank line between them (form-outline.md: "One blank line after each point's
+# block, none inside it."). One line, line numbers only, same register as above.
+REGISTER_BLANK_NOTICE = (
+    "[prdt register check] your last user-chat reply broke form=outline: %d point block(s) "
+    "run into the block above with no blank line (lines %s). "
+    "Leave the sent reply as is; write this reply with one blank line after each point's block."
+)
 # T-651 grill: how many violating line numbers the notice actually lists before
 # collapsing the rest into "+N more" — the COUNT (%d above) always stays the
 # true total, only the printed list is capped (a QA-round PO decision: an
@@ -629,6 +637,43 @@ def form_outline_violations(text):
     return out
 
 
+def form_outline_blank_violations(text):
+    """1-indexed line numbers of top-level `- ` points that start with no blank
+    line above, directly under another point's block, where at least one of the
+    two blocks carries sub-lines (`·` or indented `- `) (T-869). A block = a column-0 `- ` line plus
+    the indented lines right under it. Plain one-line bullets stacked together
+    are an ordinary list and never flagged; fenced code and table rows are never
+    a block, and a non-block line (blank, table, heading, prose) ends one."""
+    if not isinstance(text, str) or not text:
+        return []
+    raw_lines = [ln.rstrip("\r") for ln in text.split("\n")]
+    blocks = []   # [start_idx, has_dot, glued_to_prev_block]
+    cur = None
+    in_fence = False
+    for i, ln in enumerate(raw_lines):
+        if FORM_OUTLINE_FENCE_RE.match(ln.strip()):
+            in_fence = not in_fence
+            cur = None
+            continue
+        if in_fence or ln.strip() == "":
+            cur = None
+            continue
+        if re.match(r"^- \S", ln):
+            glued = cur is not None
+            cur = [i, False, glued]
+            blocks.append(cur)
+        elif cur is not None and ln[:1] in (" ", "\t"):
+            if ln.lstrip(" \t").startswith(("·", "- ")):
+                cur[1] = True
+        else:
+            cur = None
+    out = []
+    for k, b in enumerate(blocks):
+        if b[2] and k > 0 and (b[1] or blocks[k - 1][1]):
+            out.append(b[0] + 1)
+    return out
+
+
 FORM_OUTLINE_TAIL_CHUNK = 256 * 1024
 FORM_OUTLINE_TAIL_MAX = 1024 * 1024
 
@@ -719,6 +764,14 @@ if hook_dir and os.path.isfile(resolver):
                     if rest > 0:
                         numbers += f", +{rest} more"
                     lines.append(REGISTER_CHECK_NOTICE % (len(violations), numbers))
+                blanks = form_outline_blank_violations(reply_text) if reply_text is not None else []
+                if blanks:
+                    shown = blanks[:FORM_OUTLINE_LIST_CAP]
+                    rest = len(blanks) - len(shown)
+                    numbers = ", ".join(str(n) for n in shown)
+                    if rest > 0:
+                        numbers += f", +{rest} more"
+                    lines.append(REGISTER_BLANK_NOTICE % (len(blanks), numbers))
         elif r.returncode != 0:
             lines.append(REGISTER_UNCONFIRMED_NOTICE % "the resolver exited non-zero")
     except subprocess.TimeoutExpired:
