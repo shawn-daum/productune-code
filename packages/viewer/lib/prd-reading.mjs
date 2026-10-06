@@ -187,7 +187,7 @@ function outlineTickets(text) {
  * @param {string} args.idPrefix unique per rendered copy (the same PRD can sit in two panes)
  * @param {{md:(t:string)=>string, inline:(t:string)=>string, esc:(s:string)=>string, sameVersion:(a:string,b:string)=>boolean, ticketPill:(assignee:string)=>string}} args.deps
  */
-export function renderPrdReading({ body, currentVersion, decisionTickets, idPrefix, deps }) {
+export function renderPrdReading({ body, currentVersion, decisionTickets, idPrefix, deps, line = null }) {
   const { md, inline, esc, sameVersion, ticketPill } = deps
   const tree = parsePrdTree(body)
   const noHeadings = !tree.title && tree.sections.length === 0
@@ -199,7 +199,9 @@ export function renderPrdReading({ body, currentVersion, decisionTickets, idPref
   let questions = { main: [], review: [] }
 
   const isOpenVersion = (title) => {
-    const first = /^(\S+)/.exec(title)?.[1] ?? ''
+    // T-961: an added release line's section is headed `<line> v<N>.<m>`.
+    const t = line && title.startsWith(`${line} `) ? title.slice(line.length + 1) : title
+    const first = /^(\S+)/.exec(t)?.[1] ?? ''
     return /^v\d/.test(first) && sameVersion(first, currentVersion)
   }
 

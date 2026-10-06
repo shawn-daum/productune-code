@@ -57,7 +57,7 @@ const RENDER_MJS_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 // syntax is not copy). Excluding them by declaration name, not by content, so
 // this checker cannot be fooled by *wrapping* a real hard-coded label in
 // either of those two constants.
-const OPAQUE_BLOB_DECLARATIONS = new Set(['TEMPLATE_CSS', 'INTERACTION_SCRIPT'])
+const OPAQUE_BLOB_DECLARATIONS = new Set(['TEMPLATE_CSS', 'INTERACTION_SCRIPT', 'LINES_CSS', 'LINES_SCRIPT'])
 
 // A dev-facing diagnostic message (`templateGuardErrors`'s own guard-failure
 // text, e.g. "template CSS contains a hex or rgb() literal") is real English
