@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · schedule · track (open|review|land) · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint|promote) · tickets · schedule · track (open|review|land) · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
@@ -2569,17 +2569,25 @@ def cmd_shared_state_guard(args):
         print(w, file=sys.stderr)
 
 
+def write_machine_index(mpages):
+    """Regenerate the machine store's own index.md (skipped when the store does
+    not exist yet — a reader of an absent store must not create it)."""
+    mdir = machine_wiki_root()
+    if mdir.is_dir():
+        (mdir / "index.md").write_text(render_wiki_index(mpages, MACHINE_INDEX_HEADER),
+                                       encoding="utf-8")
+
+
 def cmd_wiki(args):
     root = require_root()
+    if args.action == "promote":
+        return wiki_promote(root, args)
     if args.action == "reindex":
         w = live_dispatch_warning("wiki reindex")
         if w:
             print(w, file=sys.stderr)
         _con, v, pages, mpages = rebuild_index(root)
-        mdir = machine_wiki_root()
-        if mdir.is_dir():
-            (mdir / "index.md").write_text(render_wiki_index(mpages, MACHINE_INDEX_HEADER),
-                                           encoding="utf-8")
+        write_machine_index(mpages)
         print(f"reindexed: {len(pages)} wiki pages + {len(mpages)} machine, tickets ok" +
               (f", {len(v)} ticket violations (see `prdt doctor`)" if v else ""))
     elif args.action == "search":
@@ -2635,6 +2643,146 @@ def cmd_wiki(args):
         for w in warns:
             print(f"⚠ {w}")
         print("wiki lint: clean" if not warns else f"wiki lint: {len(warns)} warning(s)")
+
+
+# ── wiki promote (T-477) ──────────────────────────────────────────────────────
+# Project wiki → machine wiki is a MOVE. The only route before this was a hand
+# copy, which left the original behind (measured 2026-08-18: four duplicate
+# pairs, one machine copy shallower than the source). The project side keeps a
+# pointer — never the text — so there is one place to maintain it.
+PROMOTE_NAME_BAD = re.compile(r"[/\\\s]|^\.|\.\.")
+PROMOTE_POINTER_MARK = "기기 위키로 옮겼어요"
+
+
+def _display_path(p):
+    try:
+        return "~/" + str(Path(p).relative_to(Path.home()))
+    except ValueError:
+        return str(p)
+
+
+def _promote_find_section(body, heading):
+    """(start, end) line indexes of the section whose heading text is `heading`
+    — from its heading line up to the next heading of the same or a shallower
+    level. Fenced code is not scanned for headings. Returns a list so an
+    ambiguous name is visible to the caller."""
+    lines = body.split("\n")
+    heads, fence = [], False
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        m = None if fence else re.match(r"^(#{1,6})\s+(.*?)\s*#*\s*$", ln)
+        if m:
+            heads.append((i, len(m.group(1)), m.group(2).strip()))
+    out = []
+    for k, (i, lvl, text) in enumerate(heads):
+        if text != heading:
+            continue
+        end = len(lines)
+        for j, l2, _t in heads[k + 1:]:
+            if l2 <= lvl:
+                end = j
+                break
+        out.append((i, end))
+    return lines, out
+
+
+def wiki_promote(root, args):
+    """`prdt wiki promote <page> [--section <heading>] [--as <machine-name>] [--yes]`.
+
+    Moves one project page, or one named section of it, into the machine store
+    and leaves a pointer on the project side. Never silent and never a merge:
+    it always prints the plan first, refuses when the machine target exists,
+    and writes only after a confirm (`--yes`, or `y` at a terminal prompt).
+    One page per call — there is deliberately no batch mode."""
+    if len(args.query) != 1:
+        sys.exit("usage: prdt wiki promote <page> [--section <heading>] [--as <machine-name>] [--yes]")
+    page = args.query[0]
+    if page.startswith(MACHINE):
+        sys.exit(f"prdt wiki promote: {page} is already a machine page — nothing to promote")
+    src = root / "docs" / "wiki" / f"{page}.md"
+    if page in ("index", "inbox", "log") or not src.is_file():
+        sys.exit(f"prdt wiki promote: no project wiki page `{page}` (looked for docs/wiki/{page}.md)")
+    target = args.as_name or page
+    if PROMOTE_NAME_BAD.search(target) or target in ("index", "inbox", "log"):
+        sys.exit(f"prdt wiki promote: `{target}` is not a usable page name (no slash, space, "
+                 "leading dot or `..`; not index/inbox/log)")
+    dest = machine_wiki_root() / f"{target}.md"
+    fm, body = parse_frontmatter(src)
+    if fm.get("promoted_to"):
+        sys.exit(f"prdt wiki promote: docs/wiki/{page}.md is already a pointer to "
+                 f"{fm['promoted_to']} — nothing to move")
+    ref = MACHINE + target
+    if dest.exists():
+        sys.exit(f"refused: machine page {ref} already exists ({_display_path(dest)}). "
+                 "Nothing was written — promote never overwrites or merges. Pick another "
+                 f"name with `--as <name>`, or reconcile the two by hand and then delete "
+                 f"the project copy.")
+    text = src.read_text(encoding="utf-8")
+    pointer_line = f"→ {PROMOTE_POINTER_MARK}: [[{ref}]] ({_display_path(dest)})"
+    if args.section:
+        full_lines, found = _promote_find_section(text, args.section)
+        if not found:
+            sys.exit(f"prdt wiki promote: no section headed `{args.section}` in docs/wiki/{page}.md")
+        if len(found) > 1:
+            sys.exit(f"prdt wiki promote: `{args.section}` heads {len(found)} sections in "
+                     f"docs/wiki/{page}.md — ambiguous, nothing was written")
+        a, b = found[0]
+        moved = full_lines[a:b]
+        while moved and not moved[-1].strip():
+            moved.pop()
+        if any(PROMOTE_POINTER_MARK in l for l in moved[1:3]):
+            sys.exit(f"prdt wiki promote: section `{args.section}` is already a pointer — nothing to move")
+        mtext = (f"---\ntitle: {args.section}\ntype: {fm.get('type') or page.split('--')[0]}\n"
+                 f"status: live\nversion: \nlinks: []\n---\n\n" + "\n".join(moved) + "\n")
+        new_lines = full_lines[:a + 1] + ["", pointer_line, ""] + full_lines[b:]
+        ptext = "\n".join(new_lines)
+        ptext = re.sub(r"\n{3,}", "\n\n", ptext)
+        what = f"section `{args.section}` of docs/wiki/{page}.md ({len(moved)} lines)"
+    else:
+        moved = text.rstrip("\n").split("\n")
+        mtext = text
+        title = fm.get("title") or page
+        ptext = (f"---\ntitle: {title}\ntype: {fm.get('type') or page.split('--')[0]}\n"
+                 f"status: live\nversion: {fm.get('version') or ''}\npromoted_to: {ref}\n"
+                 f"links: [{ref}]\n---\n\n# {title}\n\n{pointer_line}\n")
+        what = f"whole page docs/wiki/{page}.md ({len(moved)} lines)"
+    print(f"promote plan — {what}")
+    print(f"  from : project wiki  docs/wiki/{page}.md")
+    print(f"  to   : machine wiki  {ref}  ({_display_path(dest)})  [new page]")
+    print(f"  left on the project side: {pointer_line}")
+    if not args.yes:
+        if sys.stdin.isatty():
+            ok = input("move it now? [y/N] ").strip().lower() in ("y", "yes")
+        else:
+            ok = False
+        if not ok:
+            print("not confirmed — nothing was written. Re-run with --yes once the user has "
+                  "confirmed this move.", file=sys.stderr)
+            sys.exit(2)
+    w = live_dispatch_warning("wiki promote")
+    if w:
+        print(w, file=sys.stderr)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(dest, "x", encoding="utf-8") as fh:   # exclusive: a race never overwrites
+            fh.write(mtext)
+    except FileExistsError:
+        sys.exit(f"refused: machine page {ref} appeared while promoting — nothing was written")
+    try:
+        src.write_text(ptext, encoding="utf-8")
+    except OSError as e:
+        dest.unlink()
+        sys.exit(f"prdt wiki promote: could not rewrite the project page ({e}) — machine "
+                 "page rolled back, nothing moved")
+    note_docs_write(src, text, ptext)
+    _con, _v, pages, mpages = rebuild_index(root)
+    write_machine_index(mpages)
+    print(f"promoted: {what} → {ref}")
+    print(f"--- project side: docs/wiki/{page}.md ---\n{ptext.rstrip()}")
+    print(f"--- machine side: {_display_path(dest)} ---\n{mtext.rstrip()}")
+    print(f"indexes rebuilt: {len(pages)} project pages + {len(mpages)} machine pages")
 
 
 def wiki_lint(root):
@@ -14566,9 +14714,14 @@ def main():
                    help="what was read and found — required; a record without one buys no silence")
     p.set_defaults(fn=cmd_attest)
     p = sub.add_parser("wiki", help="search (both stores; machine hits prefixed `machine:`) | "
-                                    "refs <change_meta JSON> (wiki_refs candidates) | reindex | lint")
-    p.add_argument("action", choices=["search", "refs", "reindex", "lint"])
+                                    "refs <change_meta JSON> (wiki_refs candidates) | reindex | lint | "
+                                    "promote <page> [--section H] [--as NAME] --yes (project → machine move)")
+    p.add_argument("action", choices=["search", "refs", "reindex", "lint", "promote"])
     p.add_argument("query", nargs="*")
+    p.add_argument("--section", help="promote: move only the section with this heading text")
+    p.add_argument("--as", dest="as_name", help="promote: machine page name (default: same as the project page)")
+    p.add_argument("--yes", action="store_true",
+                   help="promote: the user's confirm for this one move (without it nothing is written)")
     p.set_defaults(fn=cmd_wiki)
     p = sub.add_parser("index", help="rebuild — drop + re-derive `.prdt/index.db` in full "
                                      "(tickets · wiki · edges, T-674); `edges` is derived, "
