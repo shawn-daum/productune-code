@@ -1,0 +1,2 @@
+- 발주 자리가 나서 T-985(결정 티켓 누락 차단)를 Developer에게 보냈어요.
+- [T-988](file:///Users/shawn.axz-pc/dev/ntf-products/productune/.prdt/scratch/viewer/at/T-988.html)은 위 예시를 보시고 A · B 중 골라 주세요. B를 추천해요.
