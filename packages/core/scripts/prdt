@@ -85,6 +85,9 @@ def norm_assignee(v):
 
 
 PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
+# Additive keys (release-lines.md §5, schema_version unchanged): `checks` = the
+# home line's stage-check record (T-954 = A), `lines` = per added line.
+PO_STATE_OPTIONAL_KEYS = {"checks", "lines"}
 # §11 token-budget caps (physical lines; playbook cap counts body after frontmatter).
 # `override` applies per persona PER LAYER (machine and project each) — a curation
 # budget for text injected once per session start and after a compaction (T-586
@@ -641,9 +644,14 @@ def scan_tickets(root):
     tdir = root / "docs" / "tickets"
     if not tdir.is_dir():
         return
+    lines = set(project_line_names(root))
     for p in sorted(tdir.rglob("T-*.md")):
         fm, _ = parse_frontmatter(p)
         version = p.parent.name
+        # An added line's ticket sits in `docs/tickets/<line>/<version>/` — its
+        # row carries the line id `<line>/<version>` (T-951 = A).
+        if lines and p.parent.parent.parent == tdir and p.parent.parent.name in lines:
+            version = f"{p.parent.parent.name}/{version}"
         problems = []
         f = _index_fields(fm, TICKET_INDEX_FIELDS, problems)
         deps, deps_shape = index_list(fm.get("deps"))
@@ -4813,12 +4821,14 @@ def next_ticket_id(root):
     return f"T-{max_n + 1:03d}"
 
 
-def current_version_id(root):
+def current_version_id(root, line=None):
     """`docs/tickets/<version>/` for a freshly scaffolded ticket — the
     project's OPEN version (`po-state.json.version`), never a guess; falls
     back to `backlog` only when the state file is unreadable (a corrupt or
     pre-init project — `new` still has to land the file somewhere)."""
     st = read_json(root / ".prdt" / "po-state.json")
+    if line is not None:
+        return line_state(st, line)[1] or join_line_id(line, "backlog")
     v = (st or {}).get("version")
     return v if isinstance(v, str) and v.strip() else "backlog"
 
@@ -4844,7 +4854,14 @@ def cmd_tickets_new(args, root):
         sys.exit("prdt tickets new: --slug is required and must be kebab-case (a-z0-9, hyphen-separated)")
     ttype = args.type
     tid = next_ticket_id(root)
-    version = current_version_id(root)
+    line = getattr(args, "line", None)
+    if line is not None and line not in project_line_names(root):
+        if line == _resource_project_slug(root):
+            line = None
+        else:
+            sys.exit(f"prdt tickets new: --line {safe_label(line)} is not a line declared in "
+                     f".prdt/config.json `lines`")
+    version = current_version_id(root, line)
     # `type: decision` forces `assignee: user` (contracts §Tickets) — never a
     # CLI choice, the same way the frame itself is never a per-ticket choice.
     assignee = "user" if ttype == "decision" else (args.assignee or "po")
@@ -8958,11 +8975,24 @@ def is_artifact_bucket_name(name):
 
 
 def artifact_buckets(root):
+    """Home buckets `docs/artifacts/<version>/` in version order, then each
+    added line's `docs/artifacts/<line>/<version>/` (T-951 = A)."""
     base = artifacts_root(root)
     if not base.is_dir():
         return []
-    return sorted((d for d in base.iterdir() if d.is_dir() and is_artifact_bucket_name(d.name)),
-                  key=lambda d: (_version_id_canon(d.name), d.name))
+    out = sorted((d for d in base.iterdir() if d.is_dir() and is_artifact_bucket_name(d.name)),
+                 key=lambda d: (_version_id_canon(d.name), d.name))
+    for ln in project_line_names(root):
+        ld = base / ln
+        if ld.is_dir():
+            out += sorted((d for d in ld.iterdir() if d.is_dir() and is_artifact_bucket_name(d.name)),
+                          key=lambda d: (_version_id_canon(d.name), d.name))
+    return out
+
+
+def bucket_id(bucket):
+    """A bucket's manifest id: `<version>`, or `<line>/<version>` for an added line."""
+    return bucket.name if bucket.parent.name == "artifacts" else f"{bucket.parent.name}/{bucket.name}"
 
 
 def legacy_bucket_manifests(root):
@@ -9092,7 +9122,8 @@ def derive_artifact_ticket(root, bucket, rel):
 
 
 def _artifact_entry_sort_key(e):
-    return (_version_id_canon(e["bucket"]) or (), e["bucket"], e["path"])
+    line, ver = split_line_id(e["bucket"])
+    return (line or "", _version_id_canon(ver) or (), e["bucket"], e["path"])
 
 
 def _artifact_entry_canon(bucket, e):
@@ -9136,12 +9167,12 @@ def build_artifact_manifest(root, prior=None):
         files_set = set(files)
         for rel in files:
             archived = rel.startswith("archive/")
-            key = (bucket.name, rel)
+            key = (bucket_id(bucket), rel)
             if key in prior:
                 old = prior[key]
                 consumed.add(key)
             elif archived:
-                moved_from = (bucket.name, rel[len("archive/"):])
+                moved_from = (bucket_id(bucket), rel[len("archive/"):])
                 if moved_from in prior and moved_from[1] not in files_set:
                     old = prior[moved_from]
                     consumed.add(moved_from)
@@ -9150,7 +9181,7 @@ def build_artifact_manifest(root, prior=None):
             else:
                 old = {}
             e = {
-                "bucket": bucket.name,
+                "bucket": bucket_id(bucket),
                 "path": rel,
                 "ticket": old.get("ticket") if "ticket" in old else derive_artifact_ticket(root, bucket, rel),
                 "kind": old.get("kind") or derive_artifact_kind(rel),
@@ -9162,7 +9193,7 @@ def build_artifact_manifest(root, prior=None):
             for k, v in old.items():
                 if k not in ARTIFACT_DERIVED_KEYS:
                     e[k] = v
-            entries.append(_artifact_entry_canon(bucket.name, e))
+            entries.append(_artifact_entry_canon(bucket_id(bucket), e))
     entries.sort(key=_artifact_entry_sort_key)
     dropped = sorted(prior.keys() - consumed, key=lambda k: (_version_id_canon(k[0]) or (), k[0], k[1]))
     drop_lines = [f"artifact: docs/artifacts/manifest.json dropped {b}/{p} — no longer on disk"
@@ -9190,12 +9221,20 @@ def artifact_placement_warnings(root):
     if not base.is_dir():
         return []
     warns = []
+    line_names = set(project_line_names(root))
     for p in sorted(base.iterdir(), key=lambda x: x.name):
         if p.name.startswith(".") or p.name == ARTIFACT_MANIFEST_NAME:
             continue
         if p.is_file():
             warns.append(f"artifact: {p.name} sits outside a version bucket — "
                          f"move it under docs/artifacts/<version>/ (contracts §Fixed paths)")
+        elif p.name in line_names:
+            for q in sorted(p.iterdir(), key=lambda x: x.name):
+                if q.name.startswith("."):
+                    continue
+                if q.is_file() or not is_artifact_bucket_name(q.name):
+                    warns.append(f"artifact: docs/artifacts/{p.name}/{q.name} is not a version bucket of "
+                                 f"line {p.name} (expected docs/artifacts/{p.name}/<version>/)")
         elif not is_artifact_bucket_name(p.name):
             warns.append(f"artifact: docs/artifacts/{p.name}/ is not a version bucket "
                          f"(expected a version id: v<N>, v<N>.<m> or v<N>.<m>.<p>)")
@@ -9219,18 +9258,18 @@ def artifact_placement_warnings(root):
     for bucket in buckets:
         for d in sorted(bucket.iterdir(), key=lambda x: x.name):
             if d.is_dir() and d.name != "archive":
-                warns.append(f"artifact: {bucket.name}/{d.name}/ — a bucket holds files "
+                warns.append(f"artifact: {bucket_id(bucket)}/{d.name}/ — a bucket holds files "
                              f"plus archive/, no other subdirectory")
         on_disk = set(artifact_files(bucket))
-        registered = {p for (b, p) in prior if b == bucket.name}
+        registered = {p for (b, p) in prior if b == bucket_id(bucket)}
         if not present and on_disk:
-            warns.append(f"artifact: {bucket.name}/ has {len(on_disk)} file(s) and there is no "
+            warns.append(f"artifact: {bucket_id(bucket)}/ has {len(on_disk)} file(s) and there is no "
                          f"docs/artifacts/manifest.json — run {next_step}")
             continue
         for rel in sorted(on_disk - registered):
-            warns.append(f"artifact: {bucket.name}/{rel} is not registered in "
+            warns.append(f"artifact: {bucket_id(bucket)}/{rel} is not registered in "
                          f"docs/artifacts/manifest.json — run {next_step}")
-    bucket_names = {b.name for b in buckets}
+    bucket_names = {bucket_id(b) for b in buckets}
     for (b, rel) in sorted(prior, key=lambda k: (_version_id_canon(k[0]) or (), k[0], k[1])):
         if b not in bucket_names:
             warns.append(f"artifact: docs/artifacts/manifest.json lists {b}/{rel}, and {b}/ "
@@ -10078,6 +10117,237 @@ PRD_VERSION_HEADING_RE = re.compile(r"^## (v\d+(?:\.\d+){0,2})(?![\d.])")
 PRD_VERSION_FILE_RE = re.compile(r"^v\d+(?:\.\d+){0,2}\.md$")
 
 
+# ── release lines (T-960 · T-946 = B · T-951 = A) ───────────────────────────
+# One project may hold several release lines. The home line (the project slug)
+# keeps every path, heading and id exactly as before; an added line, declared in
+# `.prdt/config.json` `lines`, prefixes `<line>/` to its version id wherever one
+# stands (`ntf-archive/v1.2`), and heads its PRD section `## <line> v<N>.<m>`.
+# No `lines` → a single-line project, byte-identical to before
+# (docs/artifacts/v1.13/release-lines.md §1–§6).
+LINE_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def _line_config_entries(root):
+    cfg = read_json(Path(root) / ".prdt" / "config.json") if root else None
+    if not isinstance(cfg, dict):
+        return None, None
+    raw = cfg.get("lines")
+    return cfg.get("slug"), (raw if isinstance(raw, list) else ([] if raw is None else raw))
+
+
+def project_lines(root):
+    """Added release lines in declaration order — config entries whose `name` is
+    legal, unique and not the slug; `line_config_warnings` names the rest.
+    [] = a single-line project."""
+    slug, raw = _line_config_entries(root)
+    out, seen = [], set()
+    for e in (raw if isinstance(raw, list) else []):
+        name = e.get("name") if isinstance(e, dict) else None
+        if isinstance(name, str) and LINE_NAME_RE.match(name) and name not in seen and name != slug:
+            seen.add(name)
+            out.append(e)
+    return out
+
+
+def project_line_names(root):
+    return [e["name"] for e in project_lines(root)]
+
+
+def project_declares_lines(root):
+    """True when `.prdt/config.json` carries a `lines` key at all — the switch
+    for every line-only check, so a single-line project's doctor output keeps
+    its check count."""
+    cfg = read_json(Path(root) / ".prdt" / "config.json") if root else None
+    return isinstance(cfg, dict) and "lines" in cfg
+
+
+def line_config_warnings(root):
+    slug, raw = _line_config_entries(root)
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        return ["lines: `.prdt/config.json` `lines` is not a list — every added line is ignored"]
+    warns, seen = [], set()
+    for i, e in enumerate(raw):
+        name = e.get("name") if isinstance(e, dict) else None
+        if not isinstance(name, str):
+            warns.append(f"lines: entry {i} in .prdt/config.json has no string `name` — ignored")
+            continue
+        lab = safe_label(name)
+        if not LINE_NAME_RE.match(name):
+            warns.append(f"lines: `{lab}` is not a legal line name — kebab-case, never `v<digit>…` "
+                         f"or `backlog` (contracts/fixed-paths.md); ignored")
+        elif name == slug:
+            warns.append(f"lines: `{lab}` is the project slug — the home line is never listed in "
+                         f"`lines`; ignored")
+        elif name in seen:
+            warns.append(f"lines: `{lab}` is declared twice — the second entry is ignored")
+        seen.add(name)
+    return warns
+
+
+def split_line_id(vid):
+    """`ntf-archive/v1.2` → ("ntf-archive", "v1.2"); `v1.2` → (None, "v1.2")."""
+    if isinstance(vid, str) and "/" in vid:
+        line, _, rest = vid.partition("/")
+        if LINE_NAME_RE.match(line):
+            return line, rest
+    return None, vid
+
+
+def join_line_id(line, vid):
+    return f"{line}/{vid}" if line else vid
+
+
+def line_state(st, line=None):
+    """(stage, version id, checks) of one line in po-state: the top-level fields
+    for the home line (`line` None), `lines.<line>` for an added line — whose
+    version comes back prefixed `<line>/`."""
+    if not isinstance(st, dict):
+        return None, None, None
+    src = st
+    if line is not None:
+        ls = st.get("lines")
+        src = ls.get(line) if isinstance(ls, dict) else None
+        if not isinstance(src, dict):
+            return None, None, None
+    v = src.get("version")
+    v = v.strip() if isinstance(v, str) and v.strip() else None
+    return src.get("stage"), (join_line_id(line, v) if v else None), src.get("checks")
+
+
+def _line_st(st, line):
+    """A po-state view of one line shaped like the top level (`version` bare),
+    for the single-line readers that take `st`. The home line gets `st` itself."""
+    if line is None:
+        return st
+    stage, vid, checks = line_state(st, line)
+    return {"stage": stage, "version": split_line_id(vid)[1] if vid else None, "checks": checks}
+
+
+def ticket_line(root, row_version):
+    """The line a ticket row belongs to — the `<line>/` dir it sits in; None = home."""
+    return split_line_id(row_version)[0]
+
+
+def _prd_line_headings(text, lines):
+    """[(line|None, version, line_no)] for every version heading: home `## v…`
+    plus `## <line> v…` for each DECLARED added line, fenced blocks excluded."""
+    if not lines:
+        return [(None, v, ln) for v, ln in _prd_version_headings(text)]
+    alt = "|".join(re.escape(x) for x in lines)
+    rx = re.compile(rf"^## (?:({alt}) )?(v\d+(?:\.\d+){{0,2}})(?![\d.])")
+    out = []
+    for i, line in _md_structural_lines(text):
+        m = rx.match(line)
+        if m:
+            out.append((m.group(1), m.group(2), i))
+    return out
+
+
+def prd_line_layout_warnings(root, st):
+    """contracts/fixed-paths.md, per ADDED line (the home line is
+    `prd_layout_warnings`): PRD.md carries that line's ONE open
+    `## <line> v<N>.<m>` section; a closed one lives at
+    `docs/prd/versions/<line>/v<N>.<m>.md` (section or one-line stub); a ticket
+    dir `docs/tickets/<line>/v<N>.<m>/` below the open round has that file."""
+    root = Path(root)
+    lines = project_line_names(root)
+    if not lines:
+        return []
+    prd_md = root / "docs" / "prd" / "PRD.md"
+    try:
+        text = prd_md.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        text = None
+    heads = _prd_line_headings(text, lines) if text is not None else []
+    warns = []
+    for ln_name in lines:
+        _, vid, _ = line_state(st, ln_name)
+        open_v = split_line_id(vid)[1] if vid else None
+        open_key = _version_id_canon(open_v) if open_v else None
+        vdir = root / "docs" / "prd" / "versions" / ln_name
+        on_disk = {}
+        if vdir.is_dir():
+            for f in sorted(vdir.glob("*.md")):
+                k = _version_id_canon(f.stem) if PRD_VERSION_FILE_RE.match(f.name) else None
+                if k is None:
+                    warns.append(f"prd: docs/prd/versions/{ln_name}/{f.name} is not a version file — "
+                                 f"only v<N>.<m>.md files live there (contracts/fixed-paths.md)")
+                    continue
+                on_disk.setdefault(k, f)
+                try:
+                    body = f.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                fh = _prd_line_headings(body, lines)
+                if not fh:
+                    if _prd_version_file_kind(body) != "stub":
+                        warns.append(f"prd: docs/prd/versions/{ln_name}/{f.name} is neither a "
+                                     f"`## {ln_name} {f.stem}` section nor a one-line stub")
+                    continue
+                fl, fv, fln = fh[0]
+                if fl != ln_name or _version_id_canon(fv) != k or fln != 1:
+                    warns.append(f"prd: docs/prd/versions/{ln_name}/{f.name} must open with "
+                                 f"`## {ln_name} {f.stem}` on line 1 — the file is that block and nothing else")
+        mine = [(v, ln) for l, v, ln in heads if l == ln_name]
+        seen_open = 0
+        for v, ln in mine:
+            if open_key is not None and _version_id_canon(v) == open_key:
+                seen_open += 1
+                if seen_open > 1:
+                    warns.append(f"prd: docs/prd/PRD.md:{ln} repeats the open section `## {ln_name} {v}` — "
+                                 f"the working file carries it once (contracts §Fixed paths)")
+                continue
+            if open_key is None and len(mine) == 1:
+                continue
+            warns.append(f"prd: closed section `## {ln_name} {v}` found in docs/prd/PRD.md:{ln} — the "
+                         f"working file is the standing head + the ONE open section per line, which "
+                         f"`.prdt/po-state.json` names as `{vid or '-'}`; its home is "
+                         f"docs/prd/versions/{ln_name}/{v}.md, moved byte-identical")
+        tdir = root / "docs" / "tickets" / ln_name
+        if tdir.is_dir():
+            current = {k for k in (_version_id_canon(v) for v, _ in mine) if k is not None}
+            if open_key is not None:
+                current.add(open_key)
+            ceiling = max(current) if current else None
+            for d in sorted(tdir.iterdir()):
+                if not d.is_dir() or not PRD_VERSION_FILE_RE.match(d.name + ".md"):
+                    continue
+                k = _version_id_canon(d.name)
+                if k is None or k in current or k in on_disk:
+                    continue
+                if ceiling is not None and k >= ceiling:
+                    continue
+                warns.append(f"prd: docs/tickets/{ln_name}/{d.name}/ has no "
+                             f"docs/prd/versions/{ln_name}/{d.name}.md — a closed round's section, or a "
+                             f"one-line `no PRD section — <decision>` stub (contracts/fixed-paths.md §PRD)")
+    return warns
+
+
+def _resource_line(root):
+    """The release line a resource marker is held for (release-lines.md §6):
+    the folder of po-state's current ticket, else `current_task.line`, else the
+    home line. None in a single-line project — its marker keeps today's shape."""
+    names = project_line_names(root) if root else []
+    if not names:
+        return None
+    slug = _resource_project_slug(root)
+    st = read_json(Path(root) / ".prdt" / "po-state.json") or {}
+    ct = st.get("current_task") if isinstance(st, dict) else None
+    if isinstance(ct, dict):
+        tid = ct.get("ticket_id")
+        if isinstance(tid, str) and re.match(r"^T-\d+$", tid):
+            for p in (Path(root) / "docs" / "tickets").glob(f"*/*/{tid}.md"):
+                if p.parent.parent.name in names:
+                    return p.parent.parent.name
+            if any((Path(root) / "docs" / "tickets").glob(f"*/{tid}.md")):
+                return slug
+        if ct.get("line") in names:
+            return ct["line"]
+    return slug
+
+
 def _version_id_canon(v):
     """Canonical comparable form of a version id — trailing zero components
     dropped, so `v1` ≡ `v1.0` ≡ `v1.0.0` (user decision above). None when `v`
@@ -10347,6 +10617,7 @@ def prd_layout_warnings(root, st):
     open_id = pv.strip() if isinstance(pv, str) and pv.strip() else None
     open_key = _version_id_canon(open_id) if open_id else None
 
+    one_open = " per line" if project_line_names(root) else ""
     prd_section_ids = []
     text = read(prd_md) if prd_md.is_file() else None
     if text is not None:
@@ -10377,7 +10648,7 @@ def prd_layout_warnings(root, st):
                                      f"round is open it lives in {rel(prd_md)} alone (contracts §Fixed paths)")
                     continue
                 warns.append(f"prd: closed section `## {v}` found in {rel(prd_md)}:{ln} — the working "
-                             f"file is the standing head + the ONE open section, which "
+                             f"file is the standing head + the ONE open section{one_open}, which "
                              f"`.prdt/po-state.json` names as `{open_id}`; {home_clause(v, rel(prd_md))}")
         elif len(heads) > 1:
             # No readable open version: the count is all that is left to judge on.
@@ -10663,7 +10934,7 @@ def po_state_warnings(st):
     if st is None:
         return ["state: .prdt/po-state.json missing or invalid JSON"]
     warns = []
-    extra = set(st) - PO_STATE_KEYS
+    extra = set(st) - PO_STATE_KEYS - PO_STATE_OPTIONAL_KEYS
     missing = PO_STATE_KEYS - set(st)
     if extra:
         warns.append(f"state: unexpected keys {sorted(extra)} (shape is 4 fields)")
@@ -10672,8 +10943,20 @@ def po_state_warnings(st):
     if st.get("stage") not in STAGES:
         warns.append(f"state: stage '{st.get('stage')}' not in {'/'.join(STAGES)}")
     ct = st.get("current_task")
-    if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee"} >= set(ct)):
-        warns.append("state: current_task must be null or {ticket_id, slug, assignee}")
+    if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee", "line"} >= set(ct)):
+        warns.append("state: current_task must be null or {ticket_id, slug, assignee, line?}")
+    lines = st.get("lines")
+    if "lines" in st and not isinstance(lines, dict):
+        warns.append("state: lines must be an object {<line>: {stage, version, checks?}}")
+    for name, ent in (lines.items() if isinstance(lines, dict) else []):
+        lab = safe_label(str(name))
+        if not isinstance(ent, dict):
+            warns.append(f"state: lines.{lab} must be {{stage, version, checks?}}")
+            continue
+        if ent.get("stage") not in STAGES:
+            warns.append(f"state: lines.{lab}.stage '{safe_label(str(ent.get('stage')))}' not in {'/'.join(STAGES)}")
+        if set(ent) - {"stage", "version", "checks"}:
+            warns.append(f"state: lines.{lab} has unexpected keys {sorted(set(ent) - {'stage', 'version', 'checks'})}")
     return warns
 
 
@@ -10699,13 +10982,21 @@ def ticket_graph_warnings(root, tickets):
     return warns
 
 
-def stage_signal_warnings(st, tickets):
+def stage_signal_warnings(st, tickets, lines=()):
     """Stage-completion signal, plus the build-entry signal (T-430). Both are
-    project-progress observations, not discipline↔execution mismatches."""
+    project-progress observations, not discipline↔execution mismatches.
+    `lines` = the added release lines, each judged on its own stage/version."""
     if not st:
         return []
     warns = []
-    stage, version = st.get("stage"), st.get("version")
+    for ln in lines:
+        lstage, lver, _ = line_state(st, ln)
+        warns += _stage_signal_one(lstage, lver, tickets)
+    return _stage_signal_one(st.get("stage"), st.get("version"), tickets) + warns
+
+
+def _stage_signal_one(stage, version, tickets):
+    warns = []
     next_stage = {"build": "Ship", "ship": "Retro"}.get(stage)
     if next_stage and version:
         ver_tickets = [t for t in tickets.values() if t["version"] == version]
@@ -10958,10 +11249,10 @@ PRD_REVERSED_ROW_RE = re.compile(
 PRD_ITEM_KEY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 PRD_H4_RE = re.compile(r"^#### (.+)$")
 # A ticket's src half: `prd_item: <version>#<key>` (T-663 §「항목 주소」).
-PRD_ITEM_RE = re.compile(r"^(v\d+(?:\.\d+){0,2})#([a-z0-9]+(?:-[a-z0-9]+)*)$")
+PRD_ITEM_RE = re.compile(r"^((?:[a-z0-9]+(?:-[a-z0-9]+)*/)?v\d+(?:\.\d+){0,2})#([a-z0-9]+(?:-[a-z0-9]+)*)$")
 
 
-def _prd_open_section(root, st):
+def _prd_open_section(root, st, line=None):
     """(version_id_as_written, [(line_no, line), ...]) for the ONE open `## v`
     section's BODY (heading line excluded, next `## v` heading excluded),
     fenced blocks already dropped. Same "which section is open" resolution
@@ -10980,9 +11271,11 @@ def _prd_open_section(root, st):
     except OSError:
         return None, []
     lines = _md_structural_lines(text)
-    heads = _prd_version_headings(text)
+    all_heads = _prd_line_headings(text, project_line_names(root))
+    heads = [(v, ln) for l, v, ln in all_heads if l == line]
     if not heads:
         return None, []
+    st = _line_st(st, line)
     pv = st.get("version") if isinstance(st, dict) else None
     open_key = _version_id_canon(pv) if isinstance(pv, str) and pv.strip() else None
     chosen = next((h for h in heads if open_key is not None and _version_id_canon(h[0]) == open_key),
@@ -10992,7 +11285,7 @@ def _prd_open_section(root, st):
             return None, []  # po-state names a round PRD.md does not carry open
         chosen = heads[0]
     version, start_ln = chosen
-    later = sorted(ln for _, ln in heads if ln > start_ln)
+    later = sorted(ln for _, _, ln in all_heads if ln > start_ln)
     end_ln = later[0] if later else None
     body = [(ln, line) for ln, line in lines
             if ln > start_ln and (end_ln is None or ln < end_ln)]
@@ -11117,13 +11410,18 @@ def _prd_item_keys_for_version(root, st, version_str):
     never graded — P1 above is the open section's check alone. Empty set
     when neither is on disk yet (the version does not exist, or the round
     that owns it has not written its items yet)."""
+    line, version_str = split_line_id(version_str)
+    if line is not None and line not in project_line_names(root):
+        return set()
     vkey = _version_id_canon(version_str)
     if vkey is None:
         return set()
-    open_v, open_body = _prd_open_section(root, st)
+    open_v, open_body = _prd_open_section(root, st, line)
     if open_v is not None and _version_id_canon(open_v) == vkey:
         return {k for _, k, _ in _prd_h4_items(open_body) if k}
     vdir = Path(root) / "docs" / "prd" / "versions"
+    if line is not None:
+        vdir = vdir / line
     if vdir.is_dir():
         for f in sorted(vdir.glob("*.md")):
             if not PRD_VERSION_FILE_RE.match(f.name) or _version_id_canon(f.stem) != vkey:
@@ -12535,6 +12833,7 @@ def _resource_markers(name=None):
                 "dispatch": data.get("dispatch") or f.stem,
                 "project": data.get("project"),
                 "since": data.get("since"),
+                **({"line": data["line"]} if isinstance(data.get("line"), str) else {}),
             })
     return out
 
@@ -12772,17 +13071,22 @@ def _schedule_tickets(root):
     return tickets
 
 
-def compute_schedule(root, tickets=None):
+def compute_schedule(root, tickets=None, line=None):
     """The schedule as one dict (the `--json` shape; text renders from it).
     `tickets` = a `_schedule_tickets()` result the caller already holds."""
     import graphlib
     root = Path(root)
     st = read_json(root / ".prdt" / "po-state.json") or {}
-    version = st.get("version") if isinstance(st.get("version"), str) else None
+    if line is None:
+        version = st.get("version") if isinstance(st.get("version"), str) else None
+    else:
+        version = line_state(st, line)[1]
     if tickets is None:
         tickets = _schedule_tickets(root)
     out = {"version": version, "cycle": None, "critical_path": [], "cp_length": 0,
            "rows": [], "missing_deps": []}
+    if project_line_names(root):
+        out["line"] = line or _resource_project_slug(root)
 
     # node set: current version's open tickets, then open deps wherever they live
     nodes, stack = {}, [t for t, (r, _) in tickets.items()
@@ -12828,7 +13132,7 @@ def compute_schedule(root, tickets=None):
         below[t] = acc
 
     h4 = {}
-    open_v, body = _prd_open_section(root, st)
+    open_v, body = _prd_open_section(root, st, line)
     if open_v is not None:
         for i, (_ln, key, _c) in enumerate(k for k in _prd_h4_items(body) if k[1]):
             h4.setdefault(key, i)
@@ -12840,8 +13144,9 @@ def compute_schedule(root, tickets=None):
         fm, _ = parse_frontmatter(p)
         prd_item = fm.get("prd_item") if isinstance(fm.get("prd_item"), str) else None
         m = PRD_ITEM_RE.match(prd_item.strip()) if prd_item else None
-        prd_order = (h4.get(m.group(2)) if m and open_vkey is not None
-                     and _version_id_canon(m.group(1)) == open_vkey else None)
+        m_line, m_ver = split_line_id(m.group(1)) if m else (None, None)
+        prd_order = (h4.get(m.group(2)) if m and open_vkey is not None and m_line == line
+                     and _version_id_canon(m_ver) == open_vkey else None)
         waits = sorted(preds[t], key=_ticket_num_key)
         if r["type"] == "decision" or r["assignee"] == "user":
             state = "waiting-user"
@@ -12888,19 +13193,43 @@ def cmd_schedule(args):
     if getattr(args, "action", None) == "report":
         return cmd_schedule_report(args)
     root = require_root()
-    s = compute_schedule(root)
-    if args.json:
-        print(json.dumps(s, ensure_ascii=False))
-        if s["cycle"] is not None:
+    names = project_line_names(root)
+    sel = getattr(args, "line", None)
+    if sel is not None:
+        if sel == _resource_project_slug(root):
+            sel = None
+        elif sel not in names:
+            sys.exit(f"prdt schedule: --line {safe_label(sel)} is not a line declared in "
+                     f".prdt/config.json `lines`")
+    if args.json or sel is not None or not names:
+        s = compute_schedule(root, line=sel)
+        if args.json:
+            print(json.dumps(s, ensure_ascii=False))
+            if s["cycle"] is not None:
+                sys.exit(1)
+            return
+        if _render_schedule(s):
             sys.exit(1)
         return
+    # Several lines and no --line: every line's schedule, home line first.
+    bad = False
+    for i, ln in enumerate([None] + names):
+        if i:
+            print()
+        bad = _render_schedule(compute_schedule(root, line=ln)) or bad
+    if bad:
+        sys.exit(1)
+
+
+def _render_schedule(s):
+    """Print one line's schedule; True when it carries a dependency cycle."""
     lab = lambda v: safe_label(str(v if v is not None else "-"))
     for m in s["missing_deps"]:
         print(f"note: {lab(m['ticket'])} deps on missing {lab(m['dep'])} — ignored")
     if s["cycle"] is not None:
         print("dependency cycle: " + " → ".join(lab(t) for t in s["cycle"]))
         print("no order computed — break the cycle in these tickets' `deps`")
-        sys.exit(1)
+        return True
     rows = s["rows"]
     print(f"schedule {lab(s['version'])} — {len(rows)} open ticket(s) in the graph")
     if s["critical_path"]:
@@ -12929,6 +13258,7 @@ def cmd_schedule(args):
     for state, title in (("waiting-user", "waiting on user"), ("po", "PO work"), ("in-flight", "in flight")):
         ids = [lab(r["id"]) for r in rows if r["state"] == state]
         print(f"{title}: {' '.join(ids) if ids else '(none)'}")
+    return False
 
 
 # ── T-773 (T-681 S2): the dispatch schedule record + `prdt schedule report` ──
@@ -13371,7 +13701,7 @@ def cmd_resource(args):
             group = by_name.get(n, [])
             print(f"{safe_label(n)}: {len(group)} held")
             for m in group:
-                proj = safe_label(m["project"]) if m["project"] else "-"
+                proj = safe_label(m.get("line") or m["project"]) if (m.get("line") or m["project"]) else "-"
                 print(f"  dispatch={safe_label(m['dispatch'])} project={proj} since={m['since'] or '-'}")
             # S6/S7: the command `down` would actually run for this name right
             # now (resolved fresh, same function `down` itself calls — never a
@@ -13428,12 +13758,15 @@ def cmd_resource(args):
         # No `stop_cmd` on the marker (T-680 S5) — this dict is bookkeeping
         # only, never a value anything later trusts as an executable source.
         marker = {"resource": name, "dispatch": dispatch, "project": project, "since": since}
+        line = _resource_line(find_project_root())
+        if line:
+            marker["line"] = line
         d = _resource_marker_dir(name)
         d.mkdir(parents=True, exist_ok=True)
         p = d / f"{dispatch}.json"
         atomic_write_text(p, json.dumps(marker, indent=2, sort_keys=True) + "\n")
         held = len(_resource_markers(name))
-        proj_out = safe_label(project) if project else "-"
+        proj_out = safe_label(line or project) if (line or project) else "-"
         # Purely informational — a fresh registry read at THIS moment, printed
         # and never persisted; `down` re-resolves independently at its own time.
         stop_out = "registered" if _resource_registered_stop_cmd(name) else "none"
@@ -13916,8 +14249,11 @@ def cmd_doctor(_args):
         # created before the frame's landing date.
         ("ticket frame", FAMILY_PROJECT, lambda: ticket_frame_warnings(root, trows)),
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
-        ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets)),
+        ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root))),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
+        *([("release lines", FAMILY_DE,
+            lambda: line_config_warnings(root) + prd_line_layout_warnings(root, st))]
+          if project_declares_lines(root) else []),
         # artifacts — version-bucket placement + manifest registration (T-512).
         # Supersedes the referencing-ticket scan, which was never the checkable
         # condition: it missed a file naming its own ticket in its title, and it
@@ -15025,7 +15361,9 @@ def main():
                         "worker's run never opens regardless")
     p.add_argument("--type", choices=TICKET_TYPES, help="new: the ticket's `type` (required)")
     p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
-    p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value (v<N>.<m>#<key>)")
+    p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value ([<line>/]v<N>.<m>#<key>)")
+    p.add_argument("--line", help="new: an added release line (.prdt/config.json `lines`) — the ticket "
+                                  "lands in docs/tickets/<line>/<that line's version>/; default the home line")
     p.add_argument("--deps", nargs="+", metavar="ID", help="new: `deps` ticket ids")
     p.add_argument("--check", action="store_true",
                    help="fmt: report violations and exit non-zero instead of writing")
@@ -15136,6 +15474,8 @@ def main():
                         "(PreToolUse event on stdin)")
     p.add_argument("--version", help="report: the version bucket (default: po-state.json version)")
     p.add_argument("--json", action="store_true", help="the same rows, machine-readable")
+    p.add_argument("--line", help="one release line (.prdt/config.json `lines`, or the project slug for "
+                                  "the home line); default every line, home first — `--json` the home line")
     p.set_defaults(fn=cmd_schedule)
     p = sub.add_parser("track", help="parallel track worktree (T-775): open <T-NNN> [--base dev|main] · "
                                      "review <T-NNN> · land <T-NNN> [--base dev|main] [--test CMD] · "
