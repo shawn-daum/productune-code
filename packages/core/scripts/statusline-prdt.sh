@@ -258,8 +258,18 @@ row_by_line = {r["line"]: r for r in rows}
 # (backlog excluded) — the same rule as the viewer Home (`waitLists`).
 dec = []
 req = []
+req_deps = {}   # req candidate id -> its `deps` ids
+tid_status = {}  # every scanned ticket id -> status (any status)
 tid_line = {}  # ticket id -> the line whose folder holds it (None = home)
 tickets_root = os.path.join(root, "docs", "tickets")
+
+
+def _fm_deps(head):
+    """`deps` ids of a ticket's frontmatter: inline list, bare id, or `- T-n` block."""
+    fm = re.match(r"---\n(.*?)\n---", head, re.S)
+    block = fm.group(1) if fm else head
+    m = re.search(r"^deps:[ \t]*(.*(?:\n[ \t]+-[^\n]*)*)", block, re.M)
+    return re.findall(r"T-\d+", m.group(1)) if m else []
 
 
 def scan(base, row):
@@ -279,11 +289,13 @@ def scan(base, row):
             if not (fn.startswith("T-") and fn.endswith(".md")):
                 continue
             try:
-                head = open(os.path.join(dpath, fn)).read(600)
+                head = open(os.path.join(dpath, fn)).read(2000)
             except OSError:
                 continue
             ms = re.search(r"^status:\s*(\S+)", head, re.M)
             s = ms.group(1) if ms else ""
+            if TICKET_RE.match(fn[:-3]):
+                tid_status.setdefault(fn[:-3], s)
             if s not in ("done", "open"):
                 continue
             if is_current:
@@ -303,6 +315,7 @@ def scan(base, row):
                 dec.append(tid)
             elif tassignee == "user":
                 req.append(tid)
+                req_deps[tid] = _fm_deps(head)
 
 
 for r in rows:
@@ -314,7 +327,9 @@ def _tid_key(t):
 
 
 dec = sorted(set(dec), key=_tid_key)
-req = sorted(set(req), key=_tid_key)
+# `req` lists only what the user can do NOW: a ticket whose `deps` still name an
+# open ticket is blocked and hidden (same rule as the viewer Home `waitLists`).
+req = sorted((t for t in set(req) if not any(tid_status.get(d) == "open" for d in req_deps.get(t, []))), key=_tid_key)
 
 
 def line_of(tid):

@@ -78,6 +78,18 @@ afterEach(() => {
   fs.rmSync(prdtHome, { recursive: true, force: true })
 })
 
+describe.skipIf(!READY)('statusline — T-961 req hides blocked user tasks', () => {
+  test('req lists a user ticket only when none of its deps is open', () => {
+    seed({ slug: 'productune' }, { stage: 'build', version: 'v1.13' })
+    ticket('v1.13', 'T-1')
+    ticket('v1.13', 'T-2', { status: 'done' })
+    ticket('v1.13', 'T-10', { assignee: 'user', deps: '[T-1]' })
+    ticket('v1.13', 'T-11', { assignee: 'user', deps: '[T-2]' })
+    ticket('v1.13', 'T-12', { assignee: 'user' })
+    expect(rows().at(-1)).toBe('dec — · req T-11 T-12')
+  })
+})
+
 describe.skipIf(!READY)('statusline — T-984 layout, single line', () => {
   test('dec and req both empty → line row + own last row `dec — · req —`', () => {
     seed({ slug: 'productune' }, { stage: 'build', version: 'v1.13', checks: { build: ['split', 'main-path', 'qa'] } })
