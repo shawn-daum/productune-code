@@ -2785,6 +2785,161 @@ def wiki_promote(root, args):
     print(f"indexes rebuilt: {len(pages)} project pages + {len(mpages)} machine pages")
 
 
+# ── inbox (T-479) — one-line recommendations between projects on this machine ─
+# One machine store, `$PRDT_HOME/inbox.md`, one line per recommendation naming
+# the RECEIVING project's slug. A project never writes into another project's
+# files: the sender appends here, the receiver's PO sees its own lines at
+# session start (prdt-inbox-inject.sh) and decides each one — `adopt` or
+# `decline` marks the line, it is then no longer delivered, and the marked line
+# stays as the trace that refuses the same (to, text) being sent again. Nothing
+# is applied anywhere: adopting is the receiving PO's own follow-up.
+# Bounded: every write drops decided lines older than INBOX_DECIDED_KEEP_DAYS
+# and undecided ones older than INBOX_OPEN_KEEP_DAYS (a project nobody opened in
+# half a year). Deliberately not built: broadcast / no-addressee lines, replies
+# or threads, a project registry, a live SendMessage nudge, any cross-project
+# wiki — see T-479 outcome.
+INBOX_LINE_RE = re.compile(
+    r"^- (r-[0-9a-f]{8}) · to: (\S+) · from: (\S+) · sent: (\d{4}-\d{2}-\d{2}) · "
+    r"(open|adopted \d{4}-\d{2}-\d{2}|declined \d{4}-\d{2}-\d{2}) · (.*)$")
+INBOX_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+INBOX_TEXT_MAX = 300
+INBOX_DECIDED_KEEP_DAYS = 90
+INBOX_OPEN_KEEP_DAYS = 180
+INBOX_HEADER = ("# prdt inbox — one-line recommendations between projects on this machine\n\n"
+                "Written only by `prdt inbox`; one line per recommendation, addressed by project slug.\n\n")
+
+
+def inbox_path():
+    return prdt_home() / "inbox.md"
+
+
+def project_slug(root):
+    """The name another project addresses this one by: `.prdt/config.json`
+    `slug`, else the root's directory name (init's own default for it). The
+    session-start hook resolves it the same way."""
+    cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
+    s = cfg.get("slug") if isinstance(cfg, dict) else None
+    return str(s) if s else Path(root).name
+
+
+def _inbox_read():
+    """(rows, other) — rows are dicts in file order; `other` is every line that
+    is not a recommendation (header prose), kept as written."""
+    try:
+        text = inbox_path().read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return [], []
+    rows, other = [], []
+    for ln in text.split("\n"):
+        m = INBOX_LINE_RE.match(ln)
+        if not m:
+            other.append(ln)
+            continue
+        st = m.group(5)
+        rows.append({"id": m.group(1), "to": m.group(2), "from": m.group(3), "sent": m.group(4),
+                     "state": st.split(" ")[0], "decided": st.split(" ")[1] if " " in st else "",
+                     "text": m.group(6)})
+    return rows, other
+
+
+def _inbox_render(r):
+    st = r["state"] if r["state"] == "open" else f"{r['state']} {r['decided']}"
+    return f"- {r['id']} · to: {r['to']} · from: {r['from']} · sent: {r['sent']} · {st} · {r['text']}"
+
+
+def _inbox_prune(rows, today):
+    def age(d):
+        try:
+            return (today - datetime.strptime(d, "%Y-%m-%d").date()).days
+        except ValueError:
+            return 0
+    return [r for r in rows
+            if (age(r["decided"]) <= INBOX_DECIDED_KEEP_DAYS if r["state"] != "open"
+                else age(r["sent"]) <= INBOX_OPEN_KEEP_DAYS)]
+
+
+def _inbox_write(rows):
+    p = inbox_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(p, INBOX_HEADER + "".join(_inbox_render(r) + "\n" for r in rows))
+
+
+@contextlib.contextmanager
+def _inbox_lock():
+    p = prdt_home() / "inbox.md.lock"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def cmd_inbox(args):
+    """`prdt inbox [list]` · `send <project-slug> <text…>` · `adopt <id>` ·
+    `decline <id>` — see the T-479 block above."""
+    root = require_root()
+    me = project_slug(root)
+    today = datetime.now(timezone.utc).date()
+    action = args.action or "list"
+    if action == "list":
+        mine = [r for r in _inbox_read()[0] if r["to"] == me and r["state"] == "open"]
+        for r in mine:
+            print(f"{r['id']} · from {r['from']} · {r['sent']} · {r['text']}")
+        if not mine:
+            print(f"(no open recommendation addressed to {me})")
+        return
+    if action == "send":
+        if len(args.rest) < 2:
+            sys.exit("usage: prdt inbox send <project-slug> <one-line recommendation>  "
+                     "(a line always names ONE receiving project — there is no broadcast)")
+        to, text = args.rest[0], " ".join(one_line(" ".join(args.rest[1:])).split())
+        if not INBOX_SLUG_RE.match(to):
+            sys.exit(f"refused: `{safe_label(to, limit=40)}` is not a project slug — name one receiving "
+                     "project (its .prdt/config.json `slug`); there is no broadcast")
+        if to == me:
+            sys.exit(f"refused: {me} is this project — write it to your own docs/wiki/inbox.md instead")
+        if not text:
+            sys.exit("refused: empty recommendation")
+        if len(text) > INBOX_TEXT_MAX:
+            sys.exit(f"refused: {len(text)} chars — a recommendation is ONE line (≤{INBOX_TEXT_MAX}); "
+                     "point at a file or ticket for the detail")
+        rid = "r-" + hashlib.sha256(f"{to}\n{text}".encode("utf-8")).hexdigest()[:8]
+        with _inbox_lock():
+            rows, _other = _inbox_read()
+            rows = _inbox_prune(rows, today)
+            dup = next((r for r in rows if r["id"] == rid), None)
+            if dup:
+                why = ("is already waiting for it" if dup["state"] == "open"
+                       else f"{dup['state']} it on {dup['decided']}")
+                sys.exit(f"refused: the same line to {to} exists — {to} {why} ({rid}); not sent again")
+            rows.append({"id": rid, "to": to, "from": me, "sent": today.isoformat(),
+                         "state": "open", "decided": "", "text": text})
+            _inbox_write(rows)
+        print(f"sent {rid} → {to}: {text}")
+        print(f"{to}'s PO sees it at its next session start; it decides adoption there.")
+        return
+    if action in ("adopt", "decline"):
+        if len(args.rest) != 1:
+            sys.exit(f"usage: prdt inbox {action} <id>")
+        rid = args.rest[0]
+        with _inbox_lock():
+            rows, _other = _inbox_read()
+            r = next((x for x in rows if x["id"] == rid), None)
+            if not r or r["to"] != me:
+                sys.exit(f"refused: no recommendation {safe_label(rid, limit=20)} addressed to {me}")
+            if r["state"] != "open":
+                sys.exit(f"{rid} was already {r['state']} on {r['decided']} — nothing changed")
+            r["state"], r["decided"] = ("adopted" if action == "adopt" else "declined"), today.isoformat()
+            _inbox_write(_inbox_prune(rows, today))
+        print(f"{r['state']} {rid} (from {r['from']}): {r['text']}")
+        print("no longer delivered at session start." + (
+            " Adopting applied nothing — record it in docs/wiki/inbox.md or a ticket."
+            if action == "adopt" else " The trace refuses the same line being sent again."))
+        return
+
+
 def wiki_lint(root):
     pages = scan_wiki(root)
     warns = []
@@ -14723,6 +14878,12 @@ def main():
     p.add_argument("--yes", action="store_true",
                    help="promote: the user's confirm for this one move (without it nothing is written)")
     p.set_defaults(fn=cmd_wiki)
+    p = sub.add_parser("inbox", help="one-line recommendations between projects on this machine (T-479): "
+                                     "list (default: open lines addressed to THIS project) · "
+                                     "send <project-slug> <text> · adopt <id> · decline <id>")
+    p.add_argument("action", nargs="?", choices=["list", "send", "adopt", "decline"])
+    p.add_argument("rest", nargs="*")
+    p.set_defaults(fn=cmd_inbox)
     p = sub.add_parser("index", help="rebuild — drop + re-derive `.prdt/index.db` in full "
                                      "(tickets · wiki · edges, T-674); `edges` is derived, "
                                      "never hand-maintained")
