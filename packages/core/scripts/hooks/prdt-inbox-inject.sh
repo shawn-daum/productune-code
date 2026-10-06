@@ -30,7 +30,7 @@ EVENT_NAME="$(printf '%s' "$EVENT_JSON" | jq -r '.hook_event_name // "SessionSta
 [ -z "$EVENT_CWD" ] && EVENT_CWD="$PWD"
 
 CTX="$(python3 - "$INBOX" "$EVENT_CWD" <<'PY' 2>/dev/null
-import json, os, re, sys
+import json, os, re, sys, unicodedata
 inbox, cwd = sys.argv[1], sys.argv[2]
 d = os.path.realpath(cwd)
 root = None
@@ -50,7 +50,7 @@ try:
 except Exception:
     pass
 slug = str(slug) if slug else os.path.basename(root)
-if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", slug):
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", slug):
     sys.exit(0)
 # Same reading rules as `_inbox_read` / `_inbox_expired` in the CLI: a store
 # that is not exactly what `prdt inbox` writes (bad UTF-8, a malformed line, a
@@ -62,6 +62,9 @@ LINE = re.compile(r"^- (r-[0-9a-f]{8}) · to: (\S+) · from: (\S+) · sent: (\d{
                   r"(open|adopted \d{4}-\d{2}-\d{2}|declined \d{4}-\d{2}-\d{2}) · (.*)$")
 SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 FOLD = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029\u0080-\u009f\u200b-\u200d\u202a-\u202e\u2066-\u2069\ufeff]")
+def fold(s):
+    s = FOLD.sub(" ", s)
+    return "".join(" " if unicodedata.category(c) in ("Cf", "Cc", "Zl", "Zp") else c for c in s)
 PROSE = "Written only by `prdt inbox`; one line per recommendation, addressed by project slug."
 TEXT_MAX, OPEN_KEEP_DAYS, SHOW_MAX = 300, 180, 10
 try:
@@ -84,8 +87,8 @@ try:
         decided = st.split(" ")[1] if " " in st else ""
         sent_d = day(sent)
         decided_d = day(decided) if decided else None
-        if (not SLUG.match(to) or not SLUG.match(frm) or rid in seen or not body
-                or len(body) > TEXT_MAX or body != " ".join(FOLD.sub(" ", body).split())):
+        if (not SLUG.fullmatch(to) or not SLUG.fullmatch(frm) or rid in seen or not body
+                or len(body) > TEXT_MAX or body != " ".join(fold(body).split())):
             sys.exit(0)
         seen.add(rid)
         age = (today - sent_d).days

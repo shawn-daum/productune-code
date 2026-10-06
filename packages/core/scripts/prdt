@@ -407,7 +407,11 @@ def one_line(text):
     output unvalidated can still never become a second line. NOT a substitute
     for `forged_tokens` — it cannot stop a forgery that fits on one line, which
     is why the validators refuse rather than lean on this."""
-    return INVISIBLE_RE.sub(" ", LINE_BREAK_RE.sub(" ", str(text)))
+    s = INVISIBLE_RE.sub(" ", LINE_BREAK_RE.sub(" ", str(text)))
+    # Every format / control / separator character (Cf, Cc, Zl, Zp: LRM/RLM,
+    # ALM, word joiner, Mongolian vowel separator, soft hyphen, tag characters…)
+    # — the hook folds the identical set.
+    return "".join(" " if unicodedata.category(c) in ("Cf", "Cc", "Zl", "Zp") else c for c in s)
 
 
 def safe_label(text, reserved=DOCTOR_RESERVED, limit=60, ellipsis=False):
@@ -2843,7 +2847,7 @@ def project_slug(root):
 def _inbox_row_problem(r):
     """Why a parsed row could not have been written by `prdt inbox` (None = fine)."""
     for k in ("to", "from"):
-        if not INBOX_SLUG_RE.match(r[k]):
+        if not INBOX_SLUG_RE.fullmatch(r[k]):
             return f"row {r['id']} has an invalid `{k}` slug"
     for d in (r["sent"], r["decided"]):
         if d:
@@ -2968,10 +2972,10 @@ def cmd_inbox(args):
             sys.exit("usage: prdt inbox send <project-slug> <one-line recommendation>  "
                      "(a line always names ONE receiving project — there is no broadcast)")
         to, text = args.rest[0], " ".join(one_line(" ".join(args.rest[1:])).split())
-        if not INBOX_SLUG_RE.match(me):
+        if not INBOX_SLUG_RE.fullmatch(me):
             sys.exit(f"refused: this project's slug `{safe_label(me, limit=40)}` is not a valid project slug "
                      "(letters, digits, `.`, `_`, `-`; ≤64) — fix `slug` in .prdt/config.json; nothing was sent")
-        if not INBOX_SLUG_RE.match(to):
+        if not INBOX_SLUG_RE.fullmatch(to):
             sys.exit(f"refused: `{safe_label(to, limit=40)}` is not a project slug — name one receiving "
                      "project (its .prdt/config.json `slug`); there is no broadcast")
         if to == me:
