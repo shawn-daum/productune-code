@@ -51,6 +51,9 @@ export const HOME = {
   // define-screen-set.html, home-progress · home-cases; T-796 outcome). The
   // matrix labels (담당 · 검수 · 전체) went with the matrix.
   here: 'now',
+  // T-961: stage-bar counts as the v1.13 screen set (T-955) labels them.
+  stageTickets: (n) => `티켓 ${n}`,
+  stageDone: (done, total) => `티켓 완료 ${done}/${total}`,
   scope: '스코프',
   scopeSub: (n) => `이번 버전 ${n}항목`,
   waitDec: '내 결정 대기',
