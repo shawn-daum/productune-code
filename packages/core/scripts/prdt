@@ -10927,7 +10927,7 @@ def doctor_verdict_lines(records):
     return lines
 
 
-def po_state_warnings(st):
+def po_state_warnings(st, root=None):
     """`.prdt/po-state.json` is the state the harness actually runs on, against
     the shape the discipline declares — a discipline↔execution check by
     construction, which is why the ticket names `state:` in the family."""
@@ -10943,8 +10943,12 @@ def po_state_warnings(st):
     if st.get("stage") not in STAGES:
         warns.append(f"state: stage '{st.get('stage')}' not in {'/'.join(STAGES)}")
     ct = st.get("current_task")
+    multi = bool(root) and project_declares_lines(root)
     if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee", "line"} >= set(ct)):
-        warns.append("state: current_task must be null or {ticket_id, slug, assignee, line?}")
+        # Single-line projects keep the pre-T-960 text byte-for-byte.
+        warns.append("state: current_task must be null or {ticket_id, slug, assignee, line?}" if multi
+                     else "state: current_task must be null or {ticket_id, slug, assignee}")
+    declared = set(project_line_names(root)) if root else None
     lines = st.get("lines")
     if "lines" in st and not isinstance(lines, dict):
         warns.append("state: lines must be an object {<line>: {stage, version, checks?}}")
@@ -10955,6 +10959,8 @@ def po_state_warnings(st):
             continue
         if ent.get("stage") not in STAGES:
             warns.append(f"state: lines.{lab}.stage '{safe_label(str(ent.get('stage')))}' not in {'/'.join(STAGES)}")
+        if declared is not None and name not in declared:
+            warns.append(f"state: lines.{lab} is not a line declared in .prdt/config.json `lines`")
         if set(ent) - {"stage", "version", "checks"}:
             warns.append(f"state: lines.{lab} has unexpected keys {sorted(set(ent) - {'stage', 'version', 'checks'})}")
     return warns
@@ -14235,7 +14241,7 @@ def cmd_doctor(_args):
     # entry is the DECLARED family (T-560) — the one thing a person adding a
     # check must not leave out, and the one thing the verdict refuses to guess.
     roster = [
-        ("po-state shape", FAMILY_DE, lambda: po_state_warnings(st)),
+        ("po-state shape", FAMILY_DE, lambda: po_state_warnings(st, root)),
         ("ticket index", FAMILY_PROJECT, lambda: [f"ticket: {v}" for v in tviol]),
         # Whether a duplicated id deserves its own warning was left open by T-549
         # and answered by T-551: it does, ONCE, from a dedicated check — never as
