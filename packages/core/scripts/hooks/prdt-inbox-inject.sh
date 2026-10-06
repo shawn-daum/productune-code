@@ -6,7 +6,7 @@
 #
 # Reads the one machine store `$PRDT_HOME/inbox.md` (written only by
 # `prdt inbox`), resolves THIS project's slug the way the CLI does
-# (`.prdt/config.json` slug, else the root dir name; root = OUTERMOST
+# (the explicit `.prdt/config.json` slug, no slug → no inbox; root = OUTERMOST
 # `.prdt/po-state.json` on the physical ancestor chain, T-484/T-493), and
 # prints the OPEN lines addressed to that slug. Nothing addressed here →
 # no output at all. The lines come from another project, so each is rendered
@@ -49,7 +49,8 @@ try:
     slug = cfg.get("slug") if isinstance(cfg, dict) else None
 except Exception:
     pass
-slug = str(slug) if slug else os.path.basename(root)
+if not isinstance(slug, str) or not slug:
+    sys.exit(0)   # no explicit slug → no address → nothing delivered (T-975)
 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", slug):
     sys.exit(0)
 # Same reading rules as `_inbox_read` / `_inbox_expired` in the CLI: a store

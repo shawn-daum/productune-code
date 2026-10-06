@@ -335,3 +335,63 @@ test('the hook is registered on its own PO SessionStart entry, not inside the pi
   const regs = m.registrations.filter((r: { hooks: string[] }) => r.hooks.includes('prdt-inbox-inject.sh'))
   expect(regs).toEqual([{ event: 'SessionStart', matcher: 'startup|resume|clear', hooks: ['prdt-inbox-inject.sh'] }])
 })
+
+describe('T-975 an address is an explicit slug, never a folder name', () => {
+  function slugless(parent: string, name: string): string {
+    const root = path.join(parent, name)
+    fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage: 'build', version: 'v1.0' }))
+    fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify({}))
+    return root
+  }
+  function marker(root: string, n: number) {
+    const d = path.join(home, 'run', 'dispatches')
+    fs.mkdirSync(d, { recursive: true })
+    fs.writeFileSync(path.join(d, `m${n}.json`), JSON.stringify({ agent_id: `a${n}`, persona: 'qa', project_root: root, since: '2026-10-06T00:00:00Z' }))
+  }
+
+  test('a project without a slug cannot send, list or decide, and its PO session start prints nothing', () => {
+    const lone = slugless(tmp('prdt-t975-a-'), 'lonely')
+    const s = cli(lone, 'send', 'beta', 'hello')
+    expect(s.code).not.toBe(0)
+    expect(s.err).toContain('no `slug`')
+    expect(fs.existsSync(path.join(home, 'inbox.md'))).toBe(false)
+    expect(cli(lone, 'list').code).not.toBe(0)
+    // a line addressed to the folder name is never delivered to the slug-less project
+    expect(cli(projA, 'send', 'lonely', 'hi there').code).toBe(0)
+    expect(hook(lone)).toBe('')
+  })
+
+  test('two slug-less projects with the same folder name: neither sends, neither receives', () => {
+    const c1 = slugless(tmp('prdt-t975-c1-'), 'shared')
+    const c2 = slugless(tmp('prdt-t975-c2-'), 'shared')
+    expect(cli(projA, 'send', 'shared', 'one line').code).toBe(0)
+    expect(hook(c1)).toBe('')
+    expect(hook(c2)).toBe('')
+    expect(cli(c1, 'send', 'alpha', 'x').code).not.toBe(0)
+    expect(cli(c2, 'send', 'alpha', 'x').code).not.toBe(0)
+  })
+
+  test('a slug declared by two projects is refused at send, naming the ambiguity, and nothing is written', () => {
+    const d1 = makeProject('dup')
+    const d2 = makeProject('dup')
+    marker(d1, 1)
+    marker(d2, 2)
+    const toDup = cli(projA, 'send', 'dup', 'who gets this')
+    expect(toDup.code).not.toBe(0)
+    expect(toDup.err).toContain('ambiguous')
+    const fromDup = cli(d1, 'send', 'alpha', 'who sent this')
+    expect(fromDup.code).not.toBe(0)
+    expect(fromDup.err).toContain('ambiguous')
+    expect(fs.existsSync(path.join(home, 'inbox.md'))).toBe(false)
+  })
+
+  test('`prdt init` always writes a slug', () => {
+    const root = tmp('prdt-t975-init-')
+    const r = spawnSync('python3', [PRDT_CLI, 'init', '--json'], { cwd: root, env: env(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    expect(r.status).toBe(0)
+    const cfg = JSON.parse(fs.readFileSync(path.join(root, '.prdt', 'config.json'), 'utf8'))
+    expect(typeof cfg.slug).toBe('string')
+    expect(cfg.slug.length).toBeGreaterThan(0)
+  })
+})

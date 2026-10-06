@@ -2396,7 +2396,7 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     # scratch (same contract as meta-git.ts writeMetaAllowlist).
     cfg = read_json(prdt / "config.json")
     cfg = cfg if isinstance(cfg, dict) else {}
-    cfg["slug"] = cfg.get("slug") or slug
+    cfg["slug"] = cfg["slug"] if isinstance(cfg.get("slug"), str) and cfg["slug"] else slug
     cfg["created_at"] = cfg.get("created_at") or now_iso()
     cfg["surfaces"] = cfg.get("surfaces") if isinstance(cfg.get("surfaces"), dict) else {}
     meta = cfg.get("meta") if isinstance(cfg.get("meta"), dict) else {}
@@ -2836,12 +2836,32 @@ def inbox_path():
 
 
 def project_slug(root):
-    """The name another project addresses this one by: `.prdt/config.json`
-    `slug`, else the root's directory name (init's own default for it). The
-    session-start hook resolves it the same way."""
+    """The name another project addresses this one by: the EXPLICIT `slug` in
+    `.prdt/config.json`, else None. A directory name is never an address (two
+    checkouts named `shared` would both answer to it, T-975); the session-start
+    hook resolves it the same way."""
     cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
     s = cfg.get("slug") if isinstance(cfg, dict) else None
-    return str(s) if s else Path(root).name
+    return s if isinstance(s, str) and s else None
+
+
+def _inbox_slug_claimants(slug, root):
+    """Distinct project roots on this machine that declare `slug`. The only
+    machine-wide project knowledge prdt keeps is the `project_root` of the
+    dispatch markers under `$PRDT_HOME/run/dispatches/` (no registry is added),
+    so this sees THIS root plus every project that dispatched on this machine
+    within the markers' retention (~24 h after a dispatch stops)."""
+    roots = {os.path.realpath(root)}
+    d = prdt_home() / "run" / "dispatches"
+    if d.is_dir():
+        for f in d.glob("*.json"):
+            try:
+                pr = (json.loads(f.read_text(encoding="utf-8")) or {}).get("project_root")
+            except Exception:
+                continue
+            if isinstance(pr, str) and pr:
+                roots.add(os.path.realpath(pr))
+    return {r for r in roots if project_slug(r) == slug}
 
 
 def _inbox_row_problem(r):
@@ -2951,6 +2971,9 @@ def cmd_inbox(args):
     me = project_slug(root)
     today = datetime.now(timezone.utc).date()
     action = args.action or "list"
+    if me is None:
+        sys.exit("refused: this project has no `slug` in .prdt/config.json — the inbox addresses a project only by "
+                 'an explicit slug (a directory name can collide); set `"slug": "<name>"` there. Nothing was read or written')
     for a in args.rest:
         try:
             a.encode("utf-8")
@@ -2978,6 +3001,11 @@ def cmd_inbox(args):
         if not INBOX_SLUG_RE.fullmatch(to):
             sys.exit(f"refused: `{safe_label(to, limit=40)}` is not a project slug — name one receiving "
                      "project (its .prdt/config.json `slug`); there is no broadcast")
+        for who, label in ((me, "this project's"), (to, "the addressee's")):
+            if len(_inbox_slug_claimants(who, root)) > 1:
+                sys.exit(f"refused: the slug `{safe_label(who, limit=40)}` ({label}) is declared by more than one project "
+                         "on this machine, so the address is ambiguous — give each project its own `slug` in "
+                         ".prdt/config.json; nothing was sent")
         if to == me:
             sys.exit(f"refused: {me} is this project — write it to your own docs/wiki/inbox.md instead")
         if not text:
