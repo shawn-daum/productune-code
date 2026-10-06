@@ -14,9 +14,9 @@
 #   dec <ids|—> · req <ids|—>
 #   - One row per release line, home line (the project slug) first, then each
 #     line declared in `.prdt/config.json` `lines` (release-lines.md §6b).
-#   - Single-line project: when dec and req are both empty they end the one row
-#     as `| dec — · req —`; when either has an entry they move to row 2.
-#     Multi-line project: one shared `dec … · req …` row after the line rows.
+#   - The `dec … · req …` row is ALWAYS its own last row (`dec — · req —` when
+#     empty), single-line and multi-line projects alike (T-988 = A, T-984
+#     reversed by the user 2026-10-06).
 #   - Never more than MAX_ROWS (17, measured on the user's machine) rows.
 #   - `<stage> n/m` reads the T-954 checklist record, po-state `checks.<stage>`
 #     (or `lines.<line>.checks.<stage>`); no record for the stage → stage alone.
@@ -600,13 +600,10 @@ def fit(build):
 
 # T-984 layout (user-confirmed 2026-10-06):
 #   <label> <version> | branch: <b> | <stage> n/m | ticket n/m | working …
-# One row per line, home first. Single-line: when dec and req are both empty
-# they end the row as `| dec — · req —`; when either has an entry they move to
-# a second row `dec … · req …`. Multi-line: always one shared dec/req row last.
+# One row per line, home first, then ALWAYS one `dec … · req …` row last
+# (`dec — · req —` when empty), single-line and multi-line alike.
 # Never more than MAX_ROWS rows: past it, the last line rows fold into `+N lines`.
-multi = len(rows) > 1
-action_row = multi or bool(dec or req)
-line_budget = MAX_ROWS - (1 if action_row else 0)
+line_budget = MAX_ROWS - 1
 shown = rows if len(rows) <= line_budget else rows[:line_budget - 1]
 out_rows = []
 for r in shown:
@@ -617,13 +614,11 @@ for r in shown:
     if r["vtotal"]:
         head.append(f"ticket {r['vdone']}/{r['vtotal']}")
     ids = [tid for tid, _ in running if line_of(tid) == r["line"]]
-    tail = (lambda lim: []) if action_row else (lambda lim: [action_seg(lim)])
-    out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids, tail=tail:
-                                        " | ".join(head + [working_seg(ids, lim)] + tail(lim)))))
+    out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
+                                        " | ".join(head + [working_seg(ids, lim)]))))
 if len(shown) < len(rows):
     out_rows.append((None, f"+{len(rows) - len(shown)} lines"))
-if action_row:
-    out_rows.append((None, fit(action_seg)))
+out_rows.append((None, fit(action_seg)))
 
 
 def wrap_links(text, link_map):

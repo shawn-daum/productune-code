@@ -805,12 +805,14 @@ export const PAST_TICKET_GLOBAL = '__PRDT_VIEWER_DATA__'
  * loader takes a src from that map only.
  * @returns {Array<{ bucket: string, name: string, tickets: Record<string,{path:string,body:string}>, bodies: string[] }>}
  */
-export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [] } = {}) {
+export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [], line = null } = {}) {
   pageViewerAbsPath = viewerAbsPath
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   const files = []
   for (const bucket of tickets.omitted) {
-    if (!bucket.bodies || !PAST_BUCKET_RE.test(bucket.bucket)) continue
+    // T-961: an added line's bucket key is `<line>--<bucket>` (no `/` in a file name).
+    const key = line ? `${line}--${bucket.bucket}` : bucket.bucket
+    if (!bucket.bodies || !PAST_BUCKET_RE.test(key)) continue
     const rows = {}
     const bodies = []
     for (const t of bucket.tickets) {
@@ -822,7 +824,7 @@ export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_
       bodies.push(body)
     }
     if (bodies.length === 0) continue
-    files.push({ bucket: bucket.bucket, name: `${prefix}.tickets-${bucket.bucket}.js`, tickets: rows, bodies })
+    files.push({ bucket: key, name: `${prefix}.tickets-${key}.js`, tickets: rows, bodies })
   }
   return files
 }
@@ -3212,6 +3214,14 @@ ${PRD_READING_SCRIPT}
 const THEME_HEAD_SCRIPT = `(function(){var t=null;try{t=localStorage.getItem(${JSON.stringify(THEME_STORAGE_PREFIX)}+location.pathname)}catch(e){}document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light')})();`
 const THEME_HEAD_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(THEME_HEAD_SCRIPT, 'utf8').digest('base64')
 const INTERACTION_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT, 'utf8').digest('base64')
+// T-961: a multi-line page resolves an added line's past ticket
+// (docs/tickets/<line>/<v>/T-n.md) to its own data file key `<line>--<v>`; a
+// single-line page keeps INTERACTION_SCRIPT, byte for byte.
+const PAST_REF_RE = /(function pastTicketRef\(fields\) \{\n\s*var parts = [^\n]*;)/
+const PAST_REF_LINE = '\n    ' + ['if', '(parts.length', '===', '5)', 'parts.splice(2,', '2,', "parts[2]", '+', "'--'", '+', 'parts[3]);'].join(' ')
+const INTERACTION_SCRIPT_LINES = INTERACTION_SCRIPT.replace(PAST_REF_RE, (head) => head + PAST_REF_LINE)
+if (INTERACTION_SCRIPT_LINES === INTERACTION_SCRIPT) throw new Error('T-961: pastTicketRef text drifted from PAST_REF_RE')
+const INTERACTION_SCRIPT_LINES_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT_LINES, 'utf8').digest('base64')
 // T-961: emitted only on a page with several release lines — a single-line
 // page's CSS, scripts and CSP stay byte-identical.
 const LINES_CSS = `
@@ -3237,7 +3247,7 @@ const CSP_CONTENT = [
   "base-uri 'none'",
   "form-action 'none'",
 ].join('; ')
-const CSP_CONTENT_LINES = CSP_CONTENT.replace("'strict-dynamic'", `'sha256-${LINES_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`)
+const CSP_CONTENT_LINES = CSP_CONTENT.replace(`'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}'`, `'sha256-${INTERACTION_SCRIPT_LINES_SHA256_BASE64}'`).replace("'strict-dynamic'", `'sha256-${LINES_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`)
 
 /**
  * Embeds `obj` as a same-document JSON blob. Escapes EVERY `<` as `<`
@@ -3338,7 +3348,7 @@ ${releaseSection(data.releases || [])}
 ${discSection(discipline)}
 </div>
 ${detailDataScript(detailData)}
-<script>${INTERACTION_SCRIPT}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}
+<script>${views.length > 0 ? INTERACTION_SCRIPT_LINES : INTERACTION_SCRIPT}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}
 </body>
 </html>
 `
