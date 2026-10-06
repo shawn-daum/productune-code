@@ -163,7 +163,7 @@ function unwrapLinks(text: string): string {
 
 /** Pulls out the ` | `-delimited segment starting with `name ` (or undefined),
  *  with any OSC 8 wrapping unwrapped back to the plain ticket id. */
-function segment(out: string, name: 'running' | 'dec' | 'req'): string | undefined {
+function segment(out: string, name: 'working' | 'dec' | 'req'): string | undefined {
   const found = out.trim().split(' | ').find((p) => p.startsWith(`${name} `))
   return found === undefined ? undefined : unwrapLinks(found).slice(name.length + 1)
 }
@@ -186,7 +186,7 @@ afterEach(() => {
 describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer segments', () => {
   test('T-922: none running, none waiting: running/dec/req still render, as an em dash', () => {
     const out = runStatusline()
-    expect(segment(out, 'running')).toBe('\u2014')
+    expect(segment(out, 'working')).toBe('\u2014')
     expect(segment(out, 'dec')).toBe('\u2014')
     expect(segment(out, 'req')).toBe('\u2014')
     expect(out).not.toMatch(/\b(waiting|CP)\b/)
@@ -214,11 +214,35 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     )
 
     const out = runStatusline()
-    const running = segment(out, 'running')
-    expect(running).toBe('T-700→developer>T-720 T-701→qa')
+    const running = segment(out, 'working')
+    expect(running).toBe('T-700(dev)>T-720 T-701(qa)')
     expect(segment(out, 'dec')).toBe('T-710>T-730')
     expect(segment(out, 'req')).toBe('T-711')
     expect(out).not.toMatch(/\bwaiting\b/)
+  })
+
+  test('T-965: user-confirmed sample — personas abbreviated, successors only from the current version folder', () => {
+    writeMarker({ agentId: 'd', ticketId: 'T-959', persona: 'designer', ageMs: 4 * 60_000 })
+    writeMarker({ agentId: 'q', ticketId: 'T-477', persona: 'qa', ageMs: 3 * 60_000 })
+    buildIndexDb(
+      [
+        { id: 'T-959', relPath: 'docs/tickets/v9.9/T-959.md' },
+        { id: 'T-960', relPath: 'docs/tickets/v9.9/T-960.md' },
+        { id: 'T-477', relPath: 'docs/tickets/v9.9/T-477.md' },
+        { id: 'T-478', relPath: 'docs/tickets/v9.9/T-478.md' },
+        { id: 'T-963', relPath: 'docs/tickets/v9.9/T-963.md' },
+        { id: 'T-496', relPath: 'docs/tickets/backlog/T-496.md' }, // backlog: neither shown nor counted
+        { id: 'T-497', relPath: 'docs/tickets/v9.8/T-497.md' }, // other version: same
+      ],
+      [
+        { src: 'T-960', dst: 'T-959' },
+        { src: 'T-478', dst: 'T-477' },
+        { src: 'T-963', dst: 'T-477' },
+        { src: 'T-496', dst: 'T-477' },
+        { src: 'T-497', dst: 'T-477' },
+      ],
+    )
+    expect(segment(runStatusline(), 'working')).toBe('T-959(des)>T-960 T-477(qa)>T-478,T-963')
   })
 
   test('a stale in-flight marker ages out (never shown, never crashes, never deleted); a fresh one still shows; a stopped one is hidden', () => {
@@ -227,8 +251,8 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const stopped = writeMarker({ agentId: 'done', ticketId: 'T-998', ageMs: 120_000, stoppedAgoMs: 30_000 }) // slice 3: stamped, not unlinked
 
     const out = runStatusline()
-    const running = segment(out, 'running')
-    expect(running).toBe('T-682→developer') // default persona from writeMarker()
+    const running = segment(out, 'working')
+    expect(running).toBe('T-682(dev)') // default persona from writeMarker()
     expect(out).not.toContain('T-999')
     expect(out).not.toContain('T-998')
     // F10: pure display — the stale file is still on disk; only prdt-post-dispatch.sh prunes run/dispatches
@@ -261,9 +285,9 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     )
 
     const out = runStatusline()
-    const running = segment(out, 'running')
+    const running = segment(out, 'working')
     const dec = segment(out, 'dec')
-    expect(running).toBe('T-750→developer>T-760,T-761+1 T-751→qa T-752→developer +1')
+    expect(running).toBe('T-750(dev)>T-760,T-761+1 T-751(qa) T-752(dev) +1')
     expect(dec).toBe('T-770>T-780 T-771 T-772 +1')
   })
 
@@ -279,7 +303,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
       project_root: root, since: isoAgo(60_000),
     }))
     const out = runStatusline()
-    expect(segment(out, 'running')).toBe('\u2014')
+    expect(segment(out, 'working')).toBe('\u2014')
   })
 
   test('T-805: OSC 8 link targets the viewer jump page (never the raw ticket md) when a viewer exists', () => {
@@ -359,13 +383,13 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const slug = path.basename(root)
     expect(plain).not.toContain(OSC8_OPEN)
     // no tickets, no branch (tmp dir is no git repo): ticket segment and branch segment degrade away
-    expect(plain).toBe(`${slug} ${VERSION} | build | running \u2014 | dec \u2014 | req \u2014`)
+    expect(plain).toBe(`${slug} ${VERSION} | build | working \u2014 | dec \u2014 | req \u2014`)
 
     stubViewerHtml()
     const linked = runStatusline().trim()
     const viewer = path.join(root, '.prdt', 'scratch', 'viewer', 'viewer.html')
     expect(linked.startsWith(`${OSC8_OPEN}file://${viewer}\x1b\\${slug} ${VERSION}${OSC8_CLOSE} | build`)).toBe(true)
-    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | build | running \u2014 | dec \u2014 | req \u2014`)
+    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | build | working \u2014 | dec \u2014 | req \u2014`)
   })
 
   test('T-922: full layout order — ticket count, current task, running/dec/req, branch last; persona arrow is \u2192 and never \u00bb', () => {
@@ -377,7 +401,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     execFileSync('git', ['init', '-q', '-b', 'dev', root])
     execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init'])
     const plain = unwrapLinks(runStatusline()).trim()
-    expect(plain).toBe(`${path.basename(root)} ${VERSION} | build | ticket 1/2 | T-890 restore\u2192developer | running T-890\u2192qa | dec \u2014 | req \u2014 | branch: dev`)
+    expect(plain).toBe(`${path.basename(root)} ${VERSION} | build | ticket 1/2 | T-890 restore\u2192developer | working T-890(qa) | dec \u2014 | req \u2014 | branch: dev`)
     expect(plain).not.toContain('\u00bb')
   })
 
@@ -386,7 +410,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     writeMarker({ agentId: 'qa', ticketId: 'T-700', persona: 'qa', ageMs: 60_000 })
     writeMarker({ agentId: 'other', ticketId: 'T-701', persona: 'developer', ageMs: 2 * 60_000 })
     const out = runStatusline()
-    expect(segment(out, 'running')).toBe('T-700→developer+qa T-701→developer')
+    expect(segment(out, 'working')).toBe('T-700(dev+qa) T-701(dev)')
     expect((out.match(/T-700/g) ?? []).length).toBe(1)
   })
 
@@ -401,7 +425,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(wrapped.length).toBe(2) // once in the current_task segment, once in running
     expect((unwrapLinks(out).match(/T-682/g) ?? []).length).toBe(2) // visible text only (the file URI names the id too)
     expect(unwrapLinks(out)).toContain('T-682 footer→developer')
-    expect(segment(out, 'running')).toBe('T-682→developer')
+    expect(segment(out, 'working')).toBe('T-682(dev)')
   })
 
   test('F5: an index path carrying a control byte is refused (plain id, no link); a root with a space yields a percent-encoded file URI', () => {
@@ -452,7 +476,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const waiting = segment(out, 'dec')
     expect(waiting).toBeDefined()
     expect(waiting).toMatch(/^T-770(>T-\d+(,T-\d+)?(\+\d+)?)? .*\+\d+$/) // first id(s) + a count tail, intact
-    expect(segment(out, 'running')).toMatch(/\+\d+$/)
+    expect(segment(out, 'working')).toMatch(/\+\d+$/)
   })
 
   test('F7/F8: an EXCLUSIVE lock on index.db never stalls the render, and the render leaves no sidecar file', () => {
