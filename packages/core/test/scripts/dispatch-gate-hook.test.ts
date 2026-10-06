@@ -247,8 +247,8 @@ function denyReason(o: EventOpts, r: RunEnv = {}): string {
 const CLAUSE_CTX =
   'One inline `[ctx]` JSON line opens every dispatch:\n' +
   '  `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},' +
-  '"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#v<N>.<m>"}`'
-const CLAUSE_PRD = '`[ctx].prd_path` = `docs/prd/PRD.md#v<N>.<m>`'
+  '"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#[<line>/]v<N>.<m>"}`'
+const CLAUSE_PRD = '`[ctx].prd_path` = `docs/prd/PRD.md#[<line>/]v<N>.<m>`'
 const CLAUSE_LANG =
   'Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · ' +
   '`dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.'
@@ -587,6 +587,11 @@ describe('deny: `prd_path` shape', () => {
     ['docs/prd/PRD-v1.md#v1.7', 'a versioned FILENAME, which git history replaces'],
     ['docs/prd/PRD.md#v1.7 ', 'a trailing space'],
     ['PRD.md#v1.7', 'a bare filename'],
+    ['docs/prd/PRD.md#Android/v1.7', 'an uppercase line name'],
+    ['docs/prd/PRD.md#backlog/v1.7', 'the reserved name `backlog` as a line'],
+    ['docs/prd/PRD.md#v2/v1.7', 'a line name shaped like a version'],
+    ['docs/prd/PRD.md#android/v1.7.1', 'a patch version on an added line'],
+    ['docs/prd/PRD.md#a/b/v1.7', 'two line prefixes'],
     ['docs/prd/prd.md#v1.7', 'wrong case'],
   ])('%s (%s) is denied', (prd_path) => {
     const reason = denyReason({ cwd: makeProject(), prompt: promptWith({ ...VALID_CTX, prd_path }) })
@@ -602,7 +607,7 @@ describe('deny: `prd_path` shape', () => {
     }
   })
 
-  test.each(['docs/prd/PRD.md#v1.7', 'docs/prd/PRD.md#v0.1', 'docs/prd/PRD.md#v12.34'])(
+  test.each(['docs/prd/PRD.md#v1.7', 'docs/prd/PRD.md#v0.1', 'docs/prd/PRD.md#v12.34', 'docs/prd/PRD.md#ntf-archive/v1.2', 'docs/prd/PRD.md#android/v2.1'])(
     '%s passes', (prd_path) => {
       expect(run({ cwd: makeProject(), prompt: promptWith({ ...VALID_CTX, prd_path }) })).toBe('')
     })

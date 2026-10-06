@@ -354,8 +354,8 @@ FORK_DENY="$(printf '%s' "$EV" | jq -rc '
 # Single-quoted so backticks and braces are inert; the embedded newline is
 # literal. A test asserts each of these appears verbatim in contracts.md.
 CLAUSE_CTX='One inline `[ctx]` JSON line opens every dispatch:
-  `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#v<N>.<m>"}`'
-CLAUSE_PRD='`[ctx].prd_path` = `docs/prd/PRD.md#v<N>.<m>`'
+  `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#[<line>/]v<N>.<m>"}`'
+CLAUSE_PRD='`[ctx].prd_path` = `docs/prd/PRD.md#[<line>/]v<N>.<m>`'
 CLAUSE_LANG='Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · `dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.'
 CLAUSE_DISPATCH_ID='`"dispatch_id"` = the PO'\''s minted id, one per dispatch, never per session and never a harness agent id — it owns that dispatch'\''s resource markers; the gate denies its absence on a `prdt-qa` or `prdt-developer` `subagent_type`.'
 
@@ -403,7 +403,7 @@ else (.tool_input // {}) as $ti
           | if ($missing | length) > 0 then
               deny(head + "the `[ctx]` line is missing required key(s): " + ($missing | join(", ")) + ".\ncontracts.md §Dispatch, verbatim:\n" + $clause_ctx + "\nEvery key in that schema is required; extra keys of your own are fine." + tail)
             elif (($ctx.prd_path | type) != "string")
-                 or (($ctx.prd_path | test("^docs/prd/PRD\\.md#v[0-9]+\\.[0-9]+$")) | not) then
+                 or (($ctx.prd_path | test("^docs/prd/PRD\\.md#((?!backlog/)(?!v[0-9])[a-z0-9]+(-[a-z0-9]+)*/)?v[0-9]+\\.[0-9]+$")) | not) then
               deny(head + "`[ctx].prd_path` is malformed.\ncontracts.md §Fixed paths, verbatim:\n" + $clause_prd + "\nSet it to exactly that shape — the fragment scopes the worker's read to ONE version section, so it has no tolerance." + tail)
             elif ($ti.subagent_type == "prdt-qa" or $ti.subagent_type == "prdt-developer")
                  and (($ctx.dispatch_id // "") == "") then
