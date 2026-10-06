@@ -507,8 +507,9 @@ REGISTER_CHECK_NOTICE = (
 # block, none inside it."). One line, line numbers only, same register as above.
 REGISTER_BLANK_NOTICE = (
     "[prdt register check] your last user-chat reply broke form=outline: %d point block(s) "
-    "run into the block above with no blank line (lines %s). "
-    "Leave the sent reply as is; write this reply with one blank line after each point's block."
+    "(lines %s) — a top-level point right under another point's block with no blank line, "
+    "either block holding sub-lines. "
+    "Leave the sent reply as is; write this reply with one blank line after each point's block, none inside it."
 )
 # T-651 grill: how many violating line numbers the notice actually lists before
 # collapsing the rest into "+N more" — the COUNT (%d above) always stays the
