@@ -370,6 +370,29 @@ if [ -z "$OPEN_MODE" ]; then
   esac
 fi
 
+# T-995: a ticket (or any docs/**/*.md) written from a shell — python/sed/tee/
+# mv inside a Bash call — never passes through Write/Edit, so the case above
+# never saw it and the viewer kept serving the old corpus. Trigger: a completed
+# Bash call (PO or worker) whose command names `docs/` schedules the same
+# coalesced regen when the project's viewer.html exists and some docs/**/*.md
+# is newer than it — a read-only `cat docs/...` finds nothing newer and costs
+# one `find`. Coalescing, lock and failure backoff are the worker's, unchanged.
+if [ -z "$OPEN_MODE" ] && [ "$TOOL_NAME" = "Bash" ]; then
+  case "$EVENT_JSON" in
+    *docs/*)
+      BASH_CWD="$(printf '%s' "$EVENT_JSON" | jq -r '.cwd // ""' 2>/dev/null)"
+      if [ -n "$BASH_CWD" ] && [ -d "$BASH_CWD" ]; then
+        BASH_ROOT="$(find_proj "$BASH_CWD" 2>/dev/null)"
+        BASH_VIEWER="$BASH_ROOT/.prdt/scratch/viewer/viewer.html"
+        if [ -n "$BASH_ROOT" ] && [ -f "$BASH_VIEWER" ] && [ -d "$BASH_ROOT/docs" ] \
+          && [ -n "$(find "$BASH_ROOT/docs" -name '*.md' -newer "$BASH_VIEWER" -print -quit 2>/dev/null)" ]; then
+          schedule_viewer_regen_root "$BASH_ROOT"
+        fi
+      fi
+      ;;
+  esac
+fi
+
 # GUI po-runner spawns set this (T-409) — CLI-only feature, GUI already surfaces
 # artifacts in-app; skips only the OPENING pipeline below — T-802's regen just
 # above already ran regardless of this flag (regenerating is not opening a
