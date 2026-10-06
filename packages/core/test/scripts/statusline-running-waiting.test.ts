@@ -164,7 +164,8 @@ function unwrapLinks(text: string): string {
 /** Pulls out the ` | `-delimited segment starting with `name ` (or undefined),
  *  with any OSC 8 wrapping unwrapped back to the plain ticket id. */
 function segment(out: string, name: 'working' | 'dec' | 'req'): string | undefined {
-  const found = out.trim().split(' | ').find((p) => p.startsWith(`${name} `))
+  // T-984/T-961: rows are newline-separated, and `dec … · req …` share one segment.
+  const found = out.trim().split(/\n| \| | \u00b7 /).find((p) => p.startsWith(`${name} `))
   return found === undefined ? undefined : unwrapLinks(found).slice(name.length + 1)
 }
 
@@ -383,16 +384,16 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const slug = path.basename(root)
     expect(plain).not.toContain(OSC8_OPEN)
     // no tickets, no branch (tmp dir is no git repo): ticket segment and branch segment degrade away
-    expect(plain).toBe(`${slug} ${VERSION} | build | working \u2014 | dec \u2014 | req \u2014`)
+    expect(plain).toBe(`${slug} ${VERSION} | build | working \u2014 | dec \u2014 \u00b7 req \u2014`)
 
     stubViewerHtml()
     const linked = runStatusline().trim()
     const viewer = path.join(root, '.prdt', 'scratch', 'viewer', 'viewer.html')
     expect(linked.startsWith(`${OSC8_OPEN}file://${viewer}\x1b\\${slug} ${VERSION}${OSC8_CLOSE} | build`)).toBe(true)
-    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | build | working \u2014 | dec \u2014 | req \u2014`)
+    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | build | working \u2014 | dec \u2014 \u00b7 req \u2014`)
   })
 
-  test('T-922: full layout order — ticket count, current task, running/dec/req, branch last; persona arrow is \u2192 and never \u00bb', () => {
+  test('T-984: full layout order — branch between version and stage, ticket count, working, then dec · req; no current-task segment; never \u00bb', () => {
     root = makeProject('prdt-t922-full-', { ticket_id: 'T-890', slug: 'restore', assignee: 'developer' })
     fs.mkdirSync(path.join(root, 'docs', 'tickets', VERSION), { recursive: true })
     writeTicket('T-890', {}, 'open')
@@ -401,7 +402,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     execFileSync('git', ['init', '-q', '-b', 'dev', root])
     execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init'])
     const plain = unwrapLinks(runStatusline()).trim()
-    expect(plain).toBe(`${path.basename(root)} ${VERSION} | build | ticket 1/2 | T-890 restore\u2192developer | working T-890(qa) | dec \u2014 | req \u2014 | branch: dev`)
+    expect(plain).toBe(`${path.basename(root)} ${VERSION} | branch: dev | build | ticket 1/2 | working T-890(qa) | dec \u2014 \u00b7 req \u2014`)
     expect(plain).not.toContain('\u00bb')
   })
 
@@ -414,17 +415,16 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect((out.match(/T-700/g) ?? []).length).toBe(1)
   })
 
-  test('F4: every occurrence of a linked id is wrapped — current_task and a running item on the same ticket', () => {
-    fs.rmSync(root, { recursive: true, force: true })
-    root = makeProject('prdt-t682-sl-proj-', { ticket_id: 'T-682', slug: 'footer', assignee: 'developer' })
+  test('F4: every occurrence of a linked id is wrapped — a working item and a waiting (dec) item on the same ticket', () => {
+    writeTicket('T-682', { type: 'decision' })
     writeMarker({ agentId: 'a', ticketId: 'T-682', ageMs: 60_000 })
     buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], [])
     stubViewerHtml()
     const out = runStatusline()
     const wrapped = out.match(/\x1b\]8;;file:\/\/[^\x1b]+\x1b\\T-682\x1b\]8;;\x1b\\/g) ?? []
-    expect(wrapped.length).toBe(2) // once in the current_task segment, once in running
+    expect(wrapped.length).toBe(2) // once in working, once in dec
     expect((unwrapLinks(out).match(/T-682/g) ?? []).length).toBe(2) // visible text only (the file URI names the id too)
-    expect(unwrapLinks(out)).toContain('T-682 footer→developer')
+    expect(segment(out, 'dec')).toBe('T-682')
     expect(segment(out, 'working')).toBe('T-682(dev)')
   })
 
@@ -470,9 +470,12 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     }
     buildIndexDb(tickets, edges)
     const out = runStatusline()
-    const plain = unwrapLinks(out).trim()
-    expect(plain.length).toBeLessThanOrEqual(200)
-    expect(plain).not.toContain('\u2026') // never the belt's truncation mark
+    const rows = unwrapLinks(out).trim().split('\n')
+    expect(rows).toHaveLength(2) // dec has entries → T-984 second row
+    for (const row of rows) {
+      expect(row.length).toBeLessThanOrEqual(200)
+      expect(row).not.toContain('\u2026') // never the belt's truncation mark
+    }
     const waiting = segment(out, 'dec')
     expect(waiting).toBeDefined()
     expect(waiting).toMatch(/^T-770(>T-\d+(,T-\d+)?(\+\d+)?)? .*\+\d+$/) // first id(s) + a count tail, intact
