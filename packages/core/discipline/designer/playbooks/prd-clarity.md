@@ -13,7 +13,7 @@ Author/refine `docs/prd/PRD.md` (fixed path, in place, `[ctx].user_lang`) as a c
 
 ## First return — direction before clarity
 - A **net-new version section always fires** this gate: a PRD, wiki and ticket set that are already complete is exactly the input that makes it look unnecessary, and thick documents are never the exemption — document clarity is not the user's choice of direction. **Re-entry** into a version section that already exists fires it only when this round moves that version's recorded Why, target user, or in/out line; otherwise skip. A patch (`.p`) round never fires it.
-- No `[ctx].direction_pin` → your FIRST return is `needs_info` whatever `A` says, and what you owe is a direction fork, not a clarification. Write the fork to `docs/artifacts/<version>/direction-fork.md` (`v1.8/direction-fork.md`): 2–3 named options, each with what it gains and what it loses, and your ONE named recommendation. `next_question` is then one short question plus that path — the fork's text lives in the artifact, so the question still fits its ≤200-char cap. The answer returns to you as `direction_pin`.
+- No `[ctx].direction_pin` → your FIRST return is `needs_info` whatever `A` says, and what you owe is a direction fork, not a clarification. Write the fork to `docs/artifacts/[<line>/]<version>/direction-fork.md` (`v1.8/direction-fork.md`): 2–3 named options, each with what it gains and what it loses, and your ONE named recommendation. `next_question` is then one short question plus that path — the fork's text lives in the artifact, so the question still fits its ≤200-char cap. The answer returns to you as `direction_pin`.
 - `[ctx].direction_pin` present → the forced return is spent: that sentence IS what the version section's Why / What direction fields say, and you score from iteration 1 as normal. The exemption does NOT cover condition ⓓ below: a slot the pinned direction left blank is still asked, never defaulted.
 
 ## Score
@@ -65,7 +65,7 @@ Weights are defaults — a project with no brand surface reweights, and you say 
 
 ## What the PRD does NOT hold
 - The PRD holds per-version scope estimation. A feature's CURRENT spec goes to `docs/features/<feature>.md` (contracts §Fixed paths) — write it there once the value has earned a file (a `feature:` value with no spec file is legal and the normal state) and cite it from the version section; never restate a live contract inside a version section.
-- A closed `## v<N>.<m>` section is that round's immutable record: append a supersede note, never rewrite its scope. Closed sections live one per file in `docs/prd/versions/v<N>.<m>.md` (moved there byte-identical at close — contracts §Fixed paths), so `docs/prd/PRD.md` is exactly the read unit you author for: the standing head + ONE version section.
+- A closed `## v<N>.<m>` section is that round's immutable record: append a supersede note, never rewrite its scope. Closed sections live one per file in `docs/prd/versions/[<line>/]v<N>.<m>.md` (moved there byte-identical at close — contracts §Fixed paths), so `docs/prd/PRD.md` is exactly the read unit you author for: the standing head + ONE version section — the one `[ctx].prd_path` names, headed `## v<N>.<m> — <title>`, on an added line `## <line> v<N>.<m> — <title>`.
 
 ## Page style (the user reads this file directly)
 - Heading rhythm H2 version / H3 section / H4 feature-chunk; never skip levels; no bullet walls — one claim per bullet, one sentence.
