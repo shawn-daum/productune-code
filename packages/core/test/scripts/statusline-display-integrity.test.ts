@@ -56,10 +56,10 @@ function unsanitizedCopy(): string {
   for (const [from, to] of [
     ['slug = clean(cfg_slug) or clean(os.path.basename(root)) or "?"',
       'slug = cfg_slug or os.path.basename(root)'],
-    ['stage = token(st.get("stage"), lambda v: v in STAGES, absent="?") or "?"',
-      'stage = st.get("stage") or "?"'],
-    ['version = token(st.get("version"), lambda v: VERSION_RE.match(v) is not None)',
-      'version = st.get("version") or ""'],
+    ['stage = token(raw_stage, lambda v: v in STAGES, absent="?") or "?"',
+      'stage = raw_stage or "?"'],
+    ['r["version"] = token(r["st"].get("version"), lambda v: VERSION_RE.match(v) is not None)',
+      'r["version"] = r["st"].get("version") or ""'],
     // T-682 slice 1 split the old one-line `print(clean(...))` into an
     // assignment (`line = clean(...)`) followed by the OSC 8 wrap step and a
     // separate `print(wrap_links(line, links))` — the literal this control
@@ -68,7 +68,8 @@ function unsanitizedCopy(): string {
     // marker, so `links` stays `{}` and `wrap_links(line, {})` is a no-op —
     // `print(wrap_links(line, links))` prints exactly `line` either way.
     // Slice 3 named the cap (`cap=LINE_CAP`); the literal follows it.
-    ['line = clean(candidate, cap=LINE_CAP, bar=True)', 'line = candidate'],
+    // T-961 moved the per-row belt into `fit()`, one call per printed row.
+    ['return clean(candidate, cap=LINE_CAP, bar=True)', 'return candidate'],
   ] as const) {
     expect(weak, `the production line must exist to be undone: ${from.slice(0, 40)}`).toContain(from)
     weak = weak.replace(from, to)
@@ -162,6 +163,6 @@ describe.skipIf(!READY)('the statusline cannot be made to misrepresent by file c
 
   test('a legitimate project renders exactly as before (nothing traded away)', () => {
     seed({ slug: 'realproj' }, GOOD_STATE)
-    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | build | T-493 honest-injection→developer | working — | dec — | req —')
+    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | build | working — | dec — · req —')
   })
 })
