@@ -5536,7 +5536,7 @@ def cmd_tickets(args):
     q, params = "SELECT id, slug, type, status, assignee, version, deps FROM tickets", []
     conds = []
     if args.backlog:
-        conds.append("version = 'backlog'")
+        conds.append("(version = 'backlog' OR version LIKE '%/backlog')")
     if args.version:
         conds.append("version = ?"); params.append(args.version)
     if args.feature:
@@ -10657,9 +10657,12 @@ def prd_layout_warnings(root, st):
                          f"+ ONE open version section; move each closed one byte-identical to "
                          f"its own docs/prd/versions/v<N>.<m>.md (contracts §Fixed paths)")
 
+    declared_lines = set(project_line_names(root))
     for p in (sorted(prd_dir.rglob("*.md")) if prd_dir.is_dir() else []):
         if p == prd_md:
             continue
+        if p.parent.parent == vdir and p.parent.name in declared_lines:
+            continue  # an added line's closed files: `prd_line_layout_warnings` owns them
         text = read(p)
         if text is None:
             continue
@@ -11378,9 +11381,15 @@ def prd_form_warnings(root, st, tickets):
     E4 check below — this one never reads a ticket file, only the ticket id
     map already built for the wiki-edge checks (E2's `tickets`), to answer
     "does this T-NNN target exist" the same way E2/E6 already do."""
-    version, body = _prd_open_section(root, st)
-    if version is None:
-        return []
+    warns = []
+    for line in [None] + project_line_names(root):
+        version, body = _prd_open_section(root, st, line)
+        if version is not None:
+            warns += _prd_open_form_warnings(root, join_line_id(line, version), body, tickets)
+    return warns
+
+
+def _prd_open_form_warnings(root, version, body, tickets):
     warns = []
     texts = {line for _, line in body}
     has_asis = PRD_ASIS_HEADING in texts or PRD_ASIS_HEADING_OLD in texts

@@ -236,3 +236,48 @@ print(json.dumps(m.po_state_warnings(json.loads(sys.argv[3]), Path(sys.argv[2]))
     expect(w.some((x) => x.includes('lines.android is not'))).toBe(false)
   }, T)
 })
+
+describe('multi-line project: QA fix round (backlog · form · home layout)', () => {
+  let root: string
+  let home: string
+  beforeAll(() => {
+    root = makeProject(true)
+    home = tmp('prdt-lines-home2-')
+    ticket(root, 'backlog', 'T-006')
+    ticket(root, 'android/backlog', 'T-005')
+    put(root, 'docs/prd/versions/android/v2.0.md', '## v2.0\n\n- o\n')
+  }, T)
+
+  test('tickets --backlog lists a line backlog, labelled with the line', () => {
+    const out = cli(root, home, ['tickets', '--backlog']).out
+    expect(out).toMatch(/^T-006 .* backlog /m)
+    expect(out).toMatch(/^T-005 .* android\/backlog /m)
+  })
+
+  test('single-line --backlog output stays plain', () => {
+    const r1 = makeProject(false)
+    ticket(r1, 'backlog', 'T-006')
+    const out = cli(r1, tmp('prdt-lines-home3-'), ['tickets', '--backlog']).out
+    expect(out.trim().split('\n')).toHaveLength(1)
+    expect(out).not.toContain('/backlog')
+  })
+
+  test('prd_form_warnings grades the added line open section too, prefixed with the line', () => {
+    const py = `
+import importlib.util, importlib.machinery, sys, json
+from pathlib import Path
+loader = importlib.machinery.SourceFileLoader("prdt_mod", sys.argv[1])
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+root = Path(sys.argv[2])
+st = json.loads((root / ".prdt" / "po-state.json").read_text())
+print(json.dumps({"form": m.prd_form_warnings(root, st, {}), "layout": m.prd_layout_warnings(root, st)}))
+`
+    const r = spawnSync('python3', ['-c', py, PRDT_CLI, String(root)], { encoding: 'utf8', timeout: 60_000 })
+    const o = JSON.parse(r.stdout)
+    expect(o.form.some((w: string) => w.startsWith('v1.0: missing As-Is/To-Be'))).toBe(true)
+    expect(o.form.some((w: string) => w.startsWith('android/v2.1: missing As-Is/To-Be'))).toBe(true)
+    expect(o.form.some((w: string) => w.startsWith('android/v2.1: no "'))).toBe(true)
+    expect(o.layout.some((w: string) => w.includes('versions/android/v2.0.md'))).toBe(false)
+  })
+})
