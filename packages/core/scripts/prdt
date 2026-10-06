@@ -393,12 +393,21 @@ def forged_tokens(text, reserved=()):
     return hits
 
 
+# Characters that render as nothing or reorder what follows them (T-479 fix):
+# C1 controls, bidi embeddings/overrides/isolates, zero-width space/joiners and
+# BOM. Not line breaks, so `forged_tokens` keeps its own narrower meaning; the
+# render guard below folds them as well, so a line can never look shorter or
+# read in another order than the bytes it carries.
+INVISIBLE_RE = re.compile(r"[\u0080-\u009f\u200b-\u200d\u202a-\u202e\u2066-\u2069\ufeff]")
+
+
 def one_line(text):
-    """Last-resort render guard: fold every break class into a space so a string
-    that reached output unvalidated can still never become a second line. NOT a
-    substitute for `forged_tokens` — it cannot stop a forgery that fits on one
-    line, which is why the validators refuse rather than lean on this."""
-    return LINE_BREAK_RE.sub(" ", str(text))
+    """Last-resort render guard: fold every break class — and every invisible or
+    reordering character (INVISIBLE_RE) — into a space so a string that reached
+    output unvalidated can still never become a second line. NOT a substitute
+    for `forged_tokens` — it cannot stop a forgery that fits on one line, which
+    is why the validators refuse rather than lean on this."""
+    return INVISIBLE_RE.sub(" ", LINE_BREAK_RE.sub(" ", str(text)))
 
 
 def safe_label(text, reserved=DOCTOR_RESERVED, limit=60, ellipsis=False):
@@ -2795,7 +2804,10 @@ def wiki_promote(root, args):
 # is applied anywhere: adopting is the receiving PO's own follow-up.
 # Bounded: every write drops decided lines older than INBOX_DECIDED_KEEP_DAYS
 # and undecided ones older than INBOX_OPEN_KEEP_DAYS (a project nobody opened in
-# half a year). Deliberately not built: broadcast / no-addressee lines, replies
+# half a year); a future date counts as expired. Open lines are capped per
+# addressee and per sender→addressee pair. A store that is not exactly what
+# `prdt inbox` writes (bad UTF-8, a malformed line, a duplicate id) is corrupt:
+# no write touches it and the hook delivers nothing. Deliberately not built: broadcast / no-addressee lines, replies
 # or threads, a project registry, a live SendMessage nudge, any cross-project
 # wiki — see T-479 outcome.
 INBOX_LINE_RE = re.compile(
@@ -2805,8 +2817,14 @@ INBOX_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 INBOX_TEXT_MAX = 300
 INBOX_DECIDED_KEEP_DAYS = 90
 INBOX_OPEN_KEEP_DAYS = 180
+# Open lines are capped so one session start stays small: at most 10 waiting
+# for one project, at most 3 of them from one sender. Worst case the hook
+# renders 10 × 400 chars + its fixed preamble — see prdt-inbox.test.ts.
+INBOX_OPEN_PER_ADDRESSEE = 10
+INBOX_OPEN_PER_PAIR = 3
+INBOX_HEADER_PROSE = "Written only by `prdt inbox`; one line per recommendation, addressed by project slug."
 INBOX_HEADER = ("# prdt inbox — one-line recommendations between projects on this machine\n\n"
-                "Written only by `prdt inbox`; one line per recommendation, addressed by project slug.\n\n")
+                + INBOX_HEADER_PROSE + "\n\n")
 
 
 def inbox_path():
@@ -2822,24 +2840,65 @@ def project_slug(root):
     return str(s) if s else Path(root).name
 
 
+def _inbox_row_problem(r):
+    """Why a parsed row could not have been written by `prdt inbox` (None = fine)."""
+    for k in ("to", "from"):
+        if not INBOX_SLUG_RE.match(r[k]):
+            return f"row {r['id']} has an invalid `{k}` slug"
+    for d in (r["sent"], r["decided"]):
+        if d:
+            try:
+                datetime.strptime(d, "%Y-%m-%d")
+            except ValueError:
+                return f"row {r['id']} has an invalid date"
+    t = r["text"]
+    if not t or len(t) > INBOX_TEXT_MAX or t != " ".join(one_line(t).split()):
+        return f"row {r['id']} has text no `prdt inbox send` could write"
+    return None
+
+
 def _inbox_read():
-    """(rows, other) — rows are dicts in file order; `other` is every line that
-    is not a recommendation (header prose), kept as written."""
+    """(rows, problem) — rows are dicts in file order. `problem` (None = clean)
+    names why the store is corrupt: it does not decode as UTF-8, a line is
+    neither header prose nor a well-formed row, or an id appears twice. A
+    corrupt store yields NO rows and is never rewritten (`_inbox_load`); the
+    session-start hook applies the same rules and then delivers nothing."""
     try:
         text = inbox_path().read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return [], []
-    rows, other = [], []
-    for ln in text.split("\n"):
+    except FileNotFoundError:
+        return [], None
+    except UnicodeDecodeError as e:
+        return [], f"is not valid UTF-8 (byte offset {e.start})"
+    except OSError as e:
+        return [], f"cannot be read ({e.strerror or type(e).__name__})"
+    rows, seen = [], set()
+    for n, ln in enumerate(text.split("\n"), 1):
         m = INBOX_LINE_RE.match(ln)
         if not m:
-            other.append(ln)
-            continue
+            if ln == "" or ln.startswith("# ") or ln == INBOX_HEADER_PROSE:
+                continue
+            return [], f"has a malformed line {n}"
         st = m.group(5)
-        rows.append({"id": m.group(1), "to": m.group(2), "from": m.group(3), "sent": m.group(4),
-                     "state": st.split(" ")[0], "decided": st.split(" ")[1] if " " in st else "",
-                     "text": m.group(6)})
-    return rows, other
+        r = {"id": m.group(1), "to": m.group(2), "from": m.group(3), "sent": m.group(4),
+             "state": st.split(" ")[0], "decided": st.split(" ")[1] if " " in st else "",
+             "text": m.group(6)}
+        bad = _inbox_row_problem(r)
+        if bad:
+            return [], f"line {n}: {bad}"
+        if r["id"] in seen:
+            return [], f"line {n}: id {r['id']} appears twice"
+        seen.add(r["id"])
+        rows.append(r)
+    return rows, None
+
+
+def _inbox_load():
+    """Rows for a write — exits (refusing the write) when the store is corrupt."""
+    rows, problem = _inbox_read()
+    if problem:
+        sys.exit(f"refused: the inbox store {inbox_path()} {problem} — it is left exactly as it is; "
+                 "nothing was written. Repair or remove that file by hand.")
+    return rows
 
 
 def _inbox_render(r):
@@ -2847,15 +2906,20 @@ def _inbox_render(r):
     return f"- {r['id']} · to: {r['to']} · from: {r['from']} · sent: {r['sent']} · {st} · {r['text']}"
 
 
-def _inbox_prune(rows, today):
+def _inbox_expired(r, today):
+    """A date in the future is expired too — a planted `sent: 2099-…` can never
+    outlive the age bound. The session-start hook applies the same rule."""
     def age(d):
-        try:
-            return (today - datetime.strptime(d, "%Y-%m-%d").date()).days
-        except ValueError:
-            return 0
-    return [r for r in rows
-            if (age(r["decided"]) <= INBOX_DECIDED_KEEP_DAYS if r["state"] != "open"
-                else age(r["sent"]) <= INBOX_OPEN_KEEP_DAYS)]
+        return (today - datetime.strptime(d, "%Y-%m-%d").date()).days
+    if age(r["sent"]) < 0 or (r["decided"] and age(r["decided"]) < 0):
+        return True
+    if r["state"] == "open":
+        return age(r["sent"]) > INBOX_OPEN_KEEP_DAYS
+    return age(r["decided"]) > INBOX_DECIDED_KEEP_DAYS
+
+
+def _inbox_prune(rows, today):
+    return [r for r in rows if not _inbox_expired(r, today)]
 
 
 def _inbox_write(rows):
@@ -2883,8 +2947,17 @@ def cmd_inbox(args):
     me = project_slug(root)
     today = datetime.now(timezone.utc).date()
     action = args.action or "list"
+    for a in args.rest:
+        try:
+            a.encode("utf-8")
+        except UnicodeEncodeError:
+            sys.exit("refused: an argument is not valid UTF-8 text — nothing was read or written")
     if action == "list":
-        mine = [r for r in _inbox_read()[0] if r["to"] == me and r["state"] == "open"]
+        rows, problem = _inbox_read()
+        if problem:
+            sys.exit(f"the inbox store {inbox_path()} {problem} — nothing is delivered from it "
+                     "and no write will touch it. Repair or remove that file by hand.")
+        mine = [r for r in rows if r["to"] == me and r["state"] == "open" and not _inbox_expired(r, today)]
         for r in mine:
             print(f"{r['id']} · from {r['from']} · {r['sent']} · {r['text']}")
         if not mine:
@@ -2895,6 +2968,9 @@ def cmd_inbox(args):
             sys.exit("usage: prdt inbox send <project-slug> <one-line recommendation>  "
                      "(a line always names ONE receiving project — there is no broadcast)")
         to, text = args.rest[0], " ".join(one_line(" ".join(args.rest[1:])).split())
+        if not INBOX_SLUG_RE.match(me):
+            sys.exit(f"refused: this project's slug `{safe_label(me, limit=40)}` is not a valid project slug "
+                     "(letters, digits, `.`, `_`, `-`; ≤64) — fix `slug` in .prdt/config.json; nothing was sent")
         if not INBOX_SLUG_RE.match(to):
             sys.exit(f"refused: `{safe_label(to, limit=40)}` is not a project slug — name one receiving "
                      "project (its .prdt/config.json `slug`); there is no broadcast")
@@ -2907,13 +2983,19 @@ def cmd_inbox(args):
                      "point at a file or ticket for the detail")
         rid = "r-" + hashlib.sha256(f"{to}\n{text}".encode("utf-8")).hexdigest()[:8]
         with _inbox_lock():
-            rows, _other = _inbox_read()
-            rows = _inbox_prune(rows, today)
+            rows = _inbox_prune(_inbox_load(), today)
             dup = next((r for r in rows if r["id"] == rid), None)
             if dup:
                 why = ("is already waiting for it" if dup["state"] == "open"
                        else f"{dup['state']} it on {dup['decided']}")
                 sys.exit(f"refused: the same line to {to} exists — {to} {why} ({rid}); not sent again")
+            waiting = [r for r in rows if r["to"] == to and r["state"] == "open"]
+            if len(waiting) >= INBOX_OPEN_PER_ADDRESSEE:
+                sys.exit(f"refused: {to} already has {len(waiting)} open recommendations "
+                         f"(cap {INBOX_OPEN_PER_ADDRESSEE}) — not sent until {to} decides some")
+            if sum(1 for r in waiting if r["from"] == me) >= INBOX_OPEN_PER_PAIR:
+                sys.exit(f"refused: {to} already has {INBOX_OPEN_PER_PAIR} open recommendations from {me} "
+                         f"(cap {INBOX_OPEN_PER_PAIR}) — not sent until {to} decides one")
             rows.append({"id": rid, "to": to, "from": me, "sent": today.isoformat(),
                          "state": "open", "decided": "", "text": text})
             _inbox_write(rows)
@@ -2925,7 +3007,7 @@ def cmd_inbox(args):
             sys.exit(f"usage: prdt inbox {action} <id>")
         rid = args.rest[0]
         with _inbox_lock():
-            rows, _other = _inbox_read()
+            rows = _inbox_load()
             r = next((x for x in rows if x["id"] == rid), None)
             if not r or r["to"] != me:
                 sys.exit(f"refused: no recommendation {safe_label(rid, limit=20)} addressed to {me}")
