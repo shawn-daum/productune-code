@@ -4,7 +4,7 @@
  * Drives the REAL `statusline-prdt.sh` end to end:
  *   - T-984 (user-confirmed 2026-10-06): `<label> <version> | branch: <b> |
  *     <stage> n/m | ticket n/m | working …`; single-line: an empty dec/req pair
- *     ends row 1 as `| dec — · req —`, any entry moves it to row 2.
+ *     is always its own last row, `dec — · req —` when empty.
  *   - T-961: one row per release line (home first, then config `lines` in
  *     declaration order), one shared dec/req row; never more than 17 rows
  *     (the limit measured on the user's machine, T-961 log).
@@ -79,14 +79,14 @@ afterEach(() => {
 })
 
 describe.skipIf(!READY)('statusline — T-984 layout, single line', () => {
-  test('dec and req both empty → ONE row ending `| dec — · req —`', () => {
+  test('dec and req both empty → line row + own last row `dec — · req —`', () => {
     seed({ slug: 'productune' }, { stage: 'build', version: 'v1.13', checks: { build: ['split', 'main-path', 'qa'] } })
     ticket('v1.13', 'T-1', { status: 'done' })
     ticket('v1.13', 'T-2')
-    expect(rows()).toEqual(['productune v1.13 | build 3/5 | ticket 1/2 | working — | dec — · req —'])
+    expect(rows()).toEqual(['productune v1.13 | build 3/5 | ticket 1/2 | working —', 'dec — · req —'])
   })
 
-  test('either list has an entry → dec · req move to row 2', () => {
+  test('either list has an entry → listed on the same last row', () => {
     seed({ slug: 'productune' }, { stage: 'define', version: 'v1.13' })
     ticket('v1.13', 'T-984', { type: 'decision', assignee: 'user' })
     ticket('v1.13', 'T-985', { assignee: 'user' })
@@ -197,6 +197,6 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     const before = rows()
     seed({ slug: 'p', lines: [] }, { stage: 'build', version: 'v1.0' })
     expect(rows()).toEqual(before)
-    expect(before).toHaveLength(1)
+    expect(before).toHaveLength(2)
   })
 })

@@ -384,13 +384,13 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const slug = path.basename(root)
     expect(plain).not.toContain(OSC8_OPEN)
     // no tickets, no branch (tmp dir is no git repo): ticket segment and branch segment degrade away
-    expect(plain).toBe(`${slug} ${VERSION} | build | working \u2014 | dec \u2014 \u00b7 req \u2014`)
+    expect(plain).toBe(`${slug} ${VERSION} | build | working \u2014\ndec \u2014 \u00b7 req \u2014`)
 
     stubViewerHtml()
     const linked = runStatusline().trim()
     const viewer = path.join(root, '.prdt', 'scratch', 'viewer', 'viewer.html')
     expect(linked.startsWith(`${OSC8_OPEN}file://${viewer}\x1b\\${slug} ${VERSION}${OSC8_CLOSE} | build`)).toBe(true)
-    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | build | working \u2014 | dec \u2014 \u00b7 req \u2014`)
+    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | build | working \u2014\ndec \u2014 \u00b7 req \u2014`)
   })
 
   test('T-984: full layout order — branch between version and stage, ticket count, working, then dec · req; no current-task segment; never \u00bb', () => {
@@ -402,7 +402,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     execFileSync('git', ['init', '-q', '-b', 'dev', root])
     execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init'])
     const plain = unwrapLinks(runStatusline()).trim()
-    expect(plain).toBe(`${path.basename(root)} ${VERSION} | branch: dev | build | ticket 1/2 | working T-890(qa) | dec \u2014 \u00b7 req \u2014`)
+    expect(plain).toBe(`${path.basename(root)} ${VERSION} | branch: dev | build | ticket 1/2 | working T-890(qa)\ndec \u2014 \u00b7 req \u2014`)
     expect(plain).not.toContain('\u00bb')
   })
 

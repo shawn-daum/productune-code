@@ -8,7 +8,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { collectAll, collectLineNames, lineState, prdLineBody } from '@productune/viewer/lib/collect.mjs'
-import { renderPage, buildAnchors, lineViews, LINE_SECTIONED_STORES } from '@productune/viewer/lib/render.mjs'
+import { renderPage, buildAnchors, lineViews, LINE_SECTIONED_STORES, pastTicketDataFiles } from '@productune/viewer/lib/render.mjs'
 import { META_ROOT, META_SKIP_REASON } from './meta-root'
 
 const render = (data: unknown) => renderPage({ data, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
@@ -101,6 +101,29 @@ function pane(store: string, group: string) {
   expect(start).toBeGreaterThan(-1)
   return sec.slice(start).split('<div class="view-pane')[0]
 }
+
+describe('past-ticket data files — added line (T-961)', () => {
+  it('a line past version gets its own data file named with the line; home buckets keep their bare names', () => {
+    const home = pastTicketDataFiles(data.tickets, { prefix: 'viewer' })
+    expect(home.map((f: { name: string }) => f.name)).toEqual(['viewer.tickets-v2.1.js'])
+    const line = pastTicketDataFiles(data.lines[0].tickets, { prefix: 'viewer', line: 'ntf-archive' })
+    expect(line.map((f: { name: string; bucket: string }) => [f.bucket, f.name])).toEqual([['ntf-archive--v1.1', 'viewer.tickets-ntf-archive--v1.1.js']])
+    expect(Object.keys(line[0].tickets)).toEqual(['T-205'])
+    expect(line[0].tickets['T-205'].path).toBe('docs/tickets/ntf-archive/v1.1/T-205.md')
+  })
+
+  it('the page script resolves docs/tickets/<line>/<v>/T-n.md to the <line>--<v> key', () => {
+    const withSrc = renderPage({ data, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '', pastTicketSrc: { 'ntf-archive--v1.1': 'x.js', 'v2.1': 'y.js' } })
+    expect(withSrc).toContain("parts.splice(2, 2, parts[2] + '--' + parts[3])")
+    const single = renderPage({ data: { ...data, lines: [] }, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    expect(single).not.toContain("'--'")
+    // the CSP hash names the script actually shipped
+    const sha = (t: string) => require('node:crypto').createHash('sha256').update(t, 'utf8').digest('base64')
+    const inline = withSrc.split('<script>').map((x: string) => x.split('</script>')[0])
+    const csp = /script-src ([^;]*)/.exec(withSrc)![1]
+    for (const body of inline.slice(1)) if (body.length > 200) expect(csp).toContain(`'sha256-${sha(body)}'`)
+  })
+})
 
 describe('collect — release lines (mirrors prdt project_lines / line_state)', () => {
   it('reads config `lines` (legal, unique, not the slug) and po-state `lines.<line>`', () => {

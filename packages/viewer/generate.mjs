@@ -110,7 +110,11 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH,
   // T-885 (T-876 = D): past-version ticket bodies go to sibling data files;
   // the page carries only the bucket → src map, generator-written.
   const prefix = path.basename(outputPath).replace(/\.html?$/i, '')
-  const pastFiles = pastTicketDataFiles(data.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline })
+  const pastFiles = [
+    ...pastTicketDataFiles(data.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline }),
+    // T-961: an added release line's past-version bodies, file names carry the line.
+    ...(data.lines || []).flatMap((l) => pastTicketDataFiles(l.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline, line: l.name })),
+  ]
   const pastTicketSrc = {}
   for (const f of pastFiles) pastTicketSrc[f.bucket] = encodeURIComponent(f.name)
   const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc })
