@@ -125,6 +125,8 @@ function cliHooksBlock(home: string): any {
     SessionStart: [
       { matcher: 'startup|resume|clear', hooks: disciplineEntry },
       { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), ...partSlots, ...injectors] },
+      // T-479: the cross-project inbox line is its OWN SessionStart entry (PO only, never compact/SubagentStart).
+      { matcher: 'startup|resume|clear', hooks: [h('prdt-inbox-inject.sh')] },
     ],
     // T-682 slice 3: prdt-post-dispatch.sh rides SubagentStart too (the
     // mode-independent START of a dispatch — its in-flight marker), as its OWN
