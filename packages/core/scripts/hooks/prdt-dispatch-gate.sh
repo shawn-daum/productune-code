@@ -624,6 +624,16 @@ MEMSIZE="${SYS%%$'\n'*}"
 [ -n "$NCPU" ] || NCPU="$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
 MEMP="$(memory_pressure 2>/dev/null)"
 PSOUT="$(ps -axo args= 2>/dev/null)"
+# T-1009: the process table goes to jq as an `--arg`, and a busy host's table
+# (3600 processes ≈ 1.07 MB) passes the OS argument limit (ARG_MAX 1 MiB on
+# macOS) — jq then never starts and the report (and the verdict) fails. Only the
+# two axes that read it need a row: vitest entries and VM processes. A table
+# that read fine but holds none of them becomes one inert row, never "", which
+# the program reads as "ps unmeasured".
+if [ -n "$PSOUT" ]; then
+  PSOUT="$(printf '%s\n' "$PSOUT" | grep -E 'vitest|com\.apple\.Virtualization\.VirtualMachine$')"
+  [ -n "$PSOUT" ] || PSOUT="-"
+fi
 
 # ── dispatches axis: markers, then liveness (T-695 slice 2) ──────────────────
 # Each marker file is read on its own (bash builtin, no fork) and joined with a
