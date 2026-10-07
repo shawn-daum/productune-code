@@ -272,7 +272,27 @@ export class MetaGitUntrustedError extends Error {
   }
 }
 
+/**
+ * T-917 (user decision T-913 = A): a meta backup remote is a NETWORK remote
+ * only. A push to a local repository runs THAT repository's hooks on this
+ * machine (`-c core.hooksPath=/dev/null` never reaches the receiving side), so
+ * every local path is refused — relative, absolute, `~`, `file://` — inside the
+ * project or not. Same rule as `scripts/prdt` `_meta_remote_url_problem`; both
+ * judge test/fixtures/meta-remote-urls.json (keep them in step).
+ */
+export const META_LOCAL_REMOTE_RULE =
+  'meta backup allows only network remotes (https, ssh, git or user@host:path)'
+
 export function metaGitRefusal(problem: string): string {
+  if (problem.includes(META_LOCAL_REMOTE_RULE)) {
+    // An older prdt accepted a local backup remote, so this one may be the
+    // user's own — say how to repoint it, not "came with a clone".
+    return (
+      `prdt does not run git on this project's .prdt/meta.git: ${problem}.` +
+      ' Point the remote at a network URL (`git --git-dir=.prdt/meta.git remote set-url <name> <url>`)' +
+      ' or remove it, then run `prdt doctor`.'
+    )
+  }
   return (
     `prdt does not run git on this project's .prdt/meta.git: ${problem}` +
     ' — prdt never writes this, so it may have come with a cloned repository.' +
@@ -280,30 +300,22 @@ export function metaGitRefusal(problem: string): string {
   )
 }
 
-function metaRemoteUrlProblem(projectDir: string, url: string): string | null {
+/**
+ * Null for a network remote URL git reaches over https/http/ssh/git (or
+ * scp-like `user@host:path`), else why not: a `<helper>::` transport or a
+ * non-network `<scheme>://` (runs `git-remote-<x>`; `ext::` runs its
+ * argument), or any local path (its hooks run on push).
+ */
+export function metaRemoteUrlProblem(url: string): string | null {
   if (url.split('/', 1)[0].includes('::')) return 'a remote-helper URL'
-  const isFile = url.startsWith('file://')
   const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//.exec(url)?.[1]?.toLowerCase()
-  // any other `<scheme>://` runs `git-remote-<scheme>` (ext:// included)
-  if (!isFile && scheme) return META_URL_SCHEMES.has(scheme) ? null : 'a remote-helper URL'
-
-  if (!isFile && /^[^/]+:/.test(url)) return null // scp-like host:path
-  const p = isFile ? url.slice('file://'.length) : url
-  let base: string
-  let target: string
-  try {
-    base = fs.realpathSync(projectDir)
-    const abs = path.isAbsolute(p) ? p : path.join(base, p)
-    try {
-      target = fs.realpathSync(abs)
-    } catch {
-      target = path.resolve(abs)
-    }
-  } catch {
-    return 'an unresolvable local remote'
+  if (scheme) {
+    if (META_URL_SCHEMES.has(scheme)) return null
+    if (scheme !== 'file') return 'a remote-helper URL'
+  } else if (/^[^/]+:/.test(url)) {
+    return null // scp-like host:path — git's own rule: a colon before any slash
   }
-  if (target === base || target.startsWith(base + path.sep)) return 'a local remote inside this project'
-  return null
+  return `a local path — ${META_LOCAL_REMOTE_RULE}`
 }
 
 /** `meta.git` as a FILE: git follows a `gitdir: <path>` file to a repository anywhere. */
@@ -404,9 +416,9 @@ export function metaGitTrustProblem(projectDir: string): string | null {
         break
       }
       if (k.startsWith('remote.') && (k.endsWith('.url') || k.endsWith('.pushurl'))) {
-        const why = metaRemoteUrlProblem(projectDir, v)
+        const why = metaRemoteUrlProblem(v)
         if (why) {
-          problem = `${rel(cfg)} ${k} is ${why}`
+          problem = `${rel(cfg)} ${k} (${v}) is ${why}`
           break
         }
       }
@@ -425,9 +437,9 @@ export function metaGitTrustProblem(projectDir: string): string | null {
     }
     for (const [k, v] of ents) {
       if (k.startsWith('branch.') && k.endsWith('.remote') && !names.has(v)) {
-        const why = metaRemoteUrlProblem(projectDir, v)
+        const why = metaRemoteUrlProblem(v)
         if (why) {
-          problem = `${rel(cfg)} ${k} is ${why}`
+          problem = `${rel(cfg)} ${k} (${v}) is ${why}`
           break
         }
       }
@@ -969,7 +981,7 @@ export async function addMetaRemote(
     return { ok: false, error: 'meta repo not initialized' }
   }
   // Same check the trust gate applies on read: never write a URL it would refuse (T-848 fix2).
-  const urlProblem = metaRemoteUrlProblem(projectDir, url)
+  const urlProblem = metaRemoteUrlProblem(url)
   if (urlProblem) {
     return { ok: false, error: `${url} is ${urlProblem}; prdt would refuse the whole meta repo afterwards` }
   }
@@ -1235,6 +1247,9 @@ export async function bootstrapMetaRepo(
 
   if (!bootstrapCodeRepoExists(projectDir)) return { ...base, refusal: 'no-git' }
   if (metaRepoExists(projectDir)) return { ...base, refusal: 'meta-repo-exists' }
+  // T-917: refused before the probe touches it — the same rule addMetaRemote applies.
+  const urlProblem = metaRemoteUrlProblem(url)
+  if (urlProblem) return { ...base, error: `remote add failed: ${url} is ${urlProblem}` }
 
   // Pin the state-dir kind from the backup BEFORE touching the filesystem, so
   // metaGitDir() is stable for the whole operation (see peekRemoteStateKind).

@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { renderPage, pastTicketDataFiles } from '@productune/viewer/lib/render.mjs'
-import { collectDiscipline, countChangedLines } from '@productune/viewer/lib/collect.mjs'
+import { collectDiscipline, countChangedLines, defaultDisciplineRoot } from '@productune/viewer/lib/collect.mjs'
 import { buildDisciplineIndex, linkDisciplineText } from '@productune/viewer/lib/discipline-links.mjs'
 
 const FILES: Record<string, string> = {
@@ -52,6 +52,23 @@ describe('collectDiscipline', () => {
     ])
     expect(d.find((x) => x.rel === 'po/playbooks/patch-cycle.md').lines).toHaveLength(40)
     expect(d.find((x) => x.rel === 'po/playbooks/_index.md').kind).toBe('index')
+  })
+
+  it('T-911: the default discipline root honors PRDT_HOME', () => {
+    const f = fixture()
+    const home = path.join(f.root, 'prdt-home')
+    fs.mkdirSync(home)
+    fs.renameSync(f.applied, path.join(home, 'discipline'))
+    const prev = process.env.PRDT_HOME
+    process.env.PRDT_HOME = home
+    try {
+      const d = collectDiscipline(f.repo) as any[]
+      expect(d.map((x) => x.rel)).toContain('po/habit.md')
+      expect(defaultDisciplineRoot()).toBe(path.join(home, 'discipline'))
+    } finally {
+      if (prev === undefined) delete process.env.PRDT_HOME
+      else process.env.PRDT_HOME = prev
+    }
   })
 
   it('no discipline root → no documents', () => {

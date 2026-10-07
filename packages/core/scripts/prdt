@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · schedule · track (open|review|land) · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint|promote) · tickets · schedule · track (open|review|land) · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
@@ -85,6 +85,9 @@ def norm_assignee(v):
 
 
 PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
+# Additive keys (release-lines.md §5, schema_version unchanged): `checks` = the
+# home line's stage-check record (T-954 = A), `lines` = per added line.
+PO_STATE_OPTIONAL_KEYS = {"checks", "lines"}
 # §11 token-budget caps (physical lines; playbook cap counts body after frontmatter).
 # `override` applies per persona PER LAYER (machine and project each) — a curation
 # budget for text injected once per session start and after a compaction (T-586
@@ -393,12 +396,25 @@ def forged_tokens(text, reserved=()):
     return hits
 
 
+# Characters that render as nothing or reorder what follows them (T-479 fix):
+# C1 controls, bidi embeddings/overrides/isolates, zero-width space/joiners and
+# BOM. Not line breaks, so `forged_tokens` keeps its own narrower meaning; the
+# render guard below folds them as well, so a line can never look shorter or
+# read in another order than the bytes it carries.
+INVISIBLE_RE = re.compile(r"[\u0080-\u009f\u200b-\u200d\u202a-\u202e\u2066-\u2069\ufeff]")
+
+
 def one_line(text):
-    """Last-resort render guard: fold every break class into a space so a string
-    that reached output unvalidated can still never become a second line. NOT a
-    substitute for `forged_tokens` — it cannot stop a forgery that fits on one
-    line, which is why the validators refuse rather than lean on this."""
-    return LINE_BREAK_RE.sub(" ", str(text))
+    """Last-resort render guard: fold every break class — and every invisible or
+    reordering character (INVISIBLE_RE) — into a space so a string that reached
+    output unvalidated can still never become a second line. NOT a substitute
+    for `forged_tokens` — it cannot stop a forgery that fits on one line, which
+    is why the validators refuse rather than lean on this."""
+    s = INVISIBLE_RE.sub(" ", LINE_BREAK_RE.sub(" ", str(text)))
+    # Every format / control / separator character (Cf, Cc, Zl, Zp: LRM/RLM,
+    # ALM, word joiner, Mongolian vowel separator, soft hyphen, tag characters…)
+    # — the hook folds the identical set.
+    return "".join(" " if unicodedata.category(c) in ("Cf", "Cc", "Zl", "Zp") else c for c in s)
 
 
 def safe_label(text, reserved=DOCTOR_RESERVED, limit=60, ellipsis=False):
@@ -628,9 +644,14 @@ def scan_tickets(root):
     tdir = root / "docs" / "tickets"
     if not tdir.is_dir():
         return
+    lines = set(project_line_names(root))
     for p in sorted(tdir.rglob("T-*.md")):
         fm, _ = parse_frontmatter(p)
         version = p.parent.name
+        # An added line's ticket sits in `docs/tickets/<line>/<version>/` — its
+        # row carries the line id `<line>/<version>` (T-951 = A).
+        if lines and p.parent.parent.parent == tdir and p.parent.parent.name in lines:
+            version = f"{p.parent.parent.name}/{version}"
         problems = []
         f = _index_fields(fm, TICKET_INDEX_FIELDS, problems)
         deps, deps_shape = index_list(fm.get("deps"))
@@ -1092,27 +1113,32 @@ _meta_trust_cache = {}
 _META_URL_SCHEMES = {"https", "http", "ssh", "git", "git+ssh", "ssh+git", "ftp", "ftps"}
 
 
-def _meta_remote_url_problem(root, url):
-    """A remote URL that would make a push/fetch run a clone-carried program:
-    a `<helper>::` transport (`ext::` runs its argument) or a local repository
-    inside this project (its own hooks run on push)."""
+# T-917 (user decision T-913 = A): a meta backup remote is a NETWORK remote only.
+# A push to a local repository runs THAT repository's hooks on this machine
+# (`-c core.hooksPath=/dev/null` never reaches the receiving side), so every
+# local path is refused — relative, absolute, `~`, `file://` — inside the
+# project or not. Shared fixture list with meta-git.ts metaRemoteUrlProblem:
+# test/fixtures/meta-remote-urls.json (keep both sides in step).
+META_LOCAL_REMOTE_RULE = "meta backup allows only network remotes (https, ssh, git or user@host:path)"
+
+
+def _meta_remote_url_problem(url):
+    """None for a network remote URL git reaches over https/http/ssh/git (or
+    scp-like `user@host:path`), else why not: a `<helper>::` transport or a
+    non-network `<scheme>://` (runs `git-remote-<x>`; `ext::` runs its
+    argument), or any local path (its hooks run on push)."""
     if "::" in url.split("/", 1)[0]:
         return "a remote-helper URL"
     m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*)://", url)
-    if m and m.group(1).lower() != "file":
-        # any other `<scheme>://` runs `git-remote-<scheme>` (ext:// included)
-        return None if m.group(1).lower() in _META_URL_SCHEMES else "a remote-helper URL"
-    if not url.startswith("file://") and re.match(r"^[^/]+:", url):
-        return None  # scp-like host:path
-    p = url[len("file://"):] if url.startswith("file://") else url
-    try:
-        base = Path(root).resolve()
-        tgt = (base / p).resolve() if not os.path.isabs(p) else Path(p).resolve()
-    except (OSError, RuntimeError):
-        return "an unresolvable local remote"
-    if tgt == base or base in tgt.parents:
-        return "a local remote inside this project"
-    return None
+    if m:
+        scheme = m.group(1).lower()
+        if scheme in _META_URL_SCHEMES:
+            return None
+        if scheme != "file":
+            return "a remote-helper URL"
+    elif re.match(r"^[^/]+:", url):
+        return None  # scp-like host:path — git's own rule: a colon before any slash
+    return "a local path — " + META_LOCAL_REMOTE_RULE
 
 
 def _meta_gitfile_problem(gd):
@@ -1193,9 +1219,9 @@ def meta_git_trust_problem(root):
                 prob = f".prdt/meta.git/config sets {k}"
                 break
             if k.endswith((".url", ".pushurl")) and k.startswith("remote."):
-                why = _meta_remote_url_problem(root, v)
+                why = _meta_remote_url_problem(v)
                 if why:
-                    prob = f".prdt/meta.git/config {k} is {why}"
+                    prob = f".prdt/meta.git/config {k} ({v}) is {why}"
                     break
         if prob is None:
             # branch.<b>.remote may name a URL/path instead of a remote (T-848 fix1)
@@ -1204,15 +1230,21 @@ def meta_git_trust_problem(root):
                      for m in [re.fullmatch(r"remote\.(.+)\.(?:url|pushurl|fetch)", k)] if m}
             for k, _, v in ents:
                 if k.startswith("branch.") and k.endswith(".remote") and v not in names:
-                    why = _meta_remote_url_problem(root, v)
+                    why = _meta_remote_url_problem(v)
                     if why:
-                        prob = f".prdt/meta.git/config {k} is {why}"
+                        prob = f".prdt/meta.git/config {k} ({v}) is {why}"
                         break
     _meta_trust_cache[key] = prob
     return prob
 
 
 def meta_git_refusal(prob):
+    if META_LOCAL_REMOTE_RULE in prob:
+        # T-917: an older prdt accepted a local backup remote, so this one may be
+        # the user's own — say how to repoint it, not "came with a clone".
+        return ("prdt does not run git on this project's .prdt/meta.git: " + prob
+                + ". Point the remote at a network URL (`git --git-dir=.prdt/meta.git "
+                  "remote set-url <name> <url>`) or remove it, then run `prdt doctor`.")
     return ("prdt does not run git on this project's .prdt/meta.git: " + prob
             + " — prdt never writes this, so it may have come with a cloned "
               "repository. Check it, remove it, then run `prdt doctor`.")
@@ -2372,7 +2404,7 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     # scratch (same contract as meta-git.ts writeMetaAllowlist).
     cfg = read_json(prdt / "config.json")
     cfg = cfg if isinstance(cfg, dict) else {}
-    cfg["slug"] = cfg.get("slug") or slug
+    cfg["slug"] = cfg["slug"] if isinstance(cfg.get("slug"), str) and cfg["slug"] else slug
     cfg["created_at"] = cfg.get("created_at") or now_iso()
     cfg["surfaces"] = cfg.get("surfaces") if isinstance(cfg.get("surfaces"), dict) else {}
     meta = cfg.get("meta") if isinstance(cfg.get("meta"), dict) else {}
@@ -2558,17 +2590,25 @@ def cmd_shared_state_guard(args):
         print(w, file=sys.stderr)
 
 
+def write_machine_index(mpages):
+    """Regenerate the machine store's own index.md (skipped when the store does
+    not exist yet — a reader of an absent store must not create it)."""
+    mdir = machine_wiki_root()
+    if mdir.is_dir():
+        (mdir / "index.md").write_text(render_wiki_index(mpages, MACHINE_INDEX_HEADER),
+                                       encoding="utf-8")
+
+
 def cmd_wiki(args):
     root = require_root()
+    if args.action == "promote":
+        return wiki_promote(root, args)
     if args.action == "reindex":
         w = live_dispatch_warning("wiki reindex")
         if w:
             print(w, file=sys.stderr)
         _con, v, pages, mpages = rebuild_index(root)
-        mdir = machine_wiki_root()
-        if mdir.is_dir():
-            (mdir / "index.md").write_text(render_wiki_index(mpages, MACHINE_INDEX_HEADER),
-                                           encoding="utf-8")
+        write_machine_index(mpages)
         print(f"reindexed: {len(pages)} wiki pages + {len(mpages)} machine, tickets ok" +
               (f", {len(v)} ticket violations (see `prdt doctor`)" if v else ""))
     elif args.action == "search":
@@ -2624,6 +2664,402 @@ def cmd_wiki(args):
         for w in warns:
             print(f"⚠ {w}")
         print("wiki lint: clean" if not warns else f"wiki lint: {len(warns)} warning(s)")
+
+
+# ── wiki promote (T-477) ──────────────────────────────────────────────────────
+# Project wiki → machine wiki is a MOVE. The only route before this was a hand
+# copy, which left the original behind (measured 2026-08-18: four duplicate
+# pairs, one machine copy shallower than the source). The project side keeps a
+# pointer — never the text — so there is one place to maintain it.
+PROMOTE_NAME_BAD = re.compile(r"[/\\\s]|^\.|\.\.")
+PROMOTE_POINTER_MARK = "기기 위키로 옮겼어요"
+
+
+def _display_path(p):
+    try:
+        return "~/" + str(Path(p).relative_to(Path.home()))
+    except ValueError:
+        return str(p)
+
+
+def _promote_find_section(body, heading):
+    """(start, end) line indexes of the section whose heading text is `heading`
+    — from its heading line up to the next heading of the same or a shallower
+    level. Fenced code is not scanned for headings. Returns a list so an
+    ambiguous name is visible to the caller."""
+    lines = body.split("\n")
+    heads, fence = [], False
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        m = None if fence else re.match(r"^(#{1,6})\s+(.*?)\s*#*\s*$", ln)
+        if m:
+            heads.append((i, len(m.group(1)), m.group(2).strip()))
+    out = []
+    for k, (i, lvl, text) in enumerate(heads):
+        if text != heading:
+            continue
+        end = len(lines)
+        for j, l2, _t in heads[k + 1:]:
+            if l2 <= lvl:
+                end = j
+                break
+        out.append((i, end))
+    return lines, out
+
+
+def wiki_promote(root, args):
+    """`prdt wiki promote <page> [--section <heading>] [--as <machine-name>] [--yes]`.
+
+    Moves one project page, or one named section of it, into the machine store
+    and leaves a pointer on the project side. Never silent and never a merge:
+    it always prints the plan first, refuses when the machine target exists,
+    and writes only after a confirm (`--yes`, or `y` at a terminal prompt).
+    One page per call — there is deliberately no batch mode."""
+    if len(args.query) != 1:
+        sys.exit("usage: prdt wiki promote <page> [--section <heading>] [--as <machine-name>] [--yes]")
+    page = args.query[0]
+    if page.startswith(MACHINE):
+        sys.exit(f"prdt wiki promote: {page} is already a machine page — nothing to promote")
+    src = root / "docs" / "wiki" / f"{page}.md"
+    if page in ("index", "inbox", "log") or not src.is_file():
+        sys.exit(f"prdt wiki promote: no project wiki page `{page}` (looked for docs/wiki/{page}.md)")
+    target = args.as_name or page
+    if PROMOTE_NAME_BAD.search(target) or target in ("index", "inbox", "log"):
+        sys.exit(f"prdt wiki promote: `{target}` is not a usable page name (no slash, space, "
+                 "leading dot or `..`; not index/inbox/log)")
+    dest = machine_wiki_root() / f"{target}.md"
+    fm, body = parse_frontmatter(src)
+    if fm.get("promoted_to"):
+        sys.exit(f"prdt wiki promote: docs/wiki/{page}.md is already a pointer to "
+                 f"{fm['promoted_to']} — nothing to move")
+    ref = MACHINE + target
+    if dest.exists():
+        sys.exit(f"refused: machine page {ref} already exists ({_display_path(dest)}). "
+                 "Nothing was written — promote never overwrites or merges. Pick another "
+                 f"name with `--as <name>`, or reconcile the two by hand and then delete "
+                 f"the project copy.")
+    text = src.read_text(encoding="utf-8")
+    pointer_line = f"→ {PROMOTE_POINTER_MARK}: [[{ref}]] ({_display_path(dest)})"
+    if args.section:
+        full_lines, found = _promote_find_section(text, args.section)
+        if not found:
+            sys.exit(f"prdt wiki promote: no section headed `{args.section}` in docs/wiki/{page}.md")
+        if len(found) > 1:
+            sys.exit(f"prdt wiki promote: `{args.section}` heads {len(found)} sections in "
+                     f"docs/wiki/{page}.md — ambiguous, nothing was written")
+        a, b = found[0]
+        moved = full_lines[a:b]
+        while moved and not moved[-1].strip():
+            moved.pop()
+        if any(PROMOTE_POINTER_MARK in l for l in moved[1:3]):
+            sys.exit(f"prdt wiki promote: section `{args.section}` is already a pointer — nothing to move")
+        mtext = (f"---\ntitle: {args.section}\ntype: {fm.get('type') or page.split('--')[0]}\n"
+                 f"status: live\nversion: \nlinks: []\n---\n\n" + "\n".join(moved) + "\n")
+        new_lines = full_lines[:a + 1] + ["", pointer_line, ""] + full_lines[b:]
+        ptext = "\n".join(new_lines)
+        ptext = re.sub(r"\n{3,}", "\n\n", ptext)
+        what = f"section `{args.section}` of docs/wiki/{page}.md ({len(moved)} lines)"
+    else:
+        moved = text.rstrip("\n").split("\n")
+        mtext = text
+        title = fm.get("title") or page
+        ptext = (f"---\ntitle: {title}\ntype: {fm.get('type') or page.split('--')[0]}\n"
+                 f"status: live\nversion: {fm.get('version') or ''}\npromoted_to: {ref}\n"
+                 f"links: [{ref}]\n---\n\n# {title}\n\n{pointer_line}\n")
+        what = f"whole page docs/wiki/{page}.md ({len(moved)} lines)"
+    print(f"promote plan — {what}")
+    print(f"  from : project wiki  docs/wiki/{page}.md")
+    print(f"  to   : machine wiki  {ref}  ({_display_path(dest)})  [new page]")
+    print(f"  left on the project side: {pointer_line}")
+    if not args.yes:
+        if sys.stdin.isatty():
+            ok = input("move it now? [y/N] ").strip().lower() in ("y", "yes")
+        else:
+            ok = False
+        if not ok:
+            print("not confirmed — nothing was written. Re-run with --yes once the user has "
+                  "confirmed this move.", file=sys.stderr)
+            sys.exit(2)
+    w = live_dispatch_warning("wiki promote")
+    if w:
+        print(w, file=sys.stderr)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(dest, "x", encoding="utf-8") as fh:   # exclusive: a race never overwrites
+            fh.write(mtext)
+    except FileExistsError:
+        sys.exit(f"refused: machine page {ref} appeared while promoting — nothing was written")
+    try:
+        src.write_text(ptext, encoding="utf-8")
+    except OSError as e:
+        dest.unlink()
+        sys.exit(f"prdt wiki promote: could not rewrite the project page ({e}) — machine "
+                 "page rolled back, nothing moved")
+    note_docs_write(src, text, ptext)
+    _con, _v, pages, mpages = rebuild_index(root)
+    write_machine_index(mpages)
+    print(f"promoted: {what} → {ref}")
+    print(f"--- project side: docs/wiki/{page}.md ---\n{ptext.rstrip()}")
+    print(f"--- machine side: {_display_path(dest)} ---\n{mtext.rstrip()}")
+    print(f"indexes rebuilt: {len(pages)} project pages + {len(mpages)} machine pages")
+
+
+# ── inbox (T-479) — one-line recommendations between projects on this machine ─
+# One machine store, `$PRDT_HOME/inbox.md`, one line per recommendation naming
+# the RECEIVING project's slug. A project never writes into another project's
+# files: the sender appends here, the receiver's PO sees its own lines at
+# session start (prdt-inbox-inject.sh) and decides each one — `adopt` or
+# `decline` marks the line, it is then no longer delivered, and the marked line
+# stays as the trace that refuses the same (to, text) being sent again. Nothing
+# is applied anywhere: adopting is the receiving PO's own follow-up.
+# Bounded: every write drops decided lines older than INBOX_DECIDED_KEEP_DAYS
+# and undecided ones older than INBOX_OPEN_KEEP_DAYS (a project nobody opened in
+# half a year); a future date counts as expired. Open lines are capped per
+# addressee and per sender→addressee pair. A store that is not exactly what
+# `prdt inbox` writes (bad UTF-8, a malformed line, a duplicate id) is corrupt:
+# no write touches it and the hook delivers nothing. Deliberately not built: broadcast / no-addressee lines, replies
+# or threads, a project registry, a live SendMessage nudge, any cross-project
+# wiki — see T-479 outcome.
+INBOX_LINE_RE = re.compile(
+    r"^- (r-[0-9a-f]{8}) · to: (\S+) · from: (\S+) · sent: (\d{4}-\d{2}-\d{2}) · "
+    r"(open|adopted \d{4}-\d{2}-\d{2}|declined \d{4}-\d{2}-\d{2}) · (.*)$")
+INBOX_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+INBOX_TEXT_MAX = 300
+INBOX_DECIDED_KEEP_DAYS = 90
+INBOX_OPEN_KEEP_DAYS = 180
+# Open lines are capped so one session start stays small: at most 10 waiting
+# for one project, at most 3 of them from one sender. Worst case the hook
+# renders 10 × 400 chars + its fixed preamble — see prdt-inbox.test.ts.
+INBOX_OPEN_PER_ADDRESSEE = 10
+INBOX_OPEN_PER_PAIR = 3
+INBOX_HEADER_PROSE = "Written only by `prdt inbox`; one line per recommendation, addressed by project slug."
+INBOX_HEADER = ("# prdt inbox — one-line recommendations between projects on this machine\n\n"
+                + INBOX_HEADER_PROSE + "\n\n")
+
+
+def inbox_path():
+    return prdt_home() / "inbox.md"
+
+
+def project_slug(root):
+    """The name another project addresses this one by: the EXPLICIT `slug` in
+    `.prdt/config.json`, else None. A directory name is never an address (two
+    checkouts named `shared` would both answer to it, T-975); the session-start
+    hook resolves it the same way."""
+    cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
+    s = cfg.get("slug") if isinstance(cfg, dict) else None
+    return s if isinstance(s, str) and s else None
+
+
+def _inbox_slug_claimants(slug, root):
+    """Distinct project roots on this machine that declare `slug`. The only
+    machine-wide project knowledge prdt keeps is the `project_root` of the
+    dispatch markers under `$PRDT_HOME/run/dispatches/` (no registry is added),
+    so this sees THIS root plus every project that dispatched on this machine
+    within the markers' retention (~24 h after a dispatch stops)."""
+    roots = {os.path.realpath(root)}
+    d = prdt_home() / "run" / "dispatches"
+    if d.is_dir():
+        for f in d.glob("*.json"):
+            try:
+                pr = (json.loads(f.read_text(encoding="utf-8")) or {}).get("project_root")
+            except Exception:
+                continue
+            if isinstance(pr, str) and pr:
+                roots.add(os.path.realpath(pr))
+    return {r for r in roots if project_slug(r) == slug}
+
+
+def _inbox_row_problem(r):
+    """Why a parsed row could not have been written by `prdt inbox` (None = fine)."""
+    for k in ("to", "from"):
+        if not INBOX_SLUG_RE.fullmatch(r[k]):
+            return f"row {r['id']} has an invalid `{k}` slug"
+    for d in (r["sent"], r["decided"]):
+        if d:
+            try:
+                datetime.strptime(d, "%Y-%m-%d")
+            except ValueError:
+                return f"row {r['id']} has an invalid date"
+    t = r["text"]
+    if not t or len(t) > INBOX_TEXT_MAX or t != " ".join(one_line(t).split()):
+        return f"row {r['id']} has text no `prdt inbox send` could write"
+    return None
+
+
+def _inbox_read():
+    """(rows, problem) — rows are dicts in file order. `problem` (None = clean)
+    names why the store is corrupt: it does not decode as UTF-8, a line is
+    neither header prose nor a well-formed row, or an id appears twice. A
+    corrupt store yields NO rows and is never rewritten (`_inbox_load`); the
+    session-start hook applies the same rules and then delivers nothing."""
+    try:
+        text = inbox_path().read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return [], None
+    except UnicodeDecodeError as e:
+        return [], f"is not valid UTF-8 (byte offset {e.start})"
+    except OSError as e:
+        return [], f"cannot be read ({e.strerror or type(e).__name__})"
+    rows, seen = [], set()
+    for n, ln in enumerate(text.split("\n"), 1):
+        m = INBOX_LINE_RE.match(ln)
+        if not m:
+            if ln == "" or ln.startswith("# ") or ln == INBOX_HEADER_PROSE:
+                continue
+            return [], f"has a malformed line {n}"
+        st = m.group(5)
+        r = {"id": m.group(1), "to": m.group(2), "from": m.group(3), "sent": m.group(4),
+             "state": st.split(" ")[0], "decided": st.split(" ")[1] if " " in st else "",
+             "text": m.group(6)}
+        bad = _inbox_row_problem(r)
+        if bad:
+            return [], f"line {n}: {bad}"
+        if r["id"] in seen:
+            return [], f"line {n}: id {r['id']} appears twice"
+        seen.add(r["id"])
+        rows.append(r)
+    return rows, None
+
+
+def _inbox_load():
+    """Rows for a write — exits (refusing the write) when the store is corrupt."""
+    rows, problem = _inbox_read()
+    if problem:
+        sys.exit(f"refused: the inbox store {inbox_path()} {problem} — it is left exactly as it is; "
+                 "nothing was written. Repair or remove that file by hand.")
+    return rows
+
+
+def _inbox_render(r):
+    st = r["state"] if r["state"] == "open" else f"{r['state']} {r['decided']}"
+    return f"- {r['id']} · to: {r['to']} · from: {r['from']} · sent: {r['sent']} · {st} · {r['text']}"
+
+
+def _inbox_expired(r, today):
+    """A date in the future is expired too — a planted `sent: 2099-…` can never
+    outlive the age bound. The session-start hook applies the same rule."""
+    def age(d):
+        return (today - datetime.strptime(d, "%Y-%m-%d").date()).days
+    if age(r["sent"]) < 0 or (r["decided"] and age(r["decided"]) < 0):
+        return True
+    if r["state"] == "open":
+        return age(r["sent"]) > INBOX_OPEN_KEEP_DAYS
+    return age(r["decided"]) > INBOX_DECIDED_KEEP_DAYS
+
+
+def _inbox_prune(rows, today):
+    return [r for r in rows if not _inbox_expired(r, today)]
+
+
+def _inbox_write(rows):
+    p = inbox_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(p, INBOX_HEADER + "".join(_inbox_render(r) + "\n" for r in rows))
+
+
+@contextlib.contextmanager
+def _inbox_lock():
+    p = prdt_home() / "inbox.md.lock"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def cmd_inbox(args):
+    """`prdt inbox [list]` · `send <project-slug> <text…>` · `adopt <id>` ·
+    `decline <id>` — see the T-479 block above."""
+    root = require_root()
+    me = project_slug(root)
+    today = datetime.now(timezone.utc).date()
+    action = args.action or "list"
+    if me is None:
+        sys.exit("refused: this project has no `slug` in .prdt/config.json — the inbox addresses a project only by "
+                 'an explicit slug (a directory name can collide); set `"slug": "<name>"` there. Nothing was read or written')
+    for a in args.rest:
+        try:
+            a.encode("utf-8")
+        except UnicodeEncodeError:
+            sys.exit("refused: an argument is not valid UTF-8 text — nothing was read or written")
+    if action == "list":
+        rows, problem = _inbox_read()
+        if problem:
+            sys.exit(f"the inbox store {inbox_path()} {problem} — nothing is delivered from it "
+                     "and no write will touch it. Repair or remove that file by hand.")
+        mine = [r for r in rows if r["to"] == me and r["state"] == "open" and not _inbox_expired(r, today)]
+        for r in mine:
+            print(f"{r['id']} · from {r['from']} · {r['sent']} · {r['text']}")
+        if not mine:
+            print(f"(no open recommendation addressed to {me})")
+        return
+    if action == "send":
+        if len(args.rest) < 2:
+            sys.exit("usage: prdt inbox send <project-slug> <one-line recommendation>  "
+                     "(a line always names ONE receiving project — there is no broadcast)")
+        to, text = args.rest[0], " ".join(one_line(" ".join(args.rest[1:])).split())
+        if not INBOX_SLUG_RE.fullmatch(me):
+            sys.exit(f"refused: this project's slug `{safe_label(me, limit=40)}` is not a valid project slug "
+                     "(letters, digits, `.`, `_`, `-`; ≤64) — fix `slug` in .prdt/config.json; nothing was sent")
+        if not INBOX_SLUG_RE.fullmatch(to):
+            sys.exit(f"refused: `{safe_label(to, limit=40)}` is not a project slug — name one receiving "
+                     "project (its .prdt/config.json `slug`); there is no broadcast")
+        for who, label in ((me, "this project's"), (to, "the addressee's")):
+            if len(_inbox_slug_claimants(who, root)) > 1:
+                sys.exit(f"refused: the slug `{safe_label(who, limit=40)}` ({label}) is declared by more than one project "
+                         "on this machine, so the address is ambiguous — give each project its own `slug` in "
+                         ".prdt/config.json; nothing was sent")
+        if to == me:
+            sys.exit(f"refused: {me} is this project — write it to your own docs/wiki/inbox.md instead")
+        if not text:
+            sys.exit("refused: empty recommendation")
+        if len(text) > INBOX_TEXT_MAX:
+            sys.exit(f"refused: {len(text)} chars — a recommendation is ONE line (≤{INBOX_TEXT_MAX}); "
+                     "point at a file or ticket for the detail")
+        rid = "r-" + hashlib.sha256(f"{to}\n{text}".encode("utf-8")).hexdigest()[:8]
+        with _inbox_lock():
+            rows = _inbox_prune(_inbox_load(), today)
+            dup = next((r for r in rows if r["id"] == rid), None)
+            if dup:
+                why = ("is already waiting for it" if dup["state"] == "open"
+                       else f"{dup['state']} it on {dup['decided']}")
+                sys.exit(f"refused: the same line to {to} exists — {to} {why} ({rid}); not sent again")
+            waiting = [r for r in rows if r["to"] == to and r["state"] == "open"]
+            if len(waiting) >= INBOX_OPEN_PER_ADDRESSEE:
+                sys.exit(f"refused: {to} already has {len(waiting)} open recommendations "
+                         f"(cap {INBOX_OPEN_PER_ADDRESSEE}) — not sent until {to} decides some")
+            if sum(1 for r in waiting if r["from"] == me) >= INBOX_OPEN_PER_PAIR:
+                sys.exit(f"refused: {to} already has {INBOX_OPEN_PER_PAIR} open recommendations from {me} "
+                         f"(cap {INBOX_OPEN_PER_PAIR}) — not sent until {to} decides one")
+            rows.append({"id": rid, "to": to, "from": me, "sent": today.isoformat(),
+                         "state": "open", "decided": "", "text": text})
+            _inbox_write(rows)
+        print(f"sent {rid} → {to}: {text}")
+        print(f"{to}'s PO sees it at its next session start; it decides adoption there.")
+        return
+    if action in ("adopt", "decline"):
+        if len(args.rest) != 1:
+            sys.exit(f"usage: prdt inbox {action} <id>")
+        rid = args.rest[0]
+        with _inbox_lock():
+            rows = _inbox_load()
+            r = next((x for x in rows if x["id"] == rid), None)
+            if not r or r["to"] != me:
+                sys.exit(f"refused: no recommendation {safe_label(rid, limit=20)} addressed to {me}")
+            if r["state"] != "open":
+                sys.exit(f"{rid} was already {r['state']} on {r['decided']} — nothing changed")
+            r["state"], r["decided"] = ("adopted" if action == "adopt" else "declined"), today.isoformat()
+            _inbox_write(_inbox_prune(rows, today))
+        print(f"{r['state']} {rid} (from {r['from']}): {r['text']}")
+        print("no longer delivered at session start." + (
+            " Adopting applied nothing — record it in docs/wiki/inbox.md or a ticket."
+            if action == "adopt" else " The trace refuses the same line being sent again."))
+        return
 
 
 def wiki_lint(root):
@@ -4413,12 +4849,14 @@ def next_ticket_id(root):
     return f"T-{max_n + 1:03d}"
 
 
-def current_version_id(root):
+def current_version_id(root, line=None):
     """`docs/tickets/<version>/` for a freshly scaffolded ticket — the
     project's OPEN version (`po-state.json.version`), never a guess; falls
     back to `backlog` only when the state file is unreadable (a corrupt or
     pre-init project — `new` still has to land the file somewhere)."""
     st = read_json(root / ".prdt" / "po-state.json")
+    if line is not None:
+        return line_state(st, line)[1] or join_line_id(line, "backlog")
     v = (st or {}).get("version")
     return v if isinstance(v, str) and v.strip() else "backlog"
 
@@ -4444,7 +4882,14 @@ def cmd_tickets_new(args, root):
         sys.exit("prdt tickets new: --slug is required and must be kebab-case (a-z0-9, hyphen-separated)")
     ttype = args.type
     tid = next_ticket_id(root)
-    version = current_version_id(root)
+    line = getattr(args, "line", None)
+    if line is not None and line not in project_line_names(root):
+        if line == _resource_project_slug(root):
+            line = None
+        else:
+            sys.exit(f"prdt tickets new: --line {safe_label(line)} is not a line declared in "
+                     f".prdt/config.json `lines`")
+    version = current_version_id(root, line)
     # `type: decision` forces `assignee: user` (contracts §Tickets) — never a
     # CLI choice, the same way the frame itself is never a per-ticket choice.
     assignee = "user" if ttype == "decision" else (args.assignee or "po")
@@ -4478,7 +4923,16 @@ def cmd_tickets_new(args, root):
     if path.exists():
         sys.exit(f"prdt tickets new: {path} already exists — id collision, re-run (next_ticket_id is derived, never cached)")
     atomic_write_text(path, text)
-    print(f"[{tid}](file://{path.resolve()})")
+    # T-995: the new ticket is in the viewer before anyone can mention it — the
+    # viewer is regenerated here (the generator writes the ticket's at/ page
+    # itself) and the paste-ready line is the viewer link, the md file link
+    # only when the viewer cannot be generated.
+    # A project that never generated its viewer has nothing to keep fresh (T-838):
+    # it gets the file link, which opens as it is.
+    if (Path(root) / VIEWER_REL / "viewer.html").is_file():
+        print(viewer_links(root, [tid], labels={tid: str(path.resolve())})[0])
+    else:
+        print(f"[{tid}](file://{path.resolve()})")
 
 
 def split_ticket_header_body(text):
@@ -5119,7 +5573,7 @@ def cmd_tickets(args):
     q, params = "SELECT id, slug, type, status, assignee, version, deps FROM tickets", []
     conds = []
     if args.backlog:
-        conds.append("version = 'backlog'")
+        conds.append("(version = 'backlog' OR version LIKE '%/backlog')")
     if args.version:
         conds.append("version = ?"); params.append(args.version)
     if args.feature:
@@ -6945,7 +7399,7 @@ def cmd_meta(args):
             if len(rest) != 3:
                 sys.exit("usage: prdt meta remote add <name> <url>")
             _, name, url = rest
-            why = _meta_remote_url_problem(root, url)
+            why = _meta_remote_url_problem(url)
             if why:  # same check the trust gate applies on read — never write what it would refuse
                 sys.exit(f"prdt meta: remote 설정 실패 — {url} is {why}; prdt would refuse the whole meta repo afterwards")
             res = _meta_call(root, "remote-add", name, url)
@@ -8558,11 +9012,24 @@ def is_artifact_bucket_name(name):
 
 
 def artifact_buckets(root):
+    """Home buckets `docs/artifacts/<version>/` in version order, then each
+    added line's `docs/artifacts/<line>/<version>/` (T-951 = A)."""
     base = artifacts_root(root)
     if not base.is_dir():
         return []
-    return sorted((d for d in base.iterdir() if d.is_dir() and is_artifact_bucket_name(d.name)),
-                  key=lambda d: (_version_id_canon(d.name), d.name))
+    out = sorted((d for d in base.iterdir() if d.is_dir() and is_artifact_bucket_name(d.name)),
+                 key=lambda d: (_version_id_canon(d.name), d.name))
+    for ln in project_line_names(root):
+        ld = base / ln
+        if ld.is_dir():
+            out += sorted((d for d in ld.iterdir() if d.is_dir() and is_artifact_bucket_name(d.name)),
+                          key=lambda d: (_version_id_canon(d.name), d.name))
+    return out
+
+
+def bucket_id(bucket):
+    """A bucket's manifest id: `<version>`, or `<line>/<version>` for an added line."""
+    return bucket.name if bucket.parent.name == "artifacts" else f"{bucket.parent.name}/{bucket.name}"
 
 
 def legacy_bucket_manifests(root):
@@ -8692,7 +9159,8 @@ def derive_artifact_ticket(root, bucket, rel):
 
 
 def _artifact_entry_sort_key(e):
-    return (_version_id_canon(e["bucket"]) or (), e["bucket"], e["path"])
+    line, ver = split_line_id(e["bucket"])
+    return (line or "", _version_id_canon(ver) or (), e["bucket"], e["path"])
 
 
 def _artifact_entry_canon(bucket, e):
@@ -8736,12 +9204,12 @@ def build_artifact_manifest(root, prior=None):
         files_set = set(files)
         for rel in files:
             archived = rel.startswith("archive/")
-            key = (bucket.name, rel)
+            key = (bucket_id(bucket), rel)
             if key in prior:
                 old = prior[key]
                 consumed.add(key)
             elif archived:
-                moved_from = (bucket.name, rel[len("archive/"):])
+                moved_from = (bucket_id(bucket), rel[len("archive/"):])
                 if moved_from in prior and moved_from[1] not in files_set:
                     old = prior[moved_from]
                     consumed.add(moved_from)
@@ -8750,7 +9218,7 @@ def build_artifact_manifest(root, prior=None):
             else:
                 old = {}
             e = {
-                "bucket": bucket.name,
+                "bucket": bucket_id(bucket),
                 "path": rel,
                 "ticket": old.get("ticket") if "ticket" in old else derive_artifact_ticket(root, bucket, rel),
                 "kind": old.get("kind") or derive_artifact_kind(rel),
@@ -8762,7 +9230,7 @@ def build_artifact_manifest(root, prior=None):
             for k, v in old.items():
                 if k not in ARTIFACT_DERIVED_KEYS:
                     e[k] = v
-            entries.append(_artifact_entry_canon(bucket.name, e))
+            entries.append(_artifact_entry_canon(bucket_id(bucket), e))
     entries.sort(key=_artifact_entry_sort_key)
     dropped = sorted(prior.keys() - consumed, key=lambda k: (_version_id_canon(k[0]) or (), k[0], k[1]))
     drop_lines = [f"artifact: docs/artifacts/manifest.json dropped {b}/{p} — no longer on disk"
@@ -8790,12 +9258,20 @@ def artifact_placement_warnings(root):
     if not base.is_dir():
         return []
     warns = []
+    line_names = set(project_line_names(root))
     for p in sorted(base.iterdir(), key=lambda x: x.name):
         if p.name.startswith(".") or p.name == ARTIFACT_MANIFEST_NAME:
             continue
         if p.is_file():
             warns.append(f"artifact: {p.name} sits outside a version bucket — "
                          f"move it under docs/artifacts/<version>/ (contracts §Fixed paths)")
+        elif p.name in line_names:
+            for q in sorted(p.iterdir(), key=lambda x: x.name):
+                if q.name.startswith("."):
+                    continue
+                if q.is_file() or not is_artifact_bucket_name(q.name):
+                    warns.append(f"artifact: docs/artifacts/{p.name}/{q.name} is not a version bucket of "
+                                 f"line {p.name} (expected docs/artifacts/{p.name}/<version>/)")
         elif not is_artifact_bucket_name(p.name):
             warns.append(f"artifact: docs/artifacts/{p.name}/ is not a version bucket "
                          f"(expected a version id: v<N>, v<N>.<m> or v<N>.<m>.<p>)")
@@ -8819,18 +9295,18 @@ def artifact_placement_warnings(root):
     for bucket in buckets:
         for d in sorted(bucket.iterdir(), key=lambda x: x.name):
             if d.is_dir() and d.name != "archive":
-                warns.append(f"artifact: {bucket.name}/{d.name}/ — a bucket holds files "
+                warns.append(f"artifact: {bucket_id(bucket)}/{d.name}/ — a bucket holds files "
                              f"plus archive/, no other subdirectory")
         on_disk = set(artifact_files(bucket))
-        registered = {p for (b, p) in prior if b == bucket.name}
+        registered = {p for (b, p) in prior if b == bucket_id(bucket)}
         if not present and on_disk:
-            warns.append(f"artifact: {bucket.name}/ has {len(on_disk)} file(s) and there is no "
+            warns.append(f"artifact: {bucket_id(bucket)}/ has {len(on_disk)} file(s) and there is no "
                          f"docs/artifacts/manifest.json — run {next_step}")
             continue
         for rel in sorted(on_disk - registered):
-            warns.append(f"artifact: {bucket.name}/{rel} is not registered in "
+            warns.append(f"artifact: {bucket_id(bucket)}/{rel} is not registered in "
                          f"docs/artifacts/manifest.json — run {next_step}")
-    bucket_names = {b.name for b in buckets}
+    bucket_names = {bucket_id(b) for b in buckets}
     for (b, rel) in sorted(prior, key=lambda k: (_version_id_canon(k[0]) or (), k[0], k[1])):
         if b not in bucket_names:
             warns.append(f"artifact: docs/artifacts/manifest.json lists {b}/{rel}, and {b}/ "
@@ -9678,6 +10154,237 @@ PRD_VERSION_HEADING_RE = re.compile(r"^## (v\d+(?:\.\d+){0,2})(?![\d.])")
 PRD_VERSION_FILE_RE = re.compile(r"^v\d+(?:\.\d+){0,2}\.md$")
 
 
+# ── release lines (T-960 · T-946 = B · T-951 = A) ───────────────────────────
+# One project may hold several release lines. The home line (the project slug)
+# keeps every path, heading and id exactly as before; an added line, declared in
+# `.prdt/config.json` `lines`, prefixes `<line>/` to its version id wherever one
+# stands (`ntf-archive/v1.2`), and heads its PRD section `## <line> v<N>.<m>`.
+# No `lines` → a single-line project, byte-identical to before
+# (docs/artifacts/v1.13/release-lines.md §1–§6).
+LINE_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def _line_config_entries(root):
+    cfg = read_json(Path(root) / ".prdt" / "config.json") if root else None
+    if not isinstance(cfg, dict):
+        return None, None
+    raw = cfg.get("lines")
+    return cfg.get("slug"), (raw if isinstance(raw, list) else ([] if raw is None else raw))
+
+
+def project_lines(root):
+    """Added release lines in declaration order — config entries whose `name` is
+    legal, unique and not the slug; `line_config_warnings` names the rest.
+    [] = a single-line project."""
+    slug, raw = _line_config_entries(root)
+    out, seen = [], set()
+    for e in (raw if isinstance(raw, list) else []):
+        name = e.get("name") if isinstance(e, dict) else None
+        if isinstance(name, str) and LINE_NAME_RE.match(name) and name not in seen and name != slug:
+            seen.add(name)
+            out.append(e)
+    return out
+
+
+def project_line_names(root):
+    return [e["name"] for e in project_lines(root)]
+
+
+def project_declares_lines(root):
+    """True when `.prdt/config.json` carries a `lines` key at all — the switch
+    for every line-only check, so a single-line project's doctor output keeps
+    its check count."""
+    cfg = read_json(Path(root) / ".prdt" / "config.json") if root else None
+    return isinstance(cfg, dict) and "lines" in cfg
+
+
+def line_config_warnings(root):
+    slug, raw = _line_config_entries(root)
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        return ["lines: `.prdt/config.json` `lines` is not a list — every added line is ignored"]
+    warns, seen = [], set()
+    for i, e in enumerate(raw):
+        name = e.get("name") if isinstance(e, dict) else None
+        if not isinstance(name, str):
+            warns.append(f"lines: entry {i} in .prdt/config.json has no string `name` — ignored")
+            continue
+        lab = safe_label(name)
+        if not LINE_NAME_RE.match(name):
+            warns.append(f"lines: `{lab}` is not a legal line name — kebab-case, never `v<digit>…` "
+                         f"or `backlog` (contracts/fixed-paths.md); ignored")
+        elif name == slug:
+            warns.append(f"lines: `{lab}` is the project slug — the home line is never listed in "
+                         f"`lines`; ignored")
+        elif name in seen:
+            warns.append(f"lines: `{lab}` is declared twice — the second entry is ignored")
+        seen.add(name)
+    return warns
+
+
+def split_line_id(vid):
+    """`ntf-archive/v1.2` → ("ntf-archive", "v1.2"); `v1.2` → (None, "v1.2")."""
+    if isinstance(vid, str) and "/" in vid:
+        line, _, rest = vid.partition("/")
+        if LINE_NAME_RE.match(line):
+            return line, rest
+    return None, vid
+
+
+def join_line_id(line, vid):
+    return f"{line}/{vid}" if line else vid
+
+
+def line_state(st, line=None):
+    """(stage, version id, checks) of one line in po-state: the top-level fields
+    for the home line (`line` None), `lines.<line>` for an added line — whose
+    version comes back prefixed `<line>/`."""
+    if not isinstance(st, dict):
+        return None, None, None
+    src = st
+    if line is not None:
+        ls = st.get("lines")
+        src = ls.get(line) if isinstance(ls, dict) else None
+        if not isinstance(src, dict):
+            return None, None, None
+    v = src.get("version")
+    v = v.strip() if isinstance(v, str) and v.strip() else None
+    return src.get("stage"), (join_line_id(line, v) if v else None), src.get("checks")
+
+
+def _line_st(st, line):
+    """A po-state view of one line shaped like the top level (`version` bare),
+    for the single-line readers that take `st`. The home line gets `st` itself."""
+    if line is None:
+        return st
+    stage, vid, checks = line_state(st, line)
+    return {"stage": stage, "version": split_line_id(vid)[1] if vid else None, "checks": checks}
+
+
+def ticket_line(root, row_version):
+    """The line a ticket row belongs to — the `<line>/` dir it sits in; None = home."""
+    return split_line_id(row_version)[0]
+
+
+def _prd_line_headings(text, lines):
+    """[(line|None, version, line_no)] for every version heading: home `## v…`
+    plus `## <line> v…` for each DECLARED added line, fenced blocks excluded."""
+    if not lines:
+        return [(None, v, ln) for v, ln in _prd_version_headings(text)]
+    alt = "|".join(re.escape(x) for x in lines)
+    rx = re.compile(rf"^## (?:({alt}) )?(v\d+(?:\.\d+){{0,2}})(?![\d.])")
+    out = []
+    for i, line in _md_structural_lines(text):
+        m = rx.match(line)
+        if m:
+            out.append((m.group(1), m.group(2), i))
+    return out
+
+
+def prd_line_layout_warnings(root, st):
+    """contracts/fixed-paths.md, per ADDED line (the home line is
+    `prd_layout_warnings`): PRD.md carries that line's ONE open
+    `## <line> v<N>.<m>` section; a closed one lives at
+    `docs/prd/versions/<line>/v<N>.<m>.md` (section or one-line stub); a ticket
+    dir `docs/tickets/<line>/v<N>.<m>/` below the open round has that file."""
+    root = Path(root)
+    lines = project_line_names(root)
+    if not lines:
+        return []
+    prd_md = root / "docs" / "prd" / "PRD.md"
+    try:
+        text = prd_md.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        text = None
+    heads = _prd_line_headings(text, lines) if text is not None else []
+    warns = []
+    for ln_name in lines:
+        _, vid, _ = line_state(st, ln_name)
+        open_v = split_line_id(vid)[1] if vid else None
+        open_key = _version_id_canon(open_v) if open_v else None
+        vdir = root / "docs" / "prd" / "versions" / ln_name
+        on_disk = {}
+        if vdir.is_dir():
+            for f in sorted(vdir.glob("*.md")):
+                k = _version_id_canon(f.stem) if PRD_VERSION_FILE_RE.match(f.name) else None
+                if k is None:
+                    warns.append(f"prd: docs/prd/versions/{ln_name}/{f.name} is not a version file — "
+                                 f"only v<N>.<m>.md files live there (contracts/fixed-paths.md)")
+                    continue
+                on_disk.setdefault(k, f)
+                try:
+                    body = f.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                fh = _prd_line_headings(body, lines)
+                if not fh:
+                    if _prd_version_file_kind(body) != "stub":
+                        warns.append(f"prd: docs/prd/versions/{ln_name}/{f.name} is neither a "
+                                     f"`## {ln_name} {f.stem}` section nor a one-line stub")
+                    continue
+                fl, fv, fln = fh[0]
+                if fl != ln_name or _version_id_canon(fv) != k or fln != 1:
+                    warns.append(f"prd: docs/prd/versions/{ln_name}/{f.name} must open with "
+                                 f"`## {ln_name} {f.stem}` on line 1 — the file is that block and nothing else")
+        mine = [(v, ln) for l, v, ln in heads if l == ln_name]
+        seen_open = 0
+        for v, ln in mine:
+            if open_key is not None and _version_id_canon(v) == open_key:
+                seen_open += 1
+                if seen_open > 1:
+                    warns.append(f"prd: docs/prd/PRD.md:{ln} repeats the open section `## {ln_name} {v}` — "
+                                 f"the working file carries it once (contracts §Fixed paths)")
+                continue
+            if open_key is None and len(mine) == 1:
+                continue
+            warns.append(f"prd: closed section `## {ln_name} {v}` found in docs/prd/PRD.md:{ln} — the "
+                         f"working file is the standing head + the ONE open section per line, which "
+                         f"`.prdt/po-state.json` names as `{vid or '-'}`; its home is "
+                         f"docs/prd/versions/{ln_name}/{v}.md, moved byte-identical")
+        tdir = root / "docs" / "tickets" / ln_name
+        if tdir.is_dir():
+            current = {k for k in (_version_id_canon(v) for v, _ in mine) if k is not None}
+            if open_key is not None:
+                current.add(open_key)
+            ceiling = max(current) if current else None
+            for d in sorted(tdir.iterdir()):
+                if not d.is_dir() or not PRD_VERSION_FILE_RE.match(d.name + ".md"):
+                    continue
+                k = _version_id_canon(d.name)
+                if k is None or k in current or k in on_disk:
+                    continue
+                if ceiling is not None and k >= ceiling:
+                    continue
+                warns.append(f"prd: docs/tickets/{ln_name}/{d.name}/ has no "
+                             f"docs/prd/versions/{ln_name}/{d.name}.md — a closed round's section, or a "
+                             f"one-line `no PRD section — <decision>` stub (contracts/fixed-paths.md §PRD)")
+    return warns
+
+
+def _resource_line(root):
+    """The release line a resource marker is held for (release-lines.md §6):
+    the folder of po-state's current ticket, else `current_task.line`, else the
+    home line. None in a single-line project — its marker keeps today's shape."""
+    names = project_line_names(root) if root else []
+    if not names:
+        return None
+    slug = _resource_project_slug(root)
+    st = read_json(Path(root) / ".prdt" / "po-state.json") or {}
+    ct = st.get("current_task") if isinstance(st, dict) else None
+    if isinstance(ct, dict):
+        tid = ct.get("ticket_id")
+        if isinstance(tid, str) and re.match(r"^T-\d+$", tid):
+            for p in (Path(root) / "docs" / "tickets").glob(f"*/*/{tid}.md"):
+                if p.parent.parent.name in names:
+                    return p.parent.parent.name
+            if any((Path(root) / "docs" / "tickets").glob(f"*/{tid}.md")):
+                return slug
+        if ct.get("line") in names:
+            return ct["line"]
+    return slug
+
+
 def _version_id_canon(v):
     """Canonical comparable form of a version id — trailing zero components
     dropped, so `v1` ≡ `v1.0` ≡ `v1.0.0` (user decision above). None when `v`
@@ -9947,6 +10654,7 @@ def prd_layout_warnings(root, st):
     open_id = pv.strip() if isinstance(pv, str) and pv.strip() else None
     open_key = _version_id_canon(open_id) if open_id else None
 
+    one_open = " per line" if project_line_names(root) else ""
     prd_section_ids = []
     text = read(prd_md) if prd_md.is_file() else None
     if text is not None:
@@ -9977,7 +10685,7 @@ def prd_layout_warnings(root, st):
                                      f"round is open it lives in {rel(prd_md)} alone (contracts §Fixed paths)")
                     continue
                 warns.append(f"prd: closed section `## {v}` found in {rel(prd_md)}:{ln} — the working "
-                             f"file is the standing head + the ONE open section, which "
+                             f"file is the standing head + the ONE open section{one_open}, which "
                              f"`.prdt/po-state.json` names as `{open_id}`; {home_clause(v, rel(prd_md))}")
         elif len(heads) > 1:
             # No readable open version: the count is all that is left to judge on.
@@ -9986,9 +10694,12 @@ def prd_layout_warnings(root, st):
                          f"+ ONE open version section; move each closed one byte-identical to "
                          f"its own docs/prd/versions/v<N>.<m>.md (contracts §Fixed paths)")
 
+    declared_lines = set(project_line_names(root))
     for p in (sorted(prd_dir.rglob("*.md")) if prd_dir.is_dir() else []):
         if p == prd_md:
             continue
+        if p.parent.parent == vdir and p.parent.name in declared_lines:
+            continue  # an added line's closed files: `prd_line_layout_warnings` owns them
         text = read(p)
         if text is None:
             continue
@@ -10256,14 +10967,14 @@ def doctor_verdict_lines(records):
     return lines
 
 
-def po_state_warnings(st):
+def po_state_warnings(st, root=None):
     """`.prdt/po-state.json` is the state the harness actually runs on, against
     the shape the discipline declares — a discipline↔execution check by
     construction, which is why the ticket names `state:` in the family."""
     if st is None:
         return ["state: .prdt/po-state.json missing or invalid JSON"]
     warns = []
-    extra = set(st) - PO_STATE_KEYS
+    extra = set(st) - PO_STATE_KEYS - PO_STATE_OPTIONAL_KEYS
     missing = PO_STATE_KEYS - set(st)
     if extra:
         warns.append(f"state: unexpected keys {sorted(extra)} (shape is 4 fields)")
@@ -10272,8 +10983,26 @@ def po_state_warnings(st):
     if st.get("stage") not in STAGES:
         warns.append(f"state: stage '{st.get('stage')}' not in {'/'.join(STAGES)}")
     ct = st.get("current_task")
-    if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee"} >= set(ct)):
-        warns.append("state: current_task must be null or {ticket_id, slug, assignee}")
+    multi = bool(root) and project_declares_lines(root)
+    if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee", "line"} >= set(ct)):
+        # Single-line projects keep the pre-T-960 text byte-for-byte.
+        warns.append("state: current_task must be null or {ticket_id, slug, assignee, line?}" if multi
+                     else "state: current_task must be null or {ticket_id, slug, assignee}")
+    declared = set(project_line_names(root)) if root else None
+    lines = st.get("lines")
+    if "lines" in st and not isinstance(lines, dict):
+        warns.append("state: lines must be an object {<line>: {stage, version, checks?}}")
+    for name, ent in (lines.items() if isinstance(lines, dict) else []):
+        lab = safe_label(str(name))
+        if not isinstance(ent, dict):
+            warns.append(f"state: lines.{lab} must be {{stage, version, checks?}}")
+            continue
+        if ent.get("stage") not in STAGES:
+            warns.append(f"state: lines.{lab}.stage '{safe_label(str(ent.get('stage')))}' not in {'/'.join(STAGES)}")
+        if declared is not None and name not in declared:
+            warns.append(f"state: lines.{lab} is not a line declared in .prdt/config.json `lines`")
+        if set(ent) - {"stage", "version", "checks"}:
+            warns.append(f"state: lines.{lab} has unexpected keys {sorted(set(ent) - {'stage', 'version', 'checks'})}")
     return warns
 
 
@@ -10299,13 +11028,21 @@ def ticket_graph_warnings(root, tickets):
     return warns
 
 
-def stage_signal_warnings(st, tickets):
+def stage_signal_warnings(st, tickets, lines=()):
     """Stage-completion signal, plus the build-entry signal (T-430). Both are
-    project-progress observations, not discipline↔execution mismatches."""
+    project-progress observations, not discipline↔execution mismatches.
+    `lines` = the added release lines, each judged on its own stage/version."""
     if not st:
         return []
     warns = []
-    stage, version = st.get("stage"), st.get("version")
+    for ln in lines:
+        lstage, lver, _ = line_state(st, ln)
+        warns += _stage_signal_one(lstage, lver, tickets)
+    return _stage_signal_one(st.get("stage"), st.get("version"), tickets) + warns
+
+
+def _stage_signal_one(stage, version, tickets):
+    warns = []
     next_stage = {"build": "Ship", "ship": "Retro"}.get(stage)
     if next_stage and version:
         ver_tickets = [t for t in tickets.values() if t["version"] == version]
@@ -10538,8 +11275,12 @@ def artifact_ticket_edge_warnings(root, tickets):
 # never graded (P1 is the open section's check alone; a closed section is an
 # immutable record, no retroactive grading).
 
-PRD_ASIS_HEADING = "### 이 버전 직전 (as-is)"
-PRD_TOBE_HEADING = "### 이 버전 직후 (to-be)"
+PRD_ASIS_HEADING = "### As-Is"
+PRD_TOBE_HEADING = "### To-Be"
+# The pair's previous strings (T-931/T-970). Closed sections keep them and are
+# never graded; an OPEN section still carrying them gets a rename advisory.
+PRD_ASIS_HEADING_OLD = "### 이 버전 직전 (as-is)"
+PRD_TOBE_HEADING_OLD = "### 이 버전 직후 (to-be)"
 PRD_REVERSED_HEADING = "### 이 버전이 뒤집은 것 (reversed)"
 PRD_REVERSED_NONE_ROW = "- 없음"
 # T-663 Outcome "개정 1 — 행 정규식의 slug 문자 집합" (2026-09-23), byte-exact
@@ -10554,10 +11295,10 @@ PRD_REVERSED_ROW_RE = re.compile(
 PRD_ITEM_KEY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 PRD_H4_RE = re.compile(r"^#### (.+)$")
 # A ticket's src half: `prd_item: <version>#<key>` (T-663 §「항목 주소」).
-PRD_ITEM_RE = re.compile(r"^(v\d+(?:\.\d+){0,2})#([a-z0-9]+(?:-[a-z0-9]+)*)$")
+PRD_ITEM_RE = re.compile(r"^((?:[a-z0-9]+(?:-[a-z0-9]+)*/)?v\d+(?:\.\d+){0,2})#([a-z0-9]+(?:-[a-z0-9]+)*)$")
 
 
-def _prd_open_section(root, st):
+def _prd_open_section(root, st, line=None):
     """(version_id_as_written, [(line_no, line), ...]) for the ONE open `## v`
     section's BODY (heading line excluded, next `## v` heading excluded),
     fenced blocks already dropped. Same "which section is open" resolution
@@ -10576,9 +11317,11 @@ def _prd_open_section(root, st):
     except OSError:
         return None, []
     lines = _md_structural_lines(text)
-    heads = _prd_version_headings(text)
+    all_heads = _prd_line_headings(text, project_line_names(root))
+    heads = [(v, ln) for l, v, ln in all_heads if l == line]
     if not heads:
         return None, []
+    st = _line_st(st, line)
     pv = st.get("version") if isinstance(st, dict) else None
     open_key = _version_id_canon(pv) if isinstance(pv, str) and pv.strip() else None
     chosen = next((h for h in heads if open_key is not None and _version_id_canon(h[0]) == open_key),
@@ -10588,7 +11331,7 @@ def _prd_open_section(root, st):
             return None, []  # po-state names a round PRD.md does not carry open
         chosen = heads[0]
     version, start_ln = chosen
-    later = sorted(ln for _, ln in heads if ln > start_ln)
+    later = sorted(ln for _, _, ln in all_heads if ln > start_ln)
     end_ln = later[0] if later else None
     body = [(ln, line) for ln, line in lines
             if ln > start_ln and (end_ln is None or ln < end_ln)]
@@ -10666,7 +11409,7 @@ def _prd_reversed_section_warnings(root, version, body, tickets):
 def prd_form_warnings(root, st, tickets):
     """P1 — the OPEN `## v` section's form, graded exactly as T-663 Outcome's
     table (docs/tickets/v1.10/T-663.md "P1 넷째 줄이 내는 판정", design linkage
-    §2.4): ⓐ as-is/to-be pair present (advisory — an undeclared PRD is not a
+    §2.4): ⓐ As-Is/To-Be pair present, the old Korean pair → rename (advisory — an undeclared PRD is not a
     violation, T-599's own posture) ⓑ every H4 in the section is item-address
     form (warning; a duplicate key is a violation) ⓒ the reversed heading +
     its row grammar, incl. the `- 없음` empty marker (mixed grades per the
@@ -10675,14 +11418,26 @@ def prd_form_warnings(root, st, tickets):
     E4 check below — this one never reads a ticket file, only the ticket id
     map already built for the wiki-edge checks (E2's `tickets`), to answer
     "does this T-NNN target exist" the same way E2/E6 already do."""
-    version, body = _prd_open_section(root, st)
-    if version is None:
-        return []
+    warns = []
+    for line in [None] + project_line_names(root):
+        version, body = _prd_open_section(root, st, line)
+        if version is not None:
+            warns += _prd_open_form_warnings(root, join_line_id(line, version), body, tickets)
+    return warns
+
+
+def _prd_open_form_warnings(root, version, body, tickets):
     warns = []
     texts = {line for _, line in body}
-    if PRD_ASIS_HEADING not in texts or PRD_TOBE_HEADING not in texts:
-        warns.append(f'{version}: missing as-is/to-be pair ("{PRD_ASIS_HEADING}" / '
+    has_asis = PRD_ASIS_HEADING in texts or PRD_ASIS_HEADING_OLD in texts
+    has_tobe = PRD_TOBE_HEADING in texts or PRD_TOBE_HEADING_OLD in texts
+    if not (has_asis and has_tobe):
+        warns.append(f'{version}: missing As-Is/To-Be pair ("{PRD_ASIS_HEADING}" / '
                      f'"{PRD_TOBE_HEADING}")')
+    elif PRD_ASIS_HEADING_OLD in texts or PRD_TOBE_HEADING_OLD in texts:
+        warns.append(f'{version}: old as-is/to-be headings ("{PRD_ASIS_HEADING_OLD}" / '
+                     f'"{PRD_TOBE_HEADING_OLD}") — rename them to "{PRD_ASIS_HEADING}" / '
+                     f'"{PRD_TOBE_HEADING}"')
     seen = {}
     for ln, key, content in _prd_h4_items(body):
         if key is None:
@@ -10707,13 +11462,18 @@ def _prd_item_keys_for_version(root, st, version_str):
     never graded — P1 above is the open section's check alone. Empty set
     when neither is on disk yet (the version does not exist, or the round
     that owns it has not written its items yet)."""
+    line, version_str = split_line_id(version_str)
+    if line is not None and line not in project_line_names(root):
+        return set()
     vkey = _version_id_canon(version_str)
     if vkey is None:
         return set()
-    open_v, open_body = _prd_open_section(root, st)
+    open_v, open_body = _prd_open_section(root, st, line)
     if open_v is not None and _version_id_canon(open_v) == vkey:
         return {k for _, k, _ in _prd_h4_items(open_body) if k}
     vdir = Path(root) / "docs" / "prd" / "versions"
+    if line is not None:
+        vdir = vdir / line
     if vdir.is_dir():
         for f in sorted(vdir.glob("*.md")):
             if not PRD_VERSION_FILE_RE.match(f.name) or _version_id_canon(f.stem) != vkey:
@@ -11614,7 +12374,12 @@ def _track_exclude(code, root):
     nests `tracks/` inside the code work tree, so that repo's own
     info/exclude needs the same line."""
     gd_meta = meta_git_dir(root)
-    if gd_meta.is_dir():
+    # T-911: a symlinked / untrusted meta.git could point the write outside the
+    # project (is_dir follows links) — skip it, say so in one line.
+    prob = meta_git_trust_problem(root)
+    if prob:
+        print(f"meta exclude skipped: {prob}", file=sys.stderr)
+    elif gd_meta.is_dir():
         _exclude_add(gd_meta)
     if Path(code).resolve() != Path(root).resolve():
         return
@@ -11639,7 +12404,7 @@ def cmd_track_open(args):
         _track_die(f"branch {branch} already exists with no worktree at {wt} — land or drop it first")
     _track_exclude(code, root)
     wt.parent.mkdir(parents=True, exist_ok=True)
-    r = _tgit(["worktree", "add", str(wt), "-b", branch, base], code)
+    r = _tgit(["worktree", "add", str(wt), "-b", branch, f"refs/heads/{base}"], code)
     if r.returncode != 0:
         _track_die("git worktree add failed: " + (r.stderr.strip() or r.stdout.strip()))
     _tgit(["config", f"branch.{branch}.prdtbase", base], code)
@@ -11701,12 +12466,16 @@ def cmd_track_review(args):
             print(f"warning: the open record for {tid} ({_track_record_path(code, tid)}) is unreadable or does "
                   f"not match this track — comparing against {base} from git config; a bare land will refuse",
                   file=sys.stderr)
-    mb = _tgit(["merge-base", base, branch], code).stdout.strip()
+    # T-915: every git argument names the branch by its full ref — a bare
+    # `dev`/`main`/`track/T-NNN` resolves refs/tags/<name> before
+    # refs/heads/<name>, so a worker-made tag would move the comparison base.
+    bref, tref = f"refs/heads/{base}", f"refs/heads/{branch}"
+    mb = _tgit(["merge-base", bref, tref], code).stdout.strip()
     if not mb:
         _track_die(f"{branch} shares no history with {base}")
     changed = _track_changed(wt, mb)
-    ahead = _tgit(["rev-list", "--count", f"{base}..{branch}"], code).stdout.strip() or "0"
-    behind = _tgit(["rev-list", "--count", f"{branch}..{base}"], code).stdout.strip() or "0"
+    ahead = _tgit(["rev-list", "--count", f"{bref}..{tref}"], code).stdout.strip() or "0"
+    behind = _tgit(["rev-list", "--count", f"{tref}..{bref}"], code).stdout.strip() or "0"
     dirty = [p for p in changed if _tgit(["diff", "--quiet", "HEAD", "--", p], wt).returncode != 0 or changed[p] == "??"]
     print(f"track {tid} review — {branch} vs {base} (merge-base {mb[:12]}): "
           f"{ahead} commit(s) ahead, {base} {behind} commit(s) ahead, {len(dirty)} uncommitted file(s)")
@@ -11722,7 +12491,7 @@ def cmd_track_review(args):
         outside = sorted(p for p in changed if p not in declared)
         print("   outside the dispatch record's change_meta.files: " + (", ".join(outside) if outside else "(none)"))
     # 2 merge preview
-    r = _tgit(["merge-tree", "--write-tree", "--name-only", "--no-messages", base, branch], code)
+    r = _tgit(["merge-tree", "--write-tree", "--name-only", "--no-messages", bref, tref], code)
     conflicts = r.stdout.splitlines()[1:] if r.returncode == 1 else []
     if r.returncode == 0:
         verdict = "clean"
@@ -11734,12 +12503,12 @@ def cmd_track_review(args):
     if dirty:
         print(f"   {len(dirty)} uncommitted file(s) are not in this preview — commit on {branch} first")
     # 3 overlap
-    base_changed = set(_tgit(["diff", "--name-only", "--no-renames", mb, base], code).stdout.split("\n")) - {""}
+    base_changed = set(_tgit(["diff", "--name-only", "--no-renames", mb, bref], code).stdout.split("\n")) - {""}
     overlap = sorted(base_changed & set(changed))
     print(f"\n3. overlap — files {base} changed since the merge-base that this track also changed: "
           + (", ".join(overlap) if overlap else "(none)"))
     if overlap:
-        print(_tgit(["diff", mb, base, "--", *overlap], code).stdout.rstrip("\n"))
+        print(_tgit(["diff", mb, bref, "--", *overlap], code).stdout.rstrip("\n"))
     # 4 verification
     print(f"\n4. verification — dispatch records for {tid}:")
     if not recs:
@@ -11825,6 +12594,7 @@ def cmd_track_land(args):
                        f"not match this track — pass --base main to merge it to main, or --base dev to "
                        f"merge it to dev; nothing was merged")
     base = args.base or "dev"
+    bref, tref = f"refs/heads/{base}", f"refs/heads/{branch}"   # T-915: never a bare name a tag can shadow
     st = _tgit(["status", "--porcelain"], wt)
     if st.returncode != 0 or st.stdout.strip():
         _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or drop them, then land")
@@ -11834,10 +12604,12 @@ def cmd_track_land(args):
                    "or give package.json a test script")
     lock = _track_lock(code)
     try:
-        old = _tgit(["rev-parse", f"refs/heads/{base}"], code).stdout.strip()
+        old = _tgit(["rev-parse", "--verify", "--quiet", bref], code).stdout.strip()
+        if not old:
+            _track_die(f"base branch {base} does not exist in the code repo")
         before = _lockfile_sig(wt)
-        if _tgit(["merge-base", "--is-ancestor", base, branch], wt).returncode != 0:
-            r = _tgit(["merge", "--no-edit", "--no-ff", base], wt)
+        if _tgit(["merge-base", "--is-ancestor", old, tref], wt).returncode != 0:
+            r = _tgit(["merge", "--no-edit", "--no-ff", bref], wt)
             if r.returncode != 0:
                 un = _tgit(["diff", "--name-only", "--diff-filter=U"], wt).stdout.split()
                 _tgit(["merge", "--abort"], wt)
@@ -11861,8 +12633,8 @@ def cmd_track_land(args):
             left = [ln[3:] if len(ln) > 3 else ln for ln in dirty.stdout.splitlines() if ln]
             _track_die(f"tests left the merged tree dirty ({', '.join(left) or '?'}) — {base} is unchanged; "
                        f"{branch} keeps the merge, clean it up there and land again")
-        new = _tgit(["rev-parse", branch], code).stdout.strip()
-        if _tgit(["merge-base", "--is-ancestor", f"refs/heads/{base}", new], code).returncode != 0:
+        new = _tgit(["rev-parse", "--verify", "--quiet", tref], code).stdout.strip()
+        if not new or _tgit(["merge-base", "--is-ancestor", bref, new], code).returncode != 0:
             _track_die(f"{base} moved during the land — land again")
         holder = None
         cur = None
@@ -11874,7 +12646,7 @@ def cmd_track_land(args):
         if holder:
             r = _tgit(["merge", "--ff-only", new], holder)
         else:
-            r = _tgit(["update-ref", f"refs/heads/{base}", new, old], code)
+            r = _tgit(["update-ref", bref, new, old], code)
         if r.returncode != 0:
             _track_die(f"fast-forwarding {base} failed: " + (r.stderr.strip() or r.stdout.strip())
                        + f" — {base} is unchanged")
@@ -11899,7 +12671,7 @@ def cmd_track_land(args):
     # (T-775 grill). We just fast-forwarded `base` to `branch`'s own tip, so
     # `branch` is provably contained in `base`: check that directly and delete
     # accordingly, never against whatever `code` happens to have checked out.
-    if _tgit(["merge-base", "--is-ancestor", branch, f"refs/heads/{base}"], code).returncode == 0:
+    if _tgit(["merge-base", "--is-ancestor", tref, bref], code).returncode == 0:
         r = _tgit(["branch", "-D", branch], code)
         print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
     else:
@@ -11918,8 +12690,9 @@ def cmd_track_drop(args):
         if st.returncode != 0 or st.stdout.strip():
             _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or "
                        f"`prdt track drop {tid} --force` to discard them")
-        on_dev = _tgit(["merge-base", "--is-ancestor", branch, "refs/heads/dev"], code).returncode == 0
-        on_main = _tgit(["merge-base", "--is-ancestor", branch, "refs/heads/main"], code).returncode == 0
+        tref = f"refs/heads/{branch}"   # T-915: a tag named like the branch never stands in for it
+        on_dev = _tgit(["merge-base", "--is-ancestor", tref, "refs/heads/dev"], code).returncode == 0
+        on_main = _tgit(["merge-base", "--is-ancestor", tref, "refs/heads/main"], code).returncode == 0
         if not (on_dev or on_main):
             _track_die(f"branch {branch} holds commits not on dev or main — `prdt track drop {tid} --force` "
                        f"to drop it anyway, or `prdt track land {tid}` to keep them")
@@ -12112,6 +12885,7 @@ def _resource_markers(name=None):
                 "dispatch": data.get("dispatch") or f.stem,
                 "project": data.get("project"),
                 "since": data.get("since"),
+                **({"line": data["line"]} if isinstance(data.get("line"), str) else {}),
             })
     return out
 
@@ -12349,17 +13123,22 @@ def _schedule_tickets(root):
     return tickets
 
 
-def compute_schedule(root, tickets=None):
+def compute_schedule(root, tickets=None, line=None):
     """The schedule as one dict (the `--json` shape; text renders from it).
     `tickets` = a `_schedule_tickets()` result the caller already holds."""
     import graphlib
     root = Path(root)
     st = read_json(root / ".prdt" / "po-state.json") or {}
-    version = st.get("version") if isinstance(st.get("version"), str) else None
+    if line is None:
+        version = st.get("version") if isinstance(st.get("version"), str) else None
+    else:
+        version = line_state(st, line)[1]
     if tickets is None:
         tickets = _schedule_tickets(root)
     out = {"version": version, "cycle": None, "critical_path": [], "cp_length": 0,
            "rows": [], "missing_deps": []}
+    if project_line_names(root):
+        out["line"] = line or _resource_project_slug(root)
 
     # node set: current version's open tickets, then open deps wherever they live
     nodes, stack = {}, [t for t, (r, _) in tickets.items()
@@ -12405,7 +13184,7 @@ def compute_schedule(root, tickets=None):
         below[t] = acc
 
     h4 = {}
-    open_v, body = _prd_open_section(root, st)
+    open_v, body = _prd_open_section(root, st, line)
     if open_v is not None:
         for i, (_ln, key, _c) in enumerate(k for k in _prd_h4_items(body) if k[1]):
             h4.setdefault(key, i)
@@ -12417,8 +13196,9 @@ def compute_schedule(root, tickets=None):
         fm, _ = parse_frontmatter(p)
         prd_item = fm.get("prd_item") if isinstance(fm.get("prd_item"), str) else None
         m = PRD_ITEM_RE.match(prd_item.strip()) if prd_item else None
-        prd_order = (h4.get(m.group(2)) if m and open_vkey is not None
-                     and _version_id_canon(m.group(1)) == open_vkey else None)
+        m_line, m_ver = split_line_id(m.group(1)) if m else (None, None)
+        prd_order = (h4.get(m.group(2)) if m and open_vkey is not None and m_line == line
+                     and _version_id_canon(m_ver) == open_vkey else None)
         waits = sorted(preds[t], key=_ticket_num_key)
         if r["type"] == "decision" or r["assignee"] == "user":
             state = "waiting-user"
@@ -12465,19 +13245,43 @@ def cmd_schedule(args):
     if getattr(args, "action", None) == "report":
         return cmd_schedule_report(args)
     root = require_root()
-    s = compute_schedule(root)
-    if args.json:
-        print(json.dumps(s, ensure_ascii=False))
-        if s["cycle"] is not None:
+    names = project_line_names(root)
+    sel = getattr(args, "line", None)
+    if sel is not None:
+        if sel == _resource_project_slug(root):
+            sel = None
+        elif sel not in names:
+            sys.exit(f"prdt schedule: --line {safe_label(sel)} is not a line declared in "
+                     f".prdt/config.json `lines`")
+    if args.json or sel is not None or not names:
+        s = compute_schedule(root, line=sel)
+        if args.json:
+            print(json.dumps(s, ensure_ascii=False))
+            if s["cycle"] is not None:
+                sys.exit(1)
+            return
+        if _render_schedule(s):
             sys.exit(1)
         return
+    # Several lines and no --line: every line's schedule, home line first.
+    bad = False
+    for i, ln in enumerate([None] + names):
+        if i:
+            print()
+        bad = _render_schedule(compute_schedule(root, line=ln)) or bad
+    if bad:
+        sys.exit(1)
+
+
+def _render_schedule(s):
+    """Print one line's schedule; True when it carries a dependency cycle."""
     lab = lambda v: safe_label(str(v if v is not None else "-"))
     for m in s["missing_deps"]:
         print(f"note: {lab(m['ticket'])} deps on missing {lab(m['dep'])} — ignored")
     if s["cycle"] is not None:
         print("dependency cycle: " + " → ".join(lab(t) for t in s["cycle"]))
         print("no order computed — break the cycle in these tickets' `deps`")
-        sys.exit(1)
+        return True
     rows = s["rows"]
     print(f"schedule {lab(s['version'])} — {len(rows)} open ticket(s) in the graph")
     if s["critical_path"]:
@@ -12506,6 +13310,7 @@ def cmd_schedule(args):
     for state, title in (("waiting-user", "waiting on user"), ("po", "PO work"), ("in-flight", "in flight")):
         ids = [lab(r["id"]) for r in rows if r["state"] == state]
         print(f"{title}: {' '.join(ids) if ids else '(none)'}")
+    return False
 
 
 # ── T-773 (T-681 S2): the dispatch schedule record + `prdt schedule report` ──
@@ -12948,7 +13753,7 @@ def cmd_resource(args):
             group = by_name.get(n, [])
             print(f"{safe_label(n)}: {len(group)} held")
             for m in group:
-                proj = safe_label(m["project"]) if m["project"] else "-"
+                proj = safe_label(m.get("line") or m["project"]) if (m.get("line") or m["project"]) else "-"
                 print(f"  dispatch={safe_label(m['dispatch'])} project={proj} since={m['since'] or '-'}")
             # S6/S7: the command `down` would actually run for this name right
             # now (resolved fresh, same function `down` itself calls — never a
@@ -13005,12 +13810,15 @@ def cmd_resource(args):
         # No `stop_cmd` on the marker (T-680 S5) — this dict is bookkeeping
         # only, never a value anything later trusts as an executable source.
         marker = {"resource": name, "dispatch": dispatch, "project": project, "since": since}
+        line = _resource_line(find_project_root())
+        if line:
+            marker["line"] = line
         d = _resource_marker_dir(name)
         d.mkdir(parents=True, exist_ok=True)
         p = d / f"{dispatch}.json"
         atomic_write_text(p, json.dumps(marker, indent=2, sort_keys=True) + "\n")
         held = len(_resource_markers(name))
-        proj_out = safe_label(project) if project else "-"
+        proj_out = safe_label(line or project) if (line or project) else "-"
         # Purely informational — a fresh registry read at THIS moment, printed
         # and never persisted; `down` re-resolves independently at its own time.
         stop_out = "registered" if _resource_registered_stop_cmd(name) else "none"
@@ -13479,7 +14287,7 @@ def cmd_doctor(_args):
     # entry is the DECLARED family (T-560) — the one thing a person adding a
     # check must not leave out, and the one thing the verdict refuses to guess.
     roster = [
-        ("po-state shape", FAMILY_DE, lambda: po_state_warnings(st)),
+        ("po-state shape", FAMILY_DE, lambda: po_state_warnings(st, root)),
         ("ticket index", FAMILY_PROJECT, lambda: [f"ticket: {v}" for v in tviol]),
         # Whether a duplicated id deserves its own warning was left open by T-549
         # and answered by T-551: it does, ONCE, from a dedicated check — never as
@@ -13493,8 +14301,11 @@ def cmd_doctor(_args):
         # created before the frame's landing date.
         ("ticket frame", FAMILY_PROJECT, lambda: ticket_frame_warnings(root, trows)),
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
-        ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets)),
+        ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root))),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
+        *([("release lines", FAMILY_DE,
+            lambda: line_config_warnings(root) + prd_line_layout_warnings(root, st))]
+          if project_declares_lines(root) else []),
         # artifacts — version-bucket placement + manifest registration (T-512).
         # Supersedes the referencing-ticket scan, which was never the checkable
         # condition: it missed a file naming its own ticket in its title, and it
@@ -14542,10 +15353,21 @@ def main():
                    help="what was read and found — required; a record without one buys no silence")
     p.set_defaults(fn=cmd_attest)
     p = sub.add_parser("wiki", help="search (both stores; machine hits prefixed `machine:`) | "
-                                    "refs <change_meta JSON> (wiki_refs candidates) | reindex | lint")
-    p.add_argument("action", choices=["search", "refs", "reindex", "lint"])
+                                    "refs <change_meta JSON> (wiki_refs candidates) | reindex | lint | "
+                                    "promote <page> [--section H] [--as NAME] --yes (project → machine move)")
+    p.add_argument("action", choices=["search", "refs", "reindex", "lint", "promote"])
     p.add_argument("query", nargs="*")
+    p.add_argument("--section", help="promote: move only the section with this heading text")
+    p.add_argument("--as", dest="as_name", help="promote: machine page name (default: same as the project page)")
+    p.add_argument("--yes", action="store_true",
+                   help="promote: the user's confirm for this one move (without it nothing is written)")
     p.set_defaults(fn=cmd_wiki)
+    p = sub.add_parser("inbox", help="one-line recommendations between projects on this machine (T-479): "
+                                     "list (default: open lines addressed to THIS project) · "
+                                     "send <project-slug> <text> · adopt <id> · decline <id>")
+    p.add_argument("action", nargs="?", choices=["list", "send", "adopt", "decline"])
+    p.add_argument("rest", nargs="*")
+    p.set_defaults(fn=cmd_inbox)
     p = sub.add_parser("index", help="rebuild — drop + re-derive `.prdt/index.db` in full "
                                      "(tickets · wiki · edges, T-674); `edges` is derived, "
                                      "never hand-maintained")
@@ -14591,7 +15413,9 @@ def main():
                         "worker's run never opens regardless")
     p.add_argument("--type", choices=TICKET_TYPES, help="new: the ticket's `type` (required)")
     p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
-    p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value (v<N>.<m>#<key>)")
+    p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value ([<line>/]v<N>.<m>#<key>)")
+    p.add_argument("--line", help="new: an added release line (.prdt/config.json `lines`) — the ticket "
+                                  "lands in docs/tickets/<line>/<that line's version>/; default the home line")
     p.add_argument("--deps", nargs="+", metavar="ID", help="new: `deps` ticket ids")
     p.add_argument("--check", action="store_true",
                    help="fmt: report violations and exit non-zero instead of writing")
@@ -14702,6 +15526,8 @@ def main():
                         "(PreToolUse event on stdin)")
     p.add_argument("--version", help="report: the version bucket (default: po-state.json version)")
     p.add_argument("--json", action="store_true", help="the same rows, machine-readable")
+    p.add_argument("--line", help="one release line (.prdt/config.json `lines`, or the project slug for "
+                                  "the home line); default every line, home first — `--json` the home line")
     p.set_defaults(fn=cmd_schedule)
     p = sub.add_parser("track", help="parallel track worktree (T-775): open <T-NNN> [--base dev|main] · "
                                      "review <T-NNN> · land <T-NNN> [--base dev|main] [--test CMD] · "

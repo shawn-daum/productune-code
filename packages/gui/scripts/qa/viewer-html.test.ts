@@ -21,7 +21,8 @@
 // href>` (never auto-fetched), or inside a `<code>`/`<pre>` span is not any
 // of those and is correctly left alone.
 import { describe, it, expect, beforeAll } from 'vitest'
-import { generate, missingMetaRootReason } from '@productune/viewer/generate.mjs'
+import { generate } from '@productune/viewer/generate.mjs'
+import { META_ROOT, META_SKIP_REASON } from './meta-root'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
 
 // T-718: the real generated page is now built HERE, in-process (`generate()`
@@ -40,12 +41,12 @@ import { renderPage } from '@productune/viewer/lib/render.mjs'
 // test below that needs `realHtml` skips with a visible reason instead of
 // this whole file erroring out of `beforeAll` — every fixture-based case
 // here needs neither `generate()` nor a meta project and still runs.
-const metaMissingReason = missingMetaRootReason()
+const metaMissingReason = META_SKIP_REASON
 let realHtml: string
 
 beforeAll(async () => {
   if (metaMissingReason) return
-  ;({ html: realHtml } = await generate())
+  ;({ html: realHtml } = await generate({ repoRoot: META_ROOT! }))
 }, 30000)
 
 /**

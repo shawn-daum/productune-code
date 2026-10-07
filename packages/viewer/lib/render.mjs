@@ -43,6 +43,7 @@ import {
   HASH_NOTICE,
   THEME_TOGGLE,
   noGroupLabel,
+  OPTION_CARD,
 } from './labels.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
 import { HOME_STAGES, stageSegments, buildHomeGraph, layoutHomeGraph, waitLists, compareTicketIds, NODE_W, NODE_H } from './home-graph.mjs'
@@ -377,7 +378,7 @@ function isAllowedRawHref(href) {
 // page's repoRootHref here right before parsing — safe because generation
 // is single-threaded and synchronous (no md() call is ever in flight while
 // another starts).
-let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF, disc: null }
+let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF, disc: null, decision: null }
 // T-886: the discipline documents' name index (discipline-links.mjs), built once per
 // page from the collected documents; a body links names only when its md() call asks
 // (ticket · wiki · PRD bodies — the three the acceptance names).
@@ -457,9 +458,83 @@ hardenedRenderer.image = function ({ href, title, text, tokens }) {
  *   back to the repo root (see `renderPage`).
  * @param {{discipline?: boolean}} [opts] `discipline`: link the names of discipline documents (T-886).
  */
-function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF, { discipline = false } = {}) {
-  linkContext = { sourceDirRel, repoRootHref, disc: discipline ? pageDisciplineIndex : null }
-  return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
+function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF, { discipline = false, decision = false } = {}) {
+  linkContext = { sourceDirRel, repoRootHref, disc: discipline ? pageDisciplineIndex : null, decision: decision ? { chosen: decisionChosen(text ?? '') } : null }
+  try {
+    return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
+  } finally {
+    linkContext.decision = null
+  }
+}
+
+// T-998 (T-999 = C): a decision ticket's `options` table renders as one card
+// per option. Only a ticket body asks for it (`md(..., { decision: true })`);
+// the ticket md keeps the contract's table. Columns are mapped by header name.
+/**
+ * The letter the user's answer picked, read from the ticket's `## outcome`
+ * section: the PO's "= B" reading first, then a lone letter inside the
+ * verbatim quote, then "A 안". null when there is none (an open decision).
+ * @param {string} body
+ * @returns {string|null}
+ */
+function decisionChosen(body) {
+  const sec = /^## outcome[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(body)
+  if (!sec) return null
+  const t = sec[1]
+  const m = OPTION_CARD.pickPatterns.reduce((hit, re) => hit || re.exec(t), null)
+  return m ? m[1].toUpperCase() : null
+}
+
+const inlineMd = (text) => marked.parseInline(text, { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
+
+function renderOptionCards(token, parser) {
+  const cols = token.header.map((h) => OPTION_CARD.headers[h.text.replace(/\s*\(.*$/, '').trim().toLowerCase()] || null)
+  if (!cols.includes('name')) return null
+  const cards = token.rows.map((row) => {
+    const cell = (kind) => { const i = cols.indexOf(kind); return i < 0 ? null : row[i] }
+    const nameCell = cell('name')
+    const nameText = nameCell ? nameCell.text.trim() : ''
+    const lm = /^([A-Z]|\d+)\s+([\s\S]+)$/.exec(nameText)
+    const letter = lm ? lm[1] : ''
+    const title = lm ? inlineMd(lm[2]) : inlineMd(nameText)
+    const recCell = cell('rec')
+    const recText = recCell ? recCell.text.trim() : ''
+    const isRec = recText !== '' && !OPTION_CARD.noRec.test(recText)
+    const why = isRec ? recText.replace(OPTION_CARD.recPrefix, '') : ''
+    const chosen = linkContext.decision?.chosen
+    const isChosen = !!chosen && letter === chosen
+    const isDim = !!chosen && !isChosen
+    const marks = (isRec ? `<span class="opt-mk opt-mk-rec">${OPTION_CARD.recommended}</span>` : '') + (isChosen ? `<span class="opt-mk opt-mk-chosen">${OPTION_CARD.chosen}</span>` : '')
+    let html = `<article class="opt-card${isChosen ? ' is-chosen' : ''}${isDim ? ' is-dim' : ''}"><header class="opt-h">${letter ? `<span class="opt-letter">${escapeHtml(letter)}</span>` : ''}<h4>${title}</h4><span class="opt-marks">${marks}</span></header>`
+    const ex = cell('example')
+    if (ex && ex.text.trim()) {
+      const only = ex.tokens.length === 1 && ex.tokens[0].type === 'codespan'
+      const body = only
+        ? `<pre class="opt-sk">${escapeHtml(ex.tokens[0].raw.replace(/^`+|`+$/g, '').trim())}</pre>`
+        : `<div class="opt-ex-text">${parser.parseInline(ex.tokens)}</div>`
+      html += `<div class="opt-ex"><div class="opt-lab">${OPTION_CARD.example}</div>${body}</div>`
+    }
+    let facts = ''
+    for (const kind of ['result', 'pros', 'cons', 'tradeoff']) {
+      const c = cell(kind)
+      if (!c || !c.text.trim()) continue
+      const [label, cls] = OPTION_CARD.facts[kind]
+      facts += `<dt${cls ? ` class="${cls}"` : ''}>${label}</dt><dd>${parser.parseInline(c.tokens)}</dd>`
+    }
+    if (facts) html += `<dl class="opt-facts">${facts}</dl>`
+    if (why) html += `<div class="opt-why"><b>${OPTION_CARD.why}</b>${inlineMd(why)}</div>`
+    return html + '</article>'
+  })
+  return `<div class="opt-cards">${cards.join('')}</div>\n`
+}
+
+const defaultTable = Renderer.prototype.table
+hardenedRenderer.table = function (token) {
+  if (linkContext.decision) {
+    const cards = renderOptionCards(token, this.parser)
+    if (cards !== null) return cards
+  }
+  return defaultTable.call(this, token)
 }
 
 /**
@@ -693,6 +768,17 @@ function ticketRowsTable(tickets) {
  * 현재`) — that is the canonical "now" wording, unchanged.
  */
 function ticketStoreInner(tickets, currentVersion) {
+  const { groups, defaultKey } = ticketGroups(tickets, currentVersion)
+  return groupedStore({
+    sidebarSubLabel: TICKET.sidebarLabel,
+    crumbLabel: TICKET.sidebarLabel,
+    groups,
+    noGroupUnit: TICKET.countUnit,
+    defaultKey,
+  })
+}
+
+function ticketGroups(tickets, currentVersion) {
   const currentTickets = currentVersionTickets(tickets, currentVersion)
   const backlogTickets = tickets.included.filter((t) => t.bucket === 'backlog')
   const currentBucketKey = currentTicketBucketKey(tickets, currentVersion)
@@ -730,14 +816,7 @@ function ticketStoreInner(tickets, currentVersion) {
       bodyHtml: countBadge(TICKET.backlogLabel, backlogTickets.length, TICKET.countUnit) + ticketRowsTable(backlogTickets),
     },
   ]
-
-  return groupedStore({
-    sidebarSubLabel: TICKET.sidebarLabel,
-    crumbLabel: TICKET.sidebarLabel,
-    groups,
-    noGroupUnit: TICKET.countUnit,
-    defaultKey: currentBucketKey,
-  })
+  return { groups, defaultKey: currentBucketKey }
 }
 
 /**
@@ -749,19 +828,21 @@ function ticketStoreInner(tickets, currentVersion) {
  * `fields.fileHref` present → `FILE_HREF_NOTE` + a real-file link, see
  * `INTERACTION_SCRIPT` below), so nothing there changes for this.
  */
-function ticketDetailEntries(tickets, repoRootHref) {
+function ticketDetailEntries(tickets, repoRootHref, lineTickets = []) {
   const entries = {}
+  // T-961: added release lines' tickets follow the home line's.
+  for (const set of lineTickets) Object.assign(entries, ticketDetailEntries(set, repoRootHref))
   for (const t of tickets.included) {
     const fm = t.frontmatter
     const id = fm.id || t.rel
     entries[id] = {
       title: fm.slug || id,
       type: fm.type || '',
-      status: fm.status || '',
+      status: ticketStatusText(fm.status || ''),
       assignee: fm.assignee || '',
       created: fm.created || '',
       path: t.rel,
-      body: md(t.body, path.dirname(t.rel), repoRootHref, { discipline: true }),
+      body: md(t.body, path.dirname(t.rel), repoRootHref, { discipline: true, decision: true }),
     }
   }
   for (const bucket of tickets.omitted) {
@@ -771,7 +852,7 @@ function ticketDetailEntries(tickets, repoRootHref) {
       entries[id] = {
         title: fm.slug || id,
         type: fm.type || '',
-        status: fm.status || '',
+        status: ticketStatusText(fm.status || ''),
         assignee: fm.assignee || '',
         path: t.rel,
         fileHref: containedFileHref(`${repoRootHref}/${encodeFsPathHref(t.rel)}`, repoRootHref),
@@ -799,24 +880,26 @@ export const PAST_TICKET_GLOBAL = '__PRDT_VIEWER_DATA__'
  * loader takes a src from that map only.
  * @returns {Array<{ bucket: string, name: string, tickets: Record<string,{path:string,body:string}>, bodies: string[] }>}
  */
-export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [] } = {}) {
+export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [], line = null } = {}) {
   pageViewerAbsPath = viewerAbsPath
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   const files = []
   for (const bucket of tickets.omitted) {
-    if (!bucket.bodies || !PAST_BUCKET_RE.test(bucket.bucket)) continue
+    // T-961: an added line's bucket key is `<line>--<bucket>` (no `/` in a file name).
+    const key = line ? `${line}--${bucket.bucket}` : bucket.bucket
+    if (!bucket.bodies || !PAST_BUCKET_RE.test(key)) continue
     const rows = {}
     const bodies = []
     for (const t of bucket.tickets) {
       const raw = Object.prototype.hasOwnProperty.call(bucket.bodies, t.rel) ? bucket.bodies[t.rel] : undefined
       if (typeof raw !== 'string') continue
       const id = t.frontmatter.id || t.rel
-      const body = md(raw, path.dirname(t.rel), repoRootHref, { discipline: true })
+      const body = md(raw, path.dirname(t.rel), repoRootHref, { discipline: true, decision: true })
       rows[id] = { path: t.rel, body }
       bodies.push(body)
     }
     if (bodies.length === 0) continue
-    files.push({ bucket: bucket.bucket, name: `${prefix}.tickets-${bucket.bucket}.js`, tickets: rows, bodies })
+    files.push({ bucket: key, name: `${prefix}.tickets-${key}.js`, tickets: rows, bodies })
   }
   return files
 }
@@ -833,8 +916,64 @@ export function pastTicketDataContent(bucket, payload) {
   return `(window.${PAST_TICKET_GLOBAL} = window.${PAST_TICKET_GLOBAL} || {})[${JSON.stringify(bucket)}] = ${json};\n`
 }
 
-function ticketSection(tickets, currentVersion) {
+function ticketSection(tickets, currentVersion, views = []) {
+  if (views.length > 0) {
+    const groups = lineSectioned(views, (v) => ticketGroups(v.tickets, v.currentVersion))
+    return storeSection('ticket', { innerHtml: groupedStore({ sidebarSubLabel: TICKET.sidebarLabel, crumbLabel: TICKET.sidebarLabel, groups, noGroupUnit: TICKET.countUnit, defaultKey: groups.defaultKey }) })
+  }
   return storeSection('ticket', { innerHtml: ticketStoreInner(tickets, currentVersion) })
+}
+
+// ---------- release lines (T-961; release-lines.md §6b) ----------
+// The stores whose sidebar draws one section per release line, home line
+// first, each headed `<line> <version>` + its stage. The env store joins this
+// list when it lands (T-958). Every other store's sidebar is unchanged.
+export const LINE_SECTIONED_STORES = ['home', 'prd', 'ticket', 'feature', 'artifact']
+
+/**
+ * One view per release line, home line first; [] on a single-line project —
+ * every store then takes its unchanged single-line path. A view carries the
+ * same field names the single-line renderers read off `data`, so a view-
+ * scoped copy of `data` (`lineData`) feeds them unchanged.
+ */
+export function lineViews(data) {
+  if (!Array.isArray(data.lines) || data.lines.length === 0) return []
+  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd }
+  return [
+    home,
+    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd })),
+  ]
+}
+
+function lineHead(v) {
+  return `${v.name} ${v.currentVersion}`.trim()
+}
+
+/** `data` with tickets · PRD · version · stage scoped to one line. */
+function lineData(data, v) {
+  return { ...data, tickets: v.tickets, prd: v.prd, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, allLineTickets: allLineTickets(data) }
+}
+
+/** Flattens per-line `{groups, defaultKey}` into one group list: keys prefixed `<line>/` (home line bare), the first group of each line carrying the section head. `defaultKey` = the home line's default. */
+function lineSectioned(views, build, { prefixKeys = true } = {}) {
+  const out = []
+  let defaultKey
+  views.forEach((v, i) => {
+    const { groups, defaultKey: dk } = build(v)
+    const pre = prefixKeys ? v.prefix : ''
+    groups.forEach((g, j) => {
+      out.push({ ...g, key: `${pre}${g.key}`, crumb: `${lineHead(v)} · ${g.label}`, head: j === 0 ? { label: lineHead(v), stage: v.stage } : undefined })
+    })
+    if (i === 0) defaultKey = dk === undefined ? undefined : `${pre}${dk}`
+  })
+  out.defaultKey = defaultKey
+  return out
+}
+
+/** Every ticket the page lists, all lines (detail entries · anchors · max id). */
+function allLineTickets(data) {
+  const views = lineViews(data)
+  return views.length === 0 ? [data.tickets] : views.map((v) => v.tickets)
 }
 
 // ---------- shared grouped-store shell (T-666 slice 1b/2a) ----------
@@ -881,7 +1020,12 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', d
           // with the version string, matching every other store's own PRD-nav
           // convention) rather than always a bare integer.
           const countHtml = g.count === undefined || g.count === null ? '' : `<span class="nav-item-count">${escapeHtml(String(g.count))}</span>`
-          return `<button type="button" class="nav-item nav-item-clickable${active}" data-group-select="${escapeHtml(g.key)}"><span>${escapeHtml(g.label)}</span>${countHtml}</button>`
+          // T-961: a release line's first group opens that line's section head;
+          // `crumb` names the line in the breadcrumb (LINES_SCRIPT). Both are
+          // absent on a single-line page, whose markup is unchanged.
+          const head = g.head ? `<div class="ls-h"><b>${escapeHtml(g.head.label)}</b><span class="ls-st">${escapeHtml(g.head.stage || '')}</span></div>\n` : ''
+          const crumbAttr = g.crumb ? ` data-crumb="${escapeHtml(g.crumb)}"` : ''
+          return `${head}<button type="button" class="nav-item nav-item-clickable${active}" data-group-select="${escapeHtml(g.key)}"${crumbAttr}><span>${escapeHtml(g.label)}</span>${countHtml}</button>`
         })
         .join('\n')
   const sidebar = `<nav class="sidebar">
@@ -894,7 +1038,7 @@ ${sidebarButtons}
     .map((g, i) => `<div class="view-pane${i === defaultIndex ? ' active' : ''}" data-group="${escapeHtml(g.key)}">${g.bodyHtml}</div>`)
     .join('\n')
 
-  const defaultLabel = groups.length > 0 ? groups[defaultIndex].label : ''
+  const defaultLabel = groups.length > 0 ? (groups[defaultIndex].crumb ?? groups[defaultIndex].label) : ''
   const mainCol = `<div class="frame-main-col">
 <div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)}${defaultLabel === '' ? '' : ` · <span class="js-group-label">${escapeHtml(defaultLabel)}</span>`}</b></span></div>
 <div class="frame-body"><div class="main-inner">${topHtml}${panes}</div></div>
@@ -1234,10 +1378,26 @@ function ticketNumber(id) {
   return (String(id).match(/\d+/g) || []).map(Number)
 }
 
+/** T-961: the taxonomy-less taxonomy — one area, one entry per distinct `feature:` value of the tickets in `data` (no kind, definition or links). */
+function derivedFeatureTaxonomy(data) {
+  const keys = [...new Set(allTicketRows(data.tickets).map((r) => (typeof r.fm.feature === 'string' ? r.fm.feature.trim() : '')).filter(Boolean))].sort()
+  return {
+    areas: [{ key: '_', name: FEATURE.allLabel, def: '' }],
+    kinds: [],
+    entries: keys.map((key) => ({ key, name: key, kind: '', area: '_', def: '', aliases: [], links: [] })),
+  }
+}
+
 /** Everything the screen shows per feature, computed once from taxonomy + tickets + spec files. */
 export function featureScreenModel(data) {
-  const tax = data.featureTaxonomy
-  if (!tax || !tax.areas || tax.areas.length === 0) return null
+  let tax = data.featureTaxonomy
+  let derived = false
+  if (!tax || !tax.areas || tax.areas.length === 0) {
+    // T-961: a multi-line project without `features.taxonomy` still lists features — the `feature:` values its tickets carry, one flat group per line.
+    if (lineViews(data).length === 0) return null
+    tax = derivedFeatureTaxonomy(data)
+    derived = true
+  }
   const areaKeys = new Set(tax.areas.map((a) => a.key))
   const entries = tax.entries.filter((e) => areaKeys.has(e.area))
   const byKey = new Map(entries.map((e) => [e.key, e]))
@@ -1278,7 +1438,7 @@ export function featureScreenModel(data) {
       spec: specs.get(e.key) || null,
     }
   })
-  return { areas: tax.areas, kinds: tax.kinds || [], entries: model, byKey: new Map(model.map((m) => [m.key, m])) }
+  return { derived, areas: tax.areas, kinds: tax.kinds || [], entries: model, byKey: new Map(model.map((m) => [m.key, m])) }
 }
 
 function kindChip(model, kindKey) {
@@ -1287,20 +1447,23 @@ function kindChip(model, kindKey) {
 }
 
 function featureRow(model, e) {
-  return `<tr class="detail-row" data-area="${escapeHtml(e.area)}" data-detail-kind="feature" data-detail-id="${escapeHtml(e.key)}" tabindex="0">` +
+  return `<tr class="detail-row" data-area="${escapeHtml(e.area)}" data-detail-kind="feature" data-detail-id="${escapeHtml(`${model.idPrefix || ''}${e.key}`)}" tabindex="0">` +
     `<td><span class="nm">${escapeHtml(e.name || e.key)}</span><span class="nm-key">${escapeHtml(e.key)}</span></td>` +
-    `<td>${kindChip(model, e.kind)}</td><td class="def-col">${escapeHtml(e.def || '')}</td><td class="num-col">${e.tickets.length}</td></tr>\n`
+    (model.derived ? '' : `<td>${kindChip(model, e.kind)}</td><td class="def-col">${escapeHtml(e.def || '')}</td>`) + `<td class="num-col">${e.tickets.length}</td></tr>\n`
 }
 
 function featureAreaRows(model, area) {
   const items = model.entries.filter((e) => e.area === area.key)
+  if (model.derived) return items.map((e) => featureRow(model, e)).join('')
   return `<tr class="grp-row" data-area="${escapeHtml(area.key)}"><td colspan="4"><span class="grp-name">${escapeHtml(area.name)}</span>` +
     `<span class="grp-n">${items.length}</span><span class="grp-def">${escapeHtml(area.def || '')}</span></td></tr>\n` +
     items.map((e) => featureRow(model, e)).join('')
 }
 
 function featurePane(model, areas, count) {
-  const head = `<tr>${FEATURE.tableHeaders.map((h, i) => `<th${i === 3 ? ' class="num-col"' : ''}>${escapeHtml(h)}</th>`).join('')}</tr>`
+  if (model.derived && count === 0) return `<p class="v-note">${FEATURE.empty}</p>`
+  const heads = model.derived ? [FEATURE.tableHeaders[0], FEATURE.tableHeaders[3]] : FEATURE.tableHeaders
+  const head = `<tr>${heads.map((h, i) => `<th${i === heads.length - 1 ? ' class="num-col"' : ''}>${escapeHtml(h)}</th>`).join('')}</tr>`
   return `<div class="count-line section-meta"><span class="count-badge">${escapeHtml(FEATURE.sidebarLabel)} <b>${count}</b>${escapeHtml(FEATURE.countUnit)}</span></div>\n` +
     `<div class="table-wrap"><table class="feature-table"><thead>${head}</thead><tbody>\n${areas.map((a) => featureAreaRows(model, a)).join('')}</tbody></table></div>\n`
 }
@@ -1322,7 +1485,29 @@ function featureSpecListRows(pages) {
   return html + '</tbody></table></div>\n'
 }
 
+/** T-961: one line's feature groups — the home line lists every taxonomy entry, an added line the entries its own tickets carry; counts are that line's tickets. Null when there is no taxonomy (the spec list is not line-scoped). */
+function featureLineGroups(data, v) {
+  const full = featureScreenModel(lineData(data, v))
+  if (!full) return null
+  const entries = v.line || full.derived ? full.entries.filter((e) => e.tickets.length > 0) : full.entries
+  const model = { ...full, entries, idPrefix: v.prefix }
+  if (full.derived) return { groups: [{ key: 'all', label: FEATURE.allLabel, count: entries.length, bodyHtml: featurePane(model, model.areas, entries.length) }], defaultKey: undefined, model }
+  const groups = [
+    { key: 'all', label: FEATURE.allLabel, count: entries.length, bodyHtml: featurePane(model, model.areas, entries.length) },
+    ...model.areas.map((a) => {
+      const n = entries.filter((e) => e.area === a.key).length
+      return { key: a.key, label: a.name, count: n, bodyHtml: featurePane(model, [a], n) }
+    }),
+  ]
+  return { groups, defaultKey: undefined, model }
+}
+
 function featureStoreInner(data) {
+  const views = lineViews(data)
+  if (views.length > 0 && featureScreenModel(data)) {
+    const groups = lineSectioned(views, (v) => featureLineGroups(data, v))
+    return groupedStore({ sidebarSubLabel: STORE_LABEL.feature, crumbLabel: STORE_LABEL.feature, groups, noGroupUnit: FEATURE.countUnit, defaultKey: groups.defaultKey })
+  }
   const model = featureScreenModel(data)
   if (!model && data.features.length > 0) {
     const groups = [{
@@ -1389,10 +1574,11 @@ function featureReadField(data, e) {
 function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
   const area = model.areas.find((a) => a.key === e.area)
   const kind = model.kinds.find((k) => k.key === e.kind)
+  const lean = model.derived  // T-961: no taxonomy — no kind, area or definition to show
   const field = (label, value) => `<div class="detail-field"><span class="detail-field-label">${escapeHtml(label)}</span><span class="detail-field-value">${value}</span></div>`
   const meta = '<div class="detail-meta">' +
-    field(FEATURE.fields.kind, kindChip(model, e.kind)) +
-    field(FEATURE.fields.area, `<button type="button" class="area-a" data-feature-area="${escapeHtml(e.area)}">${escapeHtml(area.name)}</button>`) +
+    (lean ? '' : field(FEATURE.fields.kind, kindChip(model, e.kind)) +
+    field(FEATURE.fields.area, `<button type="button" class="area-a" data-feature-area="${escapeHtml(e.area)}">${escapeHtml(area.name)}</button>`)) +
     field(FEATURE.fields.tickets, escapeHtml(featureTicketsLabel(e))) +
     (e.versions ? field(FEATURE.fields.version, escapeHtml(e.versions)) : '') +
     (readHtml ? field(FEATURE.fields.read, readHtml) : '') +
@@ -1402,12 +1588,12 @@ function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
     ...e.links.map((l) => featureLinkItem(model, l.to, l.text || '', l.ground || '', anchors)),
     ...e.rev.map((k) => featureLinkItem(model, k, undefined, undefined, anchors)),
   ]
-  const links = `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.linksHeading)}</h2>` +
+  const links = lean ? '' : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.linksHeading)}</h2>` +
     (items.length ? `<ul class="cn-list">${items.join('')}</ul>` : `<p class="cn-empty">${escapeHtml(FEATURE.linksEmpty)}</p>`)
   const tail = e.spec
     ? `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.specHeading)}</h2><div class="v-body">${md(e.spec.body, path.dirname(e.spec.rel), repoRootHref)}</div>`
     : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
-  return `<p class="def-lead">${escapeHtml(e.def || '')}</p>${meta}${kdef}<div class="detail-doc body-prose">${links}${tail}</div>`
+  return `${lean ? '' : `<p class="def-lead">${escapeHtml(e.def || '')}</p>`}${meta}${kdef}<div class="detail-doc body-prose">${links}${tail}</div>`
 }
 
 function featureDetailEntries(data, anchors, repoRootHref) {
@@ -1424,6 +1610,13 @@ function featureDetailEntries(data, anchors, repoRootHref) {
   for (const e of model.entries) {
     entries[e.key] = { title: `${e.name || e.key} · ${e.key}`, name: e.name || e.key, html: featureDetailHtml(model, e, anchors, repoRootHref, featureReadField(data, e)) }
   }
+  // T-961: an added line's rows open that line's own counts (`<line>/<key>`).
+  for (const v of lineViews(data).slice(1)) {
+    const { model: lm } = featureLineGroups(data, v)
+    for (const e of lm.entries) {
+      entries[`${v.prefix}${e.key}`] = { title: `${e.name || e.key} · ${e.key}`, name: e.name || e.key, html: featureDetailHtml(lm, e, anchors, repoRootHref, featureReadField(data, e)) }
+    }
+  }
   return entries
 }
 
@@ -1432,7 +1625,7 @@ function featuresSection(data) {
 }
 
 /** PRD store: the ONE named content nuance (not a structural deviation — same activity-bar → sidebar-group → main-pane shell as every other store). The "open" group's single, currently-relevant document renders inline directly rather than as a one-row list a reader must click; "closed" behaves exactly like every other store's list→detail. Both strings below ("열린 섹션" / "닫힌 버전") are lifted verbatim from the user-approved mockup (docs/artifacts/v1.10/define-screen-set.html), not new copy. */
-function prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix }) {
+function prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix, line = null }) {
   // T-884: the open PRD is the reading screen (outline · folds · 「결정할 것」 box · What cards).
   // `idPrefix` keeps ids unique when the same body sits in two panes (PRD store and home).
   const sourceDir = 'docs/prd'
@@ -1443,6 +1636,7 @@ function prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix }) {
     decisionTickets: openDecisionTickets(tickets),
     idPrefix,
     deps: { md: (t) => md(t, sourceDir, repoRootHref, { discipline: true }), inline: inlineMd, esc: escapeHtml, sameVersion, ticketPill: ticketRolePill },
+    ...(line ? { line } : {}),
   })
 }
 
@@ -1460,20 +1654,28 @@ function prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix }) {
  * text was never needed as a list column once the row IS the document.
  */
 function prdStoreInner(prd, currentVersion, repoRootHref, tickets) {
+  return groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups: prdGroups(prd, currentVersion, repoRootHref, tickets) })
+}
+
+function prdGroups(prd, currentVersion, repoRootHref, tickets, line = null) {
   const closedRounds = [...prd.closed].sort((a, b) =>
     compareVersionIdsDesc(a.name.replace(/\.md$/, ''), b.name.replace(/\.md$/, '')),
   )
   const groups = [
-    { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix: 'prd' }) },
+    { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix: line ? `prd-${line}` : 'prd', line }) },
     ...closedRounds.map((c) => {
       const id = c.name.replace(/\.md$/, '')
       return { key: id, label: id, bodyHtml: `<div class="v-body">${md(c.body, path.dirname(c.rel), repoRootHref, { discipline: true })}</div>` }
     }),
   ]
-  return groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups })
+  return groups
 }
 
-function prdSection(prd, currentVersion, repoRootHref, tickets) {
+function prdSection(prd, currentVersion, repoRootHref, tickets, views = []) {
+  if (views.length > 0) {
+    const groups = lineSectioned(views, (v) => ({ groups: prdGroups(v.prd, v.currentVersion, repoRootHref, v.tickets, v.line) }))
+    return storeSection('prd', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups }) })
+  }
   return storeSection('prd', { innerHtml: prdStoreInner(prd, currentVersion, repoRootHref, tickets) })
 }
 
@@ -1631,6 +1833,25 @@ export function buildAnchors(data) {
     const f = e.fields
     put(e.diskRel, { s: 'artifact', g: f.bucket, k: 'artifact', i: `${f.bucket}/${f.path}` })
   }
+  // T-961: an added release line's items, under its `<line>/` group keys.
+  for (const v of lineViews(data).slice(1)) {
+    for (const t of currentVersionTickets(v.tickets, v.currentVersion)) {
+      const id = t.frontmatter.id || t.rel
+      put(id, { s: 'home', g: `${v.prefix}ticket`, k: 'ticket', i: id })
+    }
+    const key = `${v.prefix}${currentTicketBucketKey(v.tickets, v.currentVersion)}`
+    for (const t of v.tickets.included) {
+      const id = t.frontmatter.id || t.rel
+      put(id, { s: 'ticket', g: t.bucket === 'backlog' ? `${v.prefix}backlog` : key, k: 'ticket', i: id })
+    }
+    for (const b of v.tickets.omitted) {
+      for (const t of b.tickets) {
+        const id = t.frontmatter.id || t.rel
+        put(id, { s: 'ticket', g: `${v.prefix}${b.bucket}`, k: 'ticket', i: id })
+      }
+    }
+    for (const c of v.prd.closed) put(c.rel, { s: 'prd', g: `${v.prefix}${c.name.replace(/\.md$/, '')}` })
+  }
   return anchors
 }
 
@@ -1641,8 +1862,10 @@ export function maxTicketNumber(data) {
     const m = /^T-(\d+)$/.exec(id || '')
     if (m) max = Math.max(max, Number(m[1]))
   }
-  for (const t of data.tickets.included) see(t.frontmatter.id)
-  for (const b of data.tickets.omitted) for (const t of b.tickets) see(t.frontmatter.id)
+  for (const set of allLineTickets(data)) {
+    for (const t of set.included) see(t.frontmatter.id)
+    for (const b of set.omitted) for (const t of b.tickets) see(t.frontmatter.id)
+  }
   return max
 }
 
@@ -1657,7 +1880,42 @@ const HASH_NOTICE_HTML = `<div class="notice" id="hash-notice" role="status" hid
 </div>
 `
 
-function artifactsSection(artifacts, currentVersion) {
+/** T-961: the manifest entries of one line — an added line's buckets are `<line>/<version>`, the home line's every other bucket. */
+function lineArtifactEntries(artifacts, v, views) {
+  const added = views.filter((x) => x.line).map((x) => x.prefix)
+  return artifacts.entries.filter((e) => {
+    const b = String(e.fields.bucket || '')
+    return v.line ? b.startsWith(v.prefix) : !added.some((p) => b.startsWith(p))
+  })
+}
+
+function artifactLineGroups(artifacts, v, views) {
+  const entries = lineArtifactEntries(artifacts, v, views)
+  const cur = `${v.prefix}${v.currentVersion}`
+  if (entries.length === 0) {
+    return { groups: [{ key: cur, label: cur, count: 0, bodyHtml: countBadge(`${cur}${ARTIFACT.bucketSuffix}`, 0, ARTIFACT.countUnit) + artifactRowsTable([]) }] }
+  }
+  const byBucket = new Map()
+  for (const e of entries) {
+    if (!byBucket.has(e.fields.bucket)) byBucket.set(e.fields.bucket, [])
+    byBucket.get(e.fields.bucket).push(e)
+  }
+  const keys = [...byBucket.keys()]
+  const first = keys.includes(cur) ? cur : keys[0]
+  const groups = [first, ...keys.filter((k) => k !== first)].map((key) => {
+    const items = byBucket.get(key)
+    return { key, label: key, count: items.length, bodyHtml: countBadge(`${key}${ARTIFACT.bucketSuffix}`, items.length, ARTIFACT.countUnit) + artifactRowsTable(items) }
+  })
+  return { groups }
+}
+
+function artifactsSection(artifacts, currentVersion, views = []) {
+  if (views.length > 0) {
+    // Bucket keys already carry the line (`<line>/<version>`), so the group
+    // key stays the bucket — the anchor table's `g: bucket` still resolves.
+    const groups = lineSectioned(views, (v) => artifactLineGroups(artifacts, v, views), { prefixKeys: false })
+    return storeSection('artifact', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.artifact, crumbLabel: STORE_LABEL.artifact, groups, noGroupUnit: ARTIFACT.countUnit }) })
+  }
   return storeSection('artifact', { innerHtml: artifactStoreInner(artifacts, currentVersion) })
 }
 
@@ -1715,7 +1973,7 @@ function homeStageBar(currentTickets, stage) {
   const segs = stageSegments(currentTickets)
   const labelOf = (seg) => {
     const cur = seg.stage === stage
-    return `<span class="sb-lab${cur ? ' sb-lab-cur' : ''}">${seg.stage}${cur ? `<span class="sb-here">${HOME.here}</span>` : ''} <span class="mono sb-n">${seg.tickets.length}</span></span>`
+    return `<span class="sb-lab${cur ? ' sb-lab-cur' : ''}">${seg.stage}${cur ? `<span class="sb-here">${HOME.here}</span>` : ''} <span class="sb-n">${HOME.stageTickets(seg.tickets.length)}</span></span>`
   }
   const cells = segs
     .map((seg, i) => {
@@ -1724,7 +1982,7 @@ function homeStageBar(currentTickets, stage) {
       return `<div class="${cls}"><div class="sb-up">${i % 2 === 0 ? lab : ''}</div><div class="sb-sq">${seg.tickets.map(stageSquare).join('')}</div><div class="sb-dn">${i % 2 === 1 ? lab : ''}</div></div>`
     })
     .join('')
-  return `<div class="sb"><span class="sb-tick" aria-hidden="true"></span>${cells}<span class="mono sb-total">${done}/${total}</span></div>`
+  return `<div class="sb"><span class="sb-tick" aria-hidden="true"></span>${cells}<span class="sb-total">${HOME.stageDone(done, total)}</span></div>`
 }
 
 function ticketButtonAttrs(id) {
@@ -1761,7 +2019,9 @@ function homeScope(data, currentTickets) {
 }
 
 function homeWaits(data) {
-  const { dec, req } = waitLists(allTicketRows(data.tickets))
+  // T-961: a blocking dep may be an open ticket in another line's folder — blockers are read across every line.
+  const all = (data.allLineTickets || [data.tickets]).flatMap(allTicketRows)
+  const { dec, req } = waitLists(allTicketRows(data.tickets), all)
   const block = (label, list, empty) =>
     `<div><div class="cp-h">${label} <span class="mono cp-n">${list.length}</span></div>` +
     (list.length === 0
@@ -1808,7 +2068,7 @@ function diagramRole(role, x, y) {
 }
 
 /** The ticket diagram's markup, and which legend entries it needs. */
-function dependencyDiagram(graph, layout) {
+function dependencyDiagram(graph, layout, DG_ID = 'home-dg') {
   const nodes = layout.nodes
   const firstBy = (pred, key) => nodes.filter(pred).sort(key)[0]
   const topLeft = (a, b) => a.y - b.y || a.x - b.x
@@ -1900,6 +2160,7 @@ function dependencyDiagram(graph, layout) {
 }
 
 function homeDependency(data, currentTickets) {
+  const dgId = data.dgId || DG_ID
   const graph = buildHomeGraph({ tickets: currentTickets, gatePath: data.prd.gatePath || '' })
   const drawable = graph.connected && graph.spine.size > 0
   const stage = data.poState?.stage
@@ -1908,7 +2169,7 @@ function homeDependency(data, currentTickets) {
   const notice = graph.connected || graph.nodes.length === 0 ? '' : `<div class="cp-spine-none">${stage === 'define' ? HOME.notConnected : HOME.notConnectedBuilt}</div>`
   if (graph.nodes.length === 0) return `<div class="cp-block">${head}${notice}<p class="cp-empty">${HOME.dependencyEmpty}</p></div>`
   void drawable
-  return `<div class="cp-block">${head}${notice}${dependencyDiagram(graph, layoutHomeGraph(graph))}</div>`
+  return `<div class="cp-block">${head}${notice}${dependencyDiagram(graph, layoutHomeGraph(graph), dgId)}</div>`
 }
 
 function homeProgressBody(data) {
@@ -1916,12 +2177,45 @@ function homeProgressBody(data) {
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
 ${homeStageBar(currentTickets, data.poState?.stage || '?')}
-<div class="sc sc-grid">${homeScope(data, currentTickets)}${homeWaits(data)}</div>
+<div class="sc sc-grid">${homeWaits(data)}${homeScope(data, currentTickets)}</div>
 ${homeDependency(data, currentTickets)}
 </div>`
 }
 
+/** T-961: one line's Home groups — the single-line blocks scoped to that line's tickets, PRD section, artifact bucket and decision pages. */
+function homeLineGroups(data, v, views, repoRootHref) {
+  const ld = lineData(data, v)
+  const currentTickets = currentVersionTickets(v.tickets, v.currentVersion)
+  const cur = `${v.prefix}${v.currentVersion}`
+  const currentArtifacts = lineArtifactEntries(data.artifacts, v, views).filter((e) => e.fields.bucket === cur)
+  const currentDecisions = lineDecisionPages(data.wiki, v)
+  const groups = [
+    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(ld)}</div>` },
+    { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
+    { key: 'prd', label: STORE_LABEL.prd, count: v.currentVersion, bodyHtml: prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
+    { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
+    { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
+  ]
+  return { groups, defaultKey: 'progress' }
+}
+
+/** A decision page's `version:` is `<line>/<v>` for an added line, bare for the home line (release-lines.md one-line rule). */
+function lineDecisionPages(pages, v) {
+  return pages.filter((p) => {
+    if (!p.rel.split('/').pop().startsWith('decision--') || !p.frontmatter.version) return false
+    const raw = String(p.frontmatter.version)
+    const slash = raw.indexOf('/')
+    const line = slash === -1 ? null : raw.slice(0, slash)
+    return line === v.line && sameVersion(slash === -1 ? raw : raw.slice(slash + 1), v.currentVersion)
+  })
+}
+
 function homeSection(data, repoRootHref) {
+  const views = lineViews(data)
+  if (views.length > 0) {
+    const groups = lineSectioned(views, (v) => homeLineGroups(data, v, views, repoRootHref))
+    return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups, defaultKey: groups.defaultKey, topHtml: HASH_NOTICE_HTML }) })
+  }
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   // T-713 scope note: `e.fields.bucket` matching stays literal (never
   // `sameVersion`) — an artifact-manifest bucket spelled differently from
@@ -1942,7 +2236,7 @@ function homeSection(data, repoRootHref) {
 
 export const TEMPLATE_CSS = `
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
+html, body { margin: 0; padding: 0; overflow-x: hidden; }
 body {
   font-family: var(--font-family);
   background: var(--bg-base);
@@ -1955,7 +2249,7 @@ body {
 code { font-family: var(--font-mono); font-size: 0.9em; }
 
 /* ---------- app shell (T-666 slice 1a) — activity bar | sidebar | main | detail panel ---------- */
-.app-shell { flex: 1; min-height: 0; display: flex; }
+.app-shell { flex: 1; min-height: 0; display: flex; overflow: clip; }
 .activity {
   width: 48px; flex: 0 0 48px; background: var(--bg-base); border-right: 1px solid var(--border-item);
   display: flex; flex-direction: column; align-items: center; padding-top: 12px; gap: 4px;
@@ -1994,14 +2288,15 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .view-pane { display: none; }
 .view-pane.active { display: block; }
 
-.frame-main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; position: relative; }
+/* T-909: overflow: clip — the closed detail panel parks at translateX(100%) inside this column; without a clip a horizontal swipe / shift-wheel scrolled the page and showed it. clip (unlike hidden) is not user- or focus-scrollable. */
+.frame-main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; position: relative; overflow: clip; }
 .topstrip {
   height: 44px; flex: 0 0 44px; display: flex; align-items: center; gap: var(--space-8);
   padding: 0 var(--space-20); border-bottom: 1px solid var(--border-item); background: var(--bg-surface-base);
 }
 .topstrip-crumb { font-size: 12px; color: var(--text-tertiary); }
 .topstrip-crumb b { color: var(--text-primary); font-weight: 600; }
-.frame-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-32) var(--space-40); }
+.frame-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: var(--space-32) var(--space-40); }
 .main-inner { max-width: 1040px; margin: 0 auto; }
 /* T-708 결함 1: home is the one dashboard-card screen (progress stats +
    matrix, table-shaped data with no paragraph-readability reason for a cap)
@@ -2009,6 +2304,8 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
    data-store, not a second .main-inner variant class, since main-inner is
    shared markup across every groupedStore()/ticketStoreInner() call. */
 .store-section[data-store="home"] .main-inner { max-width: none; }
+/* T-961: with the waits column on screen (Home 「진행」 pane), the detail panel stops short of it: width = the main column minus (frame padding + card inset ~56, waits column 280, a ~24px gap), never under 520px; below that width it overlays the waits column (the panel needs room to read) and the user closes it to see the waits. */
+.store-section[data-store="home"]:has(.view-pane.active .sc-waits) .detail-panel { width: min(820px, 92%, max(520px, calc(100% - 360px))); }
 .section-meta { margin-bottom: var(--space-12); }
 .count-badge { font-size: 11.5px; color: var(--text-tertiary); }
 .count-badge b { color: var(--text-primary); font-weight: 600; }
@@ -2093,7 +2390,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .stage-sq { width: 10px; height: 10px; border-radius: 2px; background: var(--bg-interaction-neutral); border: 1px solid var(--border-inline); flex: 0 0 auto; }
 .stage-sq.sq-done { background: var(--accent); border-color: var(--accent); }
 .sc { border-top: 1px solid var(--border-item); margin: var(--space-16) 0 0; padding: var(--space-16) 0 0; }
-.sc-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(200px, 220px); gap: var(--space-24); }
+.sc-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--space-24); }
 .sc-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: center; gap: var(--space-10); min-height: 20px; }
 .sc-lab { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sc-out .sc-lab { color: var(--text-tertiary); }
@@ -2101,7 +2398,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .sc-n { font-size: 10.5px; color: var(--text-tertiary); }
 .sc-btn { cursor: pointer; }
 .sc-btn.is-open { outline: 2px solid var(--text-primary); outline-offset: 1px; }
-.sc-waits { min-width: 0; display: flex; flex-direction: column; gap: var(--space-16); border-left: 1px solid var(--border-item); padding-left: var(--space-24); }
+.sc-waits { min-width: 0; display: flex; flex-direction: column; gap: var(--space-16); border-right: 1px solid var(--border-item); padding-right: var(--space-24); }
 .cp-block { border-top: 1px solid var(--border-item); margin: var(--space-16) 0 0; padding: var(--space-16) 0 0; }
 .cp-h { font-size: 12px; font-weight: 600; color: var(--text-primary); margin: 0 0 var(--space-10); display: flex; align-items: baseline; gap: var(--space-8); flex-wrap: wrap; }
 .cp-sub { font-weight: 400; color: var(--text-tertiary); font-size: 11.5px; }
@@ -2218,6 +2515,32 @@ table.v-omitted th, table.v-artifacts th { color: var(--text-secondary); border-
 .detail-doc pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .v-body table { border-collapse: collapse; }
 .v-body table th, .v-body table td { border: 1px solid var(--border-item); padding: var(--space-4) var(--space-8); }
+/* ---------- T-998 decision options as cards (T-999 = C; no accent stripe — the 권고 chip alone marks the recommendation) ---------- */
+.opt-cards { display: flex; flex-direction: column; gap: var(--space-12); margin: var(--space-8) 0; }
+.opt-card { background: var(--bg-surface-base); border: 1px solid var(--border-inline); border-radius: var(--radius-8); padding: var(--space-12) var(--space-16); }
+.opt-card.is-chosen { border: 2px solid var(--status-done); background: color-mix(in srgb, var(--status-done) 6%, var(--bg-surface-base)); }
+.opt-card.is-dim { background: transparent; border-style: dashed; }
+.opt-card.is-dim .opt-h h4 { color: var(--text-tertiary); }
+.opt-card.is-dim .opt-letter { background: transparent; color: var(--text-tertiary); border: 1px solid var(--border-inline); }
+.opt-h { display: flex; align-items: center; gap: var(--space-10); margin-bottom: var(--space-10); }
+.opt-h h4 { margin: 0; font-size: 14px; font-weight: 700; flex: 1; min-width: 0; }
+.opt-letter { flex: 0 0 auto; width: 24px; height: 24px; border-radius: var(--radius-4); background: var(--text-primary); color: var(--bg-surface-base); font-size: 13px; font-weight: 700; line-height: 24px; text-align: center; }
+.opt-marks { display: flex; gap: var(--space-6); }
+.opt-mk { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: var(--radius-100); white-space: nowrap; }
+.opt-mk-rec { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); border: 1px solid var(--accent); }
+.opt-mk-chosen { background: color-mix(in srgb, var(--status-done) 14%, transparent); color: var(--status-done); border: 1px solid var(--status-done); }
+.opt-lab { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; color: var(--text-tertiary); margin-bottom: var(--space-4); }
+pre.opt-sk { margin: 0; padding: var(--space-10) var(--space-12); background: var(--bg-base); border-radius: var(--radius-4); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-primary); }
+.opt-ex-text { font-size: 13px; }
+.opt-facts { display: grid; grid-template-columns: 40px 1fr; gap: var(--space-6) var(--space-12); margin: var(--space-12) 0 0; font-size: 13px; }
+.opt-facts dt { font-weight: 700; color: var(--text-tertiary); font-size: 12px; padding-top: 1px; }
+.opt-facts dt.p { color: var(--status-done); }
+.opt-facts dt.c { color: var(--status-review); }
+.opt-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.opt-why { margin-top: var(--space-10); padding-top: var(--space-8); border-top: 1px dashed var(--border-inline); font-size: 12.5px; color: var(--text-secondary); }
+.opt-why b { color: var(--accent); margin-right: var(--space-6); }
+:root:not([data-theme="dark"]) .opt-mk-chosen, :root:not([data-theme="dark"]) .opt-facts dt.p { color: color-mix(in srgb, var(--status-done) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .opt-facts dt.c { color: color-mix(in srgb, var(--status-review) 80%, var(--text-primary)); }
 details.v-fold summary { cursor: pointer; color: var(--icon-tertiary); padding: var(--space-8) 0; }
 details.v-fold[open] summary { color: var(--text-primary); }
 
@@ -2230,7 +2553,7 @@ details.v-fold[open] summary { color: var(--text-primary); }
    every store tab, and any item open. margin-top: auto (not margin-left,
    T-797's horizontal-flex value) pushes it to the rail's bottom edge in the
    rail's own column flex. ) ---------- */
-.activity-theme-toggle { margin-top: auto; width: 28px; height: 28px; border: none; background: none; padding: 0; cursor: pointer;
+.activity-theme-toggle { margin-top: auto; margin-bottom: var(--space-16); width: 28px; height: 28px; border: none; background: none; padding: 0; cursor: pointer;
   color: var(--text-tertiary); border-radius: var(--radius-4); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .activity-theme-toggle:hover { background: var(--bg-state-hover); color: var(--text-primary); }
 .activity-theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -2625,6 +2948,9 @@ ${PRD_READING_SCRIPT}
     var metaHtml = metaRows.length ? '<div class="detail-meta">' + metaRows.join('') + '</div>' : '';
     // T-666 slice 1b acceptance line 2: an artifact with no inlinable body
     // (.html/.json) says so and links the file, instead of an empty panel.
+    // T-912 F3: fileHref embeds repoRootHref, a raw path (a repo dir may be named
+    // with a quote) — escaped for the attribute AND the link text.
+    function escAttr(v) { return String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
     var docHtml;
     var past = kind === 'ticket' && !fields.body ? pastTicketRef(fields) : null;
     if (past && !pastSettled(past)) {
@@ -2637,7 +2963,7 @@ ${PRD_READING_SCRIPT}
       docHtml = '<div class="detail-doc body-prose">' + fields.body + '</div>';
     } else if (fields.fileHref) {
       docHtml = '<div class="detail-doc detail-nobody"><p>' + ${JSON.stringify(FILE_HREF_NOTE)} + '</p><p><a href="' +
-        fields.fileHref + '" target="_blank" rel="noopener">' + (fields.path || fields.fileHref).replace(/</g, '&lt;') + '</a></p></div>';
+        escAttr(fields.fileHref) + '" target="_blank" rel="noopener">' + escAttr(fields.path || fields.fileHref) + '</a></p></div>';
     } else {
       docHtml = '';
     }
@@ -3014,6 +3340,27 @@ ${PRD_READING_SCRIPT}
 const THEME_HEAD_SCRIPT = `(function(){var t=null;try{t=localStorage.getItem(${JSON.stringify(THEME_STORAGE_PREFIX)}+location.pathname)}catch(e){}document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light')})();`
 const THEME_HEAD_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(THEME_HEAD_SCRIPT, 'utf8').digest('base64')
 const INTERACTION_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT, 'utf8').digest('base64')
+// T-961: a multi-line page resolves an added line's past ticket
+// (docs/tickets/<line>/<v>/T-n.md) to its own data file key `<line>--<v>`; a
+// single-line page keeps INTERACTION_SCRIPT, byte for byte.
+const PAST_REF_RE = /(function pastTicketRef\(fields\) \{\n\s*var parts = [^\n]*;)/
+const PAST_REF_LINE = '\n    ' + ['if', '(parts.length', '===', '5)', 'parts.splice(2,', '2,', "parts[2]", '+', "'--'", '+', 'parts[3]);'].join(' ')
+const INTERACTION_SCRIPT_LINES = INTERACTION_SCRIPT.replace(PAST_REF_RE, (head) => head + PAST_REF_LINE)
+if (INTERACTION_SCRIPT_LINES === INTERACTION_SCRIPT) throw new Error('T-961: pastTicketRef text drifted from PAST_REF_RE')
+const INTERACTION_SCRIPT_LINES_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT_LINES, 'utf8').digest('base64')
+// T-961: emitted only on a page with several release lines — a single-line
+// page's CSS, scripts and CSP stay byte-identical.
+const LINES_CSS = `
+.ls-h { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-6); margin: var(--space-12) var(--space-6) var(--space-4); padding-top: var(--space-8); border-top: 1px solid var(--border-item); }
+.sidebar-sub + .ls-h { border-top: none; padding-top: 0; margin-top: 0; }
+.ls-h b { font-size: 12.5px; font-weight: 700; color: var(--text-primary); }
+.ls-st { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-tertiary); }
+`
+// The breadcrumb names the line: after any group switch, the active group's
+// \`data-crumb\` (\`<line> <version> · <label>\`) replaces the plain label.
+const LINES_SCRIPT = `(function(){function sync(){document.querySelectorAll('.store-section').forEach(function(s){var b=s.querySelector('.nav-item-clickable.active[data-crumb]');var l=s.querySelector('.js-group-label');if(b&&l)l.textContent=b.getAttribute('data-crumb');});}function later(){setTimeout(sync,0);}document.addEventListener('click',later);document.addEventListener('keydown',later);window.addEventListener('hashchange',later);later();})();`
+const LINES_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(LINES_SCRIPT, 'utf8').digest('base64')
+
 const CSP_CONTENT = [
   "default-src 'none'",
   // T-885 (T-876 = D): 'strict-dynamic' lets the hash-trusted interaction
@@ -3026,6 +3373,7 @@ const CSP_CONTENT = [
   "base-uri 'none'",
   "form-action 'none'",
 ].join('; ')
+const CSP_CONTENT_LINES = CSP_CONTENT.replace(`'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}'`, `'sha256-${INTERACTION_SCRIPT_LINES_SHA256_BASE64}'`).replace("'strict-dynamic'", `'sha256-${LINES_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`)
 
 /**
  * Embeds `obj` as a same-document JSON blob. Escapes EVERY `<` as `<`
@@ -3076,8 +3424,9 @@ export function renderPage({
   const discipline = data.discipline || []
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   const anchors = buildAnchors(data)
+  const views = lineViews(data)
   const detailData = {
-    ticket: ticketDetailEntries(data.tickets, repoRootHref),
+    ticket: ticketDetailEntries(data.tickets, repoRootHref, views.slice(1).map((v) => v.tickets)),
     wiki: wikiDetailEntries(data.wiki, repoRootHref),
     feature: featureDetailEntries(data, anchors, repoRootHref),
     glossary: glossaryDetailEntries(data.wiki, repoRootHref),
@@ -3100,14 +3449,14 @@ export function renderPage({
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="${CSP_CONTENT}">
+<meta http-equiv="Content-Security-Policy" content="${views.length > 0 ? CSP_CONTENT_LINES : CSP_CONTENT}">
 <title>${pageTitle}</title>
 <meta property="og:title" content="${pageTitle}">
 <script>${THEME_HEAD_SCRIPT}</script>
 <style>
 ${fontFaceCss}
 ${TEMPLATE_CSS}
-${emitRootThemeCss(dark, light)}
+${emitRootThemeCss(dark, light)}${views.length > 0 ? LINES_CSS : ''}
 </style>
 </head>
 <body>
@@ -3115,17 +3464,17 @@ ${emitRootThemeCss(dark, light)}
 <div class="app-shell">
 ${activityBar('home')}
 ${homeSection(data, repoRootHref)}
-${prdSection(data.prd, data.currentVersion, repoRootHref, data.tickets)}
-${ticketSection(data.tickets, data.currentVersion)}
+${prdSection(data.prd, data.currentVersion, repoRootHref, data.tickets, views)}
+${ticketSection(data.tickets, data.currentVersion, views)}
 ${wikiSection(data.wiki)}
 ${featuresSection(data)}
-${artifactsSection(data.artifacts, data.currentVersion)}
+${artifactsSection(data.artifacts, data.currentVersion, views)}
 ${glossarySection(data.wiki)}
 ${releaseSection(data.releases || [])}
 ${discSection(discipline)}
 </div>
 ${detailDataScript(detailData)}
-<script>${INTERACTION_SCRIPT}</script>
+<script>${views.length > 0 ? INTERACTION_SCRIPT_LINES : INTERACTION_SCRIPT}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}
 </body>
 </html>
 `

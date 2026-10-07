@@ -52,26 +52,89 @@ import { parseFrontmatter } from './frontmatter.mjs'
 // same version. No cycle: render.mjs never imports collect.mjs.
 import { sameVersion, decodePathSegments } from './render.mjs'
 
+// T-912 F1: every read under the repo root passes through realpath containment
+// (the RELEASES.md / discipline rule, T-883 / T-842 class): a path whose REAL
+// location (every symlink resolved) is outside the REAL repo root reads as
+// absent. A symlink resolving inside the same top directory (`docs/` or
+// `.prdt/`) still works; one reaching another in-repo file (root `.env.local`)
+// does not.
+function realInsideRepo(repoRoot, abs) {
+  try {
+    const realRoot = fs.realpathSync(repoRoot)
+    const real = fs.realpathSync(abs)
+    if (!(real === realRoot || real.startsWith(realRoot + path.sep))) return null
+    // Narrower than the repo: the viewer reads only under `docs/` and `.prdt/`,
+    // so a link to another in-repo file (e.g. a root `.env.local`) is refused too.
+    const top = path.relative(repoRoot, abs).split(path.sep)[0]
+    if (top && top !== '..') {
+      // Anchor at <realRoot>/<top>, not realpath(<top>): a `docs/` or `.prdt/`
+      // that is itself a link must not widen the allowed region.
+      const realTop = path.join(realRoot, top)
+      if (!(real === realTop || real.startsWith(realTop + path.sep))) return null
+    }
+    return real
+  } catch {
+    return null
+  }
+}
+
+/** The contained real path of an existing regular file, else null. */
+function containedFile(repoRoot, abs) {
+  const real = realInsideRepo(repoRoot, abs)
+  try {
+    return real && fs.statSync(real).isFile() ? real : null
+  } catch {
+    return null
+  }
+}
+
+/** The contained real path of an existing directory, else null. */
+function containedDir(repoRoot, abs) {
+  const real = realInsideRepo(repoRoot, abs)
+  try {
+    return real && fs.statSync(real).isDirectory() ? real : null
+  } catch {
+    return null
+  }
+}
+
 function readJson(p) {
   return JSON.parse(fs.readFileSync(p, 'utf8'))
 }
 
-function listMarkdownFiles(dir) {
-  if (!fs.existsSync(dir)) return []
+// Names of the regular files (or in-repo file links) in `dir` passing `nameOk`;
+// empty when `dir` is missing or resolves outside the repo.
+function listContainedFiles(repoRoot, dir, nameOk) {
+  if (!containedDir(repoRoot, dir)) return []
   return fs
     .readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith('.md'))
+    .filter((e) => (e.isFile() || e.isSymbolicLink()) && nameOk(e.name) && containedFile(repoRoot, path.join(dir, e.name)))
     .map((e) => e.name)
     .sort()
 }
 
-/** @returns {{schema_version:number, stage:string, version:string, current_task:unknown}} */
-export function readPoState(repoRoot) {
-  return readJson(path.join(repoRoot, '.prdt/po-state.json'))
+function listMarkdownFiles(repoRoot, dir) {
+  return listContainedFiles(repoRoot, dir, (n) => n.endsWith('.md'))
 }
 
+/** @returns {{schema_version:number, stage:string, version:string, current_task:unknown}} */
+export function readPoState(repoRoot) {
+  const abs = path.join(repoRoot, '.prdt/po-state.json')
+  // T-912: a present po-state that resolves outside the repo reads as an empty
+  // state (never the outside file); a truly missing one still throws ENOENT.
+  const real = containedFile(repoRoot, abs)
+  if (!real) {
+    if (!fs.existsSync(abs)) return readJson(abs)
+    return { schema_version: 0, stage: '', version: '', current_task: null }
+  }
+  return readJson(real)
+}
+
+// null when the file's real path leaves the repo (callers skip the entry).
 function readDoc(repoRoot, absPath) {
-  const raw = fs.readFileSync(absPath, 'utf8')
+  const real = containedFile(repoRoot, absPath)
+  if (!real) return null
+  const raw = fs.readFileSync(real, 'utf8')
   const { data, body } = parseFrontmatter(raw)
   return { rel: path.relative(repoRoot, absPath).split(path.sep).join('/'), frontmatter: data, body }
 }
@@ -89,14 +152,16 @@ function ticketLite(doc) {
 /**
  * @returns {{ included: Array, omitted: Array<{bucket:string, count:number, bytes:number, tickets:Array, bodies:Record<string,string>}> }}
  */
-export function collectTickets(repoRoot, currentVersion) {
-  const ticketsRoot = path.join(repoRoot, 'docs/tickets')
+export function collectTickets(repoRoot, currentVersion, { line = null, exclude = [] } = {}) {
+  // T-961: an added release line's tickets sit under `docs/tickets/<line>/`;
+  // the home line's own read skips those line directories (`exclude`).
+  const ticketsRoot = path.join(repoRoot, 'docs/tickets', ...(line ? [line] : []))
   // T-746: a project with no ticket yet has no docs/tickets at all — zero
   // tickets, never an ENOENT that leaves the viewer ungenerated.
-  if (!fs.existsSync(ticketsRoot)) return { included: [], omitted: [] }
+  if (!containedDir(repoRoot, ticketsRoot)) return { included: [], omitted: [] }
   const bucketDirs = fs
     .readdirSync(ticketsRoot, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
+    .filter((e) => (e.isDirectory() || e.isSymbolicLink()) && !exclude.includes(e.name) && containedDir(repoRoot, path.join(ticketsRoot, e.name)))
     .map((e) => e.name)
     .sort()
 
@@ -104,11 +169,7 @@ export function collectTickets(repoRoot, currentVersion) {
   const omitted = []
   for (const bucket of bucketDirs) {
     const bucketDir = path.join(ticketsRoot, bucket)
-    const files = fs
-      .readdirSync(bucketDir, { withFileTypes: true })
-      .filter((e) => e.isFile() && /^T-.+\.md$/.test(e.name))
-      .map((e) => e.name)
-      .sort()
+    const files = listContainedFiles(repoRoot, bucketDir, (n) => /^T-.+\.md$/.test(n))
     const isCurrent = sameVersion(bucket, currentVersion) || bucket === 'backlog'
     if (isCurrent) {
       for (const f of files) {
@@ -127,8 +188,8 @@ export function collectTickets(repoRoot, currentVersion) {
       const bodies = {}
       for (const f of files) {
         const filePath = path.join(bucketDir, f)
-        bytes += fs.statSync(filePath).size
         const doc = readDoc(repoRoot, filePath)
+        bytes += fs.statSync(containedFile(repoRoot, filePath)).size
         tickets.push(ticketLite(doc))
         bodies[doc.rel] = doc.body
       }
@@ -151,14 +212,14 @@ export function collectTickets(repoRoot, currentVersion) {
 
 export function collectWiki(repoRoot) {
   const dir = path.join(repoRoot, 'docs/wiki')
-  return listMarkdownFiles(dir)
+  return listMarkdownFiles(repoRoot, dir)
     .filter((f) => f !== 'index.md')
     .map((f) => readDoc(repoRoot, path.join(dir, f)))
 }
 
 export function collectFeatures(repoRoot) {
   const dir = path.join(repoRoot, 'docs/features')
-  return listMarkdownFiles(dir).map((f) => readDoc(repoRoot, path.join(dir, f)))
+  return listMarkdownFiles(repoRoot, dir).map((f) => readDoc(repoRoot, path.join(dir, f)))
 }
 
 // T-882: the feature taxonomy the feature screen draws — `.prdt/config.json`
@@ -170,10 +231,11 @@ export function collectFeatures(repoRoot) {
 // empty state); a malformed config is the same null — doctor names the fault.
 export function collectFeatureTaxonomy(repoRoot) {
   const cfgPath = path.join(repoRoot, '.prdt/config.json')
-  if (!fs.existsSync(cfgPath)) return null
   let cfg
   try {
-    cfg = readJson(cfgPath)
+    const real = containedFile(repoRoot, cfgPath)
+    if (!real) return null
+    cfg = readJson(real)
   } catch {
     return null
   }
@@ -226,9 +288,10 @@ const PRD_ITEM_HEADING_RE = /^####\s+(\S+)(?:\s+—\s+(.*))?\s*$/
  * @param {string} currentVersion
  * @returns {Array<{key:string, label:string}>}
  */
-export function collectPrdOpenItems(prdBody, currentVersion) {
+export function collectPrdOpenItems(prdBody, currentVersion, line = null) {
   const items = []
-  for (const line of openSectionLines(prdBody, currentVersion)) {
+  for (const line_ of openSectionLines(prdBody, currentVersion, line)) {
+    const line = line_
     const m = PRD_ITEM_HEADING_RE.exec(line)
     if (m) {
       const key = m[1]
@@ -240,11 +303,13 @@ export function collectPrdOpenItems(prdBody, currentVersion) {
 }
 
 /** The lines of the OPEN `## v<N>.<m>` section (heading excluded), found by `sameVersion` (T-713). */
-function openSectionLines(prdBody, currentVersion) {
+function openSectionLines(prdBody, currentVersion, line = null) {
   const lines = (prdBody || '').split('\n')
+  // T-961: an added line's open section is headed `## <line> v<N>.<m>`.
+  const headingRe = line ? new RegExp(`^##\\s+${escapeRe(line)}\\s+(v\\S+)`) : PRD_VERSION_HEADING_RE
   let start = -1
   for (let i = 0; i < lines.length; i++) {
-    const m = PRD_VERSION_HEADING_RE.exec(lines[i])
+    const m = headingRe.exec(lines[i])
     if (m && sameVersion(m[1], currentVersion)) {
       start = i + 1
       break
@@ -267,8 +332,9 @@ function openSectionLines(prdBody, currentVersion) {
  * `''`. Home finds the gate ticket by that path in a ticket body — the PRD
  * names no ticket id, and a ticket has no gate field.
  */
-export function collectPrdGatePath(prdBody, currentVersion) {
-  for (const line of openSectionLines(prdBody, currentVersion)) {
+export function collectPrdGatePath(prdBody, currentVersion, line = null) {
+  for (const line_ of openSectionLines(prdBody, currentVersion, line)) {
+    const line = line_
     if (!line.includes('**합격선**')) continue
     const m = /`(docs\/[^`\s]+)`/.exec(line)
     if (m) return m[1]
@@ -276,19 +342,79 @@ export function collectPrdGatePath(prdBody, currentVersion) {
   return ''
 }
 
-export function collectPrd(repoRoot, currentVersion) {
+export function collectPrd(repoRoot, currentVersion, { line = null, lineNames = [] } = {}) {
   // T-746: a project whose PRD is not written yet still gets a viewer (an
   // empty open section), never an ENOENT.
   const prdPath = path.join(repoRoot, 'docs/prd/PRD.md')
-  const current = fs.existsSync(prdPath)
-    ? readDoc(repoRoot, prdPath)
-    : { rel: 'docs/prd/PRD.md', frontmatter: {}, body: '' }
-  const versionsDir = path.join(repoRoot, 'docs/prd/versions')
-  const closed = listMarkdownFiles(versionsDir).map((f) => {
-    const rel = `docs/prd/versions/${f}`
-    return { rel, name: f, body: fs.readFileSync(path.join(versionsDir, f), 'utf8') }
+  const doc = readDoc(repoRoot, prdPath) ?? { rel: 'docs/prd/PRD.md', frontmatter: {}, body: '' }
+  // T-961: with release lines declared, each line reads the shared head plus
+  // ITS OWN open section only (release-lines.md §3 read unit).
+  const current = lineNames.length > 0 ? { ...doc, body: prdLineBody(doc.body, line, lineNames) } : doc
+  const versionsDir = path.join(repoRoot, 'docs/prd/versions', ...(line ? [line] : []))
+  const closed = listMarkdownFiles(repoRoot, versionsDir).map((f) => {
+    const rel = `docs/prd/versions/${line ? `${line}/` : ''}${f}`
+    return { rel, name: f, body: fs.readFileSync(containedFile(repoRoot, path.join(versionsDir, f)), 'utf8') }
   })
-  return { current, closed, openItems: collectPrdOpenItems(current.body, currentVersion), gatePath: collectPrdGatePath(current.body, currentVersion) }
+  return { current, closed, openItems: collectPrdOpenItems(current.body, currentVersion, line), gatePath: collectPrdGatePath(current.body, currentVersion, line) }
+}
+
+function escapeRe(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * T-961: PRD.md as one release line reads it — every `##` block that is not a
+ * version section of ANY line (the shared head, `## Phase N`), plus that
+ * line's own version section(s). `line` null = the home line (`## v…`); an
+ * added line's section is `## <line> v…`. Fenced code is not a heading.
+ */
+export function prdLineBody(body, line, lineNames) {
+  const alt = lineNames.map(escapeRe).join('|')
+  const rx = new RegExp(`^##\\s+(?:(${alt})\\s+)?(v\\d\\S*)`)
+  const out = []
+  let keep = true
+  let fence = false
+  for (const ln of (body || '').split('\n')) {
+    if (/^\s*(```|~~~)/.test(ln)) fence = !fence
+    if (!fence && /^##\s/.test(ln)) {
+      const m = rx.exec(ln)
+      keep = !m || (m[1] ?? null) === line
+    }
+    if (keep) out.push(ln)
+  }
+  return out.join('\n')
+}
+
+/**
+ * T-961: the added release lines (`.prdt/config.json` `lines`), mirroring the
+ * CLI's `project_lines`: entries whose `name` is a legal line name, unique and
+ * not the slug, in declaration order. [] = a single-line project.
+ */
+const LINE_NAME_RE = /^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$/
+export function collectLineNames(repoRoot) {
+  let cfg
+  try {
+    const real = containedFile(repoRoot, path.join(repoRoot, '.prdt/config.json'))
+    if (!real) return []
+    cfg = readJson(real)
+  } catch {
+    return []
+  }
+  if (!cfg || !Array.isArray(cfg.lines)) return []
+  const out = []
+  for (const e of cfg.lines) {
+    const name = e && typeof e === 'object' ? e.name : undefined
+    if (typeof name === 'string' && LINE_NAME_RE.test(name) && !out.includes(name) && name !== cfg.slug) out.push(name)
+  }
+  return out
+}
+
+/** T-961: `(stage, version)` of an added line from po-state `lines.<line>` (the CLI's `line_state`); version bare, '' when absent. */
+export function lineState(poState, line) {
+  const ls = poState && typeof poState.lines === 'object' && poState.lines ? poState.lines[line] : null
+  if (!ls || typeof ls !== 'object') return { stage: '', version: '' }
+  const v = typeof ls.version === 'string' ? ls.version.trim() : ''
+  return { stage: typeof ls.stage === 'string' ? ls.stage : '', version: v }
 }
 
 const ARTIFACTS_ROOT_REL = 'docs/artifacts'
@@ -342,7 +468,10 @@ export function isContainedArtifactPath(repoRoot, bucket, relPath) {
   } catch {
     return true // docs/artifacts itself does not exist on disk at all
   }
-  return realResolved === realRoot || realResolved.startsWith(realRoot + path.sep)
+  if (!(realResolved === realRoot || realResolved.startsWith(realRoot + path.sep))) return false
+  // T-912: docs/artifacts itself may be a link out of the repo — then the
+  // check above compares the outside target with itself.
+  return realInsideRepo(repoRoot, resolved) !== null
 }
 
 /**
@@ -354,8 +483,9 @@ export function collectArtifacts(repoRoot) {
   // "버전이 열리면 이 버킷에 manifest.json 이 생겨요" — states this as the
   // NORMAL pre-manifest state, not an error) has no manifest.json on disk at
   // all; treat it as zero entries rather than throwing `readJson`'s ENOENT.
-  if (!fs.existsSync(manifestPath)) return { entries: [] }
-  const manifest = readJson(manifestPath)
+  const realManifest = containedFile(repoRoot, manifestPath)
+  if (!realManifest) return { entries: [] }
+  const manifest = readJson(realManifest)
   const entries = []
   for (const fields of manifest.entries || []) {
     const bucket = fields.bucket
@@ -450,7 +580,9 @@ export const DISCIPLINE_SOURCE_REL = 'code/packages/core/discipline'
 const DISCIPLINE_PERSONAS = ['po', 'designer', 'developer', 'qa']
 
 export function defaultDisciplineRoot() {
-  return path.join(os.homedir(), '.prdt', 'discipline')
+  // same resolution as prdt_home(): PRDT_HOME redirects the tool home (T-911)
+  const home = process.env.PRDT_HOME || path.join(os.homedir(), '.prdt')
+  return path.join(home, 'discipline')
 }
 
 function readContainedText(realRoot, rel) {
@@ -560,7 +692,7 @@ export function collectDiscipline(repoRoot, { disciplineRoot = defaultDiscipline
 /** T-809: the project slug from the meta repo's `.prdt/config.json`; null when absent. */
 export function collectProjectSlug(repoRoot) {
   try {
-    const slug = readJson(path.join(repoRoot, '.prdt/config.json')).slug
+    const slug = readJson(containedFile(repoRoot, path.join(repoRoot, '.prdt/config.json'))).slug
     return typeof slug === 'string' && slug.trim() ? slug.trim() : null
   } catch {
     return null
@@ -571,12 +703,26 @@ export function collectProjectSlug(repoRoot) {
 export function collectAll(repoRoot, { disciplineRoot } = {}) {
   const poState = readPoState(repoRoot)
   const currentVersion = poState.version
+  const lineNames = collectLineNames(repoRoot)
+  // T-961: one entry per added release line; [] = single-line, every other
+  // field exactly as before.
+  const lines = lineNames.map((name) => {
+    const { stage, version } = lineState(poState, name)
+    return {
+      name,
+      stage,
+      version,
+      prd: collectPrd(repoRoot, version, { line: name, lineNames }),
+      tickets: collectTickets(repoRoot, version, { line: name }),
+    }
+  })
   return {
     poState,
     project: collectProjectSlug(repoRoot),
     currentVersion,
-    prd: collectPrd(repoRoot, currentVersion),
-    tickets: collectTickets(repoRoot, currentVersion),
+    lines,
+    prd: collectPrd(repoRoot, currentVersion, { lineNames }),
+    tickets: collectTickets(repoRoot, currentVersion, { exclude: lineNames }),
     wiki: collectWiki(repoRoot),
     features: collectFeatures(repoRoot),
     featureTaxonomy: collectFeatureTaxonomy(repoRoot),

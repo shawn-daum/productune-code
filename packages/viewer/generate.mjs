@@ -13,6 +13,7 @@ import { buildRawThemeMaps, resolveVarChains } from './lib/parse-tokens.mjs'
 import subsetFont from 'subset-font'
 import { collectUsedChars, buildPretendardFontFaceCss } from './lib/font-subset.mjs'
 import { collectAll } from './lib/collect.mjs'
+import { ticketIdsOf } from './lib/jump-pages.mjs'
 import { renderPage, templateGuardErrors, pastTicketDataFiles, pastTicketDataContent, buildFileContent } from './lib/render.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -69,7 +70,8 @@ const SEMIBOLD_WOFF2 = path.join(PRETENDARD_STATIC_DIR, 'Pretendard-SemiBold.wof
  * `created`/`closed`, artifact `added_at`, etc.), never "generated at".
  * T-885: also returns `dataFiles` — one past-version ticket data file per
  * bucket, written NEXT TO `outputPath` (`name` is a bare file name).
- * @returns {Promise<{ html: string, dataFiles: Array<{ name: string, content: string }>, buildFile: { name: string, content: string } }>}
+ * @returns {Promise<{ html: string, dataFiles: Array<{ name: string, content: string }>, buildFile: { name: string, content: string }, ticketIds: string[] }>}
+ * T-995: `ticketIds` = every ticket the page carries; cli.mjs writes their `at/` pages.
  */
 export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH, disciplineRoot } = {}) {
   const tokensBuf = fs.readFileSync(TOKENS_PATH)
@@ -110,7 +112,11 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH,
   // T-885 (T-876 = D): past-version ticket bodies go to sibling data files;
   // the page carries only the bucket → src map, generator-written.
   const prefix = path.basename(outputPath).replace(/\.html?$/i, '')
-  const pastFiles = pastTicketDataFiles(data.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline })
+  const pastFiles = [
+    ...pastTicketDataFiles(data.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline }),
+    // T-961: an added release line's past-version bodies, file names carry the line.
+    ...(data.lines || []).flatMap((l) => pastTicketDataFiles(l.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline, line: l.name })),
+  ]
   const pastTicketSrc = {}
   for (const f of pastFiles) pastTicketSrc[f.bucket] = encodeURIComponent(f.name)
   const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc })
@@ -141,7 +147,7 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH,
   const id = hash.digest('hex').slice(0, 16)
   const buildName = `${prefix}.build.js`
   const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc, build: { id, src: encodeURIComponent(buildName) } })
-  return { html, dataFiles, buildFile: { name: buildName, content: buildFileContent(id) } }
+  return { html, dataFiles, buildFile: { name: buildName, content: buildFileContent(id) }, ticketIds: ticketIdsOf(data) }
 }
 
 async function supplementFont(chars, regularBuffer, semiboldBuffer) {

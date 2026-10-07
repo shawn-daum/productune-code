@@ -26,6 +26,7 @@ import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
+import { networkAlias } from '../helpers/network-remote'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -121,7 +122,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — meta backup lag (T-428 item 1)', () =
     runInit()
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-bare-'))
     execFileSync('git', ['init', '--bare', '-q', bare])
-    metaGit(['remote', 'add', 'backup', bare])
+    metaGit(['remote', 'add', 'backup', networkAlias(bare)])
     const out = doctor()
     expect(out).toContain("backup remote 'backup' never pushed")
     fs.rmSync(bare, { recursive: true, force: true })
@@ -131,7 +132,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — meta backup lag (T-428 item 1)', () =
     runInit()
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-bare-'))
     execFileSync('git', ['init', '--bare', '-q', bare])
-    metaGit(['remote', 'add', 'backup', bare])
+    metaGit(['remote', 'add', 'backup', networkAlias(bare)])
     metaGit(['push', 'backup', 'main'])
     const out = doctor()
     expect(out).not.toContain('meta:')
@@ -152,7 +153,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — meta backup lag (T-428 item 1)', () =
     runInit()
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-bare-'))
     execFileSync('git', ['init', '--bare', '-q', bare])
-    metaGit(['remote', 'add', 'backup', bare])
+    metaGit(['remote', 'add', 'backup', networkAlias(bare)])
     metaGit(['push', 'backup', 'main'])
     // empty commits — no file churn needed to exceed the count threshold, keeps
     // this test fast under full-suite parallel load (avoids the timeout).
@@ -169,7 +170,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — meta backup lag (T-428 item 1)', () =
     runInit()
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-bare-'))
     execFileSync('git', ['init', '--bare', '-q', bare])
-    metaGit(['remote', 'add', 'backup', bare])
+    metaGit(['remote', 'add', 'backup', networkAlias(bare)])
     const old = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString()
     metaGit(['commit', '--amend', '--no-edit', '--date', old], { GIT_COMMITTER_DATE: old })
     metaGit(['push', 'backup', 'main'])
@@ -192,7 +193,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — meta backup lag (T-428 item 1)', () =
     runInit()
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-bare-'))
     execFileSync('git', ['init', '--bare', '-q', bare])
-    metaGit(['remote', 'add', 'origin', bare])
+    metaGit(['remote', 'add', 'origin', networkAlias(bare)])
     fs.writeFileSync(path.join(projectDir, '.prdt', 'meta.git', 'prdt-backup-state.json'), JSON.stringify({
       remote: 'backup', last_attempt_at: '2026-09-26T06:14:00.000Z', last_ok: false,
       last_error: "meta.backup_remote 'backup' names no remote of the meta repo (have: origin)",

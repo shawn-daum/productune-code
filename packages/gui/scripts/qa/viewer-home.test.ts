@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import { renderPage, TEMPLATE_CSS, buildAnchors } from '@productune/viewer/lib/render.mjs'
 import { collectPrdGatePath } from '@productune/viewer/lib/collect.mjs'
-import { buildHomeGraph, layoutHomeGraph, waitLists, stageSegments, stageOfTicketType, NODE_W } from '@productune/viewer/lib/home-graph.mjs'
+import { buildHomeGraph, findGateTicket, layoutHomeGraph, waitLists, stageSegments, stageOfTicketType, NODE_W } from '@productune/viewer/lib/home-graph.mjs'
 
 type T = { id: string; type?: string; status?: string; assignee?: string; deps?: string[]; prd_item?: string; body?: string }
 const tk = (o: T) => ({
@@ -99,6 +99,26 @@ describe('home wait lists — the T-849 rule the statusline dec / req uses', () 
   })
 })
 
+describe('home wait lists — req hides blocked user tasks (T-961)', () => {
+  const row = (bucket: string, o: T) => ({ bucket, fm: tk(o).frontmatter })
+  it('req keeps an assignee-user ticket only when no dep is still open', () => {
+    const r = waitLists([
+      row('v1.13', { id: 'T-1', type: 'impl', assignee: 'developer' }),
+      row('v1.13', { id: 'T-2', type: 'impl', assignee: 'developer', status: 'done' }),
+      row('v1.13', { id: 'T-10', type: 'ops', assignee: 'user', deps: ['T-1'] }),
+      row('v1.13', { id: 'T-11', type: 'ops', assignee: 'user', deps: ['T-2'] }),
+      row('v1.13', { id: 'T-12', type: 'ops', assignee: 'user' }),
+    ])
+    expect(r.req.map((f) => f.id)).toEqual(['T-11', 'T-12'])
+  })
+  it('a dep that is open in another line blocks too (allRows spans every line); backlog never blocks', () => {
+    const mine = [row('v2.2', { id: 'T-720', type: 'ops', assignee: 'user', deps: ['T-9102'] }), row('v2.2', { id: 'T-721', type: 'ops', assignee: 'user', deps: ['T-9103'] })]
+    const other = [row('v1.2', { id: 'T-9102', type: 'impl', assignee: 'developer' }), row('backlog', { id: 'T-9103', type: 'impl', assignee: 'developer' })]
+    expect(waitLists(mine).req.map((f) => f.id)).toEqual(['T-720', 'T-721'])
+    expect(waitLists(mine, [...mine, ...other]).req.map((f) => f.id)).toEqual(['T-721'])
+  })
+})
+
 describe('home stage bar and PRD gate path', () => {
   it('reads design and decision as define, qa and ops as ship, everything else as build; retro stays empty', () => {
     expect(['design', 'decision', 'impl', 'qa', 'ops', 'x'].map(stageOfTicketType)).toEqual(['define', 'define', 'build', 'ship', 'ship', 'build'])
@@ -111,6 +131,28 @@ describe('home stage bar and PRD gate path', () => {
     const prd = '## v1.12 — x\n\n| **합격선** | **`docs/artifacts/v1.12/obs.md` 가 존재하고** |\n\n## v1.13\n| **합격선** | `docs/other.md` |'
     expect(collectPrdGatePath(prd, 'v1.12')).toBe('docs/artifacts/v1.12/obs.md')
     expect(collectPrdGatePath('## v1.12\nnothing', 'v1.12')).toBe('')
+  })
+})
+
+describe('findGateTicket — the real gate survives later tickets that merely mention the path (T-914)', () => {
+  const mention = (id: string, o: Partial<T> = {}) => tk({ id, body: `see \`${GATE}\``, ...o })
+  const pick = (ts: ReturnType<typeof tk>[]) => findGateTicket(ts, GATE)?.frontmatter.id ?? null
+  const chain = [tk({ id: 'T-1' }), tk({ id: 'T-2', deps: ['T-1'] })]
+
+  it('a later open or done ticket that only mentions the path does not displace the end of the dependency chain', () => {
+    expect(pick([...chain, gate(['T-2']), mention('T-95')])).toBe('T-90')
+    expect(pick([...chain, gate(['T-2']), mention('T-95', { status: 'done' })])).toBe('T-90')
+    expect(pick([...chain, gate(['T-2']), mention('T-95', { deps: ['T-1'] })])).toBe('T-90') // shorter chain behind it
+  })
+  it('a dropped ticket is never the gate, however late or deep', () => {
+    expect(pick([...chain, gate(['T-2']), mention('T-95', { status: 'dropped', deps: ['T-2', 'T-90'] })])).toBe('T-90')
+    expect(pick([mention('T-95', { status: 'dropped' })])).toBeNull()
+  })
+  it('null without a path or without any live ticket naming it; ties go to the higher number; cycles do not hang', () => {
+    expect(findGateTicket([gate([])], '')).toBeNull()
+    expect(pick([tk({ id: 'T-1' })])).toBeNull()
+    expect(pick([mention('T-3'), mention('T-7')])).toBe('T-7')
+    expect(pick([mention('T-1', { deps: ['T-2'] }), mention('T-2', { deps: ['T-1'] })])).not.toBeNull()
   })
 })
 
@@ -141,6 +183,11 @@ describe('home screen — T-796 acceptance in the generated page', () => {
     expect(connected.home).not.toContain('stage-matrix')
     expect(connected.home).not.toContain('>홈<')
   })
+  it('T-961: stage-bar labels read 「티켓 n」 per stage and 「티켓 완료 n/m」 for the version (v1.13 screen set, T-955)', () => {
+    expect(connected.home).toContain('<span class="sb-n">티켓 1</span>')
+    expect(connected.home).toContain('<span class="sb-n">티켓 0</span>')
+    expect(connected.home).toContain('<span class="sb-total">티켓 완료 0/3</span>')
+  })
   it('draws the stage bar, 스코프, both wait lists and the dependency block (named 「dependency」)', () => {
     expect(connected.home).toContain('class="sb"')
     expect(connected.home).toContain('스코프')
@@ -148,6 +195,15 @@ describe('home screen — T-796 acceptance in the generated page', () => {
     expect(connected.home).toContain('사용자 작업 대기')
     expect(connected.home).toContain('dependency')
     expect(connected.home).toContain('메인 패스 · 크리티컬 패스')
+  })
+  it('T-961: 내 결정 대기 · 사용자 작업 대기 sit left of 스코프, dependency stays below', () => {
+    const h = connected.home
+    const w = h.indexOf('class="sc-waits"')
+    const sc = h.indexOf('class="cp-h">스코프')
+    const dep = h.indexOf('class="cp-h">dependency')
+    expect(w).toBeGreaterThan(-1)
+    expect(w).toBeLessThan(sc)
+    expect(sc).toBeLessThan(dep)
   })
   it('before Build: the not-connected notice and 「크리티컬 패스」 only', () => {
     expect(before.home).toContain('메인 패스가 아직 이어지지 않았어요')
@@ -220,7 +276,7 @@ describe('home fix round 1 (T-881 grill) — what a DOM-free test can pin; width
     expect(TEMPLATE_CSS).toMatch(/\.sb-seg \{[^}]*flex: 0 1 auto; min-width: 56px/)
     expect(TEMPLATE_CSS).toMatch(/\.sb-sq \{[^}]*flex-wrap: wrap/)
     expect(TEMPLATE_CSS).toMatch(/\.sb-total \{[^}]*flex: 0 0 auto/)
-    expect(TEMPLATE_CSS).toMatch(/\.sc-grid \{[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(200px, 220px\)/)
+    expect(TEMPLATE_CSS).toMatch(/\.sc-grid \{[^}]*grid-template-columns: 280px minmax\(0, 1fr\)/)
     expect(TEMPLATE_CSS).toMatch(/\.sc-sq \{[^}]*flex-wrap: wrap/)
     expect(TEMPLATE_CSS).toMatch(/\.sc-waits \{ min-width: 0;/)
   })

@@ -61,19 +61,28 @@ export function stageSegments(currentTickets) {
 }
 
 /**
- * The gate (합격선) ticket: the current-version ticket whose body names the
+ * The gate (합격선) ticket: the live current-version ticket whose body names the
  * artifact path the PRD 합격선 row names. Null when the PRD names none or no
- * ticket carries it — the screen then says the main path is not connected.
+ * live ticket carries it — the screen then says the main path is not connected.
+ *
+ * Only open + done tickets count (a dropped ticket is no gate). Several tickets
+ * may merely mention the path (a follow-up, a note); the gate is the one at the
+ * end of the longest dependency chain of the version's work — the mention with
+ * the most work behind it — so a later ticket with no work behind it never
+ * displaces it. Ties fall to the higher ticket number (T-914).
  */
 export function findGateTicket(currentTickets, gatePath) {
   if (!gatePath) return null
-  const hits = currentTickets.filter((t) => typeof t.body === 'string' && t.body.includes(gatePath))
+  const live = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
+  const hits = live.filter((t) => typeof t.body === 'string' && t.body.includes(gatePath))
   if (hits.length === 0) return null
-  // Several tickets may mention the path; the gate is the one nothing else in
-  // that set depends on (the end of the chain).
-  const sinks = hits.filter((t) => !hits.some((o) => o !== t && ticketDeps(o.frontmatter).includes(t.frontmatter.id)))
-  const pool = sinks.length > 0 ? sinks : hits
-  return pool.slice().sort((a, b) => compareTicketIds(a.frontmatter.id, b.frontmatter.id)).pop()
+  const ids = live.map((t) => t.frontmatter.id)
+  const preds = new Map(live.map((t) => [t.frontmatter.id, ticketDeps(t.frontmatter)]))
+  const { memo } = longestEndingAt(ids, preds)
+  return hits
+    .slice()
+    .sort((a, b) => (memo.get(a.frontmatter.id) || 0) - (memo.get(b.frontmatter.id) || 0) || compareTicketIds(a.frontmatter.id, b.frontmatter.id))
+    .pop()
 }
 
 /** Longest chain (node count) ending at each id of `ids`, over `preds` (id → ids), cycle-safe. */
@@ -354,15 +363,21 @@ export function layoutHomeGraph(graph) {
 /**
  * The decision and user-task wait lists, by the T-849 rule the statusline
  * `dec` / `req` uses: `dec` = every open `type: decision` ticket, `req` = every
- * open `assignee: user` ticket that is not a decision — across every version
+ * open `assignee: user` ticket that is not a decision and whose `deps` name no
+ * open ticket (blocked ones are hidden) — across every version
  * directory, not only the current one (backlog is not a version directory).
- * `rows` is `[{ bucket, fm }]` for every ticket of every bucket.
+ * `rows` is `[{ bucket, fm }]` for every ticket of every bucket. `allRows`
+ * (default `rows`) is the same shape over EVERY release line: a dep that is an
+ * open ticket in another line's folder blocks too (T-961, as the statusline's
+ * `tid_status` spans all lines).
  */
-export function waitLists(rows) {
+export function waitLists(rows, allRows = rows) {
   const open = rows.filter((r) => r.bucket !== 'backlog' && r.fm.status === 'open')
   const pick = (pred) => open.filter((r) => pred(r.fm)).map((r) => r.fm).sort((a, b) => compareTicketIds(a.id, b.id))
+  // req = what the user can do NOW: a ticket whose deps still name an open ticket is blocked and hidden.
+  const openIds = new Set(allRows.filter((r) => r.bucket !== 'backlog' && r.fm.status === 'open').map((r) => r.fm.id))
   return {
     dec: pick((fm) => fm.type === 'decision'),
-    req: pick((fm) => fm.assignee === 'user' && fm.type !== 'decision'),
+    req: pick((fm) => fm.assignee === 'user' && fm.type !== 'decision' && !ticketDeps(fm).some((d) => openIds.has(d))),
   }
 }

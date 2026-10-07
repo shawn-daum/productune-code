@@ -373,3 +373,80 @@ describe('performance — a realistic worst-case transcript', () => {
     expect(elapsedMs).toBeLessThan(15000)
   }, 20000)
 })
+
+/**
+ * T-869 — top-level point blocks glued together with no blank line between them.
+ * NARO_REPLY mirrors the shape of the naro-proto PO reply in the ticket's
+ * evidence (five `- ` blocks, each with `·` lines, no blank line between).
+ */
+const NARO_REPLY = [
+  '정리입니다.',
+  '',
+  '- 에피소드 탭 캘린더',
+  '   · 날짜별로 묶어 보여 줘요',
+  '- 「기타」 음식 사진',
+  '   · 분류가 비어 있어요',
+  '- 지금 시작한 작업',
+  '   · 캘린더 연결',
+  '- 답이 필요한 것 1',
+  '   · 기본 탭을 고르세요',
+  '- 답이 필요한 것 2',
+  '   · 사진 보존 기간',
+].join('\n')
+
+const REAL_NARO_REPLY = `- 에피소드 탭 캘린더
+  - 없어진 게 아니라 아직 만들지 않았어요
+  - 지금 앱에는 캘린더가 들어갈 빈 자리만 있어요
+  - 캘린더 작업(T-327)은 VoiceOver 문구 하나가 확정되면 바로 시작해요. 아래 질문 5번이에요
+- "기타"에 섞인 음식 사진 (T-337)
+  - 꽃 때와 같은 방식으로 조사를 시작했어요
+     · iPhone 11 사진에서 "기타" 사진을 무작위로 뽑아 음식이 몇 장인지 세요
+     · 왜 놓쳤는지 확인해요
+     · 9칸 확인 같은 방법으로 되찾을 수 있는지 비교해요
+  - 표본 시트가 나오면 션님이 맞음/아님을 표시해 주시면 돼요
+  - 기기 데이터는 읽기만 하고, 지우는 작업은 금지해 뒀어요
+- 지금 시작한 작업
+  - T-128: 장면 판정 기준 정하기 (Designer). 션님의 iPhone 판정 세션 전에 필요해요
+  - T-330: 가끔 실패하는 테스트 고치기 (Developer)
+  - T-308: 서버 전송 안내 문구는 T-128이 끝나면 이어서 시작해요
+     · 두 작업이 같은 디자인 문서를 고쳐서 순서대로 해요
+- 답이 필요한 것 1 — 얼굴 2개짜리 앨범끼리 묻는 질문 57개를 어디에 둘까요? (T-318)
+  - 장면을 넘어 자동으로 합치는 건 얼굴이 많은 앨범끼리만 해요`
+
+const BLANK_FIXTURES: Array<{ name: string, reply: string, lines: number[] | null }> = [
+  { name: 'verbatim naro reply (2026-10-06) — nested `  - ` children, 3 glued blocks', reply: REAL_NARO_REPLY, lines: [5, 12, 17] },
+  { name: 'nested `  - ` children glued to the next point — flagged', reply: '- 하나\n  - 세부\n- 둘', lines: [3] },
+  { name: 'naro-proto reply — five glued blocks, four flagged', reply: NARO_REPLY, lines: [5, 7, 9, 11] },
+  {
+    name: 'compliant — blank line after each block, `·` lines kept inside',
+    reply: '- 하나\n   · 세부\n\n- 둘\n   · 세부\n\n- 셋',
+    lines: null,
+  },
+  { name: 'plain one-line bullets stacked — an ordinary list, not flagged', reply: '- 하나\n- 둘\n- 셋', lines: null },
+  {
+    name: 'table and code block between points — not flagged',
+    reply: '- 하나\n   · 세부\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```\n- 코드\n   · 안\n- 코드2\n```\n- 둘\n   · 세부',
+    lines: null,
+  },
+]
+
+describe('T-869 blank line between top-level point blocks', () => {
+  test.each(BLANK_FIXTURES)('$name', ({ reply, lines }) => {
+    const sb = makeSandbox()
+    const hook = stubResolverHook(sb.root, `bl-${Math.random().toString(36).slice(2)}`, FORM_OUTLINE_BINDING)
+    const tp = writeTranscript(sb.proj, [mainText(reply)])
+    const ctx = run(hook, sb.proj, nextSid(), tp, { PRDT_HOME: sb.prdtHome })
+    const noticeLines = ctx.split('\n').filter((l) => l.includes(NOTICE_TAG))
+    if (lines === null) {
+      expect(noticeLines).toEqual([])
+      return
+    }
+    expect(noticeLines).toHaveLength(1)
+    expect(noticeLines[0]).toContain(`${lines.length} point block(s)`)
+    expect(noticeLines[0]).toContain(`(lines ${lines.join(', ')})`)
+    for (const raw of reply.split('\n')) {
+      const trimmed = raw.trim()
+      if (trimmed.length > 3) expect(noticeLines[0]).not.toContain(trimmed)
+    }
+  })
+})

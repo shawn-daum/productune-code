@@ -118,7 +118,7 @@ describe('planted po-state values cannot inject structure into the [prdt state] 
     })
     const lines = ctx.split('\n')
     expect(lines).toHaveLength(2) // state line + one guard line
-    expect(lines[0]).toBe('[prdt state] stage=<withheld> · version=<withheld> · current_task=<withheld>(<withheld>)')
+    expect(lines[0]).toBe('[prdt state] stage=<withheld> · version=<withheld> · current_task=<withheld>(<withheld>) · dec=none · req=none')
     for (const f of ['stage', 'version', 'ticket_id', 'assignee']) expect(lines[1]).toContain(f)
   })
 
@@ -137,19 +137,19 @@ describe('planted po-state values cannot inject structure into the [prdt state] 
     const ctx = stateContext({ ...LEGIT, stage: 'BUILD; rm -rf /', version: 'v1.6.0.0.0' })
     expect(ctx).not.toContain('rm -rf')
     expect(ctx).not.toContain('v1.6.0.0.0')
-    expect(ctx.split('\n')[0]).toBe('[prdt state] stage=<withheld> · version=<withheld> · current_task=none')
+    expect(ctx.split('\n')[0]).toBe('[prdt state] stage=<withheld> · version=<withheld> · current_task=none · dec=none · req=none')
   })
 })
 
 describe('a legitimate po-state renders byte-identically to pre-T-471', () => {
   // golden bytes captured from the real hook BEFORE the coercion landed
   test('no current_task', () => {
-    expect(stateContext(LEGIT)).toBe('[prdt state] stage=build · version=v1.6 · current_task=none')
+    expect(stateContext(LEGIT)).toBe('[prdt state] stage=build · version=v1.6 · current_task=none · dec=none · req=none')
   })
 
   test('current_task summarized as ticket(assignee)', () => {
     expect(stateContext({ ...LEGIT, current_task: { ticket_id: 'T-471', slug: 'x', assignee: 'developer' } }))
-      .toBe('[prdt state] stage=build · version=v1.6 · current_task=T-471(developer)')
+      .toBe('[prdt state] stage=build · version=v1.6 · current_task=T-471(developer) · dec=none · req=none')
   })
 
   // T-642: this test used to pin the stage-guard line's exact wording
@@ -194,13 +194,13 @@ describe('a legitimate po-state renders byte-identically to pre-T-471', () => {
 
   test('absent fields keep today’s `?` placeholder (not a withheld notice)', () => {
     const ctx = stateContext({ schema_version: 1, current_task: {} })
-    expect(ctx).toBe('[prdt state] stage=? · version=? · current_task=?(?)')
+    expect(ctx).toBe('[prdt state] stage=? · version=? · current_task=?(?) · dec=none · req=none')
     expect(ctx).not.toContain('state guard')
   })
 
   test('padding around a legitimate token is tolerated, as it is for $TIER', () => {
     const ctx = stateContext({ ...LEGIT, stage: ' build\n', version: 'v1.6 ' })
-    expect(ctx).toBe('[prdt state] stage=build · version=v1.6 · current_task=none')
+    expect(ctx).toBe('[prdt state] stage=build · version=v1.6 · current_task=none · dec=none · req=none')
   })
 
   test('every stage of the enum, a bare `v<N>` and every assignee pass unchanged', () => {
@@ -212,7 +212,81 @@ describe('a legitimate po-state renders byte-identically to pre-T-471', () => {
     }
     for (const assignee of ['po', 'designer', 'developer', 'qa', 'user']) {
       const ctx = stateContext({ ...LEGIT, current_task: { ticket_id: 'T-9', slug: 'x', assignee } })
-      expect(ctx).toBe(`[prdt state] stage=build · version=v1.6 · current_task=T-9(${assignee})`)
+      expect(ctx).toBe(`[prdt state] stage=build · version=v1.6 · current_task=T-9(${assignee}) · dec=none · req=none`)
+    }
+  })
+})
+
+describe('T-849: dec / req on the [prdt state] line', () => {
+  /** A project whose docs/tickets holds the given files (`<version>/<name>`), each a minimal frontmatter. */
+  function projectWithTickets(files: Record<string, string>): string {
+    const dir = makeProject(LEGIT)
+    for (const [rel, fm] of Object.entries(files)) {
+      const f = path.join(dir, 'docs', 'tickets', rel)
+      fs.mkdirSync(path.dirname(f), { recursive: true })
+      fs.writeFileSync(f, `---\n${fm}\n---\n\nbody\n`)
+    }
+    return dir
+  }
+  const dec = (extra = 'assignee: po') => `status: open\ntype: decision\n${extra}`
+  const req = 'status: open\ntype: feature\nassignee: user'
+
+  function line(cwd: string): string {
+    const out = execFileSync('bash', [PROMPT_HOOK], {
+      input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 't849', cwd, prompt: 'hello' }),
+      encoding: 'utf8',
+    })
+    return (JSON.parse(out).hookSpecificOutput.additionalContext as string).split('\n')[0]
+  }
+  const HEAD = '[prdt state] stage=build · version=v1.6 · current_task=none'
+
+  test('empty: no open decision or user ticket -> none', () => {
+    const cwd = projectWithTickets({
+      'v1.6/T-1.md': 'status: done\ntype: decision\nassignee: user',
+      'v1.6/T-2.md': 'status: open\ntype: feature\nassignee: developer',
+    })
+    expect(line(cwd)).toBe(`${HEAD} · dec=none · req=none`)
+  })
+
+  test('3+ ids per list, numerically sorted (T-1000 after T-999), a decision is never in req', () => {
+    const cwd = projectWithTickets({
+      'v1.6/T-1000.md': dec('assignee: user'),
+      'v1.6/T-999.md': dec(),
+      'v1.6/T-30.md': dec(),
+      'v1.6/T-7.md': req,
+      'v1.6/T-100.md': req,
+      'v1.6/T-12.md': req,
+    })
+    expect(line(cwd)).toBe(`${HEAD} · dec=T-30,T-999,T-1000 · req=T-7,T-12,T-100`)
+  })
+
+  test('overflow: 5 ids then +N', () => {
+    const files: Record<string, string> = {}
+    for (let i = 1; i <= 17; i++) files[`v1.6/T-${i}.md`] = dec()
+    files['v1.6/T-50.md'] = req
+    expect(line(projectWithTickets(files))).toBe(`${HEAD} · dec=T-1,T-2,T-3,T-4,T-5+12 · req=T-50`)
+  })
+
+  test('a previous-version dir counts; backlog and off-shape names do not', () => {
+    const cwd = projectWithTickets({
+      'v1.5/T-40.md': req,
+      'v1.5/T-41.md': dec(),
+      'backlog/T-42.md': dec(),
+      'v1.6/T-P4-094.md': dec(),
+      'v1.6/T-123456.md': dec(),
+      'v1.6/notes.md': dec(),
+    })
+    expect(line(cwd)).toBe(`${HEAD} · dec=T-41 · req=T-40`)
+  })
+
+  test('walk failure -> ? for both', () => {
+    const cwd = projectWithTickets({ 'v1.6/T-1.md': dec() })
+    const vdir = path.join(cwd, 'docs', 'tickets', 'v1.6')
+    fs.chmodSync(vdir, 0o000)
+    try {
+      expect(line(cwd)).toBe(`${HEAD} · dec=? · req=?`)
+    } finally {
+      fs.chmodSync(vdir, 0o755)
     }
   })
 })

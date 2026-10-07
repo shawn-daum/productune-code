@@ -3,7 +3,8 @@
 // document kind" · "a test asserts that every ticket row resolves to a
 // detail entry" (the shell's list → detail proof, ticket store).
 import { describe, it, expect, beforeAll } from 'vitest'
-import { generate, missingMetaRootReason } from '@productune/viewer/generate.mjs'
+import { generate } from '@productune/viewer/generate.mjs'
+import { META_ROOT, META_SKIP_REASON } from './meta-root'
 import { renderPage, resolveDocLink } from '@productune/viewer/lib/render.mjs'
 import { collectPrdOpenItems } from '@productune/viewer/lib/collect.mjs'
 
@@ -16,11 +17,11 @@ import { collectPrdOpenItems } from '@productune/viewer/lib/collect.mjs'
 // (see viewer-html.test.ts's header) — `generate()` throws ENOENT there.
 // Checked once, up front, so only the one test below that needs `realHtml`
 // skips (with a visible reason); every fixture-based case here still runs.
-const metaMissingReason = missingMetaRootReason()
+const metaMissingReason = META_SKIP_REASON
 let realHtml: string
 beforeAll(async () => {
   if (metaMissingReason) return
-  ;({ html: realHtml } = await generate())
+  ;({ html: realHtml } = await generate({ repoRoot: META_ROOT! }))
 }, 30000)
 
 // T-795: real `#### <key> — <label>` headings, matching a fixture ticket's
