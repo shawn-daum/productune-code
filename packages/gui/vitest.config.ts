@@ -26,6 +26,20 @@ const { armTripwire } = cjs('./tests/real-home-tripwire.cjs') as { armTripwire: 
 // scripts/vitest-real-home-verdict.ts (globalSetup below).
 armTripwire('packages/gui vitest.config.ts module scope')
 
+// T-790: the per-test and per-hook budgets come from the SAME load-scaled module
+// packages/core uses (scripts/vitest-timeouts.cjs, T-649) — vitest's bare 5 s /
+// 10 s defaults let host load fail a passing test (2026-10-07, load 22-28:
+// scripts/qa/viewer-past-tickets.test.ts "cli writes page + data files…"
+// ran 5.9 s and died on "Test timed out in 5000ms"; alone it passes). The budget
+// stays hang detection, not permission to be slow. `pin()` fixes the scale into
+// the env so every worker fork uses the number this config resolved.
+const timeouts = cjs('../../scripts/vitest-timeouts.cjs') as {
+  pin: () => unknown
+  testTimeoutMs: () => number
+  hookTimeoutMs: () => number
+}
+timeouts.pin()
+
 export default defineConfig({
   test: {
     // PREVENTION for this runner. `--require` at worker STARTUP, not a setupFile:
@@ -33,6 +47,9 @@ export default defineConfig({
     // `node:child_process`, and a named ESM binding captured before the patch
     // stays unpatched (measured — boundary ① in tests/isolation-enforcer.ts).
     execArgv: ['--require', BOOTSTRAP],
+    // T-790: load-scaled budgets (see the note at timeouts.pin() above).
+    testTimeout: timeouts.testTimeoutMs(),
+    hookTimeout: timeouts.hookTimeoutMs(),
     // T-450 THE FLOOR: the run's verdict. A config field, so `--reporter` cannot
     // remove it — which is exactly how S4 removed the R1 floor.
     globalSetup: ['../../scripts/vitest-real-home-verdict.ts'],
