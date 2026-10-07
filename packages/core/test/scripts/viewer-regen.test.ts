@@ -297,6 +297,22 @@ function newTicket(s: ReturnType<typeof cliSandbox>, slug: string): string {
   return out.match(/\[(T-\d+)\]/)![1]
 }
 
+/** T-995: `tickets new` regenerates synchronously with the real generator when a
+ *  viewer exists, so tests of the DETACHED worker (stub generator, failure
+ *  stamp) drive it with a doc write that only schedules: a ticket file written
+ *  directly (as a shell would) + `wiki reindex` over a fresh wiki page. */
+let shellSeq = 0
+function shellTicket(s: ReturnType<typeof cliSandbox>, slug: string, extra: NodeJS.ProcessEnv = {}): string {
+  const id = `T-${900 + ++shellSeq}`
+  const dir = path.join(s.root, 'docs', 'tickets', 'v0.1')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, `${id}.md`), `---\nid: ${id}\nslug: ${slug}\ntype: impl\nstatus: open\nassignee: po\ncreated: 2026-10-07\n---\n\n## problem\n\nx\n`)
+  fs.mkdirSync(path.join(s.root, 'docs', 'wiki'), { recursive: true })
+  fs.writeFileSync(path.join(s.root, 'docs', 'wiki', `fact--${slug}.md`), `---\ntitle: ${slug}\ntype: fact\nstatus: live\n---\nbody\n`)
+  s.run(['wiki', 'reindex'], extra)
+  return id
+}
+
 describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the viewer themselves', () => {
   test('tickets new regenerates viewer.html in the background and opens nothing', async () => {
     const s = cliSandbox()
@@ -377,7 +393,7 @@ describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the vie
 
   test('20 doc-writing calls against a failing generator make at most a few attempts (failure stamp)', async () => {
     const s = cliSandbox({ fail: true })
-    for (let i = 0; i < 20; i++) newTicket(s, `burst-${i}`)
+    for (let i = 0; i < 20; i++) shellTicket(s, `burst-${i}`)
     const attempts = await settledCount(s.countFile)
     expect(attempts).toBeGreaterThan(0)
     expect(attempts).toBeLessThanOrEqual(3)
@@ -386,14 +402,14 @@ describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the vie
 
   test('a success after the backoff window clears the failure stamp', async () => {
     const s = cliSandbox({ fail: true })
-    newTicket(s, 'fails')
+    shellTicket(s, 'fails')
     expect(await waitFor(() => fs.existsSync(path.join(s.vdir, '.regen-failed')))).toBe(true)
     await settledCount(s.countFile)
     const base = countOf(s.countFile)
     delete s.env.PRDT_TEST_FAIL
-    newTicket(s, 'recovers-too-soon')
+    shellTicket(s, 'recovers-too-soon')
     expect(await settledCount(s.countFile)).toBe(base)
-    s.run(['tickets', 'new', '--type', 'impl', '--slug', 'recovers'], { PRDT_VIEWER_REGEN_BACKOFF_SECS: '0' })
+    shellTicket(s, 'recovers', { PRDT_VIEWER_REGEN_BACKOFF_SECS: '0' })
     expect(await waitFor(() => !fs.existsSync(path.join(s.vdir, '.regen-failed')))).toBe(true)
     expect(countOf(s.countFile)).toBe(base + 1)
   })
@@ -403,16 +419,16 @@ describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the vie
   // doc-writing command once the stamp is older than the window.
   test('reviewer sequence: failing generator, then a working one — the next doc write after the window shows the second ticket', async () => {
     const s = cliSandbox({ fail: true })
-    newTicket(s, 'first')
+    shellTicket(s, 'first')
     expect(await waitFor(() => fs.existsSync(path.join(s.vdir, '.regen-failed')))).toBe(true)
     await settledCount(s.countFile)
     delete s.env.PRDT_TEST_FAIL
-    const second = newTicket(s, 'second')
+    const second = shellTicket(s, 'second')
     await settledCount(s.countFile)
     expect(fs.readFileSync(path.join(s.vdir, 'viewer.html'), 'utf8')).not.toContain(second)
     const old = Date.now() / 1000 - 120
     fs.utimesSync(path.join(s.vdir, '.regen-failed'), old, old)
-    newTicket(s, 'third')
+    shellTicket(s, 'third')
     // The detached worker writes viewer.html first and clears .regen-failed only
     // after the generator exits: wait for BOTH (a load-dependent gap between the
     // two), with a generous timeout, instead of asserting the stamp right after.
