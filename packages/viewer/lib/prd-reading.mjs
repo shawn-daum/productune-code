@@ -324,14 +324,15 @@ export function renderPrdReading({ body, currentVersion, decisionTickets, idPref
 
   return (
     `<div class="pr-wrap">` +
-    `<nav class="pr-outline" aria-label="${esc(L.outlineHeading)}"><div class="pr-outline-h">${esc(L.outlineHeading)}</div>${entries.join('')}${legend}</nav>` +
     `<div class="pr-doc" id="${esc(titleId)}">` +
     `<div class="pr-decide" role="region" aria-label="${esc(L.decideHeading)}">${box}</div>` +
     `<div class="pr-tools"><button type="button" class="pr-btn" data-pr-act="all">${esc(L.expandAll)}</button><button type="button" class="pr-btn" data-pr-act="none">${esc(L.collapseAll)}</button><button type="button" class="pr-btn" data-pr-act="reset">${esc(L.resetFolds)}</button></div>` +
     (titleText ? `<h1 class="pr-title">${inline(tree.title.title)}</h1>` : '') +
     (tree.pre.trim() ? `<div class="pr-pre"><div class="v-body">${md(tree.pre)}</div></div>` : '') +
     sectionsHtml +
-    `</div></div>`
+    `</div>` +
+    `<nav class="pr-outline" aria-label="${esc(L.outlineHeading)}"><div class="pr-outline-h">${esc(L.outlineHeading)}</div>${entries.join('')}${legend}</nav>` +
+    `</div>`
   )
 }
 
@@ -340,8 +341,8 @@ export const PRD_READING_CSS = `
 /* ---------- PRD reading screen (T-884, approved mockup docs/artifacts/v1.12/prd-reading.html) ---------- */
 .store-section[data-store="prd"] .main-inner { max-width: none; }
 .store-section[data-store="prd"] .view-pane > .v-body { max-width: 1040px; margin: 0 auto; }
-.pr-wrap { display: grid; grid-template-columns: 264px minmax(0, 1fr); gap: var(--space-32); align-items: start; }
-.pr-outline { position: sticky; top: 0; max-height: calc(100vh - 44px - var(--space-32)); overflow-y: auto; padding: 0 var(--space-4) var(--space-16) 0; border-right: 1px solid var(--border-item); }
+.pr-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 264px; gap: var(--space-32); align-items: start; }
+.pr-outline { position: sticky; top: 0; max-height: calc(100vh - 44px - var(--space-32)); overflow-y: auto; padding: 0 0 var(--space-16) var(--space-4); border-left: 1px solid var(--border-item); min-width: 0; }
 .pr-outline-h { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--text-quaternary); margin: 0 0 var(--space-8); padding-left: var(--space-8); }
 .ol { display: flex; align-items: baseline; gap: var(--space-6); padding: 3px var(--space-8); border-radius: var(--radius-8); font-size: 12px; line-height: 1.4; color: var(--text-secondary); text-decoration: none; cursor: pointer; position: relative; }
 .ol:hover { background: var(--bg-state-hover); }
