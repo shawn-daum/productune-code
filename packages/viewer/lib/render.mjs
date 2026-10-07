@@ -43,6 +43,7 @@ import {
   HASH_NOTICE,
   THEME_TOGGLE,
   noGroupLabel,
+  OPTION_CARD,
 } from './labels.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
 import { HOME_STAGES, stageSegments, buildHomeGraph, layoutHomeGraph, waitLists, compareTicketIds, NODE_W, NODE_H } from './home-graph.mjs'
@@ -377,7 +378,7 @@ function isAllowedRawHref(href) {
 // page's repoRootHref here right before parsing — safe because generation
 // is single-threaded and synchronous (no md() call is ever in flight while
 // another starts).
-let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF, disc: null }
+let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF, disc: null, decision: null }
 // T-886: the discipline documents' name index (discipline-links.mjs), built once per
 // page from the collected documents; a body links names only when its md() call asks
 // (ticket · wiki · PRD bodies — the three the acceptance names).
@@ -457,9 +458,83 @@ hardenedRenderer.image = function ({ href, title, text, tokens }) {
  *   back to the repo root (see `renderPage`).
  * @param {{discipline?: boolean}} [opts] `discipline`: link the names of discipline documents (T-886).
  */
-function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF, { discipline = false } = {}) {
-  linkContext = { sourceDirRel, repoRootHref, disc: discipline ? pageDisciplineIndex : null }
-  return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
+function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF, { discipline = false, decision = false } = {}) {
+  linkContext = { sourceDirRel, repoRootHref, disc: discipline ? pageDisciplineIndex : null, decision: decision ? { chosen: decisionChosen(text ?? '') } : null }
+  try {
+    return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
+  } finally {
+    linkContext.decision = null
+  }
+}
+
+// T-998 (T-999 = C): a decision ticket's `options` table renders as one card
+// per option. Only a ticket body asks for it (`md(..., { decision: true })`);
+// the ticket md keeps the contract's table. Columns are mapped by header name.
+/**
+ * The letter the user's answer picked, read from the ticket's `## outcome`
+ * section: the PO's "= B" reading first, then a lone letter inside the
+ * verbatim quote, then "A 안". null when there is none (an open decision).
+ * @param {string} body
+ * @returns {string|null}
+ */
+function decisionChosen(body) {
+  const sec = /^## outcome[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(body)
+  if (!sec) return null
+  const t = sec[1]
+  const m = OPTION_CARD.pickPatterns.reduce((hit, re) => hit || re.exec(t), null)
+  return m ? m[1] : null
+}
+
+const inlineMd = (text) => marked.parseInline(text, { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
+
+function renderOptionCards(token, parser) {
+  const cols = token.header.map((h) => OPTION_CARD.headers[h.text.replace(/\s*\(.*$/, '').trim().toLowerCase()] || null)
+  if (!cols.includes('name')) return null
+  const cards = token.rows.map((row) => {
+    const cell = (kind) => { const i = cols.indexOf(kind); return i < 0 ? null : row[i] }
+    const nameCell = cell('name')
+    const nameText = nameCell ? nameCell.text.trim() : ''
+    const lm = /^([A-Z])\s+([\s\S]+)$/.exec(nameText)
+    const letter = lm ? lm[1] : ''
+    const title = lm ? inlineMd(lm[2]) : inlineMd(nameText)
+    const recCell = cell('rec')
+    const recText = recCell ? recCell.text.trim() : ''
+    const isRec = recText !== '' && !OPTION_CARD.noRec.test(recText)
+    const why = isRec ? recText.replace(OPTION_CARD.recPrefix, '') : ''
+    const chosen = linkContext.decision?.chosen
+    const isChosen = !!chosen && letter === chosen
+    const isDim = !!chosen && !isChosen
+    const marks = (isRec ? `<span class="opt-mk opt-mk-rec">${OPTION_CARD.recommended}</span>` : '') + (isChosen ? `<span class="opt-mk opt-mk-chosen">${OPTION_CARD.chosen}</span>` : '')
+    let html = `<article class="opt-card${isChosen ? ' is-chosen' : ''}${isDim ? ' is-dim' : ''}"><header class="opt-h">${letter ? `<span class="opt-letter">${escapeHtml(letter)}</span>` : ''}<h4>${title}</h4><span class="opt-marks">${marks}</span></header>`
+    const ex = cell('example')
+    if (ex && ex.text.trim()) {
+      const only = ex.tokens.length === 1 && ex.tokens[0].type === 'codespan'
+      const body = only
+        ? `<pre class="opt-sk">${escapeHtml(ex.tokens[0].raw.replace(/^`+|`+$/g, '').trim())}</pre>`
+        : `<div class="opt-ex-text">${parser.parseInline(ex.tokens)}</div>`
+      html += `<div class="opt-ex"><div class="opt-lab">${OPTION_CARD.example}</div>${body}</div>`
+    }
+    let facts = ''
+    for (const kind of ['result', 'pros', 'cons', 'tradeoff']) {
+      const c = cell(kind)
+      if (!c || !c.text.trim()) continue
+      const [label, cls] = OPTION_CARD.facts[kind]
+      facts += `<dt${cls ? ` class="${cls}"` : ''}>${label}</dt><dd>${parser.parseInline(c.tokens)}</dd>`
+    }
+    if (facts) html += `<dl class="opt-facts">${facts}</dl>`
+    if (why) html += `<div class="opt-why"><b>${OPTION_CARD.why}</b>${inlineMd(why)}</div>`
+    return html + '</article>'
+  })
+  return `<div class="opt-cards">${cards.join('')}</div>\n`
+}
+
+const defaultTable = Renderer.prototype.table
+hardenedRenderer.table = function (token) {
+  if (linkContext.decision) {
+    const cards = renderOptionCards(token, this.parser)
+    if (cards !== null) return cards
+  }
+  return defaultTable.call(this, token)
 }
 
 /**
@@ -767,7 +842,7 @@ function ticketDetailEntries(tickets, repoRootHref, lineTickets = []) {
       assignee: fm.assignee || '',
       created: fm.created || '',
       path: t.rel,
-      body: md(t.body, path.dirname(t.rel), repoRootHref, { discipline: true }),
+      body: md(t.body, path.dirname(t.rel), repoRootHref, { discipline: true, decision: true }),
     }
   }
   for (const bucket of tickets.omitted) {
@@ -819,7 +894,7 @@ export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_
       const raw = Object.prototype.hasOwnProperty.call(bucket.bodies, t.rel) ? bucket.bodies[t.rel] : undefined
       if (typeof raw !== 'string') continue
       const id = t.frontmatter.id || t.rel
-      const body = md(raw, path.dirname(t.rel), repoRootHref, { discipline: true })
+      const body = md(raw, path.dirname(t.rel), repoRootHref, { discipline: true, decision: true })
       rows[id] = { path: t.rel, body }
       bodies.push(body)
     }
@@ -2440,6 +2515,32 @@ table.v-omitted th, table.v-artifacts th { color: var(--text-secondary); border-
 .detail-doc pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .v-body table { border-collapse: collapse; }
 .v-body table th, .v-body table td { border: 1px solid var(--border-item); padding: var(--space-4) var(--space-8); }
+/* ---------- T-998 decision options as cards (T-999 = C; no accent stripe — the 권고 chip alone marks the recommendation) ---------- */
+.opt-cards { display: flex; flex-direction: column; gap: var(--space-12); margin: var(--space-8) 0; }
+.opt-card { background: var(--bg-surface-base); border: 1px solid var(--border-inline); border-radius: var(--radius-8); padding: var(--space-12) var(--space-16); }
+.opt-card.is-chosen { border: 2px solid var(--status-done); background: color-mix(in srgb, var(--status-done) 6%, var(--bg-surface-base)); }
+.opt-card.is-dim { background: transparent; border-style: dashed; }
+.opt-card.is-dim .opt-h h4 { color: var(--text-tertiary); }
+.opt-card.is-dim .opt-letter { background: transparent; color: var(--text-tertiary); border: 1px solid var(--border-inline); }
+.opt-h { display: flex; align-items: center; gap: var(--space-10); margin-bottom: var(--space-10); }
+.opt-h h4 { margin: 0; font-size: 14px; font-weight: 700; flex: 1; min-width: 0; }
+.opt-letter { flex: 0 0 auto; width: 24px; height: 24px; border-radius: var(--radius-4); background: var(--text-primary); color: var(--bg-surface-base); font-size: 13px; font-weight: 700; line-height: 24px; text-align: center; }
+.opt-marks { display: flex; gap: var(--space-6); }
+.opt-mk { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: var(--radius-100); white-space: nowrap; }
+.opt-mk-rec { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); border: 1px solid var(--accent); }
+.opt-mk-chosen { background: color-mix(in srgb, var(--status-done) 14%, transparent); color: var(--status-done); border: 1px solid var(--status-done); }
+.opt-lab { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; color: var(--text-tertiary); margin-bottom: var(--space-4); }
+pre.opt-sk { margin: 0; padding: var(--space-10) var(--space-12); background: var(--bg-base); border-radius: var(--radius-4); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-primary); }
+.opt-ex-text { font-size: 13px; }
+.opt-facts { display: grid; grid-template-columns: 40px 1fr; gap: var(--space-6) var(--space-12); margin: var(--space-12) 0 0; font-size: 13px; }
+.opt-facts dt { font-weight: 700; color: var(--text-tertiary); font-size: 12px; padding-top: 1px; }
+.opt-facts dt.p { color: var(--status-done); }
+.opt-facts dt.c { color: var(--status-review); }
+.opt-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.opt-why { margin-top: var(--space-10); padding-top: var(--space-8); border-top: 1px dashed var(--border-inline); font-size: 12.5px; color: var(--text-secondary); }
+.opt-why b { color: var(--accent); margin-right: var(--space-6); }
+:root:not([data-theme="dark"]) .opt-mk-chosen, :root:not([data-theme="dark"]) .opt-facts dt.p { color: color-mix(in srgb, var(--status-done) 80%, var(--text-primary)); }
+:root:not([data-theme="dark"]) .opt-facts dt.c { color: color-mix(in srgb, var(--status-review) 80%, var(--text-primary)); }
 details.v-fold summary { cursor: pointer; color: var(--icon-tertiary); padding: var(--space-8) 0; }
 details.v-fold[open] summary { color: var(--text-primary); }
 
