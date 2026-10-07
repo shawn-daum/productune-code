@@ -718,21 +718,62 @@ function ticketRolePill(assignee) {
   return `<span class="pill ${pillClass}">${escapeHtml(assignee || '')}</span>`
 }
 
+// ---------- sortable list tables (T-1006) ----------
+// Tickets and artifacts tables sort by column header click (static HTML, no
+// server): rows are emitted already sorted by 추가일 descending (ties: ticket
+// number descending), every <td> carries its raw sort value in `data-sort`
+// and every <tr> its tie-break in `data-tie`; INTERACTION_SCRIPT's
+// `sortTable` reorders the rows in place. `kind` 'num' compares numbers,
+// 'text' compares text with numeric-aware collation (T-999 < T-1000).
+/** The number inside a ticket id ("T-1006" → 1006); 0 when there is none. */
+function ticketNum(id) {
+  const m = /(\d+)/.exec(String(id || ''))
+  return m ? Number(m[1]) : 0
+}
+
+/** Rows newest first by `created` text (ISO dates sort as text), then higher ticket number first, then the incoming order. */
+function sortNewestFirst(items, createdOf, ticketOf) {
+  return items
+    .map((item, i) => ({ item, i }))
+    .sort((a, b) => {
+      const ca = String(createdOf(a.item) || '')
+      const cb = String(createdOf(b.item) || '')
+      if (ca !== cb) return ca < cb ? 1 : -1
+      const ta = ticketNum(ticketOf(a.item))
+      const tb = ticketNum(ticketOf(b.item))
+      return tb - ta || a.i - b.i
+    })
+    .map((x) => x.item)
+}
+
+/** `<thead>` whose every header is a sort button; column `activeIdx` starts descending. `kinds[i]` is 'num' | 'text'. */
+function sortableThead(headers, kinds, activeIdx) {
+  const ths = headers.map((h, i) =>
+    `<th aria-sort="${i === activeIdx ? 'descending' : 'none'}"><button type="button" class="sort-btn" data-sort-col="${i}" data-sort-kind="${kinds[i]}">${escapeHtml(h)}<span class="sort-ind" aria-hidden="true"></span></button></th>`)
+  return `<thead><tr>${ths.join('')}</tr></thead>`
+}
+
+/** A `<td>` carrying its raw sort value. */
+function sortTd(value, inner, cls = '') {
+  return `<td${cls ? ` class="${cls}"` : ''} data-sort="${escapeHtml(String(value ?? ''))}">${inner}</td>`
+}
+
 /** One <table> of ticket rows for one group (current version, backlog, or a frontmatter-only bucket — T-709 결정 1: same shape, `t.frontmatter` is all this needs, whether or not the row's own entry carries a `body`) — every row is a detail-row keyed for the embedded JSON blob below, so "every row resolves to a detail entry" is true by construction (same loop builds both). */
 function ticketRowsTable(tickets) {
   if (tickets.length === 0) {
     return `<p class="v-note">${TICKET.empty}</p>`
   }
-  let html = `<div class="table-wrap"><table><thead><tr>${TICKET.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
-  for (const t of tickets) {
+  let html = `<div class="table-wrap"><table class="sortable">${sortableThead(TICKET.tableHeaders, ['text', 'text', 'text', 'text', 'text', 'text'], 5)}<tbody>\n`
+  for (const t of sortNewestFirst(tickets, (x) => x.frontmatter.created, (x) => x.frontmatter.id || x.rel)) {
     const fm = t.frontmatter
     const id = fm.id || t.rel
-    html += `<tr class="detail-row" data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}">`
-    html += `<td class="id-col">${escapeHtml(id)}</td>`
-    html += `<td>${escapeHtml(fm.slug || '')}</td>`
-    html += `<td><span class="pill pill-type">${escapeHtml(fm.type || '')}</span></td>`
-    html += `<td><span class="pill pill-status-${statusPillClass(fm.status)}">${escapeHtml(ticketStatusText(fm.status))}</span></td>`
-    html += `<td>${ticketRolePill(fm.assignee)}</td>`
+    html += `<tr class="detail-row" data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}" data-tie="${ticketNum(id)}">`
+    html += sortTd(id, escapeHtml(id), 'id-col')
+    html += sortTd(fm.slug || '', escapeHtml(fm.slug || ''))
+    html += sortTd(fm.type || '', `<span class="pill pill-type">${escapeHtml(fm.type || '')}</span>`)
+    html += sortTd(ticketStatusText(fm.status), `<span class="pill pill-status-${statusPillClass(fm.status)}">${escapeHtml(ticketStatusText(fm.status))}</span>`)
+    html += sortTd(fm.assignee || '', ticketRolePill(fm.assignee))
+    html += sortTd(fm.created || '', escapeHtml(fm.created || ''), 'num-col')
     html += '</tr>\n'
   }
   html += '</tbody></table></div>\n'
@@ -1692,18 +1733,18 @@ function artifactStatusText(status) {
 
 function artifactRowsTable(entries) {
   if (entries.length === 0) return `<p class="v-note">${ARTIFACT.empty}</p>`
-  let html = `<div class="table-wrap"><table><thead><tr>${ARTIFACT.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
-  for (const e of entries) {
+  let html = `<div class="table-wrap"><table class="sortable">${sortableThead(ARTIFACT.tableHeaders, ['text', 'text', 'text', 'text', 'text', 'num', 'text'], 6)}<tbody>\n`
+  for (const e of sortNewestFirst(entries, (x) => x.fields.added_at, (x) => x.fields.ticket)) {
     const f = e.fields
     const id = `${f.bucket}/${f.path}`
-    html += `<tr class="detail-row" data-detail-kind="artifact" data-detail-id="${escapeHtml(id)}">`
-    html += `<td class="id-col">${escapeHtml(f.path)}</td>`
-    html += `<td>${escapeHtml(f.kind || '')}</td>`
-    html += `<td><span class="pill pill-status-${artifactStatusPillClass(f.status)}">${escapeHtml(artifactStatusText(f.status))}</span></td>`
-    html += `<td>${escapeHtml(f.ticket || '')}</td>`
-    html += `<td>${escapeHtml(f.lang || '')}</td>`
-    html += `<td class="num-col">${e.bytes === undefined ? '' : escapeHtml(fmtBytes(e.bytes))}</td>`
-    html += `<td class="num-col">${escapeHtml(f.added_at || '')}</td>`
+    html += `<tr class="detail-row" data-detail-kind="artifact" data-detail-id="${escapeHtml(id)}" data-tie="${ticketNum(f.ticket)}">`
+    html += sortTd(f.path, escapeHtml(f.path), 'id-col')
+    html += sortTd(f.kind || '', escapeHtml(f.kind || ''))
+    html += sortTd(artifactStatusText(f.status), `<span class="pill pill-status-${artifactStatusPillClass(f.status)}">${escapeHtml(artifactStatusText(f.status))}</span>`)
+    html += sortTd(f.ticket || '', escapeHtml(f.ticket || ''))
+    html += sortTd(f.lang || '', escapeHtml(f.lang || ''))
+    html += sortTd(e.bytes === undefined ? '' : e.bytes, e.bytes === undefined ? '' : escapeHtml(fmtBytes(e.bytes)), 'num-col')
+    html += sortTd(f.added_at || '', escapeHtml(f.added_at || ''), 'num-col')
     html += '</tr>\n'
   }
   html += '</tbody></table></div>\n'
@@ -2481,6 +2522,13 @@ th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spac
   background: var(--bg-surface-on); }
 td { padding: var(--space-6) var(--space-10); border-bottom: 1px solid var(--border-item); vertical-align: top; color: var(--text-primary); }
 tbody tr:hover td { background: var(--bg-state-hover); }
+.sort-btn { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font: inherit; text-transform: inherit; letter-spacing: inherit; color: inherit; }
+.sort-btn:hover { color: var(--text-secondary); }
+.sort-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sort-ind::after { content: '\\21C5'; opacity: 0.5; }
+th[aria-sort="ascending"] .sort-ind::after { content: '\\25B2'; opacity: 1; }
+th[aria-sort="descending"] .sort-ind::after { content: '\\25BC'; opacity: 1; }
+th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--text-secondary); }
 .id-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
 .table-wrap { border: 1px solid var(--border-item); border-radius: var(--radius-8); overflow: hidden; overflow-x: auto; }
 
@@ -3163,6 +3211,9 @@ ${PRD_READING_SCRIPT}
       closeDetailPanel(stalePanel.closest('.store-section'));
     }
 
+    var sortBtn = ev.target.closest('.sort-btn[data-sort-col]');
+    if (sortBtn) { ev.preventDefault(); sortTable(sortBtn); return; }
+
     // T-886: a discipline-document link opens the 「규율」 panel; its 「돌아가기」 returns.
     var discLink = ev.target.closest('a.dl[data-doc]');
     if (discLink) { ev.preventDefault(); discGo(discLink); clearHashMarks(); return; }
@@ -3221,6 +3272,35 @@ ${PRD_READING_SCRIPT}
 
     var closeBtn = ev.target.closest('.detail-panel-close');
     if (closeBtn) { ev.preventDefault(); closeDetailPanel(closeBtn.closest('.store-section')); }
+  }
+
+  // T-1006: click a sortable header → sort that table by the column; again → reverse.
+  // Rows carry data-tie (ticket number, always descending as the tie-break) and each cell data-sort.
+  function sortTable(btn) {
+    var table = btn.closest('table');
+    var th = btn.closest('th');
+    var body = table && table.tBodies[0];
+    if (!body) return;
+    var col = Number(btn.getAttribute('data-sort-col'));
+    var num = btn.getAttribute('data-sort-kind') === 'num';
+    var dir = th.getAttribute('aria-sort') === 'ascending' ? -1 : 1;
+    table.querySelectorAll('th[aria-sort]').forEach(function (h) { h.setAttribute('aria-sort', 'none'); });
+    th.setAttribute('aria-sort', dir === 1 ? 'ascending' : 'descending');
+    var collator = new Intl.Collator(undefined, { numeric: true });
+    function val(tr) { var c = tr.cells[col]; return c ? (c.getAttribute('data-sort') != null ? c.getAttribute('data-sort') : c.textContent) : ''; }
+    var rows = Array.prototype.slice.call(body.rows).map(function (tr, i) { return { tr: tr, i: i, v: val(tr), t: Number(tr.getAttribute('data-tie')) || 0 }; });
+    rows.sort(function (a, b) {
+      var c;
+      if (num) {
+        var x = a.v === '' ? -Infinity : Number(a.v);
+        var y = b.v === '' ? -Infinity : Number(b.v);
+        c = x === y ? 0 : x < y ? -1 : 1;
+      } else {
+        c = collator.compare(a.v, b.v);
+      }
+      return c * dir || b.t - a.t || a.i - b.i;
+    });
+    rows.forEach(function (r) { body.appendChild(r.tr); });
   }
 
   document.addEventListener('click', function (ev) { onClick(ev); syncUrl(false); });
