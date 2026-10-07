@@ -40,6 +40,7 @@ import {
   ARTIFACT,
   PRD,
   FILE_HREF_NOTE,
+  FRAME,
   HASH_NOTICE,
   THEME_TOGGLE,
   noGroupLabel,
@@ -1799,6 +1800,8 @@ function artifactDetailEntries(artifacts, artifactsBaseHref, repoRootHref) {
       path: e.diskRel,
       body: e.inlined ? md(e.body, path.dirname(e.diskRel), repoRootHref) : undefined,
       fileHref: e.inlined ? undefined : containedFileHref(`${artifactsBaseHref}/${encodeFsPathHref(`${f.bucket}/${f.path}`)}`, repoRootHref),
+      // T-1010: an .html artifact whose file existed at generation time is shown in the panel (iframe).
+      frame: !e.inlined && e.bytes !== undefined && /\.html?$/i.test(f.path) ? true : undefined,
     }
   }
   return entries
@@ -2378,6 +2381,8 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .detail-doc { font-size: 13.5px; }
 .detail-doc :first-child { margin-top: 0; }
 .detail-doc a, .v-body a { color: var(--accent); }
+.detail-frame-bar { margin: 0 0 var(--space-8); }
+.detail-frame-view { display: block; width: 100%; height: 70vh; border: 1px solid var(--border-item); color-scheme: light; background: Canvas; }
 
 /* ---------- pills (ticket type/status/role + T-666 heading chips) ---------- */
 .pill { display: inline-block; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
@@ -3012,6 +3017,10 @@ ${PRD_READING_SCRIPT}
       });
     } else if (fields.body) {
       docHtml = '<div class="detail-doc body-prose">' + fields.body + '</div>';
+    } else if (fields.fileHref && fields.frame) {
+      docHtml = '<div class="detail-doc detail-frame"><p class="detail-frame-bar"><a href="' + escAttr(fields.fileHref) +
+        '" target="_blank" rel="noopener">' + ${JSON.stringify(FRAME.openInNewTab)} + '</a></p><iframe class="detail-frame-view" sandbox="allow-scripts" title="' +
+        ${JSON.stringify(FRAME.frameTitle)} + '" src="' + escAttr(fields.fileHref) + '"></iframe></div>';
     } else if (fields.fileHref) {
       docHtml = '<div class="detail-doc detail-nobody"><p>' + ${JSON.stringify(FILE_HREF_NOTE)} + '</p><p><a href="' +
         escAttr(fields.fileHref) + '" target="_blank" rel="noopener">' + escAttr(fields.path || fields.fileHref) + '</a></p></div>';
@@ -3456,6 +3465,8 @@ const CSP_CONTENT = [
   `script-src 'sha256-${THEME_HEAD_SCRIPT_SHA256_BASE64}' 'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`,
   "style-src 'unsafe-inline'",
   "img-src 'self' data:",
+  // T-1010: only the side panel's sandboxed artifact iframe (a contained file:// href) loads a frame.
+  "frame-src file:",
   "font-src data:",
   "base-uri 'none'",
   "form-action 'none'",
