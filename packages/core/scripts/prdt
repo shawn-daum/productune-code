@@ -3073,8 +3073,8 @@ def cmd_inbox(args):
 # a user's complaint about how a persona conducts itself, as captured in a
 # ticket body of the project that records it. The count per persona/pattern
 # crosses every project on this machine — persona habit is canonical, so a
-# first occurrence elsewhere is the same habit's first occurrence. The second
-# occurrence prints the trigger to the PO recording it; proposing the rule is
+# first occurrence elsewhere is the same habit's first occurrence. Every
+# occurrence from the second on prints the trigger to the PO recording it; proposing the rule is
 # that PO's (inject-edit → the user approves). This command writes the ledger
 # and nothing else.
 # The ledger is a reserved NON-page name in the machine store: every wiki
@@ -3095,6 +3095,14 @@ FEEDBACK_LINE_RE = re.compile(
     r"^- (f-[0-9a-f]{8}) · persona: (po|designer|developer|qa) · pattern: (\S+) · project: (\S+) · "
     r"ticket: (\S+) · recorded: (\d{4}-\d{2}-\d{2}) · (.*)$")
 FEEDBACK_QUOTE_MAX = 300
+# A quote proves the capture only if it could not sit in the ticket body by
+# chance: at least 2 words and 6 non-space characters. One word ("말", "말투")
+# or a 1–5 character fragment matches almost any Korean ticket body; the
+# shortest real complaint on record, "막 감성 챙기려는 말투 같다" (T-086), is
+# 5 words / 11 characters, and a minimal one ("말투가 이상해") still passes.
+FEEDBACK_QUOTE_MIN_WORDS = 2
+FEEDBACK_QUOTE_MIN_CHARS = 6
+FEEDBACK_TRIGGER_AT = 2
 FEEDBACK_HEADER_PROSE = ("Written only by `prdt feedback record`; one row per occurrence of a user's complaint "
                          "about a persona's behaviour, quoted from the recording project's ticket.")
 FEEDBACK_HEADER = ("# prdt feedback ledger — persona-behaviour complaints, counted across projects on this machine\n\n"
@@ -3237,9 +3245,15 @@ def cmd_feedback(args):
     quote = _feedback_norm(args.quote)
     if not quote or len(quote) > FEEDBACK_QUOTE_MAX:
         sys.exit(f"refused: the quote is empty or over {FEEDBACK_QUOTE_MAX} chars — quote the complaint itself")
-    if quote not in _feedback_norm(tpath.read_text(encoding="utf-8", errors="replace")):
-        sys.exit(f"refused: that quote is not in {tpath.relative_to(root)} verbatim — record the user's own words "
-                 "as the ticket body holds them (write them into the ticket first if they are not there)")
+    if (len(quote.split()) < FEEDBACK_QUOTE_MIN_WORDS
+            or len(quote.replace(" ", "")) < FEEDBACK_QUOTE_MIN_CHARS):
+        sys.exit(f"refused: the quote is too short to prove the capture — quote the complaint as a phrase "
+                 f"(at least {FEEDBACK_QUOTE_MIN_WORDS} words and {FEEDBACK_QUOTE_MIN_CHARS} non-space characters)")
+    _fm, tbody = parse_frontmatter(tpath)
+    if quote not in _feedback_norm(tbody):
+        sys.exit(f"refused: that quote is not in the body of {tpath.relative_to(root)} verbatim — record the user's "
+                 "own words as the ticket body holds them (write them into the ticket first if they are not there); "
+                 "frontmatter does not count")
     rid = "f-" + hashlib.sha256(f"{persona}/{pattern}/{me}/{tid}".encode("utf-8")).hexdigest()[:8]
     with _feedback_lock():
         rows = _feedback_load()
@@ -3264,12 +3278,12 @@ def cmd_feedback(args):
         p.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(p, FEEDBACK_HEADER + "".join(_feedback_render(r) + "\n" for r in rows))
     rs = pats.get((persona, pattern), []) + [row]
-    if len(rs) < 2:
-        print(f"recorded {rid}: {persona}/{pattern} · {me} · {tid} — 1 occurrence; below the second-occurrence "
-              "trigger, no proposal (one occurrence is an inbox line, not a rule)")
+    if len(rs) < FEEDBACK_TRIGGER_AT:
+        print(f"recorded {rid}: {persona}/{pattern} · {me} · {tid} — 1 occurrence; the trigger fires "
+              f"at {FEEDBACK_TRIGGER_AT}, no proposal (one occurrence is an inbox line, not a rule)")
         return
     print(f"recorded {rid}: {persona}/{pattern} · {me} · {tid}")
-    print(f"second occurrence — {persona}/{pattern}: {_feedback_tally(rs)}")
+    print(f"recurrence trigger — {persona}/{pattern}: {_feedback_tally(rs)}")
     for r in rs:
         print(_feedback_row_line(r))
     print("Proposing a rule for this is the PO's next step: quadrant + persona + a line drafted by designer "
