@@ -107,7 +107,7 @@ export const DETAIL_FIELD_LABELS = {
 // ---------- ticket store ----------
 export const TICKET = {
   // T-705 §B: 2번째 헤더 'slug'(영문 그대로) → '제목(slug)'.
-  tableHeaders: ['ID', '제목(slug)', '유형', '상태', '담당'],
+  tableHeaders: ['ID', '제목(slug)', '유형', '상태', '담당', '추가일'],
   sidebarLabel: '티켓',
   backlogLabel: 'backlog', // §A keep — 목업도 영문 소문자 그대로
   // T-709 결정 1: the current-version sidebar row's label tag —
