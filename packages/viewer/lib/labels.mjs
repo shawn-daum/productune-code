@@ -280,6 +280,13 @@ export const PRD_READING = {
 // ---------- interaction script strings (embedded into the browser-side JS
 // via JSON.stringify at generation time — still this ONE label layer, never
 // a second copy hand-typed inside the template string) ----------
+// T-1010: an HTML artifact shows in the side panel itself (iframe) with a
+// control that opens the same file in a new browser tab.
+export const FRAME = {
+  openInNewTab: '새 탭에서 열기',
+  frameTitle: '산출물 미리보기',
+}
+
 export const FILE_HREF_NOTE =
   // T-705 §C 제안 교체 문구 그대로(해요체 등록 통일).
   '이 문서는 페이지 안에 들어있지 않아요 — 아래 파일을 열어서 봐요.'
