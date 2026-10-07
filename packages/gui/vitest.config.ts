@@ -52,7 +52,7 @@ export default defineConfig({
     hookTimeout: timeouts.hookTimeoutMs(),
     // T-450 THE FLOOR: the run's verdict. A config field, so `--reporter` cannot
     // remove it — which is exactly how S4 removed the R1 floor.
-    globalSetup: ['../../scripts/vitest-real-home-verdict.ts'],
+    globalSetup: ['../../scripts/vitest-real-home-verdict.ts', '../../scripts/vitest-claude-trust-verdict.ts'],
     // Unit tests only — Playwright smoke lives in tests/ and is excluded here.
     // electron/, src/ and shared/ are the locations with .test.ts files;
     // scripts/qa/ holds standalone QA harness utilities (e.g. frontmostGate)
