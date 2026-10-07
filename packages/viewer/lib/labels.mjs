@@ -317,7 +317,9 @@ export const OPTION_CARD = {
   recPrefix: /^\*{0,2}권고\*{0,2}\s*[—–-]?\s*/,
   // which letter the answer picked, in the `## outcome` text: the PO's "= B" reading,
   // then a lone letter inside the verbatim quote, then "A 안"
+  // the PO's normalized line comes first: `- 선택: B` (a letter, or a number for numbered options)
   pickPatterns: [
+    /^[ \t]*[-*][ \t]*선택:[ \t]*([A-Za-z]|\d+)[ \t]*$/m,
     /=\s*([A-Z])(?![A-Za-z0-9가-힣])/,
     /["“*「]\s*(?:\d+\s*)?([A-Z])\s*(?:안|["”*」.]|$)/m,
     /(?:^|[\s—-])([A-Z])\s*안/m,

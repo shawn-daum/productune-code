@@ -62,6 +62,15 @@ describe('T-998 — decision options as cards', () => {
     expect(out.split('<article')[1]).toContain('<dt>절충')
   })
 
+  it('the normalized `- 선택:` line wins; lowercase and numbered options work', () => {
+    const o = (c: string) => renderTicketBody(TABLE + '\n## outcome\n\n- 선택: ' + c + '\n- 원문 "A"\n')
+    expect(o('b').split('<article')[2]).toContain('is-chosen')
+    const n = '| 선택지 | 결과 |\n|---|---|\n| 1 가 | r1 |\n| 2 나 | r2 |\n'
+    const out = renderTicketBody('## options\n\n' + n + '\n## outcome\n\n- 선택: 2\n')
+    expect(out.split('<article')[2]).toContain('is-chosen')
+    expect(out.split('<article')[1]).toContain('is-dim')
+  })
+
   it('a non-decision table stays a table', () => {
     const out = renderTicketBody('| 이름 | 값 |\n|---|---|\n| a | 1 |\n')
     expect(out).toContain('<table')
