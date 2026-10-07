@@ -199,6 +199,9 @@ describe('generated page', () => {
   it('renders the reading screen in the PRD pane and keeps the script hash-pinned; closed versions stay plain', () => {
     const html = renderPage({ data: data as any, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: 'x' }) as string
     expect(html).toContain('class="pr-wrap"')
+    // T-1007: outline sits to the right of the body (DOM after the body, grid column 2)
+    expect(html.indexOf('class="pr-doc"')).toBeLessThan(html.indexOf('<nav class="pr-outline"'))
+    expect(html).toContain('grid-template-columns: minmax(0, 1fr) 264px')
     expect(html).toContain('<li id="prd-oq-3">') // numbered like the markdown list (starts at 3)
     expect(html).toContain('<ol start="3">')
     expect(html).toContain('data-detail-kind="ticket" data-detail-id="T-9"')
