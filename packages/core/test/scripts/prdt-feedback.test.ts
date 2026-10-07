@@ -5,7 +5,7 @@
  * A user's complaint about a persona's behaviour, captured in a ticket body in
  * any project on this machine, becomes one row of ONE machine ledger
  * (`$PRDT_HOME/wiki/feedback.md`). The count per persona/pattern crosses
- * projects; the second occurrence prints the trigger to the PO recording it.
+ * projects; every occurrence from the second on prints the trigger to the PO recording it.
  * The ledger is a reserved non-page file — no wiki surface (doctor, lint,
  * search, refs, index, promote) sees it, so no project ever judges another
  * project's rows (the T-526 category error). The command writes nothing but
@@ -100,7 +100,7 @@ describe('T-086 → T-509 replay — the ticket body reaches the count, across p
     expect(first.code).toBe(0)
     expect(first.out).toContain('1 occurrence')
     expect(first.out).toContain('no proposal')
-    expect(first.out).not.toContain('second occurrence')
+    expect(first.out).not.toContain('recurrence trigger')
 
     // PO of productune first reaches for its own wording — the ledger shows it
     // the existing pattern (with T-086's words) instead of starting a new count
@@ -112,7 +112,7 @@ describe('T-086 → T-509 replay — the ticket body reaches the count, across p
 
     const second = fb(productune, 'record', 'po', 'voice-figurative', '--ticket', 'T-509', '--quote', T509_QUOTE)
     expect(second.code).toBe(0)
-    expect(second.out).toContain('second occurrence — po/voice-figurative')
+    expect(second.out).toContain('recurrence trigger — po/voice-figurative')
     expect(second.out).toContain('2 occurrences across 2 projects')
     expect(second.out).toContain(`t086-origin · T-086`)
     expect(second.out).toContain(`productune · T-509`)
@@ -129,8 +129,19 @@ describe('T-086 → T-509 replay — the ticket body reaches the count, across p
     ticket(origin, 'v1.0', 'T-090', 'later', `사용자: "또 감성 말투네요"`)
     fb(origin, 'record', 'po', 'voice-figurative', '--ticket', 'T-086', '--quote', T086_QUOTE)
     const r = fb(origin, 'record', 'po', 'voice-figurative', '--ticket', 'T-090', '--quote', '또 감성 말투네요')
-    expect(r.out).toContain('second occurrence')
+    expect(r.out).toContain('recurrence trigger')
     expect(r.out).toContain('2 occurrences across 1 project')
+  })
+
+  test('from the third occurrence on the trigger still fires, and its label stays true', () => {
+    ticket(origin, 'v1.0', 'T-090', 'later', `사용자: "또 감성 말투네요"`)
+    fb(origin, 'record', 'po', 'voice-figurative', '--ticket', 'T-086', '--quote', T086_QUOTE)
+    fb(productune, 'record', 'po', 'voice-figurative', '--ticket', 'T-509', '--quote', T509_QUOTE)
+    const third = fb(origin, 'record', 'po', 'voice-figurative', '--ticket', 'T-090', '--quote', '또 감성 말투네요')
+    expect(third.code).toBe(0)
+    expect(third.out).toContain('recurrence trigger — po/voice-figurative: 3 occurrences across 2 projects')
+    expect(third.out).not.toContain('second')
+    expect(third.out).toContain('t086-origin · T-090')
   })
 })
 
@@ -140,7 +151,7 @@ describe('what counts', () => {
     const again = fb(origin, 'record', 'po', 'voice-figurative', '--ticket', 'T-086', '--quote', T086_QUOTE)
     expect(again.code).toBe(0)
     expect(again.out).toContain('already recorded')
-    expect(again.out).not.toContain('second occurrence')
+    expect(again.out).not.toContain('recurrence trigger')
     expect(fs.readFileSync(ledger(), 'utf8').split('\n').filter((l) => l.startsWith('- f-'))).toHaveLength(1)
   })
 
@@ -149,11 +160,11 @@ describe('what counts', () => {
     // other persona: its first pattern needs no --new-pattern
     const qa = fb(productune, 'record', 'qa', 'voice-figurative', '--ticket', 'T-509', '--quote', T509_QUOTE)
     expect(qa.code).toBe(0)
-    expect(qa.out).not.toContain('second occurrence')
+    expect(qa.out).not.toContain('recurrence trigger')
     const np = fb(productune, 'record', 'po', 'metaphor-drift', '--ticket', 'T-509', '--quote', T509_QUOTE, '--new-pattern')
     expect(np.code).toBe(0)
     expect(np.out).toContain('1 occurrence')
-    expect(np.out).not.toContain('second occurrence')
+    expect(np.out).not.toContain('recurrence trigger')
   })
 
   test('the quote must be the ticket body\'s own words; the ticket must exist in this project', () => {
@@ -166,6 +177,17 @@ describe('what counts', () => {
     expect(fb(productune, 'record', 'cto', 'voice-figurative', '--ticket', 'T-509', '--quote', T509_QUOTE).code).not.toBe(0)
     expect(fb(productune, 'record', 'po', 'Bad Key', '--ticket', 'T-509', '--quote', T509_QUOTE).code).not.toBe(0)
     expect(fs.existsSync(ledger())).toBe(false)
+  })
+
+  test('the quote must be a phrase from the ticket BODY — a fragment or a frontmatter value proves nothing', () => {
+    for (const q of ['말', '말투', '감성적이다', 'status: open', 'po-voice-metaphor-drift', 'type: impl']) {
+      const r = fb(productune, 'record', 'po', 'voice-figurative', '--ticket', 'T-509', '--quote', q)
+      expect(r.code, q).not.toBe(0)
+    }
+    expect(fs.existsSync(ledger())).toBe(false)
+    // the shortest phrase the rule admits: 2 words, 6 non-space characters, in the body
+    ticket(productune, 'v1.8', 'T-600', 'short', '사용자: "말투가 이상해"')
+    expect(fb(productune, 'record', 'po', 'voice-figurative', '--ticket', 'T-600', '--quote', '말투가 이상해').code).toBe(0)
   })
 
   test('a project without its own slug, or with a slug another project declares, cannot write a row', () => {
@@ -231,7 +253,7 @@ describe('consent gate — the trigger proposes nothing by itself', () => {
     const before = { o: snap(path.join(home, 'overrides')), d: snap(path.join(home, 'discipline')),
       a: snap(origin), b: snap(productune) }
     const fire = fb(productune, 'record', 'po', 'voice-figurative', '--ticket', 'T-509', '--quote', T509_QUOTE)
-    expect(fire.out).toContain('second occurrence')
+    expect(fire.out).toContain('recurrence trigger')
     expect(fire.out).toContain('wrote only the ledger')
     expect(fire.out).toContain('the user approves')
     expect({ o: snap(path.join(home, 'overrides')), d: snap(path.join(home, 'discipline')),
