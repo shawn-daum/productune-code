@@ -49,6 +49,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 // packages/gui/electron/ipc → packages/core/scripts
 const CORE_SCRIPTS = path.resolve(HERE, '..', '..', '..', 'core', 'scripts')
 const INSTALL_SH = path.join(CORE_SCRIPTS, 'install.sh')
+// Real install.sh run: ~1.1 s alone, up to ~4.5 s while core vitest runs in parallel
+// (`prdt track land`); vitest's 5 s default timed out (T-849).
+const INSTALL_SH_TEST_TIMEOUT_MS = 15_000
 
 test('T-414: GUI PRDT_HOOK_BASENAMES equals hook-manifest.json basenames (no re-hardcoded literal)', () => {
   expect([...PRDT_HOOK_BASENAMES]).toEqual(hookManifest.basenames)
@@ -103,4 +106,4 @@ test('T-414: GUI hook roster equals install.sh registered roster in full shape (
     fs.rmSync(fixture, { recursive: true, force: true })
     if (projectDir) fs.rmSync(projectDir, { recursive: true, force: true })
   }
-})
+}, INSTALL_SH_TEST_TIMEOUT_MS)

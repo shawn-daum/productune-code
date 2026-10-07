@@ -17,9 +17,11 @@ import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import {
   metaGit,
   metaGitTrustProblem,
+  metaRemoteUrlProblem,
   initMetaRepo,
   MetaGitUntrustedError,
 } from '../../src/git-workflow/meta-git'
+import { networkAlias } from '../helpers/network-remote'
 
 const PRDT_CLI = path.resolve(__dirname, '..', '..', 'scripts', 'prdt')
 
@@ -224,7 +226,8 @@ describe('trust check edges', () => {
     ['remote-helper URL', 'ext::sh -c touch% /tmp/x', true],
     ['https remote', 'https://example.invalid/x.git', false],
     ['scp-like remote', 'git@example.invalid:x.git', false],
-    ['local remote outside the project', '__OUT__', false],
+    // T-917 (T-913 = A): outside the project is refused too — its hooks run on push
+    ['local remote outside the project', '__OUT__', true],
   ])('%s', (_label, url, refused) => {
     const gd = carriedMetaRepo()
     const u = url.replace('__W__', W).replace('__OUT__', path.join(os.tmpdir(), 'elsewhere.git'))
@@ -335,7 +338,7 @@ describe.each(SHAPES)('T-848 fix1 — $name', ({ plant, says }) => {
     // a backup remote + a commit so push would otherwise proceed
     const remote = W + '-remote.git'
     git(['init', '-q', '--bare', remote])
-    git(['--git-dir', gd, 'remote', 'add', 'backup', remote])
+    git(['--git-dir', gd, 'remote', 'add', 'backup', networkAlias(remote, HOME)])
     fs.mkdirSync(path.join(W, 'docs'), { recursive: true })
     fs.writeFileSync(path.join(W, 'docs', 'a.md'), 'a\n')
     plant(gd)
@@ -413,7 +416,7 @@ describe('T-848 fix1 — trust edges', () => {
     expect(py().problem).toBeNull()
   })
 
-  test('prdt-made repo: status/add/commit/log and push to a local bare remote still work', async () => {
+  test('prdt-made repo: status/add/commit/log and push to a network remote still work', async () => {
     git(['init', '-q'])
     expect((await initMetaRepo(W)).error).toBeUndefined()
     fs.mkdirSync(path.join(W, 'docs', 'prd'), { recursive: true })
@@ -425,8 +428,9 @@ describe('T-848 fix1 — trust edges', () => {
     const remote = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t848-bk-')))
     try {
       git(['init', '-q', '--bare', remote])
-      expect((await addMetaRemote(W, 'backup', remote)).ok).toBe(true)
-      expect(await listMetaRemotes(W)).toEqual([{ name: 'backup', url: remote }])
+      // T-917: an https URL the sandbox HOME's gitconfig rewrites to the bare repo
+      expect((await addMetaRemote(W, 'backup', networkAlias(remote))).ok).toBe(true)
+      expect(await listMetaRemotes(W)).toEqual([{ name: 'backup', url: remote }]) // `remote -v` prints the rewritten url
       const p = await pushMetaRemote(W, 'backup')
       expect(p.error).toBeUndefined()
       expect(p.ok).toBe(true)
@@ -439,7 +443,7 @@ describe('T-848 fix1 — trust edges', () => {
 })
 
 describe('T-848 fix2 — remote add runs the trust URL check before writing', () => {
-  const REFUSED = ['ext://sh', './evil.git', 'ext::sh -c id', 'file://./evil.git']
+  const REFUSED = ['ext://sh', './evil.git', 'ext::sh -c id', 'file://./evil.git', '../evil-b/x.git', '/tmp/x.git', '~/x', 'file:///tmp/x.git']
   let HOME: string
   let env: NodeJS.ProcessEnv
   const cli = (args: string[]) => {
@@ -471,7 +475,7 @@ describe('T-848 fix2 — remote add runs the trust URL check before writing', ()
     const before = fs.readFileSync(path.join(W, '.prdt', 'meta.git', 'config'), 'utf-8')
     const r = await addMetaRemote(W, 'b', url)
     expect(r.ok).toBe(false)
-    expect(r.error).toMatch(/remote-helper|inside this project/)
+    expect(r.error).toMatch(/remote-helper|only network remotes/)
     expect(fs.readFileSync(path.join(W, '.prdt', 'meta.git', 'config'), 'utf-8')).toBe(before)
     expect(await listMetaRemotes(W)).toEqual([])
   })
@@ -481,8 +485,155 @@ describe('T-848 fix2 — remote add runs the trust URL check before writing', ()
     const before = fs.readFileSync(cfg, 'utf-8')
     const r = cli(['meta', 'remote', 'add', 'b', url])
     expect(r.rc).not.toBe(0)
-    expect(r.out).toMatch(/remote-helper|inside this project/)
+    expect(r.out).toMatch(/remote-helper|only network remotes/)
     expect(fs.readFileSync(cfg, 'utf-8')).toBe(before)
     expect(cli(['meta', 'remote']).out).not.toMatch(/does not run git/)
+  })
+})
+
+// ── T-917 (user decision T-913 = A): meta backup accepts only network remotes ──
+
+type Verdict = 'ok' | 'local' | 'helper'
+const URL_FIXTURE = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'meta-remote-urls.json'), 'utf-8'),
+) as { cases: Array<{ url: string; verdict: Verdict }> }
+
+function verdictOf(problem: string | null): Verdict | string {
+  if (problem === null) return 'ok'
+  if (problem.includes('only network remotes')) return 'local'
+  if (problem.includes('remote-helper')) return 'helper'
+  return problem
+}
+
+const PY_URLS = `
+import importlib.util, importlib.machinery, sys, json
+loader = importlib.machinery.SourceFileLoader("prdt_mod", sys.argv[1])
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+print(json.dumps([m._meta_remote_url_problem(u) for u in json.loads(sys.argv[2])]))
+`
+
+describe('T-917 — one URL rule, judged identically by Python and TS', () => {
+  test('every fixture URL gets its verdict from both sides', () => {
+    const urls = URL_FIXTURE.cases.map((c) => c.url)
+    const pyProblems = JSON.parse(
+      execFileSync('python3', ['-c', PY_URLS, PRDT_CLI, JSON.stringify(urls)], { encoding: 'utf-8' }),
+    ) as Array<string | null>
+    const rows = URL_FIXTURE.cases.map((c, i) => ({
+      url: c.url,
+      want: c.verdict,
+      ts: verdictOf(metaRemoteUrlProblem(c.url)),
+      py: verdictOf(pyProblems[i]),
+    }))
+    expect(rows.filter((r) => r.ts !== r.want || r.py !== r.want)).toEqual([])
+    // and the same text, not just the same class
+    expect(URL_FIXTURE.cases.map((c) => metaRemoteUrlProblem(c.url))).toEqual(pyProblems)
+  })
+
+  test.each(URL_FIXTURE.cases.filter((c) => c.url !== ''))('in meta.git/config: $url → $verdict', ({ url, verdict }) => {
+    const gd = carriedMetaRepo()
+    git(['--git-dir', gd, 'config', 'remote.backup.url', url])
+    const ts = metaGitTrustProblem(W)
+    const p = py().problem
+    expect(verdictOf(ts)).toBe(verdict)
+    expect(verdictOf(p)).toBe(verdict)
+    if (verdict !== 'ok') {
+      expect(ts).toContain(`(${url})`)
+      expect(p).toContain(`(${url})`)
+    }
+  })
+})
+
+describe('T-917 — QA repro: a local remote with a pre-receive hook never fires', () => {
+  let HOME: string
+  let P: string // project root, W/proj — the evil repo sits at W/evil-b/x.git = ../evil-b/x.git
+  let env: NodeJS.ProcessEnv
+  const URL = '../evil-b/x.git'
+  const cli = (args: string[], extra: NodeJS.ProcessEnv = {}) => {
+    const r = spawnSync('python3', [PRDT_CLI, ...args], { cwd: P, env: { ...env, ...extra }, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] })
+    return { rc: r.status, out: `${r.stdout}${r.stderr}` }
+  }
+  const bridge = (cmd: string, ...rest: string[]): any => {
+    let o: string
+    try {
+      o = execFileSync('node', [BRIDGE, cmd, P, ...rest], { cwd: P, env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] })
+    } catch (e: any) {
+      o = e.stdout
+    }
+    return JSON.parse(o)
+  }
+
+  beforeEach(() => {
+    HOME = W + '-home'
+    P = path.join(W, 'proj')
+    fs.mkdirSync(P)
+    fs.mkdirSync(path.join(HOME, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(HOME, '.prdt', 'prdt.env'), `PRDT_REPO=${CORE}\n`)
+    env = { ...process.env, HOME, PRDT_HOME: path.join(HOME, '.prdt'), PRDT_META_BACKUP: '0', GIT_CONFIG_NOSYSTEM: '1' }
+    for (const k of Object.keys(env)) if (k.startsWith('GIT_') && k !== 'GIT_CONFIG_NOSYSTEM') delete env[k]
+    execFileSync('git', ['init', '-q'], { cwd: P, env })
+    cli(['init', '--yes', '--slug', 't917'])
+    fs.mkdirSync(path.join(P, 'docs', 'prd'), { recursive: true })
+    fs.writeFileSync(path.join(P, 'docs', 'prd', 'a.md'), 'a\n')
+    const gd = path.join(P, '.prdt', 'meta.git')
+    git(['--git-dir', gd, '--work-tree', P, 'add', '-A', '--', 'docs'], P)
+    git(['--git-dir', gd, '--work-tree', P, 'commit', '-qm', 'snap'], P)
+  })
+  afterEach(() => fs.rmSync(HOME, { recursive: true, force: true }))
+
+  test('the vector is live for plain git; every prdt surface refuses it, names the URL, fires nothing', () => {
+    const evil = path.join(W, 'evil-b', 'x.git')
+    git(['init', '-q', '--bare', evil])
+    for (const h of ['pre-receive', 'update', 'post-receive']) {
+      fs.copyFileSync(prog(h), path.join(evil, 'hooks', h))
+      fs.chmodSync(path.join(evil, 'hooks', h), 0o755)
+    }
+    const gd = path.join(P, '.prdt', 'meta.git')
+    // confirm: plain git pushing to that path runs the receiving repo's hook — on this machine
+    git(['--git-dir', gd, '--work-tree', P, '-c', 'core.hooksPath=/dev/null', 'push', '-q', URL, 'HEAD:refs/heads/probe'], P)
+    expect(marks()).toContain('pre-receive')
+    fs.rmSync(LOG, { force: true })
+
+    // the clone-carried (or pre-T-917 user-added) config names it as the backup
+    git(['--git-dir', gd, 'config', 'remote.backup.url', URL])
+    const says = (s: string) => {
+      expect(s).toContain(URL)
+      expect(s).toContain('meta backup allows only network remotes')
+    }
+    says(metaGitTrustProblem(P) as string)
+    says(String(py(P).problem))
+
+    const tick = bridge('tick')
+    expect(tick.skipReason).toBe('meta-untrusted')
+    says(tick.detail)
+    const backup = bridge('backup') // what `prdt`'s detached automatic tick runs (maybe_meta_backup)
+    expect(backup.reason).toBe('meta-untrusted')
+    says(backup.error)
+    for (const args of [['meta', 'push'], ['meta', 'push', 'backup']]) {
+      const r = cli(args)
+      expect(r.rc).not.toBe(0)
+      says(r.out)
+    }
+    says(cli(['doctor']).out)
+    expect(marks()).toEqual([])
+  })
+
+  test('an https backup remote passes the trust check and the push is formed against it', () => {
+    const gd = path.join(P, '.prdt', 'meta.git')
+    const sink = path.join(W, 'sink.git')
+    git(['init', '-q', '--bare', sink])
+    // the sandbox HOME rewrites exactly this URL to a local bare repo — no network
+    const URL_HTTPS = 'https://github.com/example/meta.git'
+    execFileSync('git', ['config', '--file', path.join(HOME, '.gitconfig'), `url.${sink}.insteadOf`, URL_HTTPS], { env })
+    const add = cli(['meta', 'remote', 'add', 'backup', URL_HTTPS])
+    expect(add.rc).toBe(0)
+    expect(git(['--git-dir', gd, 'config', '--get', 'remote.backup.url'])).toBe(URL_HTTPS)
+    expect(metaGitTrustProblem(P)).toBeNull()
+    expect(py(P).problem).toBeNull()
+    const r = cli(['meta', 'push', 'backup'])
+    expect(r.out).not.toMatch(/does not run git/)
+    expect(r.rc).toBe(0)
+    expect(git(['--git-dir', sink, 'log', '--format=%s', '-1'])).toBe('snap')
   })
 })

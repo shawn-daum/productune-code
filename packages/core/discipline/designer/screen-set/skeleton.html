@@ -6,7 +6,8 @@
 <!--
   Review artifact — skeleton (designer `hifi` §Shell). ONE scrolling page, two shapes; delete the block the
   artifact has no use for:
-    screen set    = head (ID · one-line definition) → set block [list · ONE screen · description]
+    screen set    = head (ID · one-line definition) → set block [list · device chip · status chip + ONE screen · description]
+                    → decide block BELOW the set (only when the set puts something to the user)
     decision doc  = head → decide block (one line per decision, its recommendation on the line)
                     → one options table per decision, recommended column marked
                     → evidence (the set block when screens exist; tables / measurements otherwise)
@@ -14,8 +15,12 @@
 
   SCROLL: no fixed-height pane, no overflow:hidden on anything that can overflow. List and description stick
   to the viewport (max-height + overflow-y:auto), the frame runs at its own height, the page scrolls.
-  HEAD: the ID, the definition, the decide lines — nothing else. Scope · rules · provenance · history fold
-  under <details class="spec-fold"> (closed on load).
+  HEAD: the ID, the definition — nothing else. Decide lines: a decision doc's right under the head, a screen set's
+  under the set (its decide links carry data-go="<key>[:<cond>]" and select that screen). Scope · rules ·
+  provenance · history fold under <details class="spec-fold"> (closed on load).
+  WIDTH: .spec-page max-width = roster 232 + description 300 + gaps 28 + padding 56 + the widest frame's content.
+  1720 → frame 1104. ≤1600px the description moves under the frame (frame ≥970 at 1280); ≤1100px one column.
+  Raise the cap when a frame clips at 1280 or wider.
   FONT: embed Pretendard as a glyph-subset base64 @font-face (400 + 600–700) before handing the page — a file:// page
   cannot load a sibling font file and the reader may not have Pretendard installed. Procedure:
   ~/.prdt/discipline/designer/style-library/pretendard-embed.md.
@@ -27,8 +32,12 @@
   never renders inside .frame — layer-leak-sweep.py checks it.
 
   KEYS: a roster entry data-screen="<key>" ↔ a screen id="screen-<key>"; the same set on both sides.
-  A condition of a screen is a .cond-view[data-cond="<name>"] inside that screen; the radio on the stage
+  A condition of a screen is a .cond-view[data-cond="<name>"] inside that screen; the status chip on the stage
   lists the names DESCRIPTIONS[key].conditions gives.
+  DEVICES: one roster entry per screen, never one per form. DESCRIPTIONS[key].devices lists the forms it has
+  (mobile · pc, first = shown on select); a screen with both renders each .cond-view twice, data-device="mobile" and
+  data-device="pc". The device chip always shows 모바일 · PC beside the status chip; a form the screen lacks is
+  disabled. A .cond-view without data-device serves every device. Mobile renders at phone width (390) in the frame.
   TRANSITIONS: any control inside a screen with data-open="<key>" selects that screen.
   Real repository text rendered inside a screen: wrap it in data-content="repo" (sweep excludes).
   DESCRIPTION: DESCRIPTIONS[key] = struct + the fixed categories (DESC_ORDER), one short line each (≤120 chars),
@@ -70,7 +79,7 @@ body{
   word-break:keep-all; overflow-wrap:break-word;                      /* normal flow: the page scrolls */
 }
 code,.mono{font-family:var(--spec-mono);}
-.spec-page{max-width:1440px; margin:0 auto; padding:20px 28px 56px;}
+.spec-page{max-width:1720px; margin:0 auto; padding:20px 28px 72px;}   /* 72 = room under the edit bar */
 
 /* ---------- head: ID · definition — one line each ---------- */
 .spec-head{display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; margin:0 0 14px;}
@@ -78,8 +87,13 @@ code,.mono{font-family:var(--spec-mono);}
 .spec-head h1{font-size:18px; font-weight:700; margin:0; letter-spacing:-.2px;}
 .spec-def{flex-basis:100%; font-size:13.5px; margin:0;}
 
-/* ---------- decide block: what the user decides, recommendation on the line (decision doc only) ---------- */
+/* ---------- decide block: what the user decides, recommendation on the line — decision doc: under the head · screen set: under the set ---------- */
 .spec-decide{background:var(--spec-panel); border:1px solid var(--spec-border); border-radius:12px; padding:12px 16px 10px; margin:0 0 22px;}
+.spec-set-sec + .spec-decide{margin:22px 0 0;}
+.spec-decide h2.sub{margin:14px 0 6px;}
+.spec-decide ul.done{margin:0; padding-left:20px; font-size:13px; color:var(--spec-muted);}
+.spec-decide ul.done li{margin:0 0 5px;}
+.spec-decide a[data-go]{cursor:pointer;}
 .spec-decide h2,.spec-sec h2,.spec-desc h4,.spec-roster h2{font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--spec-muted); margin:0 0 6px; font-weight:700;}
 .spec-decide ol{margin:0; padding-left:22px;}
 .spec-decide li{font-size:13.5px; line-height:1.55; margin:0 0 6px;}
@@ -108,8 +122,8 @@ code,.mono{font-family:var(--spec-mono);}
 .spec-fold ul{margin:6px 0 0; padding-left:18px;}
 .spec-fold li,.spec-fold p{margin:0 0 4px; line-height:1.55;}
 
-/* ---------- set block: list · ONE screen · description ---------- */
-.spec-set{display:grid; grid-template-columns:240px minmax(0,1fr) 300px; gap:14px; align-items:start;}
+/* ---------- set block: list · [device chip · status chip] + ONE screen · description ---------- */
+.spec-set{display:grid; grid-template-columns:232px minmax(0,1fr) 300px; gap:14px; align-items:start;}
 .spec-roster,.spec-desc{background:var(--spec-panel); border:1px solid var(--spec-border); border-radius:14px;
   position:sticky; top:12px; max-height:calc(100vh - 72px); overflow-y:auto;}   /* sticks, scrolls itself when taller than the viewport; 72 = 24 + the edit bar */
 .spec-roster{padding:10px;}
@@ -124,13 +138,17 @@ code,.mono{font-family:var(--spec-mono);}
 .r-struct{display:block; font-size:10.5px; color:var(--spec-muted); font-family:var(--spec-mono); line-height:1.5;}
 
 .spec-stage{min-width:0; display:flex; flex-direction:column; gap:8px;}
-.spec-bar{display:flex; align-items:center; gap:14px; flex-wrap:wrap;}
-.spec-cond{display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11.5px; color:var(--spec-muted);}
-.spec-cond label{display:inline-flex; align-items:center; gap:6px; border:1px solid var(--spec-border); border-radius:100px; padding:4px 10px; cursor:pointer;}
-.spec-cond label:has(input:checked){background:var(--spec-current); color:var(--spec-current-text); border-color:var(--spec-current);}
-.spec-cond input{margin:0;}
-.cond-num{font-family:var(--spec-mono); font-size:10.5px;}
+.spec-bar{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+.chip-group{display:inline-flex; align-items:center; gap:4px; flex-wrap:wrap; font-size:11.5px; color:var(--spec-muted);}
+.chip-group + .chip-group{padding-left:10px; border-left:1px solid var(--spec-border);}
+.chip-kind{font-size:10.5px; font-weight:700; letter-spacing:.4px; margin-right:2px;}
+.chip{display:inline-flex; align-items:center; gap:5px; border:1px solid var(--spec-border); border-radius:100px; padding:3px 10px; cursor:pointer; font:inherit; font-size:11.5px; color:var(--spec-text); background:none;}
+.chip[aria-checked="true"]{background:var(--spec-current); color:var(--spec-current-text); border-color:var(--spec-current);}
+.chip[aria-disabled="true"]{cursor:not-allowed; color:var(--spec-muted); border-style:dashed;}
+.chip:focus-visible,.roster-item:focus-visible,.spec-decide a:focus-visible{outline:2px solid var(--edit-label); outline-offset:2px;}
+.cond-num{font-family:var(--spec-mono); font-size:10.5px; opacity:.8;}
 .frame{border:1px solid var(--spec-border); border-radius:12px; min-height:320px; overflow:auto;}   /* its own height — never clips */
+.frame[data-device="mobile"] .screen.active{max-width:390px; margin:0 auto;}   /* phone width inside the frame */
 .screen{display:none;}
 .screen.active{display:block;}
 .cond-view{display:none;}
@@ -164,8 +182,13 @@ body.editing [data-value],body.editing [data-value] *{cursor:not-allowed;}
 body.editing [data-value]{outline:1px dotted var(--edit-value); outline-offset:2px; border-radius:2px; background:repeating-linear-gradient(135deg, var(--edit-value-bg) 0 3px, transparent 3px 7px);}
 .spec-edit-input{position:absolute; z-index:40; box-sizing:border-box; color:var(--spec-text); background:var(--spec-bg); border:2px solid var(--edit-label); border-radius:4px; padding:2px 6px; outline:none; box-shadow:0 8px 24px rgba(0,0,0,.18);}
 
-/* ---------- phone width: one column; the list becomes a sticky strip ---------- */
-@media (max-width:900px){
+/* ---------- ≤1600px: the description moves under the frame so the frame keeps its width ---------- */
+@media (max-width:1600px) and (min-width:1101px){
+  .spec-set{grid-template-columns:232px minmax(0,1fr);}
+  .spec-desc{grid-column:2; position:static; max-height:none;}
+}
+/* ---------- ≤1100px: one column; the list becomes a sticky strip ---------- */
+@media (max-width:1100px){
   .spec-page{padding:16px 16px 96px;}   /* room under the edit bar */
   .spec-edit{left:8px; right:8px; bottom:8px; justify-content:center; border-radius:14px;}
   .spec-set{grid-template-columns:1fr;}
@@ -189,7 +212,7 @@ body.editing [data-value]{outline:1px dotted var(--edit-value); outline-offset:2
   <p class="spec-def" data-spec-fact>One line: what this artifact is — the version's screen set of N screens · the frame for X.</p>
 </header>
 
-<!-- ================= decide block — decision doc only; delete for a pure screen set ================= -->
+<!-- ================= decide block, decision doc — under the head; delete for a screen set (its decide block sits under the set) ================= -->
 <section class="spec-decide" aria-label="decide">
   <h2>정할 것</h2>
   <ol>
@@ -212,7 +235,7 @@ body.editing [data-value]{outline:1px dotted var(--edit-value); outline-offset:2
 </section>
 
 <!-- ================= evidence / the set: list · ONE screen · description ================= -->
-<section class="spec-sec" id="set">
+<section class="spec-sec spec-set-sec" id="set">
   <h2>실물</h2>
   <div class="spec-set">
     <!-- left: the roster — one entry per screen, data-screen = the key -->
@@ -230,22 +253,31 @@ body.editing [data-value]{outline:1px dotted var(--edit-value); outline-offset:2
       </div>
     </nav>
 
-    <!-- center: condition radio (spec layer) + the product frame (product layer) -->
+    <!-- center: device chip · status chip (spec layer) + the product frame (product layer) -->
     <div class="spec-stage">
-      <div class="spec-bar"><div class="spec-cond" id="cond" role="radiogroup" aria-label="condition"></div></div>
+      <div class="spec-bar">
+        <div class="chip-group" id="device" role="radiogroup" aria-label="기기"></div>
+        <div class="chip-group" id="cond" role="radiogroup" aria-label="상태"></div>
+      </div>
       <div class="frame" id="frame">
         <section class="screen" id="screen-example-a">
-          <div class="cond-view" data-cond="default">
+          <!-- both forms: each condition renders once per device -->
+          <div class="cond-view" data-cond="default" data-device="mobile">
             <!-- product screen, DS tokens only. A string the label table owns: data-label="<key>" · a value from data: data-value="<source>".
                  A control that leads elsewhere: data-open="example-b" -->
             <p><span data-label="a.rows">rows</span> <span data-value="count(rows)">12</span></p>
             <button data-open="example-b" data-label="a.open">Open</button>
           </div>
-          <div class="cond-view" data-cond="empty">
-            <!-- the same screen, empty state -->
+          <div class="cond-view" data-cond="default" data-device="pc">
+            <!-- the same screen, PC form -->
+            <p><span data-label="a.rows">rows</span> <span data-value="count(rows)">12</span></p>
+            <button data-open="example-b" data-label="a.open">Open</button>
           </div>
+          <div class="cond-view" data-cond="empty" data-device="mobile"><!-- empty state, mobile --></div>
+          <div class="cond-view" data-cond="empty" data-device="pc"><!-- empty state, PC --></div>
         </section>
         <section class="screen" id="screen-example-b">
+          <!-- one form only (devices: ['pc']): no data-device needed -->
           <div class="cond-view" data-cond="default">
             <button data-open="example-a" data-label="b.back">Back</button>
           </div>
@@ -256,6 +288,18 @@ body.editing [data-value]{outline:1px dotted var(--edit-value); outline-offset:2
     <!-- right: the description — rendered from DESCRIPTIONS[key] -->
     <aside class="spec-desc" id="desc"></aside>
   </div>
+</section>
+
+<!-- ================= decide block, screen set — UNDER the set; delete when the set puts nothing to the user ================= -->
+<section class="spec-decide" aria-label="decide">
+  <h2>정할 것</h2>
+  <ol>
+    <li>Decision 1 as one line — <a data-go="example-a:empty">화면</a><span class="rec">추천 · 이대로</span></li>
+  </ol>
+  <h2 class="sub">정해진 것</h2>   <!-- optional: settled forks of this set, one line each + where; delete when none -->
+  <ul class="done">
+    <li>Settled fork = option A (T-NNN) <a data-go="example-b">화면</a></li>
+  </ul>
 </section>
 
 <!-- ================= folded: scope · provenance · history ================= -->
@@ -382,13 +426,15 @@ body.editing [data-value]{outline:1px dotted var(--edit-value); outline-offset:2
 const DESC_ORDER = ['changed', 'layout', 'action', 'goto', 'states', 'data'];
 const DESC_LABELS = { changed: '바뀐 것', layout: '구성', action: '동작', goto: '이동', states: '상태', data: '수의 출처', background: '배경 · 출처' };
 
-/* One entry per key. `conditions` names the radio options and matches .cond-view[data-cond] inside the screen
-   (first one = the one shown on select). Each category: an array of short lines (≤120 chars); omit what is empty.
+/* One entry per key. `conditions` names the status chips and matches .cond-view[data-cond] inside the screen
+   (first one = the one shown on select). `devices` = the forms the screen has, ['mobile','pc'] or one of them
+   (first = shown on select); the device chip shows both, the missing one disabled. Each category: an array of short lines (≤120 chars); omit what is empty.
    `background`: purpose, provenance, history — rendered folded. */
 const DESCRIPTIONS = {
   'example-a': {
     title: 'Example A',
     struct: 'top bar > logo · search · body = list (N) → "Open"',
+    devices: ['mobile', 'pc'],
     conditions: { default: '기본', empty: '비어 있음' },
     changed: ['이번 버전에서 새로 생김'],
     layout: ['목록 N행, 행 = 제목 · 날짜'],
@@ -401,6 +447,7 @@ const DESCRIPTIONS = {
   'example-b': {
     title: 'Example B',
     struct: 'top bar > back · body = detail',
+    devices: ['pc'],
     conditions: { default: '기본' },
     layout: ['제목 · 본문'],
     goto: ['"Back" → Example A'],
@@ -408,28 +455,37 @@ const DESCRIPTIONS = {
   },
 };
 
+const DEVICE_LABELS = { mobile: '모바일', pc: 'PC' };   /* chip order = this order */
+
 (function () {
   const roster = document.getElementById('roster');
+  const frame = document.getElementById('frame');
+  const device = document.getElementById('device');
   const cond = document.getElementById('cond');
   const desc = document.getElementById('desc');
-  let current = null;
+  let current = null, curDevice = null, curCond = null;
 
   function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-  function renderCond(key) {
-    const d = DESCRIPTIONS[key] || {};
-    const names = Object.keys(d.conditions || {});
-    cond.innerHTML = names.map((n, i) =>
-      `<label><input type="radio" name="cond" value="${esc(n)}"${i === 0 ? ' checked' : ''}>` +
-      `<span class="cond-num">#${i + 1}</span><span class="cond-name">${esc(d.conditions[n])}</span></label>`).join('');
+  /* chip group: role=radio buttons; `off` = names shown disabled */
+  function chips(el, kind, map, off, numbered) {
+    el.innerHTML = `<span class="chip-kind">${esc(kind)}</span>` + Object.keys(map).map((n, i) => {
+      const dis = off.includes(n);
+      return `<button type="button" class="chip" role="radio" data-v="${esc(n)}" aria-checked="false"` +
+        (dis ? ` aria-disabled="true" title="이 화면은 ${esc(map[n])} 형태가 없어요"` : '') + '>' +
+        (numbered ? `<span class="cond-num">#${i + 1}</span><span class="cond-name">${esc(map[n])}</span>` : `<span>${esc(map[n])}</span>`) +
+        '</button>';
+    }).join('');
   }
+  const mark = (el, v) => el.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-checked', String(c.dataset.v === v)));
 
-  function setCondition(key, name) {
-    const screen = document.getElementById('screen-' + key);
+  function show() {   /* the one .cond-view matching condition + device (no data-device = every device) */
+    const screen = document.getElementById('screen-' + current);
     if (!screen) return;
-    screen.querySelectorAll(':scope > .cond-view').forEach(v => v.classList.toggle('active', v.dataset.cond === name));
-    const radio = cond.querySelector(`input[value="${CSS.escape(name)}"]`);
-    if (radio) radio.checked = true;
+    screen.querySelectorAll(':scope > .cond-view').forEach(v =>
+      v.classList.toggle('active', v.dataset.cond === curCond && (!v.dataset.device || v.dataset.device === curDevice)));
+    frame.dataset.device = curDevice;
+    mark(device, curDevice); mark(cond, curCond);
   }
 
   function renderDesc(key) {
@@ -442,20 +498,25 @@ const DESCRIPTIONS = {
     desc.innerHTML = `<h3>${esc(d.title)}</h3><div class="desc-struct">${esc(d.struct)}</div><dl class="desc-cat">${cats}</dl>${bg}`;
   }
 
-  /* select(key): swap center + right IN PLACE — the frame's origin never moves */
-  function select(key, scrollList = true) {   /* scrollList=false on load: the page must open at its top */
+  /* select(key[, cond]): swap center + right IN PLACE — the frame's origin never moves */
+  function select(key, condName, scrollList = true) {   /* scrollList=false on load: the page must open at its top */
     const screen = document.getElementById('screen-' + key);
     if (!screen) return;
+    const d = DESCRIPTIONS[key] || {};
     document.querySelectorAll('.screen.active').forEach(s => s.classList.remove('active'));
     screen.classList.add('active');
     roster.querySelectorAll('.roster-item').forEach(b => b.classList.toggle('active', b.dataset.screen === key));
     const active = roster.querySelector('.roster-item.active');
     if (active && scrollList) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    renderCond(key);
-    const first = Object.keys((DESCRIPTIONS[key] || {}).conditions || {})[0];
-    if (first) setCondition(key, first);
-    renderDesc(key);
+    const devs = d.devices && d.devices.length ? d.devices : ['pc'];
+    chips(device, '기기', DEVICE_LABELS, Object.keys(DEVICE_LABELS).filter(n => !devs.includes(n)), false);
+    chips(cond, '상태', d.conditions || {}, [], true);
     current = key;
+    curDevice = devs.includes(curDevice) ? curDevice : devs[0];   /* keep the device the reader picked when this screen has it */
+    const names = Object.keys(d.conditions || {});
+    curCond = names.includes(condName) ? condName : names[0];
+    show();
+    renderDesc(key);
   }
 
   document.addEventListener('click', ev => {
@@ -463,13 +524,17 @@ const DESCRIPTIONS = {
     if (item && roster.contains(item)) { ev.preventDefault(); select(item.dataset.screen); return; }
     const open = ev.target.closest('[data-open]');
     if (open) { ev.preventDefault(); select(open.dataset.open); return; }
-  });
-  cond.addEventListener('change', ev => {
-    if (ev.target.name === 'cond' && current) setCondition(current, ev.target.value);
+    const go = ev.target.closest('[data-go]');   /* decide-block link under the set: select, then bring the set into view */
+    if (go) { ev.preventDefault(); const [k, c] = go.dataset.go.split(':'); select(k, c); document.getElementById('set').scrollIntoView({ block: 'start' }); return; }
+    const chip = ev.target.closest('.chip');
+    if (chip && chip.getAttribute('aria-disabled') !== 'true') {
+      if (device.contains(chip)) curDevice = chip.dataset.v; else if (cond.contains(chip)) curCond = chip.dataset.v; else return;
+      show();
+    }
   });
 
   const firstKey = roster.querySelector('.roster-item') && roster.querySelector('.roster-item').dataset.screen;
-  if (firstKey) select(firstKey, false);
+  if (firstKey) select(firstKey, undefined, false);
 })();
 </script>
 </body>

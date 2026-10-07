@@ -78,18 +78,18 @@ function wikiPage(name: string, fm: Record<string, string>, body = ''): void {
 const DEFAULT_REVERSED = '- [[decision--x]] — 뒤집었다.'
 
 function writePrd(opts: {
-  asis?: boolean; tobe?: boolean; reversedHeading?: string | null;
+  asis?: boolean; tobe?: boolean; oldPair?: boolean; reversedHeading?: string | null;
   reversedRows?: string[]; items?: string[];
 } = {}): void {
   const {
-    asis = true, tobe = true,
+    asis = true, tobe = true, oldPair = false,
     reversedHeading = '### 이 버전이 뒤집은 것 (reversed)',
     reversedRows = [DEFAULT_REVERSED],
     items = ['#### alpha — 첫 항목\n\n본문.', '#### beta — 둘째 항목\n\n본문.'],
   } = opts
   const parts = ['## v1.10 — test round', '']
-  if (asis) parts.push('### 이 버전 직전 (as-is)', '', 'as-is 본문.', '')
-  if (tobe) parts.push('### 이 버전 직후 (to-be)', '', 'to-be 본문.', '')
+  if (asis) parts.push(oldPair ? '### 이 버전 직전 (as-is)' : '### As-Is', '', '- as-is 본문.', '')
+  if (tobe) parts.push(oldPair ? '### 이 버전 직후 (to-be)' : '### To-Be', '', '- to-be 본문.', '')
   if (reversedHeading !== null) {
     parts.push(reversedHeading, '')
     parts.push(...reversedRows, '')
@@ -137,8 +137,31 @@ describe('T-674 slice 2b — P1 (prd form) + E4 (prd_item edge)', () => {
     writePrd({ asis: false, tobe: false })
     const r = runPrdt(['doctor'])
     expect(r.code).toBe(0)
-    expect(r.out).toContain('v1.10: missing as-is/to-be pair')
+    expect(r.out).toContain('v1.10: missing As-Is/To-Be pair ("### As-Is" / "### To-Be")')
     expect(r.out).toContain('(non-blocking)')
+  })
+
+  test('only one of the pair (As-Is without To-Be) is still a missing pair', () => {
+    writePrd({ tobe: false })
+    expect(doctor()).toContain('v1.10: missing As-Is/To-Be pair')
+  })
+
+  test('an open section with only the old Korean pair gets a rename advisory, not "missing pair"', () => {
+    writePrd({ oldPair: true })
+    const r = runPrdt(['doctor'])
+    expect(r.code).toBe(0)
+    expect(r.out).toContain('v1.10: old as-is/to-be headings ("### 이 버전 직전 (as-is)" / '
+      + '"### 이 버전 직후 (to-be)") — rename them to "### As-Is" / "### To-Be"')
+    expect(r.out).not.toContain('missing As-Is/To-Be pair')
+  })
+
+  test('a closed section keeping the old Korean pair is never graded', () => {
+    writePrd()
+    versionsFile('v1.9', '## v1.9 — old round\n\n### 이 버전 직전 (as-is)\n\n옛 본문.\n\n'
+      + '### 이 버전 직후 (to-be)\n\n옛 본문.\n')
+    const d = doctor()
+    expect(d).not.toContain('v1.9:')
+    expect(d).not.toContain('v1.10:')
   })
 
   // ── ⓑ H4 item-address form ──────────────────────────────────────────────────

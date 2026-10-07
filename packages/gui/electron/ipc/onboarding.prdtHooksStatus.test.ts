@@ -120,6 +120,8 @@ export const CASES: readonly Case[] = [
             // hand-listed — "installed" means the WHOLE roster is registered, so a
             // literal list here would have quietly redefined what installed means.
             { matcher: 'startup|resume|clear', hooks: [h('prdt-session-start.sh'), ...partSlots.map(h), h('prdt-audience-inject.sh'), h('prdt-plan-tier-inject.sh'), h('prdt-overrides-inject.sh'), h('prdt-project-overrides-inject.sh')] },
+            // T-479: prdt-inbox-inject.sh, its own startup|resume|clear entry (PO-only inbox lines).
+            { matcher: 'startup|resume|clear', hooks: [h('prdt-inbox-inject.sh')] },
             { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), ...partSlots.map(h), h('prdt-audience-inject.sh'), h('prdt-plan-tier-inject.sh'), h('prdt-overrides-inject.sh'), h('prdt-project-overrides-inject.sh')] },
           ],
           SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh'), h('prdt-return-check.sh')] }],
@@ -145,6 +147,8 @@ export const CASES: readonly Case[] = [
             // T-779: prdt-worktree-guard.sh, a FOURTH PreToolUse entry (the write-shaped tools).
             { matcher: 'Edit|Write|MultiEdit|NotebookEdit|Bash', hooks: [h('prdt-worktree-guard.sh')] },
           ],
+          // T-985: prdt-question-check.sh, matcher-less on Stop (PO only).
+          Stop: [{ hooks: [h('prdt-question-check.sh')] }],
         },
       }))
       const status = checkPrdtHooksStatus(home)

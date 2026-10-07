@@ -395,7 +395,62 @@ if isinstance(ct, dict):
 else:
     task = "none"
 
-lines = [f"[prdt state] stage={stage} · version={version} · current_task={task}"]
+# ── T-849: `dec` / `req` — what is waiting on the user, same sets as the statusline ──
+# dec = open `type: decision` tickets; req = open `assignee: user` tickets that
+# are not decisions; every version directory, `backlog` and any non-version-shaped
+# directory skipped. Ids match TICKET_RE (an off-shape file name is dropped, the
+# same shape check the po-state tokens get), sorted NUMERICALLY, at most 5 then
+# `+N`. Empty → `none`; a failed walk → `?` (so "nothing waiting" and "could not
+# compute" stay distinguishable). A missing `docs/tickets` is "no tickets", not a
+# failure. Source is the markdown files, not `.prdt/index.db` (derived, can be stale).
+def waiting_lists(root):
+    dec, req = set(), set()
+    tickets_root = os.path.join(root, "docs", "tickets")
+    try:
+        vdirs = [d for d in os.listdir(tickets_root)
+                 if VERSION_RE.match(d) and os.path.isdir(os.path.join(tickets_root, d))]
+    except FileNotFoundError:
+        return [], []
+    for vd in vdirs:
+        dpath = os.path.join(tickets_root, vd)
+        for fn in os.listdir(dpath):          # an unreadable version dir raises → `?`
+            tid = fn[:-3]
+            if not (fn.endswith(".md") and TICKET_RE.match(tid)):
+                continue
+            try:
+                with open(os.path.join(dpath, fn), errors="replace") as f:
+                    head = f.read(600)
+            except OSError:
+                continue
+            ms = re.search(r"^status:\s*(\S+)", head, re.M)
+            if not ms or ms.group(1) != "open":
+                continue
+            mt = re.search(r"^(?:type|stage):\s*(\S+)", head, re.M)
+            ma = re.search(r"^assignee:\s*(\S+)", head, re.M)
+            if mt and mt.group(1) == "decision":
+                dec.add(tid)
+            elif ma and ma.group(1) == "user":
+                req.add(tid)
+    key = lambda t: int(t[2:])
+    return sorted(dec, key=key), sorted(req, key=key)
+
+
+def fmt_waiting(ids):
+    if ids is None:
+        return "?"
+    if not ids:
+        return "none"
+    s = ",".join(ids[:5])
+    return s + (f"+{len(ids) - 5}" if len(ids) > 5 else "")
+
+
+try:
+    _dec, _req = waiting_lists(os.path.dirname(os.path.dirname(state_path)))
+except Exception:
+    _dec = _req = None
+
+lines = [f"[prdt state] stage={stage} · version={version} · current_task={task}"
+         f" · dec={fmt_waiting(_dec)} · req={fmt_waiting(_req)}"]
 
 # ── T-586: register binding — ONE line, from the resolver, every prompt ────────
 # The register object (`~/.prdt/register`: audience · form · structure · address)
@@ -446,6 +501,15 @@ REGISTER_CHECK_NOTICE = (
     "[prdt register check] your last user-chat reply broke form=outline: %d paragraph line(s) "
     "(lines %s) — an unmarked line holding 2+ sentences, or 2+ unmarked lines in a row. "
     "Leave the sent reply as is; write this reply one point per marked line."
+)
+# T-869: the second form=outline notice — top-level point blocks run together with
+# no blank line between them (form-outline.md: "One blank line after each point's
+# block, none inside it."). One line, line numbers only, same register as above.
+REGISTER_BLANK_NOTICE = (
+    "[prdt register check] your last user-chat reply broke form=outline: %d point block(s) "
+    "(lines %s) — a top-level point right under another point's block with no blank line, "
+    "either block holding sub-lines. "
+    "Leave the sent reply as is; write this reply with one blank line after each point's block, none inside it."
 )
 # T-651 grill: how many violating line numbers the notice actually lists before
 # collapsing the rest into "+N more" — the COUNT (%d above) always stays the
@@ -574,6 +638,43 @@ def form_outline_violations(text):
     return out
 
 
+def form_outline_blank_violations(text):
+    """1-indexed line numbers of top-level `- ` points that start with no blank
+    line above, directly under another point's block, where at least one of the
+    two blocks carries sub-lines (`·` or indented `- `) (T-869). A block = a column-0 `- ` line plus
+    the indented lines right under it. Plain one-line bullets stacked together
+    are an ordinary list and never flagged; fenced code and table rows are never
+    a block, and a non-block line (blank, table, heading, prose) ends one."""
+    if not isinstance(text, str) or not text:
+        return []
+    raw_lines = [ln.rstrip("\r") for ln in text.split("\n")]
+    blocks = []   # [start_idx, has_dot, glued_to_prev_block]
+    cur = None
+    in_fence = False
+    for i, ln in enumerate(raw_lines):
+        if FORM_OUTLINE_FENCE_RE.match(ln.strip()):
+            in_fence = not in_fence
+            cur = None
+            continue
+        if in_fence or ln.strip() == "":
+            cur = None
+            continue
+        if re.match(r"^- \S", ln):
+            glued = cur is not None
+            cur = [i, False, glued]
+            blocks.append(cur)
+        elif cur is not None and ln[:1] in (" ", "\t"):
+            if ln.lstrip(" \t").startswith(("·", "- ")):
+                cur[1] = True
+        else:
+            cur = None
+    out = []
+    for k, b in enumerate(blocks):
+        if b[2] and k > 0 and (b[1] or blocks[k - 1][1]):
+            out.append(b[0] + 1)
+    return out
+
+
 FORM_OUTLINE_TAIL_CHUNK = 256 * 1024
 FORM_OUTLINE_TAIL_MAX = 1024 * 1024
 
@@ -664,6 +765,14 @@ if hook_dir and os.path.isfile(resolver):
                     if rest > 0:
                         numbers += f", +{rest} more"
                     lines.append(REGISTER_CHECK_NOTICE % (len(violations), numbers))
+                blanks = form_outline_blank_violations(reply_text) if reply_text is not None else []
+                if blanks:
+                    shown = blanks[:FORM_OUTLINE_LIST_CAP]
+                    rest = len(blanks) - len(shown)
+                    numbers = ", ".join(str(n) for n in shown)
+                    if rest > 0:
+                        numbers += f", +{rest} more"
+                    lines.append(REGISTER_BLANK_NOTICE % (len(blanks), numbers))
         elif r.returncode != 0:
             lines.append(REGISTER_UNCONFIRMED_NOTICE % "the resolver exited non-zero")
     except subprocess.TimeoutExpired:

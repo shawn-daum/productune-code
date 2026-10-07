@@ -97,6 +97,17 @@ describe('parsePrdTree', () => {
     // table 4 rows + 0 text, plus two #### headings, plus their bodies (alpha: 4 incl. fence lines, beta: 1)
     expect(what.lines).toBe(4 + (1 + 4) + (1 + 1))
   })
+  it('reads both As-Is/To-Be heading forms — the open section\'s English pair and a closed section\'s Korean pair', () => {
+    const body = '## v1.13 — open\n\n### As-Is\n\n- a\n\n### To-Be\n\n- b\n\n'
+      + '## v1.12 — closed\n\n### 이 버전 직전 (as-is)\n\nold a\n\n### 이 버전 직후 (to-be)\n\nold b\n'
+    const t = parsePrdTree(body)
+    expect(t.sections.map((s: any) => s.children.map((c: any) => [c.level, c.title]))).toEqual([
+      [[3, 'As-Is'], [3, 'To-Be']],
+      [[3, '이 버전 직전 (as-is)'], [3, '이 버전 직후 (to-be)']],
+    ])
+    const html = renderPrdReading({ body, currentVersion: 'v1.13', decisionTickets: [], idPrefix: 'prd', deps }) as string
+    for (const s of ['As-Is', 'To-Be', '이 버전 직전 (as-is)', '이 버전 직후 (to-be)']) expect(html).toContain(s)
+  })
   it('a level jump hangs the node under the nearest shallower heading', () => {
     const t = parsePrdTree('## v1\n\n#### k — x\n\nbody\n')
     expect(t.sections[0].children[0].level).toBe(4)
@@ -139,7 +150,7 @@ describe('renderPrdReading', () => {
   it('What cards show key, title, tickets, one-liner and 「N줄」', () => {
     const html = render()
     expect(html).toContain('<span class="pr-key mono">alpha</span>')
-    expect(html).toContain('<span class="pr-tk mono">T-1 · T-2</span>')
+    expect(html).toContain('<span class="pr-tk mono"><span class="pr-id">T-1</span> · <span class="pr-id">T-2</span></span>')
     expect(html).toContain('<span class="pr-one">alpha one-liner</span>')
     expect(html).toContain(`<span class="pr-meta mono">${PRD_READING.lineCount(4)}</span>`)
     expect(html).toContain(PRD_READING.cardsHeading(2))
@@ -225,7 +236,7 @@ describe('plainInline — unbackticked underscores (T-884 fix2)', () => {
     expect(html).toContain('Success metrics → version_outcome')
     expect(html).not.toContain('versionoutcome')
     expect(html).toMatch(/pr-key mono">feature_name_with_underscores<\/span>/)
-    expect(html).toMatch(/pr-tk[^>]*>T-808/)
+    expect(html).toMatch(/pr-tk[^>]*><span class="pr-id">T-808/)
   })
   it('.pr-key is shrinkable and clipped inside the card (layout rule)', () => {
     expect(PRD_READING_CSS).toMatch(/\.pr-key \{[^}]*flex: 0 1 auto;[^}]*max-width: 100%;[^}]*text-overflow: ellipsis;/)
@@ -257,8 +268,14 @@ describe('What-card title width (layout rule; measured in headless chromium by Q
     expect(rule).toMatch(/min-width: 0;/)
     expect(rule).toMatch(/max-width: 100%;/)
     expect(rule).toMatch(/white-space: normal;/)
-    expect(rule).toMatch(/overflow-wrap: anywhere;/)
+    expect(rule).not.toMatch(/overflow-wrap: anywhere;/)
     expect(rule).not.toMatch(/flex: 0 0 auto/)
+  })
+  it('a ticket id never splits (T-888): ids are nowrap, the pill breaks only between them', () => {
+    expect(PRD_READING_CSS).toMatch(/\.pr-tk \.pr-id \{[^}]*white-space: nowrap;/)
+  })
+  it('card titles wrap Korean by word (T-888)', () => {
+    expect(PRD_READING_CSS).toMatch(/\.pr-t \{[^}]*word-break: keep-all;/)
   })
 })
 

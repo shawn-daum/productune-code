@@ -9,15 +9,32 @@
 # The state/cost recording that full's statusline smuggled in lives in
 # hooks/prdt-post-dispatch.sh.
 #
-# Format: <slug> | <version> | <stage> | <vdone>/<vtotal> | T-NNN <task>→<persona> | branch: <branch>
+# Format (T-984, user-confirmed 2026-10-06; T-961 release lines):
+#   <label> <version> | branch: <b> | <stage> n/m | ticket <vdone>/<vtotal> | working <ids|—>
+#   dec <ids|—> · req <ids|—>
+#   - One row per release line, home line (the project slug) first, then each
+#     line declared in `.prdt/config.json` `lines` (release-lines.md §6b).
+#   - The `dec … · req …` row is ALWAYS its own last row (`dec — · req —` when
+#     empty), single-line and multi-line projects alike (T-988 = A, T-984
+#     reversed by the user 2026-10-06).
+#   - Never more than MAX_ROWS (17, measured on the user's machine) rows.
+#   - `<stage> n/m` reads the T-954 checklist record, po-state `checks.<stage>`
+#     (or `lines.<line>.checks.<stage>`); no record for the stage → stage alone.
+#   - `<label> <version>` is ONE OSC 8 link to `.prdt/scratch/viewer/viewer.html`
+#     when that file exists, plain text otherwise. Successor ids inside a
+#     group use `>`.
 #   - <vdone>/<vtotal> is ONE version-wide count over every ticket (open+done)
-#     in the current version dir, every type included (`decision` too) — T-755:
-#     a per-type "which stage is this ticket in" guess (the old TYPE_TO_STAGE
-#     map) read wrong the moment a `design`-typed ticket was actually Build
-#     work, so the count no longer estimates a stage from ticket type at all.
-#   - <task> slug is capped at 16 chars (+ …) so a long slug can't blow out the line.
-#   - Trailing footer (T-682): `running T-NNN[»T-NNN…] | waiting T-NNN[»T-NNN…] | CP T-NNN→T-NNN`
-#     — CP (T-776) is the ≤2-id head of `prdt schedule`'s own critical_path.
+#     in the line's current version dir, every type included (T-755).
+#   - `dec` = every open `type: decision` ticket, `req` = every open
+#     `assignee: user` ticket that is not a decision, across EVERY version
+#     directory of every line (backlog excluded) — the same rule as the
+#     viewer Home (`waitLists`, packages/viewer/lib/home-graph.mjs, T-881).
+#   - T-965: `working` ids carry their persona abbreviated (`T-959(des)`,
+#     `T-700(dev+qa)`); a working id sits on the row of the line whose folder
+#     holds its ticket; `>` successors list ONLY tickets in that line's current
+#     version folder.
+#   - T-984 dropped the separate `T-NNN <task>→<persona>` current-task segment;
+#     in-flight work reads from `working`.
 # Missing pieces degrade silently (init is deterministic, so slug/stage exist from 0s).
 
 set +e
@@ -115,67 +132,53 @@ def clean(raw, cap=40, bar=False):
 
 
 slug = clean(cfg_slug) or clean(os.path.basename(root)) or "?"
-stage = token(st.get("stage"), lambda v: v in STAGES, absent="?") or "?"
-version = token(st.get("version"), lambda v: VERSION_RE.match(v) is not None)
-parts = [slug]
 
-# ticket progress for the current version dir: ONE version-wide count over
-# every open+done ticket, every type included (`decision` too) — T-755 removed
-# the per-type "which stage is this ticket in" guess (TYPE_TO_STAGE) that used
-# to narrow this to a stage-matched subset; a ticket's `type` no longer affects
-# the count at all, only its `status`.
-vdone = vtotal = 0
-# `version` reaches the filesystem here, so only a SHAPE-MATCHED value is used
-# (`<withheld>` / off-shape → no counting, and no `../` reaching os.listdir).
-tdir = os.path.join(root, "docs", "tickets", version) if VERSION_RE.match(version or "") else ""
-# T-682 "waiting": open `type: decision` and open `assignee: user` tickets —
-# scoped to this SAME current-version directory (not a repo-wide walk on every
-# prompt): reused from the loop below that already opens every ticket file
-# here for the version count, so this costs no extra file reads.
-waiting = []
-if tdir and os.path.isdir(tdir):
-    for fn in os.listdir(tdir):
-        if not (fn.startswith("T-") and fn.endswith(".md")):
-            continue
-        try:
-            head = open(os.path.join(tdir, fn)).read(600)
-        except OSError:
-            continue
-        ms = re.search(r"^status:\s*(\S+)", head, re.M)
-        s = ms.group(1) if ms else ""
-        if s not in ("done", "open"):
-            continue
-        is_done = s == "done"
-        vtotal += 1
-        vdone += is_done
-        mt = re.search(r"^(?:type|stage):\s*(\S+)", head, re.M)
-        ttype = mt.group(1) if mt else ""
-        if s == "open":
-            ma = re.search(r"^assignee:\s*(\S+)", head, re.M)
-            tassignee = ma.group(1) if ma else ""
-            if ttype == "decision" or tassignee == "user":
-                tid = fn[:-3]
-                if TICKET_RE.match(tid):
-                    waiting.append(tid)
-waiting = sorted(set(waiting))
+# ── T-961: release lines (docs/artifacts/v1.13/release-lines.md §1 · §5 · §6b) ─
+# The home line is the project slug and reads po-state's top-level stage /
+# version / checks; every added line is declared in `.prdt/config.json` `lines`
+# and reads `po-state.lines.<line>`, its tickets under `docs/tickets/<line>/`.
+# No `lines` → one row, the single-line project as before (plus T-984 layout).
+# KEEP LINE_NAME_RE and the declared-line filter in lockstep with
+# LINE_NAME_RE / project_lines in scripts/prdt.
+LINE_NAME_RE = re.compile(r"\A(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+# T-954 = A: stage checklist sizes (define 5 · build 5 · ship 9 · retro 8). The
+# record is po-state `checks: {"<stage>": [<item>, …]}` (or
+# `lines.<line>.checks`); `<stage> n/m` counts distinct items, capped at m.
+STAGE_CHECK_TOTALS = {"define": 5, "build": 5, "ship": 9, "retro": 8}
+# Rows this statusline may print — measured on the user's machine 2026-10-06:
+# 17 of a 30-row test statusline were visible (T-961 log).
+MAX_ROWS = 17
 
-if version and version != slug:
-    parts.append(version)
-if vtotal:
-    parts.append(f"{stage} | {vdone}/{vtotal}")
-else:
-    parts.append(stage)
+try:
+    cfg = json.load(open(os.path.join(root, ".prdt", "config.json")))
+except Exception:
+    cfg = None
+cfg = cfg if isinstance(cfg, dict) else {}
 
-ct = st.get("current_task")
-ct_tid = None  # the TICKET_RE-matched current_task id, for the OSC 8 link step (F4)
-if isinstance(ct, dict) and (ct.get("ticket_id") or ct.get("slug")):
-    tid = token(ct.get("ticket_id"), lambda v: TICKET_RE.match(v) is not None)
-    ct_tid = tid if TICKET_RE.match(tid or "") else None
-    who = token(ct.get("assignee"), lambda v: v in ASSIGNEES)
-    tslug = clean(ct.get("slug"), cap=16)  # cap so a long slug can't blow out the line
-    seg = " ".join(x for x in (tid, tslug) if x)
-    if seg:
-        parts.append(f"{seg}→{who}" if who else seg)
+
+def declared_lines():
+    """Added lines in declaration order — legal, unique, not the slug."""
+    raw = cfg.get("lines")
+    out, seen = [], set()
+    for e in (raw if isinstance(raw, list) else []):
+        name = e.get("name") if isinstance(e, dict) else None
+        if isinstance(name, str) and LINE_NAME_RE.match(name) and name not in seen and name != cfg_slug:
+            seen.add(name)
+            out.append(e)
+    return out
+
+
+def stage_seg(raw_stage, checks):
+    """`<stage> n/m` when the checklist record has an entry for this stage;
+    the stage name alone otherwise (no record, idle, or an off-shape stage)."""
+    stage = token(raw_stage, lambda v: v in STAGES, absent="?") or "?"
+    total = STAGE_CHECK_TOTALS.get(stage)
+    done = checks.get(stage) if isinstance(checks, dict) else None
+    if total and isinstance(done, list):
+        n = len({x.strip() for x in done if isinstance(x, str) and x.strip()})
+        return f"{stage} {min(n, total)}/{total}"
+    return stage
+
 
 # branch (T-426): meta/code split projects (PRD history §v1.3) carry no `.git` at
 # root — the code repo lives at `<root>/<config.code.dir>` (default "code").
@@ -187,11 +190,7 @@ CODE_DIR_DEFAULT = "code"
 
 def code_dir_name():
     """config.code.dir (a non-empty str, not escaping root) or None."""
-    try:
-        cfg = json.load(open(os.path.join(root, ".prdt", "config.json")))
-    except Exception:
-        return None
-    if isinstance(cfg, dict) and isinstance(cfg.get("code"), dict):
+    if isinstance(cfg.get("code"), dict):
         d = cfg["code"].get("dir")
         if isinstance(d, str) and d.strip():
             t = d.strip()
@@ -201,7 +200,21 @@ def code_dir_name():
     return None
 
 
+def line_code_dir(entry):
+    """An added line's `code.dir` — relative to the project root and, unlike the
+    home line's, allowed to climb out of it (`../ntf-archive/code`,
+    release-lines.md §1): it is only ever handed to `git rev-parse`. Absolute or
+    absent → None (no branch segment for that row)."""
+    c = entry.get("code") if isinstance(entry, dict) else None
+    d = c.get("dir") if isinstance(c, dict) else None
+    if isinstance(d, str) and d.strip() and not os.path.isabs(d.strip()):
+        return os.path.normpath(os.path.join(root, d.strip()))
+    return None
+
+
 def git_branch(path):
+    if not path:
+        return None
     try:
         r = subprocess.run(["git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD"],
                             capture_output=True, text=True, timeout=2)
@@ -211,14 +224,118 @@ def git_branch(path):
         return None
 
 
-# Root repo wins (non-split projects, unchanged); else the configured/default
-# code repo; else the segment is silently absent (pure-display degrade rule).
-br = git_branch(root)
-if br is None:
-    br = git_branch(os.path.join(root, code_dir_name() or CODE_DIR_DEFAULT))
-br = clean(br)
-if br:
-    parts.append(f"branch: {br}")
+def home_branch():
+    # Root repo wins (non-split projects, unchanged); else the configured/default
+    # code repo; else the segment is silently absent (pure-display degrade rule).
+    br = git_branch(root)
+    if br is None:
+        br = git_branch(os.path.join(root, code_dir_name() or CODE_DIR_DEFAULT))
+    return br
+
+
+st_lines = st.get("lines") if isinstance(st.get("lines"), dict) else {}
+rows = [{"line": None, "label": slug, "st": st, "branch": home_branch()}]
+for e in declared_lines():
+    ent = st_lines.get(e["name"])
+    rows.append({"line": e["name"], "label": e["name"], "st": ent if isinstance(ent, dict) else {},
+                 "branch": git_branch(line_code_dir(e))})
+for r in rows:
+    r["version"] = token(r["st"].get("version"), lambda v: VERSION_RE.match(v) is not None)
+    r["stage"] = stage_seg(r["st"].get("stage"), r["st"].get("checks"))
+    # T-922: `<label> <version>` opens the row (one OSC 8 link, see wrap_slug);
+    # version is omitted only when po-state carries none.
+    r["slug_ver"] = f"{r['label']} {r['version']}" if r["version"] else r["label"]
+    r["branch"] = clean(r["branch"])
+    r["vdone"] = r["vtotal"] = 0
+row_by_line = {r["line"]: r for r in rows}
+
+# Ticket progress per row: ONE version-wide count over every open+done ticket
+# in that line's current version dir, every type included (T-755).
+# Directory names reach the filesystem here only SHAPE-MATCHED (VERSION_RE,
+# LINE_NAME_RE), so no `../` and no `<withheld>` ever reaches os.listdir/join.
+# T-849 `dec` / `req`: open `type: decision` tickets, and open `assignee: user`
+# tickets that are not decisions, over EVERY version directory of EVERY line
+# (backlog excluded) — the same rule as the viewer Home (`waitLists`).
+dec = []
+req = []
+req_deps = {}   # req candidate id -> its `deps` ids
+tid_status = {}  # every scanned ticket id -> status (any status)
+tid_line = {}  # ticket id -> the line whose folder holds it (None = home)
+tickets_root = os.path.join(root, "docs", "tickets")
+
+
+def _fm_deps(head):
+    """`deps` ids of a ticket's frontmatter: inline list, bare id, or `- T-n` block."""
+    fm = re.match(r"---\n(.*?)\n---", head, re.S)
+    block = fm.group(1) if fm else head
+    m = re.search(r"^deps:[ \t]*(.*(?:\n[ \t]+-[^\n]*)*)", block, re.M)
+    return re.findall(r"T-\d+", m.group(1)) if m else []
+
+
+def scan(base, row):
+    try:
+        vdirs = sorted(d for d in os.listdir(base)
+                       if VERSION_RE.match(d) and os.path.isdir(os.path.join(base, d)))
+    except OSError:
+        return
+    for vd in vdirs:
+        dpath = os.path.join(base, vd)
+        try:
+            names = os.listdir(dpath)
+        except OSError:
+            continue
+        is_current = vd == row["version"]
+        for fn in names:
+            if not (fn.startswith("T-") and fn.endswith(".md")):
+                continue
+            try:
+                head = open(os.path.join(dpath, fn)).read(2000)
+            except OSError:
+                continue
+            ms = re.search(r"^status:\s*(\S+)", head, re.M)
+            s = ms.group(1) if ms else ""
+            if TICKET_RE.match(fn[:-3]):
+                tid_status.setdefault(fn[:-3], s)
+            if s not in ("done", "open"):
+                continue
+            if is_current:
+                row["vtotal"] += 1
+                row["vdone"] += s == "done"
+            tid = fn[:-3]
+            if not TICKET_RE.match(tid):
+                continue
+            tid_line.setdefault(tid, row["line"])
+            if s != "open":
+                continue
+            mt = re.search(r"^(?:type|stage):\s*(\S+)", head, re.M)
+            ttype = mt.group(1) if mt else ""
+            ma = re.search(r"^assignee:\s*(\S+)", head, re.M)
+            tassignee = ma.group(1) if ma else ""
+            if ttype == "decision":
+                dec.append(tid)
+            elif tassignee == "user":
+                req.append(tid)
+                req_deps[tid] = _fm_deps(head)
+
+
+for r in rows:
+    scan(tickets_root if r["line"] is None else os.path.join(tickets_root, r["line"]), r)
+
+
+def _tid_key(t):
+    return int(t[2:])
+
+
+dec = sorted(set(dec), key=_tid_key)
+# `req` lists only what the user can do NOW: a ticket whose `deps` still name an
+# open ticket is blocked and hidden (same rule as the viewer Home `waitLists`).
+req = sorted((t for t in set(req) if not any(tid_status.get(d) == "open" for d in req_deps.get(t, []))), key=_tid_key)
+
+
+def line_of(tid):
+    """The row a ticket id belongs to: its folder's line; unknown → home."""
+    ln = tid_line.get(tid)
+    return ln if ln in row_by_line else None
 
 # ── T-682: "running" / "waiting" footer segments ────────────────────────────
 # running = dispatches in flight right now, machine-generated: markers written
@@ -305,21 +422,32 @@ def open_index_ro():
         return None
 
 
+PERSONA_ABBR = {"developer": "dev", "designer": "des", "qa": "qa", "po": "po", "user": "user"}
+
+
 def dependents(con, tid):
     """Tickets that name `tid` in THEIR OWN `deps` (edges: rel='deps' rows are
     (src depends on dst) — a ticket depending on X is the row (X's dependant,
     'deps', X)). One query answers both directions this ticket asks for: a
     running ticket's direct successors, and a waiting ticket's "what this
-    blocks" — both are "who has ME in their deps."."""
-    if con is None:
+    blocks" — both are "who has ME in their deps." T-965: only dependants whose
+    file lives in the CURRENT version's folder (index `tickets.path`) — T-961:
+    the current version of the line `tid` belongs to (`docs/tickets/<line>/…`
+    for an added line); a line without a version shows none."""
+    line = line_of(tid)
+    ver = row_by_line[line]["version"]
+    if con is None or not ver:
         return []
+    prefix = f"docs/tickets/{line}/{ver}/%" if line else f"docs/tickets/{ver}/%"
     try:
-        rows = con.execute(
-            "SELECT DISTINCT src FROM edges WHERE rel='deps' AND dst=? ORDER BY src", (tid,)
+        rows_ = con.execute(
+            "SELECT DISTINCT e.src FROM edges e JOIN tickets t ON t.id = e.src "
+            "WHERE e.rel='deps' AND e.dst=? AND t.path LIKE ? ORDER BY e.src",
+            (tid, prefix),
         ).fetchall()
     except Exception:
         return []
-    return [r[0] for r in rows if isinstance(r[0], str) and TICKET_RE.match(r[0])]
+    return [x[0] for x in rows_ if isinstance(x[0], str) and TICKET_RE.match(x[0])]
 
 
 def ticket_path(con, tid):
@@ -427,67 +555,14 @@ def collapse(items, limit):
     collapse to a count + first ids" width-budget rule."""
     return (items, 0) if len(items) <= limit else (items[:limit], len(items) - limit)
 
-
 LINE_CAP = 200
 links = {}  # ticket_id -> resolved viewer link target (T-805), filled in as segments are built;
             # consumed AFTER the belt-clean below, never before (clean() would
             # strip the OSC 8 escape bytes as control characters, same as it
             # strips any other Cc/Cf/Zl/Zp — see the wrap step's own note).
 
-# ── T-776: critical-path head, "from the SAME computation as `prdt schedule`" ─
-# Reimplementing compute_schedule() here would drift from it the next time
-# S1's graph rules (T-747/763/764/765) change; shelling out to the project's
-# own `prdt schedule --json` instead can't drift, at the cost of one child
-# python process per render (~0.2s measured) — accepted per design (SoT:
-# docs/artifacts/v1.11/critical-path.html §4: "statusline critical path 표시
-# … 매 갱신 계산", computed fresh every render, nothing cached).
-def _find_prdt_script():
-    """This project's own `scripts/prdt`, same non-split-root-then-code-dir
-    order as git_branch() above (T-426 split). None when not found — no CP
-    segment, same silent degrade as every other piece here."""
-    for base in (root, os.path.join(root, code_dir_name() or CODE_DIR_DEFAULT)):
-        p = os.path.join(base, "packages", "core", "scripts", "prdt")
-        if os.path.isfile(p):
-            return p
-    return None
-
-
-def critical_path_head():
-    """Up to 2 ids — the head of `prdt schedule`'s own `critical_path` — or
-    [] on any degrade (script missing, non-zero exit, timeout, bad JSON;
-    a dependency cycle also computes as [] on the `prdt schedule` side, so it
-    degrades the same way here, silently). PRDT_META_BACKUP=0: this script is
-    pure display (file header, "No writes, no side effects") and every `prdt`
-    subcommand but `meta` fires the detached meta-backup tick otherwise — the
-    same kill switch the ticket's own observed command used."""
-    script = _find_prdt_script()
-    if not script:
-        return []
-    env = dict(os.environ)
-    env["PRDT_META_BACKUP"] = "0"
-    try:
-        r = subprocess.run([sys.executable, script, "schedule", "--json"],
-                            cwd=root, capture_output=True, text=True, timeout=2, env=env)
-    except Exception:
-        return []
-    if r.returncode != 0:
-        return []
-    try:
-        chain = json.loads(r.stdout).get("critical_path")
-    except Exception:
-        return []
-    if not isinstance(chain, list):
-        return []
-    return [t for t in chain[:2] if isinstance(t, str) and TICKET_RE.match(t)]
-
-
 running = running_dispatches()
-cp = critical_path_head()
-idx = open_index_ro() if (running or waiting or ct_tid or cp) else None
-if ct_tid:
-    links[ct_tid] = ticket_link_target(idx, ct_tid)  # F4: the current_task id links too
-for _cp_tid in cp:
-    links.setdefault(_cp_tid, ticket_link_target(idx, _cp_tid))
+idx = open_index_ro() if (running or dec or req) else None
 
 
 def fmt_group(ids, limit, succ_limit, with_persona=None):
@@ -497,54 +572,74 @@ def fmt_group(ids, limit, succ_limit, with_persona=None):
         links[tid] = ticket_link_target(idx, tid)
         seg = tid
         if with_persona is not None and with_persona.get(tid):
-            seg += "→" + "+".join(with_persona[tid])
+            seg += "(" + "+".join(PERSONA_ABBR.get(x, x) for x in with_persona[tid]) + ")"
         succ = dependents(idx, tid) if succ_limit else []
         if succ:
             s_shown, s_extra = collapse(succ, succ_limit)
             for s in s_shown:
                 links.setdefault(s, ticket_link_target(idx, s))
             s_txt = ",".join(s_shown) + (f"+{s_extra}" if s_extra else "")
-            seg += f"»{s_txt}"
+            seg += f">{s_txt}"
         bits.append(seg)
     if extra:
         bits.append(f"+{extra}")
     return " ".join(bits)
 
 
-def tail_segments(limits):
-    run_lim, wait_lim, succ_lim = limits
-    out = []
-    if running:
-        personas = {tid: ps for tid, ps in running}
-        out.append("running " + fmt_group([tid for tid, _ in running], run_lim, succ_lim, personas))
-    if waiting:
-        out.append("waiting " + fmt_group(waiting, wait_lim, succ_lim))
-    if cp:
-        out.append("CP " + "→".join(cp))  # T-776: beside `waiting`, always the ≤2-id head (never collapsed)
-    return out
+personas = {tid: ps for tid, ps in running}
 
 
-# Width budget (F6): the belt below caps the whole line at LINE_CAP, and at
-# full fan-out the cap used to fall INSIDE the waiting segment — the last one,
-# so the one that got cut. The two segments are built with the widest limits
-# (running/waiting/successors = 3/3/2) and, when the line would still exceed
-# the cap, rebuilt tighter (2/2/1, then 1/1/0) before the belt ever sees it:
-# collapsing to counts is the rule the acceptance names, truncation is not.
-line = clean(" | ".join(parts), cap=LINE_CAP, bar=True)
-if running or waiting or cp:
+def working_seg(ids, limits):
+    run_lim, _, succ_lim = limits
+    return "working " + (fmt_group(ids, run_lim, succ_lim, personas) if ids else "—")
+
+
+def action_seg(limits):
+    """T-984: the things the user must act on — `dec … · req …`, `—` when empty."""
+    _, wait_lim, succ_lim = limits
+    return ("dec " + (fmt_group(dec, wait_lim, succ_lim) if dec else "—")
+            + " · req " + (fmt_group(req, wait_lim, succ_lim) if req else "—"))
+
+
+def fit(build):
+    """Width budget (F6): build at the widest limits (working/waiting/successors
+    = 3/3/2) and, while the row would exceed LINE_CAP, tighter (2/2/1, then
+    1/1/0) — collapsing to counts, never truncation. Belt: sanitized once more
+    and capped, so every row stays ONE row whatever any input held."""
     for limits in ((3, 3, 2), (2, 2, 1), (1, 1, 0)):
-        candidate = " | ".join(parts + tail_segments(limits))
+        candidate = build(limits)
         if len(candidate) <= LINE_CAP:
             break
-    # Belt: the assembled line is sanitized once more and length-capped, so this
-    # script emits exactly ONE line no matter what any input held.
-    line = clean(candidate, cap=LINE_CAP, bar=True)
+    return clean(candidate, cap=LINE_CAP, bar=True)
+
+
+# T-984 layout (user-confirmed 2026-10-06):
+#   <label> <version> | branch: <b> | <stage> n/m | ticket n/m | working …
+# One row per line, home first, then ALWAYS one `dec … · req …` row last
+# (`dec — · req —` when empty), single-line and multi-line alike.
+# Never more than MAX_ROWS rows: past it, the last line rows fold into `+N lines`.
+line_budget = MAX_ROWS - 1
+shown = rows if len(rows) <= line_budget else rows[:line_budget - 1]
+out_rows = []
+for r in shown:
+    head = [r["slug_ver"]]
+    if r["branch"]:
+        head.append(f"branch: {r['branch']}")
+    head.append(r["stage"])
+    if r["vtotal"]:
+        head.append(f"ticket {r['vdone']}/{r['vtotal']}")
+    ids = [tid for tid, _ in running if line_of(tid) == r["line"]]
+    out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
+                                        " | ".join(head + [working_seg(ids, lim)]))))
+if len(shown) < len(rows):
+    out_rows.append((None, f"+{len(rows) - len(shown)} lines"))
+out_rows.append((None, fit(action_seg)))
 
 
 def wrap_links(text, link_map):
     """OSC 8-wraps EVERY occurrence of each ticket id in `text` that resolved
-    to a file (F4 — the current_task id and a running/waiting id can be the
-    same ticket), run AFTER the belt-clean above (never before — clean()
+    to a file (F4 — a running and a waiting id can be the same ticket), run
+    AFTER the belt-clean above (never before — clean()
     strips Cc, which an OSC 8 escape is made of, so linking earlier would just
     delete the links it added). Only ever wraps a `T-NNN` token this script
     itself put in `text` (TICKET_RE-matched throughout), never raw project
@@ -568,6 +663,21 @@ def wrap_links(text, link_map):
     return text
 
 
-print(wrap_links(line, links))
+def wrap_slug(text, slug_ver):
+    """T-849/T-922: a row's `<label> <version>` (always its first segment) as
+    ONE OSC 8 link to `.prdt/scratch/viewer/viewer.html` when that file exists;
+    plain text otherwise. Pure display — only an isfile check, no write. Run
+    AFTER wrap_links (the viewer path may itself contain a `T-NNN` directory
+    name), and only when the row still opens with the plain label."""
+    viewer = os.path.join(root, VIEWER_HTML_REL)
+    if not (slug_ver and os.path.isfile(viewer) and text.startswith(slug_ver)):
+        return text
+    uri = "file://" + quote(viewer, safe="/")
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in uri):
+        return text
+    return f"\x1b]8;;{uri}\x1b\\{slug_ver}\x1b]8;;\x1b\\" + text[len(slug_ver):]
+
+
+print("\n".join(wrap_slug(wrap_links(t, links), sv) for sv, t in out_rows))
 PYEOF
 exit 0

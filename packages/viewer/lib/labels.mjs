@@ -51,6 +51,9 @@ export const HOME = {
   // define-screen-set.html, home-progress · home-cases; T-796 outcome). The
   // matrix labels (담당 · 검수 · 전체) went with the matrix.
   here: 'now',
+  // T-961: stage-bar counts as the v1.13 screen set (T-955) labels them.
+  stageTickets: (n) => `티켓 ${n}`,
+  stageDone: (done, total) => `티켓 완료 ${done}/${total}`,
   scope: '스코프',
   scopeSub: (n) => `이번 버전 ${n}항목`,
   waitDec: '내 결정 대기',
@@ -296,4 +299,29 @@ export const HASH_NOTICE = {
 export const THEME_TOGGLE = {
   toDark: '다크 모드로 바꾸기',
   toLight: '라이트 모드로 바꾸기',
+}
+
+// T-998 (T-999 = C): a decision ticket's `options` table drawn as cards.
+// `headers` maps a column header (parenthetical dropped, lower-cased) to its
+// role; `facts` = the labelled rows in a card, [label, dt class].
+export const OPTION_CARD = {
+  headers: { 선택지: 'name', 결과: 'result', 예시: 'example', pros: 'pros', 장점: 'pros', cons: 'cons', 단점: 'cons', 'trade-off': 'tradeoff', recommend: 'rec' },
+  facts: { result: ['결과', ''], pros: ['장점', 'p'], cons: ['단점', 'c'], tradeoff: ['절충', ''] },
+  example: '예시',
+  recommended: '권고',
+  chosen: '✓ 선택됨',
+  why: '권고 이유',
+  // a recommend cell with no recommendation in it
+  noRec: /^(—|-|없음)$/,
+  // the leading 「권고」 marker in a recommend cell, dropped to leave the reason
+  recPrefix: /^\*{0,2}권고\*{0,2}\s*[—–-]?\s*/,
+  // which letter the answer picked, in the `## outcome` text: the PO's "= B" reading,
+  // then a lone letter inside the verbatim quote, then "A 안"
+  // the PO's normalized line comes first: `- 선택: B` (a letter, or a number for numbered options)
+  pickPatterns: [
+    /^[ \t]*[-*][ \t]*선택:[ \t]*([A-Za-z]|\d+)[ \t]*$/m,
+    /=\s*([A-Z])(?![A-Za-z0-9가-힣])/,
+    /["“*「]\s*(?:\d+\s*)?([A-Z])\s*(?:안|["”*」.]|$)/m,
+    /(?:^|[\s—-])([A-Z])\s*안/m,
+  ],
 }

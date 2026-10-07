@@ -218,6 +218,25 @@ describe.skipIf(!PY)('T-779 — a worktree-dispatched worker cannot write the sh
       expect(bash(c, root), c).toBe('')
     }
   })
+
+  test('T-910 — wrapper flag values and same-command path variables reach the shared-checkout rule too', () => {
+    for (const c of [
+      'nice -n 5 rm -rf code/src',
+      'sudo -u me rm -rf code/src',
+      'timeout 5 rm -rf code/src',
+      'caffeinate -i rm -rf code/src',
+      'env -u X rm -rf code/src',
+      'timeout 5 touch code/x.ts',
+      'D=code/src; rm -rf "$D"',
+      `D=${code}; echo x > "$D/a.ts"`,
+    ]) {
+      expect(denied(bash(c, root)), c).toContain('T-779')
+    }
+    for (const c of ['nice -n 5 vitest run', 'timeout 30 pnpm test', `timeout 5 rm -rf ${wt}/x`, 'D=/tmp/x; rm -rf "$D"',
+      `D=${wt}/src; rm -rf "$D"`]) {
+      expect(bash(c, root), c).toBe('')
+    }
+  })
 })
 
 describe.skipIf(!PY)('T-779 — who the guard applies to', () => {
@@ -552,6 +571,80 @@ describe.skipIf(!PY)('T-834 — no worker writes the track records', () => {
     for (const c of [`tar xf f.tar -C ${run_}`, `unzip f.zip -d${tracks}`, `install -d ${tracks}/x`]) {
       expect(run({ tool: 'Bash', aid: null, atype: null, input: { command: c } }), c).toBe('')
     }
+  })
+
+  test('T-910 — a wrapper\'s flag values are skipped and timeout/caffeinate-style wrappers are known', () => {
+    for (const c of [
+      `nice -n 5 rm -rf ${tracks}`,
+      `nice -n5 rm -rf ${tracks}`,
+      `sudo -u me rm -rf ${tracks}`,
+      `sudo -Eu me rm -rf ${tracks}`,
+      `sudo --user me rm ${rec}`,
+      `timeout 5 rm -rf ${tracks}`,
+      `timeout -s KILL -k 2 5 rm ${rec}`,
+      `gtimeout --signal KILL 5 rm ${rec}`,
+      `caffeinate -i rm -rf ${tracks}`,
+      `caffeinate -t 60 rm -rf ${tracks}`,
+      `env -u X rm -rf ${tracks}`,
+      `env - rm -rf ${tracks}`,
+      `env -C /tmp rm -rf ${tracks}`,
+      `stdbuf -o L rm ${rec}`,
+      `nohup nice -n 5 rm -rf ${tracks}`,
+      `time -o /tmp/t rm ${rec}`,
+      `exec -a x rm ${rec}`,
+      `doas -u me rm ${rec}`,
+      `sudo -- rm ${rec}`,
+    ]) {
+      expect(why(bash(c)), c).toBeTruthy()
+    }
+    const fakeHome = path.join(sb, 'home')
+    fs.mkdirSync(path.join(fakeHome, '.prdt', 'run', 'tracks'), { recursive: true })
+    const env = { ...process.env, HOME: fakeHome }
+    delete env.PRDT_HOME
+    for (const c of ['nice -n 5 rm -rf ~/.prdt/run/tracks', 'sudo -u me rm -rf ~/.prdt/run/tracks',
+      'timeout 5 rm -rf ~/.prdt/run/tracks', 'caffeinate -i rm -rf ~/.prdt/run/tracks', 'env -u X rm -rf ~/.prdt/run/tracks']) {
+      expect(why(run({ tool: 'Bash', input: { command: c }, env })), c).toBeTruthy()
+    }
+    for (const c of ['nice -n 5 vitest run', 'timeout 30 pnpm test', 'caffeinate -i pnpm build', 'sudo -u me ls /',
+      'env -u X node x.js', `timeout 5 rm -rf ${scratch}/x`, `nice -n 5 cat ${rec}`]) {
+      expect(bash(c), c).toBe('')
+    }
+    expect(run({ tool: 'Bash', aid: null, atype: null, input: { command: `nice -n 5 rm -rf ${tracks}` } })).toBe('')
+  })
+
+  test('T-910 — a variable assigned a literal path in the same command is followed to its use', () => {
+    const fakeHome = path.join(sb, 'home')
+    fs.mkdirSync(path.join(fakeHome, '.prdt', 'run', 'tracks'), { recursive: true })
+    const env = { ...process.env, HOME: fakeHome }
+    delete env.PRDT_HOME
+    for (const c of [
+      'T=~/.prdt/run/tracks; rm -rf "$T"',
+      'T=~/.prdt/run/tracks && rm -rf ${T}',
+      'D=~/.prdt; rm -rf "$D/run/tracks"',
+      'D=~/.prdt; T=$D/run/tracks; rm -rf "$T"',
+      'T=$HOME/.prdt/run/tracks; echo x > "$T/abcd/T-2.json"',
+      'export T=~/.prdt/run/tracks; rm -rf "$T"',
+      'T=~/.prdt/run/tracks; nice -n 5 rm -rf "$T"',
+      'T=~/.prdt/run/tracks; bash -c "rm -rf $T"',
+      'D=~/.prdt/run; cd "$D" && rm -rf tracks',
+    ]) {
+      expect(why(run({ tool: 'Bash', input: { command: c }, env })), c).toBeTruthy()
+    }
+    for (const c of [`T=${tracks}; rm -rf "$T"`, `T=${rec}; cp /tmp/f "$T"`, 'T=$PRDT_HOME/run/tracks; rm -rf "$T"']) {
+      expect(why(bash(c)), c).toBeTruthy()
+    }
+    for (const c of [
+      'T=/tmp/x; rm -rf "$T"',
+      `T=${tracks}; cat "$T/abcd/T-2.json"`,                     // a read
+      `T=${tracks}; T=/tmp/x; rm -rf "$T"`,                       // reassigned
+      `T=${tracks}; unset T; rm -rf "$T"`,                        // unset: unknown again
+      `(T=${tracks}); rm -rf "$T"`,                               // scoped to its subshell
+      `T=${tracks} true; rm -rf "$T"`,                            // a prefix never sets the shell's variable
+      'T=$(mktemp -d); rm -rf "$T"',                              // unresolvable value: silent
+    ]) {
+      expect(bash(c), c).toBe('')
+    }
+    expect(run({ tool: 'Bash', aid: null, atype: null, input: { command: `T=${tracks}; rm -rf "$T"` } })).toBe('')
   })
 
   test('with a worktree, both rules apply: the shared checkout and the records', () => {
