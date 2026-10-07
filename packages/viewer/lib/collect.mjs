@@ -498,15 +498,19 @@ export function collectArtifacts(repoRoot) {
     const isMd = fields.path.toLowerCase().endsWith('.md')
     let body
     let bytes
+    let unreadable = false
     if (fs.existsSync(relFsPath)) {
       bytes = fs.statSync(relFsPath).size
-      if (isMd) body = fs.readFileSync(relFsPath, 'utf8')
+      // T-1010: a file the generating user cannot read cannot be shown in the panel either.
+      try { fs.accessSync(relFsPath, fs.constants.R_OK) } catch { unreadable = true }
+      if (isMd && !unreadable) body = fs.readFileSync(relFsPath, 'utf8')
     }
     entries.push({
       fields,
       diskRel: `${ARTIFACTS_ROOT_REL}/${bucket}/${fields.path}`,
       inlined: isMd && body !== undefined,
       bytes,
+      unreadable,
       body,
     })
   }

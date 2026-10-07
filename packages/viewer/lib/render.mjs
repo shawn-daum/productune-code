@@ -1801,7 +1801,7 @@ function artifactDetailEntries(artifacts, artifactsBaseHref, repoRootHref) {
       body: e.inlined ? md(e.body, path.dirname(e.diskRel), repoRootHref) : undefined,
       fileHref: e.inlined ? undefined : containedFileHref(`${artifactsBaseHref}/${encodeFsPathHref(`${f.bucket}/${f.path}`)}`, repoRootHref),
       // T-1010: an .html artifact whose file existed at generation time is shown in the panel (iframe).
-      frame: !e.inlined && e.bytes !== undefined && /\.html?$/i.test(f.path) ? true : undefined,
+      frame: !e.inlined && e.bytes !== undefined && !e.unreadable && /\.html?$/i.test(f.path) ? true : undefined,
     }
   }
   return entries
@@ -3019,7 +3019,7 @@ ${PRD_READING_SCRIPT}
       docHtml = '<div class="detail-doc body-prose">' + fields.body + '</div>';
     } else if (fields.fileHref && fields.frame) {
       docHtml = '<div class="detail-doc detail-frame"><p class="detail-frame-bar"><a href="' + escAttr(fields.fileHref) +
-        '" target="_blank" rel="noopener">' + ${JSON.stringify(FRAME.openInNewTab)} + '</a></p><iframe class="detail-frame-view" sandbox="allow-scripts" title="' +
+        '" target="_blank" rel="noopener">' + ${JSON.stringify(FRAME.openInNewTab)} + '</a> <span class="detail-frame-hint">' + ${JSON.stringify(FRAME.hint)} + '</span></p><iframe class="detail-frame-view" sandbox="allow-scripts" title="' +
         ${JSON.stringify(FRAME.frameTitle)} + '" src="' + escAttr(fields.fileHref) + '"></iframe></div>';
     } else if (fields.fileHref) {
       docHtml = '<div class="detail-doc detail-nobody"><p>' + ${JSON.stringify(FILE_HREF_NOTE)} + '</p><p><a href="' +

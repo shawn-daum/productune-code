@@ -285,6 +285,8 @@ export const PRD_READING = {
 export const FRAME = {
   openInNewTab: '새 탭에서 열기',
   frameTitle: '산출물 미리보기',
+  // The page cannot tell a file moved or deleted after generation (no iframe error event on file://).
+  hint: '아래가 비어 있으면 파일이 옮겨졌거나 지워진 거예요. 뷰어를 다시 만들어 봐요.',
 }
 
 export const FILE_HREF_NOTE =
