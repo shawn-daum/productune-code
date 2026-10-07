@@ -482,7 +482,7 @@ function decisionChosen(body) {
   if (!sec) return null
   const t = sec[1]
   const m = OPTION_CARD.pickPatterns.reduce((hit, re) => hit || re.exec(t), null)
-  return m ? m[1] : null
+  return m ? m[1].toUpperCase() : null
 }
 
 const inlineMd = (text) => marked.parseInline(text, { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
@@ -494,7 +494,7 @@ function renderOptionCards(token, parser) {
     const cell = (kind) => { const i = cols.indexOf(kind); return i < 0 ? null : row[i] }
     const nameCell = cell('name')
     const nameText = nameCell ? nameCell.text.trim() : ''
-    const lm = /^([A-Z])\s+([\s\S]+)$/.exec(nameText)
+    const lm = /^([A-Z]|\d+)\s+([\s\S]+)$/.exec(nameText)
     const letter = lm ? lm[1] : ''
     const title = lm ? inlineMd(lm[2]) : inlineMd(nameText)
     const recCell = cell('rec')
