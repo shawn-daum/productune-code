@@ -2522,6 +2522,9 @@ th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spac
   background: var(--bg-surface-on); }
 td { padding: var(--space-6) var(--space-10); border-bottom: 1px solid var(--border-item); vertical-align: top; color: var(--text-primary); }
 tbody tr:hover td { background: var(--bg-state-hover); }
+.sortable th, .sortable td { padding-left: var(--space-6); padding-right: var(--space-6); }
+.sortable td { overflow-wrap: anywhere; }
+.sortable td.num-col { white-space: nowrap; overflow-wrap: normal; }
 .sort-btn { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font: inherit; text-transform: inherit; letter-spacing: inherit; color: inherit; }
 .sort-btn:hover { color: var(--text-secondary); }
 .sort-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -3291,9 +3294,13 @@ ${PRD_READING_SCRIPT}
     var rows = Array.prototype.slice.call(body.rows).map(function (tr, i) { return { tr: tr, i: i, v: val(tr), t: Number(tr.getAttribute('data-tie')) || 0 }; });
     rows.sort(function (a, b) {
       var c;
+      if (a.v === '' || b.v === '') {
+        if (a.v === b.v) return b.t - a.t || a.i - b.i;
+        return a.v === '' ? 1 : -1;
+      }
       if (num) {
-        var x = a.v === '' ? -Infinity : Number(a.v);
-        var y = b.v === '' ? -Infinity : Number(b.v);
+        var x = Number(a.v);
+        var y = Number(b.v);
         c = x === y ? 0 : x < y ? -1 : 1;
       } else {
         c = collator.compare(a.v, b.v);
