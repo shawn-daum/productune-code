@@ -32,6 +32,8 @@ const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-question-check.sh')
 const MANIFEST = path.join(CORE_ROOT, 'scripts', 'hook-manifest.json')
 const FIXTURES = path.join(CORE_ROOT, 'test', 'fixtures', 'question-check')
 const TAG = '[prdt question check]'
+// T-1001 = B: the hook ships OFF; every behaviour test below runs it switched on.
+const ON = { ...process.env, PRDT_QUESTION_CHECK: 'on' }
 
 const roots: string[] = []
 afterEach(() => {
@@ -77,7 +79,7 @@ function writeTranscript(root: string, reply: string): string {
 }
 
 function runHook(event: Record<string, unknown>): string {
-  return execFileSync('bash', [HOOK], { input: JSON.stringify(event), encoding: 'utf8', timeout: 20_000 })
+  return execFileSync('bash', [HOOK], { input: JSON.stringify(event), encoding: 'utf8', timeout: 20_000, env: ON })
 }
 
 function stop(store: Store, reply: string, extra: Record<string, unknown> = {}, opts: { prdt?: boolean } = {}) {
@@ -176,6 +178,20 @@ describe('gating', () => {
   const flagged = () => fx('flagged-t949-canon')
   const store: Store = { 'T-949': { type: 'design', status: 'open' } }
 
+  test('default OFF (T-1001 = B): unset, or any value but `on` → a flagged reply passes silently', () => {
+    const { root, proj } = makeProject(store)
+    const event = JSON.stringify({
+      session_id: 's', hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: proj, transcript_path: writeTranscript(root, flagged()), last_assistant_message: flagged(),
+    })
+    const { PRDT_QUESTION_CHECK: _drop, ...bare } = process.env
+    for (const env of [bare, { ...bare, PRDT_QUESTION_CHECK: 'off' }, { ...bare, PRDT_QUESTION_CHECK: '1' }]) {
+      expect(execFileSync('bash', [HOOK], { input: event, encoding: 'utf8', env })).toBe('')
+    }
+    // same event, switched on → blocked (the fixture is a real flagged ask)
+    expect(blockedLines(execFileSync('bash', [HOOK], { input: event, encoding: 'utf8', env: ON }))).toEqual([26])
+  })
+
   test('second consecutive Stop (stop_hook_active) → never a second block', () => {
     expect(stop(store, flagged(), { stop_hook_active: true }).out).toBe('')
   })
@@ -205,7 +221,7 @@ describe('gating', () => {
   test('outside a prdt project, or with no readable transcript → silent (fails open)', () => {
     expect(stop(store, flagged(), {}, { prdt: false }).out).toBe('')
     expect(stop(store, flagged(), { transcript_path: '/nonexistent/x.jsonl' }).out).toBe('')
-    expect(execFileSync('bash', [HOOK], { input: 'not json "prdt-po"', encoding: 'utf8' })).toBe('')
+    expect(execFileSync('bash', [HOOK], { input: 'not json "prdt-po"', encoding: 'utf8', env: ON })).toBe('')
   })
 })
 

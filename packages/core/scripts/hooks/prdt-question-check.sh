@@ -70,6 +70,13 @@
 # the turn start (so a decision ticket changed earlier in a very long turn may
 # not exempt it — the stated limit).
 #
+# DEFAULT OFF (T-1001 = B). The check ships switched off until decisions get
+# their own `D-NNN` records (T-996 = C): blocking today would make every PO open
+# a heavy `type: decision` ticket for each small confirm. `PRDT_QUESTION_CHECK=on`
+# in the hook's environment turns it on (tests, dogfooding); any other value or
+# none = off. The slice that lands `prdt decisions` and adds "D" to
+# DECISION_ID_PREFIXES flips this default (docs/artifacts/v1.13/decision-records-plan.md).
+#
 # THE EVENT REACHES PYTHON ON STDIN, NEVER THROUGH AN ENVIRONMENT VARIABLE
 # (T-688 개정 1: a large `last_assistant_message` in execve's environment hits
 # ARG_MAX and silently skips the hook). `printf` is a bash builtin, so piping the
@@ -83,6 +90,7 @@ case "$EVENT_JSON" in
   *'"prdt-po"'*) ;;
   *) exit 0 ;;
 esac
+[ "${PRDT_QUESTION_CHECK:-off}" = "on" ] || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 printf '%s' "$EVENT_JSON" | python3 -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
 exit 0
