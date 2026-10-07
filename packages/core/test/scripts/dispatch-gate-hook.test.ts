@@ -1290,6 +1290,18 @@ describe('T-695: the machine resource cap', () => {
     expect(run({ cwd: proj }, { machine: { ps: [PS_QUIET, ...noise, ...tree].join('\n') } })).toBe('')  // cap 1: one suite admits
   })
 
+  // T-1009: a busy host's `ps -axo args=` can pass the OS argument-size limit
+  // (3600 processes, 1.07 MB, against ARG_MAX 1 MiB on macOS); the report must
+  // still render, and the two axes that read ps must still count.
+  test('a process table past the OS argument limit still reports every axis (T-1009)', () => {
+    const filler = Array.from({ length: 6000 }, (_, i) => `/usr/bin/python3 /Users/u/dev/worker/job-${i}.py ${'x'.repeat(200)}`)
+    const ps = [PS_QUIET, ...filler, VITEST_ROOT, VM_PROC].join('\n')
+    expect(ps.length).toBeGreaterThan(1_100_000)
+    const out = report({ machine: { ps }, home: capsHome })
+    expect(out).toContain('running full test suites: 1 /')
+    expect(out).toContain('resident VMs: 1 /')
+  })
+
   // A REAL process tree, never a hand-written fixture: the suite starts `pnpm exec
   // vitest run` / `pnpm test` / `vitest watch` in a scratch root (node_modules
   // symlinked to this package's), takes the host's real `ps` rows, keeps only the
