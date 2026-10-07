@@ -229,8 +229,8 @@ function renderStructureFixture(): string {
 describe('viewer/lib/render.mjs — T-705 §G structures the approved mockup showed', () => {
   it('artifact table has a size column, formatted from bytes', () => {
     const html = renderStructureFixture()
-    expect(html).toContain('<th>크기</th>')
-    expect(html).toContain('<td class="num-col">2.0 KB</td>')
+    expect(html).toContain('>크기<span class="sort-ind"')
+    expect(html).toContain('<td class="num-col" data-sort="2048">2.0 KB</td>')
   })
 
   // T-709 결정 2: no more closed-round TABLE / separate title extraction —
@@ -268,7 +268,7 @@ describe('viewer/lib/render.mjs — T-705 §G structures the approved mockup sho
   it.skipIf(metaMissingReason)(
     `holds for the real generated viewer.html, not only the fixture${metaMissingReason ? ` — SKIPPED: ${metaMissingReason}` : ''}`,
     () => {
-      expect(realHtml).toContain('<th>크기</th>')
+      expect(realHtml).toContain('>크기<span class="sort-ind"')
       expect(realHtml).toContain('<th>제목</th>')
       expect(realHtml).toMatch(/class="count-badge">/)
     },
