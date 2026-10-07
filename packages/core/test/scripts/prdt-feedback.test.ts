@@ -239,6 +239,25 @@ describe('T-526 guard — the ledger is a store, not a verdict source', () => {
   })
 })
 
+describe('T-534 reserved name is case-insensitive', () => {
+  test('promote refuses any case variant of the ledger name with no ledger present, and a case-variant file is not a page', () => {
+    fs.writeFileSync(path.join(productune, 'docs', 'wiki', 'fact--x.md'), '---\ntitle: x\ntype: fact\nstatus: live\n---\n\nx\n')
+    expect(fs.existsSync(ledger())).toBe(false)
+    for (const name of ['Feedback', 'FEEDBACK', 'fEeDbAcK']) {
+      const promo = prdt(productune, 'wiki', 'promote', 'fact--x', '--as', name, '--yes')
+      expect(promo.code).not.toBe(0)
+      expect(fs.existsSync(path.join(home, 'wiki', `${name}.md`))).toBe(false)
+    }
+    const wikiDir = path.join(home, 'wiki')
+    expect(fs.existsSync(wikiDir) ? fs.readdirSync(wikiDir).filter((f) => /^feedback\.md$/i.test(f)) : []).toEqual([])
+    // a case-variant file already on disk is skipped by the page scan
+    fs.mkdirSync(wikiDir, { recursive: true })
+    fs.writeFileSync(path.join(wikiDir, 'Feedback.md'), '---\ntitle: sneaky\ntype: fact\nstatus: live\n---\n\nb\n')
+    const search = prdt(productune, 'wiki', 'search', 'sneaky')
+    expect(search.out).toContain('(no hits)')
+  })
+})
+
 describe('consent gate — the trigger proposes nothing by itself', () => {
   test('a firing record writes only the ledger: overrides, discipline and both projects stay byte-identical', () => {
     fs.mkdirSync(path.join(home, 'overrides', 'playbooks'), { recursive: true })

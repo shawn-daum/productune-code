@@ -724,7 +724,7 @@ def wiki_store_pages(wdir, relative_to=None, prefix="", reserved=()):
         return []
     pages = []
     for p in sorted(wdir.glob("*.md")):
-        if p.name in ("index.md", "inbox.md", "log.md") or p.stem in reserved:
+        if p.name in ("index.md", "inbox.md", "log.md") or p.stem.lower() in reserved:
             continue
         fm, body = parse_frontmatter(p)
         links = set(fm.get("links") or []) | set(WIKILINK.findall(body))
@@ -2732,7 +2732,7 @@ def wiki_promote(root, args):
     if page in ("index", "inbox", "log") or not src.is_file():
         sys.exit(f"prdt wiki promote: no project wiki page `{page}` (looked for docs/wiki/{page}.md)")
     target = args.as_name or page
-    if PROMOTE_NAME_BAD.search(target) or target in ("index", "inbox", "log", *MACHINE_WIKI_RESERVED):
+    if PROMOTE_NAME_BAD.search(target) or target.lower() in ("index", "inbox", "log", *MACHINE_WIKI_RESERVED):
         sys.exit(f"prdt wiki promote: `{target}` is not a usable page name (no slash, space, "
                  "leading dot or `..`; not index/inbox/log/feedback)")
     dest = machine_wiki_root() / f"{target}.md"
