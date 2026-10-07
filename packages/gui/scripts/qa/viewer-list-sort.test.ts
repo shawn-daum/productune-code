@@ -73,4 +73,25 @@ describe('T-1006 click sort', () => {
     sortTable(t.btn)
     expect(t.order()).toEqual(['z', 'y', 'x'])
   })
+  it('empty cells sort last in both directions', () => {
+    const t = table([{ vals: ['a', ''], tie: 1 }, { vals: ['b', '2026-10-02'], tie: 2 }, { vals: ['c', '2026-10-01'], tie: 3 }], 'text', 1)
+    sortTable(t.btn)
+    expect(t.order()).toEqual(['c', 'b', 'a'])
+    sortTable(t.btn)
+    expect(t.order()).toEqual(['b', 'c', 'a'])
+  })
+})
+
+describe('T-1006 past-version buckets carry created', () => {
+  it('collectTickets keeps frontmatter created on a frontmatter-only row', async () => {
+    const fs = await import('node:fs')
+    const os = await import('node:os')
+    const path = await import('node:path')
+    const { collectTickets } = await import('@productune/viewer/lib/collect.mjs')
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 't1006-'))
+    fs.mkdirSync(path.join(root, 'docs/tickets/v1.12'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'docs/tickets/v1.12/T-925.md'), '---\nid: T-925\nslug: x\ntype: impl\nstatus: done\nassignee: developer\ncreated: 2026-10-04\n---\n\nbody\n')
+    const r = collectTickets(root, 'v1.13')
+    expect(r.omitted[0].tickets[0].frontmatter.created).toBe('2026-10-04')
+  })
 })
