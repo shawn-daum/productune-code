@@ -10,8 +10,9 @@
 # hooks/prdt-post-dispatch.sh.
 #
 # Format (T-984, user-confirmed 2026-10-06; T-961 release lines):
-#   <label> <version> | branch: <b> | <stage> n/m | ticket <vdone>/<vtotal> | working <ids|—>
-#   dec <ids|—> | req <ids|—>
+#   <label> <version> | stage: <stage> n/m | ticket <vdone>/<vtotal> | working <ids|0> | branch: <b>   (T-1017: branch last)
+#   T-1019: empty = `0` (never `—`), a stage without a count = `0/0`; no bar follows Hangul.
+#   dec <ids|0> | req <ids|0>
 #   T-1015: every label (branch · stage · ticket · working · persona · dec · req ·
 #   `+N lines`) reads in the CLI language — the same rule as `cli_lang()` in
 #   scripts/prdt (PRDT_LANG en*/ko* wins, else the device token `cli-lang`,
@@ -19,7 +20,7 @@
 #   sibling `prdt-messages.json`. The labels in this comment are the English forms.
 #   - One row per release line, home line (the project slug) first, then each
 #     line declared in `.prdt/config.json` `lines` (release-lines.md §6b).
-#   - The `dec … | req …` row is ALWAYS its own last row (`dec — | req —` when
+#   - The `dec … | req …` row is ALWAYS its own last row (`dec 0 | req 0` when
 #     empty), single-line and multi-line projects alike (T-988 = A, T-984
 #     reversed by the user 2026-10-06).
 #   - Never more than MAX_ROWS (17, measured on the user's machine) rows.
@@ -231,15 +232,16 @@ def declared_lines():
 
 
 def stage_seg(raw_stage, checks):
-    """`<stage> n/m` when the checklist record has an entry for this stage;
+    """T-1017: labelled `stage: <stage> n/m` (ko `단계: …`) when the checklist record has an entry for this stage;
     the stage name alone otherwise (no record, idle, or an off-shape stage)."""
     stage = token(raw_stage, lambda v: v in STAGES, absent="?") or "?"
     total = STAGE_CHECK_TOTALS.get(stage)
     done = checks.get(stage) if isinstance(checks, dict) else None
     if total and isinstance(done, list):
         n = len({x.strip() for x in done if isinstance(x, str) and x.strip()})
-        return f"{L('stage.' + stage)} {min(n, total)}/{total}"
-    return L("stage." + stage) if stage in STAGES else stage
+        return L("stagelabel", name=f"{L('stage.' + stage)} {min(n, total)}/{total}")
+    # T-1019: no checklist count → `0/0` (no bare Hangul before the bar)
+    return L("stagelabel", name=(L("stage." + stage) if stage in STAGES else stage) + " 0/0")
 
 
 # branch (T-426): meta/code split projects (PRD history §v1.3) carry no `.git` at
@@ -668,30 +670,34 @@ personas = {tid: ps for tid, ps in running}
 
 def working_seg(ids, limits):
     run_lim, _, succ_lim = limits
-    return L("working") + " " + (fmt_group(ids, run_lim, succ_lim, personas) if ids else "—")
+    return L("working") + " " + (fmt_group(ids, run_lim, succ_lim, personas) if ids else "0")
 
 
 def action_seg(limits):
     """T-984: the things the user must act on — `dec … | req …`, `—` when empty."""
     _, wait_lim, succ_lim = limits
-    return (L("decision") + " " + (fmt_group(dec, wait_lim, succ_lim) if dec else "—")
-            + " | " + L("request") + " " + (fmt_group(req, wait_lim, succ_lim) if req else "—"))
+    return " | ".join([L("decision") + " " + (fmt_group(dec, wait_lim, succ_lim) if dec else "0"),
+                       L("request") + " " + (fmt_group(req, wait_lim, succ_lim) if req else "0")])
 
 
-def fit(build):
-    """Width budget (F6): build at the widest limits (working/waiting/successors
+def fit(build, tail=""):
+    """T-1017: `tail` (the branch segment) is reserved at the row's end — the
+    working segment collapses by tiers, then is cut, to make room; the tail is
+    never dropped or truncated mid-name. Width budget (F6): build at the widest limits (working/waiting/successors
     = 3/3/2) and, while the row would exceed LINE_CAP, tighter (2/2/1, then
     1/1/0) — collapsing to counts, never truncation. Belt: sanitized once more
     and capped, so every row stays ONE row whatever any input held."""
+    sep = " | " + tail if tail else ""
     for limits in ((3, 3, 2), (2, 2, 1), (1, 1, 0)):
         candidate = build(limits)
-        if dw(candidate) <= LINE_CAP:
+        if dw(candidate) + dw(sep) <= LINE_CAP:
             break
-    return clean(candidate, cap=LINE_CAP, bar=True)
+    cut = clean(candidate, cap=LINE_CAP - dw(sep), bar=True)
+    return cut + sep
 
 
 # T-984 layout (user-confirmed 2026-10-06):
-#   <label> <version> | branch: <b> | <stage> n/m | ticket n/m | working …
+#   <label> <version> | stage: <stage> n/m | ticket n/m | working … | branch: <b>   (T-1017)
 # One row per line, home first, then ALWAYS one `dec … | req …` row last
 # (`dec — | req —` when empty), single-line and multi-line alike.
 # Never more than MAX_ROWS rows: past it, the last line rows fold into `+N lines`.
@@ -699,15 +705,13 @@ line_budget = MAX_ROWS - 1
 shown = rows if len(rows) <= line_budget else rows[:line_budget - 1]
 out_rows = []
 for r in shown:
-    head = [r["slug_ver"]]
-    if r["branch"]:
-        head.append(L("branch", name=r["branch"]))
-    head.append(r["stage"])
+    head = [r["slug_ver"], r["stage"]]
     if r["vtotal"]:
         head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
     ids = [tid for tid, _ in running if line_of(tid) == r["line"]]
+    branch = L("branch", name=r["branch"]) if r["branch"] else ""
     out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
-                                        " | ".join(head + [working_seg(ids, lim)]))))
+                                        " | ".join(head + [working_seg(ids, lim)]), branch)))
 if len(shown) < len(rows):
     out_rows.append((None, L("lines", n=len(rows) - len(shown))))
 out_rows.append((None, fit(action_seg)))

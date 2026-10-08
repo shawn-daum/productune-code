@@ -72,7 +72,7 @@ function unsanitizedCopy(): string {
     // `print(wrap_links(line, links))` prints exactly `line` either way.
     // Slice 3 named the cap (`cap=LINE_CAP`); the literal follows it.
     // T-961 moved the per-row belt into `fit()`, one call per printed row.
-    ['return clean(candidate, cap=LINE_CAP, bar=True)', 'return candidate'],
+    ['cut = clean(candidate, cap=LINE_CAP - dw(sep), bar=True)', 'cut = candidate'],
   ] as const) {
     expect(weak, `the production line must exist to be undone: ${from.slice(0, 40)}`).toContain(from)
     weak = weak.replace(from, to)
@@ -164,11 +164,11 @@ describe.skipIf(!READY)('the statusline cannot be made to misrepresent by file c
     seed({ slug: 'realproj' }, { ...GOOD_STATE, version: '../tickets/v1.6' })
     const out = run().replace(/\n$/, '')
     expect(out).not.toContain('../')
-    expect(out).not.toMatch(/\d+\/\d+/)      // no count from a traversed dir
+    expect(out).not.toMatch(/(ticket|티켓) \d+\/\d+/)      // no count from a traversed dir
   })
 
   test('a legitimate project renders exactly as before (nothing traded away)', () => {
     seed({ slug: 'realproj' }, GOOD_STATE)
-    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | build | working —\ndecision — | request —')
+    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | stage: build 0/0 | working 0\ndecision 0 | request 0')
   })
 })
