@@ -56,13 +56,17 @@ test('a violating reply is blocked once, with the register-check notice naming t
   expect(r.decision).toBe('block')
   expect(r.reason).toContain(TAG)
   expect(r.reason).toContain('lines 2, 3')
+  expect(r.reason).toContain('this user-chat reply broke form=outline: 2 paragraph line(s)')
+  expect(r.reason).toContain('Rewrite this same reply now, in full, one point per marked line.')
+  expect(r.reason).not.toContain('Leave the sent reply')
 })
 
 test('the point-block notice (T-869) rides the same block', () => {
   const reply = '- 하나\n  · 가\n- 둘\n  · 나'
   const r = JSON.parse(stop(sandbox(OUTLINE), reply))
   expect(r.decision).toBe('block')
-  expect(r.reason).toContain('point block(s)')
+  expect(r.reason).toContain('this user-chat reply broke form=outline: 1 point block(s)')
+  expect(r.reason).toContain('Rewrite this same reply now, in full, with one blank line after each point')
 })
 
 test('a compliant reply passes', () => {
@@ -112,4 +116,20 @@ test('the manifest registers prdt-user-prompt.sh on Stop beside the question che
     { event: 'Stop', hooks: ['prdt-question-check.sh'] },
     { event: 'Stop', hooks: ['prdt-user-prompt.sh'] },
   ])
+})
+
+test('next-turn variant keeps its own wording, and reads the rewrite when one followed the blocked reply', () => {
+  const sb = sandbox(OUTLINE)
+  const asst = (text: string) => JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text }] } })
+  const run = (lines: string[]) => {
+    const tp = path.join(sb.root, 't.jsonl')
+    fs.writeFileSync(tp, lines.join('\n') + '\n')
+    const ev = { hook_event_name: 'UserPromptSubmit', session_id: 'sx' + lines.length, cwd: sb.proj, prompt: 'next', transcript_path: tp }
+    const out = execFileSync('bash', [sb.hook], { input: JSON.stringify(ev), encoding: 'utf8', env: { ...process.env, PRDT_HOME: path.join(sb.root, 'home') } })
+    return JSON.parse(out).hookSpecificOutput.additionalContext as string
+  }
+  const ctx = run([asst(VIOLATING)])
+  expect(ctx).toContain('your last user-chat reply broke form=outline')
+  expect(ctx).toContain('Leave the sent reply as is')
+  expect(run([asst(VIOLATING), asst(COMPLIANT)])).not.toContain(TAG)
 })
