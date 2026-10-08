@@ -192,7 +192,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(segment(out, 'dec')).toBe('\u2014')
     expect(segment(out, 'req')).toBe('\u2014')
     expect(out).not.toMatch(/\b(waiting|CP)\b/)
-    expect(out).toContain('| build |') // rest of the line still renders
+    expect(out).toContain('| stage: build |') // rest of the line still renders
   })
 
   test('several of each, with successors/blocks from the edges table', () => {
@@ -396,13 +396,13 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const slug = path.basename(root)
     expect(plain).not.toContain(OSC8_OPEN)
     // no tickets, no branch (tmp dir is no git repo): ticket segment and branch segment degrade away
-    expect(plain).toBe(`${slug} ${VERSION} | build | working \u2014\ndecision \u2014 | request \u2014`)
+    expect(plain).toBe(`${slug} ${VERSION} | stage: build | working \u2014\ndecision \u2014 | request \u2014`)
 
     stubViewerHtml()
     const linked = runStatusline().trim()
     const viewer = path.join(root, '.prdt', 'scratch', 'viewer', 'viewer.html')
-    expect(linked.startsWith(`${OSC8_OPEN}file://${viewer}\x1b\\${slug} ${VERSION}${OSC8_CLOSE} | build`)).toBe(true)
-    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | build | working \u2014\ndecision \u2014 | request \u2014`)
+    expect(linked.startsWith(`${OSC8_OPEN}file://${viewer}\x1b\\${slug} ${VERSION}${OSC8_CLOSE} | stage: build`)).toBe(true)
+    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | stage: build | working \u2014\ndecision \u2014 | request \u2014`)
   })
 
   test('T-984: full layout order — stage, ticket count, working, branch last, then dec · req; no current-task segment; never \u00bb', () => {
@@ -414,7 +414,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     execFileSync('git', ['init', '-q', '-b', 'dev', root])
     execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init'])
     const plain = unwrapLinks(runStatusline()).trim()
-    expect(plain).toBe(`${path.basename(root)} ${VERSION} | build | ticket 1/2 | working T-890(qa) | branch: dev\ndecision \u2014 | request \u2014`)
+    expect(plain).toBe(`${path.basename(root)} ${VERSION} | stage: build | ticket 1/2 | working T-890(qa) | branch: dev\ndecision \u2014 | request \u2014`)
     expect(plain).not.toContain('\u00bb')
   })
 

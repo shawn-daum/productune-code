@@ -10,7 +10,7 @@
 # hooks/prdt-post-dispatch.sh.
 #
 # Format (T-984, user-confirmed 2026-10-06; T-961 release lines):
-#   <label> <version> | <stage> n/m | ticket <vdone>/<vtotal> | working <ids|—> | branch: <b>   (T-1017: branch last)
+#   <label> <version> | stage: <stage> n/m | ticket <vdone>/<vtotal> | working <ids|—> | branch: <b>   (T-1017: branch last)
 #   dec <ids|—> | req <ids|—>
 #   T-1015: every label (branch · stage · ticket · working · persona · dec · req ·
 #   `+N lines`) reads in the CLI language — the same rule as `cli_lang()` in
@@ -251,15 +251,15 @@ def declared_lines():
 
 
 def stage_seg(raw_stage, checks):
-    """`<stage> n/m` when the checklist record has an entry for this stage;
+    """T-1017: labelled `stage: <stage> n/m` (ko `단계: …`) when the checklist record has an entry for this stage;
     the stage name alone otherwise (no record, idle, or an off-shape stage)."""
     stage = token(raw_stage, lambda v: v in STAGES, absent="?") or "?"
     total = STAGE_CHECK_TOTALS.get(stage)
     done = checks.get(stage) if isinstance(checks, dict) else None
     if total and isinstance(done, list):
         n = len({x.strip() for x in done if isinstance(x, str) and x.strip()})
-        return f"{L('stage.' + stage)} {min(n, total)}/{total}"
-    return L("stage." + stage) if stage in STAGES else stage
+        return L("stagelabel", name=f"{L('stage.' + stage)} {min(n, total)}/{total}")
+    return L("stagelabel", name=L("stage." + stage) if stage in STAGES else stage)
 
 
 # branch (T-426): meta/code split projects (PRD history §v1.3) carry no `.git` at
@@ -716,7 +716,7 @@ def fit(build, tail=""):
 
 
 # T-984 layout (user-confirmed 2026-10-06):
-#   <label> <version> | <stage> n/m | ticket n/m | working … | branch: <b>   (T-1017)
+#   <label> <version> | stage: <stage> n/m | ticket n/m | working … | branch: <b>   (T-1017)
 # One row per line, home first, then ALWAYS one `dec … | req …` row last
 # (`dec — | req —` when empty), single-line and multi-line alike.
 # Never more than MAX_ROWS rows: past it, the last line rows fold into `+N lines`.
