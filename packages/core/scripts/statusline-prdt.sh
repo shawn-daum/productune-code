@@ -10,7 +10,7 @@
 # hooks/prdt-post-dispatch.sh.
 #
 # Format (T-984, user-confirmed 2026-10-06; T-961 release lines):
-#   <label> <version> | branch: <b> | <stage> n/m | ticket <vdone>/<vtotal> | working <ids|—>
+#   <label> <version> | <stage> n/m | ticket <vdone>/<vtotal> | working <ids|—> | branch: <b>   (T-1017: branch last)
 #   dec <ids|—> | req <ids|—>
 #   T-1015: every label (branch · stage · ticket · working · persona · dec · req ·
 #   `+N lines`) reads in the CLI language — the same rule as `cli_lang()` in
@@ -186,6 +186,26 @@ try:
 except Exception:
     _labels = None
 _labels = _labels if isinstance(_labels, dict) else {}
+
+
+KO = _cli_lang() == "ko"
+
+
+def bar(prev):
+    """T-1018 = A: in ko a segment ending in a Hangul character gets ONE extra
+    space before ` | ` (a `|` right after Hangul renders as a double line in
+    the user's terminal); en unchanged. Counted in display columns by `fit`."""
+    last = prev.rstrip()[-1:] if prev else ""
+    hangul = bool(last) and ("\uac00" <= last <= "\ud7a3" or "\u1100" <= last <= "\u11ff"
+                             or "\u3130" <= last <= "\u318f")
+    return "  | " if KO and hangul else " | "
+
+
+def bar_join(parts):
+    out = ""
+    for i, part in enumerate(parts):
+        out += (bar(parts[i - 1]) if i else "") + part
+    return out
 
 
 def L(key, **kw):
@@ -674,24 +694,29 @@ def working_seg(ids, limits):
 def action_seg(limits):
     """T-984: the things the user must act on — `dec … | req …`, `—` when empty."""
     _, wait_lim, succ_lim = limits
-    return (L("decision") + " " + (fmt_group(dec, wait_lim, succ_lim) if dec else "—")
-            + " | " + L("request") + " " + (fmt_group(req, wait_lim, succ_lim) if req else "—"))
+    return bar_join([L("decision") + " " + (fmt_group(dec, wait_lim, succ_lim) if dec else "—"),
+                     L("request") + " " + (fmt_group(req, wait_lim, succ_lim) if req else "—")])
 
 
-def fit(build):
-    """Width budget (F6): build at the widest limits (working/waiting/successors
+def fit(build, tail=""):
+    """T-1017: `tail` (the branch segment) is reserved at the row's end — the
+    working segment collapses by tiers, then is cut, to make room; the tail is
+    never dropped or truncated mid-name. Width budget (F6): build at the widest limits (working/waiting/successors
     = 3/3/2) and, while the row would exceed LINE_CAP, tighter (2/2/1, then
     1/1/0) — collapsing to counts, never truncation. Belt: sanitized once more
     and capped, so every row stays ONE row whatever any input held."""
+    sep = ""
     for limits in ((3, 3, 2), (2, 2, 1), (1, 1, 0)):
         candidate = build(limits)
-        if dw(candidate) <= LINE_CAP:
+        sep = bar(candidate) + tail if tail else ""
+        if dw(candidate) + dw(sep) <= LINE_CAP:
             break
-    return clean(candidate, cap=LINE_CAP, bar=True)
+    cut = clean(candidate, cap=LINE_CAP - dw(sep), bar=True)
+    return cut + (bar(cut) + tail if tail else "")
 
 
 # T-984 layout (user-confirmed 2026-10-06):
-#   <label> <version> | branch: <b> | <stage> n/m | ticket n/m | working …
+#   <label> <version> | <stage> n/m | ticket n/m | working … | branch: <b>   (T-1017)
 # One row per line, home first, then ALWAYS one `dec … | req …` row last
 # (`dec — | req —` when empty), single-line and multi-line alike.
 # Never more than MAX_ROWS rows: past it, the last line rows fold into `+N lines`.
@@ -699,15 +724,13 @@ line_budget = MAX_ROWS - 1
 shown = rows if len(rows) <= line_budget else rows[:line_budget - 1]
 out_rows = []
 for r in shown:
-    head = [r["slug_ver"]]
-    if r["branch"]:
-        head.append(L("branch", name=r["branch"]))
-    head.append(r["stage"])
+    head = [r["slug_ver"], r["stage"]]
     if r["vtotal"]:
         head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
     ids = [tid for tid, _ in running if line_of(tid) == r["line"]]
+    branch = L("branch", name=r["branch"]) if r["branch"] else ""
     out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
-                                        " | ".join(head + [working_seg(ids, lim)]))))
+                                        bar_join(head + [working_seg(ids, lim)]), branch)))
 if len(shown) < len(rows):
     out_rows.append((None, L("lines", n=len(rows) - len(shown))))
 out_rows.append((None, fit(action_seg)))

@@ -72,7 +72,7 @@ function unsanitizedCopy(): string {
     // `print(wrap_links(line, links))` prints exactly `line` either way.
     // Slice 3 named the cap (`cap=LINE_CAP`); the literal follows it.
     // T-961 moved the per-row belt into `fit()`, one call per printed row.
-    ['return clean(candidate, cap=LINE_CAP, bar=True)', 'return candidate'],
+    ['cut = clean(candidate, cap=LINE_CAP - dw(sep), bar=True)', 'cut = candidate'],
   ] as const) {
     expect(weak, `the production line must exist to be undone: ${from.slice(0, 40)}`).toContain(from)
     weak = weak.replace(from, to)

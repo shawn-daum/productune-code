@@ -57,11 +57,11 @@
     "statusline.stage.ship": "배포",
     "statusline.stage.retro": "회고",
     "statusline.stage.idle": "유휴",
-    "statusline.persona.developer": "개발",
-    "statusline.persona.designer": "디자인",
-    "statusline.persona.qa": "검수",
-    "statusline.persona.po": "기획",
-    "statusline.persona.user": "사람"
+    "statusline.persona.developer": "개발자",
+    "statusline.persona.designer": "기획자",
+    "statusline.persona.qa": "QA",
+    "statusline.persona.po": "PO",
+    "statusline.persona.user": "사용자"
   },
   "en": {
     "settings.list.header.key": "Key",
