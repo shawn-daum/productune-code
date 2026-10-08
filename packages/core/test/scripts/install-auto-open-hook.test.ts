@@ -41,7 +41,10 @@ test.skipIf(!hasJq())('PostToolUse carries the pre-existing Agent entry and BOTH
   expect(agentEntry?.hooks?.[0]?.command).toContain('prdt-post-dispatch.sh')
   expect(writeEntry?.hooks?.[0]?.command).toContain('prdt-auto-open.sh')
   expect(bashEntry?.hooks?.[0]?.command).toContain('prdt-auto-open.sh')
-  expect(entries.length).toBe(3)
+  // T-1025: plus the matcher-less prdt-user-prompt.sh entry (form=outline hot line).
+  const hot = entries.find((e) => e.matcher === undefined)
+  expect(hot?.hooks?.[0]?.command).toContain('prdt-user-prompt.sh')
+  expect(entries.length).toBe(4)
 })
 
 test.skipIf(!hasJq())('re-running install.sh is idempotent (single auto-open entry per matcher, single command each)', () => {

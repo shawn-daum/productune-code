@@ -50,51 +50,52 @@ function stop(sb: ReturnType<typeof sandbox>, reply: unknown, extra: Record<stri
   return execFileSync('bash', [sb.hook], { input: JSON.stringify(ev), encoding: 'utf8', timeout: 20_000, env: { ...process.env, PRDT_HOME: path.join(sb.root, 'home') } })
 }
 
-test('a violating reply is blocked once, with the register-check notice naming the lines', () => {
-  const out = stop(sandbox(OUTLINE), VIOLATING)
-  const r = JSON.parse(out)
-  expect(r.decision).toBe('block')
-  expect(r.reason).toContain(TAG)
-  expect(r.reason).toContain('lines 2, 3')
-  expect(r.reason).toContain('this user-chat reply broke form=outline: 2 paragraph line(s)')
-  expect(r.reason).toContain('Rewrite this same reply now, in full, one point per marked line.')
-  expect(r.reason).not.toContain('Leave the sent reply')
+const HOT = '[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 one point per marked line: never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; one blank line after each point\'s block, none inside it.'
+
+function post(sb: ReturnType<typeof sandbox>, extra: Record<string, unknown> = {}) {
+  const ev = { session_id: 's', hook_event_name: 'PostToolUse', agent_type: 'prdt-po', cwd: sb.proj, tool_name: 'Bash', ...extra }
+  return execFileSync('bash', [sb.hook], { input: JSON.stringify(ev), encoding: 'utf8', timeout: 20_000, env: { ...process.env, PRDT_HOME: path.join(sb.root, 'home') } })
+}
+const rows = (sb: ReturnType<typeof sandbox>) => {
+  const f = path.join(sb.root, 'home', 'run', 'form-outline-counts.jsonl')
+  return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []
+}
+
+test('PostToolUse for the PO while form=outline is bound returns the hot line', () => {
+  const r = JSON.parse(post(sandbox(OUTLINE)))
+  expect(r.hookSpecificOutput.hookEventName).toBe('PostToolUse')
+  expect(r.hookSpecificOutput.additionalContext).toBe(HOT)
 })
 
-test('the point-block notice (T-869) rides the same block', () => {
-  const reply = '- 하나\n  · 가\n- 둘\n  · 나'
-  const r = JSON.parse(stop(sandbox(OUTLINE), reply))
-  expect(r.decision).toBe('block')
-  expect(r.reason).toContain('this user-chat reply broke form=outline: 1 point block(s)')
-  expect(r.reason).toContain('Rewrite this same reply now, in full, with one blank line after each point')
-})
-
-test('a compliant reply passes', () => {
-  expect(stop(sandbox(OUTLINE), COMPLIANT)).toBe('')
-})
-
-test('T-789: an English "A …" opener is not an item, and does not block a compliant reply', () => {
-  expect(stop(sandbox(OUTLINE), ENGLISH_A)).toBe('')
-})
-
-test('a second violating reply passes (stop_hook_active)', () => {
-  expect(stop(sandbox(OUTLINE), VIOLATING, { stop_hook_active: true })).toBe('')
-})
-
-test('a stop with no reply text passes (tool-only turn)', () => {
+test('PostToolUse: nothing for a worker, prose, or outside a project', () => {
+  expect(post(sandbox(OUTLINE), { agent_type: 'prdt-developer' })).toBe('')
+  expect(post(sandbox(OUTLINE), { agent_type: undefined })).toBe('')
+  expect(post(sandbox(PROSE))).toBe('')
   const sb = sandbox(OUTLINE)
+  fs.rmSync(path.join(sb.proj, '.prdt'), { recursive: true })
+  expect(post(sb)).toBe('')
+})
+
+test('Stop never blocks or prints, and records the paragraph-line and blank-block counts', () => {
+  const sb = sandbox(OUTLINE)
+  expect(stop(sb, VIOLATING)).toBe('')
+  expect(stop(sb, '- 하나\n  · 가\n- 둘\n  · 나')).toBe('')
+  const r = rows(sb)
+  expect(r).toHaveLength(2)
+  expect(r[0]).toMatchObject({ session_id: 's', paragraph_lines: 2, blank_blocks: 0 })
+  expect(r[1]).toMatchObject({ paragraph_lines: 0, blank_blocks: 1 })
+})
+
+test('Stop records a compliant reply as zeros, and nothing for tool-only turns, prose, workers', () => {
+  const sb = sandbox(OUTLINE)
+  expect(stop(sb, COMPLIANT)).toBe('')
+  expect(rows(sb)).toMatchObject([{ paragraph_lines: 0, blank_blocks: 0 }])
   expect(stop(sb, '')).toBe('')
-  expect(stop(sb, undefined)).toBe('')
-})
-
-test('only while form=outline is bound', () => {
-  expect(stop(sandbox(PROSE), VIOLATING)).toBe('')
-})
-
-test('only the PO: a worker or plain session stop passes', () => {
-  const sb = sandbox(OUTLINE)
   expect(stop(sb, VIOLATING, { agent_type: 'prdt-developer' })).toBe('')
-  expect(stop(sb, VIOLATING, { agent_type: undefined })).toBe('')
+  expect(rows(sb)).toHaveLength(1)
+  const p = sandbox(PROSE)
+  expect(stop(p, VIOLATING)).toBe('')
+  expect(rows(p)).toHaveLength(0)
 })
 
 test('outside a prdt project it passes', () => {
@@ -107,6 +108,7 @@ test('a resolver that cannot answer fails open', () => {
   const sb = sandbox(OUTLINE)
   fs.writeFileSync(path.join(path.dirname(sb.hook), 'prdt-audience-inject.sh'), '#!/usr/bin/env bash\nexit 1\n')
   expect(stop(sb, VIOLATING)).toBe('')
+  expect(rows(sb)).toHaveLength(0)
 })
 
 test('the manifest registers prdt-user-prompt.sh on Stop beside the question check', () => {
@@ -116,6 +118,8 @@ test('the manifest registers prdt-user-prompt.sh on Stop beside the question che
     { event: 'Stop', hooks: ['prdt-question-check.sh'] },
     { event: 'Stop', hooks: ['prdt-user-prompt.sh'] },
   ])
+  const post = m.registrations.filter((r: any) => r.event === 'PostToolUse' && r.hooks.includes('prdt-user-prompt.sh'))
+  expect(post).toEqual([{ event: 'PostToolUse', hooks: ['prdt-user-prompt.sh'] }])
 })
 
 test('next-turn variant keeps its own wording, and reads the rewrite when one followed the blocked reply', () => {
@@ -131,14 +135,15 @@ test('next-turn variant keeps its own wording, and reads the rewrite when one fo
   const ctx = run([asst(VIOLATING)])
   expect(ctx).toContain('your last user-chat reply broke form=outline')
   expect(ctx).toContain('Leave the sent reply as is')
+  expect(ctx).toContain(HOT)
   expect(run([asst(VIOLATING), asst(COMPLIANT)])).not.toContain(TAG)
 })
 
-test('a ~1.3 MB violating reply is still blocked (event travels on stdin, not in the environment)', () => {
+test('a ~1.3 MB reply is still recorded (event travels on stdin, not in the environment)', () => {
   const big = VIOLATING + '\n' + 'x'.repeat(1_300_000)
-  const r = JSON.parse(stop(sandbox(OUTLINE), big))
-  expect(r.decision).toBe('block')
-  expect(r.reason).toContain(TAG)
+  const sb = sandbox(OUTLINE)
+  expect(stop(sb, big)).toBe('')
+  expect(rows(sb)).toHaveLength(1)
 })
 
 test('a non-PO Stop leaves before python3 starts (fork-0 case filter)', () => {
