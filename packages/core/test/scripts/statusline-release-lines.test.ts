@@ -185,7 +185,7 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     seed({ slug: 'ntf-pm', lines: [{ name: 'ntf-archive' }, { name: 'v2-bad' }, { name: 'ntf-pm' }, { name: 'ntf-archive' }] },
       { stage: 'build', version: 'v2.2', lines: { ghost: { stage: 'ship', version: 'v9.9' } } })
     const r = rows()
-    expect(r).toEqual(['ntf-pm v2.2 | stage: build | working —', 'ntf-archive | ? | working —', 'decision — | request —'])
+    expect(r).toEqual(['ntf-pm v2.2 | stage: build | working —', 'ntf-archive | stage: ? | working —', 'decision — | request —'])
     expect(r.join('\n')).not.toContain('ghost')
   })
 
