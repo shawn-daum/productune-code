@@ -105,7 +105,7 @@ describe.skipIf(!READY)('statusline — T-984 layout, single line', () => {
     seed({ slug: 'productune' }, { stage: 'build', version: 'v1.13', checks: { build: ['split', 'main-path', 'qa'] } })
     ticket('v1.13', 'T-1', { status: 'done' })
     ticket('v1.13', 'T-2')
-    expect(rows()).toEqual(['productune v1.13 | build 3/5 | ticket 1/2 | working —', 'decision — | request —'])
+    expect(rows()).toEqual(['productune v1.13 | stage: build 3/5 | ticket 1/2 | working —', 'decision — | request —'])
   })
 
   test('either list has an entry → listed on the same last row', () => {
@@ -114,7 +114,7 @@ describe.skipIf(!READY)('statusline — T-984 layout, single line', () => {
     ticket('v1.13', 'T-985', { assignee: 'user' })
     marker('T-985', 'qa')
     expect(rows()).toEqual([
-      'productune v1.13 | define | ticket 0/2 | working T-985(qa)',
+      'productune v1.13 | stage: define | ticket 0/2 | working T-985(qa)',
       'decision T-984 | request T-985',
     ])
   })
@@ -125,26 +125,26 @@ describe.skipIf(!READY)('statusline — stage checklist count (T-954 = A)', () =
 
   test('absent `checks` → stage name alone', () => {
     seed({ slug: 'p' }, { stage: 'ship', version: 'v1.0' })
-    expect(stageSeg()).toBe('ship')
+    expect(stageSeg()).toBe('stage: ship')
   })
 
   test('`checks` without an entry for the current stage → stage name alone', () => {
     seed({ slug: 'p' }, { stage: 'ship', version: 'v1.0', checks: { build: ['a'] } })
-    expect(stageSeg()).toBe('ship')
+    expect(stageSeg()).toBe('stage: ship')
   })
 
   test('distinct items count; duplicates and non-strings ignored; capped at the stage total', () => {
     seed({ slug: 'p' }, { stage: 'ship', version: 'v1.0', checks: { ship: ['review', 'review', 3, 'tests'] } })
-    expect(stageSeg()).toBe('ship 2/9')
+    expect(stageSeg()).toBe('stage: ship 2/9')
     seed({ slug: 'p' }, { stage: 'define', version: 'v1.0', checks: { define: ['a', 'b', 'c', 'd', 'e', 'f'] } })
-    expect(stageSeg()).toBe('define 5/5')
+    expect(stageSeg()).toBe('stage: define 5/5')
     seed({ slug: 'p' }, { stage: 'retro', version: 'v1.0', checks: { retro: [] } })
-    expect(stageSeg()).toBe('retro 0/8')
+    expect(stageSeg()).toBe('stage: retro 0/8')
   })
 
   test('idle has no checklist', () => {
     seed({ slug: 'p' }, { stage: 'idle', version: 'v1.0', checks: { idle: ['x'] } })
-    expect(stageSeg()).toBe('idle')
+    expect(stageSeg()).toBe('stage: idle')
   })
 })
 
@@ -164,8 +164,8 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     ticket('ntf-archive/v1.1', 'T-700', { status: 'done' }) // older version: not counted
     marker('T-764')
     expect(rows()).toEqual([
-      'ntf-pm v2.2 | define 2/5 | ticket 1/2 | working —',
-      'ntf-archive v1.2 | build 1/5 | ticket 0/2 | working T-764(developer)',
+      'ntf-pm v2.2 | stage: define 2/5 | ticket 1/2 | working —',
+      'ntf-archive v1.2 | stage: build 1/5 | ticket 0/2 | working T-764(developer)',
       'decision T-760 | request T-767',
     ])
   })
@@ -174,9 +174,9 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     seed({ slug: 'shop', lines: [{ name: 'android' }, { name: 'ios' }] },
       { stage: 'ship', version: 'v3.4', lines: { android: { stage: 'build', version: 'v2.1' }, ios: { stage: 'define', version: 'v2.1' } } })
     expect(rows()).toEqual([
-      'shop v3.4 | ship | working —',
-      'android v2.1 | build | working —',
-      'ios v2.1 | define | working —',
+      'shop v3.4 | stage: ship | working —',
+      'android v2.1 | stage: build | working —',
+      'ios v2.1 | stage: define | working —',
       'decision — | request —',
     ])
   })
@@ -185,7 +185,7 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     seed({ slug: 'ntf-pm', lines: [{ name: 'ntf-archive' }, { name: 'v2-bad' }, { name: 'ntf-pm' }, { name: 'ntf-archive' }] },
       { stage: 'build', version: 'v2.2', lines: { ghost: { stage: 'ship', version: 'v9.9' } } })
     const r = rows()
-    expect(r).toEqual(['ntf-pm v2.2 | build | working —', 'ntf-archive | ? | working —', 'decision — | request —'])
+    expect(r).toEqual(['ntf-pm v2.2 | stage: build | working —', 'ntf-archive | ? | working —', 'decision — | request —'])
     expect(r.join('\n')).not.toContain('ghost')
   })
 
@@ -196,7 +196,7 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
       execFileSync('git', ['-C', sib, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'i'])
       seed({ slug: 'ntf-pm', lines: [{ name: 'ntf-archive', code: { dir: path.relative(root, sib) } }] },
         { stage: 'build', version: 'v2.2', lines: { 'ntf-archive': { stage: 'ship', version: 'v1.2' } } })
-      expect(rows()[1]).toBe('ntf-archive v1.2 | ship | working — | branch: release')
+      expect(rows()[1]).toBe('ntf-archive v1.2 | stage: ship | working — | branch: release')
     } finally {
       fs.rmSync(sib, { recursive: true, force: true })
     }
@@ -208,8 +208,8 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
       { stage: 'build', version: 'v1.0', lines: Object.fromEntries(names.map((n) => [n, { stage: 'build', version: 'v1.0' }])) })
     const r = rows()
     expect(r).toHaveLength(17)
-    expect(r[0]).toBe('big v1.0 | build | working —')
-    expect(r[14]).toBe('line-14 v1.0 | build | working —')
+    expect(r[0]).toBe('big v1.0 | stage: build | working —')
+    expect(r[14]).toBe('line-14 v1.0 | stage: build | working —')
     expect(r[15]).toBe('+6 lines')
     expect(r[16]).toBe('decision — | request —')
   })

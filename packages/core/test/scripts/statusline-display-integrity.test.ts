@@ -169,6 +169,6 @@ describe.skipIf(!READY)('the statusline cannot be made to misrepresent by file c
 
   test('a legitimate project renders exactly as before (nothing traded away)', () => {
     seed({ slug: 'realproj' }, GOOD_STATE)
-    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | build | working —\ndecision — | request —')
+    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | stage: build | working —\ndecision — | request —')
   })
 })
