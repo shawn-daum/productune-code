@@ -4,7 +4,8 @@
  * 1. The worker's first-prompt `[ctx]` line is read in three hooks, each its
  *    own process: prdt-post-dispatch.sh `ctx_from_prompt` (python),
  *    prdt-worktree-guard.sh `ctx_worktree` (python), prdt-dispatch-gate.sh
- *    (one jq program — the gate's no-fork budget keeps it in jq). The same
+ *    (one jq program, two copies — the gate's no-fork budget keeps it in jq),
+ *    and scripts/prdt `_ctx_from_prompt` (the schedule record). The same
  *    prompt corpus must select the same line and parse it the same way.
  * 2. post-dispatch `ticket_from_ctx` (+ `ticket_by_slug`) and scripts/prdt
  *    `schedule_ticket_for_ctx` resolve a `[ctx]` to a ticket by the same rule.
@@ -66,19 +67,26 @@ describe.skipIf(!OK)('[ctx] first-prompt parse — three hooks agree', () => {
     // The gate's own selector, verbatim — pinned as text, then run as jq.
     const SELECT = 'split("\\n") | map(select(startswith("[ctx] {"))) | first'
     const PARSE = '.[6:] | fromjson | select(type == "object")'
-    expect(gateSrc).toContain(`strings | ${SELECT}`)
+    // Every copy in the gate (the tier-model read and the T-814 qa read), not
+    // just one: a drift in either copy alone must fail here.
+    const count = (hay: string, needle: string) => hay.split(needle).length - 1
+    expect(count(gateSrc, `strings | ${SELECT}`)).toBe(2)
+    expect(count(gateSrc, `strings | ${SELECT}\n                    | .[6:] | fromjson | `)).toBe(2)
     expect(gateSrc).toContain(`| ${PARSE}) catch null`)
     for (const [name, prompt] of Object.entries(CORPUS)) {
       const jq = execFileSync('jq', ['-c', `(try (strings | ${SELECT} | ${PARSE}) catch null) // null`],
         { input: JSON.stringify(prompt), encoding: 'utf8' }).trim()
       const gate = JSON.parse(jq)
-      const [post, guard] = runPy(`
+      const [post, guard, cli] = runPy(`
 exec(lift(sys.argv[1], "ctx_from_prompt"))
 exec(lift(sys.argv[2], "ctx_worktree"))
+exec(lift(sys.argv[4], "_ctx_from_prompt"))
 p = sys.argv[3]
-print(json.dumps([ctx_from_prompt(p), list(ctx_worktree(p))]))
-`, [POST, GUARD, prompt]) as [unknown, [boolean, string | null]]
+print(json.dumps([ctx_from_prompt(p), list(ctx_worktree(p)), _ctx_from_prompt(p)]))
+`, [POST, GUARD, prompt, PRDT_CLI]) as [unknown, [boolean, string | null], unknown]
       expect(post, name).toEqual(gate)
+      // scripts/prdt's own copy (the schedule record's [ctx] read).
+      expect(cli, name).toEqual(gate)
       // ctx_worktree: (found_ctx, worktree) — a malformed line is not found;
       // no line at all is "found, no worktree" (nothing to guard).
       const wt = gate && typeof (gate as { worktree?: unknown }).worktree === 'string'
