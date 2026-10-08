@@ -56,6 +56,20 @@ REGISTER_CHECK_NOTICE = (
     "(lines %s) — an unmarked line holding 2+ sentences, or 2+ unmarked lines in a row. "
     "Leave the sent reply as is; write this reply one point per marked line."
 )
+# T-1022: the Stop-time variants — same diagnosis body as the two notices above,
+# only the opening (this reply, not the last one) and the closing instruction
+# (rewrite now, not "leave the sent reply") differ. User-confirmed wording, 2026-10-08.
+REGISTER_CHECK_NOTICE_STOP = (
+    "[prdt register check] this user-chat reply broke form=outline: %d paragraph line(s) "
+    "(lines %s) — an unmarked line holding 2+ sentences, or 2+ unmarked lines in a row. "
+    "Rewrite this same reply now, in full, one point per marked line."
+)
+REGISTER_BLANK_NOTICE_STOP = (
+    "[prdt register check] this user-chat reply broke form=outline: %d point block(s) "
+    "(lines %s) — a top-level point right under another point's block with no blank line, "
+    "either block holding sub-lines. "
+    "Rewrite this same reply now, in full, with one blank line after each point's block, none inside it."
+)
 # T-869: the second form=outline notice — top-level point blocks run together with
 # no blank line between them (form-outline.md: "One blank line after each point's
 # block, none inside it."). One line, line numbers only, same register as above.
@@ -305,15 +319,17 @@ def register_binding_has_form_outline(binding_line):
 
 
 
-def form_outline_notices(reply_text):
+def form_outline_notices(reply_text, stop=False):
     """The rendered form=outline notice lines for `reply_text` ([] when it is
     None or compliant). One place for both callers: the next-turn notice here
     (UserPromptSubmit) and the reply-end block (Stop)."""
     notices = []
     if reply_text is None:
         return notices
-    for found, template in ((form_outline_violations(reply_text), REGISTER_CHECK_NOTICE),
-                            (form_outline_blank_violations(reply_text), REGISTER_BLANK_NOTICE)):
+    check_t = REGISTER_CHECK_NOTICE_STOP if stop else REGISTER_CHECK_NOTICE
+    blank_t = REGISTER_BLANK_NOTICE_STOP if stop else REGISTER_BLANK_NOTICE
+    for found, template in ((form_outline_violations(reply_text), check_t),
+                            (form_outline_blank_violations(reply_text), blank_t)):
         if found:
             shown = found[:FORM_OUTLINE_LIST_CAP]
             rest_n = len(found) - len(shown)
@@ -365,7 +381,7 @@ def stop_main():
     reply = ev.get("last_assistant_message")
     if not (isinstance(reply, str) and reply.strip()):
         return
-    notices = form_outline_notices(reply)
+    notices = form_outline_notices(reply, stop=True)
     if notices and form_outline_bound():
         sys.stdout.write(json.dumps({"decision": "block", "reason": "\n".join(notices)},
                                     ensure_ascii=False))
