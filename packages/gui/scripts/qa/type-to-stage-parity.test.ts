@@ -102,8 +102,8 @@ describe.skipIf(!PYTHON3)('viewer version-progress counting parity with statusli
   it("render.mjs's versionProgressCounts agrees with the real statusline-prdt.sh over one shared fixture", () => {
     expect(fs.existsSync(STATUSLINE_PATH), `${STATUSLINE_PATH} does not exist`).toBe(true)
     const out = runStatuslineOverFixture()
-    const m = new RegExp(`^\\S+ \\S+ \\| stage: ${STAGE} \\| ticket (\\d+)/(\\d+) \\|`).exec(out)
-    expect(m, `statusline output "${out}" head is not "<slug> <version> | stage: ${STAGE} | ticket n/m"`).not.toBeNull()
+    const m = new RegExp(`^\\S+ \\S+ \\| stage: ${STAGE} 0/0 \\| ticket (\\d+)/(\\d+) \\|`).exec(out)
+    expect(m, `statusline output "${out}" head is not "<slug> <version> | stage: ${STAGE} 0/0 | ticket n/m"`).not.toBeNull()
     const [, shellDone, shellTotal] = m as RegExpExecArray
 
     const viewerTickets = FIXTURE_TICKETS.map((t) => ({ frontmatter: { type: t.type, status: t.status } }))
