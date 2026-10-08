@@ -5151,6 +5151,10 @@ def cmd_tickets_new(args, root):
     if path.exists():
         sys.exit(f"prdt tickets new: {path} already exists — id collision, re-run (next_ticket_id is derived, never cached)")
     atomic_write_text(path, text)
+    # T-1014: the derived index learns the new ticket before this command exits —
+    # the statusline gates a ticket id's link on its index row, so a stale index
+    # left a freshly created id unclickable until some other command reindexed.
+    reindex_tickets(root, open_db(root))
     # T-995: the new ticket is in the viewer before anyone can mention it — the
     # viewer is regenerated here (the generator writes the ticket's at/ page
     # itself) and the paste-ready line is the viewer link, the md file link
