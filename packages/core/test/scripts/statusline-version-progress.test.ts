@@ -90,7 +90,7 @@ describe.skipIf(!PYTHON3)('the statusline shows version-wide progress, not a per
     const out = runStatusline()
 
     // one version-wide count: 4 done of 17, decision ticket included in the total
-    expect(out).toContain('| stage: define | ticket 4/17 |')
+    expect(out).toContain('| stage: define 0/0 | ticket 4/17 |')
     // never a stage-matched subset count (the old `define 1/5` shape, or any
     // other N/5 the design-only bucket would have produced)
     expect(out).not.toMatch(/ticket \d+\/5(?!\d)/)
@@ -111,7 +111,7 @@ describe.skipIf(!PYTHON3)('the statusline shows version-wide progress, not a per
     writeTicket('T-22', 'design', 'open')
 
     const out = runStatusline()
-    expect(out).toContain('| stage: ship | ticket 1/3 |')
+    expect(out).toContain('| stage: ship 0/0 | ticket 1/3 |')
     expect(out).not.toContain('total')
   })
 

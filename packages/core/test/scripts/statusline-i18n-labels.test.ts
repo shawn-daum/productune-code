@@ -133,8 +133,8 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     ['retro', '회고', 'retro'], ['idle', '유휴', 'idle'],
   ])('stage %s → ko %s / en %s', (stage, ko, en) => {
     fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage, version: 'v1.13' }))
-    expect(run({ PRDT_LANG: 'ko' }).split('\n')[0]).toBe(`proj v1.13 | 단계: ${ko}  | 작업중 —`)
-    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe(`proj v1.13 | stage: ${en} | working —`)
+    expect(run({ PRDT_LANG: 'ko' }).split('\n')[0]).toBe(`proj v1.13 | 단계: ${ko} 0/0 | 작업중 0`)
+    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe(`proj v1.13 | stage: ${en} 0/0 | working 0`)
   })
 
   test('persona labels: po / user in both languages; branch label with the branch name kept', () => {
@@ -148,12 +148,22 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe('proj v1.13 | stage: build 2/5 | ticket 0/2 | working T-5(po) T-6(user) | branch: dev')
   })
 
-  test('T-1018: ko — a segment ending in Hangul gets one extra space before `|`; en unchanged', () => {
-    fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage: 'build', version: 'v1.13' }))
-    const ko = run({ PRDT_LANG: 'ko' }).split('\n')[0]
-    expect(ko).toBe('proj v1.13 | 단계: 개발  | 작업중 —')
-    expect(ko).toContain('개발  | ')
-    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe('proj v1.13 | stage: build | working —')
+  test('T-1019: no ` | ` follows a Hangul character or `—` in any ko row; separator stays one-space; empty = 0', () => {
+    seedFull()
+    execFileSync('git', ['init', '-q', '-b', 'dev'], { cwd: root })
+    execFileSync('git', ['-c', 'user.email=u@test', '-c', 'user.name=u', 'commit', '-q', '--allow-empty', '-m', 'i'], { cwd: root })
+    const fixtures = [
+      run({ PRDT_LANG: 'ko' }),
+      (() => { fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage: 'idle', version: 'v1.13' })); return run({ PRDT_LANG: 'ko' }) })(),
+    ]
+    for (const out of fixtures) {
+      const plain = unwrap(out)
+      expect(plain).not.toMatch(/[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3\u2014] ?\|/)
+      expect(plain).not.toContain('  |')
+      expect(plain).not.toContain('\u2014')
+    }
+    expect(fixtures[1].split('\n')[0]).toContain('단계: 유휴 0/0 | ')
+    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toContain('stage: idle 0/0 | ticket 1/4 | working T-2')
   })
 
   test('T-1017: a long branch stays whole and last when the working segment has to give way', () => {
@@ -181,7 +191,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     expect(ko).toHaveLength(17)
     expect(ko[15]).toBe('+6 라인')
     expect(en[15]).toBe('+6 lines')
-    expect(ko[16]).toBe('결정사항 — | 요청사항 —')
+    expect(ko[16]).toBe('결정사항 0 | 요청사항 0')
   })
 
   test('OSC 8 links still wrap every ticket id in both languages', () => {

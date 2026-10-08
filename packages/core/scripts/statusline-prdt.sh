@@ -10,8 +10,9 @@
 # hooks/prdt-post-dispatch.sh.
 #
 # Format (T-984, user-confirmed 2026-10-06; T-961 release lines):
-#   <label> <version> | stage: <stage> n/m | ticket <vdone>/<vtotal> | working <ids|—> | branch: <b>   (T-1017: branch last)
-#   dec <ids|—> | req <ids|—>
+#   <label> <version> | stage: <stage> n/m | ticket <vdone>/<vtotal> | working <ids|0> | branch: <b>   (T-1017: branch last)
+#   T-1019: empty = `0` (never `—`), a stage without a count = `0/0`; no bar follows Hangul.
+#   dec <ids|0> | req <ids|0>
 #   T-1015: every label (branch · stage · ticket · working · persona · dec · req ·
 #   `+N lines`) reads in the CLI language — the same rule as `cli_lang()` in
 #   scripts/prdt (PRDT_LANG en*/ko* wins, else the device token `cli-lang`,
@@ -19,7 +20,7 @@
 #   sibling `prdt-messages.json`. The labels in this comment are the English forms.
 #   - One row per release line, home line (the project slug) first, then each
 #     line declared in `.prdt/config.json` `lines` (release-lines.md §6b).
-#   - The `dec … | req …` row is ALWAYS its own last row (`dec — | req —` when
+#   - The `dec … | req …` row is ALWAYS its own last row (`dec 0 | req 0` when
 #     empty), single-line and multi-line projects alike (T-988 = A, T-984
 #     reversed by the user 2026-10-06).
 #   - Never more than MAX_ROWS (17, measured on the user's machine) rows.
@@ -188,26 +189,6 @@ except Exception:
 _labels = _labels if isinstance(_labels, dict) else {}
 
 
-KO = _cli_lang() == "ko"
-
-
-def bar(prev):
-    """T-1018 = A: in ko a segment ending in a Hangul character gets ONE extra
-    space before ` | ` (a `|` right after Hangul renders as a double line in
-    the user's terminal); en unchanged. Counted in display columns by `fit`."""
-    last = prev.rstrip()[-1:] if prev else ""
-    hangul = bool(last) and ("\uac00" <= last <= "\ud7a3" or "\u1100" <= last <= "\u11ff"
-                             or "\u3130" <= last <= "\u318f")
-    return "  | " if KO and hangul else " | "
-
-
-def bar_join(parts):
-    out = ""
-    for i, part in enumerate(parts):
-        out += (bar(parts[i - 1]) if i else "") + part
-    return out
-
-
 def L(key, **kw):
     t = _labels.get("statusline." + key, "statusline." + key)
     return t.format(**kw) if kw else t
@@ -259,7 +240,8 @@ def stage_seg(raw_stage, checks):
     if total and isinstance(done, list):
         n = len({x.strip() for x in done if isinstance(x, str) and x.strip()})
         return L("stagelabel", name=f"{L('stage.' + stage)} {min(n, total)}/{total}")
-    return L("stagelabel", name=L("stage." + stage) if stage in STAGES else stage)
+    # T-1019: no checklist count → `0/0` (no bare Hangul before the bar)
+    return L("stagelabel", name=(L("stage." + stage) if stage in STAGES else stage) + " 0/0")
 
 
 # branch (T-426): meta/code split projects (PRD history §v1.3) carry no `.git` at
@@ -688,14 +670,14 @@ personas = {tid: ps for tid, ps in running}
 
 def working_seg(ids, limits):
     run_lim, _, succ_lim = limits
-    return L("working") + " " + (fmt_group(ids, run_lim, succ_lim, personas) if ids else "—")
+    return L("working") + " " + (fmt_group(ids, run_lim, succ_lim, personas) if ids else "0")
 
 
 def action_seg(limits):
     """T-984: the things the user must act on — `dec … | req …`, `—` when empty."""
     _, wait_lim, succ_lim = limits
-    return bar_join([L("decision") + " " + (fmt_group(dec, wait_lim, succ_lim) if dec else "—"),
-                     L("request") + " " + (fmt_group(req, wait_lim, succ_lim) if req else "—")])
+    return " | ".join([L("decision") + " " + (fmt_group(dec, wait_lim, succ_lim) if dec else "0"),
+                       L("request") + " " + (fmt_group(req, wait_lim, succ_lim) if req else "0")])
 
 
 def fit(build, tail=""):
@@ -705,14 +687,13 @@ def fit(build, tail=""):
     = 3/3/2) and, while the row would exceed LINE_CAP, tighter (2/2/1, then
     1/1/0) — collapsing to counts, never truncation. Belt: sanitized once more
     and capped, so every row stays ONE row whatever any input held."""
-    sep = ""
+    sep = " | " + tail if tail else ""
     for limits in ((3, 3, 2), (2, 2, 1), (1, 1, 0)):
         candidate = build(limits)
-        sep = bar(candidate) + tail if tail else ""
         if dw(candidate) + dw(sep) <= LINE_CAP:
             break
     cut = clean(candidate, cap=LINE_CAP - dw(sep), bar=True)
-    return cut + (bar(cut) + tail if tail else "")
+    return cut + sep
 
 
 # T-984 layout (user-confirmed 2026-10-06):
@@ -730,7 +711,7 @@ for r in shown:
     ids = [tid for tid, _ in running if line_of(tid) == r["line"]]
     branch = L("branch", name=r["branch"]) if r["branch"] else ""
     out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
-                                        bar_join(head + [working_seg(ids, lim)]), branch)))
+                                        " | ".join(head + [working_seg(ids, lim)]), branch)))
 if len(shown) < len(rows):
     out_rows.append((None, L("lines", n=len(rows) - len(shown))))
 out_rows.append((None, fit(action_seg)))
