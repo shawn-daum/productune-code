@@ -76,6 +76,10 @@ function assertRegisterBindingLineShape(line: string, opts: { keys: string; gove
   }
 }
 
+// T-1025: while form=outline is bound the per-turn assembly appends the hot line as
+// the line right AFTER the `[prdt register]` line (same assembly point, same order).
+const FORM_OUTLINE_HOT_LINE = "[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 one point per marked line: never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; one blank line after each point's block, none inside it."
+
 describe('state line (turn-open refresher)', () => {
   test('every prompt in a prdt project gets one live state line', () => {
     const dir = makeProject(BUILD_STATE)
@@ -417,18 +421,20 @@ describe('register binding (T-586) — the per-turn channel has ONE assembly poi
   test('non-default keys with real bodies present → one `[prdt register]` line right after the state line, values verbatim, no tail (S7-b)', () => {
     const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('form=outline\nstructure=planner-tables\naddress=션님\n', true) }))
     const lines = ctx.split('\n')
-    expect(lines).toHaveLength(2)
+    expect(lines).toHaveLength(3)
     expect(lines[0]).toMatch(/^\[prdt state\] /)
     assertRegisterBindingLineShape(lines[1], { keys: 'form=outline · structure=planner-tables · address="션님"', governs: 'user-chat', bodyArrived: true })
+    expect(lines[2]).toBe(FORM_OUTLINE_HOT_LINE)
     expect(Buffer.byteLength(lines[1], 'utf8')).toBeLessThanOrEqual(180)
   })
 
   test('non-default keys with NO body files for the resolved values → same line, "No body is in force" tail', () => {
     const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('form=outline\nstructure=planner-tables\naddress=션님\n') }))
     const lines = ctx.split('\n')
-    expect(lines).toHaveLength(2)
+    expect(lines).toHaveLength(3)
     expect(lines[0]).toMatch(/^\[prdt state\] /)
     assertRegisterBindingLineShape(lines[1], { keys: 'form=outline · structure=planner-tables · address="션님"', governs: 'user-chat', bodyArrived: false })
+    expect(lines[2]).toBe(FORM_OUTLINE_HOT_LINE)
   })
 
   // Not empty coverage: a fixture with exactly one property surgically removed
