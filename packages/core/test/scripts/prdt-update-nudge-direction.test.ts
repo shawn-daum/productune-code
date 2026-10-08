@@ -226,10 +226,10 @@ describe.skipIf(!PYTHON3)('T-456 · the offered version is never <= the local on
     advanceOrigin(origin, ['v1.5']) // origin rewinds its RELEASES.md to v1.5, ahead in git
     git(clone, 'fetch', '-q', 'origin', 'dev')
     expect(aheadOf(clone)).toBe(true) // gate 1 says yes...
-    const remoteV = py(`m.releases_pending(${JSON.stringify(clone)})[0]`)
     const localV = py(`m.releases_local(${JSON.stringify(clone)})[0]`)
-    expect([remoteV, localV]).toEqual(['v1.5', 'v1.6'])
-    expect(newer(remoteV as string, localV as string)).toBe(false) // ...gate 2 says no
+    expect(localV).toBe('v1.6')
+    // ...gate 2 says no: no remote section sits above the installed one.
+    expect(py(`list(m.releases_pending_between(${JSON.stringify(clone)}, ${JSON.stringify(localV)}))`)).toEqual([null, []])
   })
 })
 
