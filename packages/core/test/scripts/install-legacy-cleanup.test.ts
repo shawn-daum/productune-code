@@ -109,8 +109,10 @@ test.skipIf(!hasJq())('install.sh strips deleted legacy pdt-* hooks + legacy sta
   //    array is dropped by cleanup; the only Stop entry left is the prdt one the manifest registers
   //    (T-985 prdt-question-check.sh), so no legacy command and no foreign entry remains there.
   const stopCmds = allCommands({ hooks: { Stop: s.hooks?.Stop ?? [] } })
-  expect(stopCmds).toHaveLength(1)
+  // T-1022: plus prdt-user-prompt.sh, the PO form=outline reply check, as its own Stop entry.
+  expect(stopCmds).toHaveLength(2)
   expect(stopCmds[0]).toContain('prdt-question-check.sh')
+  expect(stopCmds[1]).toContain('prdt-user-prompt.sh')
   expect(stopCmds.some((c) => LEGACY_BASENAMES.some((b) => c.includes(b)))).toBe(false)
 })
 

@@ -164,7 +164,8 @@ function cliHooksBlock(home: string): any {
       .filter(r => r.event === 'PreToolUse')
       .map(r => ({ ...(r.matcher !== undefined ? { matcher: r.matcher } : {}), hooks: r.hooks.map(h) })),
     // T-985: the PO's unticketed-question check — matcher-less, Stop takes none.
-    Stop: [{ hooks: [h('prdt-question-check.sh')] }],
+    // T-1022: prdt-user-prompt.sh's own second Stop entry (the PO form=outline reply check).
+    Stop: [{ hooks: [h('prdt-question-check.sh')] }, { hooks: [h('prdt-user-prompt.sh')] }],
   }
 }
 
