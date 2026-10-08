@@ -38,7 +38,9 @@ set +e
 EVENT_JSON="$(cat 2>/dev/null || true)"
 [ -z "$EVENT_JSON" ] && exit 0
 case "$EVENT_JSON" in
-  *'"hook_event_name":"Stop"'*|*'"hook_event_name": "Stop"'*)
+  *'"hook_event_name":"Stop"'*|*'"hook_event_name": "Stop"'*|*'"hook_event_name":"PostToolUse"'*|*'"hook_event_name": "PostToolUse"'*)
+    # T-1025: PostToolUse joins Stop here — every tool call on the machine reaches this
+    # hook, so a non-PO event leaves before python3 starts.
     case "$EVENT_JSON" in
       *'"prdt-po"'*) ;;
       *) exit 0 ;;
@@ -75,19 +77,13 @@ REGISTER_CHECK_NOTICE = (
     "(lines %s) — an unmarked line holding 2+ sentences, or 2+ unmarked lines in a row. "
     "Leave the sent reply as is; write this reply one point per marked line."
 )
-# T-1022: the Stop-time variants — same diagnosis body as the two notices above,
-# only the opening (this reply, not the last one) and the closing instruction
-# (rewrite now, not "leave the sent reply") differ. User-confirmed wording, 2026-10-08.
-REGISTER_CHECK_NOTICE_STOP = (
-    "[prdt register check] this user-chat reply broke form=outline: %d paragraph line(s) "
-    "(lines %s) — an unmarked line holding 2+ sentences, or 2+ unmarked lines in a row. "
-    "Rewrite this same reply now, in full, one point per marked line."
-)
-REGISTER_BLANK_NOTICE_STOP = (
-    "[prdt register check] this user-chat reply broke form=outline: %d point block(s) "
-    "(lines %s) — a top-level point right under another point's block with no blank line, "
-    "either block holding sub-lines. "
-    "Rewrite this same reply now, in full, with one blank line after each point's block, none inside it."
+# T-1025: the hot line — the two form=outline rules at the moment the PO writes its
+# final reply (PostToolUse after every tool call, and UserPromptSubmit). User-approved
+# wording (T-1024, 2026-10-08), verbatim.
+FORM_OUTLINE_HOT_LINE = (
+    "[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 "
+    "one point per marked line: never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; "
+    "one blank line after each point's block, none inside it."
 )
 # T-869: the second form=outline notice — top-level point blocks run together with
 # no blank line between them (form-outline.md: "One blank line after each point's
@@ -338,15 +334,15 @@ def register_binding_has_form_outline(binding_line):
 
 
 
-def form_outline_notices(reply_text, stop=False):
+def form_outline_notices(reply_text):
     """The rendered form=outline notice lines for `reply_text` ([] when it is
     None or compliant). One place for both callers: the next-turn notice here
-    (UserPromptSubmit) and the reply-end block (Stop)."""
+    (UserPromptSubmit)."""
     notices = []
     if reply_text is None:
         return notices
-    check_t = REGISTER_CHECK_NOTICE_STOP if stop else REGISTER_CHECK_NOTICE
-    blank_t = REGISTER_BLANK_NOTICE_STOP if stop else REGISTER_BLANK_NOTICE
+    check_t = REGISTER_CHECK_NOTICE
+    blank_t = REGISTER_BLANK_NOTICE
     for found, template in ((form_outline_violations(reply_text), check_t),
                             (form_outline_blank_violations(reply_text), blank_t)):
         if found:
@@ -377,24 +373,34 @@ def form_outline_bound():
 
 
 def stop_main():
-    """T-1022: the same form=outline check at the end of a PO reply (Stop).
-    Acts for the PO only (its caller has already walked to a prdt project), while form=outline is bound; a
-    violating reply is blocked ONCE (`stop_hook_active`, the harness's own loop
-    guard, is true on the Stop that follows a block — then this exits silently,
-    so a rewrite that still violates reaches the user, as in T-985). The reply is
-    the event's own `last_assistant_message`; a stop with no text (a tool-only
-    turn) passes. Fails open: a Stop hook must never strand a session."""
-    if ev.get("agent_type") != "prdt-po" or ev.get("stop_hook_active") is True:
+    """T-1025: the Stop check no longer blocks or prints. While form=outline is bound
+    it appends one data row per PO reply (paragraph-line count, blank-block count) to
+    ~/.prdt/run/form-outline-counts.jsonl; a stop with no reply text writes nothing."""
+    if ev.get("agent_type") != "prdt-po":
         return
     reply = ev.get("last_assistant_message")
     if not (isinstance(reply, str) and reply.strip()):
         return
-    notices = form_outline_notices(reply, stop=True)
-    if notices and form_outline_bound():
-        sys.stdout.write(json.dumps({"decision": "block", "reason": "\n".join(notices)},
-                                    ensure_ascii=False))
+    if not form_outline_bound():
+        return
+    home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+    run = os.path.join(home, "run")
+    os.makedirs(run, exist_ok=True)
+    row = {"ts": int(time.time()), "session_id": ev.get("session_id"),
+           "paragraph_lines": len(form_outline_violations(reply)),
+           "blank_blocks": len(form_outline_blank_violations(reply))}
+    with open(os.path.join(run, "form-outline-counts.jsonl"), "a") as f:
+        f.write(json.dumps(row) + "\n")
 
 
+def post_tool_main():
+    """T-1025: the hot line after every PO tool call, while form=outline is bound."""
+    if ev.get("agent_type") != "prdt-po":
+        return
+    if form_outline_bound():
+        sys.stdout.write(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": FORM_OUTLINE_HOT_LINE}}, ensure_ascii=False))
 
 
 # project root: walk the WHOLE ancestor chain from the event cwd and take the
@@ -421,9 +427,9 @@ if not state_path:
 
 # T-1022: a Stop event leaves here — after the one project-root walk above (so it is
 # in a prdt project) and before any state-flow side effect (guard marker, flag drain).
-if ev.get("hook_event_name") == "Stop":
+if ev.get("hook_event_name") in ("Stop", "PostToolUse"):
     try:
-        stop_main()
+        (stop_main if ev.get("hook_event_name") == "Stop" else post_tool_main)()
     except BaseException:
         pass
     sys.exit(0)
@@ -864,6 +870,7 @@ if hook_dir and os.path.isfile(resolver):
             if register_binding_has_form_outline(first):
                 reply_text = last_main_session_text(ev.get("transcript_path"))
                 lines.extend(form_outline_notices(reply_text))
+                lines.append(FORM_OUTLINE_HOT_LINE)
         elif r.returncode != 0:
             lines.append(REGISTER_UNCONFIRMED_NOTICE % "the resolver exited non-zero")
     except subprocess.TimeoutExpired:
