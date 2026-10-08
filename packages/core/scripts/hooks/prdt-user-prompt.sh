@@ -324,6 +324,61 @@ def form_outline_notices(reply_text):
     return notices
 
 
+def form_outline_bound():
+    """True when the resolver's own `--binding` line carries `form=outline`.
+    Any failure (no resolver, timeout, non-zero exit) is False: the Stop path
+    below never blocks on a binding it could not confirm."""
+    hd = os.environ.get("PRDT_HOOK_DIR") or ""
+    res = os.path.join(hd, "prdt-audience-inject.sh")
+    if not (hd and os.path.isfile(res)):
+        return False
+    try:
+        r = subprocess.run(["bash", res, "--binding"], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=5)
+        first = (r.stdout or "").split("\n", 1)[0].strip()
+        return r.returncode == 0 and register_binding_has_form_outline(first)
+    except Exception:
+        return False
+
+
+def stop_main():
+    """T-1022: the same form=outline check at the end of a PO reply (Stop).
+    Acts for the PO only, in a prdt project, while form=outline is bound; a
+    violating reply is blocked ONCE (`stop_hook_active`, the harness's own loop
+    guard, is true on the Stop that follows a block — then this exits silently,
+    so a rewrite that still violates reaches the user, as in T-985). The reply is
+    the event's own `last_assistant_message`; a stop with no text (a tool-only
+    turn) passes. Fails open: a Stop hook must never strand a session."""
+    if ev.get("agent_type") != "prdt-po" or ev.get("stop_hook_active") is True:
+        return
+    d = os.path.realpath(ev.get("cwd") or os.getcwd())
+    in_project = False
+    while d and d != "/":
+        if os.path.isfile(os.path.join(d, ".prdt", "po-state.json")):
+            in_project = True
+        up = os.path.dirname(d)
+        if up == d:
+            break
+        d = up
+    if not in_project:
+        return
+    reply = ev.get("last_assistant_message")
+    if not (isinstance(reply, str) and reply.strip()):
+        return
+    notices = form_outline_notices(reply)
+    if notices and form_outline_bound():
+        sys.stdout.write(json.dumps({"decision": "block", "reason": "\n".join(notices)},
+                                    ensure_ascii=False))
+
+
+if ev.get("hook_event_name") == "Stop":
+    try:
+        stop_main()
+    except BaseException:
+        pass
+    sys.exit(0)
+
+
 
 # project root: walk the WHOLE ancestor chain from the event cwd and take the
 # OUTERMOST dir holding `.prdt/po-state.json` (T-484 — never the nearest: a
