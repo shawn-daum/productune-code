@@ -241,6 +241,8 @@ describe.skipIf(!PYTHON3)('T-749 · prdt update — nothing installs before the 
     const out = runCmdUpdate(clone, { tty: true, stdinAnswer: '1\n' })
     expect(out).toContain('설치됨 v1.5 →')
     expect(out).toContain('이 사이에 새 커밋은 있지만 릴리즈 노트는 없어요.')
+    // T-789: the "new version" label is the shown target commit's first 7 chars.
+    expect(out).toContain(git(origin, 'rev-parse', 'HEAD').trim().slice(0, 7))
     expect(out).toContain('1. update')
     expect(out).toContain('2. skip')
     expect(out).toContain('업데이트 완료:')
