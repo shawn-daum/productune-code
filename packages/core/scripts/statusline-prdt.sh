@@ -11,10 +11,15 @@
 #
 # Format (T-984, user-confirmed 2026-10-06; T-961 release lines):
 #   <label> <version> | branch: <b> | <stage> n/m | ticket <vdone>/<vtotal> | working <ids|—>
-#   dec <ids|—> · req <ids|—>
+#   dec <ids|—> | req <ids|—>
+#   T-1015: every label (branch · stage · ticket · working · persona · dec · req ·
+#   `+N lines`) reads in the CLI language — the same rule as `cli_lang()` in
+#   scripts/prdt (PRDT_LANG en*/ko* wins, else the device token `cli-lang`,
+#   default ko; OS LANG never read) — from the `statusline.*` keys of the
+#   sibling `prdt-messages.json`. The labels in this comment are the English forms.
 #   - One row per release line, home line (the project slug) first, then each
 #     line declared in `.prdt/config.json` `lines` (release-lines.md §6b).
-#   - The `dec … · req …` row is ALWAYS its own last row (`dec — · req —` when
+#   - The `dec … | req …` row is ALWAYS its own last row (`dec — | req —` when
 #     empty), single-line and multi-line projects alike (T-988 = A, T-984
 #     reversed by the user 2026-10-06).
 #   - Never more than MAX_ROWS (17, measured on the user's machine) rows.
@@ -72,7 +77,8 @@ while [ -n "$D" ] && [ "$D" != "/" ]; do
 done
 [ -z "$ROOT" ] && exit 0
 
-ROOT="$ROOT" python3 - <<'PYEOF'
+SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+ROOT="$ROOT" SCRIPT_DIR="$SCRIPT_DIR" python3 - <<'PYEOF'
 import json, os, re, sqlite3, subprocess, sys, unicodedata
 from datetime import datetime, timezone
 from urllib.parse import quote
@@ -128,7 +134,63 @@ def clean(raw, cap=40, bar=False):
         return ""
     s = "".join(c for c in raw if (bar or c != "|")
                 and unicodedata.category(c) not in ("Cc", "Cf", "Zl", "Zp")).strip()
-    return (s[:cap] + "\u2026") if len(s) > cap else s
+    return cut_cols(s, cap)
+
+
+def dw(s):
+    """Display columns of `s`: a wide/fullwidth char (Hangul, CJK) is 2, a
+    combining mark 0, anything else 1 (T-1015)."""
+    n = 0
+    for c in s:
+        if unicodedata.combining(c):
+            continue
+        n += 2 if unicodedata.east_asian_width(c) in ("W", "F") else 1
+    return n
+
+
+def cut_cols(s, cols):
+    """`s` cut to at most `cols` display columns, `…` (1 column) appended on a cut."""
+    if dw(s) <= cols:
+        return s
+    out, n = [], 0
+    for c in s:
+        w = dw(c)
+        if n + w > cols - 1:
+            break
+        out.append(c)
+        n += w
+    return "".join(out) + "\u2026"
+
+
+# ── T-1015: label language — the CLI's own rule and catalog ─────────────────
+# Keep the resolution in lockstep with `cli_lang()` in scripts/prdt; the
+# catalog is the sibling `prdt-messages.json` (install.sh mirrors both into
+# bin/). A missing file or key shows the key itself, so a gap is visible.
+def _cli_lang():
+    env = (os.environ.get("PRDT_LANG") or "").strip().lower()
+    if env.startswith("en"):
+        return "en"
+    if env.startswith("ko"):
+        return "ko"
+    home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+    try:
+        tok = "".join(open(os.path.join(home, "cli-lang"), encoding="utf-8", errors="replace").read().split())
+    except OSError:
+        tok = ""
+    return "en" if tok == "en" else "ko"
+
+
+try:
+    _cat = json.load(open(os.path.join(os.environ.get("SCRIPT_DIR", ""), "prdt-messages.json"), encoding="utf-8"))
+    _labels = _cat.get(_cli_lang())
+except Exception:
+    _labels = None
+_labels = _labels if isinstance(_labels, dict) else {}
+
+
+def L(key, **kw):
+    t = _labels.get("statusline." + key, "statusline." + key)
+    return t.format(**kw) if kw else t
 
 
 slug = clean(cfg_slug) or clean(os.path.basename(root)) or "?"
@@ -176,8 +238,8 @@ def stage_seg(raw_stage, checks):
     done = checks.get(stage) if isinstance(checks, dict) else None
     if total and isinstance(done, list):
         n = len({x.strip() for x in done if isinstance(x, str) and x.strip()})
-        return f"{stage} {min(n, total)}/{total}"
-    return stage
+        return f"{L('stage.' + stage)} {min(n, total)}/{total}"
+    return L("stage." + stage) if stage in STAGES else stage
 
 
 # branch (T-426): meta/code split projects (PRD history §v1.3) carry no `.git` at
@@ -422,7 +484,8 @@ def open_index_ro():
         return None
 
 
-PERSONA_ABBR = {"developer": "dev", "designer": "des", "qa": "qa", "po": "po", "user": "user"}
+def persona_label(p):
+    return L("persona." + p) if p in ASSIGNEES else p
 
 
 def dependents(con, tid):
@@ -572,7 +635,7 @@ def fmt_group(ids, limit, succ_limit, with_persona=None):
         links[tid] = ticket_link_target(idx, tid)
         seg = tid
         if with_persona is not None and with_persona.get(tid):
-            seg += "(" + "+".join(PERSONA_ABBR.get(x, x) for x in with_persona[tid]) + ")"
+            seg += "(" + "+".join(persona_label(x) for x in with_persona[tid]) + ")"
         succ = dependents(idx, tid) if succ_limit else []
         if succ:
             s_shown, s_extra = collapse(succ, succ_limit)
@@ -591,14 +654,14 @@ personas = {tid: ps for tid, ps in running}
 
 def working_seg(ids, limits):
     run_lim, _, succ_lim = limits
-    return "working " + (fmt_group(ids, run_lim, succ_lim, personas) if ids else "—")
+    return L("working") + " " + (fmt_group(ids, run_lim, succ_lim, personas) if ids else "—")
 
 
 def action_seg(limits):
-    """T-984: the things the user must act on — `dec … · req …`, `—` when empty."""
+    """T-984: the things the user must act on — `dec … | req …`, `—` when empty."""
     _, wait_lim, succ_lim = limits
-    return ("dec " + (fmt_group(dec, wait_lim, succ_lim) if dec else "—")
-            + " · req " + (fmt_group(req, wait_lim, succ_lim) if req else "—"))
+    return (L("decision") + " " + (fmt_group(dec, wait_lim, succ_lim) if dec else "—")
+            + " | " + L("request") + " " + (fmt_group(req, wait_lim, succ_lim) if req else "—"))
 
 
 def fit(build):
@@ -608,15 +671,15 @@ def fit(build):
     and capped, so every row stays ONE row whatever any input held."""
     for limits in ((3, 3, 2), (2, 2, 1), (1, 1, 0)):
         candidate = build(limits)
-        if len(candidate) <= LINE_CAP:
+        if dw(candidate) <= LINE_CAP:
             break
     return clean(candidate, cap=LINE_CAP, bar=True)
 
 
 # T-984 layout (user-confirmed 2026-10-06):
 #   <label> <version> | branch: <b> | <stage> n/m | ticket n/m | working …
-# One row per line, home first, then ALWAYS one `dec … · req …` row last
-# (`dec — · req —` when empty), single-line and multi-line alike.
+# One row per line, home first, then ALWAYS one `dec … | req …` row last
+# (`dec — | req —` when empty), single-line and multi-line alike.
 # Never more than MAX_ROWS rows: past it, the last line rows fold into `+N lines`.
 line_budget = MAX_ROWS - 1
 shown = rows if len(rows) <= line_budget else rows[:line_budget - 1]
@@ -624,15 +687,15 @@ out_rows = []
 for r in shown:
     head = [r["slug_ver"]]
     if r["branch"]:
-        head.append(f"branch: {r['branch']}")
+        head.append(L("branch", name=r["branch"]))
     head.append(r["stage"])
     if r["vtotal"]:
-        head.append(f"ticket {r['vdone']}/{r['vtotal']}")
+        head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
     ids = [tid for tid, _ in running if line_of(tid) == r["line"]]
     out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
                                         " | ".join(head + [working_seg(ids, lim)]))))
 if len(shown) < len(rows):
-    out_rows.append((None, f"+{len(rows) - len(shown)} lines"))
+    out_rows.append((None, L("lines", n=len(rows) - len(shown))))
 out_rows.append((None, fit(action_seg)))
 
 

@@ -80,12 +80,15 @@ function unsanitizedCopy(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t493-sl-prefix-'))
   const p = path.join(dir, 'statusline-prdt.sh')
   fs.writeFileSync(p, weak, { mode: 0o755 })
+  // T-1015: labels come from the sibling catalog.
+  fs.copyFileSync(path.join(CORE_ROOT, 'scripts', 'prdt-messages.json'), path.join(dir, 'prdt-messages.json'))
   return p
 }
 
 const run = (script = STATUSLINE) =>
   execFileSync('bash', [script], {
     input: JSON.stringify({ workspace: { current_dir: root } }), encoding: 'utf8',
+    env: { ...process.env, PRDT_LANG: 'en' },
   })
 
 beforeEach(() => {
@@ -166,6 +169,6 @@ describe.skipIf(!READY)('the statusline cannot be made to misrepresent by file c
 
   test('a legitimate project renders exactly as before (nothing traded away)', () => {
     seed({ slug: 'realproj' }, GOOD_STATE)
-    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | build | working —\ndec — · req —')
+    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | build | working —\ndecision — | request —')
   })
 })

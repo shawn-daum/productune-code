@@ -57,6 +57,7 @@ function writeTicket(id: string, type: string, status: 'open' | 'done' = 'open')
 function runStatusline(): string {
   return execFileSync('bash', [STATUSLINE_SH], {
     input: JSON.stringify({ workspace: { current_dir: root } }), encoding: 'utf8',
+    env: { ...process.env, PRDT_LANG: 'en' },
   }).replace(/\n$/, '')
 }
 
@@ -96,7 +97,7 @@ describe.skipIf(!PYTHON3)('the statusline shows version-wide progress, not a per
     expect(out).not.toMatch(/\bticket \d+\/\d+ total \d+\/\d+/)
     // the open `decision` ticket surfaces (as "dec"), proving it was read
     // and counted, not skipped the way TYPE_TO_STAGE used to skip it
-    expect(out).toContain('dec T-17')
+    expect(out).toContain('decision T-17')
   })
 
   test('a stage with zero type-matched tickets still shows the full version total, not zero', () => {

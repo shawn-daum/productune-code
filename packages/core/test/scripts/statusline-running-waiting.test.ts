@@ -143,7 +143,7 @@ function jumpPagePath(id: string): string {
 function runStatusline(): string {
   return execFileSync('bash', [STATUSLINE_SH], {
     cwd: root, input: '', encoding: 'utf-8',
-    env: { ...process.env, PRDT_HOME: prdtHome },
+    env: { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en' },
   })
 }
 
@@ -165,8 +165,9 @@ function unwrapLinks(text: string): string {
  *  with any OSC 8 wrapping unwrapped back to the plain ticket id. */
 function segment(out: string, name: 'working' | 'dec' | 'req'): string | undefined {
   // T-984/T-961: rows are newline-separated, and `dec … · req …` share one segment.
-  const found = out.trim().split(/\n| \| | \u00b7 /).find((p) => p.startsWith(`${name} `))
-  return found === undefined ? undefined : unwrapLinks(found).slice(name.length + 1)
+  const label = { working: 'working', dec: 'decision', req: 'request' }[name]
+  const found = out.trim().split(/\n| \| /).find((p) => p.startsWith(`${label} `))
+  return found === undefined ? undefined : unwrapLinks(found).slice(label.length + 1)
 }
 
 function which(bin: string): string | null {
@@ -216,7 +217,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
 
     const out = runStatusline()
     const running = segment(out, 'working')
-    expect(running).toBe('T-700(dev)>T-720 T-701(qa)')
+    expect(running).toBe('T-700(developer)>T-720 T-701(qa)')
     expect(segment(out, 'dec')).toBe('T-710>T-730')
     expect(segment(out, 'req')).toBe('T-711')
     expect(out).not.toMatch(/\bwaiting\b/)
@@ -243,7 +244,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
         { src: 'T-497', dst: 'T-477' },
       ],
     )
-    expect(segment(runStatusline(), 'working')).toBe('T-959(des)>T-960 T-477(qa)>T-478,T-963')
+    expect(segment(runStatusline(), 'working')).toBe('T-959(designer)>T-960 T-477(qa)>T-478,T-963')
   })
 
   test('a stale in-flight marker ages out (never shown, never crashes, never deleted); a fresh one still shows; a stopped one is hidden', () => {
@@ -253,7 +254,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
 
     const out = runStatusline()
     const running = segment(out, 'working')
-    expect(running).toBe('T-682(dev)') // default persona from writeMarker()
+    expect(running).toBe('T-682(developer)') // default persona from writeMarker()
     expect(out).not.toContain('T-999')
     expect(out).not.toContain('T-998')
     // F10: pure display — the stale file is still on disk; only prdt-post-dispatch.sh prunes run/dispatches
@@ -288,7 +289,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const out = runStatusline()
     const running = segment(out, 'working')
     const dec = segment(out, 'dec')
-    expect(running).toBe('T-750(dev)>T-760,T-761+1 T-751(qa) T-752(dev) +1')
+    expect(running).toBe('T-750(developer)>T-760,T-761+1 T-751(qa) T-752(developer) +1')
     expect(dec).toBe('T-770>T-780 T-771 T-772 +1')
   })
 
@@ -384,13 +385,13 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const slug = path.basename(root)
     expect(plain).not.toContain(OSC8_OPEN)
     // no tickets, no branch (tmp dir is no git repo): ticket segment and branch segment degrade away
-    expect(plain).toBe(`${slug} ${VERSION} | build | working \u2014\ndec \u2014 \u00b7 req \u2014`)
+    expect(plain).toBe(`${slug} ${VERSION} | build | working \u2014\ndecision \u2014 | request \u2014`)
 
     stubViewerHtml()
     const linked = runStatusline().trim()
     const viewer = path.join(root, '.prdt', 'scratch', 'viewer', 'viewer.html')
     expect(linked.startsWith(`${OSC8_OPEN}file://${viewer}\x1b\\${slug} ${VERSION}${OSC8_CLOSE} | build`)).toBe(true)
-    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | build | working \u2014\ndec \u2014 \u00b7 req \u2014`)
+    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | build | working \u2014\ndecision \u2014 | request \u2014`)
   })
 
   test('T-984: full layout order — branch between version and stage, ticket count, working, then dec · req; no current-task segment; never \u00bb', () => {
@@ -402,7 +403,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     execFileSync('git', ['init', '-q', '-b', 'dev', root])
     execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init'])
     const plain = unwrapLinks(runStatusline()).trim()
-    expect(plain).toBe(`${path.basename(root)} ${VERSION} | branch: dev | build | ticket 1/2 | working T-890(qa)\ndec \u2014 \u00b7 req \u2014`)
+    expect(plain).toBe(`${path.basename(root)} ${VERSION} | branch: dev | build | ticket 1/2 | working T-890(qa)\ndecision \u2014 | request \u2014`)
     expect(plain).not.toContain('\u00bb')
   })
 
@@ -411,7 +412,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     writeMarker({ agentId: 'qa', ticketId: 'T-700', persona: 'qa', ageMs: 60_000 })
     writeMarker({ agentId: 'other', ticketId: 'T-701', persona: 'developer', ageMs: 2 * 60_000 })
     const out = runStatusline()
-    expect(segment(out, 'working')).toBe('T-700(dev+qa) T-701(dev)')
+    expect(segment(out, 'working')).toBe('T-700(developer+qa) T-701(developer)')
     expect((out.match(/T-700/g) ?? []).length).toBe(1)
   })
 
@@ -425,7 +426,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(wrapped.length).toBe(2) // once in working, once in dec
     expect((unwrapLinks(out).match(/T-682/g) ?? []).length).toBe(2) // visible text only (the file URI names the id too)
     expect(segment(out, 'dec')).toBe('T-682')
-    expect(segment(out, 'working')).toBe('T-682(dev)')
+    expect(segment(out, 'working')).toBe('T-682(developer)')
   })
 
   test('F5: an index path carrying a control byte is refused (plain id, no link); a root with a space yields a percent-encoded file URI', () => {

@@ -47,6 +47,7 @@ function runStatusline(): string {
     cwd: projectDir,
     input: '',
     encoding: 'utf-8',
+    env: { ...process.env, PRDT_LANG: 'en' },
   })
 }
 

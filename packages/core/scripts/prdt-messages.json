@@ -45,7 +45,23 @@
     "update.done": "업데이트 완료: {old} → {new}",
     "update.error.offline": "prdt update: 새 버전 정보를 가져오지 못했어요(오프라인 등) — 잠시 후 다시 시도하세요.",
     "update.no-notes": "이 사이에 새 커밋은 있지만 릴리즈 노트는 없어요.",
-    "update.cancelled": "취소했어요 — 아무것도 설치하지 않았어요."
+    "update.cancelled": "취소했어요 — 아무것도 설치하지 않았어요.",
+    "statusline.branch": "브랜치: {name}",
+    "statusline.ticket": "티켓 {n}",
+    "statusline.working": "작업중",
+    "statusline.decision": "결정사항",
+    "statusline.request": "요청사항",
+    "statusline.lines": "+{n} 라인",
+    "statusline.stage.define": "기획",
+    "statusline.stage.build": "개발",
+    "statusline.stage.ship": "배포",
+    "statusline.stage.retro": "회고",
+    "statusline.stage.idle": "유휴",
+    "statusline.persona.developer": "개발",
+    "statusline.persona.designer": "디자인",
+    "statusline.persona.qa": "검수",
+    "statusline.persona.po": "기획",
+    "statusline.persona.user": "사람"
   },
   "en": {
     "settings.list.header.key": "Key",
@@ -93,6 +109,22 @@
     "update.done": "Update complete: {old} → {new}",
     "update.error.offline": "prdt update: couldn't fetch version info (offline?) — try again shortly.",
     "update.no-notes": "There are new commits in between, but no release notes.",
-    "update.cancelled": "Cancelled — nothing installed."
+    "update.cancelled": "Cancelled — nothing installed.",
+    "statusline.branch": "branch: {name}",
+    "statusline.ticket": "ticket {n}",
+    "statusline.working": "working",
+    "statusline.decision": "decision",
+    "statusline.request": "request",
+    "statusline.lines": "+{n} lines",
+    "statusline.stage.define": "define",
+    "statusline.stage.build": "build",
+    "statusline.stage.ship": "ship",
+    "statusline.stage.retro": "retro",
+    "statusline.stage.idle": "idle",
+    "statusline.persona.developer": "developer",
+    "statusline.persona.designer": "designer",
+    "statusline.persona.qa": "qa",
+    "statusline.persona.po": "po",
+    "statusline.persona.user": "user"
   }
 }
