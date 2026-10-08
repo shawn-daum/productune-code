@@ -196,7 +196,7 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
       execFileSync('git', ['-C', sib, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'i'])
       seed({ slug: 'ntf-pm', lines: [{ name: 'ntf-archive', code: { dir: path.relative(root, sib) } }] },
         { stage: 'build', version: 'v2.2', lines: { 'ntf-archive': { stage: 'ship', version: 'v1.2' } } })
-      expect(rows()[1]).toBe('ntf-archive v1.2 | branch: release | ship | working —')
+      expect(rows()[1]).toBe('ntf-archive v1.2 | ship | working — | branch: release')
     } finally {
       fs.rmSync(sib, { recursive: true, force: true })
     }

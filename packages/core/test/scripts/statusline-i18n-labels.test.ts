@@ -106,7 +106,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     seedFull()
     const rows = run({}).split('\n')
     expect(rows).toEqual([
-      'proj v1.13 | 개발 2/5 | 티켓 1/4 | 작업중 T-2(개발+검수) T-1(디자인)',
+      'proj v1.13 | 개발 2/5 | 티켓 1/4 | 작업중 T-2(개발자+QA) T-1(기획자)',
       '결정사항 T-3 | 요청사항 T-4',
     ])
   })
@@ -133,7 +133,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     ['retro', '회고', 'retro'], ['idle', '유휴', 'idle'],
   ])('stage %s → ko %s / en %s', (stage, ko, en) => {
     fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage, version: 'v1.13' }))
-    expect(run({ PRDT_LANG: 'ko' }).split('\n')[0]).toBe(`proj v1.13 | ${ko} | 작업중 —`)
+    expect(run({ PRDT_LANG: 'ko' }).split('\n')[0]).toBe(`proj v1.13 | ${ko}  | 작업중 —`)
     expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe(`proj v1.13 | ${en} | working —`)
   })
 
@@ -144,8 +144,29 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     marker('T-6', 'user', 50_000)
     execFileSync('git', ['init', '-q', '-b', 'dev'], { cwd: root })
     execFileSync('git', ['-c', 'user.email=u@test', '-c', 'user.name=u', 'commit', '-q', '--allow-empty', '-m', 'i'], { cwd: root })
-    expect(run({ PRDT_LANG: 'ko' }).split('\n')[0]).toBe('proj v1.13 | 브랜치: dev | 개발 2/5 | 티켓 0/2 | 작업중 T-5(기획) T-6(사람)')
-    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe('proj v1.13 | branch: dev | build 2/5 | ticket 0/2 | working T-5(po) T-6(user)')
+    expect(run({ PRDT_LANG: 'ko' }).split('\n')[0]).toBe('proj v1.13 | 개발 2/5 | 티켓 0/2 | 작업중 T-5(PO) T-6(사용자) | 브랜치: dev')
+    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe('proj v1.13 | build 2/5 | ticket 0/2 | working T-5(po) T-6(user) | branch: dev')
+  })
+
+  test('T-1018: ko — a segment ending in Hangul gets one extra space before `|`; en unchanged', () => {
+    fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage: 'build', version: 'v1.13' }))
+    const ko = run({ PRDT_LANG: 'ko' }).split('\n')[0]
+    expect(ko).toBe('proj v1.13 | 개발  | 작업중 —')
+    expect(ko).toContain('개발  | ')
+    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe('proj v1.13 | build | working —')
+  })
+
+  test('T-1017: a long branch stays whole and last when the working segment has to give way', () => {
+    for (let i = 1; i <= 30; i++) { ticket(`T-${100 + i}`); marker(`T-${100 + i}`, 'developer', 60_000 + i) }
+    const br = 'feature/' + 'x'.repeat(25)
+    execFileSync('git', ['init', '-q', '-b', br], { cwd: root })
+    execFileSync('git', ['-c', 'user.email=u@test', '-c', 'user.name=u', 'commit', '-q', '--allow-empty', '-m', 'i'], { cwd: root })
+    const ko = unwrap(run({ PRDT_LANG: 'ko' })).split('\n')[0]
+    const en = unwrap(run({ PRDT_LANG: 'en' })).split('\n')[0]
+    expect(ko.endsWith(` | 브랜치: ${br}`)).toBe(true)
+    expect(en.endsWith(` | branch: ${br}`)).toBe(true)
+    expect(cols(ko)).toBeLessThanOrEqual(200)
+    expect(cols(en)).toBeLessThanOrEqual(200)
   })
 
   test('folded rows: `+N 라인` (ko) / `+N lines` (en)', () => {

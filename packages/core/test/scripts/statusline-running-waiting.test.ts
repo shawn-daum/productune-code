@@ -405,7 +405,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | build | working \u2014\ndecision \u2014 | request \u2014`)
   })
 
-  test('T-984: full layout order — branch between version and stage, ticket count, working, then dec · req; no current-task segment; never \u00bb', () => {
+  test('T-984: full layout order — stage, ticket count, working, branch last, then dec · req; no current-task segment; never \u00bb', () => {
     root = makeProject('prdt-t922-full-', { ticket_id: 'T-890', slug: 'restore', assignee: 'developer' })
     fs.mkdirSync(path.join(root, 'docs', 'tickets', VERSION), { recursive: true })
     writeTicket('T-890', {}, 'open')
@@ -414,7 +414,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     execFileSync('git', ['init', '-q', '-b', 'dev', root])
     execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init'])
     const plain = unwrapLinks(runStatusline()).trim()
-    expect(plain).toBe(`${path.basename(root)} ${VERSION} | branch: dev | build | ticket 1/2 | working T-890(qa)\ndecision \u2014 | request \u2014`)
+    expect(plain).toBe(`${path.basename(root)} ${VERSION} | build | ticket 1/2 | working T-890(qa) | branch: dev\ndecision \u2014 | request \u2014`)
     expect(plain).not.toContain('\u00bb')
   })
 
