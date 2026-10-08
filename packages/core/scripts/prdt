@@ -2591,9 +2591,7 @@ def cmd_shared_state_guard(args):
     script (no forks allowed in the call-governor hook itself, but install.sh
     already hard-depends on python3) can reuse it instead of re-deriving the
     threshold or the counter filename shape a second time."""
-    w = live_dispatch_warning(args.label)
-    if w:
-        print(w, file=sys.stderr)
+    warn_live_dispatch(args.label)
 
 
 def write_machine_index(mpages):
@@ -2610,9 +2608,7 @@ def cmd_wiki(args):
     if args.action == "promote":
         return wiki_promote(root, args)
     if args.action == "reindex":
-        w = live_dispatch_warning("wiki reindex")
-        if w:
-            print(w, file=sys.stderr)
+        warn_live_dispatch("wiki reindex")
         _con, v, pages, mpages = rebuild_index(root)
         write_machine_index(mpages)
         print(f"reindexed: {len(pages)} wiki pages + {len(mpages)} machine, tickets ok" +
@@ -2788,9 +2784,7 @@ def wiki_promote(root, args):
             print("not confirmed — nothing was written. Re-run with --yes once the user has "
                   "confirmed this move.", file=sys.stderr)
             sys.exit(2)
-    w = live_dispatch_warning("wiki promote")
-    if w:
-        print(w, file=sys.stderr)
+    warn_live_dispatch("wiki promote")
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(dest, "x", encoding="utf-8") as fh:   # exclusive: a race never overwrites
@@ -3701,6 +3695,14 @@ LIVE_DISPATCH_FRESH_S = 900  # 15 min — 1.5x the slowest measured single-tool 
 # (call-governor's own persona scope) — exactly "a worker is running", never
 # the PO's or main session's own tool calls.
 _RUN_COUNTER_RE = re.compile(r'^[A-Za-z0-9_-]{8,64}\.[A-Za-z0-9_-]{4,64}$')
+
+
+def warn_live_dispatch(label):
+    """Print `live_dispatch_warning(label)` to stderr when there is one — the
+    one shape every shared-derived-state writer uses."""
+    w = live_dispatch_warning(label)
+    if w:
+        print(w, file=sys.stderr)
 
 
 def live_dispatch_warning(label):
@@ -6502,44 +6504,14 @@ def readme_stale_at_tag_warnings(root):
     return []
 
 
-def releases_pending(code_root, timeout=2):
-    """(version, section_text) of the newest release section on the REMOTE
-    (origin/<current-branch>) docs/RELEASES.md, or (None, None).
-
-    T-393: on an out-of-date install the LOCAL RELEASES.md carries NO pending
-    version section — the new section lives only on the remote. Reading the local
-    file therefore made the interstitial show the *installed* version and, worse,
-    `skip <version>` muted the installed version forever (no recovery without a
-    manual `prdt update`). So we read the remote copy: a timeout(2s)-guarded
-    `git fetch origin <branch>` then `git show origin/<branch>:docs/RELEASES.md`,
-    parsed by the same T-394 contract. Any failure (offline / timeout / no remote /
-    file absent on remote / detached HEAD) → (None, None) so the caller degrades to
-    silence (one-command, no prompt), exactly as the old local-read did on a miss."""
-    def g(*a, t=timeout):
-        return subprocess.run(["git", "-C", str(code_root), *a],
-                              capture_output=True, text=True, timeout=t)
-    try:
-        branch = g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-        if not branch or branch == "HEAD":       # no branch / detached → can't map a remote ref
-            return None, None
-        if g("fetch", "origin", branch).returncode != 0:   # offline / no remote → degrade
-            return None, None
-        s = g("show", f"origin/{branch}:docs/RELEASES.md")
-        if s.returncode != 0:                    # file absent on remote / bad ref → degrade
-            return None, None
-    except (subprocess.TimeoutExpired, OSError):
-        return None, None
-    return _parse_releases(s.stdout)
-
-
 def releases_pending_between(code_root, installed_version, timeout=2):
     """(new_version, [(version, section_text), ...]) — every REMOTE RELEASES.md
     section strictly above `installed_version`, newest first; `new_version` is
     the newest of those. `(None, [])` on any fetch failure or when nothing
     qualifies. T-749: the update prompt (explicit `prdt update` and the run-time
     nudge) must show the notes of EVERY version between installed and new, not
-    just the newest one — same remote-read rationale as `releases_pending`
-    (T-393: an out-of-date install's LOCAL RELEASES.md carries no pending
+    just the newest one — same remote-read rationale T-393 set
+    (an out-of-date install's LOCAL RELEASES.md carries no pending
     section, so the notes must come from the new version's copy, not the
     pre-update local one). `installed_version` unparseable/None → every
     parseable remote section qualifies (mirrors `_newer_version`'s "unreadable
@@ -9712,9 +9684,7 @@ def cmd_artifacts(args):
             print(l)
         sys.exit(code)
     # sync — write the ONE root manifest from disk; report what sits outside a bucket.
-    w = live_dispatch_warning("artifacts sync")
-    if w:
-        print(w, file=sys.stderr)
+    warn_live_dispatch("artifacts sync")
     legacy = legacy_bucket_manifests(root)
     if legacy:
         for mp in legacy:
@@ -12677,8 +12647,7 @@ def _track_records(root, tid):
     stops = [r for r in rows if r.get("kind") == "stop"]
     out = []
     for d in disp:
-        s = next((s for s in stops if (d.get("tool_use_id") and s.get("tool_use_id") == d.get("tool_use_id"))
-                  or (not d.get("tool_use_id") and d.get("dispatch_id") and s.get("dispatch_id") == d.get("dispatch_id"))), None)
+        s = next((s for s in stops if schedule_stop_of(d, s)), None)
         out.append((d, s))
     return out
 
@@ -13602,6 +13571,17 @@ def schedule_ticket_for_ctx(ctx, tickets):
     return None, None
 
 
+def schedule_stop_of(dispatch_row, stop_row):
+    """True when `stop_row` closes `dispatch_row` in schedule.jsonl: joined by
+    `tool_use_id`, else — only for a dispatch row that has none — by
+    `dispatch_id`. prdt-post-dispatch.sh writes the stop row by the same rule."""
+    tuid = dispatch_row.get("tool_use_id")
+    if tuid:
+        return stop_row.get("tool_use_id") == tuid
+    did = dispatch_row.get("dispatch_id")
+    return bool(did) and stop_row.get("dispatch_id") == did
+
+
 def _schedule_log_path(root):
     return Path(root) / ".prdt" / SCHEDULE_LOG
 
@@ -13687,8 +13667,7 @@ def _sched_first_stops(rows):
             s = rows[j]
             if s.get("kind") != "stop":
                 continue
-            if (r.get("tool_use_id") and s.get("tool_use_id") == r.get("tool_use_id")) or \
-               (not r.get("tool_use_id") and r.get("dispatch_id") and s.get("dispatch_id") == r.get("dispatch_id")):
+            if schedule_stop_of(r, s):
                 first[i] = j
                 break
     return first
@@ -13872,9 +13851,7 @@ def schedule_report_text(rows, version):
             counts[cls] += 1
         if cls == "followed" and line == 4 and len(r.get("top") or []) > 1:
             ties += 1
-        mine = [s for s in stops
-                if (r.get("tool_use_id") and s.get("tool_use_id") == r.get("tool_use_id"))
-                or (not r.get("tool_use_id") and r.get("dispatch_id") and s.get("dispatch_id") == r.get("dispatch_id"))]
+        mine = [s for s in stops if schedule_stop_of(r, s)]
         durs = [s["duration_s"] for s in mine if isinstance(s.get("duration_s"), (int, float))]
         dur = _fmt_duration(sum(durs)) if durs else "기록 없음"
         who = _md_cell(r.get("persona") or "-")
