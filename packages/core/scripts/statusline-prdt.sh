@@ -10,7 +10,7 @@
 # hooks/prdt-post-dispatch.sh.
 #
 # Format (T-984, user-confirmed 2026-10-06; T-961 release lines):
-#   <label> <version> | stage: <stage> n/m | ticket <vdone>/<vtotal> | working <ids|0> | branch: <b>   (T-1017: branch last)
+#   <label> <version> | stage: <stage> n/m | total tickets <vdone>/<vtotal> | working <ids|0> | branch: <b>   (T-1017: branch last)
 #   T-1019: empty = `0` (never `—`), a stage without a count = `0/0`; no bar follows Hangul.
 #   dec <ids|0> | req <ids|0>
 #   T-1015: every label (branch · stage · ticket · working · persona · dec · req ·
@@ -24,8 +24,8 @@
 #     empty), single-line and multi-line projects alike (T-988 = A, T-984
 #     reversed by the user 2026-10-06).
 #   - Never more than MAX_ROWS (17, measured on the user's machine) rows.
-#   - `<stage> n/m` reads the T-954 checklist record, po-state `checks.<stage>`
-#     (or `lines.<line>.checks.<stage>`); no record for the stage → stage alone.
+#   - `<stage> n/m` (T-923) = done/total of this version's tickets in the current
+#     stage, by the viewer's type rule; retro · idle → 0/0. No checklist record is read.
 #   - `<label> <version>` is ONE OSC 8 link to `.prdt/scratch/viewer/viewer.html`
 #     when that file exists, plain text otherwise. Successor ids inside a
 #     group use `>`.
@@ -198,16 +198,27 @@ slug = clean(cfg_slug) or clean(os.path.basename(root)) or "?"
 
 # ── T-961: release lines (docs/artifacts/v1.13/release-lines.md §1 · §5 · §6b) ─
 # The home line is the project slug and reads po-state's top-level stage /
-# version / checks; every added line is declared in `.prdt/config.json` `lines`
+# version; every added line is declared in `.prdt/config.json` `lines`
 # and reads `po-state.lines.<line>`, its tickets under `docs/tickets/<line>/`.
 # No `lines` → one row, the single-line project as before (plus T-984 layout).
 # KEEP LINE_NAME_RE and the declared-line filter in lockstep with
 # LINE_NAME_RE / project_lines in scripts/prdt.
 LINE_NAME_RE = re.compile(r"\A(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
-# T-954 = A: stage checklist sizes (define 5 · build 5 · ship 9 · retro 8). The
-# record is po-state `checks: {"<stage>": [<item>, …]}` (or
-# `lines.<line>.checks`); `<stage> n/m` counts distinct items, capped at m.
-STAGE_CHECK_TOTALS = {"define": 5, "build": 5, "ship": 9, "retro": 8}
+# T-923: `<stage> n/m` = done/total of the current version's tickets that belong
+# to the current stage. KEEP stage_of_type in lockstep with `stageOfTicketType`
+# in packages/viewer/lib/home-graph.mjs (parity test: statusline-stage-parity).
+STAGE_DEFINE_TYPES = ("design", "decision")
+STAGE_SHIP_TYPES = ("qa", "ops")
+
+
+def stage_of_type(t):
+    if t in STAGE_DEFINE_TYPES:
+        return "define"
+    if t in STAGE_SHIP_TYPES:
+        return "ship"
+    return "build"
+
+
 # Rows this statusline may print — measured on the user's machine 2026-10-06:
 # 17 of a 30-row test statusline were visible (T-961 log).
 MAX_ROWS = 17
@@ -231,17 +242,12 @@ def declared_lines():
     return out
 
 
-def stage_seg(raw_stage, checks):
-    """T-1017: labelled `stage: <stage> n/m` (ko `단계: …`) when the checklist record has an entry for this stage;
-    the stage name alone otherwise (no record, idle, or an off-shape stage)."""
+def stage_seg(raw_stage, sdone, stotal):
+    """T-923: `stage: <stage> n/m` (ko `단계: …`) — n/m counts this version's tickets of the stage
+    (retro · idle · off-shape stage → 0/0; digits end the segment, T-1019)."""
     stage = token(raw_stage, lambda v: v in STAGES, absent="?") or "?"
-    total = STAGE_CHECK_TOTALS.get(stage)
-    done = checks.get(stage) if isinstance(checks, dict) else None
-    if total and isinstance(done, list):
-        n = len({x.strip() for x in done if isinstance(x, str) and x.strip()})
-        return L("stagelabel", name=f"{L('stage.' + stage)} {min(n, total)}/{total}")
-    # T-1019: no checklist count → `0/0` (no bare Hangul before the bar)
-    return L("stagelabel", name=(L("stage." + stage) if stage in STAGES else stage) + " 0/0")
+    name = L("stage." + stage) if stage in STAGES else stage
+    return L("stagelabel", name=f"{name} {sdone.get(stage, 0)}/{stotal.get(stage, 0)}")
 
 
 # branch (T-426): meta/code split projects (PRD history §v1.3) carry no `.git` at
@@ -305,12 +311,12 @@ for e in declared_lines():
                  "branch": git_branch(line_code_dir(e))})
 for r in rows:
     r["version"] = token(r["st"].get("version"), lambda v: VERSION_RE.match(v) is not None)
-    r["stage"] = stage_seg(r["st"].get("stage"), r["st"].get("checks"))
     # T-922: `<label> <version>` opens the row (one OSC 8 link, see wrap_slug);
     # version is omitted only when po-state carries none.
     r["slug_ver"] = f"{r['label']} {r['version']}" if r["version"] else r["label"]
     r["branch"] = clean(r["branch"])
     r["vdone"] = r["vtotal"] = 0
+    r["sdone"], r["stotal"] = {}, {}
 row_by_line = {r["line"]: r for r in rows}
 
 # Ticket progress per row: ONE version-wide count over every open+done ticket
@@ -365,6 +371,10 @@ def scan(base, row):
             if is_current:
                 row["vtotal"] += 1
                 row["vdone"] += s == "done"
+                mty = re.search(r"^(?:type|stage):\s*(\S+)", head, re.M)
+                stg = stage_of_type(mty.group(1) if mty else "")
+                row["stotal"][stg] = row["stotal"].get(stg, 0) + 1
+                row["sdone"][stg] = row["sdone"].get(stg, 0) + (s == "done")
             tid = fn[:-3]
             if not TICKET_RE.match(tid):
                 continue
@@ -384,6 +394,7 @@ def scan(base, row):
 
 for r in rows:
     scan(tickets_root if r["line"] is None else os.path.join(tickets_root, r["line"]), r)
+    r["stage"] = stage_seg(r["st"].get("stage"), r["sdone"], r["stotal"])
 
 
 def _tid_key(t):
@@ -697,7 +708,7 @@ def fit(build, tail=""):
 
 
 # T-984 layout (user-confirmed 2026-10-06):
-#   <label> <version> | stage: <stage> n/m | ticket n/m | working … | branch: <b>   (T-1017)
+#   <label> <version> | stage: <stage> n/m | total tickets n/m | working … | branch: <b>   (T-1017)
 # One row per line, home first, then ALWAYS one `dec … | req …` row last
 # (`dec — | req —` when empty), single-line and multi-line alike.
 # Never more than MAX_ROWS rows: past it, the last line rows fold into `+N lines`.

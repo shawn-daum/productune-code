@@ -414,7 +414,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     execFileSync('git', ['init', '-q', '-b', 'dev', root])
     execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init'])
     const plain = unwrapLinks(runStatusline()).trim()
-    expect(plain).toBe(`${path.basename(root)} ${VERSION} | stage: build 0/0 | ticket 1/2 | working T-890(qa) | branch: dev\ndecision 0 | request 0`)
+    expect(plain).toBe(`${path.basename(root)} ${VERSION} | stage: build 1/2 | total tickets 1/2 | working T-890(qa) | branch: dev\ndecision 0 | request 0`)
     expect(plain).not.toContain('\u00bb')
   })
 

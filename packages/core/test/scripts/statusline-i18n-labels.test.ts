@@ -83,7 +83,7 @@ beforeEach(() => {
   fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
   fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify({ slug: 'proj' }))
   fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({
-    schema_version: 1, stage: 'build', version: 'v1.13', checks: { build: ['a', 'b'] }, current_task: null,
+    schema_version: 1, stage: 'build', version: 'v1.13', current_task: null,
   }))
 })
 afterEach(() => {
@@ -106,7 +106,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     seedFull()
     const rows = run({}).split('\n')
     expect(rows).toEqual([
-      'proj v1.13 | 단계: 개발 2/5 | 티켓 1/4 | 작업중 T-2(개발자+QA) T-1(기획자)',
+      'proj v1.13 | 단계: 개발 1/3 | 총 티켓 1/4 | 작업중 T-2(개발자+QA) T-1(기획자)',
       '결정사항 T-3 | 요청사항 T-4',
     ])
   })
@@ -114,7 +114,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
   test('en (PRDT_LANG=en): English labels, last-row separator is `|`', () => {
     seedFull()
     expect(run({ PRDT_LANG: 'en' }).split('\n')).toEqual([
-      'proj v1.13 | stage: build 2/5 | ticket 1/4 | working T-2(developer+qa) T-1(designer)',
+      'proj v1.13 | stage: build 1/3 | total tickets 1/4 | working T-2(developer+qa) T-1(designer)',
       'decision T-3 | request T-4',
     ])
   })
@@ -144,8 +144,8 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     marker('T-6', 'user', 50_000)
     execFileSync('git', ['init', '-q', '-b', 'dev'], { cwd: root })
     execFileSync('git', ['-c', 'user.email=u@test', '-c', 'user.name=u', 'commit', '-q', '--allow-empty', '-m', 'i'], { cwd: root })
-    expect(run({ PRDT_LANG: 'ko' }).split('\n')[0]).toBe('proj v1.13 | 단계: 개발 2/5 | 티켓 0/2 | 작업중 T-5(PO) T-6(사용자) | 브랜치: dev')
-    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe('proj v1.13 | stage: build 2/5 | ticket 0/2 | working T-5(po) T-6(user) | branch: dev')
+    expect(run({ PRDT_LANG: 'ko' }).split('\n')[0]).toBe('proj v1.13 | 단계: 개발 0/2 | 총 티켓 0/2 | 작업중 T-5(PO) T-6(사용자) | 브랜치: dev')
+    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe('proj v1.13 | stage: build 0/2 | total tickets 0/2 | working T-5(po) T-6(user) | branch: dev')
   })
 
   test('T-1019: no ` | ` follows a Hangul character or `—` in any ko row; separator stays one-space; empty = 0', () => {
@@ -163,7 +163,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
       expect(plain).not.toContain('\u2014')
     }
     expect(fixtures[1].split('\n')[0]).toContain('단계: 유휴 0/0 | ')
-    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toContain('stage: idle 0/0 | ticket 1/4 | working T-2')
+    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toContain('stage: idle 0/0 | total tickets 1/4 | working T-2')
   })
 
   test('T-1017: a long branch stays whole and last when the working segment has to give way', () => {

@@ -3,12 +3,12 @@
  *
  * Drives the REAL `statusline-prdt.sh` end to end:
  *   - T-984 (user-confirmed 2026-10-06): `<label> <version> | branch: <b> |
- *     <stage> n/m | ticket n/m | working …`; single-line: an empty dec/req pair
+ *     <stage> n/m | total tickets n/m | working …`; single-line: an empty dec/req pair
  *     is always its own last row, `dec 0 · req 0` when empty.
  *   - T-961: one row per release line (home first, then config `lines` in
  *     declaration order), one shared dec/req row; never more than 17 rows
  *     (the limit measured on the user's machine, T-961 log).
- *   - T-954 = A: `<stage> n/m` from po-state `checks` / `lines.<line>.checks`;
+ *   - T-923: `<stage> n/m` counts this version's tickets of the stage (no `checks` record);
  *     no record for the stage → the stage name alone.
  *
  * `PRDT_HOME` is always a scratch dir (never the real `~/.prdt`).
@@ -102,10 +102,10 @@ describe.skipIf(!READY)('statusline — T-961 req blocked rule spans lines', () 
 
 describe.skipIf(!READY)('statusline — T-984 layout, single line', () => {
   test('dec and req both empty → line row + own last row `dec 0 · req 0`', () => {
-    seed({ slug: 'productune' }, { stage: 'build', version: 'v1.13', checks: { build: ['split', 'main-path', 'qa'] } })
+    seed({ slug: 'productune' }, { stage: 'build', version: 'v1.13' })
     ticket('v1.13', 'T-1', { status: 'done' })
     ticket('v1.13', 'T-2')
-    expect(rows()).toEqual(['productune v1.13 | stage: build 3/5 | ticket 1/2 | working 0', 'decision 0 | request 0'])
+    expect(rows()).toEqual(['productune v1.13 | stage: build 1/2 | total tickets 1/2 | working 0', 'decision 0 | request 0'])
   })
 
   test('either list has an entry → listed on the same last row', () => {
@@ -114,35 +114,46 @@ describe.skipIf(!READY)('statusline — T-984 layout, single line', () => {
     ticket('v1.13', 'T-985', { assignee: 'user' })
     marker('T-985', 'qa')
     expect(rows()).toEqual([
-      'productune v1.13 | stage: define 0/0 | ticket 0/2 | working T-985(qa)',
+      'productune v1.13 | stage: define 0/1 | total tickets 0/2 | working T-985(qa)',
       'decision T-984 | request T-985',
     ])
   })
 })
 
-describe.skipIf(!READY)('statusline — stage checklist count (T-954 = A)', () => {
+describe.skipIf(!READY)('statusline — stage ticket count (T-923)', () => {
   const stageSeg = () => rows()[0].split(' | ')[1]
 
-  test('absent `checks` → stage name alone', () => {
+  test('no tickets → 0/0', () => {
     seed({ slug: 'p' }, { stage: 'ship', version: 'v1.0' })
     expect(stageSeg()).toBe('stage: ship 0/0')
   })
 
-  test('`checks` without an entry for the current stage → stage name alone', () => {
-    seed({ slug: 'p' }, { stage: 'ship', version: 'v1.0', checks: { build: ['a'] } })
-    expect(stageSeg()).toBe('stage: ship 0/0')
+  test('counts only this version\'s tickets of the current stage (define = design · decision, ship = qa · ops, build = rest)', () => {
+    const mix = () => {
+      ticket('v1.0', 'T-1', { type: 'design', status: 'done' })
+      ticket('v1.0', 'T-2', { type: 'decision' })
+      ticket('v1.0', 'T-3', { type: 'impl', status: 'done' })
+      ticket('v1.0', 'T-4', { type: 'impl' })
+      ticket('v1.0', 'T-5', { type: 'refactor' })
+      ticket('v1.0', 'T-6', { type: 'qa', status: 'done' })
+      ticket('v1.0', 'T-7', { type: 'ops' })
+      ticket('v1.0', 'T-8', { type: 'qa', status: 'deferred' }) // neither open nor done: not counted
+      ticket('v0.9', 'T-9', { type: 'qa' }) // other version: not counted
+    }
+    seed({ slug: 'p' }, { stage: 'define', version: 'v1.0' }); mix()
+    expect(stageSeg()).toBe('stage: define 1/2')
+    seed({ slug: 'p' }, { stage: 'build', version: 'v1.0' })
+    expect(stageSeg()).toBe('stage: build 1/3')
+    seed({ slug: 'p' }, { stage: 'ship', version: 'v1.0' })
+    expect(stageSeg()).toBe('stage: ship 1/2')
+    expect(rows()[0]).toContain('| total tickets 3/7 |')
   })
 
-  test('distinct items count; duplicates and non-strings ignored; capped at the stage total', () => {
-    seed({ slug: 'p' }, { stage: 'ship', version: 'v1.0', checks: { ship: ['review', 'review', 3, 'tests'] } })
-    expect(stageSeg()).toBe('stage: ship 2/9')
-    seed({ slug: 'p' }, { stage: 'define', version: 'v1.0', checks: { define: ['a', 'b', 'c', 'd', 'e', 'f'] } })
-    expect(stageSeg()).toBe('stage: define 5/5')
-    seed({ slug: 'p' }, { stage: 'retro', version: 'v1.0', checks: { retro: [] } })
-    expect(stageSeg()).toBe('stage: retro 0/8')
-  })
-
-  test('idle has no checklist', () => {
+  test('retro and idle have no stage tickets → 0/0; the version total still shows; a po-state `checks` is ignored', () => {
+    ticket('v1.0', 'T-1', { status: 'done' })
+    ticket('v1.0', 'T-2')
+    seed({ slug: 'p' }, { stage: 'retro', version: 'v1.0', checks: { retro: ['a'] } })
+    expect(rows()[0]).toBe('p v1.0 | stage: retro 0/0 | total tickets 1/2 | working 0')
     seed({ slug: 'p' }, { stage: 'idle', version: 'v1.0', checks: { idle: ['x'] } })
     expect(stageSeg()).toBe('stage: idle 0/0')
   })
@@ -153,8 +164,7 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     seed(
       { slug: 'ntf-pm', lines: [{ name: 'ntf-archive' }] },
       {
-        stage: 'define', version: 'v2.2', checks: { define: ['a', 'b'] },
-        lines: { 'ntf-archive': { stage: 'build', version: 'v1.2', checks: { build: ['x'] } } },
+        stage: 'define', version: 'v2.2',         lines: { 'ntf-archive': { stage: 'build', version: 'v1.2' } },
       },
     )
     ticket('v2.2', 'T-760', { type: 'decision', assignee: 'user' })
@@ -164,8 +174,8 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     ticket('ntf-archive/v1.1', 'T-700', { status: 'done' }) // older version: not counted
     marker('T-764')
     expect(rows()).toEqual([
-      'ntf-pm v2.2 | stage: define 2/5 | ticket 1/2 | working 0',
-      'ntf-archive v1.2 | stage: build 1/5 | ticket 0/2 | working T-764(developer)',
+      'ntf-pm v2.2 | stage: define 0/1 | total tickets 1/2 | working 0',
+      'ntf-archive v1.2 | stage: build 0/2 | total tickets 0/2 | working T-764(developer)',
       'decision T-760 | request T-767',
     ])
   })
