@@ -452,6 +452,30 @@ MODE="$(cat "$PRDT_HOME/auto-open" 2>/dev/null | tr -d '[:space:]')"
 
 command -v open >/dev/null 2>&1 || { printf '{}'; exit 0; }
 
+# Same-path debounce: a rewritten-in-place deliverable (designer iterating on
+# an artifact, a subagent re-saving) should surface once, not on every Write.
+# Keyed on the raw file_path string (not a resolved realpath — cheap, and two
+# different paths that merely resolve to the same inode is a rare enough edge
+# to not be worth a stat/readlink chain here). T-789: checked HERE, before the
+# viewer-routed `prdt viewer --no-open` call (~1.2s per Write) and the handler
+# lookup — a debounced Write exits before paying for either. The marker is
+# still stamped only once an open is actually decided, below.
+DEBOUNCE_SECS="${PRDT_AUTO_OPEN_DEBOUNCE_SECS:-30}"
+DEBOUNCE_DIR="$PRDT_HOME/.auto-open-debounce"
+KEY="$(printf '%s' "$FILE_PATH" | cksum 2>/dev/null | tr -s ' ' '-')"
+[ -n "$OPEN_MODE" ] && KEY=""
+NOW="$(date +%s 2>/dev/null)"
+if [ -n "$KEY" ] && [ -f "$DEBOUNCE_DIR/$KEY" ] && [ -n "$NOW" ]; then
+  LAST="$(cat "$DEBOUNCE_DIR/$KEY" 2>/dev/null | tr -d '[:space:]')"
+  if [ -n "$LAST" ] && [ "$LAST" -eq "$LAST" ] 2>/dev/null; then
+    AGE=$((NOW - LAST))
+    if [ "$AGE" -lt "$DEBOUNCE_SECS" ] 2>/dev/null; then
+      printf '{}'
+      exit 0
+    fi
+  fi
+fi
+
 BASENAME="$(basename -- "$FILE_PATH")"
 LOWER="$(printf '%s' "$BASENAME" | tr '[:upper:]' '[:lower:]')"
 
@@ -566,30 +590,10 @@ if [ "$ACTION" = "open" ]; then
   [ "$HANDLER_WARM" = "yes" ] || ACTION="reveal"
 fi
 
-# Same-path debounce: a rewritten-in-place deliverable (designer iterating on
-# an artifact, a subagent re-saving) should surface once, not on every Write.
-# Keyed on the raw file_path string (not a resolved realpath — cheap, and two
-# different paths that merely resolve to the same inode is a rare enough edge
-# to not be worth a stat/readlink chain here).
-DEBOUNCE_SECS="${PRDT_AUTO_OPEN_DEBOUNCE_SECS:-30}"
-DEBOUNCE_DIR="$PRDT_HOME/.auto-open-debounce"
-mkdir -p "$DEBOUNCE_DIR" 2>/dev/null
-KEY="$(printf '%s' "$FILE_PATH" | cksum 2>/dev/null | tr -s ' ' '-')"
-[ -n "$OPEN_MODE" ] && KEY=""
-if [ -n "$KEY" ]; then
-  MARKER="$DEBOUNCE_DIR/$KEY"
-  NOW="$(date +%s 2>/dev/null)"
-  if [ -f "$MARKER" ] && [ -n "$NOW" ]; then
-    LAST="$(cat "$MARKER" 2>/dev/null | tr -d '[:space:]')"
-    if [ -n "$LAST" ] && [ "$LAST" -eq "$LAST" ] 2>/dev/null; then
-      AGE=$((NOW - LAST))
-      if [ "$AGE" -lt "$DEBOUNCE_SECS" ] 2>/dev/null; then
-        printf '{}'
-        exit 0
-      fi
-    fi
-  fi
-  [ -n "$NOW" ] && printf '%s' "$NOW" > "$MARKER" 2>/dev/null
+# Stamp the debounce marker (checked above) now that an open is decided.
+if [ -n "$KEY" ] && [ -n "$NOW" ]; then
+  mkdir -p "$DEBOUNCE_DIR" 2>/dev/null
+  printf '%s' "$NOW" > "$DEBOUNCE_DIR/$KEY" 2>/dev/null
 fi
 
 if [ "$ACTION" = "reveal" ]; then

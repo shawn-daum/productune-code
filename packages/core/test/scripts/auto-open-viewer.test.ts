@@ -135,6 +135,25 @@ describe('hook — viewer-routed documents', () => {
   })
 })
 
+describe('hook — debounce before the viewer call (T-789)', () => {
+  test.skipIf(!hasJq())('a debounced rewrite of a viewer-routed document never calls `prdt viewer` for it', () => {
+    const s = sandbox()
+    const root = project(s.dir)
+    const file = path.join(root, 'docs', 'prd', 'PRD.md')
+    const calls = path.join(s.dir, 'viewer-calls.log')
+    const jump = path.join(root, '.prdt', 'scratch', 'viewer', 'at', 'stub.html')
+    const stub = path.join(s.dir, 'prdt-count')
+    fs.writeFileSync(stub, `#!/usr/bin/env bash\necho "$*" >> "${calls}"\nmkdir -p "${path.dirname(jump)}"\necho '<!doctype html>' > "${jump}"\necho "[x](file://${jump})"\n`, { mode: 0o755 })
+    const env = { ...s.env, PRDT_BIN: stub }
+    execFileSync('bash', [HOOK], { input: writeEvent(file), env })
+    execFileSync('bash', [HOOK], { input: writeEvent(file), env })
+    // Only the foreground call names the file; the T-802 background regen does not.
+    const forFile = readLog(calls).split('\n').filter((l) => l.includes(file))
+    expect(forFile).toEqual([`viewer --no-open ${file}`])
+    expect(readLog(s.log)).toBe(jump)
+  })
+})
+
 describe('hook — --open hand-off mode', () => {
   test.skipIf(!hasJq())('opens the given file, twice in a row (no debounce)', () => {
     const s = sandbox()
