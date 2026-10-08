@@ -28,18 +28,37 @@
 # read/parse failure (a state hook must never break a session).
 
 set +e
+# T-1022: the event travels on stdin, never through an environment variable (T-688
+# 개정 1: a ~1 MB `last_assistant_message` in execve's environment hits ARG_MAX and
+# silently skips the hook). Bash reads nothing from stdin before python does; the
+# only bash-side filter is a fork-0 `case` that drops a Stop event that is not the
+# PO's before python3 starts (every Stop on the machine reaches this hook).
+# Needs the event text for that, so it is captured once and piped back via the
+# `printf` builtin (no exec, no argv).
 EVENT_JSON="$(cat 2>/dev/null || true)"
 [ -z "$EVENT_JSON" ] && exit 0
+case "$EVENT_JSON" in
+  *'"hook_event_name":"Stop"'*|*'"hook_event_name": "Stop"'*)
+    case "$EVENT_JSON" in
+      *'"prdt-po"'*) ;;
+      *) exit 0 ;;
+    esac ;;
+esac
 
 # T-586: the register binding rides THIS channel (see below) and is computed by the
 # resolver hook next to this file — the mirror dir, so both come from one install.
 PRDT_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 export PRDT_HOOK_DIR
-PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
+printf '%s' "$EVENT_JSON" | python3 -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
+exit 0
+# The heredoc below is never executed (`exit 0` above): it only keeps the python
+# body out of bash's parser, so `bash -n` still reads this file end to end.
+: <<'PYEOF'
+# ---- python ----
 import hashlib, json, os, re, subprocess, sys, time
 
 try:
-    ev = json.loads(os.environ.get("PRDT_EVENT_JSON", ""))
+    ev = json.loads(sys.stdin.read())
 except Exception:
     sys.exit(0)
 if not isinstance(ev, dict):
@@ -359,24 +378,13 @@ def form_outline_bound():
 
 def stop_main():
     """T-1022: the same form=outline check at the end of a PO reply (Stop).
-    Acts for the PO only, in a prdt project, while form=outline is bound; a
+    Acts for the PO only (its caller has already walked to a prdt project), while form=outline is bound; a
     violating reply is blocked ONCE (`stop_hook_active`, the harness's own loop
     guard, is true on the Stop that follows a block — then this exits silently,
     so a rewrite that still violates reaches the user, as in T-985). The reply is
     the event's own `last_assistant_message`; a stop with no text (a tool-only
     turn) passes. Fails open: a Stop hook must never strand a session."""
     if ev.get("agent_type") != "prdt-po" or ev.get("stop_hook_active") is True:
-        return
-    d = os.path.realpath(ev.get("cwd") or os.getcwd())
-    in_project = False
-    while d and d != "/":
-        if os.path.isfile(os.path.join(d, ".prdt", "po-state.json")):
-            in_project = True
-        up = os.path.dirname(d)
-        if up == d:
-            break
-        d = up
-    if not in_project:
         return
     reply = ev.get("last_assistant_message")
     if not (isinstance(reply, str) and reply.strip()):
@@ -386,13 +394,6 @@ def stop_main():
         sys.stdout.write(json.dumps({"decision": "block", "reason": "\n".join(notices)},
                                     ensure_ascii=False))
 
-
-if ev.get("hook_event_name") == "Stop":
-    try:
-        stop_main()
-    except BaseException:
-        pass
-    sys.exit(0)
 
 
 
@@ -416,6 +417,15 @@ while d and d != "/":
         break
     d = up
 if not state_path:
+    sys.exit(0)
+
+# T-1022: a Stop event leaves here — after the one project-root walk above (so it is
+# in a prdt project) and before any state-flow side effect (guard marker, flag drain).
+if ev.get("hook_event_name") == "Stop":
+    try:
+        stop_main()
+    except BaseException:
+        pass
     sys.exit(0)
 
 try:
@@ -1083,4 +1093,3 @@ print(json.dumps({"hookSpecificOutput": {
 # is the harmless direction: one advisory line, never a lost state line.
 guard_finish(_guard_marker, _guard_t0, _guard_started)
 PYEOF
-exit 0
