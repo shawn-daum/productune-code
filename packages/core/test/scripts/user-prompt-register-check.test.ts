@@ -298,6 +298,20 @@ const FIXTURES: Array<{ name: string, reply: string, violations: number[] | null
     name: 'self-labelled items beside two consecutive unmarked lines — the second still flags (T-768)',
     reply: 'A 항목1\nB 항목2\n첫 문장.\n둘째 문장.',
     violations: [4],
+  },  {
+    name: 'an English sentence opening with the article "A" is not a self-label — the run still flags (T-789)',
+    reply: '정리입니다.\n\nA dispatch was denied.\nA worker retried it.',
+    violations: [4],
+  },
+  {
+    name: 'lowercase article "a" / pronoun "I" openers are not self-labels either (T-789)',
+    reply: '정리입니다.\n\nI checked the gate.\na second run passed.',
+    violations: [4],
+  },
+  {
+    name: 'real options "A 그대로 두기" / "A. …" / "A) …" stay self-labelled (T-789)',
+    reply: '정리입니다.\n\nA 그대로 두기\nB. 고치기\nC) Fix it now',
+    violations: null,
   },
 ]
 

@@ -565,9 +565,13 @@ FORM_OUTLINE_BOLD_RE = re.compile(r"^\*\*.+\*\*$")
 # letter (A, a — either case, any letter) or a lowercase roman numeral up to
 # xx, optionally closed with `.`/`)`, then whitespace or end-of-line. Plain
 # digit-dot ("1.") is already a marker above; this covers the letter/roman
-# labels the PO approved dropping the `-` for.
+# labels the PO approved dropping the `-` for. T-789: a bare `A` / `a` / `I`
+# (no `.`/`)` closer) followed by a lowercase ASCII word is an English
+# sentence opener ("A dispatch was denied."), not a label; "A 그대로 두기",
+# "A. ..." and "A) ..." still are.
 FORM_OUTLINE_SELF_LABEL_RE = re.compile(
-    r"^(?:[A-Za-z]|ii|iii|iv|vi|vii|viii|ix|xi|xii|xiii|xiv|xv|xvi|xvii|xviii|xix|xx)"
+    r"^(?![AaI][ \t]+[a-z])"
+    r"(?:[A-Za-z]|ii|iii|iv|vi|vii|viii|ix|xi|xii|xiii|xiv|xv|xvi|xvii|xviii|xix|xx)"
     r"[.)]?(?=\s|$)"
 )
 # Sentence end = one of `. ! ? 。`, optionally followed by a closing wrapper
