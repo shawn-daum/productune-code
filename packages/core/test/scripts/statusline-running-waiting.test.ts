@@ -325,6 +325,17 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(fs.readFileSync(jump, 'utf-8')).toContain('url=../viewer.html#T-682')
   })
 
+  test('T-1014: a dec ticket with no index row (stale index / hand-edited status) still links; a ticket not open drops out', () => {
+    writeTicket('T-901', { type: 'decision' })
+    writeTicket('T-902', { type: 'decision' }, 'done')
+    buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], []) // index knows neither
+    stubViewerHtml()
+    const out = runStatusline()
+    expect(segment(out, 'dec')).toBe('T-901')
+    expect(out).toMatch(/\x1b\]8;;file:\/\/[^\x1b]+\x1b\\T-901\x1b\]8;;\x1b\\/)
+    expect(fs.readFileSync(jumpPagePath('T-901'), 'utf-8')).toContain('url=../viewer.html#T-901')
+  })
+
   test('T-842: a committed symlink at viewer/at/ is never written through — the victim keeps its bytes and the id renders unlinked', () => {
     writeMarker({ agentId: 'linked', ticketId: 'T-682', ageMs: 60_000 })
     buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], [])
