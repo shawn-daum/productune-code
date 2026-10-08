@@ -2071,7 +2071,7 @@ function homeWaits(data) {
     (list.length === 0
       ? `<p class="cp-empty">${empty}</p>`
       : `<div class="cp-wlist">${list
-          .map((fm) => `<button type="button" class="cp-went" data-detail-kind="ticket" data-detail-id="${escapeHtml(fm.id)}"><span class="mono">${escapeHtml(fm.id)}</span> ${escapeHtml(fm.slug || '')} ${ticketRolePill(fm.assignee)}</button>`)
+          .map((fm) => `<button type="button" class="cp-went" data-detail-kind="ticket" data-detail-id="${escapeHtml(fm.id)}"><span class="mono cp-wid">${escapeHtml(fm.id)}</span><span class="cp-wslug">${escapeHtml(fm.slug || '')}</span>${ticketRolePill(fm.assignee)}</button>`)
           .join('')}</div>`) +
     '</div>'
   return `<div class="sc-waits">${block(HOME.waitDec, dec, HOME.waitDecEmpty)}${block(HOME.waitReq, req, HOME.waitReqEmpty)}</div>`
@@ -2452,6 +2452,9 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .cp-empty { font-size: 11.5px; color: var(--text-tertiary); margin: var(--space-4) 0 0; }
 .cp-wlist { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .cp-went { font: inherit; font-size: 12px; text-align: left; display: inline-flex; align-items: center; gap: 6px; background: var(--bg-surface-base); color: var(--text-primary); border: 1px solid var(--border-inline); border-radius: var(--radius-8); padding: 4px 8px; cursor: pointer; }
+.cp-went { max-width: 100%; }
+.cp-went .cp-wid { flex: none; white-space: nowrap; }
+.cp-went .cp-wslug { min-width: 0; overflow-wrap: anywhere; }
 .cp-went.is-open { border-color: var(--text-primary); box-shadow: 0 0 0 1px var(--text-primary); }
 .cp-spine-none { font-size: 12px; color: var(--text-primary); background: var(--bg-interaction-subtle); border: 1px dashed var(--border-inline); border-radius: var(--radius-8); padding: var(--space-6) var(--space-10); margin: 0 0 var(--space-12); }
 .dg { display: block; overflow: visible; }
