@@ -133,3 +133,15 @@ test('next-turn variant keeps its own wording, and reads the rewrite when one fo
   expect(ctx).toContain('Leave the sent reply as is')
   expect(run([asst(VIOLATING), asst(COMPLIANT)])).not.toContain(TAG)
 })
+
+test('a ~1.3 MB violating reply is still blocked (event travels on stdin, not in the environment)', () => {
+  const big = VIOLATING + '\n' + 'x'.repeat(1_300_000)
+  const r = JSON.parse(stop(sandbox(OUTLINE), big))
+  expect(r.decision).toBe('block')
+  expect(r.reason).toContain(TAG)
+})
+
+test('a non-PO Stop leaves before python3 starts (fork-0 case filter)', () => {
+  const src = fs.readFileSync(HOOK, 'utf8')
+  expect(src).toMatch(/"hook_event_name":"Stop"[\s\S]*?"prdt-po"[\s\S]*?exit 0[\s\S]*?python3 -c/)
+})
