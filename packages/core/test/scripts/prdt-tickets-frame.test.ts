@@ -118,6 +118,16 @@ describe.skipIf(!PYTHON3)('prdt tickets new', () => {
     expect(headings).toEqual(['problem', 'options', 'related', 'acceptance', 'evidence', 'outcome', 'log'])
   })
 
+  test('T-1014: `new` leaves the ticket in .prdt/index.db when it exits (statusline link gate)', () => {
+    runInit()
+    const out = runPrdt(['tickets', 'new', '--type', 'impl', '--slug', 'indexed-at-once'])
+    const id = out.match(/\[(T-\d+)\]/)![1]
+    const row = execFileSync('python3', ['-c',
+      'import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("select path from tickets where id=?",(sys.argv[2],)).fetchone())',
+      path.join(projectDir, '.prdt', 'index.db'), id], { encoding: 'utf-8' })
+    expect(row).toContain(`${id}.md`)
+  })
+
   test('ids are a global counter across every ticket dir, never reused', () => {
     const res = runInit()
     writeTicket('backlog', 'T-950', { body: '## problem\nx\n\n## acceptance\nx\n' })

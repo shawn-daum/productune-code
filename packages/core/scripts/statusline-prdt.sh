@@ -546,8 +546,22 @@ def ticket_link_target(con, tid):
     gated, the link is always the viewer jump page, degrading to no link at
     all — never to the raw md — when no viewer exists yet (T-805)."""
     if ticket_path(con, tid) is None:
-        return None
+        # T-1014: no index row (index stale: a ticket made or moved since the
+        # last reindex) is not "no ticket" — this render already scanned the
+        # md files, so a scanned id links without it. A row that EXISTS but
+        # failed the path-safety gate stays refused.
+        if tid not in tid_status or _index_has_row(con, tid):
+            return None
     return viewer_jump_path(tid)
+
+
+def _index_has_row(con, tid):
+    if con is None:
+        return False
+    try:
+        return con.execute("SELECT 1 FROM tickets WHERE id=?", (tid,)).fetchone() is not None
+    except Exception:
+        return False
 
 
 def collapse(items, limit):
