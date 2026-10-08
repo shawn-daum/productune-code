@@ -1350,7 +1350,13 @@ describe('T-695: the machine resource cap', () => {
     return [...rows].filter(([pid]) => inTree(pid)).map(([, r]) => r.args).join('\n')
   }
   test.each(VARIANTS)('real process tree: one `%s` counts as exactly 1 on the host ps', async (_label, cmd, cmdArgs) => {
-    const root = tmp('prdt-t695-vt-')
+    // Mirror the workspace depth (<repo>/packages/core): pnpm ≥10 writes .bin shims that reach
+    // the store as `$basedir/../../../../node_modules/.pnpm/...` off the UNRESOLVED shim path,
+    // so a project at the tmp root alone would escape to a missing store (T-787).
+    const base = tmp('prdt-t695-vt-')
+    fs.symlinkSync(path.join(CORE_ROOT, '..', '..', 'node_modules'), path.join(base, 'node_modules'))
+    const root = path.join(base, 'packages', 'vt')
+    fs.mkdirSync(root, { recursive: true })
     fs.symlinkSync(path.join(CORE_ROOT, 'node_modules'), path.join(root, 'node_modules'))
     fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'vt', private: true, type: 'module', scripts: { test: 'vitest run' } }))
     fs.writeFileSync(path.join(root, 'sleep.test.ts'), 'import { test } from "vitest"\ntest("sleep", async () => { await new Promise(r => setTimeout(r, 40000)) }, 60000)\n')
