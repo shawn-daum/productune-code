@@ -91,6 +91,7 @@ function runStatuslineOverFixture(): string {
     return execFileSync('bash', [STATUSLINE_PATH], {
       input: JSON.stringify({ workspace: { current_dir: root } }),
       encoding: 'utf8',
+      env: { ...process.env, PRDT_LANG: 'en' }, // T-1015: labels follow cli.lang; this parser reads the English form
     }).replace(/\n$/, '')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
