@@ -13,7 +13,7 @@
  *             not a measured ceiling (slice 1's own note) — this suite only
  *             pins the AGEING MECHANISM at a threshold crossing, not the
  *             number 4 as a measured value.
- *   dec/req — T-849: open `type: decision` tickets / open `assignee: user`
+ *   dec/req 0 T-849: open `type: decision` tickets / open `assignee: user`
  *             non-decision tickets across EVERY version dir (backlog excluded),
  *             no marker involved; replaced T-682's single `waiting` segment.
  *   successors/blocks — `.prdt/index.db`'s `edges` table (`rel='deps'`).
@@ -188,11 +188,11 @@ afterEach(() => {
 describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer segments', () => {
   test('T-922: none running, none waiting: running/dec/req still render, as an em dash', () => {
     const out = runStatusline()
-    expect(segment(out, 'working')).toBe('\u2014')
-    expect(segment(out, 'dec')).toBe('\u2014')
-    expect(segment(out, 'req')).toBe('\u2014')
+    expect(segment(out, 'working')).toBe('0')
+    expect(segment(out, 'dec')).toBe('0')
+    expect(segment(out, 'req')).toBe('0')
     expect(out).not.toMatch(/\b(waiting|CP)\b/)
-    expect(out).toContain('| build |') // rest of the line still renders
+    expect(out).toContain('| stage: build 0/0 |') // rest of the line still renders
   })
 
   test('several of each, with successors/blocks from the edges table', () => {
@@ -305,7 +305,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
       project_root: root, since: isoAgo(60_000),
     }))
     const out = runStatusline()
-    expect(segment(out, 'working')).toBe('\u2014')
+    expect(segment(out, 'working')).toBe('0')
   })
 
   test('T-805: OSC 8 link targets the viewer jump page (never the raw ticket md) when a viewer exists', () => {
@@ -396,16 +396,16 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const slug = path.basename(root)
     expect(plain).not.toContain(OSC8_OPEN)
     // no tickets, no branch (tmp dir is no git repo): ticket segment and branch segment degrade away
-    expect(plain).toBe(`${slug} ${VERSION} | build | working \u2014\ndecision \u2014 | request \u2014`)
+    expect(plain).toBe(`${slug} ${VERSION} | stage: build 0/0 | working 0\ndecision 0 | request 0`)
 
     stubViewerHtml()
     const linked = runStatusline().trim()
     const viewer = path.join(root, '.prdt', 'scratch', 'viewer', 'viewer.html')
-    expect(linked.startsWith(`${OSC8_OPEN}file://${viewer}\x1b\\${slug} ${VERSION}${OSC8_CLOSE} | build`)).toBe(true)
-    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | build | working \u2014\ndecision \u2014 | request \u2014`)
+    expect(linked.startsWith(`${OSC8_OPEN}file://${viewer}\x1b\\${slug} ${VERSION}${OSC8_CLOSE} | stage: build 0/0`)).toBe(true)
+    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | stage: build 0/0 | working 0\ndecision 0 | request 0`)
   })
 
-  test('T-984: full layout order — branch between version and stage, ticket count, working, then dec · req; no current-task segment; never \u00bb', () => {
+  test('T-984: full layout order — stage, ticket count, working, branch last, then dec · req; no current-task segment; never \u00bb', () => {
     root = makeProject('prdt-t922-full-', { ticket_id: 'T-890', slug: 'restore', assignee: 'developer' })
     fs.mkdirSync(path.join(root, 'docs', 'tickets', VERSION), { recursive: true })
     writeTicket('T-890', {}, 'open')
@@ -414,7 +414,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     execFileSync('git', ['init', '-q', '-b', 'dev', root])
     execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init'])
     const plain = unwrapLinks(runStatusline()).trim()
-    expect(plain).toBe(`${path.basename(root)} ${VERSION} | branch: dev | build | ticket 1/2 | working T-890(qa)\ndecision \u2014 | request \u2014`)
+    expect(plain).toBe(`${path.basename(root)} ${VERSION} | stage: build 0/0 | ticket 1/2 | working T-890(qa) | branch: dev\ndecision 0 | request 0`)
     expect(plain).not.toContain('\u00bb')
   })
 
