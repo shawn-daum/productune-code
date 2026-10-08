@@ -23,6 +23,7 @@ import { execFileSync } from 'node:child_process'
 import { describe, it, expect } from 'vitest'
 import { GUI_ROOT } from '@productune/viewer/generate.mjs'
 import { versionProgressCounts } from '@productune/viewer/lib/render.mjs'
+import { stageOfTicketType } from '@productune/viewer/lib/home-graph.mjs'
 
 // T-718: statusline-prdt.sh lives at `packages/core/scripts/…` — a SIBLING of
 // this package (`packages/gui`) under `packages/`, found relative to
@@ -44,7 +45,6 @@ function which(bin: string): string | null {
 const PYTHON3 = which('python3')
 
 const VERSION = 'v9.8' // scratch-only version id, matches statusline's VERSION_RE
-const STAGE = 'build' // scratch-only po-state stage, any STAGES member works
 
 // The T-755 repro mix (statusline-version-progress.test.ts's own fixture):
 // all five ticket types, mixed open/done, plus one `dropped` ticket this
@@ -72,13 +72,13 @@ const FIXTURE_TICKETS = [
   { id: 'T-18', type: 'impl', status: 'dropped' },
 ]
 
-function runStatuslineOverFixture(): string {
+function runStatuslineOverFixture(stage: string): string {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t766-sl-')))
   try {
     fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
     fs.writeFileSync(
       path.join(root, '.prdt', 'po-state.json'),
-      JSON.stringify({ schema_version: 1, stage: STAGE, version: VERSION, current_task: null }),
+      JSON.stringify({ schema_version: 1, stage, version: VERSION, current_task: null }),
     )
     const ticketDir = path.join(root, 'docs', 'tickets', VERSION)
     fs.mkdirSync(ticketDir, { recursive: true })
@@ -101,9 +101,9 @@ function runStatuslineOverFixture(): string {
 describe.skipIf(!PYTHON3)('viewer version-progress counting parity with statusline-prdt.sh (T-766)', () => {
   it("render.mjs's versionProgressCounts agrees with the real statusline-prdt.sh over one shared fixture", () => {
     expect(fs.existsSync(STATUSLINE_PATH), `${STATUSLINE_PATH} does not exist`).toBe(true)
-    const out = runStatuslineOverFixture()
-    const m = new RegExp(`^\\S+ \\S+ \\| stage: ${STAGE} 0/0 \\| ticket (\\d+)/(\\d+) \\|`).exec(out)
-    expect(m, `statusline output "${out}" head is not "<slug> <version> | stage: ${STAGE} 0/0 | ticket n/m"`).not.toBeNull()
+    const out = runStatuslineOverFixture('build')
+    const m = /^\S+ \S+ \| stage: build \d+\/\d+ \| total tickets (\d+)\/(\d+) \|/.exec(out)
+    expect(m, `statusline output "${out}" head is not "<slug> <version> | stage: build n/m | total tickets n/m"`).not.toBeNull()
     const [, shellDone, shellTotal] = m as RegExpExecArray
 
     const viewerTickets = FIXTURE_TICKETS.map((t) => ({ frontmatter: { type: t.type, status: t.status } }))
@@ -114,6 +114,17 @@ describe.skipIf(!PYTHON3)('viewer version-progress counting parity with statusli
     // non-vacuous: the shared fixture actually has a `dropped` ticket excluded
     // from the count on both sides (17 counted, not the full 18 written)
     expect(total).toBe(FIXTURE_TICKETS.length - 1)
+  })
+
+  // T-923: `stage: <stage> n/m` follows the viewer's stageOfTicketType rule.
+  it.each(['define', 'build', 'ship', 'retro', 'idle'])('stage segment n/m for %s agrees with the viewer type rule', (stage) => {
+    const out = runStatuslineOverFixture(stage)
+    const m = new RegExp(`\\| stage: ${stage} (\\d+)/(\\d+) \\|`).exec(out)
+    expect(m, `statusline output "${out}" has no "stage: ${stage} n/m"`).not.toBeNull()
+    const counted = FIXTURE_TICKETS.filter((t) => t.status === 'open' || t.status === 'done')
+    const inStage = stage === 'retro' || stage === 'idle' ? [] : counted.filter((t) => stageOfTicketType(t.type) === stage)
+    expect(Number((m as RegExpExecArray)[1])).toBe(inStage.filter((t) => t.status === 'done').length)
+    expect(Number((m as RegExpExecArray)[2])).toBe(inStage.length)
   })
 
   // Non-vacuous control: the parser/regex above must be able to catch a real
