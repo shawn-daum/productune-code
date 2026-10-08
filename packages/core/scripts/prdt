@@ -6014,35 +6014,17 @@ def _git_repo(repo, *a):
     return subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True)
 
 
-def _remote_short_ref(code_root, timeout=2):
-    """Short SHA of `origin/<branch>` — the "new version" label for the T-749b
-    no-release-notes prompt (origin has commits ahead, but no `## <version>`
-    section in RELEASES.md qualifies). The objects are already local by the
-    time this is called: both `remote_ahead` and `releases_pending_between`
-    already fetched `origin/<branch>` to get here, so this is a plain local
-    `rev-parse`, no extra network hop. None on any failure — caller falls back
-    to a literal "?"."""
-    try:
-        branch = subprocess.run(["git", "-C", str(code_root), "rev-parse", "--abbrev-ref", "HEAD"],
-                                 capture_output=True, text=True, timeout=timeout).stdout.strip()
-        if not branch or branch == "HEAD":
-            return None
-        r = subprocess.run(["git", "-C", str(code_root), "rev-parse", "--short", f"origin/{branch}"],
-                            capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip() or None
-    except (subprocess.TimeoutExpired, OSError):
-        return None
-
-
 def _remote_target_sha(code_root, timeout=2):
     """Full SHA of `origin/<current-branch>` — the exact ref `remote_ahead` /
-    `releases_pending_between` / `_remote_short_ref` already read to compute
+    `releases_pending_between` already read to compute
     the version + notes an update prompt shows. `_run_pull_install` pulls to
     exactly this sha (never `@{upstream}`, which can point somewhere else
     entirely — e.g. a `dev` branch whose upstream is set to `origin/main`) and
     refuses to install if the pull lands anywhere else. Plain local
     `rev-parse` (no fetch): the objects are already local by the time this is
-    called, same rationale as `_remote_short_ref`. None on any failure —
+    called: both `remote_ahead` and `releases_pending_between` already
+    fetched `origin/<branch>`. Its first 7 characters are also the "new
+    version" label of the no-release-notes prompt (T-749b). None on any failure —
     caller degrades the same way `ahead is None` does."""
     try:
         branch = subprocess.run(["git", "-C", str(code_root), "rev-parse", "--abbrev-ref", "HEAD"],
@@ -6098,11 +6080,15 @@ def cmd_update(_args):
         return
 
     new_version, sections = releases_pending_between(code_root, installed)
+    # T-749c: captured NOW, same moment the version/notes above came from
+    # (`origin/<branch>`) — `_run_pull_install` pulls to exactly this sha,
+    # never `@{upstream}`.
+    target_sha = _remote_target_sha(code_root)
     if not new_version or not _newer_version(new_version, installed):
         # T-749b: origin IS ahead, but no RELEASES.md section qualifies as a
         # newer version — still ask, with a "no release notes" line and the
         # remote's short SHA standing in for the version number.
-        new_version = _remote_short_ref(code_root) or "?"
+        new_version = target_sha[:7] if target_sha else "?"
         sections = []
 
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -6113,10 +6099,6 @@ def cmd_update(_args):
         print(msg(m, "update.noninteractive", installed=installed or "?", new=_strip_control_chars(new_version)))
         return
 
-    # T-749c: captured NOW, same moment the version/notes above came from
-    # (`origin/<branch>`) — `_run_pull_install` pulls to exactly this sha,
-    # never `@{upstream}`.
-    target_sha = _remote_target_sha(code_root)
     if not target_sha:
         sys.exit(msg(m, "update.error.offline"))
 
