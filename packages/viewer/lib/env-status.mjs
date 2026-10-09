@@ -24,8 +24,44 @@ export function isSampleEnvFile(name) {
   return name.endsWith('.example')
 }
 
-function isWs(b) {
-  return b === 0x20 || b === 0x09 || b === 0x0b || b === 0x0c || b === 0x0d
+// Python str.strip()'s whitespace set (str.isspace), as UTF-8 byte
+// sequences: \t \n \v \f \r, \x1c-\x1f, space, U+0085, U+00A0, U+1680,
+// U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000. A narrower set here
+// leaves an open-quote line unparsed, and its continuation line then reads as
+// a key — a value's bytes in a key name (T-958 QA).
+function isAsciiWs(b) {
+  return (b >= 0x09 && b <= 0x0d) || (b >= 0x1c && b <= 0x20)
+}
+function isWs2(b0, b1) {
+  return b0 === 0xc2 && (b1 === 0x85 || b1 === 0xa0)
+}
+function isWs3(b0, b1, b2) {
+  if (b0 === 0xe1) return b1 === 0x9a && b2 === 0x80
+  if (b0 === 0xe2 && b1 === 0x80) return (b2 >= 0x80 && b2 <= 0x8a) || b2 === 0xa8 || b2 === 0xa9 || b2 === 0xaf
+  if (b0 === 0xe2) return b1 === 0x81 && b2 === 0x9f
+  return b0 === 0xe3 && b1 === 0x80 && b2 === 0x80
+}
+/** Byte length of the whitespace character starting at `i` (within [i, end)), else 0. */
+function wsAt(buf, i, end) {
+  if (i >= end) return 0
+  if (isAsciiWs(buf[i])) return 1
+  if (i + 2 <= end && isWs2(buf[i], buf[i + 1])) return 2
+  if (i + 3 <= end && isWs3(buf[i], buf[i + 1], buf[i + 2])) return 3
+  return 0
+}
+/** Byte length of the whitespace character ending at `end` (within [start, end)), else 0. */
+function wsBefore(buf, start, end) {
+  if (end <= start) return 0
+  if (isAsciiWs(buf[end - 1])) return 1
+  if (end - 2 >= start && isWs2(buf[end - 2], buf[end - 1])) return 2
+  if (end - 3 >= start && isWs3(buf[end - 3], buf[end - 2], buf[end - 1])) return 3
+  return 0
+}
+/** [a, b) with Python str.strip() whitespace removed from both ends. */
+function strip(buf, a, b) {
+  for (let n; (n = wsAt(buf, a, b)); ) a += n
+  for (let n; (n = wsBefore(buf, a, b)); ) b -= n
+  return [a, b]
 }
 
 /** [start, end) of each `\n`-separated line, one trailing CR excluded. */
@@ -60,20 +96,15 @@ export function envKeyStatus(buf) {
   const status = new Map()
   let li = 0
   while (li < lines.length) {
-    let [a, b] = lines[li++]
-    while (a < b && isWs(buf[a])) a++
-    while (b > a && isWs(buf[b - 1])) b--
+    let [a, b] = strip(buf, ...lines[li++])
     if (a === b || buf[a] === 0x23) continue
     if (b - a > EXPORT.length && EXPORT.every((c, k) => buf[a + k] === c) && (buf[a + 6] === 0x20 || buf[a + 6] === 0x09)) {
       a += EXPORT.length
-      while (a < b && isWs(buf[a])) a++
+      for (let n; (n = wsAt(buf, a, b)); ) a += n
     }
     const eq = find(buf, 0x3d, a, b)
     if (eq === -1) continue
-    let ks = a
-    let ke = eq
-    while (ks < ke && isWs(buf[ks])) ks++
-    while (ke > ks && isWs(buf[ke - 1])) ke--
+    const [ks, ke] = strip(buf, a, eq)
     let key = ''
     for (let k = ks; k < ke; k++) {
       if (buf[k] >= 0x80) { key = ''; break }

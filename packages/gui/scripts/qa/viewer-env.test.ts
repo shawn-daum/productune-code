@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { collectAll } from '@productune/viewer/lib/collect.mjs'
 import { envKeyStatus, collectEnv } from '@productune/viewer/lib/env-status.mjs'
@@ -57,6 +58,52 @@ describe('envKeyStatus — same set/empty verdict as `prdt env check`', () => {
 
   it('a key whose bytes are not ASCII is skipped', () => {
     expect(status('KÉY=1\nOK=1')).toEqual([{ name: 'OK', set: true }])
+  })
+})
+
+// T-958 QA: the line and key trim must strip exactly Python str.strip()'s set,
+// or an open-quote line is skipped and its continuation reads as a key.
+const PRDT_CLI = path.resolve(__dirname, '../../../core/scripts/prdt')
+const NBSP = Buffer.from([0xc2, 0xa0])
+const ws = (bytes: number[]) => Buffer.from(bytes)
+const WS_CASES: Array<[string, Buffer]> = [
+  ['J1 NBSP-led open quote', Buffer.concat([NBSP, Buffer.from(`J1="open ${SENTINEL}\nJ_LEAK_${SENTINEL}=v\n"\n`)])],
+  ['J3 NBSP before =', Buffer.concat([Buffer.from('J3'), NBSP, Buffer.from(`=${SENTINEL}\n`)])],
+  ['J4 \\x1c before key', Buffer.concat([ws([0x1c]), Buffer.from(`J4=${SENTINEL}\n`)])],
+  ['KEY=NBSP', Buffer.concat([Buffer.from('KEY='), NBSP, Buffer.from('\n')])],
+  ['KEY=\\x1c', Buffer.concat([Buffer.from('KEY='), ws([0x1c]), Buffer.from('\n')])],
+  ['U+0085 · U+2028 · U+3000 around lines', Buffer.concat([ws([0xc2, 0x85]), Buffer.from('A=1'), ws([0xe2, 0x80, 0xa8]), Buffer.from('\nB='), ws([0xe3, 0x80, 0x80]), Buffer.from('\n'), ws([0xe2, 0x80, 0x89]), Buffer.from(`export C="${SENTINEL}\nD_LEAK=x"\n`)])],
+]
+
+describe('envKeyStatus — Unicode whitespace parity with Python str.strip() (T-958 QA)', () => {
+  it('J1: an NBSP-led open-quote line is set and its continuation never becomes a key', () => {
+    expect(envKeyStatus(WS_CASES[0][1])).toEqual([{ name: 'J1', set: true }])
+  })
+
+  it('J3 · J4 set; KEY=NBSP and KEY=\\x1c empty', () => {
+    expect(envKeyStatus(WS_CASES[1][1])).toEqual([{ name: 'J3', set: true }])
+    expect(envKeyStatus(WS_CASES[2][1])).toEqual([{ name: 'J4', set: true }])
+    expect(envKeyStatus(WS_CASES[3][1])).toEqual([{ name: 'KEY', set: false }])
+    expect(envKeyStatus(WS_CASES[4][1])).toEqual([{ name: 'KEY', set: false }])
+    expect(envKeyStatus(WS_CASES[5][1])).toEqual([{ name: 'A', set: true }, { name: 'B', set: false }, { name: 'C', set: true }])
+  })
+
+  let py: string | null = null
+  try { py = execFileSync('which', ['python3']).toString().trim() || null } catch { py = null }
+  it.skipIf(!py)('agrees with `prdt env check` on every case', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-env-parity-'))
+    try {
+      for (const [label, bytes] of WS_CASES) {
+        const f = path.join(dir, '.env.case')
+        fs.writeFileSync(f, bytes)
+        const out = execFileSync(py!, [PRDT_CLI, 'env', 'check', f]).toString()
+        const want = out.trim().split('\n').filter(Boolean).map((l) => { const [name, st] = l.split(/\s+/); return { name, set: st === 'set' } })
+        const got = envKeyStatus(bytes).slice().sort((x: { name: string }, y: { name: string }) => (x.name < y.name ? -1 : 1))
+        expect(got, label).toEqual(want)
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
@@ -191,9 +238,12 @@ describe('env screen — single-line project', () => {
 
   it('the generated files (page · data files · build file) carry no sentinel value', async () => {
     write(root, 'code/.env.local', `DATABASE_URL=${SENTINEL}\nSTRIPE_SECRET_KEY="${SENTINEL}"\n`)
+    fs.writeFileSync(path.join(root, 'code/.env.test'), WS_CASES[0][1])
     write(root, 'docs/tickets/v2.1/T-1.md', '---\nid: T-1\nslug: s\ntype: impl\nstatus: done\nassignee: developer\n---\nbody\n')
     const { html, dataFiles, buildFile } = await generate({ repoRoot: root, outputPath: path.join(root, 'out/viewer.html'), disciplineRoot: root })
     expect(html).toContain('<code>STRIPE_SECRET_KEY</code>')
+    expect(html).toContain('<code>J1</code>')
+    expect(html).not.toContain('J_LEAK_')
     for (const text of [html, buildFile.content, ...dataFiles.map((f: { content: string }) => f.content)]) expect(text).not.toContain(SENTINEL)
   }, 60_000)
 })
