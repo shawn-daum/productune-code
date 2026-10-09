@@ -268,10 +268,19 @@ export const PRD_READING = {
   reviewQuestions: (n) => `화면 승인 때 볼 것 ${n}건`,
   cardsHeading: (n) => `항목 ${n}개`,
   lineCount: (n) => `${n}줄`,
+  // T-928 (approved mockup docs/artifacts/v1.13/define-screen-set.html #screen-prd): the head's
+  // machine/meta paragraph folds behind one line; As-Is + To-Be read as one paired table.
+  // T-970: As-Is / To-Be are never translated, so the heading and the column heads stay English.
+  metaSummary: '이 문서에 대해 — 만든 날 · 상태 · 파일 구성',
+  pairTitle: 'As-Is → To-Be',
+  pairHeads: ['As-Is', 'To-Be'],
+  pairCount: (n) => `${n}쌍`,
   // The PRD contract's own section names this screen keys off (never copy shown to a reader):
   // sections folded open at first (under the open version), the §Open Questions heading,
   // the §What heading, and the question-group titles.
-  initialOpen: /^(합격선|What|Open Questions)(\s|$)/,
+  initialOpen: /^(합격선|What|Open Questions|As-Is → To-Be)(\s|$)/,
+  asIsSection: /^As-Is(\s|$)/,
+  toBeSection: /^To-Be(\s|$)/,
   questionsSection: /^Open Questions(\s|$)/,
   whatSection: /^What(\s|$)/,
   reviewGroup: /승인/,

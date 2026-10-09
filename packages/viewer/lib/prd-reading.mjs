@@ -180,6 +180,48 @@ function outlineTickets(text) {
 }
 
 /**
+ * The top-level `- ` items of a declaration list (continuation lines fold into their item), or null
+ * when the text holds anything but such a list — then the As-Is / To-Be pair falls back to plain folds.
+ */
+function declarationItems(text) {
+  const items = []
+  for (const line of String(text ?? '').split('\n')) {
+    if (line.trim() === '') continue
+    const m = /^[-*]\s+(.*)$/.exec(line)
+    if (m) items.push(m[1].trim())
+    else if (items.length && /^\s+\S/.test(line)) items[items.length - 1] += ' ' + line.trim()
+    else return null
+  }
+  return items
+}
+
+/**
+ * T-928: sibling `### As-Is` + `### To-Be` whose bodies are item lists of the same length become ONE
+ * synthesized node (`pair`), shown as a paired table. Anything else is left as it is.
+ */
+function pairAsIsToBe(children) {
+  const i = children.findIndex((c) => L.asIsSection.test(c.title))
+  const j = children.findIndex((c, k) => k > i && L.toBeSection.test(c.title))
+  if (i < 0 || j < 0) return children
+  const [a, b] = [children[i], children[j]]
+  if (a.children.length || b.children.length || a.level !== b.level) return children
+  const asIs = declarationItems(a.ownText)
+  const toBe = declarationItems(b.ownText)
+  if (!asIs || !toBe || asIs.length === 0 || asIs.length !== toBe.length) return children
+  const node = { level: a.level, title: L.pairTitle, ownText: '', children: [], lines: a.lines + b.lines, pair: { asIs, toBe } }
+  return children.flatMap((c, k) => (k === i ? [node] : k === j ? [] : [c]))
+}
+
+/** Wrap every markdown table: its column count as a class (2 = label | text, wide = grid) + a scroll box. */
+function tagTables(html) {
+  return html.replace(/<table>([\s\S]*?)<\/table>/g, (m, inner) => {
+    const firstRow = /<tr>([\s\S]*?)<\/tr>/.exec(inner)?.[1] ?? ''
+    const cols = (firstRow.match(/<t[hd][\s>]/g) || []).length
+    return `<div class="pr-tw"><table class="pr-tbl pr-cols-${cols}">${inner}</table></div>`
+  })
+}
+
+/**
  * @param {object} args
  * @param {string} args.body PRD.md body (standing head + the open `## v<N>.<m>`)
  * @param {string} args.currentVersion
@@ -211,7 +253,7 @@ export function renderPrdReading({ body, currentVersion, decisionTickets, idPref
       return `<ol${start ? ` start="${start}"` : ''}>${inner.replace(/<li>/g, () => `<li id="${idPrefix}-oq-${n++}">`)}</ol>`
     })
 
-  const bodyHtml = (text) => (text.trim() === '' ? '' : `<div class="pr-body v-body">${text}</div>`)
+  const bodyHtml = (text) => (text.trim() === '' ? '' : `<div class="pr-body v-body">${tagTables(text)}</div>`)
 
   /** @returns {string} html of one foldable section; also appends its outline entry */
   const foldSeen = new Map()
@@ -231,6 +273,18 @@ export function renderPrdReading({ body, currentVersion, decisionTickets, idPref
     const meta = `<span class="pr-meta mono">${esc(L.lineCount(node.lines))}</span>`
     const slot = { id, level: node.level, marks, text: plainInline(node.title), what: isWhat, questions: isQuestions, key: '', tk: '', badge: '' }
     outline.push(slot)
+    if (node.pair) {
+      const { asIs, toBe } = node.pair
+      const open = ctx.underOpen && L.initialOpen.test(node.title)
+      const rowsHtml = asIs.map((a, k) => `<tr><td>${inline(a)}</td><td class="pr-arr">→</td><td>${inline(toBe[k])}</td></tr>`).join('')
+      const table =
+        `<div class="pr-tw"><table class="pr-tbl pr-pair"><thead><tr><th>${esc(L.pairHeads[0])}</th><th></th><th>${esc(L.pairHeads[1])}</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`
+      return (
+        `<details class="pr-sec pr-l${node.level}" id="${id}" data-fold="${esc(foldKey)}" data-open0="${open ? 1 : 0}"${open ? ' open' : ''}>` +
+        `<summary><span class="pr-mark mono">${marks}</span><span class="pr-t">${esc(L.pairTitle)}</span><span class="pr-meta mono">${esc(L.pairCount(asIs.length))}</span></summary>` +
+        `<div class="pr-body v-body">${table}</div></details>`
+      )
+    }
 
     let inner = ''
     let summary
@@ -269,7 +323,7 @@ export function renderPrdReading({ body, currentVersion, decisionTickets, idPref
         kids = node.children.length ? `<div class="pr-cards-h">${esc(L.cardsHeading(node.children.length))}</div><div class="pr-cards">${cards}</div>` : ''
       } else {
         const nextCtx = { ...ctx, path, underOpen: ctx.underOpen || isOpenSection }
-        kids = node.children.map((c) => section(c, nextCtx)).join('')
+        kids = pairAsIsToBe(node.children).map((c) => section(c, nextCtx)).join('')
       }
       inner = bodyHtml(own + kids)
     }
@@ -328,7 +382,7 @@ export function renderPrdReading({ body, currentVersion, decisionTickets, idPref
     `<div class="pr-decide" role="region" aria-label="${esc(L.decideHeading)}">${box}</div>` +
     `<div class="pr-tools"><button type="button" class="pr-btn" data-pr-act="all">${esc(L.expandAll)}</button><button type="button" class="pr-btn" data-pr-act="none">${esc(L.collapseAll)}</button><button type="button" class="pr-btn" data-pr-act="reset">${esc(L.resetFolds)}</button></div>` +
     (titleText ? `<h1 class="pr-title">${inline(tree.title.title)}</h1>` : '') +
-    (tree.pre.trim() ? `<div class="pr-pre"><div class="v-body">${md(tree.pre)}</div></div>` : '') +
+    (tree.pre.trim() ? `<details class="pr-pre"><summary>${esc(L.metaSummary)}</summary><div class="v-body">${tagTables(md(tree.pre))}</div></details>` : '') +
     sectionsHtml +
     `</div>` +
     `<nav class="pr-outline" aria-label="${esc(L.outlineHeading)}"><div class="pr-outline-h">${esc(L.outlineHeading)}</div>${entries.join('')}${legend}</nav>` +
@@ -393,8 +447,27 @@ export const PRD_READING_CSS = `
 .pr-btn:hover { border-color: var(--text-primary); color: var(--text-primary); }
 .pr-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .pr-title { font-size: 20px; font-weight: 700; margin: 0 0 var(--space-8); }
-.pr-pre { font-size: 12.5px; color: var(--text-secondary); margin: 0 0 var(--space-16); }
+.pr-pre { font-size: 12px; color: var(--text-tertiary); margin: 0 0 var(--space-16); }
+.pr-pre > summary { cursor: pointer; list-style: none; }
+.pr-pre > summary::-webkit-details-marker { display: none; }
+.pr-pre > summary::before { content: "› "; }
+.pr-pre[open] > summary::before { content: "⌄ "; }
+.pr-pre > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pr-pre .v-body { color: var(--text-secondary); margin-top: var(--space-8); }
 .pr-pre .v-body > :first-child { margin-top: 0; }
+/* T-928: tables scan by row — a hairline under each row, no cell grid, a quiet head, a hover row. */
+.pr-tw { overflow-x: auto; margin: var(--space-8) 0; }
+.pr-doc .v-body table.pr-tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; line-height: 1.55; }
+.pr-doc .v-body table.pr-tbl th, .pr-doc .v-body table.pr-tbl td { border: 0; border-bottom: 1px solid var(--border-section); text-align: left; vertical-align: top; padding: var(--space-8) var(--space-12); }
+.pr-doc .v-body table.pr-tbl thead th { font-size: 11px; font-weight: 600; color: var(--text-tertiary); border-bottom-color: var(--border-inline); padding-top: 0; background: none; text-transform: none; letter-spacing: 0; }
+.pr-doc .v-body table.pr-tbl tbody tr:hover td { background: var(--bg-state-hover); }
+.pr-doc .v-body table.pr-tbl code { font-family: var(--font-mono); font-size: 11.5px; background: var(--bg-surface-on); border-radius: 4px; padding: 1px 6px; }
+.pr-doc .v-body table.pr-cols-2 td:first-child { width: 8.5em; font-weight: 600; color: var(--text-secondary); }
+.pr-doc .v-body table.pr-cols-2 tbody tr:first-child td:last-child { font-size: 13px; color: var(--text-primary); }
+.pr-doc .v-body table.pr-tbl:not(.pr-cols-2):not(.pr-pair) td:first-child { white-space: nowrap; }
+.pr-doc .v-body table.pr-pair td { width: 47%; color: var(--text-tertiary); }
+.pr-doc .v-body table.pr-pair td:last-child { color: var(--text-primary); font-weight: 600; }
+.pr-doc .v-body table.pr-pair td.pr-arr { width: 6%; text-align: center; color: var(--text-quaternary); padding-left: 0; padding-right: 0; font-weight: 400; }
 .pr-sec { margin: 0; }
 .pr-sec > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: var(--space-8); padding: var(--space-8) var(--space-8); border-radius: var(--radius-8); position: relative; }
 .pr-sec > summary::-webkit-details-marker { display: none; }
