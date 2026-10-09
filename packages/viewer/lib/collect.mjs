@@ -44,6 +44,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { collectEnv, homeEnvDir, lineEnvDir } from './env-status.mjs'
 import { parseFrontmatter } from './frontmatter.mjs'
 // T-713: reuse render.mjs's own numeric version-equality rule (contracts
 // §Fixed-paths "`v1` ≡ `v1.0.0`") rather than a second string-equality copy —
@@ -708,6 +709,7 @@ export function collectAll(repoRoot, { disciplineRoot } = {}) {
   const poState = readPoState(repoRoot)
   const currentVersion = poState.version
   const lineNames = collectLineNames(repoRoot)
+  const cfg = readConfig(repoRoot)
   // T-961: one entry per added release line; [] = single-line, every other
   // field exactly as before.
   const lines = lineNames.map((name) => {
@@ -718,6 +720,8 @@ export function collectAll(repoRoot, { disciplineRoot } = {}) {
       version,
       prd: collectPrd(repoRoot, version, { line: name, lineNames }),
       tickets: collectTickets(repoRoot, version, { line: name }),
+      // T-958: key names + set/empty only (env-status.mjs).
+      env: collectEnv(repoRoot, lineEnvDir(cfg, name)),
     }
   })
   return {
@@ -733,5 +737,16 @@ export function collectAll(repoRoot, { disciplineRoot } = {}) {
     artifacts: collectArtifacts(repoRoot),
     releases: collectReleases(repoRoot),
     discipline: collectDiscipline(repoRoot, disciplineRoot === undefined ? undefined : { disciplineRoot }),
+    env: collectEnv(repoRoot, homeEnvDir(repoRoot, cfg)),
+  }
+}
+
+/** `.prdt/config.json`, or null when absent or unreadable. */
+function readConfig(repoRoot) {
+  try {
+    const real = containedFile(repoRoot, path.join(repoRoot, '.prdt/config.json'))
+    return real ? readJson(real) : null
+  } catch {
+    return null
   }
 }
