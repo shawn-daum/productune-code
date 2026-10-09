@@ -1,0 +1,181 @@
+// viewer/lib/env-status.mjs — T-958 (T-956 = A): which env keys a line's code
+// folder has set or empty. Key NAMES and one boolean per key only.
+//
+// Secrets (contracts §Secrets): an env file is read as raw bytes and scanned
+// in place. A value's bytes are never decoded into a string — only a key's
+// bytes are (ASCII, matched against the key pattern), and a value contributes
+// nothing but "has at least one byte". The buffer is zero-filled once
+// scanned. The set/empty verdict mirrors `prdt env check`
+// (packages/core/scripts/prdt `_env_parse_file`): `\n`-only line split, one
+// trailing CR dropped, `#` comments, `export ` prefix, last occurrence wins,
+// a quoted value read up to its closing quote (multi-line when the quote
+// does not close on its own line).
+import fs from 'node:fs'
+import path from 'node:path'
+
+const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+/** `.env` and `.env.*` — the names prdt-secret-guard.sh treats as env files. */
+export const ENV_FILE_RE = /^\.env(\..+)?$/
+const QUOTES = new Set([0x22, 0x27])
+const EXPORT = [0x65, 0x78, 0x70, 0x6f, 0x72, 0x74] // "export"
+
+/** A sample file (`.env.example`): listed dim as 견본; its keys count as empty in the real files. */
+export function isSampleEnvFile(name) {
+  return name.endsWith('.example')
+}
+
+function isWs(b) {
+  return b === 0x20 || b === 0x09 || b === 0x0b || b === 0x0c || b === 0x0d
+}
+
+/** [start, end) of each `\n`-separated line, one trailing CR excluded. */
+function lineSpans(buf, from) {
+  const out = []
+  let s = from
+  for (let i = from; i <= buf.length; i++) {
+    if (i === buf.length || buf[i] === 0x0a) {
+      let e = i
+      if (e > s && buf[e - 1] === 0x0d) e--
+      out.push([s, e])
+      s = i + 1
+    }
+  }
+  return out
+}
+
+/** Index of byte `b` in buf[from, to), else -1. */
+function find(buf, b, from, to) {
+  const i = buf.indexOf(b, from)
+  return i !== -1 && i < to ? i : -1
+}
+
+/**
+ * @param {Buffer} buf raw env-file bytes
+ * @returns {Array<{ name: string, set: boolean }>} key names in first-seen
+ *   order; `set` = the last occurrence's value is non-empty.
+ */
+export function envKeyStatus(buf) {
+  const bom = buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf ? 3 : 0
+  const lines = lineSpans(buf, bom)
+  const status = new Map()
+  let li = 0
+  while (li < lines.length) {
+    let [a, b] = lines[li++]
+    while (a < b && isWs(buf[a])) a++
+    while (b > a && isWs(buf[b - 1])) b--
+    if (a === b || buf[a] === 0x23) continue
+    if (b - a > EXPORT.length && EXPORT.every((c, k) => buf[a + k] === c) && (buf[a + 6] === 0x20 || buf[a + 6] === 0x09)) {
+      a += EXPORT.length
+      while (a < b && isWs(buf[a])) a++
+    }
+    const eq = find(buf, 0x3d, a, b)
+    if (eq === -1) continue
+    let ks = a
+    let ke = eq
+    while (ks < ke && isWs(buf[ks])) ks++
+    while (ke > ks && isWs(buf[ke - 1])) ke--
+    let key = ''
+    for (let k = ks; k < ke; k++) {
+      if (buf[k] >= 0x80) { key = ''; break }
+      key += String.fromCharCode(buf[k])
+    }
+    if (!KEY_RE.test(key)) continue
+    const v = eq + 1
+    let set
+    if (v < b && QUOTES.has(buf[v])) {
+      const q = buf[v]
+      const close = find(buf, q, v + 1, b)
+      if (close !== -1) {
+        set = close > v + 1
+      } else {
+        // Open quote: continuation lines joined by `\n` until one holds the
+        // closing quote — any continuation line at all makes the value non-empty.
+        let len = b - (v + 1)
+        while (li < lines.length) {
+          const [c, d] = lines[li++]
+          len += 1
+          const ci = find(buf, q, c, d)
+          if (ci !== -1) { len += ci - c; break }
+          len += d - c
+        }
+        set = len > 0
+      }
+    } else {
+      set = v < b
+    }
+    status.set(key, set)
+  }
+  return [...status].map(([name, set]) => ({ name, set }))
+}
+
+/** One env file's key list, or null when it cannot be read. The bytes are zero-filled before returning. */
+function readEnvKeys(file) {
+  let buf
+  try {
+    buf = fs.readFileSync(file)
+  } catch {
+    return null
+  }
+  try {
+    return envKeyStatus(buf)
+  } finally {
+    buf.fill(0)
+  }
+}
+
+/** The home line's code folder: config `code.dir` (relative, never climbing out), default `code`; the project root itself when that folder does not exist (a non-split project). */
+export function homeEnvDir(repoRoot, cfg) {
+  const d = cfg && typeof cfg.code === 'object' && cfg.code ? cfg.code.dir : undefined
+  let rel = 'code'
+  if (typeof d === 'string' && d.trim() && !path.isAbsolute(d.trim()) && !d.trim().split(/[/\\]+/).includes('..')) rel = d.trim()
+  try {
+    if (fs.statSync(path.join(repoRoot, rel)).isDirectory()) return rel
+  } catch {}
+  return '.'
+}
+
+/** An added line's code folder: its config entry's `code.dir` (relative, may climb out — release-lines.md §1); null when absent or absolute. */
+export function lineEnvDir(cfg, line) {
+  const entry = cfg && Array.isArray(cfg.lines) ? cfg.lines.find((e) => e && typeof e === 'object' && e.name === line) : null
+  const d = entry && typeof entry.code === 'object' && entry.code ? entry.code.dir : undefined
+  return typeof d === 'string' && d.trim() && !path.isAbsolute(d.trim()) ? d.trim() : null
+}
+
+/**
+ * The env files at the top of one code folder, real files first then
+ * samples, each name-sorted. A real file's list also carries, as empty, every
+ * sample key it lacks (screen set: 「견본에만 있는 키도 비어 있음」).
+ * @param {string} repoRoot
+ * @param {string | null} rel code folder relative to repoRoot
+ * @returns {{ dir: string | null, files: Array<{ name: string, sample: boolean, keys: Array<{ name: string, set: boolean }> }> }}
+ */
+export function collectEnv(repoRoot, rel) {
+  if (!rel) return { dir: null, files: [] }
+  const abs = path.resolve(repoRoot, rel)
+  let names
+  try {
+    names = fs.readdirSync(abs).filter((n) => {
+      if (!ENV_FILE_RE.test(n)) return false
+      try {
+        return fs.statSync(path.join(abs, n)).isFile()
+      } catch {
+        return false
+      }
+    })
+  } catch {
+    return { dir: rel, files: [] }
+  }
+  const read = []
+  for (const name of names.sort()) {
+    const keys = readEnvKeys(path.join(abs, name))
+    if (keys) read.push({ name, sample: isSampleEnvFile(name), keys })
+  }
+  const sampleKeys = []
+  for (const f of read) if (f.sample) for (const k of f.keys) if (!sampleKeys.includes(k.name)) sampleKeys.push(k.name)
+  for (const f of read) {
+    if (f.sample) continue
+    const own = new Set(f.keys.map((k) => k.name))
+    for (const k of sampleKeys) if (!own.has(k)) f.keys.push({ name: k, set: false })
+  }
+  return { dir: rel, files: [...read.filter((f) => !f.sample), ...read.filter((f) => f.sample)] }
+}
