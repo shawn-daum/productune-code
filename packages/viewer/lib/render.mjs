@@ -45,6 +45,7 @@ import {
   THEME_TOGGLE,
   noGroupLabel,
   OPTION_CARD,
+  ENV,
 } from './labels.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
 import { HOME_STAGES, stageSegments, buildHomeGraph, layoutHomeGraph, waitLists, compareTicketIds, NODE_W, NODE_H } from './home-graph.mjs'
@@ -579,7 +580,8 @@ function fmtBytes(n) {
 // 621-627) — doctrine #2, don't re-draw what is already signed off.
 // T-880 = A: 현재 버전(home) · PRD · 티켓 · 위키 · 기능 · 아티팩트 · 용어 사전 ·
 // 릴리즈 노트 · 규율 — the discipline store (T-886) lands last, after 'release'.
-const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release', 'disc']
+// T-958: env sits after 아티팩트 (screen set v1.13 #screen-env).
+const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'env', 'glossary', 'release', 'disc']
 const STORE_ICON_PATHS = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
   prd: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/>',
@@ -590,6 +592,8 @@ const STORE_ICON_PATHS = {
   glossary: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m8 13 4-7 4 7"/><path d="M9.1 11h5.7"/>',
   release: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
   // T-886: copied from the approved screen set (define-screen-set.html 「규율」 activity button).
+  // T-958: copied from the approved screen set (v1.13 define-screen-set.html 「env」 activity button).
+  env: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2"/><path d="m16 7 3 3"/><path d="m19 4 2 2"/>',
   disc: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
   artifact:
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
@@ -1047,8 +1051,10 @@ function allLineTickets(data) {
 // simply never matches it. `noGroupUnit` is the caller's own count-unit word
 // (e.g. FEATURE.countUnit) — groupedStore has no store-specific vocabulary of
 // its own, so it cannot guess one.
-function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey, topHtml = '' }) {
-  const singleGroup = groups.length === 1
+// T-958: `alwaysButtons` keeps a one-group sidebar clickable (env: one file is
+// still a file row, never 「그룹 없음」); a group's `dim` greys its row.
+function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey, topHtml = '', alwaysButtons = false }) {
+  const singleGroup = groups.length === 1 && !alwaysButtons
   const defaultIndex = defaultKey === undefined ? 0 : Math.max(0, groups.findIndex((g) => g.key === defaultKey))
   const sidebarButtons = singleGroup
     ? `<div class="nav-item" style="color:var(--text-tertiary); font-style:italic;">${escapeHtml(noGroupLabel(groups[0].count ?? 0, noGroupUnit))}</div>`
@@ -1067,7 +1073,8 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', d
           // absent on a single-line page, whose markup is unchanged.
           const head = g.head ? `<div class="ls-h"><b>${escapeHtml(g.head.label)}</b><span class="ls-st">${escapeHtml(g.head.stage || '')}</span></div>\n` : ''
           const crumbAttr = g.crumb ? ` data-crumb="${escapeHtml(g.crumb)}"` : ''
-          return `${head}<button type="button" class="nav-item nav-item-clickable${active}" data-group-select="${escapeHtml(g.key)}"${crumbAttr}><span>${escapeHtml(g.label)}</span>${countHtml}</button>`
+          const dim = g.dim ? ' nav-dim' : ''
+          return `${head}<button type="button" class="nav-item nav-item-clickable${dim}${active}" data-group-select="${escapeHtml(g.key)}"${crumbAttr}><span>${escapeHtml(g.label)}</span>${countHtml}</button>`
         })
         .join('\n')
   const sidebar = `<nav class="sidebar">
@@ -1963,6 +1970,77 @@ function artifactsSection(artifacts, currentVersion, views = []) {
   return storeSection('artifact', { innerHtml: artifactStoreInner(artifacts, currentVersion) })
 }
 
+// ---------- env store (T-958, T-956 = A) ----------
+// Screen set docs/artifacts/v1.13/define-screen-set.html #screen-env: sidebar
+// = each line's env files (`<line> <version>` sections; none on a single-line
+// project), main = key names + 설정됨 / 비어 있음. Read-only: no value, no
+// length, no edit or copy control. data.env / line.env carry names and one
+// boolean per key only (env-status.mjs) — there is no value here to render.
+function envOfView(data, v) {
+  if (!v.line) return data.env
+  const l = (data.lines || []).find((x) => x.name === v.line)
+  return l ? l.env : null
+}
+
+function envPill(set) {
+  return `<span class="est ${set ? 'on' : 'off'}">${set ? ENV.set : ENV.unset}</span>`
+}
+
+function envSetCount(f) {
+  return f.keys.filter((k) => k.set).length
+}
+
+function envFileBody(f, dir) {
+  const set = envSetCount(f)
+  const rows = f.keys.map((k) => `<div class="erow"><code>${escapeHtml(k.name)}</code>${envPill(k.set)}</div>`).join('')
+  return `<div class="dash-card env-card"><div class="env-h"><b>${escapeHtml(f.name)}</b><span class="env-dir">${escapeHtml(dir || '')}</span>` +
+    `<span class="env-c">${envPill(true)} ${set} ${envPill(false)} ${f.keys.length - set}</span></div>` +
+    `<p class="env-note">${ENV.note}</p><div class="erows">${rows}</div></div>`
+}
+
+function envGroups(env, emptyHead) {
+  if (!env || env.files.length === 0) {
+    const body = `<div class="env-nofile"><b>${escapeHtml(emptyHead)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
+    return { groups: [{ key: 'none', label: ENV.noFile, dim: true, bodyHtml: body }] }
+  }
+  return {
+    groups: env.files.map((f) => ({
+      key: f.name,
+      label: f.sample ? `${f.name} · ${ENV.sample}` : f.name,
+      count: f.keys.length,
+      dim: f.sample,
+      bodyHtml: envFileBody(f, env.dir),
+    })),
+  }
+}
+
+function envSection(data) {
+  const views = lineViews(data)
+  const groups = views.length > 0
+    ? lineSectioned(views, (v) => envGroups(envOfView(data, v), ENV.emptyHead))
+    : envGroups(data.env, ENV.homeNone).groups
+  // Lands on the first real env file anywhere, else the first row.
+  const first = groups.find((g) => !g.dim)
+  return storeSection('env', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.env, crumbLabel: STORE_LABEL.env, groups, defaultKey: first ? first.key : undefined, alwaysButtons: true }) })
+}
+
+/** Home's env block: per real env file (samples only when there is no real one) 설정됨 n · 비어 있음 m, the empty keys named, a link to that file on the env screen; no env file → one line. */
+function homeEnvBlock(env, prefix, noneText) {
+  const head = `<div class="cp-h">${STORE_LABEL.env}</div>`
+  const all = env ? env.files : []
+  const real = all.filter((f) => !f.sample)
+  const shown = real.length > 0 ? real : all
+  if (shown.length === 0) return `<div class="cp-block env-blk">${head}<p class="env-none">${noneText}</p></div>\n`
+  const rows = shown.map((f) => {
+    const set = envSetCount(f)
+    const empty = f.keys.filter((k) => !k.set)
+    const emptyHtml = empty.length === 0 ? '' : `<p class="env-empty"><span>${ENV.unset}</span>: ${empty.map((k) => `<code>${escapeHtml(k.name)}</code>`).join(' · ')}</p>`
+    return `<div class="env-file"><code>${escapeHtml(f.name)}</code><span class="env-c">${envPill(true)} ${set} · ${envPill(false)} ${f.keys.length - set}</span>` +
+      `<button type="button" class="env-go" data-open-store="env" data-open-group="${escapeHtml(prefix + f.name)}">${escapeHtml(ENV.go)}</button></div>${emptyHtml}`
+  }).join('')
+  return `<div class="cp-block env-blk">${head}${rows}</div>\n`
+}
+
 // ---------- home: the in-progress version's workspace (T-666 slice 2a) ----------
 // Slice 1a/1b proved the shared sidebar-group -> list -> detail-panel model on
 // five stores; home was the one deliberately left as a flat summary table
@@ -2216,13 +2294,13 @@ function homeDependency(data, currentTickets) {
   return `<div class="cp-block">${head}${notice}${dependencyDiagram(graph, layoutHomeGraph(graph), dgId)}</div>`
 }
 
-function homeProgressBody(data) {
+function homeProgressBody(data, envHtml = '') {
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
 ${homeStageBar(currentTickets, data.poState?.stage || '?')}
 <div class="sc sc-grid">${homeWaits(data)}${homeScope(data, currentTickets)}</div>
-${homeDependency(data, currentTickets)}
+${envHtml}${homeDependency(data, currentTickets)}
 </div>`
 }
 
@@ -2234,7 +2312,7 @@ function homeLineGroups(data, v, views, repoRootHref) {
   const currentArtifacts = lineArtifactEntries(data.artifacts, v, views).filter((e) => e.fields.bucket === cur)
   const currentDecisions = lineDecisionPages(data.wiki, v)
   const groups = [
-    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(ld)}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(ld, homeEnvBlock(envOfView(data, v), v.prefix, ENV.homeNoneLine))}</div>` },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: v.currentVersion, bodyHtml: prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
@@ -2267,7 +2345,7 @@ function homeSection(data, repoRootHref) {
   const currentArtifacts = currentArtifactEntries(data.artifacts, data.currentVersion)
   const currentDecisions = currentDecisionPages(data.wiki, data.currentVersion)
   const groups = [
-    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data, homeEnvBlock(data.env, '', ENV.homeNone))}</div>` },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
@@ -2723,6 +2801,30 @@ details.v-fold[open] summary { color: var(--text-primary); }
 :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill:first-child, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note + h3.pill { margin-top: var(--space-16); }
 :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note { font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 var(--space-4); }
 @media (prefers-reduced-motion: reduce) { :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row td { transition: none; } }
+/* T-958: env screen + Home env block (approved screen set docs/artifacts/v1.13/define-screen-set.html #screen-env · home env-blk) */
+.nav-item.nav-dim:not(.active) span:first-child { color: var(--text-tertiary); }
+.env-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 4px; }
+.env-h b { font-family: var(--font-mono); font-size: 13px; }
+.env-dir { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.env-c { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); }
+.env-note { margin: 0 0 10px; font-size: 12px; color: var(--text-tertiary); }
+.erows { columns: 2 260px; column-gap: 24px; }
+.erow { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border-item); break-inside: avoid; }
+.erow code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.est { font-family: var(--font-family); font-size: 11px; border-radius: 100px; padding: 1px 8px; white-space: nowrap; border: 1px solid var(--border-inline); }
+.est.on { color: var(--status-done); border-color: color-mix(in srgb, var(--status-done) 40%, transparent); }
+.est.off { color: var(--text-tertiary); border-style: dashed; }
+.env-nofile { display: flex; flex-direction: column; gap: 4px; padding: 18px; border: 1px dashed var(--border-inline); border-radius: 10px; color: var(--text-tertiary); font-size: 12.5px; }
+.env-nofile b { color: var(--text-primary); font-size: 13px; }
+.env-file { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
+.env-file + .env-file, .env-empty + .env-file { margin-top: 8px; }
+.env-file code { font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); }
+.env-file .env-c { margin-left: 0; }
+.env-go { margin-left: auto; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; background: none; border: none; padding: 0; }
+.env-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.env-empty { margin: 6px 0 0; font-size: 12px; color: var(--text-tertiary); line-height: 1.8; }
+.env-empty code { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); background: var(--bg-surface-on); border-radius: 4px; padding: 0 5px; }
+.env-none { margin: 0; font-size: 12px; color: var(--text-tertiary); }
 /* T-886: discipline screens (approved screen set docs/artifacts/v1.12/define-screen-set.html 「규율」) */
 a.dl { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 a.dl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
@@ -3261,7 +3363,10 @@ ${PRD_READING_SCRIPT}
     var readBtn = ev.target.closest('[data-open-store]');
     if (readBtn) {
       ev.preventDefault();
-      selectStore(readBtn.getAttribute('data-open-store'));
+      var openedSection = selectStore(readBtn.getAttribute('data-open-store'));
+      // T-958: Home's 「env 화면 →」 also names the file row to open.
+      var openGroup = readBtn.getAttribute('data-open-group');
+      if (openedSection && openGroup) selectGroup(openedSection, openGroup);
       clearHashMarks();
       return;
     }
@@ -3570,6 +3675,7 @@ ${ticketSection(data.tickets, data.currentVersion, views)}
 ${wikiSection(data.wiki)}
 ${featuresSection(data)}
 ${artifactsSection(data.artifacts, data.currentVersion, views)}
+${envSection(data)}
 ${glossarySection(data.wiki)}
 ${releaseSection(data.releases || [])}
 ${discSection(discipline)}
