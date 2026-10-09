@@ -300,3 +300,44 @@ describe('fold state script', () => {
     expect(api.prdFoldState()).toEqual({ '/A': false, '/B': true, '/NEW': true })
   })
 })
+
+describe('T-928 PRD screen scanability', () => {
+  const OPEN = (extra: string) => `# PRD: demo\n\n**Slug**: demo  **Created**: 2026-01-01\n\n> file layout note\n\n## v1.13 — open\n\n${extra}`
+  const run = (body: string) => renderPrdReading({ body, currentVersion: 'v1.13', decisionTickets: [], idPrefix: 'prd', deps }) as string
+
+  it('folds the head meta paragraph behind one summary line, closed by default', () => {
+    const html = run(OPEN('### 합격선\n\n- a\n'))
+    expect(html).toMatch(/<details class="pr-pre"><summary>이 문서에 대해 — 만든 날 · 상태 · 파일 구성<\/summary>/)
+    expect(html).not.toMatch(/<details class="pr-pre"[^>]* open/)
+    expect(html).toContain('Slug')
+  })
+
+  it('shows As-Is + To-Be as one fold labelled `As-Is → To-Be`, a paired table with English column heads, open at first', () => {
+    const html = run(OPEN('### As-Is\n\n- 지금 하나\n- 지금 둘\n\n### To-Be\n\n- 뒤 하나\n- 뒤 둘\n\n### 합격선\n\n- a\n'))
+    expect(html).toContain('As-Is → To-Be')
+    expect(html).toContain('2쌍')
+    expect(html).toContain('<th>As-Is</th><th></th><th>To-Be</th>')
+    expect(html).toContain('<td>지금 하나</td><td class="pr-arr">→</td><td>뒤 하나</td>')
+    expect(html).not.toMatch(/<span class="pr-t">As-Is<\/span>/)
+    expect(html).toMatch(/<details class="pr-sec pr-l3" id="prd-s2" data-fold="[^"]*As-Is → To-Be" data-open0="1" open>/)
+  })
+
+  it('leaves As-Is / To-Be as plain folds when the item counts differ or the body is prose', () => {
+    const uneven = run(OPEN('### As-Is\n\n- a\n- b\n\n### To-Be\n\n- c\n'))
+    expect(uneven).not.toContain('pr-pair')
+    expect(uneven).toMatch(/<span class="pr-t">As-Is<\/span>/)
+    const prose = run(OPEN('### As-Is\n\n한 문단 산문이다.\n\n### To-Be\n\n또 산문이다.\n'))
+    expect(prose).not.toContain('pr-pair')
+  })
+
+  it('tags markdown tables with their column count inside a scroll box, and ships the row-scan table CSS', () => {
+    const html = run(OPEN('### 합격선\n\n| 항목 | 문언 |\n|:--|:--|\n| a | b |\n'))
+    // the test md stub flattens tables; the tagger itself is exercised through a md that emits one
+    const md = (t: string) => '<table><thead><tr><th>항목</th><th>문언</th></tr></thead><tbody><tr><td>a</td><td>b</td></tr></tbody></table>' + t.length
+    const tagged = renderPrdReading({ body: OPEN('### 합격선\n\nx\n'), currentVersion: 'v1.13', decisionTickets: [], idPrefix: 'prd', deps: { ...deps, md } }) as string
+    expect(tagged).toContain('<div class="pr-tw"><table class="pr-tbl pr-cols-2">')
+    expect(html).toBeTruthy()
+    expect(PRD_READING_CSS).toContain('table.pr-tbl')
+    expect(PRD_READING_CSS).toContain('border-bottom: 1px solid var(--border-section)')
+  })
+})
