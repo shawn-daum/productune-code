@@ -14,7 +14,7 @@
 // formal '-다' register.
 
 // ---------- A. kept verbatim (relocated only — T-705 §A) ----------
-export const STORE_LABEL = { home: '현재 버전', prd: 'PRD', ticket: '티켓', wiki: '위키', feature: '기능', artifact: '아티팩트', glossary: '용어 사전', release: '릴리즈 노트', disc: '규율' }
+export const STORE_LABEL = { home: '현재 버전', prd: 'PRD', ticket: '티켓', wiki: '위키', feature: '기능', artifact: '아티팩트', env: 'env', glossary: '용어 사전', release: '릴리즈 노트', disc: '규율' }
 
 export const COMMON = {
   close: '닫기',
@@ -31,6 +31,22 @@ export const COMMON = {
 // — this function holds no store-specific vocabulary of its own.
 export function noGroupLabel(count, unit) {
   return `그룹 없음 · 전체 ${count}${unit}`
+}
+
+// T-958: the env screen and Home's env block — strings verbatim from the
+// approved screen set (docs/artifacts/v1.13/define-screen-set.html
+// #screen-env · home env-blk, data-label env.* · home.env.none).
+export const ENV = {
+  set: '설정됨',
+  unset: '비어 있음',
+  note: '키 이름과 설정 여부만 보여요. 값은 이 화면에 없어요.',
+  sample: '견본',
+  noFile: 'env 파일 없음',
+  emptyHead: '이 줄에는 env 파일이 없어요.',
+  emptyDetail: (dir) => `코드 폴더에서 .env 로 시작하는 파일을 찾았어요 — ${dir}`,
+  go: 'env 화면 →',
+  homeNone: '코드 폴더에 env 파일이 없어요.',
+  homeNoneLine: '이 줄의 코드 폴더에 env 파일이 없어요.',
 }
 
 export const PAGE = {
