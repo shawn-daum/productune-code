@@ -137,6 +137,7 @@ function mirrorComplete(homeDir: string): boolean {
   const required = [
     path.join(prdt, 'bin', 'prdt'),
     path.join(prdt, 'bin', 'statusline-prdt.sh'),
+    path.join(prdt, 'bin', 'prdt_safe_fs.py'),
     path.join(prdt, 'doctrine.md'),
     path.join(prdt, 'discipline'),
     ...HOOK_BASENAMES.map((b) => path.join(prdt, 'hooks', b)),
@@ -170,7 +171,7 @@ export function decideBootstrap(paths: BootstrapPaths): BootstrapDecision {
 // ── Provision ─────────────────────────────────────────────────────────────────
 
 function payloadValid(payloadRoot: string): boolean {
-  return ['scripts/prdt', 'scripts/prdt-messages.json', 'scripts/statusline-prdt.sh', 'doctrine.md', 'discipline']
+  return ['scripts/prdt', 'scripts/prdt-messages.json', 'scripts/statusline-prdt.sh', 'scripts/prdt_safe_fs.py', 'doctrine.md', 'discipline']
     .every((rel) => {
       try { return fs.existsSync(path.join(payloadRoot, rel)) } catch { return false }
     })

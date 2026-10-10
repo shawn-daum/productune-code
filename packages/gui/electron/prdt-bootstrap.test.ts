@@ -58,6 +58,7 @@ function seedCompleteMirror(homeDir: string): void {
   fs.writeFileSync(path.join(prdt, 'doctrine.md'), '# doctrine\n')
   fs.writeFileSync(path.join(prdt, 'bin', 'prdt'), '#!/usr/bin/env python3\n', { mode: 0o755 })
   fs.writeFileSync(path.join(prdt, 'bin', 'statusline-prdt.sh'), '#!/bin/bash\n', { mode: 0o755 })
+  fs.writeFileSync(path.join(prdt, 'bin', 'prdt_safe_fs.py'), '# helper\n')
   for (const b of hookManifest.basenames) {
     fs.writeFileSync(path.join(prdt, 'hooks', b), '#!/bin/bash\n', { mode: 0o755 })
   }
@@ -67,6 +68,14 @@ function seedCompleteMirror(homeDir: string): void {
 
 test('T-431: empty HOME (no ~/.prdt) → provision, reason missing-bin', () => {
   expect(decideBootstrap(paths())).toEqual({ action: 'provision', reason: 'missing-bin' })
+})
+
+test('T-906: bin/prdt_safe_fs.py missing from our mirror → provision incomplete-mirror; provisioning restores it', () => {
+  seedCompleteMirror(home)
+  fs.rmSync(path.join(home, '.prdt', 'bin', 'prdt_safe_fs.py'))
+  expect(decideBootstrap(paths())).toEqual({ action: 'provision', reason: 'incomplete-mirror' })
+  expect(runBootstrap({ ...paths() }).ok).toBe(true)
+  expect(fs.existsSync(path.join(home, '.prdt', 'bin', 'prdt_safe_fs.py'))).toBe(true)
 })
 
 test('T-431: complete mirror WITHOUT gui marker (repo install) → skip, never touched', () => {
