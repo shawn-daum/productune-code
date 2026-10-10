@@ -11,9 +11,17 @@
 // `prdt tickets --link`, the auto-open hook), so a project with no
 // `code/packages/viewer` of its own still gets one. Without them, the defaults
 // are this repo's own layout, unchanged.
+//
+// T-908: `--emit` (with `--out`, which then only NAMES the page — nothing is
+// written) prints ONE JSON bundle on stdout instead of writing files:
+// `{ files: [{name, content}…] (data files, page, build id — in write order),
+//    at: [{name, content}…] (every ticket's at/ page),
+//    prune: { dataPrefix, dataSuffix } }`. `prdt` writes the bundle itself through
+// its link-refusing `state_write` and prunes by directory descriptor, so no
+// generator process resolves the output folder's path string (T-850 race).
 import fs from 'node:fs'
 import path from 'node:path'
-import { writeTicketJumpPages } from './lib/jump-pages.mjs'
+import { writeTicketJumpPages, ticketJumpPages } from './lib/jump-pages.mjs'
 import { generate, checkUpToDate, isPastTicketDataFileName, OUTPUT_PATH, REPO_ROOT } from './generate.mjs'
 
 function argValue(name) {
@@ -46,6 +54,17 @@ async function main() {
   }
 
   const { html, dataFiles, buildFile, ticketIds } = await generate({ repoRoot, outputPath })
+  if (process.argv.includes('--emit')) {
+    const base = path.basename(outputPath)
+    const prefix = base.replace(/\.html?$/i, '')
+    const bundle = {
+      files: [...dataFiles, { name: base, content: html }, buildFile],
+      at: ticketJumpPages(ticketIds),
+      prune: { dataPrefix: `${prefix}.tickets-`, dataSuffix: '.js' },
+    }
+    process.stdout.write(JSON.stringify(bundle))
+    return
+  }
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
   // T-885: the past-version data files land before the page that names them.
   const dir = path.dirname(outputPath)
