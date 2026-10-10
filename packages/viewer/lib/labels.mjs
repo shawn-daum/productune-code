@@ -43,8 +43,12 @@ export const ENV = {
   sample: '견본',
   noFile: 'env 파일 없음',
   emptyHead: '이 줄에는 env 파일이 없어요.',
-  emptyDetail: (dir) => `코드 폴더에서 .env · .env.* 파일을 찾았어요 — ${dir}`,
-  go: 'env 화면 →',
+  emptyDetail: (dir) => `찾은 폴더: ${dir} · 찾은 이름: .env · .env.*`,
+  go: 'env 보기',
+  reveal: '키 목록 보기',
+  mask: '키 목록 가리기',
+  sampleKeys: (n) => `견본 · ${n}개 키`,
+  sampleNote: '견본 파일은 설정 여부를 세지 않아요.',
   homeNone: '코드 폴더에 env 파일이 없어요.',
   homeNoneLine: '이 줄의 코드 폴더에 env 파일이 없어요.',
 }
@@ -71,11 +75,14 @@ export const HOME = {
   stageTickets: (n) => `티켓 ${n}`,
   stageDone: (done, total) => `티켓 완료 ${done}/${total}`,
   scope: '스코프',
-  scopeSub: (n) => `이번 버전 ${n}항목`,
-  // T-981: why tickets fall under 「항목 밖」, each count linking to the ticket list.
-  scopeWhyLead: '항목 밖인 이유:',
-  scopeMalformed: (n) => `prd_item 형식이 틀린 티켓 ${n}개`,
-  scopeNoItem: (n) => `prd_item 이 없는 티켓 ${n}개`,
+  scopeSub: (n) => `이번 버전 PRD ${n}항목`,
+  // T-1046: the 「PRD 항목 밖 티켓」 block — one-line definition, then (only when any) the malformed count linking to the ticket list.
+  scopeOutDef: '어느 PRD 항목에도 묶이지 않은 작업 티켓이에요. 티켓의 prd_item 이 비어 있거나 열린 섹션 항목과 맞지 않아요.',
+  scopeOutEmpty: '없음',
+  scopeMalformed: (n) => `형식이 틀린 티켓 ${n}건`,
+  // T-1046 (T-1051 = A): decision records are not scope work, so the count skips them; this note says how many.
+  scopeDecisionNote: (n) => `결정 기록 ${n}건은 항목에 묶지 않아 여기서 세지 않아요.`,
+  scopeDecisionLink: '결정 목록 보기',
   scopeFixTag: (n) => `형식 고치기 ${n}`,
   scopeFixTitle: '버전 없이 키만 적혀 있어요. <버전>#<키> 형식으로 고쳐 주세요.',
   waitDec: '내 결정 대기',
@@ -113,7 +120,7 @@ export const HOME = {
 // no PRD heading to read a label from, so it keeps its own hardcoded label,
 // same as every other genuine UI copy string in this file (§A keep, PRD.md's
 // own existing "항목 밖" idiom reused verbatim).
-export const PROGRESS_OUT_OF_SCOPE_LABEL = '항목 밖'
+export const PROGRESS_OUT_OF_SCOPE_LABEL = 'PRD 항목 밖 티켓'
 
 // T-705 §B: spec_since 라벨을 영문 키 그대로 노출하던 것을 '시작 버전'으로.
 export const DETAIL_FIELD_LABELS = {
@@ -308,6 +315,12 @@ export const PRD_READING = {
   pairTitle: 'As-Is → To-Be',
   pairHeads: ['As-Is', 'To-Be'],
   pairCount: (n) => `${n}쌍`,
+  // T-1048: pairs grouped by the PRD's `####` meaning groups; pairs whose To-Be starts with the
+  // `(v1.14 로 옮김, T-1021)` prefix gather into one muted group at the bottom.
+  groupCount: (g, n) => `묶음 ${g} · ${n}쌍`,
+  movedPrefix: /^\((v\d[\d.]*) 로 옮김,\s*(T-\d+)\)\s*/,
+  movedTag: (v, t) => `${v} 로 옮김 · ${t}`,
+  movedTitle: '옮긴 항목',
   // The PRD contract's own section names this screen keys off (never copy shown to a reader):
   // sections folded open at first (under the open version), the §Open Questions heading,
   // the §What heading, and the question-group titles.

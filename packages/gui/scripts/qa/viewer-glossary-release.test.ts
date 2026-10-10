@@ -85,7 +85,7 @@ describe('activity bar (T-880 = A)', () => {
     const html = render(data())
     const nav = html.slice(html.indexOf('<nav class="activity">'), html.indexOf('</nav>'))
     const keys = [...nav.matchAll(/data-store="([^"]+)" title="([^"]+)"/g)].map((m) => m[1])
-    expect(keys).toEqual(['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'env', 'glossary', 'release', 'disc']) // T-958: env after 아티팩트
+    expect(keys).toEqual(['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release', 'disc']) // T-1047: env left the activity bar
     expect(nav).toContain('title="용어 사전" aria-label="용어 사전"')
     expect(nav).toContain('title="릴리즈 노트" aria-label="릴리즈 노트"')
   })
