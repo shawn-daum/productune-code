@@ -308,6 +308,12 @@ export const PRD_READING = {
   pairTitle: 'As-Is → To-Be',
   pairHeads: ['As-Is', 'To-Be'],
   pairCount: (n) => `${n}쌍`,
+  // T-1048: pairs grouped by the PRD's `####` meaning groups; pairs whose To-Be starts with the
+  // `(v1.14 로 옮김, T-1021)` prefix gather into one muted group at the bottom.
+  groupCount: (g, n) => `묶음 ${g} · ${n}쌍`,
+  movedPrefix: /^\((v\d[\d.]*) 로 옮김,\s*(T-\d+)\)\s*/,
+  movedTag: (v, t) => `${v} 로 옮김 · ${t}`,
+  movedTitle: '옮긴 항목',
   // The PRD contract's own section names this screen keys off (never copy shown to a reader):
   // sections folded open at first (under the open version), the §Open Questions heading,
   // the §What heading, and the question-group titles.
