@@ -47,6 +47,7 @@ import {
   OPTION_CARD,
   ENV,
 } from './labels.mjs'
+import { mermaidBlock, hasMermaid, mermaidScript, MERMAID_CSS } from './mermaid.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
 import { HOME_STAGES, stageSegments, buildHomeGraph, layoutHomeGraph, waitLists, compareTicketIds, NODE_W, NODE_H } from './home-graph.mjs'
 import { renderPrdReading, openDecisionTickets, PRD_READING_CSS, PRD_READING_SCRIPT } from './prd-reading.mjs'
@@ -470,6 +471,13 @@ hardenedRenderer.text = function (token) {
     }
   }
   return defaultTextRender.call(this, token)
+}
+// T-1049 (T-1056 = A): a ```mermaid fence becomes the same inert diagram block the guide's `flow`
+// uses (lib/mermaid.mjs); every other fence keeps marked's own renderer.
+const defaultCodeRender = hardenedRenderer.code
+hardenedRenderer.code = function (token) {
+  if (token && typeof token === 'object' && /^mermaid(\s|$)/.test(token.lang || '')) return mermaidBlock(token.text || '') + '\n'
+  return defaultCodeRender.call(this, token)
 }
 hardenedRenderer.codespan = function ({ text }) {
   if (linkContext.docs && pageDocTargets.has(text)) return `<code>${docPathAnchor(text, escapeHtml(text))}</code>`
@@ -1679,7 +1687,7 @@ function featureEvidence(e, anchors) {
     .join(' · ')
 }
 
-/** Detail order (T-808 outcome): definition and 「함께 쓰는 기능」 first, then the spec body (spec file present) or 근거 티켓. */
+/** Detail order (T-808 outcome): definition and 「연관 기능」 first, then the spec body (spec file present) or 근거 티켓. */
 // T-883: feature keys whose detail carries a 「읽기」 field, and the store each opens.
 const FEATURE_READ_STORE = { glossary: 'glossary', 'release-notes': 'release' }
 
@@ -1708,7 +1716,7 @@ export function specTruthCount(body) {
   return found ? n : null
 }
 
-/** T-964: the spec link under 어떻게 동작하나 — a fold, collapsed, that opens the spec body in place. */
+/** T-964: the spec link under 동작 방식 — a fold, collapsed, that opens the spec body in place. */
 function featureSpecFold(e, repoRootHref) {
   if (!e.spec) return ''
   const n = specTruthCount(e.spec.body)
@@ -1716,20 +1724,54 @@ function featureSpecFold(e, repoRootHref) {
   return `<details class="fd-spec"><summary class="fd-more">${escapeHtml(label)}</summary><div class="v-body">${md(e.spec.body, path.dirname(e.spec.rel), repoRootHref)}</div></details>`
 }
 
-/** T-964: the five guide sections, or the new-feature empty notice when the guide has no text. */
+/**
+ * T-1049 (T-1055 = A): the surface map over a numbered list. Draws only when some ux item's `at`
+ * names a known surface (`viewer.prd`, or a bare `viewer`); an item whose `at` is unknown or absent
+ * stays a plain numbered line. `items` = [{html, at}].
+ */
+function surfaceMapHtml(items) {
+  const marks = new Map()  // 'surface.part' or 'surface' -> [item numbers]
+  const known = new Set()
+  for (const s of FEATURE.surfaces) {
+    known.add(s.key)
+    for (const [part] of s.parts) known.add(`${s.key}.${part}`)
+  }
+  items.forEach((it, i) => { if (known.has(it.at)) marks.set(it.at, [...(marks.get(it.at) || []), i + 1]) })
+  if (marks.size === 0) return ''
+  const badge = (ns) => ns.map((n) => `<span class="fd-bn">${n}</span>`).join('')
+  const tiles = FEATURE.surfaces.map((s) => {
+    const tileNs = marks.get(s.key) || []
+    const anyPart = tileNs.length > 0 || s.parts.some(([part]) => marks.has(`${s.key}.${part}`))
+    const parts = s.parts.map(([part, name]) => {
+      const ns = marks.get(`${s.key}.${part}`) || []
+      return `<div class="fd-sp${ns.length ? ' hit' : ''}">${badge(ns)}${escapeHtml(name)}</div>`
+    }).join('')
+    return `<div class="fd-stile${anyPart ? ' hit' : ''}"><div class="fd-st">${badge(tileNs)}${escapeHtml(s.name)}</div>${parts}</div>`
+  }).join('')
+  return `<div class="fd-smap">${tiles}</div>`
+}
+
+/** T-964: the guide sections (T-1049: document headings, a surface map under 화면 구성, a flow diagram under 동작 방식), or the new-feature empty notice when the guide has no text. */
 function featureGuideHtml(e, anchors, specFold = '') {
   const g = e.guide
   if (!g) return `<p class="fd-empty"><b>${escapeHtml(FEATURE.guideEmptyHead)}</b> <span>${escapeHtml(FEATURE.guideEmptyDetail)}</span></p>${specFold}`
-  const sec = (key, body) => `<div class="fd-sec"><h2 class="pill pill-heading-2">${escapeHtml(FEATURE.guide[key])}</h2>${body}</div>`
+  const sec = (key, body) => `<div class="fd-sec"><h2 class="fd-h">${escapeHtml(FEATURE.guide[key])}</h2>${body}</div>`
   const ul = (items) => `<ul class="fd-list">${items.map((x) => `<li>${x}</li>`).join('')}</ul>`
   const noScreen = FEATURE.noScreenKinds.includes(e.kind)
-  const ux = [...(noScreen && !(g.ux[0] || '').startsWith(FEATURE.noScreen) ? [escapeHtml(FEATURE.noScreen)] : []), ...g.ux.map(guideInline)]
+  const ux = [...(noScreen && !(g.ux[0]?.text || '').startsWith(FEATURE.noScreen) ? [{ html: escapeHtml(FEATURE.noScreen), at: '' }] : []), ...g.ux.map((u) => ({ html: guideInline(u.text), at: u.at }))]
+  const uxBody = () => {
+    const map = surfaceMapHtml(ux)
+    return map
+      ? map + `<ol class="fd-ol">${ux.map((u, i) => `<li><span class="fd-bn">${i + 1}</span><span>${u.html}</span></li>`).join('')}</ol>`
+      : ul(ux.map((u) => u.html))
+  }
+  const flow = g.flow ? `<div class="fd-flow">${mermaidBlock(g.flow)}</div>` : ''
   const out = []
   if (g.when.length) out.push(sec('when', ul(g.when.map(guideInline))))
-  if (ux.length) out.push(sec('ux', ul(ux)))
+  if (ux.length) out.push(sec('ux', uxBody()))
   if (g.logic.length) {
-    out.push(sec('logic', ul(g.logic.map((l) => guideInline(l.text) + (l.ground.length ? `<span class="cn-g">${ticketIdLinks(escapeHtml(l.ground.join(' · ')), anchors)}</span>` : ''))) + specFold))
-  } else if (specFold) out.push(sec('logic', specFold))
+    out.push(sec('logic', flow + ul(g.logic.map((l) => guideInline(l.text) + (l.ground.length ? `<span class="cn-g">${ticketIdLinks(escapeHtml(l.ground.join(' · ')), anchors)}</span>` : ''))) + specFold))
+  } else if (flow || specFold) out.push(sec('logic', flow + specFold))
   out.push(sec('limits', g.limits.length ? ul(g.limits.map(guideInline)) : `<p class="cn-empty">${escapeHtml(FEATURE.limitsNone)}</p>`))
   if (g.example) out.push(sec('example', `<p class="fd-ex">${guideInline(g.example)}</p>`))
   return out.join('')
@@ -1753,9 +1795,9 @@ function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
     ...e.rev.map((k) => featureLinkItem(model, k, undefined, undefined, anchors)),
   ]
   const guide = lean ? '' : featureGuideHtml(e, anchors, featureSpecFold(e, repoRootHref))
-  const links = lean ? '' : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.linksHeading)}</h2>` +
+  const links = lean ? '' : `<h2 class="fd-h">${escapeHtml(FEATURE.linksHeading)}</h2>` +
     (items.length ? `<ul class="cn-list">${items.join('')}</ul>` : `<p class="cn-empty">${escapeHtml(FEATURE.linksEmpty)}</p>`)
-  const tail = `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
+  const tail = `<h2 class="fd-h">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
   return `${lean ? '' : `<p class="def-lead">${escapeHtml(e.def || '')}</p>`}${meta}${kdef}<div class="detail-doc body-prose">${guide}${links}${tail}</div>`
 }
 
@@ -2898,8 +2940,19 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .store-section[data-store="feature"] .area-a { color: var(--accent); text-decoration: underline; cursor: pointer; background: none; border: none; padding: 0; font: inherit; }
 .store-section[data-store="feature"] .kind-def { margin: calc(-1 * var(--space-4)) 0 var(--space-16); font-size: 12px; color: var(--text-tertiary); }
 .store-section[data-store="feature"] .def-lead { font-size: 14.5px; line-height: 1.65; color: var(--text-primary); margin: 0 0 var(--space-16); }
-.store-section[data-store="feature"] .detail-doc h2.pill { margin: var(--space-24) 0 var(--space-8); }
-.store-section[data-store="feature"] .detail-doc h2.pill:first-child { margin-top: 0; }
+.store-section[data-store="feature"] .detail-doc h2.fd-h { font-size: 13.5px; font-weight: 700; color: var(--text-primary); margin: var(--space-24) 0 var(--space-8); padding-bottom: var(--space-6); border-bottom: 1px solid var(--border-section); }
+.store-section[data-store="feature"] .detail-doc h2.fd-h:first-child { margin-top: 0; }
+.store-section[data-store="feature"] .fd-smap { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-8); margin: 0 0 var(--space-12); }
+.store-section[data-store="feature"] .fd-stile { border: 1px solid var(--border-inline); border-radius: var(--radius-8); padding: var(--space-8) var(--space-10); background: var(--bg-base); min-height: 96px; }
+.store-section[data-store="feature"] .fd-stile.hit { border-color: var(--accent); }
+.store-section[data-store="feature"] .fd-st { display: flex; align-items: center; gap: var(--space-4); font-size: 11px; font-weight: 700; color: var(--text-tertiary); margin-bottom: var(--space-6); }
+.store-section[data-store="feature"] .fd-sp { display: flex; align-items: center; gap: var(--space-6); font-size: 11.5px; color: var(--text-quaternary); padding: 2px var(--space-4); border-radius: var(--radius-4); }
+.store-section[data-store="feature"] .fd-sp.hit { color: var(--text-primary); background: var(--accent-subtle); font-weight: 600; }
+.store-section[data-store="feature"] .fd-bn { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); color: var(--accent-contrast); font-size: 9.5px; font-weight: 700; }
+.store-section[data-store="feature"] .fd-ol { list-style: none; margin: 0; padding: 0; font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
+.store-section[data-store="feature"] .fd-ol li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--space-6); margin: var(--space-4) 0; align-items: baseline; }
+.store-section[data-store="feature"] .fd-flow { margin: 0 0 var(--space-8); }
+.store-section[data-store="feature"] .fd-ol code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
 .store-section[data-store="feature"] .cn-list { list-style: none; margin: 0; padding: 0; }
 .store-section[data-store="feature"] .cn-item { display: grid; grid-template-columns: minmax(180px, auto) 1fr; gap: 2px var(--space-16); align-items: baseline; padding: var(--space-10) 0; border-bottom: 1px solid var(--border-item); }
 .store-section[data-store="feature"] .cn-item:last-child { border-bottom: none; }
@@ -3797,24 +3850,7 @@ export function renderPage({
     build,
   }
 
-  return `<!doctype html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="${views.length > 0 ? CSP_CONTENT_LINES : CSP_CONTENT}">
-<title>${pageTitle}</title>
-<meta property="og:title" content="${pageTitle}">
-<script>${THEME_HEAD_SCRIPT}</script>
-<style>
-${fontFaceCss}
-${TEMPLATE_CSS}
-${emitRootThemeCss(dark, light)}${views.length > 0 ? LINES_CSS : ''}
-</style>
-</head>
-<body>
-<!-- sha256:${escapeHtml(tokensSha256)} -->
-<div class="app-shell">
-${activityBar('home')}
+  const bodyHtml = `${activityBar('home')}
 ${homeSection(data, repoRootHref)}
 ${prdSection(data.prd, data.currentVersion, repoRootHref, data.tickets, views)}
 ${ticketSection(data.tickets, data.currentVersion, views)}
@@ -3824,10 +3860,34 @@ ${artifactsSection(data.artifacts, data.currentVersion, views)}
 ${envSection(data)}
 ${glossarySection(data.wiki)}
 ${releaseSection(data.releases || [])}
-${discSection(discipline)}
+${discSection(discipline)}`
+  const detailScript = detailDataScript(detailData)
+  // T-1049 (T-1056 = A): mermaid ships only on a page that carries a diagram block.
+  const mm = hasMermaid(bodyHtml, detailScript) ? mermaidScript() : null
+  const csp = views.length > 0 ? CSP_CONTENT_LINES : CSP_CONTENT
+  const cspMeta = mm ? csp.replace("'strict-dynamic'", `'sha256-${mm.sha256}' 'strict-dynamic'`) : csp
+
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${cspMeta}">
+<title>${pageTitle}</title>
+<meta property="og:title" content="${pageTitle}">
+<script>${THEME_HEAD_SCRIPT}</script>
+<style>
+${fontFaceCss}
+${TEMPLATE_CSS}
+${emitRootThemeCss(dark, light)}${views.length > 0 ? LINES_CSS : ''}${mm ? MERMAID_CSS : ''}
+</style>
+</head>
+<body>
+<!-- sha256:${escapeHtml(tokensSha256)} -->
+<div class="app-shell">
+${bodyHtml}
 </div>
-${detailDataScript(detailData)}
-<script>${views.length > 0 ? INTERACTION_SCRIPT_LINES : INTERACTION_SCRIPT}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}
+${detailScript}
+<script>${views.length > 0 ? INTERACTION_SCRIPT_LINES : INTERACTION_SCRIPT}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}${mm ? `\n<script>${mm.script}</script>` : ''}
 </body>
 </html>
 `
