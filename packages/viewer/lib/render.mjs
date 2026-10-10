@@ -2173,7 +2173,8 @@ function homeScope(data, currentTickets) {
       fixCount.set(raw, (fixCount.get(raw) || 0) + 1)
     } else {
       outOfScope.push(t)
-      if (raw === '') noItem += 1
+      // Decision tickets record user choices, not scope work — never counted as a missing prd_item.
+      if (raw === '') { if (t.frontmatter.type !== 'decision') noItem += 1 }
       else if (!/^[^#]+#[^#]+$/.test(raw)) malformed += 1
     }
   }
