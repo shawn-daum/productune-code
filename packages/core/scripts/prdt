@@ -8721,7 +8721,16 @@ def meta_bridge_staleness_warnings():
     (an installed-only machine with no nearby checkout) is silence, same
     posture as those checks' "no repo to compare against" — this check can
     only ever fire from a machine that also has the source, since a build
-    artifact needs a build INPUT to be stale against."""
+    artifact needs a build INPUT to be stale against.
+
+    T-1064: `PRDT_BRIDGE_CHECK=0` turns the check into "could not look"
+    (Skipped, never a silent clean). Doctor tests set it: the bridge judged
+    here is a REAL checkout's (PRDT_REPO, else self-reference), so a track
+    worktree whose bridge predates freshly merged sources leaked a violation
+    into every sandboxed `violations=0` assertion. Same kill-switch shape as
+    `PRDT_META_BACKUP=0`; unset everywhere outside tests."""
+    if os.environ.get("PRDT_BRIDGE_CHECK") == "0":
+        return Skipped("PRDT_BRIDGE_CHECK=0 — bridge staleness not judged (test sandbox switch)")
     for base in _repo_root_candidates(prefer_prdt_repo=True):
         src_dir = base / "src"
         if not (src_dir / "bin" / "meta-cli.ts").is_file():

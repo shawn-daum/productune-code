@@ -226,6 +226,22 @@ describe.skipIf(!PYTHON3)('prdt doctor — meta-cli bridge staleness (T-731)', (
     expect(out).toMatch(/npm run build/)
   })
 
+  // T-1064: hermetic doctor tests (prdt-doctor-ticket-frame) set
+  // PRDT_BRIDGE_CHECK=0 so a real checkout's bridge mtime cannot leak into their
+  // verdict. The switch turns the check into "could not look" — never a silent
+  // clean — and the same stale fixture without it still warns.
+  test('PRDT_BRIDGE_CHECK=0 → check skipped as could-not-look; unset → same stale bridge still warns', () => {
+    runInit()
+    const cli = cliWithBridgeFixture({
+      srcFiles: { 'bin/meta-cli.ts': -60 },
+      bridgeOffsetSec: -3600,
+    })
+    const off = doctor(cli, { PRDT_BRIDGE_CHECK: '0' })
+    expect(off).not.toMatch(/meta-cli bridge STALE/)
+    expect(off).toMatch(/could not look · meta-cli bridge staleness: PRDT_BRIDGE_CHECK=0/)
+    expect(doctor(cli)).toMatch(/meta-cli bridge STALE/)
+  })
+
   test('bridge newer than every src file → silent (no warning)', () => {
     runInit()
     const cli = cliWithBridgeFixture({
