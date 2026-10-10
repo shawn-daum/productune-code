@@ -1620,6 +1620,28 @@ function featureReadField(data, e) {
   return `<button type="button" class="area-a read-link" data-open-store="${store}">${escapeHtml(text)}</button>`
 }
 
+/** T-964: inline `code` spans in guide text (screen strings · commands stay code-shaped). */
+const guideInline = (t) => escapeHtml(t).replace(/`([^`]+)`/g, '<code>$1</code>')
+
+/** T-964: the five guide sections, or the new-feature empty notice when the guide has no text. */
+function featureGuideHtml(e, anchors) {
+  const g = e.guide
+  if (!g) return `<p class="fd-empty"><b>${escapeHtml(FEATURE.guideEmptyHead)}</b> <span>${escapeHtml(FEATURE.guideEmptyDetail)}</span></p>`
+  const sec = (key, body) => `<div class="fd-sec"><h2 class="pill pill-heading-2">${escapeHtml(FEATURE.guide[key])}</h2>${body}</div>`
+  const ul = (items) => `<ul class="fd-list">${items.map((x) => `<li>${x}</li>`).join('')}</ul>`
+  const noScreen = FEATURE.noScreenKinds.includes(e.kind)
+  const ux = [...(noScreen ? [escapeHtml(FEATURE.noScreen)] : []), ...g.ux.map(guideInline)]
+  const out = []
+  if (g.when.length) out.push(sec('when', ul(g.when.map(guideInline))))
+  if (ux.length) out.push(sec('ux', ul(ux)))
+  if (g.logic.length) {
+    out.push(sec('logic', ul(g.logic.map((l) => guideInline(l.text) + (l.ground.length ? `<span class="cn-g">${ticketIdLinks(escapeHtml(l.ground.join(' · ')), anchors)}</span>` : '')))))
+  }
+  out.push(sec('limits', g.limits.length ? ul(g.limits.map(guideInline)) : `<p class="cn-empty">${escapeHtml(FEATURE.limitsNone)}</p>`))
+  if (g.example) out.push(sec('example', `<p class="fd-ex">${guideInline(g.example)}</p>`))
+  return out.join('')
+}
+
 function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
   const area = model.areas.find((a) => a.key === e.area)
   const kind = model.kinds.find((k) => k.key === e.kind)
@@ -1637,12 +1659,13 @@ function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
     ...e.links.map((l) => featureLinkItem(model, l.to, l.text || '', l.ground || '', anchors)),
     ...e.rev.map((k) => featureLinkItem(model, k, undefined, undefined, anchors)),
   ]
+  const guide = lean ? '' : featureGuideHtml(e, anchors)
   const links = lean ? '' : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.linksHeading)}</h2>` +
     (items.length ? `<ul class="cn-list">${items.join('')}</ul>` : `<p class="cn-empty">${escapeHtml(FEATURE.linksEmpty)}</p>`)
   const tail = e.spec
     ? `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.specHeading)}</h2><div class="v-body">${md(e.spec.body, path.dirname(e.spec.rel), repoRootHref)}</div>`
     : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
-  return `${lean ? '' : `<p class="def-lead">${escapeHtml(e.def || '')}</p>`}${meta}${kdef}<div class="detail-doc body-prose">${links}${tail}</div>`
+  return `${lean ? '' : `<p class="def-lead">${escapeHtml(e.def || '')}</p>`}${meta}${kdef}<div class="detail-doc body-prose">${guide}${links}${tail}</div>`
 }
 
 function featureDetailEntries(data, anchors, repoRootHref) {
@@ -2771,6 +2794,11 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .store-section[data-store="feature"] .cn-t { font-size: 13px; color: var(--text-secondary); }
 .store-section[data-store="feature"] .cn-g { display: block; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-quaternary); margin-top: 2px; }
 .store-section[data-store="feature"] .cn-empty { font-size: 12.5px; color: var(--text-tertiary); margin: 0; }
+.store-section[data-store="feature"] .fd-list { margin: 0; padding-left: var(--space-16); font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
+.store-section[data-store="feature"] .fd-list code, .store-section[data-store="feature"] .fd-ex code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
+.store-section[data-store="feature"] .fd-list .cn-g { display: inline; margin-left: var(--space-8); font-size: 11.5px; color: var(--text-tertiary); }
+.store-section[data-store="feature"] .fd-ex { margin: 0; font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
+.store-section[data-store="feature"] .fd-empty { margin: 0 0 var(--space-16); font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); background: var(--bg-surface-on); padding: var(--space-8) var(--space-12); border-radius: var(--radius-4); }
 .store-section[data-store="feature"] .ev-text { font-size: 13px; color: var(--text-secondary); line-height: 1.7; margin: 0; }
 .store-section[data-store="feature"] .ev-text code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
 .store-section[data-store="feature"] .read-link { font-size: 12px; font-weight: 600; }
