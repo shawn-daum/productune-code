@@ -41,6 +41,7 @@
 //     ticket, kind, status, lang, added_at) so the page still SAYS what
 //     exists and where, per acceptance line 3's "says so … rather than
 //     rendering half a document" — no row is ever a half-rendered artifact.
+import { collectDisciplineLoad } from './discipline-load.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -775,6 +776,8 @@ export function collectAll(repoRoot, { disciplineRoot } = {}) {
     artifacts: collectArtifacts(repoRoot),
     releases: collectReleases(repoRoot),
     discipline: collectDiscipline(repoRoot, disciplineRoot === undefined ? undefined : { disciplineRoot }),
+    // T-1050: the load diagram's facts (plan · annex when · menus · hook roster).
+    disciplineLoad: collectDisciplineLoad(repoRoot, { disciplineRoot: disciplineRoot === undefined ? defaultDisciplineRoot() : disciplineRoot }),
     env: collectEnv(repoRoot, homeEnvDir(repoRoot, cfg)),
   }
 }

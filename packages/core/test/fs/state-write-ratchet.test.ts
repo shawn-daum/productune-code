@@ -156,6 +156,8 @@ const ALLOW: Record<string, number> = {
   'core/src/settings/plan-tier.ts': 1,
   'core/src/settings/register.ts': 1,
   'core/src/settings/ui-settings.ts': 1,
+  // viewer: doctrine copy into a fresh mkdtemp dir used as the throwaway PRDT_HOME for `--plan` (T-1050) — outside any project / state dir
+  'viewer/lib/discipline-load.mjs': 1,
   'gui/electron/chat-store.ts': 2,
   'gui/electron/claude-installer.ts': 1,
   'gui/electron/ipc/attachments.ts': 1,
