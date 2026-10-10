@@ -10159,14 +10159,6 @@ FEATURE_T3_MIN_DIRS = 2
 # the shared CLI keeps every other project on this machine exactly as it was.
 FEATURE_KEY_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 FEATURE_KINDS = ("feature", "area", "tag")
-# W6's constants set: the stems a `term--<x>` page may carry without `x` being
-# a project feature. Design §1.4 names the four prdt-global concepts whose
-# term pages stay (`dispatch · persona · stage · ticket`); the members of the
-# closed vocabularies the CLI already holds join them, so `term--designer` or
-# `term--build` explains a known name too. A `feature--<x>` page or a spec file
-# never gets this exemption — those are features by definition.
-FEATURE_VOCAB_CONSTANTS = frozenset(("dispatch", "persona", "stage", "ticket")
-                                    + PERSONAS + STAGES + TICKET_TYPES)
 _FEATURE_FM_LINE_RE = re.compile(r"^(feature:[ \t]*)(['\"]?)([^'\"\s][^'\"\n]*?)\2([ \t]*)$")
 
 
@@ -10297,18 +10289,19 @@ def feature_vocab_warnings(root, tickets, cfg, vocab, problems, specs):
         warns.append(f"feature: '{value}' is not a .prdt/config.json features.vocab key ({where})"
                      + (f" — did you mean '{hint}'?" if hint else "")
                      + " — add a vocab line first, or fix the value")
-    # W6 — a name that claims to BE a feature (spec file, `feature--` page) or
-    # to explain one (`term--` page) but names nothing the vocab knows. term--
-    # stems may also be prdt's own constants (design §1.4); the others may not.
-    def w6(what, stem, allow_constants):
-        if stem in vocab or (allow_constants and stem in FEATURE_VOCAB_CONSTANTS):
+    # W6 — a name that claims to BE a feature (spec file, `feature--` page) must
+    # name a vocab key. A `term--<slug>` page is a glossary entry (T-1029 = A):
+    # any stem is legal, so new terms need no vocab line. It warns only on a
+    # collision — the stem IS a vocab key that carries a `label`, yet the page
+    # title does not contain that label, i.e. the page uses a feature's name
+    # for another meaning. Prdt constants hold no label, so they never collide.
+    def w6(what, stem):
+        if stem in vocab:
             return
-        tail = " nor a prdt constant" if allow_constants else ""
-        if stem in aliases:
-            tail += f" — '{stem}' is an alias of '{aliases[stem]}'"
+        tail = f" — '{stem}' is an alias of '{aliases[stem]}'" if stem in aliases else ""
         warns.append(f"feature: {what} names no features.vocab key{tail}")
     for name in sorted(specs):
-        w6(f"docs/features/{name}.md", name, False)
+        w6(f"docs/features/{name}.md", name)
     for pg in scan_wiki(root) + scan_machine_wiki():
         name = pg["name"]
         bare = name[len(MACHINE):] if name.startswith(MACHINE) else name
@@ -10318,7 +10311,14 @@ def feature_vocab_warnings(root, tickets, cfg, vocab, problems, specs):
         if kind not in ("feature", "term"):
             continue
         label = "machine wiki page" if name.startswith(MACHINE) else "wiki page"
-        w6(f"{label} {name}", stem, kind == "term")
+        if kind == "feature":
+            w6(f"{label} {name}", stem)
+            continue
+        want = (vocab.get(stem) or {}).get("label")
+        if isinstance(want, str) and want.strip() and want.strip() not in (pg.get("title") or ""):
+            warns.append(f"feature: {label} {name} reuses features.vocab key '{stem}' "
+                         f"but its title does not carry the key's label '{want.strip()}' "
+                         f"— a different meaning needs a different stem")
     # W3' — the old W3 (a non_features entry that got promoted anyway), absorbed
     # by `kind`: an `area` has no spec by definition, so one on disk is rot.
     for key in sorted(vocab):
