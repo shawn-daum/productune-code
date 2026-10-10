@@ -17,7 +17,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
-const PRDT = path.join(CORE_ROOT, 'scripts', 'prdt')
+// PRDT_T905_CLI points the suite at another script (the pre-fix control run).
+const PRDT = process.env.PRDT_T905_CLI ?? path.join(CORE_ROOT, 'scripts', 'prdt')
 const VICTIM_BODY = 'VICTIM ORIGINAL\n'
 
 const DRIVER = `
@@ -61,8 +62,11 @@ function py(code: string, umask?: number): { status: number | null; out: string;
   })
   return { status: r.status, out: r.stdout, err: r.stderr }
 }
-function prdt(args: string[], cwd = P) {
-  const r = spawnSync('python3', [PRDT, ...args], { cwd, env, encoding: 'utf-8', timeout: subprocessTimeout('cli') })
+function prdt(args: string[], cwd = P, umask?: string) {
+  const r = umask
+    ? spawnSync('sh', ['-c', `umask ${umask}; exec python3 "$0" "$@"`, PRDT, ...args],
+        { cwd, env, encoding: 'utf-8', timeout: subprocessTimeout('cli') })
+    : spawnSync('python3', [PRDT, ...args], { cwd, env, encoding: 'utf-8', timeout: subprocessTimeout('cli') })
   return { status: r.status, out: r.stdout, err: r.stderr }
 }
 const victimIntact = () => expect(fs.readFileSync(victim, 'utf-8')).toBe(VICTIM_BODY)
@@ -132,9 +136,11 @@ describe('state_write — modes', () => {
       expect(fs.readFileSync(f, 'utf-8')).toBe('new\n')
     }
   })
-  it('a new file is 0644 regardless of umask; an explicit mode is exact', () => {
+  it('a new file is 0666 & ~umask; an explicit mode is exact', () => {
     expect(py(`m.state_write(P, P / ".prdt/n.txt", "x\\n")`, 0o077).status).toBe(0)
-    expect(mode(path.join(P, '.prdt', 'n.txt'))).toBe(0o644)
+    expect(mode(path.join(P, '.prdt', 'n.txt'))).toBe(0o600)
+    expect(py(`m.state_write(P, P / ".prdt/n2.txt", "x\\n")`, 0o022).status).toBe(0)
+    expect(mode(path.join(P, '.prdt', 'n2.txt'))).toBe(0o644)
     expect(py(`m.state_write(P, P / ".prdt/s.txt", "x\\n", mode=0o600)`, 0o022).status).toBe(0)
     expect(mode(path.join(P, '.prdt', 's.txt'))).toBe(0o600)
   })
@@ -283,6 +289,88 @@ describe('prdt migrate — legacy lite project', () => {
   })
 })
 
+describe('prdt init — .prdt is a link', () => {
+  function clone(): string {
+    const c = path.join(W, 'clone2')
+    fs.mkdirSync(c)
+    execFileSync('git', ['init', '-q'], { cwd: c })
+    return c
+  }
+  it('.prdt -> outside dir holding config.json: refused, target bytes unchanged', () => {
+    const c = clone()
+    fs.writeFileSync(path.join(outDir, 'config.json'), VICTIM_BODY)
+    fs.symlinkSync(outDir, path.join(c, '.prdt'))
+    const r = prdt(['init', '--yes', '--slug', 'x'], c)
+    expect(r.status).not.toBe(0)
+    expect(fs.readFileSync(path.join(outDir, 'config.json'), 'utf-8')).toBe(VICTIM_BODY)
+    expect(fs.readdirSync(outDir)).toEqual(['config.json'])
+  })
+  it('dangling .prdt link: nothing created at the target', () => {
+    const c = clone()
+    const target = path.join(W, 'nowhere')
+    fs.symlinkSync(target, path.join(c, '.prdt'))
+    expect(prdt(['init', '--yes', '--slug', 'x'], c).status).not.toBe(0)
+    expect(fs.existsSync(target)).toBe(false)
+  })
+})
+
+describe('new files follow the umask (0666 & ~umask)', () => {
+  it('prdt init under umask 077: po-state.json, inbox.md, log.md are 0600', () => {
+    const c = path.join(W, 'clone3')
+    fs.mkdirSync(c)
+    execFileSync('git', ['init', '-q'], { cwd: c })
+    expect(prdt(['init', '--yes', '--slug', 'x'], c, '077').status).toBe(0)
+    expect(mode(path.join(c, '.prdt', 'po-state.json'))).toBe(0o600)
+    expect(mode(path.join(c, 'docs', 'wiki', 'inbox.md'))).toBe(0o600)
+    expect(mode(path.join(c, 'docs', 'wiki', 'log.md'))).toBe(0o600)
+  })
+  it('prdt migrate under umask 077: config.json, briefing flag, log.md are 0600', () => {
+    const c = path.join(W, 'legacy2')
+    fs.mkdirSync(path.join(c, '.productune-lite'), { recursive: true })
+    fs.writeFileSync(path.join(c, '.productune-lite', 'po-state.json'),
+      JSON.stringify({ stage: 'define', version: 'v1', current_task: null }))
+    execFileSync('git', ['init', '-q'], { cwd: c })
+    expect(prdt(['migrate'], c, '077').status).toBe(0)
+    for (const f of ['.prdt/config.json', '.prdt/migration-briefing-pending', 'docs/wiki/log.md']) {
+      expect(mode(path.join(c, f))).toBe(0o600)
+    }
+  })
+  it('track record under umask 077 is 0600', () => {
+    const r = py(`
+import os
+code = P / "code"; code.mkdir()
+os.environ["PRDT_HOME"] = str(P / "ph")
+m._track_record_write(code, "T-9", "track/T-9", "dev")
+print(oct(os.stat(m._track_record_path(code, "T-9")).st_mode & 0o7777))
+`, 0o077)
+    expect(r.out.trim()).toBe('0o600')
+  })
+})
+
+describe('open_db — a file swapped in during connect is refused', () => {
+  it('a different inode at index.db after connect is detected', () => {
+    const other = path.join(W, 'other.db')
+    const r = py(`
+import os, sqlite3
+m.open_db(P).close()
+dbp = P / ".prdt" / "index.db"
+other = Path(${JSON.stringify(other)})
+other.write_bytes(b"")
+real = sqlite3.connect
+class Shim:
+    connect = staticmethod(lambda *a, **k: (os.replace(other, dbp), real(*a, **k))[1])
+    OperationalError = sqlite3.OperationalError
+m.sqlite3 = Shim
+try:
+    m.open_db(P)
+    print("OPENED")
+except m.StateLinkError as e:
+    print("REFUSED", e)
+`)
+    expect(r.out).toMatch(/REFUSED/)
+  })
+})
+
 describe('_exclude_add — the track exclude line', () => {
   const call = `
 gd = P / ".prdt" / "meta.git"
@@ -324,7 +412,7 @@ describe('features migrate — ticket rewrite goes through state_write', () => {
     fs.mkdirSync(path.join(P, 'docs', 'wiki'), { recursive: true })
     fs.writeFileSync(path.join(P, '.prdt', 'config.json'), JSON.stringify({
       slug: 'p', meta: { allowlist: ['.prdt', 'docs'] },
-      features: { vocab: { gui: { kind: 'tag' }, 'gui-old': { kind: 'alias', of: 'gui' } } },
+      features: { vocab: { gui: { kind: 'feature', aliases: ['gui-old'] } } },
     }))
     const body = '---\nid: T-1\nslug: s\ntype: impl\nstatus: done\nassignee: developer\nfeature: gui-old\ncreated: 2026-01-01\n---\n\nbody\n'
     fs.writeFileSync(victim, body)

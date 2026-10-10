@@ -485,9 +485,12 @@ def _index_db_prepare(root, dbp):
     follows a link and CREATES the target when it dangles. The `.prdt` chain is
     walked with O_NOFOLLOW (`state_open_dir`), a missing index is pre-created
     O_EXCL|O_NOFOLLOW (an empty file is a valid empty database), the others are
-    lstat'd. Returns True when the file already existed. A leftover race
+    lstat'd. Returns `(existed, (st_dev, st_ino))` of the checked file. A race
     between this check and the connect needs a concurrent local process that
-    swaps a link in; `_index_db_connect` re-checks the opened file's identity."""
+    swaps a link in; `_index_db_connect` compares the identity again after
+    connecting and refuses a changed file (a swap that is swapped back before
+    that compare, and the write sqlite already did to the swapped-in target
+    in between, stay undetected — sqlite has no nofollow open)."""
     dfd = _state_dir_or_raise(root, Path(".prdt") / "index.db", False)
     try:
         for suffix in ("", "-journal", "-wal", "-shm"):
@@ -500,23 +503,25 @@ def _index_db_prepare(root, dbp):
                                      f"{'a symlink' if stat.S_ISLNK(st.st_mode) else 'not a regular file'} — not followed")
         try:
             os.close(os.open(dbp.name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644, dir_fd=dfd))
-            return False
+            existed = False
         except FileExistsError:
-            return True
+            existed = True
+        st = os.stat(dbp.name, dir_fd=dfd, follow_symlinks=False)
+        return existed, (st.st_dev, st.st_ino)
     finally:
         os.close(dfd)
 
 
-def _index_db_connect(dbp):
+def _index_db_connect(dbp, ident):
     con = sqlite3.connect(dbp)
     try:
         st = os.lstat(dbp)
-        main_ok = stat.S_ISREG(st.st_mode)
+        main_ok = stat.S_ISREG(st.st_mode) and (st.st_dev, st.st_ino) == ident
     except OSError:
         main_ok = False
     if not main_ok:
         con.close()
-        raise StateLinkError(errno.ELOOP, ".prdt/index.db changed while opening (a link or a non-regular file) — not followed")
+        raise StateLinkError(errno.ELOOP, ".prdt/index.db changed while opening (a link, another file or a non-regular file) — not followed")
     return con
 
 
@@ -551,14 +556,15 @@ def open_db(root):
     "whole index or none"), so this never turns into a second, half-applied
     migration path alongside `rebuild_index`."""
     dbp = root / ".prdt" / "index.db"
-    cold = not _index_db_prepare(root, dbp)
-    con = _index_db_connect(dbp)
+    existed, ident = _index_db_prepare(root, dbp)
+    cold = not existed
+    con = _index_db_connect(dbp, ident)
     if not cold and _tickets_check_stale(con):
         con.close()
         dbp.unlink()
         cold = True
-        _index_db_prepare(root, dbp)
-        con = _index_db_connect(dbp)
+        _existed, ident = _index_db_prepare(root, dbp)
+        con = _index_db_connect(dbp, ident)
     con.executescript(SCHEMA)
     try:
         con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(name, title, body, tokenize='trigram')")
@@ -2440,6 +2446,9 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     """The one init module (§10) — GUI onboarding shares this via `prdt init --json`."""
     root = Path(root).resolve()
     prdt = root / ".prdt"
+    if os.path.islink(prdt):
+        # T-905: before any read, mkdir or write — a `.prdt` link (to a dir or dangling) is never followed.
+        sys.exit(f"prdt init: {prdt} is a symlink — not followed. Remove the link, then run `prdt init` again.")
     if (prdt / "po-state.json").exists():
         # Already initialized — no-op. The code `.gitignore` managed block was
         # retired (PRD §v1.3 설계 결정 2, T-377), so there is nothing to resync here.
@@ -2476,7 +2485,7 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     elif not (root / ".git").exists():
         cfg["code"] = {"dir": CODE_DIR_DEFAULT}
         (root / CODE_DIR_DEFAULT).mkdir(parents=True, exist_ok=True)
-    atomic_write_text(prdt / "config.json", json.dumps(cfg, indent=2) + "\n")
+    state_write(root, prdt / "config.json", json.dumps(cfg, indent=2) + "\n", mode=0o644)
     state_write(root, prdt / "po-state.json", json.dumps(
         {"schema_version": 1, "stage": stage, "version": version, "current_task": None},
         indent=2) + "\n")
@@ -5592,6 +5601,13 @@ def _state_tree_link(top, depth=2):
     return None
 
 
+def _new_file_mode():
+    """0o666 & ~umask — what `Path.write_text` gives a new file."""
+    um = os.umask(0)
+    os.umask(um)
+    return 0o666 & ~um
+
+
 def state_write(root, path, text, mode=None, create_dirs=True):
     """T-905: the one Python writer for project-local state (`.prdt/**`, the
     docs the CLI scaffolds, `meta.git/info/exclude`). `path` must sit under
@@ -5615,7 +5631,7 @@ def state_write(root, path, text, mode=None, create_dirs=True):
             raise StateLinkError(errno.ELOOP, f"{rel.as_posix()} is "
                                  f"{'a symlink' if stat.S_ISLNK(st.st_mode) else 'not a regular file'} — not followed")
         if mode is None:
-            mode = stat.S_IMODE(st.st_mode) if st is not None else 0o644
+            mode = stat.S_IMODE(st.st_mode) if st is not None else _new_file_mode()
         tmp = f".{name}.{os.getpid()}.tmp"
         flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
         for attempt in (0, 1):
@@ -5642,7 +5658,7 @@ def state_write(root, path, text, mode=None, create_dirs=True):
     return Path(path)
 
 
-def state_append(root, path, text, mode=0o644, create_dirs=True):
+def state_append(root, path, text, mode=0o666, create_dirs=True):
     """T-905: `state_write`'s appending twin — directory chain walked with
     O_NOFOLLOW, the file itself opened O_APPEND|O_NOFOLLOW (a link there fails
     with ELOOP, mapped to `StateLinkError`). An existing file keeps its mode."""
