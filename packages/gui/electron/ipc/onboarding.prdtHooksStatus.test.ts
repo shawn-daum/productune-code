@@ -146,6 +146,8 @@ export const CASES: readonly Case[] = [
             { matcher: 'Read|Bash', hooks: [h('prdt-secret-guard.sh')] },
             // T-779: prdt-worktree-guard.sh, a FOURTH PreToolUse entry (the write-shaped tools).
             { matcher: 'Edit|Write|MultiEdit|NotebookEdit|Bash', hooks: [h('prdt-worktree-guard.sh')] },
+            // T-976: prdt-identity-guard.sh, a FIFTH PreToolUse entry (outbound + write tools).
+            { matcher: 'Bash|WebFetch|WebSearch|Write|Edit|MultiEdit|NotebookEdit', hooks: [h('prdt-identity-guard.sh')] },
           ],
           // T-985: prdt-question-check.sh, matcher-less on Stop (PO only).
           Stop: [{ hooks: [h('prdt-question-check.sh')] }],
