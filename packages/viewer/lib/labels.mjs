@@ -43,7 +43,7 @@ export const ENV = {
   sample: '견본',
   noFile: 'env 파일 없음',
   emptyHead: '이 줄에는 env 파일이 없어요.',
-  emptyDetail: (dir) => `코드 폴더에서 .env 로 시작하는 파일을 찾았어요 — ${dir}`,
+  emptyDetail: (dir) => `코드 폴더에서 .env · .env.* 파일을 찾았어요 — ${dir}`,
   go: 'env 화면 →',
   homeNone: '코드 폴더에 env 파일이 없어요.',
   homeNoneLine: '이 줄의 코드 폴더에 env 파일이 없어요.',
@@ -184,6 +184,14 @@ export const FEATURE = {
   evidenceHeading: '근거 티켓',
   evidenceEmpty: '근거 티켓이 아직 없어요.',
   specHeading: '스펙 파일',
+  // T-964: the approved screen set's #screen-feature (T-955) — five guide sections from config
+  // features.vocab.<key>.taxonomy.guide, in this order. No user screen (kind internal · component): T-1026 ③.
+  guide: { when: '언제 쓰나', ux: '어떻게 보이나', logic: '어떻게 동작하나', limits: '한계', example: '예시' },
+  limitsNone: '알려진 한계 없음',
+  noScreenKinds: ['internal', 'component'],
+  noScreen: '사용자 화면 없음',
+  guideEmptyHead: '이 기능의 설명을 아직 적지 않았어요.',
+  guideEmptyDetail: '새로 생긴 기능이라 설명이 아직 없어요. 언제 쓰는지 · 어떻게 보이고 동작하는지는 이 기능을 만든 티켓이 채워요.',
   back: '← 돌아가기 · ',
   ticketUnit: '건',
   // mockup 상세 「티켓」 칸 실측: 「3건 · 완료 2 · 열림 1」, 근거 티켓 「T-353(열림)」.

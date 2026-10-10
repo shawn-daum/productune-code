@@ -182,7 +182,7 @@ describe('env screen + Home env block — several lines', () => {
     expect(pane).not.toMatch(/len=|<input|<textarea|contenteditable|clipboard|copy/i)
     const none = sec.split('data-group="none">')[1].split('<div class="view-pane')[0]
     expect(none).toContain('이 줄에는 env 파일이 없어요.')
-    expect(none).toContain('코드 폴더에서 .env 로 시작하는 파일을 찾았어요 — code')
+    expect(none).toContain('코드 폴더에서 .env · .env.* 파일을 찾았어요 — code')
   })
 
   it('Home per line: counts, empty keys named, a link to the env screen; no env file → one line', () => {
