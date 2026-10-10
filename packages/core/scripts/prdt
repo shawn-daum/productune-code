@@ -15541,7 +15541,10 @@ def installed_prdt_version():
     try:
         for line in (prdt_home() / "prdt.env").read_text(encoding="utf-8").splitlines():
             if line.startswith("PRDT_REPO="):
-                roots.append(Path(line.split("=", 1)[1].strip()))
+                # install.sh writes `<clone>/packages/core` — resolve to the clone
+                # root (as maybe_prompt_update does); a clone-root value passes through.
+                repo = line.split("=", 1)[1].strip()
+                roots.append(Path(git_toplevel(repo) or repo))
     except OSError:
         pass
     for r in roots:
