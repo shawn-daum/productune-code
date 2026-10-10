@@ -20,15 +20,15 @@ function data() {
     currentVersion: 'v1.13',
     prd: { current: { body: '' }, closed: [] },
     tickets: {
-      included: [{ bucket: 'v1.13', rel: 'docs/tickets/v1.13/T-393.md', frontmatter: { id: 'T-393', slug: 's', status: 'done', feature: 'full' }, body: '' }],
-      omitted: [],
+      included: [{ bucket: 'v1.13', rel: 'docs/tickets/v1.13/T-1.md', frontmatter: { id: 'T-1', slug: 'x', status: 'done', feature: 'spec' }, body: '' }, { bucket: 'v1.13', rel: 'docs/tickets/v1.13/T-393.md', frontmatter: { id: 'T-393', slug: 's', status: 'done', feature: 'full' }, body: '' }],
+      omitted: [{ bucket: 'v0.5', count: 1, bytes: 1, tickets: [{ rel: 'docs/tickets/v0.5/T-PATCH-147.md', frontmatter: { id: 'T-PATCH-147', slug: 'p', status: 'done', feature: 'full' } }] }],
     },
     wiki: [],
-    features: [],
+    features: [{ rel: 'docs/features/spec.md', frontmatter: {}, body: 'SPEC BODY LINE' }],
     featureTaxonomy: {
       areas: [{ key: 'a', name: '영역', def: '' }],
       kinds: [{ key: 'feature', name: '기능', def: '' }, { key: 'internal', name: '제품 외', def: '' }],
-      entries: [mk('full', 'feature', guide), mk('empty', 'feature', undefined), mk('vm', 'internal', { when: ['QA 가 검증할 때'], ux: ['QA 가 화면 대신 쓴다'], logic: ['격리한다'], example: 'e' })],
+      entries: [mk('full', 'feature', guide), mk('empty', 'feature', undefined), mk('spec', 'feature', { when: ['w'], ux: ['u'], logic: ['l'], example: 'e' }), mk('vm2', 'internal', { when: ['w'], ux: ['사용자 화면 없음 — QA 가 쓴다'], logic: ['l'], example: 'e' }), mk('vm', 'internal', { when: ['QA 가 검증할 때'], ux: ['QA 가 화면 대신 쓴다'], logic: ['격리한다'], example: 'e' })],
     },
     artifacts: { entries: [] },
   }
@@ -64,6 +64,23 @@ describe('feature guide (T-964)', () => {
   it('internal kind: 「사용자 화면 없음」 first under 어떻게 보이나, then the guide text; a user-screen kind has no such line', () => {
     expect(html('vm')).toContain('<li>사용자 화면 없음</li><li>QA 가 화면 대신 쓴다</li>')
     expect(html('full')).not.toContain('사용자 화면 없음')
+  })
+  it('T-PATCH-NNN ground (past bucket) links like T-NNN', () => {
+    const d = data()
+    d.featureTaxonomy.entries[0].guide = normalizeGuide({ when: ['w'], ux: ['u'], logic: [{ text: 'r', ground: 'T-PATCH-147' }], example: 'e' })
+    const out = renderPage({ data: d, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const h = JSON.parse(/<script id="detail-data" type="application\/json">(.*?)<\/script>/s.exec(out)![1]).feature.full.html
+    expect(h).toContain('<a href="#T-PATCH-147"><code>T-PATCH-147</code></a>')
+  })
+  it('spec-backed: spec link + 근거 티켓, no spec body', () => {
+    const h = html('spec')
+    expect(h).not.toContain('SPEC BODY LINE')
+    expect(h).toContain('href="#docs/features/spec.md"')
+    expect(h).toContain(FEATURE.evidenceHeading)
+    expect(h).toContain(FEATURE.linksHeading)
+  })
+  it('「사용자 화면 없음」 once when the first ux line already starts with it', () => {
+    expect(html('vm2').split('사용자 화면 없음').length - 1).toBe(1)
   })
   it('normalizeGuide: lenient reads, drops malformed cells, null when empty', () => {
     expect(normalizeGuide({ when: 'w', ux: ['a', 3], logic: [{ text: 't', ground: 'T-1' }, 4], limits: 'l', example: 'e' })).toEqual({ when: ['w'], ux: ['a'], logic: [{ text: 't', ground: ['T-1'] }], limits: ['l'], example: 'e' })

@@ -1390,7 +1390,7 @@ function discSection(docs) {
 // written on one side only also shows on the other side, as a name-only
 // link (T-808 outcome). No taxonomy → the pre-T-882 spec-file list (T-901 = B);
 // no taxonomy and no spec file → the approved empty state.
-const TICKET_ID_RE = /\bT-(?:P\d+-)?\d+\b/g
+const TICKET_ID_RE = /\bT-(?:P\d+-|PATCH-)?\d+\b/g
 
 function ticketIdLinks(escapedText, anchors) {
   return escapedText.replace(TICKET_ID_RE, (id) =>
@@ -1630,7 +1630,7 @@ function featureGuideHtml(e, anchors) {
   const sec = (key, body) => `<div class="fd-sec"><h2 class="pill pill-heading-2">${escapeHtml(FEATURE.guide[key])}</h2>${body}</div>`
   const ul = (items) => `<ul class="fd-list">${items.map((x) => `<li>${x}</li>`).join('')}</ul>`
   const noScreen = FEATURE.noScreenKinds.includes(e.kind)
-  const ux = [...(noScreen ? [escapeHtml(FEATURE.noScreen)] : []), ...g.ux.map(guideInline)]
+  const ux = [...(noScreen && !(g.ux[0] || '').startsWith(FEATURE.noScreen) ? [escapeHtml(FEATURE.noScreen)] : []), ...g.ux.map(guideInline)]
   const out = []
   if (g.when.length) out.push(sec('when', ul(g.when.map(guideInline))))
   if (ux.length) out.push(sec('ux', ul(ux)))
@@ -1662,9 +1662,10 @@ function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
   const guide = lean ? '' : featureGuideHtml(e, anchors)
   const links = lean ? '' : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.linksHeading)}</h2>` +
     (items.length ? `<ul class="cn-list">${items.join('')}</ul>` : `<p class="cn-empty">${escapeHtml(FEATURE.linksEmpty)}</p>`)
-  const tail = e.spec
-    ? `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.specHeading)}</h2><div class="v-body">${md(e.spec.body, path.dirname(e.spec.rel), repoRootHref)}</div>`
-    : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
+  // T-964 fix: a spec-backed feature shows 함께 쓰는 기능 + a link to the spec file + 근거 티켓 (screen-feature data-cond=spec), never the spec body.
+  const specLink = e.spec ? `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.specHeading)}</h2><p class="ev-text"><a class="fd-more" href="#${escapeHtml(e.spec.rel)}"><code>${escapeHtml(e.spec.rel)}</code> ›</a></p>` : ''
+  const tail = specLink +
+    `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
   return `${lean ? '' : `<p class="def-lead">${escapeHtml(e.def || '')}</p>`}${meta}${kdef}<div class="detail-doc body-prose">${guide}${links}${tail}</div>`
 }
 
