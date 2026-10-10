@@ -214,63 +214,58 @@ schedule_viewer_regen_root() {
   [ -x "$prdt_cli" ] || prdt_cli="$(command -v prdt 2>/dev/null)"
   [ -n "$prdt_cli" ] || return 0
   command -v python3 >/dev/null 2>&1 || return 0
-  python3 - "$root" "$prdt_cli" >/dev/null 2>&1 <<'PY'
+  # T-906: the symlink-safe directory walk + writers live in ONE module,
+  # prdt_safe_fs.py — beside statusline-prdt.sh in an installed mirror
+  # ($PRDT_HOME/bin, one level up from hooks/) and one level up from hooks/
+  # in a source checkout. Absent → the worker skips its regen, silently, the
+  # same as a refused link (never an unsafe fallback walk).
+  local hook_dir safe_dir="" d
+  hook_dir="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+  for d in "$hook_dir/../bin" "$hook_dir/.."; do
+    [ -f "$d/prdt_safe_fs.py" ] && { safe_dir="$(cd -P -- "$d" 2>/dev/null && pwd -P)"; break; }
+  done
+  python3 - "$root" "$prdt_cli" "$safe_dir" >/dev/null 2>&1 <<'PY'
 import subprocess, sys
 
-root, cli = sys.argv[1], sys.argv[2]
+root, cli, safe_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 
 # The actual single-flight worker: spawned as its OWN detached process (below)
 # so this outer script — the one the hook waits on — never itself blocks on a
 # regen, however long one takes.
 WORKER = r'''
 import fcntl, os, stat, subprocess, sys, time
-root, cli = sys.argv[1], sys.argv[2]
+root, cli, safe_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 # T-842: `.prdt/scratch/viewer/` is inside a repository someone else may have
-# committed, symlinks included. Every step below goes through a descriptor of
-# the viewer directory opened component by component with O_NOFOLLOW (a
-# symlinked `.prdt`, `scratch` or `viewer` is refused, never followed, never
-# replaced), and every state file is opened, stat'ed and unlinked relative to
-# it with O_NOFOLLOW / follow_symlinks=False. Any symlink among them → this
-# regen is skipped, silently: the caller never waits on this process anyway.
-NOFOLLOW_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+# committed, symlinks included. T-906: every step below goes through a
+# descriptor of the viewer directory opened by the shared prdt_safe_fs module
+# component by component with O_NOFOLLOW (a symlinked `.prdt`, `scratch` or
+# `viewer` is refused, never followed, never replaced), and every state file is
+# stat'ed, opened and unlinked relative to it, link-refusing. Any link among
+# them (or the module itself missing) → this regen is skipped, silently: the
+# caller never waits on this process anyway.
 try:
-    vfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-    for part in (".prdt", "scratch", "viewer"):
-        try:
-            os.mkdir(part, 0o755, dir_fd=vfd)
-        except FileExistsError:
-            pass
-        nfd = os.open(part, NOFOLLOW_DIR, dir_fd=vfd)
-        os.close(vfd)
-        vfd = nfd
-except OSError:
+    sys.path.append(safe_dir)
+    import prdt_safe_fs as sfs
+    vfd = sfs.open_dir(root, (".prdt", "scratch", "viewer"), create=True)
+except (ImportError, OSError):
     sys.exit(0)
 DIRTY, LOCK, FAILED = ".regen-dirty", ".regen-lock", ".regen-failed"
 
 def lst(name):
-    try:
-        return os.stat(name, dir_fd=vfd, follow_symlinks=False)
-    except OSError:
-        return None
+    return sfs.lstat(vfd, name)
 
 for name in (DIRTY, LOCK, FAILED):
     st = lst(name)
     # st_nlink > 1: a hard link planted at a state file is a regular file whose
-    # inode is shared with a file elsewhere — O_TRUNC would write through it.
-    if st is not None and (not stat.S_ISREG(st.st_mode) or st.st_nlink > 1):
+    # inode is shared with a file elsewhere — a write would go through it.
+    if not sfs.is_plain_file(st):
         sys.exit(0)
 
 def write_flag(name, text):
     try:
-        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644, dir_fd=vfd)
+        sfs.write_inplace(vfd, name, text)
     except OSError:
         return
-    try:
-        os.write(fd, text.encode())
-    except OSError:
-        pass
-    finally:
-        os.close(fd)
 
 def unlink(name):
     try:
@@ -284,7 +279,7 @@ except ValueError:
     backoff = 60.0
 write_flag(DIRTY, "1")
 try:
-    fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o644, dir_fd=vfd)
+    fd = sfs.open_lock(vfd, LOCK)
 except OSError:
     sys.exit(0)
 try:
@@ -321,7 +316,7 @@ finally:
     os.close(vfd)
 '''
 
-subprocess.Popen([sys.executable, "-c", WORKER, root, cli],
+subprocess.Popen([sys.executable, "-c", WORKER, root, cli, safe_dir],
                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                   start_new_session=True)
 PY
