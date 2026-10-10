@@ -180,8 +180,22 @@ describe.skipIf(!READY)('hook appends under .prdt — every component, not just 
     fs.symlinkSync(victimDir, path.join(project, '.prdt'))
     return { project, victimDir }
   }
-  const run = (hook: string, cwd: string, event: object) =>
-    spawnSync('bash', [hook], { input: JSON.stringify(event), encoding: 'utf8', cwd, timeout: subprocessTimeout('hook') })
+  // Every spawned hook gets a sandbox HOME / PRDT_HOME — never the real ~/.prdt.
+  const run = (hook: string, cwd: string, event: object) => {
+    const home = tmp('prdt-t906-home-')
+    return spawnSync('bash', [hook], {
+      input: JSON.stringify(event), encoding: 'utf8', cwd, timeout: subprocessTimeout('hook'),
+      env: { ...process.env, HOME: home, PRDT_HOME: path.join(home, '.prdt') },
+    })
+  }
+  /** parent transcript + <session>/subagents/agent-<id>.jsonl, so return-check sees a dispatched worker. */
+  const workerTranscript = (project: string, agentId: string) => {
+    const tp = path.join(project, 'session.jsonl')
+    fs.writeFileSync(tp, '{}\n')
+    fs.mkdirSync(path.join(project, 'session', 'subagents'), { recursive: true })
+    fs.writeFileSync(path.join(project, 'session', 'subagents', `agent-${agentId}.jsonl`), '{}\n')
+    return tp
+  }
 
   test('post-dispatch: a symlinked .prdt gets no turns.jsonl line', () => {
     const { project, victimDir } = linkedDotPrdt()
@@ -196,10 +210,33 @@ describe.skipIf(!READY)('hook appends under .prdt — every component, not just 
     const { project, victimDir } = linkedDotPrdt()
     const r = run(RETURN_CHECK, project, {
       hook_event_name: 'SubagentStop', agent_type: 'prdt-developer', agent_id: 'agent-t906-b', cwd: project,
-      stop_hook_active: false, last_assistant_message: JSON.stringify({ persona: 'developer', task: 'x', confidence: 0.5 }),
+      transcript_path: workerTranscript(project, 'agent-t906-b'), stop_hook_active: false, last_assistant_message: JSON.stringify({ persona: 'developer', task: 'x', confidence: 0.5 }),
     })
     expect(r.status).toBe(0)
     expect(fs.existsSync(path.join(victimDir, '.return-gate.jsonl'))).toBe(false)
+  })
+
+  test('control: a real .prdt gets its .return-gate.jsonl line (the absence tests above reach the write)', () => {
+    const project = tmp('prdt-t906-proj-')
+    fs.mkdirSync(path.join(project, '.prdt'))
+    fs.writeFileSync(path.join(project, '.prdt', 'po-state.json'),
+      JSON.stringify({ schema_version: 1, stage: 'build', version: 'v1.9', current_task: null }))
+    const r = run(RETURN_CHECK, project, {
+      hook_event_name: 'SubagentStop', agent_type: 'prdt-developer', agent_id: 'agent-t906-b', cwd: project,
+      transcript_path: workerTranscript(project, 'agent-t906-b'), stop_hook_active: false,
+      last_assistant_message: JSON.stringify({ persona: 'developer', task: 'x', confidence: 0.5 }),
+    })
+    expect(r.status).toBe(0)
+    expect(fs.readFileSync(path.join(project, '.prdt', '.return-gate.jsonl'), 'utf8').length).toBeGreaterThan(0)
+  })
+
+  test('post-dispatch: a refused append does not abort the rest of the event (sessions.json still written elsewhere is not required; exit 0 and no traceback)', () => {
+    const { project } = linkedDotPrdt()
+    const tr = path.join(project, 'transcript.jsonl')
+    fs.writeFileSync(tr, JSON.stringify({ message: { model: 'claude-sonnet-5', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }) + '\n')
+    const r = run(POST_DISPATCH, project, { hook_event_name: 'SubagentStop', agent_type: 'prdt-developer', agent_id: 'agent-t906-d', cwd: project, agent_transcript_path: tr })
+    expect(r.status).toBe(0)
+    expect(r.stderr).not.toContain('Traceback')
   })
 
   test('control: a real .prdt still gets its turns.jsonl line, mode 0600', () => {

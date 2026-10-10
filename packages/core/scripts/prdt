@@ -8171,6 +8171,41 @@ def prdt_script_drift_warnings():
             f"the same resync the behind case uses: `{sync_cmd}` ({bootstrap_note})"]
 
 
+# T-906: helper modules the installed hooks / statusline import from bin/ —
+# install.sh, the GUI bootstrap and electron-builder mirror each one. Without it
+# the regen worker and the statusline ticket links stop silently, so doctor
+# names the file. Keep this list = every `import <module>` those scripts do from
+# their sibling directory.
+BIN_HELPER_MODULES = ("prdt_safe_fs.py",)
+
+
+def bin_helper_warnings():
+    """Doctor line for each bin/ helper module that is missing from the
+    installed mirror, or differs from the repo's copy (when a checkout is near)."""
+    bindir = prdt_home() / "bin"
+    if not (bindir / "prdt").is_file():
+        return Skipped(f"no installed copy at {bindir / 'prdt'} (quiet on source-only machines)")
+    warns = []
+    for name in BIN_HELPER_MODULES:
+        mirror = bindir / name
+        if not mirror.is_file():
+            warns.append(f"bin helper: {mirror} is missing — the viewer regen worker and the statusline "
+                         f"ticket links silently stop without it; re-run install.sh (`prdt update`) to restore {name}")
+            continue
+        for base in _repo_root_candidates():
+            repo = base / "scripts" / name
+            if repo.is_file():
+                try:
+                    differs = repo.read_bytes() != mirror.read_bytes()
+                except OSError:
+                    break
+                if differs and repo.resolve() != mirror.resolve():
+                    warns.append(f"bin helper: {mirror} differs from {repo} — stale or hand-edited; "
+                                 f"sync with `cp {repo} {mirror}` (or re-run install.sh)")
+                break
+    return warns
+
+
 def meta_bridge_staleness_warnings():
     """T-731 (dogfood 2026-09-27, following T-686): `dist/bin/meta-cli.cjs` is a
     BUILD ARTIFACT of `packages/core/src` (tsc + esbuild), `dist/` is gitignored,
@@ -14725,6 +14760,7 @@ def cmd_doctor(_args):
         # prdt script mirror↔repo drift (T-507 follow-up) — independent of whether a
         # discipline mirror exists at all.
         ("prdt script mirror drift", FAMILY_DE, lambda: prdt_script_drift_warnings()),
+        ("bin helper modules", FAMILY_DE, lambda: bin_helper_warnings()),
         # meta-cli bridge (dist/bin/meta-cli.cjs) behind packages/core/src (T-731) —
         # a BUILD staleness, not a mirror-content diff like the three checks
         # around it, but the same family: a committed fix binds nothing until

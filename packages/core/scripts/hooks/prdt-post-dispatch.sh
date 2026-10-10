@@ -258,7 +258,10 @@ def _append_line(path, text):
         if safe_dir not in sys.path:
             sys.path.append(safe_dir)
         import prdt_safe_fs
-        prdt_safe_fs.append_line(root, rel, text)
+        try:
+            prdt_safe_fs.append_line(root, rel, text)
+        except OSError:
+            pass  # a refused link (or an unwritable log) skips THIS append only — the rest of the event's handling goes on
         return
     fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "a") as f:
