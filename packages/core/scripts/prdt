@@ -479,6 +479,52 @@ def _tickets_check_stale(con):
     return not all(f"'{t}'" in sql for t in TICKET_TYPES)
 
 
+def _index_db_prepare(root, dbp):
+    """T-905: refuse a link at `.prdt`, at `index.db`, or at a sqlite sidecar
+    (`-journal` · `-wal` · `-shm`) before sqlite sees the path — `sqlite3.connect`
+    follows a link and CREATES the target when it dangles. The `.prdt` chain is
+    walked with O_NOFOLLOW (`state_open_dir`), a missing index is pre-created
+    O_EXCL|O_NOFOLLOW (an empty file is a valid empty database), the others are
+    lstat'd. Returns `(existed, (st_dev, st_ino))` of the checked file. A race
+    between this check and the connect needs a concurrent local process that
+    swaps a link in; `_index_db_connect` compares the identity again after
+    connecting and refuses a changed file (a swap that is swapped back before
+    that compare, and the write sqlite already did to the swapped-in target
+    in between, stay undetected — sqlite has no nofollow open)."""
+    dfd = _state_dir_or_raise(root, Path(".prdt") / "index.db", False)
+    try:
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            try:
+                st = os.stat(dbp.name + suffix, dir_fd=dfd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                raise StateLinkError(errno.ELOOP, f".prdt/index.db{suffix} is "
+                                     f"{'a symlink' if stat.S_ISLNK(st.st_mode) else 'not a regular file'} — not followed")
+        try:
+            os.close(os.open(dbp.name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644, dir_fd=dfd))
+            existed = False
+        except FileExistsError:
+            existed = True
+        st = os.stat(dbp.name, dir_fd=dfd, follow_symlinks=False)
+        return existed, (st.st_dev, st.st_ino)
+    finally:
+        os.close(dfd)
+
+
+def _index_db_connect(dbp, ident):
+    con = sqlite3.connect(dbp)
+    try:
+        st = os.lstat(dbp)
+        main_ok = stat.S_ISREG(st.st_mode) and (st.st_dev, st.st_ino) == ident
+    except OSError:
+        main_ok = False
+    if not main_ok:
+        con.close()
+        raise StateLinkError(errno.ELOOP, ".prdt/index.db changed while opening (a link, another file or a non-regular file) — not followed")
+    return con
+
+
 def open_db(root):
     """Attach to the derived index, creating whatever table is missing. Never
     destructive on purpose (T-480): `tickets`, `wiki_pages` and `wiki_fts` live in
@@ -510,13 +556,15 @@ def open_db(root):
     "whole index or none"), so this never turns into a second, half-applied
     migration path alongside `rebuild_index`."""
     dbp = root / ".prdt" / "index.db"
-    cold = not dbp.exists()
-    con = sqlite3.connect(dbp)
+    existed, ident = _index_db_prepare(root, dbp)
+    cold = not existed
+    con = _index_db_connect(dbp, ident)
     if not cold and _tickets_check_stale(con):
         con.close()
         dbp.unlink()
         cold = True
-        con = sqlite3.connect(dbp)
+        _existed, ident = _index_db_prepare(root, dbp)
+        con = _index_db_connect(dbp, ident)
     con.executescript(SCHEMA)
     try:
         con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(name, title, body, tokenize='trigram')")
@@ -1565,6 +1613,11 @@ def init_meta_split(root):
         if prob:
             return meta_git_refusal(prob)
         if not (gd / "HEAD").exists():
+            # T-905: `git init --bare` copies its template (info/exclude, hooks/*,
+            # description) into a half-carried directory, through any link in it.
+            linked = _state_tree_link(gd)
+            if linked:
+                return f"{linked} is a symlink in a carried .prdt/meta.git — not followed (remove it, then run `prdt init` again)"
             gd.parent.mkdir(parents=True, exist_ok=True)
             r = _git(["init", "--bare", "-q", str(gd)], root)
             if r.returncode != 0:
@@ -1579,12 +1632,11 @@ def init_meta_split(root):
                      ("user.name", "prdt"), ("user.email", "prdt@localhost"),
                      ("commit.gpgsign", "false"), ("core.hooksPath", str(gd / "hooks"))):
             _git(["--git-dir", str(gd), "config", k, v], root)
-        (gd / "info").mkdir(exist_ok=True)
         # Derived/gate excludes + the physical code dir (`<code.dir>/`) when split,
         # so the code tree never shows in meta `git status` (PRD §v1.3 설계 결정 3).
         cd = code_dir_name(root)
         excl = list(META_EXCLUDE_DEFAULT) + ([cd.rstrip("/") + "/"] if cd else [])
-        (gd / "info" / "exclude").write_text("\n".join(excl) + "\n", encoding="utf-8")
+        state_write(root, gd / "info" / "exclude", "\n".join(excl) + "\n")  # T-905 (C5): link-refusing, mode kept
         _meta_stage_and_commit(root, "initial meta snapshot (prdt init)")
         return None
     except Exception as e:  # git absent / perms — degrade, never block init
@@ -2394,6 +2446,9 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     """The one init module (§10) — GUI onboarding shares this via `prdt init --json`."""
     root = Path(root).resolve()
     prdt = root / ".prdt"
+    if os.path.islink(prdt):
+        # T-905: before any read, mkdir or write — a `.prdt` link (to a dir or dangling) is never followed.
+        sys.exit(f"prdt init: {prdt} is a symlink — not followed. Remove the link, then run `prdt init` again.")
     if (prdt / "po-state.json").exists():
         # Already initialized — no-op. The code `.gitignore` managed block was
         # retired (PRD §v1.3 설계 결정 2, T-377), so there is nothing to resync here.
@@ -2430,17 +2485,17 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     elif not (root / ".git").exists():
         cfg["code"] = {"dir": CODE_DIR_DEFAULT}
         (root / CODE_DIR_DEFAULT).mkdir(parents=True, exist_ok=True)
-    atomic_write_text(prdt / "config.json", json.dumps(cfg, indent=2) + "\n")
-    (prdt / "po-state.json").write_text(json.dumps(
+    state_write(root, prdt / "config.json", json.dumps(cfg, indent=2) + "\n", mode=0o644)
+    state_write(root, prdt / "po-state.json", json.dumps(
         {"schema_version": 1, "stage": stage, "version": version, "current_task": None},
-        indent=2) + "\n", encoding="utf-8")
+        indent=2) + "\n")
     for d in ("docs/prd", "docs/tickets", "docs/artifacts", "docs/wiki"):
         (root / d).mkdir(parents=True, exist_ok=True)
     for f, head in (("inbox.md", "# Wiki inbox — 1-line memory_notes appends; curated at stage boundaries\n"),
                     ("log.md", "# Wiki log — append-only ritual/ingest/lint records\n")):
         fp = root / "docs" / "wiki" / f
-        if not fp.exists():
-            fp.write_text(head, encoding="utf-8")
+        if not os.path.lexists(fp):
+            state_write(root, fp, head)
             note_docs_write(fp)
     # Code-side release-notes stub (T-453) — after the config write above, so
     # code_root() resolves the layout this init just recorded.
@@ -5462,8 +5517,8 @@ def _first_error_line(text):
     return lines[0][:300] if lines else ""
 
 
-def _scratch_walk(root, parts):
-    """T-842: `(fd, None)` — a descriptor of `<root>/<parts…>` (created as
+def state_open_dir(root, parts, create=True):
+    """T-842 / T-905: `(fd, None)` — a descriptor of `<root>/<parts…>` (created as
     needed), opened one component at a time with O_NOFOLLOW — or `(None,
     (rel, kind))` naming the first component that stopped the walk, `kind` one
     of "symlink", "file" (a regular file), "notdir", "noopen" (no permission to open it), "nocreate" (no
@@ -5472,7 +5527,10 @@ def _scratch_walk(root, parts):
     ~/somewhere`); a writer that resolved the path string would create, rename
     or truncate files at the link's target, outside this project. mkdir with
     dir_fd never follows a link at its final component (EEXIST), and the
-    O_NOFOLLOW open right after refuses it."""
+    O_NOFOLLOW open right after refuses it. `create=False` walks only what
+    exists (a missing component is kind "missing"). This is the ONE directory
+    walk every state writer shares (`state_write` · `state_append` · `open_db`
+    · the viewer scratch folder) — T-905."""
     try:
         fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     except OSError:
@@ -5481,10 +5539,11 @@ def _scratch_walk(root, parts):
     for part in parts:
         rel = rel / part
         try:
-            try:
-                os.mkdir(part, 0o755, dir_fd=fd)
-            except FileExistsError:
-                pass
+            if create:
+                try:
+                    os.mkdir(part, 0o755, dir_fd=fd)
+                except FileExistsError:
+                    pass
             nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
         except OSError as e:
             # T-850: classify with lstat relative to the same parent descriptor,
@@ -5500,6 +5559,8 @@ def _scratch_walk(root, parts):
                 kind = "file"
             elif st is not None and not stat.S_ISDIR(st.st_mode):
                 kind = "notdir"
+            elif st is None and not create and e.errno == errno.ENOENT:
+                kind = "missing"
             elif e.errno in (errno.EACCES, errno.EPERM):
                 kind = "noopen" if st is not None else "nocreate"
             else:
@@ -5511,13 +5572,140 @@ def _scratch_walk(root, parts):
 
 
 def _open_scratch_dir(root, parts):
-    """A descriptor of `<root>/<parts…>` (see `_scratch_walk`), or None."""
-    return _scratch_walk(root, parts)[0]
+    """A descriptor of `<root>/<parts…>` (see `state_open_dir`), or None."""
+    return state_open_dir(root, parts)[0]
+
+
+class StateLinkError(OSError):
+    """A state write refused because a path component is a symlink (or is not
+    what the writer needs there). An OSError, so the older best-effort
+    `except OSError` sites keep degrading; a bare one reaching `__main__`
+    prints one line and exits 1 (T-905)."""
+
+
+def _state_rel(root, path):
+    root = Path(os.path.abspath(root))
+    rel = Path(os.path.abspath(path)).relative_to(root)
+    if not rel.parts:
+        raise ValueError(f"state path {path} is the root itself")
+    return rel
+
+
+def _state_dir_or_raise(root, rel, create):
+    fd, problem = state_open_dir(root, rel.parts[:-1], create=create)
+    if fd is None:
+        where, kind = problem
+        if kind == "missing":
+            raise FileNotFoundError(errno.ENOENT, "no such directory", str(rel.parent))
+        shown = where
+        raise StateLinkError(errno.ELOOP if kind == "symlink" else errno.ENOTDIR,
+                             f"{shown} is {'a symlink' if kind == 'symlink' else 'not a plain directory (' + kind + ')'}"
+                             " — not followed")
+    return fd
+
+
+def _state_tree_link(top, depth=2):
+    """First symlink inside `top` down to `depth` levels (never followed), as a
+    path relative to `top`'s parent, or None."""
+    top = Path(top)
+    try:
+        if not top.is_dir() or top.is_symlink():
+            return None
+        stack = [(top, 0)]
+        while stack:
+            d, n = stack.pop()
+            for e in os.scandir(d):
+                if e.is_symlink():
+                    return str(Path(e.path).relative_to(top.parent))
+                if n + 1 < depth and e.is_dir(follow_symlinks=False):
+                    stack.append((Path(e.path), n + 1))
+    except OSError:
+        return None
+    return None
+
+
+def _new_file_mode():
+    """0o666 & ~umask — what `Path.write_text` gives a new file."""
+    um = os.umask(0)
+    os.umask(um)
+    return 0o666 & ~um
+
+
+def state_write(root, path, text, mode=None, create_dirs=True):
+    """T-905: the one Python writer for project-local state (`.prdt/**`, the
+    docs the CLI scaffolds, `meta.git/info/exclude`). `path` must sit under
+    `root`; every component below `root` is walked with O_NOFOLLOW from a
+    directory descriptor (`state_open_dir`), a link — or a non-regular file —
+    at ANY component, the last included, raises `StateLinkError` with the
+    victim untouched. The text lands through a temp created O_EXCL|O_NOFOLLOW
+    in that same directory and is renamed over the name by descriptor, so no
+    string path is re-resolved after the check. `mode=None` keeps the existing
+    file's permission bits (a new file gets 0o644); an explicit `mode` is
+    exact, regardless of umask. `root` itself is the caller's trust anchor."""
+    rel = _state_rel(root, path)
+    dfd = _state_dir_or_raise(root, rel, create_dirs)
+    try:
+        name = rel.name
+        try:
+            st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+        except FileNotFoundError:
+            st = None
+        if st is not None and not stat.S_ISREG(st.st_mode):
+            raise StateLinkError(errno.ELOOP, f"{rel.as_posix()} is "
+                                 f"{'a symlink' if stat.S_ISLNK(st.st_mode) else 'not a regular file'} — not followed")
+        if mode is None:
+            mode = stat.S_IMODE(st.st_mode) if st is not None else _new_file_mode()
+        tmp = f".{name}.{os.getpid()}.tmp"
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
+        for attempt in (0, 1):
+            try:
+                fd = os.open(tmp, flags, 0o600, dir_fd=dfd)
+                break
+            except FileExistsError:
+                if attempt:
+                    raise
+                os.unlink(tmp, dir_fd=dfd)  # a leftover or a planted link — removed, never opened
+        try:
+            os.fchmod(fd, mode)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+        except BaseException:
+            try:
+                os.unlink(tmp, dir_fd=dfd)
+            except OSError:
+                pass
+            raise
+    finally:
+        os.close(dfd)
+    return Path(path)
+
+
+def state_append(root, path, text, mode=0o666, create_dirs=True):
+    """T-905: `state_write`'s appending twin — directory chain walked with
+    O_NOFOLLOW, the file itself opened O_APPEND|O_NOFOLLOW (a link there fails
+    with ELOOP, mapped to `StateLinkError`). An existing file keeps its mode."""
+    rel = _state_rel(root, path)
+    dfd = _state_dir_or_raise(root, rel, create_dirs)
+    try:
+        try:
+            fd = os.open(rel.name, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, mode, dir_fd=dfd)
+        except OSError as e:
+            if e.errno in (errno.ELOOP, errno.EMLINK):
+                raise StateLinkError(errno.ELOOP, f"{rel.as_posix()} is a symlink — not followed") from e
+            raise
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                raise StateLinkError(errno.ELOOP, f"{rel.as_posix()} is not a regular file")
+            f.write(text)
+    finally:
+        os.close(dfd)
+    return Path(path)
 
 
 def viewer_scratch_safe(root):
     """True when `<root>/.prdt/scratch/viewer/` is a real directory chain
-    (created if missing) — see `_scratch_walk`."""
+    (created if missing) — see `state_open_dir`."""
     fd = _open_scratch_dir(root, VIEWER_REL.parts)
     if fd is None:
         return False
@@ -5527,9 +5715,9 @@ def viewer_scratch_safe(root):
 
 def viewer_scratch_problem(root):
     """T-850: why `prdt viewer` cannot write its folder — `(rel, kind)` as in
-    `_scratch_walk`, or "nowrite" for an existing viewer folder that cannot be
+    `state_open_dir`, or "nowrite" for an existing viewer folder that cannot be
     written — or None when the folder chain is usable."""
-    fd, problem = _scratch_walk(root, VIEWER_REL.parts)
+    fd, problem = state_open_dir(root, VIEWER_REL.parts)
     if fd is None:
         return problem
     try:
@@ -10405,7 +10593,7 @@ def features_migrate(root, apply):
         if out is None:
             print(f"  skipped {p.relative_to(root)}: no frontmatter `feature: {old}` line found")
             continue
-        p.write_text(out, encoding="utf-8")
+        state_write(root, p, out)
         note_docs_write(p)
         done += 1
     rebuild_index(root)
@@ -12800,12 +12988,10 @@ def _track_record_path(code, tid):
 
 def _track_record_write(code, tid, branch, base):
     p = _track_record_path(code, tid)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps({"schema": 1, "ticket": tid, "branch": branch, "base": base,
-                               "opened_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}) + "\n",
-                   encoding="utf-8")
-    os.replace(tmp, p)
+    home = prdt_home()
+    home.mkdir(parents=True, exist_ok=True)
+    state_write(home, p, json.dumps({"schema": 1, "ticket": tid, "branch": branch, "base": base,
+                                     "opened_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}) + "\n")
 
 
 def _track_record_read(code, tid, branch):
@@ -12841,15 +13027,36 @@ def _track_require_open(code, wt, branch, tid):
         _track_die(f"branch {branch} does not exist in the code repo")
 
 
-def _exclude_add(gd):
-    """Append `/tracks/` to <gd>/info/exclude, once, best-effort (never raises)."""
+def _exclude_add(gd, root=None):
+    """Append `/tracks/` to <gd>/info/exclude, once, best-effort (never raises).
+    T-905: the chain below `root` (the project for the meta git dir; the git
+    dir itself when none is given) is walked with O_NOFOLLOW and the file is
+    opened O_APPEND|O_NOFOLLOW — a link anywhere skips the write."""
     ex = gd / "info" / "exclude"
+    anchor = root if root is not None else gd
     try:
-        cur = ex.read_text(encoding="utf-8") if ex.is_file() else ""
+        cur = ""
+        fd = None
+        try:
+            dfd = _state_dir_or_raise(anchor, _state_rel(anchor, ex), False)
+        except FileNotFoundError:
+            dfd = None
+        if dfd is not None:
+            try:
+                fd = os.open("exclude", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+            except FileNotFoundError:
+                fd = None
+            except OSError as e:
+                if e.errno in (errno.ELOOP, errno.EMLINK):
+                    raise StateLinkError(errno.ELOOP, "info/exclude is a symlink — not followed") from e
+                raise
+            finally:
+                os.close(dfd)
+        if fd is not None:
+            with os.fdopen(fd, "r", encoding="utf-8") as f:
+                cur = f.read()
         if "/tracks/" not in cur.splitlines():
-            ex.parent.mkdir(parents=True, exist_ok=True)
-            with open(ex, "a", encoding="utf-8") as f:
-                f.write(("" if cur == "" or cur.endswith("\n") else "\n") + "/tracks/\n")
+            state_append(anchor, ex, ("" if cur == "" or cur.endswith("\n") else "\n") + "/tracks/\n")
     except OSError:
         pass
 
@@ -12869,7 +13076,7 @@ def _track_exclude(code, root):
     if prob:
         print(f"meta exclude skipped: {prob}", file=sys.stderr)
     elif gd_meta.is_dir():
-        _exclude_add(gd_meta)
+        _exclude_add(gd_meta, root)
     if Path(code).resolve() != Path(root).resolve():
         return
     r = _tgit(["rev-parse", "--git-common-dir"], code)
@@ -14998,7 +15205,7 @@ def date_only(v):
     return m.group(1) if m else None
 
 
-def migrate_ticket(p, dry):
+def migrate_ticket(p, dry, root):
     fm, body = parse_frontmatter(p)
     if not fm.get("ticket_id") and not fm.get("id"):
         return None
@@ -15022,19 +15229,18 @@ def migrate_ticket(p, dry):
         pairs = " ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in dropped.items())
         note = f"<!-- migrated from full frontmatter: {pairs} -->\n\n"
     if not dry:
-        p.write_text(fm_serialize(new) + "\n" + note + body, encoding="utf-8")
+        state_write(root, p, fm_serialize(new) + "\n" + note + body)
         note_docs_write(p)
     return new["status"]
 
 
 def write_wiki_page(root, name, type_, title, body, version, dry):
     p = root / "docs" / "wiki" / f"{name}.md"
-    if p.exists():
+    if os.path.lexists(p):
         return False
     fm = {"title": title, "type": type_, "status": "live", "version": version or ""}
     if not dry:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(fm_serialize(fm) + "\n" + body.strip() + "\n", encoding="utf-8")
+        state_write(root, p, fm_serialize(fm) + "\n" + body.strip() + "\n")
         note_docs_write(p)
     return True
 
@@ -15126,10 +15332,9 @@ def migrate_claude_md(root, dry, assume_yes, to_archive, version):
             wrote = write_wiki_page(root, dst.stem, "fact", CLAUDE_MIGRATED_TITLE,
                                     body, version, dry=False) and dst.is_file()
         else:
-            dst.parent.mkdir(parents=True, exist_ok=True)
             fm = {"title": CLAUDE_MIGRATED_TITLE, "status": "archived",
                   "migrated_from": "CLAUDE.md"}
-            dst.write_text(fm_serialize(fm) + "\n" + body.strip() + "\n", encoding="utf-8")
+            state_write(root, dst, fm_serialize(fm) + "\n" + body.strip() + "\n")
             note_docs_write(dst)
             wrote = dst.is_file()
     except OSError as e:
@@ -15200,7 +15405,7 @@ def cmd_migrate(args):
     tdir = root / "docs" / "tickets"
     if kind == "full" and tdir.is_dir():
         for p in sorted(tdir.rglob("T-*.md")):
-            s = migrate_ticket(p, dry)
+            s = migrate_ticket(p, dry, root)
             if s:
                 n_tickets += 1
                 status_counts[s] = status_counts.get(s, 0) + 1
@@ -15273,28 +15478,28 @@ def cmd_migrate(args):
         slug = old_cfg.get("slug") or old_cfg.get("project_name") or root.name
         cfg = {"slug": slug, "created_at": now_iso(), "surfaces": old_cfg.get("surfaces") or {},
                "migrated_from": kind, "migrated_at": now_iso()}
-        (prdt / "config.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        (prdt / "po-state.json").write_text(json.dumps(
+        state_write(root, prdt / "config.json", json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+        state_write(root, prdt / "po-state.json", json.dumps(
             {"schema_version": 1, "stage": stage, "version": version, "current_task": None},
-            indent=2) + "\n", encoding="utf-8")
+            indent=2) + "\n")
         for d in ("docs/prd", "docs/tickets", "docs/artifacts", "docs/wiki"):
             (root / d).mkdir(parents=True, exist_ok=True)
         for f, head in (("inbox.md", "# Wiki inbox — 1-line memory_notes appends; curated at stage boundaries\n"),
                         ("log.md", "# Wiki log — append-only ritual/ingest/lint records\n")):
             fp = root / "docs" / "wiki" / f
-            if not fp.exists():
-                fp.write_text(head, encoding="utf-8")
-        with open(root / "docs" / "wiki" / "log.md", "a", encoding="utf-8") as f:
-            f.write(f"- ({now_iso()[:10]}) migrated from {kind}: {n_tickets} tickets, {n_pages} wiki pages — curation due at next Retro\n")
+            if not os.path.lexists(fp):
+                state_write(root, fp, head)
+        state_append(root, root / "docs" / "wiki" / "log.md",
+                     f"- ({now_iso()[:10]}) migrated from {kind}: {n_tickets} tickets, {n_pages} wiki pages — curation due at next Retro\n")
         note_docs_write(root / "docs" / "wiki" / "log.md")
         _con, v, _pages, _mpages = rebuild_index(root)
         if v:
             report.append(f"⚠ reindex: 티켓 위반 {len(v)}건 잔존 — `prdt doctor` 확인")
         # 1회용 온보딩 플래그 — hook#1이 다음 PO 세션에 자기 브리핑 지시를 주입 후 소거
-        (prdt / "migration-briefing-pending").write_text(json.dumps({
+        state_write(root, prdt / "migration-briefing-pending", json.dumps({
             "kind": kind, "open_tickets": status_counts.get("open", 0),
             "stage": stage, "version": version, "migrated_at": now_iso()},
-            ensure_ascii=False) + "\n", encoding="utf-8")
+            ensure_ascii=False) + "\n")
     prefix = "[dry-run] " if dry else ""
     print(f"{prefix}migrate 완료 → stage={stage} · version={version}")
     for r in report:
@@ -16618,6 +16823,10 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except StateLinkError as e:
+        # T-905: a state write refused at a link — one line, nothing written.
+        print(f"prdt: {e}", file=sys.stderr)
+        sys.exit(1)
     except BrokenPipeError:
         # T-677 QA S3: a downstream reader that closes early (e.g.
         # `prdt env check big.env | head -c 1`) turns our next write — or
