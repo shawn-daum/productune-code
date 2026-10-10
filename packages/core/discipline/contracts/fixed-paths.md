@@ -21,7 +21,7 @@ Continues `contracts.md` §Fixed paths; binds every persona the same way, loaded
 
 ## PRD — the open version section's fixed form
 - The transition heads the section as three H3s — `### As-Is` · `### To-Be` · reversed — strings fixed byte-for-byte at their authoring site, designer `prd-clarity` §as-is / to-be; a receiving pipe slices on the exact strings, so nothing is appended to them.
-- Scope items under What are H4s `#### <key> — <label>`: `<key>` matches `^[a-z0-9]+(-[a-z0-9]+)*$`, unique in the section, immutable once the section closes. A ticket addresses one with frontmatter `prd_item: [<line>/]v<N>.<m>#<key>` — never an ordinal, a heading string or a line number.
+- Scope items under What are H4s `#### <key> — <label>`: `<key>` matches `^[a-z0-9]+(-[a-z0-9]+)*$`, unique in the section, immutable once the section closes. A ticket addresses one with frontmatter `prd_item: [<line>/]v<N>.<m>#<key>` — never an ordinal, a heading string or a line number. An H4 under `### As-Is` · `### To-Be` is a pair group (designer `prd-clarity`), never an item.
 
 ## PRD — closing a `## Phase N` section
 - Closing one rewrites that heading away into a `완료된 라운드` snapshot pointer — same precedent as Phase 1~3 — never left in place with an appended note.
