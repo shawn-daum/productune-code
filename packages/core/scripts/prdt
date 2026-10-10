@@ -5100,6 +5100,22 @@ TICKET_FRONTMATTER_ORDER = ("id", "slug", "type", "status", "assignee", "feature
                             "prd_item", "deps", "created")
 
 
+def prd_item_hint(root, line=None):
+    """T-992 — one line listing the open section's item keys as ready-to-paste
+    `--prd-item` values (`[<line>/]v<N>.<m>#<key>`); None when the open
+    section carries no item key (nothing to suggest)."""
+    st = read_json(Path(root) / ".prdt" / "po-state.json")
+    version, body = _prd_open_section(root, st, line)
+    if version is None:
+        return None
+    keys = [k for _, k, _ in _prd_h4_items(body) if k]
+    if not keys:
+        return None
+    vid = join_line_id(line, version)
+    return (f"hint — no --prd-item given; open section items: "
+            f"{' · '.join(f'{vid}#{k}' for k in dict.fromkeys(keys))} (pass one as --prd-item)")
+
+
 def cmd_tickets_new(args, root):
     """`prdt tickets new` — scaffold a frame ticket (T-685): the next global id,
     full frontmatter in frame order, and the frame's H2 keys already in place
@@ -5163,6 +5179,13 @@ def cmd_tickets_new(args, root):
     # only when the viewer cannot be generated.
     # A project that never generated its viewer has nothing to keep fresh (T-838):
     # it gets the file link, which opens as it is.
+    # T-992: a version-folder ticket created without `--prd-item` gets a one-line
+    # hint naming the open section's item keys — advisory, stderr (stdout stays
+    # the paste-ready link), never blocks the create above.
+    if not args.prd_item and ttype != "decision" and not version.endswith("backlog"):
+        hint = prd_item_hint(root, line)
+        if hint:
+            print(hint, file=sys.stderr)
     if (Path(root) / VIEWER_REL / "viewer.html").is_file():
         print(viewer_links(root, [tid], labels={tid: str(path.resolve())})[0])
     else:
@@ -11810,6 +11833,42 @@ def prd_item_edge_warnings(root, st, trows):
     return warns
 
 
+def prd_item_coverage_notes(root, st, trows):
+    """T-992 — one advisory line per open version: the share of its tickets
+    without `prd_item` (`type: decision` tickets legitimately carry none and
+    are left out of the count), and any single `feature` key holding more than
+    half of those tickets. Silent when nothing to say. The lead is
+    `prd_item coverage <version>:` — never a `<tag>: ` an existing warning
+    channel already uses."""
+    notes = []
+    for line in [None] + project_line_names(root):
+        vid = line_state(st, line)[1] if line is not None else (st or {}).get("version")
+        if not (isinstance(vid, str) and vid.strip()):
+            continue
+        rows = [t for t in trows if t["version"] == vid and t["type"] != "decision"]
+        if not rows:
+            continue
+        missing = 0
+        for t in rows:
+            fm, _ = parse_frontmatter(Path(root) / t["path"])
+            raw = fm.get("prd_item")
+            if not (isinstance(raw, str) and raw.strip()):
+                missing += 1
+        counts = {}
+        for t in rows:
+            if t.get("feature"):
+                counts[t["feature"]] = counts.get(t["feature"], 0) + 1
+        heavy = sorted((f, c) for f, c in counts.items() if c * 2 > len(rows))
+        if not missing and not heavy:
+            continue
+        msg = (f"prd_item coverage {vid}: {missing}/{len(rows)} tickets without prd_item "
+               f"({round(100 * missing / len(rows))}%)")
+        for f, c in heavy:
+            msg += f"; feature '{f}' holds {c}/{len(rows)} (more than half)"
+        notes.append(msg)
+    return notes
+
+
 # ── doctor: W7 (drift-carry commit trailer past ticket close) — T-674 slice 2d
 #
 # Design SoT: docs/artifacts/v1.10/linkage-design.md §2.2 A(a) / §2.7. Adopted
@@ -14660,6 +14719,8 @@ def cmd_doctor(_args):
         # T-663 Outcome literals. Project family, same posture as E2-E6 above.
         ("PRD form (P1)", FAMILY_PROJECT, lambda: prd_form_warnings(root, st, tickets)),
         ("prd_item edge (E4)", FAMILY_PROJECT, lambda: prd_item_edge_warnings(root, st, trows)),
+        # T-992: advisory — share of tickets without prd_item per open version.
+        ("prd_item coverage", FAMILY_PROJECT, lambda: Advisory(prd_item_coverage_notes(root, st, trows))),
         # W7 (T-674 slice 2d, design §2.2 A(a) / §2.7) — report-only, same
         # FAMILY_PROJECT posture as the edge-value checks above: a commit after
         # close can be a legitimate fix, never a discipline↔execution mismatch.
