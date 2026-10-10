@@ -5100,6 +5100,22 @@ TICKET_FRONTMATTER_ORDER = ("id", "slug", "type", "status", "assignee", "feature
                             "prd_item", "deps", "created")
 
 
+def prd_item_hint(root, line=None):
+    """T-992 — one line listing the open section's item keys as ready-to-paste
+    `--prd-item` values (`[<line>/]v<N>.<m>#<key>`); None when the open
+    section carries no item key (nothing to suggest)."""
+    st = read_json(Path(root) / ".prdt" / "po-state.json")
+    version, body = _prd_open_section(root, st, line)
+    if version is None:
+        return None
+    keys = [k for _, k, _ in _prd_h4_items(body) if k]
+    if not keys:
+        return None
+    vid = join_line_id(line, version)
+    return (f"hint — no --prd-item given; open section items: "
+            f"{' · '.join(f'{vid}#{k}' for k in dict.fromkeys(keys))} (pass one as --prd-item)")
+
+
 def cmd_tickets_new(args, root):
     """`prdt tickets new` — scaffold a frame ticket (T-685): the next global id,
     full frontmatter in frame order, and the frame's H2 keys already in place
@@ -5163,6 +5179,13 @@ def cmd_tickets_new(args, root):
     # only when the viewer cannot be generated.
     # A project that never generated its viewer has nothing to keep fresh (T-838):
     # it gets the file link, which opens as it is.
+    # T-992: a version-folder ticket created without `--prd-item` gets a one-line
+    # hint naming the open section's item keys — advisory, stderr (stdout stays
+    # the paste-ready link), never blocks the create above.
+    if not args.prd_item and ttype != "decision" and not version.endswith("backlog"):
+        hint = prd_item_hint(root, line)
+        if hint:
+            print(hint, file=sys.stderr)
     if (Path(root) / VIEWER_REL / "viewer.html").is_file():
         print(viewer_links(root, [tid], labels={tid: str(path.resolve())})[0])
     else:
@@ -5761,6 +5784,77 @@ def viewer_links(root, targets, labels=None):
     return lines
 
 
+def _viewer_code_root():
+    """The prdt checkout root holding `packages/viewer/cli.mjs`, or None."""
+    for base in _repo_root_candidates():
+        if (base.parent / "viewer" / "cli.mjs").is_file():
+            return base.parent.parent
+    return None
+
+
+def viewer_install_deps():
+    """T-983: install the viewer generator's dependencies — the exact filtered,
+    frozen-lockfile, scripts-off install `install.sh` §1c runs (never electron).
+    None on success (or when another run holds the install lock — it is doing
+    this very work), else one line naming the cause. Never raises."""
+    code = _viewer_code_root()
+    if code is None:
+        return "prdt 체크아웃을 찾지 못해 뷰어 의존성을 설치하지 못했어요"
+    pnpm = shutil.which("pnpm")
+    if pnpm is None:
+        return (f"pnpm 이 PATH 에 없어 뷰어 의존성을 설치하지 못했어요 — "
+                f"`npm install -g pnpm` 뒤 `cd {code} && {VIEWER_INSTALL_CMD}`")
+    cmd = [pnpm, "install", "--frozen-lockfile", "--filter", "@productune/viewer"]
+    if (code / "packages" / "gui" / "node_modules").is_dir() and (code / "packages" / "gui" / "package.json").is_file():
+        cmd += ["--filter", "./packages/gui"]
+    cmd += ["--ignore-scripts", "--config.fetch-retries=1"]
+    lock = None
+    try:
+        run_dir = prdt_home() / "run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        lock = open(run_dir / "viewer-install.lock", "a")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return None
+        # pass_fds: the pnpm child holds the lock's open file description, so
+        # the lock outlives a killed ensure for as long as the install runs.
+        r = subprocess.run(cmd, cwd=str(code), capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=600, pass_fds=(lock.fileno(),))
+        if r.returncode == 0:
+            return None
+        lines = [l.strip() for l in ((r.stderr or "") + "\n" + (r.stdout or "")).splitlines() if l.strip()]
+        err = next((l for l in reversed(lines) if "ERR_PNPM" in l), None) or (lines[-1] if lines else "출력 없음")
+        return (f"뷰어 의존성 설치가 실패했어요 ({err[:200]}) — 다음 PO 세션 시작에 다시 시도해요. "
+                f"직접: `cd {code} && {VIEWER_INSTALL_CMD}`")
+    except subprocess.TimeoutExpired:
+        return f"뷰어 의존성 설치가 600초 안에 끝나지 않았어요 — 다음 PO 세션 시작에 다시 시도해요. 직접: `cd {code} && {VIEWER_INSTALL_CMD}`"
+    except OSError as e:
+        return f"뷰어 의존성 설치를 실행하지 못했어요 — {e}. 직접: `cd {code} && {VIEWER_INSTALL_CMD}`"
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+def viewer_ensure(root, refresh=False):
+    """T-983: make this project's viewer exist — install the generator's
+    dependencies when they are missing, then generate `viewer.html` when it is
+    absent (or always, `refresh`: a just-updated generator). None when the
+    viewer is ready, else one line naming why not. Deps present and the page
+    there → no install, no run."""
+    problem = viewer_problem()
+    if problem is not None:
+        # the two missing-dependency causes name this fix; PRDT_VIEWER_NO_INSTALL
+        # (`prdt update`: install.sh §1c just tried) reports instead of retrying
+        if VIEWER_INSTALL_CMD in problem and not os.environ.get("PRDT_VIEWER_NO_INSTALL"):
+            failed = viewer_install_deps()
+            if failed:
+                return failed
+    elif (Path(root) / VIEWER_REL / "viewer.html").is_file() and not refresh:
+        return None
+    return viewer_generate(root)[1]
+
+
 def cmd_viewer(args):
     """`prdt viewer [TARGET…] [--no-open]` — regenerate this project's viewer
     and print a link per target (ticket id or document path) at that item;
@@ -5770,6 +5864,12 @@ def cmd_viewer(args):
     on this same command line still suppresses that (`~/.prdt/auto-open` = off
     still wins too)."""
     root = require_root()
+    if getattr(args, "ensure", False):
+        # T-983: the session-start / post-update entry — silent when ready.
+        failed = viewer_ensure(root, refresh=getattr(args, "refresh", False))
+        if failed:
+            sys.exit(f"prdt viewer: {failed}")
+        return
     if not args.targets:
         problem = viewer_scratch_problem(root)
         if problem:
@@ -6016,6 +6116,31 @@ def _run_pull_install(repo, *, pull=True, target_sha=None):
             sys.exit("prdt update: 안내한 버전과 받아온 커밋이 달라 설치를 건너뜀 — 다시 시도하세요")
     if subprocess.run(["bash", str(Path(repo) / "scripts" / "install.sh")]).returncode:
         sys.exit("prdt update: install 실패 — 위 출력 확인")
+    _viewer_after_update()
+
+
+def _viewer_after_update():
+    """T-983: right after install.sh, build the viewer of the project this run
+    is in (other projects build on their first PO session start). Runs the
+    JUST-installed CLI — this process is the old code. Never fails the update:
+    a failure is one line, and the next PO session start retries."""
+    root = find_project_root()
+    if not root:
+        return
+    cli = prdt_home() / "bin" / "prdt"
+    argv = [str(cli)] if cli.is_file() and os.access(cli, os.X_OK) else [sys.executable, str(Path(__file__).resolve())]
+    try:
+        r = subprocess.run(argv + ["viewer", "--ensure", "--refresh"], cwd=str(root),
+                           env={**os.environ, "PRDT_VIEWER_NO_INSTALL": "1"},
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print(f"prdt update: 뷰어를 만들지 못했어요 — {e}. 다음 PO 세션 시작에 다시 시도해요")
+        return
+    if r.returncode:
+        first = next((l for l in (r.stderr or r.stdout or "").splitlines() if l.strip()), "원인 출력 없음")
+        if VIEWER_INSTALL_CMD in first:
+            return  # a dependency-install failure: install.sh §1c just said it (one line) — never twice
+        print(f"prdt update: 뷰어를 만들지 못했어요 — {first.replace('prdt viewer: ', '', 1)}")
 
 
 def _git_repo(repo, *a):
@@ -11845,6 +11970,42 @@ def prd_item_edge_warnings(root, st, trows):
     return warns
 
 
+def prd_item_coverage_notes(root, st, trows):
+    """T-992 — one advisory line per open version: the share of its tickets
+    without `prd_item` (`type: decision` tickets legitimately carry none and
+    are left out of the count), and any single `feature` key holding more than
+    half of those tickets. Silent when nothing to say. The lead is
+    `prd_item coverage <version>:` — never a `<tag>: ` an existing warning
+    channel already uses."""
+    notes = []
+    for line in [None] + project_line_names(root):
+        vid = line_state(st, line)[1] if line is not None else (st or {}).get("version")
+        if not (isinstance(vid, str) and vid.strip()):
+            continue
+        rows = [t for t in trows if t["version"] == vid and t["type"] != "decision"]
+        if not rows:
+            continue
+        missing = 0
+        for t in rows:
+            fm, _ = parse_frontmatter(Path(root) / t["path"])
+            raw = fm.get("prd_item")
+            if not (isinstance(raw, str) and raw.strip()):
+                missing += 1
+        counts = {}
+        for t in rows:
+            if t.get("feature"):
+                counts[t["feature"]] = counts.get(t["feature"], 0) + 1
+        heavy = sorted((f, c) for f, c in counts.items() if c * 2 > len(rows))
+        if not missing and not heavy:
+            continue
+        msg = (f"prd_item coverage {vid}: {missing}/{len(rows)} tickets without prd_item "
+               f"({round(100 * missing / len(rows))}%)")
+        for f, c in heavy:
+            msg += f"; feature '{f}' holds {c}/{len(rows)} (more than half)"
+        notes.append(msg)
+    return notes
+
+
 # ── doctor: W7 (drift-carry commit trailer past ticket close) — T-674 slice 2d
 #
 # Design SoT: docs/artifacts/v1.10/linkage-design.md §2.2 A(a) / §2.7. Adopted
@@ -14695,6 +14856,8 @@ def cmd_doctor(_args):
         # T-663 Outcome literals. Project family, same posture as E2-E6 above.
         ("PRD form (P1)", FAMILY_PROJECT, lambda: prd_form_warnings(root, st, tickets)),
         ("prd_item edge (E4)", FAMILY_PROJECT, lambda: prd_item_edge_warnings(root, st, trows)),
+        # T-992: advisory — share of tickets without prd_item per open version.
+        ("prd_item coverage", FAMILY_PROJECT, lambda: Advisory(prd_item_coverage_notes(root, st, trows))),
         # W7 (T-674 slice 2d, design §2.2 A(a) / §2.7) — report-only, same
         # FAMILY_PROJECT posture as the edge-value checks above: a commit after
         # close can be a legitimate fix, never a discipline↔execution mismatch.
@@ -15759,6 +15922,10 @@ def main():
     p.add_argument("--no-open", action="store_true",
                    help="the PO's own run: suppress the main-session hook's open too (T-794); a worker's run "
                         "never opens regardless")
+    p.add_argument("--ensure", action="store_true",
+                   help="T-983: install the generator's dependencies if missing and build viewer.html if absent; "
+                        "silent when ready, one failure line otherwise (the PO session-start hook and `prdt update` run it)")
+    p.add_argument("--refresh", action="store_true", help="with --ensure: regenerate viewer.html even when it exists")
     p.set_defaults(fn=cmd_viewer)
     p = sub.add_parser("tickets", help="list tickets (--version --feature --status --assignee --ready --backlog) "
                                        "· --link T-NNN … prints paste-ready file:// links "
@@ -15987,10 +16154,15 @@ def main():
         or getattr(args, "json", False)
         or (args.cmd == "viewer" and getattr(args, "no_open", False))
         or args.cmd == "_shared-state-guard"
+        # T-983: the hook-spawned ensure is a background call of this same
+        # kind — it must never eat the user's daily nudge (update-state.json).
+        or (args.cmd == "viewer" and getattr(args, "ensure", False))
     )
     if not skip_update_nudge:
         maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
-    if not hook_call:
+    # T-983: `viewer --ensure` also skips the backup tick — the PO SessionStart
+    # hook that spawns it already ran that tick in the same start.
+    if not hook_call and not (args.cmd == "viewer" and getattr(args, "ensure", False)):
         maybe_meta_backup(args.cmd)    # T-504: detached meta backup tick (stage boundary / once daily; never blocks)
     if not args.cmd:
         # bare `prdt` = 구 productune UX 계승: init(필요 시 §10 3항목) → PO 대화 진입
