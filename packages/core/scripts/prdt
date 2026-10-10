@@ -12315,6 +12315,102 @@ def prd_form_warnings(root, st, tickets):
     return warns
 
 
+# T-1057 — the As-Is / To-Be sections may carry `#### <name> · <title>` MEANING
+# GROUPS (T-1048); those H4s are not What items, so the item-address check skips
+# them, and a mismatch between the two sides — which makes the viewer fall back
+# silently to a flat table — is warned here instead. Mirrors `pairGroups` /
+# `groupBody` in packages/viewer/lib/prd-reading.mjs.
+PRD_PAIR_SECTION_RE = re.compile(r"^### (As-Is|To-Be)(\s|$)")
+
+
+def _prd_pair_sections(body):
+    """[(side, heading_line, [(line_no, line), ...])] for each `### As-Is` /
+    `### To-Be` section of an open-section body — the lines after the heading up
+    to the next `### ` / `## ` heading (viewer: `^(As-Is|To-Be)(\\s|$)`; the old
+    Korean pair is not a group carrier)."""
+    out = []
+    cur = None
+    for ln, line in body:
+        if line.startswith("### ") or line.startswith("## "):
+            cur = None
+            m = PRD_PAIR_SECTION_RE.match(line)
+            if m:
+                cur = (m.group(1), ln, [])
+                out.append(cur)
+            continue
+        if cur is not None:
+            cur[2].append((ln, line))
+    return [(side, ln, rng) for side, ln, rng in out]
+
+
+def _prd_group_split(rng):
+    """(loose_lines, [(heading_text, line_no, body_lines)]) of one pair section:
+    loose = non-blank text before the first `#### `; groups = each H4 + its lines."""
+    loose, groups = [], []
+    for ln, line in rng:
+        m = PRD_H4_RE.match(line)
+        if m:
+            groups.append((m.group(1).strip(), ln, []))
+        elif groups:
+            groups[-1][2].append(line)
+        elif line.strip():
+            loose.append(ln)
+    return loose, groups
+
+
+def _prd_group_body_ok(lines):
+    """Viewer `groupBody`: an optional summary, then a `- ` list whose lines are
+    only items or indented continuations. Returns the item count, None if not so."""
+    first = next((i for i, l in enumerate(lines) if re.match(r"^[-*]\s+", l)), None)
+    if first is None:
+        return None
+    n = 0
+    for l in lines[first:]:
+        if not l.strip():
+            continue
+        if re.match(r"^[-*]\s+", l):
+            n += 1
+        elif n and re.match(r"^\s+\S", l):
+            continue
+        else:
+            return None
+    return n
+
+
+def _prd_group_parity_warnings(version, pair_ranges):
+    """Warn when the As-Is / To-Be groups would not pair in the viewer. Silent
+    when neither side has a group (a flat list is the legal plain form)."""
+    sides = {side: rng for side, _, rng in pair_ranges}
+    if "As-Is" not in sides or "To-Be" not in sides:
+        return []
+    (la, ga), (lb, gb) = _prd_group_split(sides["As-Is"]), _prd_group_split(sides["To-Be"])
+    if not ga and not gb:
+        return []
+    pre = f"{version}: As-Is/To-Be groups"
+    tail = " — the viewer falls back to a flat table"
+    if bool(ga) != bool(gb):
+        which = "As-Is" if ga else "To-Be"
+        return [f"{pre}: only {which} is grouped (`#### <name> · <title>`){tail}"]
+    warns = []
+    for side, loose in (("As-Is", la), ("To-Be", lb)):
+        if loose:
+            warns.append(f"{pre}: loose text under {side} outside a group (line "
+                         f"{loose[0]}); keep a summary line inside a group{tail}")
+    ha, hb = [t for t, _, _ in ga], [t for t, _, _ in gb]
+    if ha != hb:
+        warns.append(f"{pre}: headings differ in text or order (As-Is: {ha}; To-Be: {hb}){tail}")
+        return warns
+    for (title, _, ba), (_, _, bb) in zip(ga, gb):
+        na, nb = _prd_group_body_ok(ba), _prd_group_body_ok(bb)
+        if na is None or nb is None:
+            side = "As-Is" if na is None else "To-Be"
+            warns.append(f"{pre}: group `{title}` in {side} is not a `- ` item list "
+                         f"(an optional summary line, then items){tail}")
+        elif na != nb:
+            warns.append(f"{pre}: group `{title}` item counts differ (As-Is {na}, To-Be {nb}){tail}")
+    return warns
+
+
 def _prd_open_form_warnings(root, version, body, tickets):
     warns = []
     texts = {line for _, line in body}
@@ -12328,7 +12424,10 @@ def _prd_open_form_warnings(root, version, body, tickets):
                      f'"{PRD_TOBE_HEADING_OLD}") — rename them to "{PRD_ASIS_HEADING}" / '
                      f'"{PRD_TOBE_HEADING}"')
     seen = {}
-    for ln, key, content in _prd_h4_items(body):
+    pair_ranges = _prd_pair_sections(body)
+    in_pair = {ln for _, _, rng in pair_ranges for ln, _ in rng}
+    warns += _prd_group_parity_warnings(version, pair_ranges)
+    for ln, key, content in _prd_h4_items([(n, t) for n, t in body if n not in in_pair]):
         if key is None:
             warns.append(f"{version}: heading `#### {content}` at line {ln} is not item-address "
                          f"form (`#### <key> — <label>`)")

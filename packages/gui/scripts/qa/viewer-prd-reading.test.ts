@@ -1,6 +1,8 @@
 // T-884 (T-860 / T-874): the open PRD's reading screen — outline hierarchy, folds with the approved
 // initial open set, the 「결정할 것」 box, What cards with 「N줄」, and the h3/h4 heading split.
 import { describe, it, expect } from 'vitest'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { PRD_READING_SCRIPT } from '@productune/viewer/lib/prd-reading.mjs'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
 import { plainInline, parsePrdTree, parseQuestions, openDecisionTickets, renderPrdReading, PRD_READING_CSS } from '@productune/viewer/lib/prd-reading.mjs'
@@ -339,5 +341,66 @@ describe('T-928 PRD screen scanability', () => {
     expect(html).toBeTruthy()
     expect(PRD_READING_CSS).toContain('table.pr-tbl')
     expect(PRD_READING_CSS).toContain('border-bottom: 1px solid var(--border-section)')
+  })
+})
+
+describe('T-1048 As-Is → To-Be meaning groups', () => {
+  const OPEN = (extra: string) => `# PRD: demo\n\n## v1.13 — open\n\n${extra}`
+  const run = (body: string) => renderPrdReading({ body, currentVersion: 'v1.13', decisionTickets: [], idPrefix: 'prd', deps }) as string
+  const GROUPED =
+    '### As-Is\n\n#### 기기 위키 · 지식을 한곳에서\n\n지금 요약\n\n- a1\n- a2\n\n#### 줄 · 릴리스 줄\n\n- a3\n- a4\n\n#### 화면 · 화면 세트\n\n- a5\n\n' +
+    '### To-Be\n\n#### 기기 위키 · 지식을 한곳에서\n\n뒤 요약\n\n- b1\n- b2\n\n#### 줄 · 릴리스 줄\n\n- (v1.14 로 옮김, T-1021) b3\n- (v1.14 로 옮김, T-1021) b4\n\n#### 화면 · 화면 세트\n\n- b5\n'
+
+  it('renders one folded group per #### heading with its summary line, moved pairs last and muted', () => {
+    const html = run(OPEN(GROUPED))
+    const groups = html.match(/<details class="pr-sec pr-grp[^"]*"[^>]*>/g) ?? []
+    expect(groups).toHaveLength(3)
+    for (const g of groups) expect(g).toContain('data-open0="0"')
+    expect(groups.join('')).not.toMatch(/ open>/)
+    expect(html).toContain('묶음 3 · 5쌍')
+    expect(html).toContain('<div class="pr-gt">기기 위키</div>')
+    expect(html).toContain('<div class="pr-gl">지식을 한곳에서</div>')
+    expect(html).toContain('<div class="pr-gsum"><span class="a">지금 요약</span><span class="ar">→</span><span class="b">뒤 요약</span></div>')
+    // order: 기기 위키, 화면, then the moved group last
+    const order = [...html.matchAll(/<div class="pr-gt">([^<]*)/g)].map((m) => m[1])
+    expect(order).toEqual(['기기 위키', '화면', '줄'])
+    expect(html).toContain('<details class="pr-sec pr-grp is-moved"')
+    expect(html).toContain('<span class="pr-gtag">v1.14 로 옮김 · T-1021</span>')
+    expect(html).toContain('<div class="pr-pr is-moved"><span class="a">a3</span><span class="ar">→</span><span class="b">(v1.14 로 옮김, T-1021) b3</span></div>')
+    expect(html).not.toContain('pr-tbl pr-pair')
+  })
+
+  it('falls back to the pair table when the #### headings differ, are reordered, or counts differ', () => {
+    const swap = GROUPED.replace('#### 화면 · 화면 세트\n\n- b5', '#### 다른 · 제목\n\n- b5')
+    expect(run(OPEN(swap))).not.toContain('pr-grp')
+    const reorder = '### As-Is\n\n#### x\n\n- a\n\n#### y\n\n- b\n\n### To-Be\n\n#### y\n\n- b\n\n#### x\n\n- a\n'
+    expect(run(OPEN(reorder))).not.toContain('pr-grp')
+    const uneven = '### As-Is\n\n#### x\n\n- a\n- b\n\n### To-Be\n\n#### x\n\n- c\n'
+    expect(run(OPEN(uneven))).not.toContain('pr-grp')
+  })
+
+  it('leaves an ungrouped PRD as the T-928 pair table', () => {
+    const html = run(OPEN('### As-Is\n\n- 지금 하나\n\n### To-Be\n\n- 뒤 하나\n'))
+    expect(html).toContain('pr-tbl pr-pair')
+    expect(html).not.toContain('pr-grp')
+  })
+
+  it('the real v1.13 PRD (no #### groups yet) still renders as the pair table', () => {
+    let dir = process.cwd()
+    let prd = ''
+    for (let i = 0; i < 8 && !prd; i++, dir = dirname(dir)) {
+      const f = join(dir, 'docs/prd/PRD.md')
+      if (existsSync(f)) prd = readFileSync(f, 'utf8')
+    }
+    if (!prd || !/^### As-Is/m.test(prd)) return // meta repo not reachable from this checkout
+    const start = prd.search(/^## v1\.13 /m)
+    if (start < 0) return
+    const rest = prd.slice(start)
+    const end = rest.slice(3).search(/^## /m)
+    const sec = end < 0 ? rest : rest.slice(0, end + 3)
+    const html = run(sec)
+    if (/^#### .* · /m.test(sec.slice(sec.indexOf('### As-Is'), sec.indexOf('### To-Be')))) return // PRD already carries groups
+    expect(html).toContain('pr-tbl pr-pair')
+    expect(html).toContain('As-Is → To-Be')
   })
 })
