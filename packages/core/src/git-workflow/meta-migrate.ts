@@ -36,6 +36,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { codeRoot, codeDirName, stateDir, CODE_DIR_DEFAULT } from '../state/project-kind'
 import { atomicWriteFileSync } from '../fs/atomic-write'
+import { stateWriteFileSync } from '../fs/state-write'
 import {
   initMetaRepo,
   commitMeta,
@@ -196,8 +197,19 @@ async function excludeMetaFromCode(projectDir: string, allowlist: string[]): Pro
   }
   const cleaned = stripManagedBlock(existing)
   const prefix = cleaned.trim() ? cleaned.replace(/\n*$/, '') + '\n' : ''
-  fs.mkdirSync(path.dirname(excludePath), { recursive: true })
-  fs.writeFileSync(excludePath, prefix + block + '\n')
+  const body = prefix + block + '\n'
+  const root = codeRoot(projectDir)
+  const rel = path.relative(root, excludePath)
+  if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+    // Inside the project: refuse a link at any component (T-848 S4); mode kept.
+    // A refusal throws → the caller treats this step as best-effort.
+    stateWriteFileSync(root, excludePath, body)
+  } else {
+    // A linked worktree's external git dir lies outside the project tree — the
+    // clone cannot plant links there; keep the plain write.
+    fs.mkdirSync(path.dirname(excludePath), { recursive: true })
+    fs.writeFileSync(excludePath, body)
+  }
 }
 
 /**
@@ -642,7 +654,7 @@ export async function planPhysicalMigration(
 
 /** Strip the retired `.gitignore` managed block (PRD history §v1.3 설계 결정 2), leaving
  * every user-authored line untouched. Returns true when a block was removed. */
-function removeManagedBlock(gitignorePath: string): boolean {
+function removeManagedBlock(root: string, gitignorePath: string): boolean {
   let content: string
   try {
     content = fs.readFileSync(gitignorePath, 'utf-8')
@@ -658,8 +670,10 @@ function removeManagedBlock(gitignorePath: string): boolean {
   const after = eol < 0 ? '' : content.slice(eol + 1)
   const result = (before + after).replace(/\n{3,}/g, '\n\n')
   try {
+    // A `.gitignore` that is a link (or reached through one) is left alone (T-848 S4).
+    if (fs.lstatSync(gitignorePath).isSymbolicLink()) return false
     if (result.trim() === '') fs.rmSync(gitignorePath)
-    else fs.writeFileSync(gitignorePath, result)
+    else stateWriteFileSync(root, gitignorePath, result)
   } catch {
     /* best-effort */
   }
@@ -798,7 +812,7 @@ export async function runPhysicalMigration(
   // ── POST-MOVE (past the atomic boundary; the tree is now under code/) ───────
   // Managed block removal is a work-tree edit only — NOT committed (the physical
   // migration adds no code commit; the user commits it in their normal flow).
-  removeManagedBlock(path.join(codeDirPath, '.gitignore'))
+  removeManagedBlock(codeDirPath, path.join(codeDirPath, '.gitignore'))
 
   // Record code.dir so codeRoot() resolves to codeDirPath everywhere hereafter.
   recordCodeDir(projectDir, codeDir)
