@@ -44,14 +44,18 @@ test.skipIf(!hasJq())('PostToolUse carries the pre-existing Agent entry and BOTH
   // T-1025: plus the matcher-less prdt-user-prompt.sh entry (form=outline hot line).
   const hot = entries.find((e) => e.matcher === undefined)
   expect(hot?.hooks?.[0]?.command).toContain('prdt-user-prompt.sh')
-  expect(entries.length).toBe(4)
+  // T-977: plus prdt-wordlist-check.sh as its OWN Write|Edit|MultiEdit entry, after auto-open's.
+  const wordlist = entries.filter((e) => e.matcher === 'Write|Edit|MultiEdit')[1]
+  expect(wordlist?.hooks?.[0]?.command).toContain('prdt-wordlist-check.sh')
+  expect(entries.length).toBe(5)
 })
 
 test.skipIf(!hasJq())('re-running install.sh is idempotent (single auto-open entry per matcher, single command each)', () => {
   // its own installs ON PURPOSE: the subject is the second RUN, not the state
   const { settings } = freshInstall({ times: 2 })
   for (const matcher of ['Write|Edit|MultiEdit', 'Bash']) {
-    const entries = (settings.hooks.PostToolUse as any[]).filter((e) => e.matcher === matcher)
+    const entries = (settings.hooks.PostToolUse as any[]).filter((e) =>
+      e.matcher === matcher && String(e.hooks?.[0]?.command ?? '').includes('prdt-auto-open.sh'))
     expect(entries.length, matcher).toBe(1)
     expect(entries[0].hooks.length, matcher).toBe(1)
   }
