@@ -2214,14 +2214,14 @@ function ticketButtonAttrs(id) {
   return `data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}" role="button" tabindex="0"`
 }
 
-/** 스코프: one row per PRD item of the open section (label up to its colon; the full heading is the tooltip), then 「항목 밖」. */
+/** 스코프: one row per PRD item of the open section (label up to its colon; the full heading is the tooltip), then the 「PRD 항목 밖 티켓」 block (work tickets only; T-1046). */
 function homeScope(data, currentTickets) {
   const openItems = data.prd.openItems || []
   const byItem = new Map(openItems.map((i) => [i.key, []]))
   const outOfScope = []
-  // T-981: why a ticket sits outside the items — a malformed `prd_item` (no `<version>#<key>` shape) or none at all.
+  // T-1046: a malformed `prd_item` (no `<version>#<key>` shape) is named in the definition line; decision tickets (T-1051 = A) are only counted for the note.
   let malformed = 0
-  let noItem = 0
+  let decisions = 0
   const fixCount = new Map()
   for (const t of currentTickets) {
     if (t.frontmatter.status !== 'open' && t.frontmatter.status !== 'done') continue
@@ -2233,10 +2233,10 @@ function homeScope(data, currentTickets) {
       byItem.get(raw).push(t)
       fixCount.set(raw, (fixCount.get(raw) || 0) + 1)
     } else {
+      // Decision tickets record user choices, not scope work — never counted outside the items.
+      if (t.frontmatter.type === 'decision') { decisions += 1; continue }
       outOfScope.push(t)
-      // Decision tickets record user choices, not scope work — never counted as a missing prd_item.
-      if (raw === '') { if (t.frontmatter.type !== 'decision') noItem += 1 }
-      else if (!/^[^#]+#[^#]+$/.test(raw)) malformed += 1
+      if (raw !== '' && !/^[^#]+#[^#]+$/.test(raw)) malformed += 1
     }
   }
   const row = (label, title, tickets, extra = '', fix = 0) => {
@@ -2254,13 +2254,15 @@ function homeScope(data, currentTickets) {
     const plain = i.label.replace(/`/g, '')
     return row(plain.split(/[:：]/)[0].trim(), plain, byItem.get(i.key), '', fixCount.get(i.key) || 0)
   })
-  if (outOfScope.length > 0) rows.push(row(PROGRESS_OUT_OF_SCOPE_LABEL, PROGRESS_OUT_OF_SCOPE_LABEL, outOfScope, ' sc-out'))
-  // T-981: each reason links to the ticket list (this line's current-version group).
+  // T-1046: its own block under a divider; the row never disappears (0 shows 「없음」).
   const listKey = `${data.listPrefix || ''}${currentTicketBucketKey(data.tickets, data.currentVersion)}`
-  const why = (text) => `<button type="button" class="sc-why-link" data-open-store="ticket" data-open-group="${escapeHtml(listKey)}">${escapeHtml(text)}</button>`
-  const whys = [malformed > 0 ? why(HOME.scopeMalformed(malformed)) : '', noItem > 0 ? why(HOME.scopeNoItem(noItem)) : ''].filter(Boolean)
-  const whyHtml = whys.length > 0 ? `<p class="sc-why">${HOME.scopeWhyLead} ${whys.join(' · ')}</p>` : ''
-  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div>${rows.join('')}${whyHtml}</div>`
+  const link = (text, store, key) => `<button type="button" class="sc-why-link" data-open-store="${store}" data-open-group="${escapeHtml(key)}">${escapeHtml(text)}</button>`
+  const outRow = outOfScope.length > 0
+    ? row(PROGRESS_OUT_OF_SCOPE_LABEL, PROGRESS_OUT_OF_SCOPE_LABEL, outOfScope, ' sc-out')
+    : `<div class="sc-row sc-out"><span class="sc-lab">${escapeHtml(PROGRESS_OUT_OF_SCOPE_LABEL)}</span><span class="sc-sq"><span class="cp-empty">${escapeHtml(HOME.scopeOutEmpty)}</span></span><span class="mono sc-n">0</span></div>`
+  const defHtml = outOfScope.length > 0 ? `<p class="sc-why">${escapeHtml(HOME.scopeOutDef)}${malformed > 0 ? ` ${link(HOME.scopeMalformed(malformed), 'ticket', listKey)}` : ''}</p>` : ''
+  const noteHtml = decisions > 0 ? `<p class="sc-why">${escapeHtml(HOME.scopeDecisionNote(decisions))} ${link(HOME.scopeDecisionLink, 'home', `${data.listPrefix || ''}decision`)}</p>` : ''
+  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div>${rows.join('')}<div class="sc-outside">${outRow}${defHtml}${noteHtml}</div></div>`
 }
 
 function homeWaits(data) {
@@ -2642,7 +2644,8 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .sc-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--space-24); }
 .sc-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: center; gap: var(--space-10); min-height: 20px; }
 .sc-lab { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sc-out .sc-lab { color: var(--text-tertiary); }
+.sc-outside { margin-top: var(--space-12); padding-top: var(--space-10); border-top: 1px dashed var(--border-item); }
+.sc-out .sc-lab { color: var(--text-primary); font-weight: 600; }
 .sc-sq { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-width: 0; }
 .sc-n { font-size: 10.5px; color: var(--text-tertiary); }
 .sc-btn { cursor: pointer; }
