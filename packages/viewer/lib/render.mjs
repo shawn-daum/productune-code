@@ -651,8 +651,8 @@ function fmtBytes(n) {
 // 621-627) — doctrine #2, don't re-draw what is already signed off.
 // T-880 = A: 현재 버전(home) · PRD · 티켓 · 위키 · 기능 · 아티팩트 · 용어 사전 ·
 // 릴리즈 노트 · 규율 — the discipline store (T-886) lands last, after 'release'.
-// T-958: env sits after 아티팩트 (screen set v1.13 #screen-env).
-const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'env', 'glossary', 'release', 'disc']
+// T-1047: env has no activity-bar item — it is the last current-version sidebar item (after 결정).
+const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release', 'disc']
 const STORE_ICON_PATHS = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
   prd: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/>',
@@ -663,12 +663,13 @@ const STORE_ICON_PATHS = {
   glossary: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m8 13 4-7 4 7"/><path d="M9.1 11h5.7"/>',
   release: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
   // T-886: copied from the approved screen set (define-screen-set.html 「규율」 activity button).
-  // T-958: copied from the approved screen set (v1.13 define-screen-set.html 「env」 activity button).
-  env: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2"/><path d="m16 7 3 3"/><path d="m19 4 2 2"/>',
   disc: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
   artifact:
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
 }
+// T-1047: lucide Eye / EyeOff, the same icons the GUI env pane's reveal toggle uses.
+const EYE_ICON_PATH = '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>'
+const EYE_OFF_ICON_PATH = '<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>'
 const CLOSE_ICON_PATH = '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
 const MOON_ICON_PATH = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'
 const SUN_ICON_PATH = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'
@@ -1044,8 +1045,7 @@ function ticketSection(tickets, currentVersion, views = []) {
 
 // ---------- release lines (T-961; release-lines.md §6b) ----------
 // The stores whose sidebar draws one section per release line, home line
-// first, each headed `<line> <version>` + its stage. The env store joins this
-// list when it lands (T-958). Every other store's sidebar is unchanged.
+// first, each headed `<line> <version>` + its stage. Every other store's sidebar is unchanged.
 export const LINE_SECTIONED_STORES = ['home', 'prd', 'ticket', 'feature', 'artifact']
 
 /**
@@ -2106,39 +2106,28 @@ function envSetCount(f) {
 
 function envFileBody(f, dir) {
   const set = envSetCount(f)
-  const rows = f.keys.map((k) => `<div class="erow"><code>${escapeHtml(k.name)}</code>${envPill(k.set)}</div>`).join('')
-  return `<div class="dash-card env-card"><div class="env-h"><b>${escapeHtml(f.name)}</b><span class="env-dir">${escapeHtml(dir || '')}</span>` +
-    `<span class="env-c">${envPill(true)} ${set} ${envPill(false)} ${f.keys.length - set}</span></div>` +
-    `<p class="env-note">${ENV.note}</p><div class="erows">${rows}</div></div>`
+  // A sample file counts no set / empty (every key reads empty by design): names only.
+  const rows = f.keys.map((k) => `<div class="erow"><code>${escapeHtml(k.name)}</code>${f.sample ? '' : envPill(k.set)}</div>`).join('')
+  const where = f.sample ? ENV.sampleKeys(f.keys.length) : dir || ''
+  const counts = f.sample ? '' : `<span class="env-c">${envPill(true)} ${set} ${envPill(false)} ${f.keys.length - set}</span>`
+  // T-1047: the key list is collapsed until the eye button reveals it (state per file card).
+  const eye = `<button type="button" class="env-eye" data-env-eye aria-expanded="false" aria-label="${ENV.reveal}" title="${ENV.reveal}" data-label-show="${ENV.reveal}" data-label-hide="${ENV.mask}">` +
+    `<span class="eye-on">${svgIcon(EYE_ICON_PATH, 14)}</span><span class="eye-off">${svgIcon(EYE_OFF_ICON_PATH, 14)}</span></button>`
+  return `<div class="dash-card env-card"><div class="env-h"><b>${escapeHtml(f.name)}</b><span class="env-dir">${escapeHtml(where)}</span>` +
+    `${counts}${eye}</div>` +
+    `<p class="env-note">${f.sample ? ENV.sampleNote : ENV.note}</p><div class="erows" hidden>${rows}</div></div>`
 }
 
-function envGroups(env, emptyHead) {
+/** One current-version sidebar group per view: env = the last item (after 결정), its count = env file count (samples included). */
+function envGroup(env, emptyHead) {
   if (!env || env.files.length === 0) {
     const body = `<div class="env-nofile"><b>${escapeHtml(emptyHead)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
-    return { groups: [{ key: 'none', label: ENV.noFile, dim: true, bodyHtml: body }] }
+    return { key: 'env', label: STORE_LABEL.env, count: 0, bodyHtml: body }
   }
-  return {
-    groups: env.files.map((f) => ({
-      key: f.name,
-      label: f.sample ? `${f.name} · ${ENV.sample}` : f.name,
-      count: f.keys.length,
-      dim: f.sample,
-      bodyHtml: envFileBody(f, env.dir),
-    })),
-  }
+  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir)).join('\n') }
 }
 
-function envSection(data) {
-  const views = lineViews(data)
-  const groups = views.length > 0
-    ? lineSectioned(views, (v) => envGroups(envOfView(data, v), ENV.emptyHead))
-    : envGroups(data.env, ENV.homeNone).groups
-  // Lands on the first real env file anywhere, else the first row.
-  const first = groups.find((g) => !g.dim)
-  return storeSection('env', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.env, crumbLabel: STORE_LABEL.env, groups, defaultKey: first ? first.key : undefined, alwaysButtons: true }) })
-}
-
-/** Home's env block: per real env file (samples only when there is no real one) 설정됨 n · 비어 있음 m, the empty keys named, a link to that file on the env screen; no env file → one line. */
+/** Home's env block: per real env file (samples only when there is no real one) 설정됨 n · 비어 있음 m, the empty keys named, a link to the env item of the same version; no env file → one line. */
 function homeEnvBlock(env, prefix, noneText) {
   const head = `<div class="cp-h">${STORE_LABEL.env}</div>`
   const all = env ? env.files : []
@@ -2150,7 +2139,7 @@ function homeEnvBlock(env, prefix, noneText) {
     const empty = f.keys.filter((k) => !k.set)
     const emptyHtml = empty.length === 0 ? '' : `<p class="env-empty"><span>${ENV.unset}</span>: ${empty.map((k) => `<code>${escapeHtml(k.name)}</code>`).join(' · ')}</p>`
     return `<div class="env-file"><code>${escapeHtml(f.name)}</code><span class="env-c">${envPill(true)} ${set} · ${envPill(false)} ${f.keys.length - set}</span>` +
-      `<button type="button" class="env-go" data-open-store="env" data-open-group="${escapeHtml(prefix + f.name)}">${escapeHtml(ENV.go)}</button></div>${emptyHtml}`
+      `<button type="button" class="env-go" data-open-store="home" data-open-group="${escapeHtml(prefix)}env">${escapeHtml(ENV.go)}</button></div>${emptyHtml}`
   }).join('')
   return `<div class="cp-block env-blk">${head}${rows}</div>\n`
 }
@@ -2453,6 +2442,7 @@ function homeLineGroups(data, v, views, repoRootHref) {
     { key: 'prd', label: STORE_LABEL.prd, count: v.currentVersion, bodyHtml: prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
+    envGroup(envOfView(data, v), ENV.emptyHead),
   ]
   return { groups, defaultKey: 'progress' }
 }
@@ -2486,6 +2476,7 @@ function homeSection(data, repoRootHref) {
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
+    envGroup(data.env, ENV.homeNone),
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
   const heading = `${STORE_LABEL.home} · ${data.currentVersion}`
@@ -2968,6 +2959,15 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .env-file + .env-file, .env-empty + .env-file { margin-top: 8px; }
 .env-file code { font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); }
 .env-file .env-c { margin-left: 0; }
+.env-eye { background: none; border: none; padding: 4px; border-radius: 6px; cursor: pointer; color: var(--text-tertiary); display: inline-flex; align-items: center; margin-left: auto; }
+.env-c + .env-eye { margin-left: 0; }
+.env-eye:hover { background: var(--bg-state-hover); color: var(--text-primary); }
+.env-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.env-eye .eye-off, .env-eye[aria-expanded="true"] .eye-on { display: none; }
+.env-eye[aria-expanded="true"] .eye-off { display: inline-flex; }
+.env-eye .eye-on { display: inline-flex; }
+.erows[hidden] { display: none; }
+.env-card + .env-card { margin-top: 12px; }
 .env-go { margin-left: auto; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; background: none; border: none; padding: 0; }
 .env-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 .env-empty { margin: 6px 0 0; font-size: 12px; color: var(--text-tertiary); line-height: 1.8; }
@@ -3429,11 +3429,17 @@ ${PRD_READING_SCRIPT}
     var p = new URLSearchParams(location.search);
     var view = p.get('view');
     if (!view) return false;
+    var group = p.get('group');
+    if (view === 'env') {
+      // T-1047: env is a current-version item now; an old ?view=env&group=<line>/<file> link lands on that line's env item.
+      var cut = group ? group.lastIndexOf('/') : -1;
+      view = 'home';
+      group = (cut === -1 ? '' : group.slice(0, cut + 1)) + 'env';
+    }
     var section = findByAttr('.store-section', 'data-store', view);
     if (!section) return false;
     clearHashMarks();
     selectStore(view);
-    var group = p.get('group');
     if (group && findByAttr('.view-pane', 'data-group', group, section)) selectGroup(section, group);
     var kind = p.get('kind');
     var id = p.get('id');
@@ -3507,12 +3513,28 @@ ${PRD_READING_SCRIPT}
       return;
     }
 
+    // T-1047: the eye button shows / hides that env file's key list (names and set / empty only).
+    var eyeBtn = ev.target.closest('[data-env-eye]');
+    if (eyeBtn) {
+      ev.preventDefault();
+      var envCard = eyeBtn.closest('.env-card');
+      var envRows = envCard ? envCard.querySelector('.erows') : null;
+      if (!envRows) return;
+      var envOpen = eyeBtn.getAttribute('aria-expanded') !== 'true';
+      eyeBtn.setAttribute('aria-expanded', envOpen ? 'true' : 'false');
+      envRows.hidden = !envOpen;
+      var envLabel = eyeBtn.getAttribute(envOpen ? 'data-label-hide' : 'data-label-show');
+      eyeBtn.setAttribute('aria-label', envLabel);
+      eyeBtn.setAttribute('title', envLabel);
+      return;
+    }
+
     // T-883: a 「읽기」 field value opens the store it names (용어 사전 · 릴리즈 노트).
     var readBtn = ev.target.closest('[data-open-store]');
     if (readBtn) {
       ev.preventDefault();
       var openedSection = selectStore(readBtn.getAttribute('data-open-store'));
-      // T-958: Home's 「env 화면 →」 also names the file row to open.
+      // T-958 / T-1047: Home's 「env 보기」 names the store and the sidebar item to open.
       var openGroup = readBtn.getAttribute('data-open-group');
       if (openedSection && openGroup) selectGroup(openedSection, openGroup);
       clearHashMarks();
@@ -3824,7 +3846,6 @@ ${ticketSection(data.tickets, data.currentVersion, views)}
 ${wikiSection(data.wiki)}
 ${featuresSection(data)}
 ${artifactsSection(data.artifacts, data.currentVersion, views)}
-${envSection(data)}
 ${glossarySection(data.wiki)}
 ${releaseSection(data.releases || [])}
 ${discSection(discipline)}
