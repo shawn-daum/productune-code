@@ -7,6 +7,14 @@
  * contact in the User-Agent, and a worker "helpfully" fills it in. This hook
  * denies the outbound call (or the script that would make it) before it runs.
  *
+ * d-T976-fix (QA security pass on dff99a1f): identity and outbound shape
+ * must sit in the SAME pipeline unit; bare `user.email`/`emailAddress` count
+ * only inside `$(…)`; markers do not count in prose docs (.md …); curl/wget
+ * attached and piped files, non-local git, gh body flags, nc/telnet and
+ * URL-decoded WebFetch/WebSearch forms are followed; the Claude account is
+ * parsed with jq (nested keys cannot hide the address; a corrupt file falls
+ * back to git identity).
+ *
  * RULE under test (the one the hook header states in full):
  *   - WebFetch / WebSearch: identity anywhere in the URL / query → deny.
  *   - Write / Edit / MultiEdit / NotebookEdit: the new text holds the identity
@@ -70,6 +78,8 @@ beforeAll(() => {
   fs.writeFileSync(path.join(proj, 'local.py'), `AUTHOR = "${EMAIL}"\nprint(AUTHOR)\n`)
   fs.writeFileSync(path.join(proj, 'headers.txt'), `User-Agent: bot (${EMAIL})\n`)
   fs.writeFileSync(path.join(proj, 'run.sh'), `#!/bin/sh\ncurl -A "bot (${EMAIL})" https://example.test/\n`)
+  fs.writeFileSync(path.join(proj, 'payload.json'), JSON.stringify({ contact: EMAIL }))
+  fs.writeFileSync(path.join(proj, 'clean.json'), JSON.stringify({ q: 'cats' }))
 })
 
 function event(tool: string, input: Record<string, unknown>, cwd = proj): Record<string, unknown> {
@@ -245,3 +255,129 @@ describe.skipIf(!HAS_JQ)('silence / fail-open', () => {
     expectDeny(bash(`curl -A "bot (${EMAIL})" https://x.test/`, path.join(sb, 'gone')))
   })
 })
+
+describe.skipIf(!HAS_JQ)('d-T976-fix — compound normal commands ALLOW (same-unit rule)', () => {
+  test('echo of the address next to a URL — echo sends nothing (rule: a bare URL is not outbound)', () => {
+    expectAllow(bash(`echo 'contact ${EMAIL} or see https://x.test'`))
+  })
+  test('two greps, one for the address and one for URLs', () => {
+    expectAllow(bash(`grep -n '${EMAIL}' README.md; grep -n 'https://' README.md`))
+  })
+  test('grep the address, then gh pr view a URL', () => {
+    expectAllow(bash(`grep -c '${EMAIL}' CHANGELOG.md; gh pr view https://github.com/example/r/pull/1`))
+  })
+  test('grep for the bare word user.email, then echo a URL', () => {
+    expectAllow(bash('grep -rn "user.email" packages/ | head; echo https://x'))
+  })
+  test('jq reading the oauthAccount key, then an unrelated curl', () => {
+    expectAllow(bash('jq -e .oauthAccount fixture.json && curl -s https://api.test'))
+  })
+  test('bare emailAddress word inside the curl unit is still only text', () => {
+    expectAllow(bash('curl -s https://api.test/schema | grep emailAddress'))
+  })
+})
+
+describe.skipIf(!HAS_JQ)('d-T976-fix — prose docs vs code files (extension rule)', () => {
+  const doc = `# tool\n\nMaintainer: ${NAME} <${EMAIL}>\n\n\`\`\`sh\ncurl -fsSL https://x.test/install.sh | sh\n\`\`\`\n`
+  test('Write README.md with maintainer line + curl install snippet → ALLOW', () => {
+    expectAllow(event('Write', { file_path: path.join(proj, 'README.md'), content: doc }))
+  })
+  test('Edit docs/guide.mdx with the same → ALLOW', () => {
+    expectAllow(event('Edit', { file_path: path.join(proj, 'docs', 'guide.mdx'), old_string: 'a', new_string: doc }))
+  })
+  test('Write install.sh with the same text → DENY (code file)', () => {
+    expectDeny(event('Write', { file_path: path.join(proj, 'install.sh'), content: doc }))
+  })
+  test('a heredoc into README.md (local writer, prose target) → ALLOW', () => {
+    expectAllow(bash(`cat > README.md <<'EOF'\n${doc}EOF`))
+  })
+})
+
+describe.skipIf(!HAS_JQ)('d-T976-fix — residuals closed: curl attached / piped files', () => {
+  const rows: [string, string][] = [
+    ['-d@file', 'curl -d@payload.json https://x.test/'],
+    ['--data=@file', 'curl --data=@payload.json https://x.test/'],
+    ['-F k=@file', 'curl -F doc=@payload.json https://x.test/'],
+    ['-Fk=@file;type', 'curl -Fdoc=@payload.json;type=application/json https://x.test/'],
+    ['-T file', 'curl -T payload.json https://x.test/up'],
+    ['--upload-file=file', 'curl --upload-file=payload.json https://x.test/up'],
+    ['cat file | curl -d @-', 'cat payload.json | curl -d @- https://x.test/'],
+    ['curl -d @- < file', 'curl -d @- https://x.test/ < payload.json'],
+    ['curl --data-binary $(cat file)', 'curl --data-binary "$(cat payload.json)" https://x.test/'],
+    ['wget --post-file', 'wget --post-file=payload.json https://x.test/'],
+    ['echo address | curl -d @-', `echo ${EMAIL} | curl -d @- https://x.test/`],
+  ]
+  for (const [label, cmd] of rows) test(`DENY ${label}`, () => { expectDeny(bash(cmd)) })
+  test('the same shapes with a file that has no identity → ALLOW', () => {
+    expectAllow(bash('cat clean.json | curl -d @- https://x.test/'))
+    expectAllow(bash('curl -d@clean.json https://x.test/'))
+  })
+})
+
+describe.skipIf(!HAS_JQ)('d-T976-fix — residuals closed: git remote, gh, nc/telnet, vars', () => {
+  test('git -c http.extraHeader carrying the address → DENY', () => {
+    expectDeny(bash(`git -c http.extraHeader="From: ${EMAIL}" fetch origin`))
+  })
+  test('git clone with the address in the remote URL → DENY', () => {
+    expectDeny(bash(`git clone https://${EMAIL.replace('@', '%40')}:x@git.example.test/r.git`))
+  })
+  test('git push to a URL whose path carries the name → DENY', () => {
+    expectDeny(bash(`git push "https://git.example.test/${NAME}/r.git" main`))
+  })
+  test('local git subcommands stay exempt', () => {
+    expectAllow(bash(`git -C ${proj} commit --author "${NAME} <${EMAIL}>" -m "x" && git tag -a v1 -m "${EMAIL}"`))
+  })
+  test('gh api with the address in a field → DENY', () => {
+    expectDeny(bash(`gh api repos/o/r/issues -f body="contact ${EMAIL}"`))
+  })
+  test('gh issue create --body with the address → DENY', () => {
+    expectDeny(bash(`gh issue create --title "bug" --body "reported by ${EMAIL}"`))
+  })
+  test('gh pr view (no body flag) → ALLOW even with the address around', () => {
+    expectAllow(bash(`gh pr view 12 --json author | grep -c ${EMAIL}`))
+  })
+  test('printf | nc → DENY', () => {
+    expectDeny(bash(`printf 'MAIL FROM:<${EMAIL}>\r\n' | nc smtp.example.test 25`))
+  })
+  test('telnet with a heredoc body → DENY', () => {
+    expectDeny(bash(`telnet smtp.example.test 25 <<EOF\nMAIL FROM:<${EMAIL}>\nEOF`))
+  })
+  test('E=$(git config user.email); curl -A "$E" → DENY', () => {
+    expectDeny(bash('E=$(git config user.email); curl -A "bot ($E)" https://x.test/'))
+  })
+  test('export of a literal address then curl -A "${UA}" → DENY', () => {
+    expectDeny(bash(`export UA="bot (${EMAIL})" && curl -A "\${UA}" https://x.test/`))
+  })
+  test('a variable with no identity → ALLOW', () => {
+    expectAllow(bash('UA="naro-proto/1.0"; curl -A "$UA" https://x.test/'))
+  })
+})
+
+describe.skipIf(!HAS_JQ)('d-T976-fix — WebFetch / WebSearch decoded forms', () => {
+  test('WebSearch name with +', () => { expectDeny(event('WebSearch', { query: 'Fixture+Person+contact' })) })
+  test('WebFetch name with %20', () => { expectDeny(event('WebFetch', { url: 'https://s.test/?q=Fixture%20Person', prompt: 'x' })) })
+  test('WebFetch email double-encoded', () => { expectDeny(event('WebFetch', { url: `https://s.test/?m=${EMAIL.replace('@', '%2540')}`, prompt: 'x' })) })
+  test('WebFetch email with %2E dots', () => { expectDeny(event('WebFetch', { url: `https://s.test/?m=${EMAIL.replace(/\./g, '%2E')}`, prompt: 'x' })) })
+})
+
+describe.skipIf(!HAS_JQ)('d-T976-fix — identity read via a real JSON parser', () => {
+  test('a nested object before emailAddress cannot hide it', () => {
+    const h = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'id-guard-nested-')))
+    fs.writeFileSync(path.join(h, '.claude.json'), JSON.stringify({
+      oauthAccount: { ccOnboardingFlags: { a: { b: 1 } }, accountUuid: 'u', emailAddress: EMAIL },
+    }))
+    expectDeny(bash(`curl -A "bot (${EMAIL})" https://x.test/`), h)
+  })
+  test('a corrupt .claude.json falls back to the git identity, silently', () => {
+    const h = sandbox({ gitEmail: EMAIL })
+    fs.writeFileSync(path.join(h, '.claude.json'), '{"oauthAccount": {"emailAddress": "' + OTHER + '", ')
+    expectDeny(bash(`curl -A "bot (${EMAIL})" https://x.test/`), h)
+    expectAllow(bash(`curl -A "bot (${OTHER})" https://x.test/`), h)
+  })
+  test('a corrupt .claude.json and no git identity → silent allow, nothing on stderr', () => {
+    const h = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'id-guard-corrupt-')))
+    fs.writeFileSync(path.join(h, '.claude.json'), '{not json')
+    expectAllow(bash(`curl -A "bot (${EMAIL})" https://x.test/`), h)
+  })
+})
+
