@@ -43,7 +43,7 @@ export const ENV = {
   sample: '견본',
   noFile: 'env 파일 없음',
   emptyHead: '이 줄에는 env 파일이 없어요.',
-  emptyDetail: (dir) => `코드 폴더에서 .env · .env.* 파일을 찾았어요 — ${dir}`,
+  emptyDetail: (dir) => `코드 폴더에서 .env · .env.* 파일을 찾았어요: ${dir}`,
   go: 'env 화면 →',
   homeNone: '코드 폴더에 env 파일이 없어요.',
   homeNoneLine: '이 줄의 코드 폴더에 env 파일이 없어요.',
@@ -52,7 +52,7 @@ export const ENV = {
 export const PAGE = {
   titlePrefix: '[prdt]',
   titleFallback: 'viewer',
-  h1: 'productune — 뷰어',
+  h1: 'productune: 뷰어',
 }
 
 // T-708 결함 11 (PO 결정, 사용자 축자 "티켓목록이랑 prd버튼 좌측 패널에 있는데
@@ -87,8 +87,8 @@ export const HOME = {
   waitReqEmpty: '지금 할 일이 없어요.',
   dependency: 'dependency',
   beforeBuild: 'Build 진입 전',
-  notConnected: '메인 패스가 아직 이어지지 않았어요 — 합격선 티켓과 설계 → 구현 → QA → 배포 deps 가 Build 진입 때 생겨요. 지금은 「크리티컬 패스」만 보여요.',
-  notConnectedBuilt: '메인 패스가 아직 이어지지 않았어요 — 합격선 티켓과 설계 → 구현 → QA → 배포 deps 가 아직 없어요. 지금은 「크리티컬 패스」만 보여요.',
+  notConnected: '메인 패스가 아직 이어지지 않았어요. 합격선 티켓과 설계 → 구현 → QA → 배포 deps 가 Build 진입 때 생겨요. 지금은 「크리티컬 패스」만 보여요.',
+  notConnectedBuilt: '메인 패스가 아직 이어지지 않았어요. 합격선 티켓과 설계 → 구현 → QA → 배포 deps 가 아직 없어요. 지금은 「크리티컬 패스」만 보여요.',
   // The screen set draws no state for "no open ticket at all"; this line is a
   // developer-written gap, reported in T-881 unresolved for the designer.
   dependencyEmpty: '열린 티켓이 없어요.',
@@ -307,7 +307,7 @@ export const PRD_READING = {
   // T-928 (approved mockup docs/artifacts/v1.13/define-screen-set.html #screen-prd): the head's
   // machine/meta paragraph folds behind one line; As-Is + To-Be read as one paired table.
   // T-970: As-Is / To-Be are never translated, so the heading and the column heads stay English.
-  metaSummary: '이 문서에 대해 — 만든 날 · 상태 · 파일 구성',
+  metaSummary: '이 문서에 대해: 만든 날 · 상태 · 파일 구성',
   pairTitle: 'As-Is → To-Be',
   pairHeads: ['As-Is', 'To-Be'],
   pairCount: (n) => `${n}쌍`,
@@ -342,7 +342,7 @@ export const FRAME = {
 
 export const FILE_HREF_NOTE =
   // T-705 §C 제안 교체 문구 그대로(해요체 등록 통일).
-  '이 문서는 페이지 안에 들어있지 않아요 — 아래 파일을 열어서 봐요.'
+  '이 문서는 페이지 안에 들어있지 않아요. 아래 파일을 열어서 봐요.'
 
 // T-746: the home notice when the viewer is opened at an `#id` it cannot
 // show (approved screen set docs/artifacts/v1.11/define-screen-set.html,

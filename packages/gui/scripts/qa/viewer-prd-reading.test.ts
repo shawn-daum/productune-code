@@ -309,7 +309,7 @@ describe('T-928 PRD screen scanability', () => {
 
   it('folds the head meta paragraph behind one summary line, closed by default', () => {
     const html = run(OPEN('### 합격선\n\n- a\n'))
-    expect(html).toMatch(/<details class="pr-pre"><summary>이 문서에 대해 — 만든 날 · 상태 · 파일 구성<\/summary>/)
+    expect(html).toMatch(/<details class="pr-pre"><summary>이 문서에 대해: 만든 날 · 상태 · 파일 구성<\/summary>/)
     expect(html).not.toMatch(/<details class="pr-pre"[^>]* open/)
     expect(html).toContain('Slug')
   })
