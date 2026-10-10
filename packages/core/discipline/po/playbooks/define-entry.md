@@ -1,7 +1,7 @@
 ---
 name: define-entry
 persona: po
-when: "Define entry — a net-new version section (always, however complete the PRD/wiki/tickets already look) · a re-entry that moves an existing version's recorded Why, target user, or in/out line (never a patch `.p` round)"
+when: "Define entry — net-new version section, always · re-entry moving a version's recorded Why, target user or in/out line"
 model_floor: opus
 effort: medium
 ---

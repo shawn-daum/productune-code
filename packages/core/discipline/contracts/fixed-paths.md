@@ -1,13 +1,14 @@
 ---
 name: fixed-paths
 section: Fixed paths
-when: "creating, writing, moving or closing a file at a fixed path, or naming a path the hot list lacks · writing `po-state.json` · authoring or updating a `docs/features/<feature>.md` spec file · closing a PRD `## v<N>.<m>` version section, a `## Phase N` section, or a round that wrote no section · writing a PRD scope item or a ticket's `prd_item:` · retiring a standing PRD section that is not a version section · writing, comparing or sorting a version id · landing a user-review artifact (the root manifest) · setting or reading a register value · deciding whether a design/token file is meta or code"
+when: "creating, writing, moving or closing a file at a fixed path, or naming any other path · writing `po-state.json` · authoring or updating a `docs/features/<feature>.md` spec file · closing a PRD `## v<N>.<m>` version section, a `## Phase N` section, or a round that wrote no section · writing a PRD scope item or a ticket's `prd_item:` · retiring a standing PRD section that is not a version section · writing, comparing or sorting a version id · landing a user-review artifact (the root manifest) · setting or reading a register value · deciding whether a design/token file is meta or code"
 ---
 # Contracts §Fixed paths — annex
 
 Continues `contracts.md` §Fixed paths; binds every persona the same way, loaded on demand at the moment `when` names.
 
 ## Version id — what `v<N>.<m>` names
+- `[<line>/]` = an added line's id prefix, never the home line's (moved from contracts.md §Fixed paths).
 - A version id carries one, two or three numeric components: `v1` · `v1.1` · `v1.1.0` are each legal, the third component being a patch round. `v<N>.<m>` written in a rule or a path template names the id itself, never a required component count. A release line added in `.prdt/config.json` `lines` (`name` kebab-case, never `v<digit>…` or `backlog`) prefixes `<line>/` to its id wherever one stands — path, `prd_path` anchor, `prd_item`, log line: `android/v2.1`, `[<line>/]` in a template; the home line (the project slug) never does, so a project without `lines` carries no prefix anywhere. Other forms: PRD heading `## <line> v<N>.<m>` · retro page `retro--<line>-v<N>.<m>.md` · tag `contracts/git.md`.
 - Fill the missing components with zero to compare, sort, or test two ids of ONE line for naming the same round (`v1` ≡ `v1.0` ≡ `v1.0.0`); ids of two lines never compare. Read a name on disk exactly as written — a round's directory and file names are never rewritten to a longer form to satisfy a comparison; a tool that rejects the shorter form, or cannot find the file it names, is the defect.
 

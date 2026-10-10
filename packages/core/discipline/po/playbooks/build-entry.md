@@ -1,13 +1,13 @@
 ---
 name: build-entry
 persona: po
-when: "Build entry (Define close — PRD version scope approved)"
+when: "Build entry"
 model_floor: opus
 effort: medium
 ---
 # Build-entry — slice the approved scope before work starts
 
-Soft ritual: nothing blocks mechanically; every skip is a judgment + one `wiki/log.md` line. Findings become the slice itself (findings-not-tickets, same as readiness/retro): this ritual emits no tickets of its own — only the split result does.
+Build entry = Define close, the PRD version scope approved. Soft ritual: nothing blocks mechanically; every skip is a judgment + one `wiki/log.md` line. Findings become the slice itself (findings-not-tickets, same as readiness/retro): this ritual emits no tickets of its own — only the split result does.
 
 ## Screen set — what the user approves Define against
 Define closes on the user's approval of the version's screens, never of the PRD alone. The set — each item with what stays unseen without it:
@@ -32,11 +32,13 @@ Define closes on the user's approval of the version's screens, never of the PRD 
 
 ## Exception — emergent work
 - Defects/discoveries surfacing DURING Build (dogfood bugs, unplanned findings) are NOT pre-sliced by this ritual — ticket them as found, exactly as today. This ritual front-loads only the APPROVED scope; it never blocks or delays reacting to the unplanned. After the gate is met, a product-shape one takes the section below.
+- A new mid-build ticket born of a product-shape change (PO habit Triage) is checked against the current PRD (What/Non-goals/Risk) before it opens: consistent → open it citing the PRD line; not covered or contradicting → amend the PRD (designer `prd-clarity`) or log the scope decision first (moved from PO habit Triage).
 - A regression this round's own commits caused — the broken behavior is on `dev` only, `main` never carried it — is ticketed as found into THIS version's dir, gate met or not: never the next-version fork, never `patch-cycle` (its in-build opening is for a regression `main` already carries, found while stage is `build`).
 
 ## Gate met — the default flips to next version
 - The state change, one-way: the open PRD section's gate literal holds — a `prdt doctor` verdict (`verdict=clean`) is read off doctor, any other literal checked as written. No gate line → every ticket of the Build-entry slice is `done`/`dropped` — the slice = the tickets in `docs/tickets/[<line>/]v<N>.<m>/` at the stage write to `build`, ritual-cut or user-cut; both close lines (§After) name it, `T-<a>–T-<b>` or `slice: none`. `slice: none` with no gate line → the step-2 confirm asks the user for the gate literal and it goes on the PRD gate line before the stage write; a round with neither has nothing this section can read. Say it in the reply you observe it and put `gate met <date>` on the PRD's gate line (Triage's scope-decision log).
 - From then, a product-shape ticket (Triage) is put to the user as going to the NEXT version. Ground that reverses it — a fact you check, never a weight: (1) dependency — an open ticket of THIS version (its file in `docs/tickets/[<line>/]v<N>.<m>/`; a PRD row counting a `backlog/` file as this version's is stale — fix the row or `git mv` the file before judging) cannot close without what the item delivers, on a record older than this fork: its `acceptance` names the deliverable in a meta commit before the item's ticket file existed (`prdt meta log`), or its worker's return (`blocked` · `unresolved[]` · `needs_info`) names it — the row quotes that line; `deps` indexes the ground, and an entry written at this fork is none; (2) double move — a named outside project or repo already carries what the item changes (name it and the file/heading), so a next-round landing changes it twice; (3) observation — the item is a finding of this version's Build observation session (§Build observation), its `evidence` quoting the user from that session's record. `ground: none` for "important" · "systemic" · "small" · "half done" · "while we're at it". The user overriding without a ground → admitted, row says `ground: none`.
+- A stage-regression request (PO habit Triage) arriving after the gate is met: changing an approved screen is product-shape, next version by default; a screen not doing what was approved is a defect (§Exception — this version's dir).
 - Not this section — none is a product-shape change: a gate blocker (same work — patch it) · a regression this round caused (§Exception — this version's dir) · a regression `main` already carries, found while stage is `build` (`patch-cycle` in-build opening, its two trigger questions) · a live-verify bug at stage `ship` (the in-ship loop) · a scoped ticket's deeper cause (rewrite that ticket's premise, count unchanged).
 - Destination: next → the ticket file in its line's `docs/tickets/[<line>/]v<N>.<m+1>/` (or the later dir a decision page already names), frontmatter as usual, never `backlog/` — backlog holds the unjudged; a judged ticket is that version's Define input (its section's What lists or drops it). Admitted → this version's dir.
 - Record: one row in the open PRD section per item — What row + the ground, or Non-goals row `T-NNN → [<line>/]v<N>.<m+1> (gate met <date>, ground: none|<literal>)`. At Ship entry an open ticket the ship leaves behind takes the same fork (`readiness-dispatch` step 5); its row carries that ritual's date — `(ship-entry <date>, ground: …)` for `(gate met <date>, ground: …)`.

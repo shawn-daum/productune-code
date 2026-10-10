@@ -1,7 +1,7 @@
 ---
 name: patch-cycle
 persona: po
-when: "post-close patch (a fix or a deliberately split-off scope arrives at stage `idle`) · emergency `main` hotfix (`dev` tip not deployable and delivery cannot wait) · in-build regression patch (stage is `build`, both trigger questions below are yes, delivered via a parallel worktree — the round does not stop)"
+when: "stage `idle`: a fix or split-off scope arrives · emergency `main` hotfix · stage `build`: a regression `main` carries"
 model_floor: opus
 effort: medium
 ---

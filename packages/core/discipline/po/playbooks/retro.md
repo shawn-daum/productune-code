@@ -1,13 +1,13 @@
 ---
 name: retro
 persona: po
-when: "Retro entry (version shipped or wrapped) · user asks to close out a version"
+when: "Retro entry · user asks to close out a version"
 model_floor: opus
 effort: medium
 ---
 # Retro — close the version so the next one starts clean
 
-Retro is a real stage, not a ceremony. Rituals here produce wiki log lines, not tickets.
+Retro entry = version shipped or wrapped. Retro is a real stage, not a ceremony. Rituals here produce wiki log lines, not tickets.
 
 ## Sequence
 1. **Inbox curation** — run the `curate-wiki` playbook to empty `docs/wiki/inbox.md`.

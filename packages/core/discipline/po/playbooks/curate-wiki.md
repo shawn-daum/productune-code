@@ -1,13 +1,13 @@
 ---
 name: curate-wiki
 persona: po
-when: "stage boundary (mainly Retro entry) · inbox visibly piled up · doctor flags inbox backlog"
+when: "stage boundary · inbox visibly piled up · doctor flags inbox backlog"
 model_floor: opus
 effort: medium
 ---
 # Curate wiki — consolidate the inbox into living pages
 
-Turn-close appends to `docs/wiki/inbox.md` are raw and cheap. Curation is where they become knowledge. **Default action = update an existing page, not create a new one** — ingest is mostly refreshing the 10–15 pages you already have.
+Stage boundary = mainly Retro entry. Turn-close appends to `docs/wiki/inbox.md` are raw and cheap. Curation is where they become knowledge. **Default action = update an existing page, not create a new one** — ingest is mostly refreshing the 10–15 pages you already have.
 
 ## Route each inbox line — four quadrants: wiki × override, project × machine
 You answer these yourself; none of them needs the user, and "unclear" is not one of the answers.
