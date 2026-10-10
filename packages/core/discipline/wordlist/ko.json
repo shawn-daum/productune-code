@@ -1,0 +1,152 @@
+{
+  "lang": "ko",
+  "schema": 1,
+  "entries": [
+    {
+      "word": "머무르다",
+      "pattern": "머무[르른를름]|머물",
+      "replace": [
+        "남다",
+        "~에만 있다"
+      ]
+    },
+    {
+      "word": "착지",
+      "pattern": "착지",
+      "replace": [
+        "도착하다",
+        "저장되다",
+        "반영되다"
+      ]
+    },
+    {
+      "word": "사람 손",
+      "pattern": "사람 ?손(?!님)",
+      "replace": [
+        "수동 작업",
+        "수동 실행",
+        "직접"
+      ]
+    },
+    {
+      "word": "손으로",
+      "pattern": "손으로",
+      "replace": [
+        "직접",
+        "수동으로"
+      ]
+    },
+    {
+      "word": "모름",
+      "pattern": "모름|모르는 값",
+      "replace": [
+        "<결과>: <사유> (예: 생성 실패: Solar API 응답 시간 초과)",
+        "수집 전",
+        "필드 없음"
+      ]
+    },
+    {
+      "word": "em dash (—)",
+      "pattern": "—|&mdash;|&#8212;|&#x2014;",
+      "replace": [
+        "콜론 :",
+        "문장 나누기",
+        "괄호"
+      ],
+      "except_line": [
+        "^## (?:[a-z0-9]+(?:-[a-z0-9]+)* )?v\\d+(?:\\.\\d+){0,2} — ",
+        "^#### [a-z0-9]+(?:-[a-z0-9]+)* — "
+      ],
+      "note": "contracts/fixed-paths.md heading separators (`## v<N>.<m> — <label>`, `#### <key> — <label>`) are machine-read literals and stay exempt"
+    },
+    {
+      "word": "덩어리",
+      "pattern": "덩어리|덩이",
+      "replace": [
+        "묶음",
+        "항목 n개"
+      ]
+    },
+    {
+      "word": "빚",
+      "pattern": "빚",
+      "replace": [
+        "남은 결함",
+        "미뤄 둔 작업"
+      ]
+    },
+    {
+      "word": "틈",
+      "pattern": "틈",
+      "replace": [
+        "누락",
+        "빠진 경로"
+      ]
+    },
+    {
+      "word": "새다 (정보 노출)",
+      "pattern": "새지 |새는 |샌다",
+      "replace": [
+        "노출되다",
+        "표시되다"
+      ]
+    },
+    {
+      "word": "되읽다",
+      "pattern": "되읽",
+      "replace": [
+        "다시 정리하다"
+      ]
+    },
+    {
+      "word": "치우다",
+      "pattern": "치웠|치운",
+      "replace": [
+        "정리하다"
+      ]
+    },
+    {
+      "word": "판 내기",
+      "pattern": "판(을)? ?내(기|고|자|요|면|서|겠|려)|판을 냈",
+      "replace": [
+        "버전 배포"
+      ]
+    },
+    {
+      "word": "발자국",
+      "pattern": "발자국",
+      "replace": [
+        "건드린 파일"
+      ]
+    },
+    {
+      "word": "축자",
+      "pattern": "축자",
+      "replace": [
+        "원문 그대로"
+      ]
+    },
+    {
+      "word": "합치다 (브랜치)",
+      "pattern": "(브랜치|변경|작업|트랙)[을를]? ?합치",
+      "replace": [
+        "merge"
+      ],
+      "note": "development terms stay untranslated: merge · commit · branch · deploy"
+    },
+    {
+      "word": "문이 잠기다",
+      "pattern": "문이 잠",
+      "replace": [
+        "쓰기 권한이 없다"
+      ]
+    },
+    {
+      "word": "뒤에서 도는",
+      "pattern": "뒤에서 도",
+      "replace": [
+        "백그라운드 작업"
+      ]
+    }
+  ]
+}
