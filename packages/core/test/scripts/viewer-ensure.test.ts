@@ -16,7 +16,7 @@
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { execFileSync, spawnSync } from 'child_process'
+import { execFileSync, spawn, spawnSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
@@ -44,6 +44,7 @@ if [ "$STUB_MODE" = fail ]; then
   echo " ERR_PNPM_META_FETCH_FAIL  GET https://registry.npmjs.org/marked: request failed, reason: getaddrinfo ENOTFOUND" >&2
   exit 1
 fi
+if [ "$STUB_MODE" = slow ]; then echo $$ > "$STUB_LOG.pid"; sleep 4; fi
 nm="$PWD/packages/viewer/node_modules"
 mkdir -p "$nm/marked" "$nm/subset-font" "$nm/pretendard/dist/web/static/woff2"
 echo '{}' > "$nm/marked/package.json"; echo '{}' > "$nm/subset-font/package.json"
@@ -193,5 +194,77 @@ describe.skipIf(!PYTHON3 || !NODE || !JQ)('PO session start runs the ensure (T-9
     expect(off.status).toBe(0)
     expect(await waitPage(800)).toBe(false)
     expect(pnpmCalls()).toEqual([])
+  })
+})
+
+describe.skipIf(!PYTHON3 || !NODE)('T-983 grill fixes', () => {
+  function installedEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+    // HOME sandbox with a prdt.env pointing PRDT_REPO at a git checkout: the
+    // daily nudge's own gates (once a day, repo found) then pass.
+    const h = path.join(sb, 'h')
+    fs.mkdirSync(path.join(h, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(h, '.prdt', 'prdt.env'), `PRDT_REPO=${path.join(code, 'packages', 'core')}\n`)
+    return { ...env('ok', extra), HOME: h, CI: '' }
+  }
+  const state = () => path.join(sb, 'h', '.prdt', 'update-state.json')
+
+  test('--ensure never runs the daily nudge (no update-state.json); a plain viewer run does (control)', () => {
+    fakeCheckout(true)
+    execFileSync('git', ['init', '-q', code])
+    const run = (args: string[]) => spawnSync(PYTHON3 as string, [prdt, 'viewer', ...args], {
+      cwd: root, encoding: 'utf8', timeout: subprocessTimeout('cli'), env: installedEnv() })
+    expect(run(['--ensure']).status).toBe(0)
+    expect(fs.existsSync(state())).toBe(false)
+    run([])
+    expect(fs.existsSync(state())).toBe(true)
+  })
+
+  test('PRDT_VIEWER_NO_INSTALL (prdt update): no second install, one failure line naming the fix', () => {
+    fakeCheckout(false)
+    const r = spawnSync(PYTHON3 as string, [prdt, 'viewer', '--ensure', '--refresh'], {
+      cwd: root, encoding: 'utf8', timeout: subprocessTimeout('cli'), env: env('ok', { PRDT_VIEWER_NO_INSTALL: '1' }) })
+    expect(r.status).toBe(1)
+    expect(pnpmCalls()).toEqual([])
+    expect(r.stderr).toContain('pnpm install --frozen-lockfile --filter @productune/viewer')
+  })
+
+  test('kill -9 of the ensure mid-install: the orphaned pnpm still holds the lock — no second install', async () => {
+    fakeCheckout(false)
+    const child = spawn(PYTHON3 as string, [prdt, 'viewer', '--ensure'], { cwd: root, env: env('slow'), stdio: 'ignore' })
+    const t0 = Date.now()
+    while (pnpmCalls().length < 1 && Date.now() - t0 < 8000) await new Promise((r) => setTimeout(r, 50))
+    expect(pnpmCalls()).toHaveLength(1)
+    child.kill('SIGKILL')
+    await new Promise((r) => setTimeout(r, 200))
+    const second = spawnSync(PYTHON3 as string, [prdt, 'viewer', '--ensure'], {
+      cwd: root, encoding: 'utf8', timeout: subprocessTimeout('cli'), env: env('slow') })
+    expect(pnpmCalls()).toHaveLength(1)
+    expect(second.status).toBe(1)
+    // clean up only the stub this test started
+    try { process.kill(Number(fs.readFileSync(`${log}.pid`, 'utf8').trim())) } catch { /* already gone */ }
+  })
+})
+
+describe.skipIf(!PYTHON3 || !NODE || !JQ)('T-983 hook skips the spawn when ready', () => {
+  test('page and deps present: the CLI is not invoked; page absent: it is', async () => {
+    fakeCheckout(true)
+    const h = path.join(sb, 'hh')
+    fs.mkdirSync(h, { recursive: true })
+    fs.writeFileSync(path.join(h, 'prdt.env'), `PRDT_REPO=${path.join(code, 'packages', 'core')}\n`)
+    const stub = path.join(sb, 'stub-prdt')
+    fs.writeFileSync(stub, `#!/bin/bash\necho "$@" >> ${log}.stub\n`, { mode: 0o755 })
+    const fire = () => spawnSync('bash', [HOOK], { cwd: root, encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      input: JSON.stringify({ agent_type: 'prdt-po', hook_event_name: 'SessionStart', cwd: root }),
+      env: { ...env('ok'), PRDT_HOME: h, PRDT_BIN: stub } })
+    fs.mkdirSync(path.dirname(page()), { recursive: true })
+    fs.writeFileSync(page(), 'x')
+    fire()
+    await new Promise((r) => setTimeout(r, 600))
+    expect(fs.existsSync(`${log}.stub`)).toBe(false)
+    fs.rmSync(page())
+    fire()
+    const t0 = Date.now()
+    while (!fs.existsSync(`${log}.stub`) && Date.now() - t0 < 6000) await new Promise((r) => setTimeout(r, 50))
+    expect(fs.readFileSync(`${log}.stub`, 'utf8').trim()).toBe('viewer --ensure')
   })
 })
