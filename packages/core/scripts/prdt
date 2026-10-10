@@ -5753,6 +5753,73 @@ def viewer_links(root, targets, labels=None):
     return lines
 
 
+def _viewer_code_root():
+    """The prdt checkout root holding `packages/viewer/cli.mjs`, or None."""
+    for base in _repo_root_candidates():
+        if (base.parent / "viewer" / "cli.mjs").is_file():
+            return base.parent.parent
+    return None
+
+
+def viewer_install_deps():
+    """T-983: install the viewer generator's dependencies — the exact filtered,
+    frozen-lockfile, scripts-off install `install.sh` §1c runs (never electron).
+    None on success (or when another run holds the install lock — it is doing
+    this very work), else one line naming the cause. Never raises."""
+    code = _viewer_code_root()
+    if code is None:
+        return "prdt 체크아웃을 찾지 못해 뷰어 의존성을 설치하지 못했어요"
+    pnpm = shutil.which("pnpm")
+    if pnpm is None:
+        return (f"pnpm 이 PATH 에 없어 뷰어 의존성을 설치하지 못했어요 — "
+                f"`npm install -g pnpm` 뒤 `cd {code} && {VIEWER_INSTALL_CMD}`")
+    cmd = [pnpm, "install", "--frozen-lockfile", "--filter", "@productune/viewer"]
+    if (code / "packages" / "gui" / "node_modules").is_dir() and (code / "packages" / "gui" / "package.json").is_file():
+        cmd += ["--filter", "./packages/gui"]
+    cmd += ["--ignore-scripts", "--config.fetch-retries=1"]
+    lock = None
+    try:
+        run_dir = prdt_home() / "run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        lock = open(run_dir / "viewer-install.lock", "a")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return None
+        r = subprocess.run(cmd, cwd=str(code), capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=600)
+        if r.returncode == 0:
+            return None
+        lines = [l.strip() for l in ((r.stderr or "") + "\n" + (r.stdout or "")).splitlines() if l.strip()]
+        err = next((l for l in reversed(lines) if "ERR_PNPM" in l), None) or (lines[-1] if lines else "출력 없음")
+        return (f"뷰어 의존성 설치가 실패했어요 ({err[:200]}) — 다음 PO 세션 시작에 다시 시도해요. "
+                f"직접: `cd {code} && {VIEWER_INSTALL_CMD}`")
+    except subprocess.TimeoutExpired:
+        return "뷰어 의존성 설치가 600초 안에 끝나지 않았어요 — 다음 PO 세션 시작에 다시 시도해요"
+    except OSError as e:
+        return f"뷰어 의존성 설치를 실행하지 못했어요 — {e}"
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+def viewer_ensure(root, refresh=False):
+    """T-983: make this project's viewer exist — install the generator's
+    dependencies when they are missing, then generate `viewer.html` when it is
+    absent (or always, `refresh`: a just-updated generator). None when the
+    viewer is ready, else one line naming why not. Deps present and the page
+    there → no install, no run."""
+    problem = viewer_problem()
+    if problem is not None:
+        if VIEWER_INSTALL_CMD in problem:  # the two missing-dependency causes name this fix
+            failed = viewer_install_deps()
+            if failed:
+                return failed
+    elif (Path(root) / VIEWER_REL / "viewer.html").is_file() and not refresh:
+        return None
+    return viewer_generate(root)[1]
+
+
 def cmd_viewer(args):
     """`prdt viewer [TARGET…] [--no-open]` — regenerate this project's viewer
     and print a link per target (ticket id or document path) at that item;
@@ -5762,6 +5829,12 @@ def cmd_viewer(args):
     on this same command line still suppresses that (`~/.prdt/auto-open` = off
     still wins too)."""
     root = require_root()
+    if getattr(args, "ensure", False):
+        # T-983: the session-start / post-update entry — silent when ready.
+        failed = viewer_ensure(root, refresh=getattr(args, "refresh", False))
+        if failed:
+            sys.exit(f"prdt viewer: {failed}")
+        return
     if not args.targets:
         problem = viewer_scratch_problem(root)
         if problem:
@@ -6008,6 +6081,28 @@ def _run_pull_install(repo, *, pull=True, target_sha=None):
             sys.exit("prdt update: 안내한 버전과 받아온 커밋이 달라 설치를 건너뜀 — 다시 시도하세요")
     if subprocess.run(["bash", str(Path(repo) / "scripts" / "install.sh")]).returncode:
         sys.exit("prdt update: install 실패 — 위 출력 확인")
+    _viewer_after_update()
+
+
+def _viewer_after_update():
+    """T-983: right after install.sh, build the viewer of the project this run
+    is in (other projects build on their first PO session start). Runs the
+    JUST-installed CLI — this process is the old code. Never fails the update:
+    a failure is one line, and the next PO session start retries."""
+    root = find_project_root()
+    if not root:
+        return
+    cli = prdt_home() / "bin" / "prdt"
+    argv = [str(cli)] if cli.is_file() and os.access(cli, os.X_OK) else [sys.executable, str(Path(__file__).resolve())]
+    try:
+        r = subprocess.run(argv + ["viewer", "--ensure", "--refresh"], cwd=str(root),
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print(f"prdt update: 뷰어를 만들지 못했어요 — {e}. 다음 PO 세션 시작에 다시 시도해요")
+        return
+    if r.returncode:
+        first = next((l for l in (r.stderr or r.stdout or "").splitlines() if l.strip()), "원인 출력 없음")
+        print(f"prdt update: 뷰어를 만들지 못했어요 — {first.replace('prdt viewer: ', '', 1)}")
 
 
 def _git_repo(repo, *a):
@@ -15588,6 +15683,10 @@ def main():
     p.add_argument("--no-open", action="store_true",
                    help="the PO's own run: suppress the main-session hook's open too (T-794); a worker's run "
                         "never opens regardless")
+    p.add_argument("--ensure", action="store_true",
+                   help="T-983: install the generator's dependencies if missing and build viewer.html if absent; "
+                        "silent when ready, one failure line otherwise (the PO session-start hook and `prdt update` run it)")
+    p.add_argument("--refresh", action="store_true", help="with --ensure: regenerate viewer.html even when it exists")
     p.set_defaults(fn=cmd_viewer)
     p = sub.add_parser("tickets", help="list tickets (--version --feature --status --assignee --ready --backlog) "
                                        "· --link T-NNN … prints paste-ready file:// links "
