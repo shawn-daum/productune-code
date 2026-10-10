@@ -38,7 +38,11 @@ export const MERMAID_RUNTIME = `;(function(){
 var m=globalThis.mermaid;if(m&&m.default)m=m.default;if(!m||!m.render)return;
 var cur=null,seq=0,queue=Promise.resolve(),pending=false;
 function theme(){return document.documentElement.getAttribute('data-theme')==='dark'?'dark':'neutral'}
-function init(){var t=theme();if(t!==cur){m.initialize({startOnLoad:false,securityLevel:'strict',theme:t,fontFamily:'inherit',flowchart:{htmlLabels:false}});cur=t}}
+function tok(n,f){var d=document.createElement('div');d.style.cssText='position:absolute;visibility:hidden;color:var(--'+n+')';document.body.appendChild(d);var c=getComputedStyle(d).color;d.remove();return c||f}
+function init(){var t=theme();if(t!==cur){var ac=tok('accent','#666'),bg=tok('bg-surface-base','#fff'),tx=tok('text-primary','#000'),ln=tok('text-quaternary','#888'),wn=tok('health-warn',ac);
+m.initialize({startOnLoad:false,securityLevel:'strict',theme:'base',fontFamily:'inherit',flowchart:{htmlLabels:false,padding:8,nodeSpacing:30,rankSpacing:30},
+themeVariables:{darkMode:t==='dark',fontSize:'12px',background:bg,primaryColor:bg,primaryBorderColor:ac,primaryTextColor:tx,lineColor:ln,secondaryColor:bg,tertiaryColor:bg,edgeLabelBackground:bg,textColor:tx,actorBkg:bg,actorBorder:ac,actorTextColor:tx,signalColor:ln,signalTextColor:tx},
+themeCSS:'.node polygon{stroke:'+wn+' !important;fill:color-mix(in srgb,'+wn+' 10%,'+bg+') !important}'});cur=t}}
 function draw(host,src){return queue=queue.then(function(){init();return m.render('mm'+(++seq),src).then(function(r){host.innerHTML=r.svg;host.removeAttribute('data-mm-fail')},function(){host.setAttribute('data-mm-fail','1')})}).catch(function(){})}
 function scan(){pending=false;
 document.querySelectorAll('pre[data-mermaid]').forEach(function(pre){

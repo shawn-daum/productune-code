@@ -82,7 +82,8 @@ describe('viewer/viewer.html — no load-time external resource (static)', () =>
   it.skipIf(metaMissingReason)(
     `references no load-time external resource${metaMissingReason ? ` — SKIPPED: ${metaMissingReason}` : ''}`,
     () => {
-      expect(findLoadTimeExternalResources(realHtml)).toEqual([])
+      // T-1049: the inline mermaid bundle (only on a page with a diagram) carries `<img src="${e}">` as JS string text, never markup.
+      expect(findLoadTimeExternalResources(realHtml.replace(/<script>[^<]*__esbuild_esm_mermaid_nm[\s\S]*?<\/script>/, '<script></script>'))).toEqual([])
     },
   )
 
