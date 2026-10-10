@@ -678,11 +678,29 @@ def working_seg(ids, limits):
     return L("working") + " " + (fmt_group(ids, run_lim, succ_lim, personas) if ids else "0")
 
 
-def action_seg(limits):
+def action_seg(wait_lim, succ_lim):
     """T-984: the things the user must act on — `dec … | req …`, `—` when empty."""
-    _, wait_lim, succ_lim = limits
     return " | ".join([L("decision") + " " + (fmt_group(dec, wait_lim, succ_lim) if dec else "0"),
                        L("request") + " " + (fmt_group(req, wait_lim, succ_lim) if req else "0")])
+
+
+def action_row():
+    """T-1044: the action row is its own row, so it has its own width budget —
+    it lists every open id that fits (successors tier 2/1/0 before an id is
+    dropped), `+N` only on overflow. Width = `$COLUMNS` when a positive integer
+    (capped at LINE_CAP), else LINE_CAP; the belt-clean at the end stays."""
+    try:
+        cols = int(os.environ.get("COLUMNS", ""))
+    except ValueError:
+        cols = 0
+    cap = min(cols, LINE_CAP) if cols > 0 else LINE_CAP
+    candidate = ""
+    for lim in range(max(len(dec), len(req), 1), 0, -1):
+        for succ in (2, 1, 0):
+            candidate = action_seg(lim, succ)
+            if dw(candidate) <= cap:
+                return clean(candidate, cap=cap, bar=True)
+    return clean(candidate, cap=cap, bar=True)
 
 
 def fit(build, tail=""):
@@ -719,7 +737,7 @@ for r in shown:
                                         " | ".join(head + [working_seg(ids, lim)]), branch)))
 if len(shown) < len(rows):
     out_rows.append((None, L("lines", n=len(rows) - len(shown))))
-out_rows.append((None, fit(action_seg)))
+out_rows.append((None, action_row()))
 
 
 def wrap_links(text, link_map):

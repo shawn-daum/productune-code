@@ -17,8 +17,8 @@
  *                                  --apply rewrites and reindexes
  *   doctor W4  value ∉ keys ∪ aliases → did-you-mean by alias/prefix
  *          W5  value ∈ aliases → migrate hint
- *          W6  spec file · `feature--<x>` · `term--<x>` with x ∉ vocab ∪ the
- *              prdt constants — project store AND the machine store
+ *          W6  spec file · `feature--<x>` with x ∉ vocab; `term--<x>` only when x
+ *              is a labelled vocab key and the title lacks the label (T-1029)
  *          W3' `kind: area` with a spec file present
  *
  * Every expectation is fixed by CONSTRUCTION (the fixture states the histogram,
@@ -96,12 +96,12 @@ function ticket(t: Ticket): string {
 function spec(name: string): void {
   fs.writeFileSync(path.join(projectRoot, 'docs', 'features', `${name}.md`), `# ${name}\n`)
 }
-function wikiPage(store: 'project' | 'machine', name: string): void {
+function wikiPage(store: 'project' | 'machine', name: string, title: string = name): void {
   const dir = store === 'project' ? path.join(projectRoot, 'docs', 'wiki') : machineWiki
   fs.mkdirSync(dir, { recursive: true })
   const type = name.split('--')[0]
   fs.writeFileSync(path.join(dir, `${name}.md`),
-    `---\ntitle: ${name}\ntype: ${type}\nstatus: live\n---\n\n# ${name}\n`)
+    `---\ntitle: ${title}\ntype: ${type}\nstatus: live\n---\n\n# ${name}\n`)
 }
 
 function vocab(v: Record<string, Record<string, unknown>>, extra: Record<string, unknown> = {}): void {
@@ -336,15 +336,27 @@ describe.skipIf(!CAN_RUN)('doctor W6 — a name page or spec file outside vocab 
     ticket({ id: 'T-101', version: 'v1.1', feature: 'gui' })
     spec('gui-core')                         // an alias, not a key
     wikiPage('project', 'feature--ghost')
-    wikiPage('project', 'term--nobody')
+    wikiPage('project', 'term--main-path')
+    wikiPage('project', 'term--release-line')
     wikiPage('machine', 'term--elsewhere')
     wikiPage('machine', 'feature--gui')      // a key — silent
     const w = featureWarnings()
     expect(w).toContain("feature: docs/features/gui-core.md names no features.vocab key — 'gui-core' is an alias of 'gui'")
     expect(w).toContain('feature: wiki page feature--ghost names no features.vocab key')
-    expect(w).toContain('feature: wiki page term--nobody names no features.vocab key nor a prdt constant')
-    expect(w).toContain('feature: machine wiki page machine:term--elsewhere names no features.vocab key nor a prdt constant')
+    expect(w.filter(l => l.includes('term--'))).toEqual([])   // T-1029: any term-- stem is a glossary entry
     expect(w.filter(l => l.includes('feature--gui '))).toEqual([])
+  })
+
+  test('a term-- stem equal to a labelled vocab key warns unless the title carries the label', () => {
+    vocab({ gui: { kind: 'area', label: 'GUI 화면' }, 'meta-split': { kind: 'tag' } })
+    ticket({ id: 'T-101', version: 'v1.1', feature: 'gui' })
+    wikiPage('project', 'term--gui', 'something else')
+    wikiPage('machine', 'term--meta-split', 'no label on this key — silent')
+    expect(featureWarnings()).toEqual([
+      "feature: wiki page term--gui reuses features.vocab key 'gui' but its title does not carry the key's label 'GUI 화면' — a different meaning needs a different stem",
+    ])
+    wikiPage('project', 'term--gui', 'GUI 화면 용어')
+    expect(featureWarnings()).toEqual([])
   })
 
   test('the prdt constants are legal term-- stems: the concepts and their members', () => {

@@ -169,7 +169,8 @@ function cliHooksBlock(home: string): any {
       .map(r => ({ ...(r.matcher !== undefined ? { matcher: r.matcher } : {}), hooks: r.hooks.map(h) })),
     // T-985: the PO's unticketed-question check — matcher-less, Stop takes none.
     // T-1022: prdt-user-prompt.sh's own second Stop entry (the PO form=outline reply check).
-    Stop: [{ hooks: [h('prdt-question-check.sh')] }, { hooks: [h('prdt-user-prompt.sh')] }],
+    // T-899: prdt-link-check.sh, its own Stop entry between the two.
+    Stop: [{ hooks: [h('prdt-question-check.sh')] }, { hooks: [h('prdt-link-check.sh')] }, { hooks: [h('prdt-user-prompt.sh')] }],
   }
 }
 
