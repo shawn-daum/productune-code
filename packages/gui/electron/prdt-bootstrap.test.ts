@@ -72,6 +72,7 @@ test('T-431: empty HOME (no ~/.prdt) → provision, reason missing-bin', () => {
 
 test('T-906: bin/prdt_safe_fs.py missing from our mirror → provision incomplete-mirror; provisioning restores it', () => {
   seedCompleteMirror(home)
+  fs.writeFileSync(guiMarkerPath(home), JSON.stringify({ app_version: APP_V }))
   fs.rmSync(path.join(home, '.prdt', 'bin', 'prdt_safe_fs.py'))
   expect(decideBootstrap(paths())).toEqual({ action: 'provision', reason: 'incomplete-mirror' })
   expect(runBootstrap({ ...paths() }).ok).toBe(true)
