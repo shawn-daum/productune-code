@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "marked": "16.4.2",
+    "mermaid": "11.17.2",
     "pretendard": "^1.3.9",
     "subset-font": "2.9.0"
   }
