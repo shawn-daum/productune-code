@@ -1623,10 +1623,31 @@ function featureReadField(data, e) {
 /** T-964: inline `code` spans in guide text (screen strings · commands stay code-shaped). */
 const guideInline = (t) => escapeHtml(t).replace(/`([^`]+)`/g, '<code>$1</code>')
 
+/** T-964: list items under the spec's `## 지금 참인 것` section (all its ### subsections); null when the spec has no such section. */
+export function specTruthCount(body) {
+  let inSec = false, fence = false, found = false, n = 0
+  for (const line of String(body || '').split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) { fence = !fence; continue }
+    if (fence) continue
+    const h = /^##\s+(.*?)\s*$/.exec(line)
+    if (h) { inSec = h[1] === FEATURE.specTruthHeading; found = found || inSec; continue }
+    if (inSec && /^\s*(?:[-*+]|\d+[.)])\s+\S/.test(line)) n++
+  }
+  return found ? n : null
+}
+
+/** T-964: the spec link under 어떻게 동작하나 — a fold, collapsed, that opens the spec body in place. */
+function featureSpecFold(e, repoRootHref) {
+  if (!e.spec) return ''
+  const n = specTruthCount(e.spec.body)
+  const label = n === null ? FEATURE.specLinkBare : FEATURE.specLink(n)
+  return `<details class="fd-spec"><summary class="fd-more">${escapeHtml(label)}</summary><div class="v-body">${md(e.spec.body, path.dirname(e.spec.rel), repoRootHref)}</div></details>`
+}
+
 /** T-964: the five guide sections, or the new-feature empty notice when the guide has no text. */
-function featureGuideHtml(e, anchors) {
+function featureGuideHtml(e, anchors, specFold = '') {
   const g = e.guide
-  if (!g) return `<p class="fd-empty"><b>${escapeHtml(FEATURE.guideEmptyHead)}</b> <span>${escapeHtml(FEATURE.guideEmptyDetail)}</span></p>`
+  if (!g) return `<p class="fd-empty"><b>${escapeHtml(FEATURE.guideEmptyHead)}</b> <span>${escapeHtml(FEATURE.guideEmptyDetail)}</span></p>${specFold}`
   const sec = (key, body) => `<div class="fd-sec"><h2 class="pill pill-heading-2">${escapeHtml(FEATURE.guide[key])}</h2>${body}</div>`
   const ul = (items) => `<ul class="fd-list">${items.map((x) => `<li>${x}</li>`).join('')}</ul>`
   const noScreen = FEATURE.noScreenKinds.includes(e.kind)
@@ -1635,8 +1656,8 @@ function featureGuideHtml(e, anchors) {
   if (g.when.length) out.push(sec('when', ul(g.when.map(guideInline))))
   if (ux.length) out.push(sec('ux', ul(ux)))
   if (g.logic.length) {
-    out.push(sec('logic', ul(g.logic.map((l) => guideInline(l.text) + (l.ground.length ? `<span class="cn-g">${ticketIdLinks(escapeHtml(l.ground.join(' · ')), anchors)}</span>` : '')))))
-  }
+    out.push(sec('logic', ul(g.logic.map((l) => guideInline(l.text) + (l.ground.length ? `<span class="cn-g">${ticketIdLinks(escapeHtml(l.ground.join(' · ')), anchors)}</span>` : ''))) + specFold))
+  } else if (specFold) out.push(sec('logic', specFold))
   out.push(sec('limits', g.limits.length ? ul(g.limits.map(guideInline)) : `<p class="cn-empty">${escapeHtml(FEATURE.limitsNone)}</p>`))
   if (g.example) out.push(sec('example', `<p class="fd-ex">${guideInline(g.example)}</p>`))
   return out.join('')
@@ -1659,13 +1680,10 @@ function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
     ...e.links.map((l) => featureLinkItem(model, l.to, l.text || '', l.ground || '', anchors)),
     ...e.rev.map((k) => featureLinkItem(model, k, undefined, undefined, anchors)),
   ]
-  const guide = lean ? '' : featureGuideHtml(e, anchors)
+  const guide = lean ? '' : featureGuideHtml(e, anchors, featureSpecFold(e, repoRootHref))
   const links = lean ? '' : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.linksHeading)}</h2>` +
     (items.length ? `<ul class="cn-list">${items.join('')}</ul>` : `<p class="cn-empty">${escapeHtml(FEATURE.linksEmpty)}</p>`)
-  // T-964 fix: a spec-backed feature shows 함께 쓰는 기능 + a link to the spec file + 근거 티켓 (screen-feature data-cond=spec), never the spec body.
-  const specLink = e.spec ? `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.specHeading)}</h2><p class="ev-text"><a class="fd-more" href="#${escapeHtml(e.spec.rel)}"><code>${escapeHtml(e.spec.rel)}</code> ›</a></p>` : ''
-  const tail = specLink +
-    `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
+  const tail = `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
   return `${lean ? '' : `<p class="def-lead">${escapeHtml(e.def || '')}</p>`}${meta}${kdef}<div class="detail-doc body-prose">${guide}${links}${tail}</div>`
 }
 
@@ -2799,6 +2817,9 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .store-section[data-store="feature"] .fd-list code, .store-section[data-store="feature"] .fd-ex code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
 .store-section[data-store="feature"] .fd-list .cn-g { display: inline; margin-left: var(--space-8); font-size: 11.5px; color: var(--text-tertiary); }
 .store-section[data-store="feature"] .fd-ex { margin: 0; font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
+.store-section[data-store="feature"] .fd-spec { margin-top: var(--space-8); }
+.store-section[data-store="feature"] .fd-more { cursor: pointer; font-size: 12.5px; color: var(--text-secondary); }
+.store-section[data-store="feature"] .fd-spec[open] > .v-body { margin-top: var(--space-8); }
 .store-section[data-store="feature"] .fd-empty { margin: 0 0 var(--space-16); font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); background: var(--bg-surface-on); padding: var(--space-8) var(--space-12); border-radius: var(--radius-4); }
 .store-section[data-store="feature"] .ev-text { font-size: 13px; color: var(--text-secondary); line-height: 1.7; margin: 0; }
 .store-section[data-store="feature"] .ev-text code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
