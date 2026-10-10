@@ -2040,7 +2040,7 @@ const INFO_ICON_SVG =
 /** docs/design.md §8.4 Banner (no side stripe, T-756) — hidden until the page is opened at an `#id` it cannot show; the script fills in the id and the text. */
 const HASH_NOTICE_HTML = `<div class="notice" id="hash-notice" role="status" hidden>
 <span class="notice-icon">${INFO_ICON_SVG}</span>
-<span class="notice-body"><b class="js-notice-id"></b> — <span class="js-notice-text"></span></span>
+<span class="notice-body"><b class="js-notice-id"></b>: <span class="js-notice-text"></span></span>
 <button type="button" class="notice-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 13)}</button>
 </div>
 `
