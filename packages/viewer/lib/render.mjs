@@ -49,6 +49,7 @@ import {
 } from './labels.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
 import { HOME_STAGES, stageSegments, buildHomeGraph, layoutHomeGraph, waitLists, compareTicketIds, NODE_W, NODE_H } from './home-graph.mjs'
+import { disciplineLoadCard, DISCIPLINE_LOAD_CSS, DISCIPLINE_LOAD_SCRIPT } from './discipline-load.mjs'
 import { renderPrdReading, openDecisionTickets, PRD_READING_CSS, PRD_READING_SCRIPT } from './prd-reading.mjs'
 
 function escapeHtml(str) {
@@ -1417,7 +1418,7 @@ function discRowsTable(docs) {
   return `<div class="table-wrap"><table class="t-disc"><thead>${head}</thead><tbody>\n${rows}</tbody></table></div>\n`
 }
 
-function discStoreInner(docs) {
+function discStoreInner(docs, load = null) {
   if (docs.length === 0) {
     const bodyHtml = `<p class="empty-note"><span>${escapeHtml(DISCIPLINE.emptyLine1)}</span><br><span>${escapeHtml(DISCIPLINE.emptyLine2)}</span></p>`
     const groups = [{ key: 'all', label: DISCIPLINE.allLabel, count: 0, bodyHtml }]
@@ -1425,7 +1426,7 @@ function discStoreInner(docs) {
   }
   const pane = (list) =>
     `<div class="count-line section-meta"><span class="count-badge">${escapeHtml(DISCIPLINE.countLabel)} <b>${list.length}</b>${escapeHtml(DISCIPLINE.countUnit)}</span></div>\n${discRowsTable(list)}`
-  const groups = [{ key: 'all', label: DISCIPLINE.allLabel, count: docs.length, bodyHtml: pane(docs) }]
+  const groups = [{ key: 'all', label: DISCIPLINE.allLabel, count: docs.length, bodyHtml: disciplineLoadCard(load) + pane(docs) }]
   const keys = []
   for (const d of docs) if (!keys.includes(d.group)) keys.push(d.group)
   for (const key of keys) {
@@ -1450,8 +1451,8 @@ function discDetailEntries(docs) {
   return entries
 }
 
-function discSection(docs) {
-  return storeSection('disc', { innerHtml: discStoreInner(docs) })
+function discSection(docs, load = null) {
+  return storeSection('disc', { innerHtml: discStoreInner(docs, load) })
 }
 
 // ---------- feature store (T-882: the T-808 feature screen) ----------
@@ -3003,6 +3004,7 @@ a.dl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; bord
 .store-section[data-store="disc"] .empty-note span { font-size: 11px; }
 .store-section[data-store="disc"] .sidebar .nav-item:not(.nav-item-clickable) { cursor: default; }
 ${PRD_READING_CSS}
+${DISCIPLINE_LOAD_CSS}
 `
 
 /**
@@ -3662,6 +3664,7 @@ ${PRD_READING_SCRIPT}
       document.head.appendChild(probe);
     }, ${VIEWER_AUTO_REFRESH_MS});
   }
+${DISCIPLINE_LOAD_SCRIPT}
 })();
 `
 
@@ -3824,7 +3827,7 @@ ${artifactsSection(data.artifacts, data.currentVersion, views)}
 ${envSection(data)}
 ${glossarySection(data.wiki)}
 ${releaseSection(data.releases || [])}
-${discSection(discipline)}
+${discSection(discipline, data.disciplineLoad || null)}
 </div>
 ${detailDataScript(detailData)}
 <script>${views.length > 0 ? INTERACTION_SCRIPT_LINES : INTERACTION_SCRIPT}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}

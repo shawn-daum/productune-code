@@ -253,6 +253,47 @@ export const DISCIPLINE = {
   emptyLine2: 'prdt 규율이 적용된 기기에서 뷰어를 만들면 나타나요.',
 }
 
+// ---------- discipline load diagram (T-1050) ----------
+// Approved strings of docs/artifacts/v1.13/observation-fixes.html (T-1050 tab).
+// `{N}` is filled in by discipline-load.mjs. Original `when:` text is shown as
+// written (English) — never translated.
+export const DISCIPLINE_LOAD = {
+  title: '규율이 들어오는 때',
+  source: '그림 출처:',
+  sourceNote: '뷰어를 만들 때마다 다시 그린다.',
+  personas: [['po', 'PO'], ['designer', 'Designer'], ['developer', 'Developer'], ['qa', 'QA']],
+  lane1: { head: '1. 세션 시작 (상시)', sub: '세션 · 작업자가 시작할 때 전부 들어온다', parts: '정본 규율 · 파트 {N}개', layers: '파트 뒤에 붙는 블록', part: 'part {N}' },
+  lane2: { head: '2. 필요할 때 (트리거)', sub: '상시 문서의 한 줄이 이 문서를 가리킬 때 읽는다', annex: 'contracts 부속 문서 · {N}', playbooks: '{P} playbook · {N} (메뉴의 when 줄)', override: 'playbook override' },
+  lane3: { head: '3. 도구를 쓸 때마다 (훅)', sub: '이벤트마다 검사하고, 막거나 기록한다', allMatcher: '(전부)', dimNoneForPo: '흐린 훅: 없음 (PO 는 전부 받는다)', dimForOthers: '흐린 훅: PO 세션에서만 움직인다' },
+  precedence: {
+    head: '우선순위', hint: '오른쪽이 이긴다',
+    steps: [['정본 규율', 'doctrine → contracts → habit'], ['기기 override', '~/.prdt/overrides/<persona>.md'], ['기기 playbook override', '그 playbook 실행 중에만'], ['프로젝트 override', '.prdt/overrides/<persona>.md']],
+    floor: '바닥 (어느 override 도 못 바꿈): Secrets 절 전체 · 사용자 동의 관문 (push · 배포 · 되돌릴 수 없는 git · 방향 확인) · 읽기 전용 조항',
+  },
+  detailHint: '항목을 누르면 파일 경로와 원문 조건이 여기 보여요.',
+  detail: { path: '경로', when: '원문 조건 (when)', matcher: 'matcher', event: '이벤트', size: '크기', poOnly: 'PO 세션에서만 움직인다', reads: '읽는 곳', scope: '받는 쪽' },
+  partDetail: '한 파트 {L} 바이트 이하 · 이 파트 {B} 바이트',
+  annexNote: 'contracts.md 의 한 줄이 이 문서를 가리킬 때 읽는다',
+  menuNote: '메뉴 표의 when 이 맞을 때 작업자가 스스로 고른다',
+  overrideItem: ['~/.prdt/overrides/playbooks/<name>.md', '그 playbook 을 고른 순간 --playbook <name> 으로 읽는다'],
+  overrideDetail: '기기 override 블록 끝의 목록에 이름이 있을 때만',
+  planMissing: '세션 시작 파트를 읽지 못했어요.',
+  manifestMissing: '훅 목록(hook-manifest.json)을 읽지 못했어요.',
+  scopePo: 'PO 만',
+  scopeAll: '모든 페르소나',
+  // Display facts for hooks, keyed by file name. The manifest says WHEN a hook
+  // runs; which persona it acts for, and what it reads, live in each hook's own
+  // source — a hook not listed here still renders (file name only).
+  layers: {
+    'prdt-audience-inject.sh': ['말투 · 형식 (register)', 'po', '~/.prdt/register 의 네 키 → discipline/register/<key>-<value>.md'],
+    'prdt-plan-tier-inject.sh': ['요금제 등급 (plan-tier)', 'po', '~/.prdt/plan-tier'],
+    'prdt-inbox-inject.sh': ['다른 프로젝트 권고 (inbox)', 'po', '~/.prdt/inbox.md 중 이 프로젝트 앞 줄'],
+    'prdt-overrides-inject.sh': ['기기 override', 'all', '~/.prdt/overrides/<persona>.md (+ playbook override 목록)'],
+    'prdt-project-overrides-inject.sh': ['프로젝트 override', 'all', '.prdt/overrides/<persona>.md'],
+  },
+  poOnlyHooks: ['prdt-user-prompt.sh', 'prdt-question-check.sh', 'prdt-link-check.sh'],
+}
+
 /** 「읽기」 칸 값 — 「용어 사전 · 5개」 · 「릴리즈 노트 · 18개」. */
 export function readFieldValue(label, count, unit) {
   return `${label} · ${count}${unit}`
