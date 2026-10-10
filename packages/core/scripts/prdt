@@ -1933,7 +1933,7 @@ def cmd_attest(args):
     git_sec = cfg.get("git") if isinstance(cfg.get("git"), dict) else {}
     git_sec["prepush_reading"] = rec
     cfg["git"] = git_sec
-    atomic_write_text(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+    state_write(root, cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")  # T-908: link-refusing, keeps the file mode
     print(f"prdt attest prepush: recorded a human reading of {p} (sha256 {digest[:12]}…) in "
           f".prdt/config.json {PREPUSH_READING_KEY} — blocks_main={'yes' if rec['blocks_main'] else 'no'} "
           f"hotfix_escape={'yes' if rec['hotfix_escape'] else 'no'}. doctor honours it only while the "
@@ -5755,6 +5755,93 @@ def viewer_scratch_message(rel, kind):
     return f"prdt viewer: {rel} 를 열지 못해서 뷰어를 만들지 않았어요."
 
 
+_VIEWER_BUNDLE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_VIEWER_TICKET_PAGE_RE = re.compile(r"^T-\d+\.html$")
+
+
+def _viewer_bundle_name(name):
+    if not isinstance(name, str) or not _VIEWER_BUNDLE_NAME_RE.match(name) or name in (".", ".."):
+        raise ValueError(f"unsafe file name in the viewer bundle: {name!r}")
+    return name
+
+
+def _viewer_prune(root, parts, keep, match):
+    """Unlink the plain files (and links, never followed) in `<root>/<parts>`
+    that `match` selects and `keep` does not name — by directory descriptor,
+    so a folder swapped for a link meanwhile is not walked. A missing or
+    link-holding folder prunes nothing."""
+    fd, problem = state_open_dir(root, parts, create=False)
+    if fd is None:
+        return
+    try:
+        with os.scandir(fd) as it:
+            names = [e.name for e in it if match(e)]
+        for name in names:
+            if name not in keep:
+                try:
+                    os.unlink(name, dir_fd=fd)
+                except OSError:
+                    pass
+    finally:
+        os.close(fd)
+
+
+def _viewer_refused(rel, kind):
+    """One stderr line for a viewer path `state_write` refused (T-908)."""
+    what = "심볼릭 링크" if kind == "symlink" else f"폴더/일반 파일이 아닌 항목({kind})"
+    print(f"prdt viewer: {rel} 가 {what}라서 쓰지 않고 건너뛰었어요 — 링크 자체를 지우면 다시 만들어요.", file=sys.stderr)
+
+
+def viewer_apply_bundle(root, bundle):
+    """T-908: land the generator's `--emit` bundle under `<root>/.prdt/scratch/
+    viewer/` through `state_write` (link refused at every component, existing
+    file modes kept, a new file follows umask), in the generator's own order:
+    data files → page → build id → `at/` pages → prune. A link at the viewer
+    folder chain or a written file raises `StateLinkError`; an `at/` that is a
+    link skips only the ticket pages (the page itself is still fresh)."""
+    base = Path(root) / VIEWER_REL
+    for f in bundle["files"]:
+        state_write(root, base / _viewer_bundle_name(f["name"]), f["content"])
+    keep_at = set()
+    at_rel = (*VIEWER_REL.parts, VIEWER_JUMP_DIR)
+    afd, aprob = state_open_dir(root, at_rel, create=True)
+    if afd is None:
+        # a link (or non-folder) at at/ or above: no ticket page is written or
+        # pruned, the page itself is already fresh — one line names the path
+        _viewer_refused(aprob[0], aprob[1])
+        at_ok = False
+    else:
+        os.close(afd)
+        at_ok = True
+    for f in bundle["at"]:
+        name = _viewer_bundle_name(f["name"])
+        keep_at.add(name)
+        if not at_ok:
+            continue
+        target = base / VIEWER_JUMP_DIR / name
+        try:
+            cur = target.read_text(encoding="utf-8") if target.is_file() and not target.is_symlink() else None
+        except OSError:
+            cur = None
+        if cur == f["content"]:
+            continue
+        try:
+            state_write(root, target, f["content"])
+        except StateLinkError:
+            # this one page is a link: skipped, the others still refresh
+            _viewer_refused((Path(*at_rel) / name).as_posix(), "symlink")
+    if at_ok:
+        _viewer_prune(root, at_rel, keep_at,
+                      lambda e: _VIEWER_TICKET_PAGE_RE.match(e.name) and
+                      (e.is_file(follow_symlinks=False) or e.is_symlink()))
+    prune = bundle.get("prune") or {}
+    keep = {f["name"] for f in bundle["files"]}
+    pre, suf = prune.get("dataPrefix"), prune.get("dataSuffix")
+    if pre and suf:
+        _viewer_prune(root, VIEWER_REL.parts, keep,
+                      lambda e: e.name.startswith(pre) and e.name.endswith(suf) and e.is_file(follow_symlinks=False))
+
+
 def viewer_generate(root):
     """`(page, None)` after regenerating `<root>/.prdt/scratch/viewer/viewer.html`,
     or `(None, cause)` — the cause as `_viewer_diagnose` or the failed run names
@@ -5768,17 +5855,33 @@ def viewer_generate(root):
     if scratch:
         return None, viewer_scratch_message(*scratch).replace("prdt viewer: ", "", 1)
     out = Path(root) / VIEWER_REL / "viewer.html"
-    fix = f"직접 실행해 전체 오류를 보세요: `{node} {cli} --repo-root {root} --out {out}`"
+    # T-908: the generator only NAMES the page (`--out`) and emits the whole
+    # bundle on stdout (`--emit`); every file lands below through `state_write`,
+    # walked from `root` with O_NOFOLLOW per write, so a folder swapped for a
+    # link after the check above is refused instead of followed (T-850 race).
+    fix = f"직접 실행해 전체 오류를 보세요: `{node} {cli} --repo-root {root} --out {out} --emit >/dev/null`"
     try:
-        r = subprocess.run([node, str(cli), "--repo-root", str(root), "--out", str(out)],
-                           capture_output=True, text=True, timeout=120)
+        r = subprocess.run([node, str(cli), "--repo-root", str(root), "--out", str(out), "--emit"],
+                           capture_output=True, text=True, encoding="utf-8", timeout=120)
     except subprocess.TimeoutExpired:
         return None, f"뷰어 생성기가 120초 안에 끝나지 않았어요. {fix}"
     except OSError as e:
         return None, f"뷰어 생성기를 실행하지 못했어요 — {e}. {fix}"
-    if r.returncode != 0 or not out.is_file():
+    bundle = None
+    if r.returncode == 0:
+        try:
+            bundle = json.loads(r.stdout)
+        except ValueError:
+            bundle = None
+    if bundle is None:
         first = _first_error_line(r.stderr) or f"종료 코드 {r.returncode}, 오류 출력 없음"
         return None, f"뷰어 생성기가 실패했어요 — {first}. {fix}"
+    try:
+        viewer_apply_bundle(root, bundle)
+    except (OSError, KeyError, TypeError, ValueError) as e:
+        return None, f"뷰어 파일을 쓰지 못했어요 — {e}. 링크로 막힌 파일이면 그 링크 자체를 지우고 다시 실행하세요."
+    if not out.is_file():
+        return None, f"뷰어 생성기가 {out.name} 을 내보내지 않았어요. {fix}"
     # T-850 (review C3): a success clears the regen worker's failure stamp, so
     # the next doc write regenerates at once instead of waiting out the backoff.
     # unlink never follows a link; the directory chain is re-walked with O_NOFOLLOW.
@@ -5909,32 +6012,15 @@ def viewer_jump(viewer_html, key):
     body = ('<!doctype html><meta charset="utf-8">'
             f'<meta http-equiv="refresh" content="0;url=../viewer.html#{html.escape(frag)}">'
             f'<a href="../viewer.html#{html.escape(frag)}">viewer.html#{html.escape(key)}</a>\n')
-    # T-842: written relative to a NOFOLLOW descriptor of `at/` (a symlinked
-    # `at/`, `viewer/`, `scratch/` or `.prdt/` → None, and the caller links the
-    # file itself); O_EXCL temp + rename within that directory, so a planted
-    # `<page>.tmp` or `<page>` symlink is removed or replaced, never followed.
+    # T-842 / T-908: written through `state_write` — every component from the
+    # project root walked with O_NOFOLLOW (a symlinked `at/`, `viewer/`,
+    # `scratch/`, `.prdt/` or page → None, and the caller links the file
+    # itself), temp + rename in the same directory, exact 0o644.
     root = Path(viewer_html).parent.parent.parent.parent
-    fd = _open_scratch_dir(root, (*VIEWER_REL.parts, VIEWER_JUMP_DIR))
-    if fd is None:
-        return None
     try:
-        tmp = page.name + ".tmp"
-        for attempt in (0, 1):
-            try:
-                wfd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644, dir_fd=fd)
-                break
-            except FileExistsError:
-                if attempt:
-                    raise
-                os.unlink(tmp, dir_fd=fd)
-        os.fchmod(wfd, 0o644)  # os.open()'s mode is masked by umask — same exact bits as atomic_write_text
-        with os.fdopen(wfd, "w", encoding="utf-8") as f:
-            f.write(body)
-        os.replace(tmp, page.name, src_dir_fd=fd, dst_dir_fd=fd)
+        state_write(root, page, body, mode=0o644)
     except OSError:
         return None
-    finally:
-        os.close(fd)
     return page
 
 
@@ -10603,7 +10689,7 @@ def features_vocab_seed(root):
     feat = {k: v for k, v in feat.items() if k != "non_features"}
     feat["vocab"] = vocab
     cfg["features"] = feat
-    atomic_write_text(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+    state_write(root, cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")  # T-908: link-refusing, keeps the file mode
     n_tag = sum(1 for e in vocab.values() if e["kind"] == "tag")
     n_area = len(vocab) - n_tag
     ghosts = sorted(a for a in areas if a not in hist)
@@ -14191,10 +14277,9 @@ def read_schedule_log(root):
 
 def append_schedule_row(root, row):
     """Symlink-proof append (T-647 primitive: O_NOFOLLOW) of one JSON line."""
-    p = _schedule_log_path(root)
-    fd = os.open(str(p), os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
-    with os.fdopen(fd, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    # T-908: state_append walks .prdt with O_NOFOLLOW too, so a linked `.prdt`
+    # is refused, not only a linked schedule.jsonl.
+    state_append(root, _schedule_log_path(root), json.dumps(row, ensure_ascii=False) + "\n", mode=0o644)
 
 
 def schedule_top(rows):
