@@ -1765,7 +1765,7 @@ function featureGuideHtml(e, anchors, specFold = '') {
       ? map + `<ol class="fd-ol">${ux.map((u, i) => `<li><span class="fd-bn">${i + 1}</span><span>${u.html}</span></li>`).join('')}</ol>`
       : ul(ux.map((u) => u.html))
   }
-  const flow = g.flow ? `<div class="fd-flow">${mermaidBlock(g.flow)}</div>` : ''
+  const flow = g.flow ? `<div class="fd-flow">${mermaidBlock(g.flow)}<details class="fd-mm"><summary>${escapeHtml(FEATURE.flowSource)}</summary><pre class="fd-mm-src">${escapeHtml(g.flow)}</pre></details></div>` : ''
   const out = []
   if (g.when.length) out.push(sec('when', ul(g.when.map(guideInline))))
   if (ux.length) out.push(sec('ux', uxBody()))
@@ -1789,7 +1789,7 @@ function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
     (e.versions ? field(FEATURE.fields.version, escapeHtml(e.versions)) : '') +
     (readHtml ? field(FEATURE.fields.read, readHtml) : '') +
     '</div>'
-  const kdef = kind ? `<p class="kind-def">${escapeHtml(kind.name)} — ${escapeHtml(kind.def || '')}</p>` : ''
+  const kdef = kind ? `<p class="kind-def">${escapeHtml(kind.name)}: ${escapeHtml(kind.def || '')}</p>` : ''
   const items = [
     ...e.links.map((l) => featureLinkItem(model, l.to, l.text || '', l.ground || '', anchors)),
     ...e.rev.map((k) => featureLinkItem(model, k, undefined, undefined, anchors)),
@@ -2941,7 +2941,12 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .store-section[data-store="feature"] .kind-def { margin: calc(-1 * var(--space-4)) 0 var(--space-16); font-size: 12px; color: var(--text-tertiary); }
 .store-section[data-store="feature"] .def-lead { font-size: 14.5px; line-height: 1.65; color: var(--text-primary); margin: 0 0 var(--space-16); }
 .store-section[data-store="feature"] .detail-doc h2.fd-h { font-size: 13.5px; font-weight: 700; color: var(--text-primary); margin: var(--space-24) 0 var(--space-8); padding-bottom: var(--space-6); border-bottom: 1px solid var(--border-section); }
-.store-section[data-store="feature"] .detail-doc h2.fd-h:first-child { margin-top: 0; }
+.store-section[data-store="feature"] .detail-doc .fd-sec { margin-top: var(--space-24); }
+.store-section[data-store="feature"] .detail-doc .fd-sec > h2.fd-h { margin-top: 0; }
+.store-section[data-store="feature"] .detail-doc > .fd-sec:first-child { margin-top: 0; }
+.store-section[data-store="feature"] .fd-mm { margin: 0 0 var(--space-8); font-size: 11.5px; }
+.store-section[data-store="feature"] .fd-mm summary { cursor: pointer; color: var(--text-tertiary); }
+.store-section[data-store="feature"] .fd-mm-src { font-family: var(--font-mono); font-size: 11px; background: var(--bg-base); border: 1px solid var(--border-item); border-radius: var(--radius-8); padding: var(--space-8) var(--space-10); margin: var(--space-6) 0 0; }
 .store-section[data-store="feature"] .fd-smap { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-8); margin: 0 0 var(--space-12); }
 .store-section[data-store="feature"] .fd-stile { border: 1px solid var(--border-inline); border-radius: var(--radius-8); padding: var(--space-8) var(--space-10); background: var(--bg-base); min-height: 96px; }
 .store-section[data-store="feature"] .fd-stile.hit { border-color: var(--accent); }

@@ -130,7 +130,7 @@ describe('feature guide (T-964)', () => {
     d.featureTaxonomy.entries[0].guide = normalizeGuide({ when: ['w'], ux: ['u'], flow: 'flowchart TD\n  A[시작] --> B{분기?}', logic: ['l'], example: 'e' })
     const out = renderPage({ data: d, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
     const h = JSON.parse(/<script id="detail-data" type="application\/json">(.*?)<\/script>/s.exec(out)![1]).feature.full.html
-    expect(h).toContain('<div class="fd-flow"><pre class="mm-src" data-mermaid>flowchart TD\n  A[시작] --&gt; B{분기?}</pre></div>')
+    expect(h).toContain('<div class="fd-flow"><pre class="mm-src" data-mermaid>flowchart TD\n  A[시작] --&gt; B{분기?}</pre><details class="fd-mm">')
     expect(h.indexOf('fd-flow')).toBeGreaterThan(h.indexOf('>동작 방식<'))
     expect(out).toContain('globalThis.mermaid')
     const m = /script-src ([^;]*)/.exec(/Content-Security-Policy" content="([^"]*)"/.exec(out)![1])![1]
@@ -146,5 +146,22 @@ describe('feature guide (T-964)', () => {
     expect(out).toContain('<pre class="mm-src" data-mermaid>flowchart LR\n  A --&gt; B</pre>')
     expect(out).toContain('const a = 1')
     expect(out).toContain('globalThis.mermaid')
+  })
+  it('T-1049 spacing: every guide section carries the same 24px top gap as 연관 기능; the flow has a closed source fold', () => {
+    const out = renderPage({ data: data(), dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    expect(out).toContain('.detail-doc .fd-sec { margin-top: var(--space-24); }')
+    expect(out).toContain('.detail-doc > .fd-sec:first-child { margin-top: 0; }')
+    expect(out).toContain('.detail-doc h2.fd-h { font-size: 13.5px; font-weight: 700; color: var(--text-primary); margin: var(--space-24) 0 var(--space-8)')
+    expect(out).not.toContain('h2.fd-h:first-child')
+    const d = data()
+    d.featureTaxonomy.entries[0].guide = normalizeGuide({ when: ['w'], ux: ['u'], flow: 'flowchart TD\n  A --> B', logic: ['l'], example: 'e' })
+    const o2 = renderPage({ data: d, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const h = JSON.parse(/<script id="detail-data" type="application\/json">(.*?)<\/script>/s.exec(o2)![1]).feature.full.html
+    expect(h).toContain('<details class="fd-mm"><summary>흐름도 원문 (mermaid)</summary><pre class="fd-mm-src">flowchart TD\n  A --&gt; B</pre></details>')
+    expect(h).not.toContain('<details class="fd-mm" open')
+  })
+  it('T-1049: the kind definition line joins name and definition with a colon, no em dash', () => {
+    expect(html('full')).toContain('<p class="kind-def">기능: </p>')
+    expect(html('full')).not.toContain('기능 — ')
   })
 })

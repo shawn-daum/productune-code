@@ -205,6 +205,7 @@ export const FEATURE = {
   specLink: (n) => `스펙 파일 · 지금 참인 것 ${n}줄 ›`,
   specTruthHeading: '지금 참인 것',
   specLinkBare: '스펙 파일 ›',
+  flowSource: '흐름도 원문 (mermaid)',
   limitsNone: '알려진 한계 없음',
   noScreenKinds: ['internal', 'component'],
   noScreen: '사용자 화면 없음',
