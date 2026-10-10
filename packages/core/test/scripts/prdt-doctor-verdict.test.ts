@@ -174,6 +174,25 @@ describe.skipIf(!PYTHON3)('prdt doctor — discipline↔execution verdict line',
     expect(rosterTotal(after)).toBe(rosterTotal(before))
   })
 
+  test('each counted mismatch is named — check name and subject (T-941)', () => {
+    const st = JSON.parse(fs.readFileSync(poStatePath(), 'utf8'))
+    st.not_a_real_field = 1
+    fs.writeFileSync(poStatePath(), JSON.stringify(st, null, 2))
+    const out = runDoctor()
+    const v = verdict(out)
+    const named = out.split('\n').filter((l) => /^doctor:\s+mismatch · /.test(l))
+    // One named line per counted violation, never fewer.
+    expect(named.length).toBe(v.violations)
+    const mine = named.find((l) => l.includes('po-state shape'))
+    expect(mine, named.join('\n')).toBeDefined()
+    expect(mine).toContain('not_a_real_field')
+  })
+
+  test('a clean doctor names no mismatch (T-941)', () => {
+    const out = runDoctor()
+    if (verdict(out).violations === 0) expect(out).not.toMatch(/doctor:\s+mismatch · /)
+  })
+
   test('a family check that cannot look is not folded into the 0', () => {
     const before = verdict()
     // Remove the install mirror the statusline / hook checks read. They then

@@ -380,7 +380,7 @@ function isAllowedRawHref(href) {
 // page's repoRootHref here right before parsing — safe because generation
 // is single-threaded and synchronous (no md() call is ever in flight while
 // another starts).
-let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF, disc: null, decision: null }
+let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF, disc: null, docs: null, decision: null }
 // T-886: the discipline documents' name index (discipline-links.mjs), built once per
 // page from the collected documents; a body links names only when its md() call asks
 // (ticket · wiki · PRD bodies — the three the acceptance names).
@@ -397,23 +397,94 @@ let pageViewerAbsPath = DEFAULT_VIEWER_ABS_PATH
 // inside an anchor — `link` below switches it off while it renders its own text)
 // and never in a fenced block, whose renderer this does not touch.
 const defaultTextRender = Renderer.prototype.text
+
+// T-972: a path this viewer itself shows (docs/artifacts · wiki · prd · tickets ·
+// features) becomes `<a href="#<path>">`, which the existing hash route opens
+// (and replaces with ?view=…&kind=…&id=… — same tab, back returns). The targets
+// are the page's own anchor table: a path the page does not carry stays text.
+// Never inside another link's text (`link` below switches it off), never in a
+// fenced block (not this renderer); an inline code span links only when the
+// whole span is one such path. A `[[wikilink]]` is left as it was.
+const DOC_PATH_RE = /(?<![\w./~-])(?<!\[\[)docs\/(?:artifacts|wiki|prd|tickets|features)\/[\w./-]*\w/g
+let pageDocTargets = null
+
+/**
+ * path → the `#` key the page's anchor table routes it by. Same table as
+ * `buildAnchors` (path keys of wiki · artifacts · features · PRD) plus every
+ * ticket file's own path, keyed by the ticket id.
+ * @param {object} data the collected project
+ * @param {Record<string, object>} [anchors] `buildAnchors(data)` when the caller has it
+ * @returns {Map<string, string>}
+ */
+export function buildDocPathTargets(data, anchors = buildAnchors(data)) {
+  const targets = new Map()
+  for (const key of Object.keys(anchors)) if (key.startsWith('docs/')) targets.set(key, key)
+  const put = (t) => {
+    const id = t.frontmatter?.id || t.rel
+    if (t.rel && Object.prototype.hasOwnProperty.call(anchors, id) && !targets.has(t.rel)) targets.set(t.rel, id)
+  }
+  for (const set of [data.tickets, ...(data.lines || []).map((l) => l.tickets)]) {
+    for (const t of set.included) put(t)
+    for (const b of set.omitted) for (const t of b.tickets) put(t)
+  }
+  return targets
+}
+
+function docPathAnchor(rel, textHtml) {
+  return `<a href="#${escapeHtml(pageDocTargets.get(rel))}">${textHtml}</a>`
+}
+
+function linkDocPathText(text, plain) {
+  DOC_PATH_RE.lastIndex = 0
+  let out = ''
+  let last = 0
+  let found = false
+  for (let m = DOC_PATH_RE.exec(text); m !== null; m = DOC_PATH_RE.exec(text)) {
+    if (!pageDocTargets.has(m[0])) continue
+    found = true
+    if (m.index > last) out += plain(text.slice(last, m.index))
+    out += docPathAnchor(m[0], escapeHtml(m[0]))
+    last = m.index + m[0].length
+  }
+  if (!found) return null
+  if (last < text.length) out += plain(text.slice(last))
+  return out
+}
+
 hardenedRenderer.text = function (token) {
-  if (linkContext.disc && !('tokens' in token && token.tokens) && !token.escaped) {
-    const linked = linkDisciplineText(token.text, linkContext.disc, (seg) => defaultTextRender.call(this, { type: 'text', raw: seg, text: seg, escaped: false }))
-    if (linked !== null) return linked
+  const plainText = (seg) => {
+    if (linkContext.disc) {
+      const linked = linkDisciplineText(seg, linkContext.disc, (s2) => defaultTextRender.call(this, { type: 'text', raw: s2, text: s2, escaped: false }))
+      if (linked !== null) return linked
+    }
+    return defaultTextRender.call(this, { type: 'text', raw: seg, text: seg, escaped: false })
+  }
+  if ((linkContext.disc || linkContext.docs) && !('tokens' in token && token.tokens) && !token.escaped) {
+    if (linkContext.docs) {
+      const docLinked = linkDocPathText(token.text, plainText)
+      if (docLinked !== null) return docLinked
+    }
+    if (linkContext.disc) {
+      const linked = linkDisciplineText(token.text, linkContext.disc, (seg) => defaultTextRender.call(this, { type: 'text', raw: seg, text: seg, escaped: false }))
+      if (linked !== null) return linked
+    }
   }
   return defaultTextRender.call(this, token)
 }
 hardenedRenderer.codespan = function ({ text }) {
+  if (linkContext.docs && pageDocTargets.has(text)) return `<code>${docPathAnchor(text, escapeHtml(text))}</code>`
   const linked = linkContext.disc ? linkDisciplineCode(text, linkContext.disc) : null
   return linked ?? `<code>${escapeHtml(text)}</code>`
 }
 
 hardenedRenderer.link = function ({ href, title, tokens }) {
   const outerDisc = linkContext.disc
+  const outerDocs = linkContext.docs
   linkContext.disc = null
+  linkContext.docs = null
   const text = this.parser.parseInline(tokens)
   linkContext.disc = outerDisc
+  linkContext.docs = outerDocs
   const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath)
   if (rewritten !== null) {
     const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
@@ -461,7 +532,7 @@ hardenedRenderer.image = function ({ href, title, text, tokens }) {
  * @param {{discipline?: boolean}} [opts] `discipline`: link the names of discipline documents (T-886).
  */
 function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF, { discipline = false, decision = false } = {}) {
-  linkContext = { sourceDirRel, repoRootHref, disc: discipline ? pageDisciplineIndex : null, decision: decision ? { chosen: decisionChosen(text ?? '') } : null }
+  linkContext = { sourceDirRel, repoRootHref, disc: discipline ? pageDisciplineIndex : null, docs: pageDocTargets, decision: decision ? { chosen: decisionChosen(text ?? '') } : null }
   try {
     return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
   } finally {
@@ -926,9 +997,10 @@ export const PAST_TICKET_GLOBAL = '__PRDT_VIEWER_DATA__'
  * loader takes a src from that map only.
  * @returns {Array<{ bucket: string, name: string, tickets: Record<string,{path:string,body:string}>, bodies: string[] }>}
  */
-export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [], line = null } = {}) {
+export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [], line = null, docTargets = null } = {}) {
   pageViewerAbsPath = viewerAbsPath
   pageDisciplineIndex = buildDisciplineIndex(discipline)
+  pageDocTargets = docTargets
   const files = []
   for (const bucket of tickets.omitted) {
     // T-961: an added line's bucket key is `<line>--<bucket>` (no `/` in a file name).
@@ -1390,7 +1462,7 @@ function discSection(docs) {
 // written on one side only also shows on the other side, as a name-only
 // link (T-808 outcome). No taxonomy → the pre-T-882 spec-file list (T-901 = B);
 // no taxonomy and no spec file → the approved empty state.
-const TICKET_ID_RE = /\bT-(?:P\d+-)?\d+\b/g
+const TICKET_ID_RE = /\bT-(?:P\d+-|PATCH-)?\d+\b/g
 
 function ticketIdLinks(escapedText, anchors) {
   return escapedText.replace(TICKET_ID_RE, (id) =>
@@ -1620,6 +1692,49 @@ function featureReadField(data, e) {
   return `<button type="button" class="area-a read-link" data-open-store="${store}">${escapeHtml(text)}</button>`
 }
 
+/** T-964: inline `code` spans in guide text (screen strings · commands stay code-shaped). */
+const guideInline = (t) => escapeHtml(t).replace(/`([^`]+)`/g, '<code>$1</code>')
+
+/** T-964: list items under the spec's `## 지금 참인 것` section (all its ### subsections); null when the spec has no such section. */
+export function specTruthCount(body) {
+  let inSec = false, fence = false, found = false, n = 0
+  for (const line of String(body || '').split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) { fence = !fence; continue }
+    if (fence) continue
+    const h = /^##\s+(.*?)\s*$/.exec(line)
+    if (h) { inSec = h[1] === FEATURE.specTruthHeading; found = found || inSec; continue }
+    if (inSec && /^\s*(?:[-*+]|\d+[.)])\s+\S/.test(line)) n++
+  }
+  return found ? n : null
+}
+
+/** T-964: the spec link under 어떻게 동작하나 — a fold, collapsed, that opens the spec body in place. */
+function featureSpecFold(e, repoRootHref) {
+  if (!e.spec) return ''
+  const n = specTruthCount(e.spec.body)
+  const label = n === null ? FEATURE.specLinkBare : FEATURE.specLink(n)
+  return `<details class="fd-spec"><summary class="fd-more">${escapeHtml(label)}</summary><div class="v-body">${md(e.spec.body, path.dirname(e.spec.rel), repoRootHref)}</div></details>`
+}
+
+/** T-964: the five guide sections, or the new-feature empty notice when the guide has no text. */
+function featureGuideHtml(e, anchors, specFold = '') {
+  const g = e.guide
+  if (!g) return `<p class="fd-empty"><b>${escapeHtml(FEATURE.guideEmptyHead)}</b> <span>${escapeHtml(FEATURE.guideEmptyDetail)}</span></p>${specFold}`
+  const sec = (key, body) => `<div class="fd-sec"><h2 class="pill pill-heading-2">${escapeHtml(FEATURE.guide[key])}</h2>${body}</div>`
+  const ul = (items) => `<ul class="fd-list">${items.map((x) => `<li>${x}</li>`).join('')}</ul>`
+  const noScreen = FEATURE.noScreenKinds.includes(e.kind)
+  const ux = [...(noScreen && !(g.ux[0] || '').startsWith(FEATURE.noScreen) ? [escapeHtml(FEATURE.noScreen)] : []), ...g.ux.map(guideInline)]
+  const out = []
+  if (g.when.length) out.push(sec('when', ul(g.when.map(guideInline))))
+  if (ux.length) out.push(sec('ux', ul(ux)))
+  if (g.logic.length) {
+    out.push(sec('logic', ul(g.logic.map((l) => guideInline(l.text) + (l.ground.length ? `<span class="cn-g">${ticketIdLinks(escapeHtml(l.ground.join(' · ')), anchors)}</span>` : ''))) + specFold))
+  } else if (specFold) out.push(sec('logic', specFold))
+  out.push(sec('limits', g.limits.length ? ul(g.limits.map(guideInline)) : `<p class="cn-empty">${escapeHtml(FEATURE.limitsNone)}</p>`))
+  if (g.example) out.push(sec('example', `<p class="fd-ex">${guideInline(g.example)}</p>`))
+  return out.join('')
+}
+
 function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
   const area = model.areas.find((a) => a.key === e.area)
   const kind = model.kinds.find((k) => k.key === e.kind)
@@ -1637,12 +1752,11 @@ function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
     ...e.links.map((l) => featureLinkItem(model, l.to, l.text || '', l.ground || '', anchors)),
     ...e.rev.map((k) => featureLinkItem(model, k, undefined, undefined, anchors)),
   ]
+  const guide = lean ? '' : featureGuideHtml(e, anchors, featureSpecFold(e, repoRootHref))
   const links = lean ? '' : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.linksHeading)}</h2>` +
     (items.length ? `<ul class="cn-list">${items.join('')}</ul>` : `<p class="cn-empty">${escapeHtml(FEATURE.linksEmpty)}</p>`)
-  const tail = e.spec
-    ? `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.specHeading)}</h2><div class="v-body">${md(e.spec.body, path.dirname(e.spec.rel), repoRootHref)}</div>`
-    : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
-  return `${lean ? '' : `<p class="def-lead">${escapeHtml(e.def || '')}</p>`}${meta}${kdef}<div class="detail-doc body-prose">${links}${tail}</div>`
+  const tail = `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
+  return `${lean ? '' : `<p class="def-lead">${escapeHtml(e.def || '')}</p>`}${meta}${kdef}<div class="detail-doc body-prose">${guide}${links}${tail}</div>`
 }
 
 function featureDetailEntries(data, anchors, repoRootHref) {
@@ -2771,6 +2885,14 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .store-section[data-store="feature"] .cn-t { font-size: 13px; color: var(--text-secondary); }
 .store-section[data-store="feature"] .cn-g { display: block; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-quaternary); margin-top: 2px; }
 .store-section[data-store="feature"] .cn-empty { font-size: 12.5px; color: var(--text-tertiary); margin: 0; }
+.store-section[data-store="feature"] .fd-list { margin: 0; padding-left: var(--space-16); font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
+.store-section[data-store="feature"] .fd-list code, .store-section[data-store="feature"] .fd-ex code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
+.store-section[data-store="feature"] .fd-list .cn-g { display: inline; margin-left: var(--space-8); font-size: 11.5px; color: var(--text-tertiary); }
+.store-section[data-store="feature"] .fd-ex { margin: 0; font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
+.store-section[data-store="feature"] .fd-spec { margin-top: var(--space-8); }
+.store-section[data-store="feature"] .fd-more { cursor: pointer; font-size: 12.5px; color: var(--text-secondary); }
+.store-section[data-store="feature"] .fd-spec[open] > .v-body { margin-top: var(--space-8); }
+.store-section[data-store="feature"] .fd-empty { margin: 0 0 var(--space-16); font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); background: var(--bg-surface-on); padding: var(--space-8) var(--space-12); border-radius: var(--radius-4); }
 .store-section[data-store="feature"] .ev-text { font-size: 13px; color: var(--text-secondary); line-height: 1.7; margin: 0; }
 .store-section[data-store="feature"] .ev-text code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
 .store-section[data-store="feature"] .read-link { font-size: 12px; font-weight: 600; }
@@ -3630,6 +3752,7 @@ export function renderPage({
   const discipline = data.discipline || []
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   const anchors = buildAnchors(data)
+  pageDocTargets = buildDocPathTargets(data, anchors)
   const views = lineViews(data)
   const detailData = {
     ticket: ticketDetailEntries(data.tickets, repoRootHref, views.slice(1).map((v) => v.tickets)),
