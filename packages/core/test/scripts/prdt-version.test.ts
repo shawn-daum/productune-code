@@ -43,7 +43,18 @@ describe.skipIf(!which('python3'))('prdt --version', () => {
     expect(r.stdout.trim()).toBe(`prdt ${expected}`)
   })
 
-  test('an installed copy with no repo beside it resolves through prdt.env PRDT_REPO', () => {
+  test('installed copy, prdt.env in the real install.sh form (PRDT_REPO=<clone>/packages/core)', () => {
+    const home = path.join(sandbox, 'home-core')
+    fs.mkdirSync(path.join(home, 'bin'), { recursive: true })
+    const copy = path.join(home, 'bin', 'prdt')
+    fs.copyFileSync(PRDT_CLI, copy)
+    fs.writeFileSync(path.join(home, 'prdt.env'), `PRDT_REPO=${CORE_ROOT}\n`)
+    const r = run(copy, { PRDT_HOME: home })
+    expect(r.status).toBe(0)
+    expect(r.stdout.trim()).toBe(`prdt ${expected}`)
+  })
+
+  test('an installed copy with PRDT_REPO at the clone root also resolves', () => {
     const home = path.join(sandbox, 'home')
     fs.mkdirSync(path.join(home, 'bin'), { recursive: true })
     const copy = path.join(home, 'bin', 'prdt')
