@@ -225,7 +225,7 @@ if [ "$PART" = "1" ] && [ "$PERSONA" = "po" ] && [ "$EVENT_NAME" = "SessionStart
       case "$VE_LINE" in PRDT_REPO=*) VE_REPO="${VE_LINE#PRDT_REPO=}"; break ;; esac
     done < "$PRDT_HOME/prdt.env"
     VE_NM="$VE_REPO/../viewer/node_modules"
-    [ -n "$VE_REPO" ] && [ -f "$VE_NM/marked/package.json" ] && [ -f "$VE_NM/subset-font/package.json" ] \
+    [ -n "$VE_REPO" ] && [ -f "$VE_NM/marked/package.json" ] && [ -f "$VE_NM/subset-font/package.json" ] && [ -f "$VE_NM/mermaid/package.json" ] \
       && [ -d "$VE_NM/pretendard/dist/web/static/woff2" ] && VE_READY=1
   fi
   if [ -n "$VE_ROOT" ] && [ -z "$VE_READY" ] && [ -x "$VE_CLI" ] && command -v python3 >/dev/null 2>&1; then

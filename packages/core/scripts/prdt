@@ -5442,9 +5442,10 @@ VIEWER_JUMP_DIR = "at"
 # sibling `packages/gui`. Ordered as reported. Read from the CHECKOUT, never
 # from `.prdt/scratch`. The fix is the exact command install.sh §1c runs
 # (`prdt update` re-runs it), which installs only these — never electron.
-VIEWER_PACKAGES = ("marked", "subset-font")
+VIEWER_PACKAGES = ("marked", "subset-font", "mermaid")  # T-1063: mermaid draws the diagrams (T-1049)
 VIEWER_PRETENDARD_REL = Path("node_modules") / "pretendard" / "dist" / "web" / "static" / "woff2"
 VIEWER_TOKENS_REL = Path("gui") / "src" / "styles" / "tokens.css"
+VIEWER_MERMAID_WARN_MARK = "PRDT_VIEWER_WARN mermaid-missing"  # printed by viewer/lib/render.mjs
 VIEWER_INSTALL_CMD = "pnpm install --frozen-lockfile --filter @productune/viewer --ignore-scripts"
 
 
@@ -5882,6 +5883,11 @@ def viewer_generate(root):
         return None, f"뷰어 파일을 쓰지 못했어요 — {e}. 링크로 막힌 파일이면 그 링크 자체를 지우고 다시 실행하세요."
     if not out.is_file():
         return None, f"뷰어 생성기가 {out.name} 을 내보내지 않았어요. {fix}"
+    # T-1063: a page with a diagram whose renderer (mermaid) could not load still
+    # builds, the diagram as source — say so once, naming the fix.
+    if VIEWER_MERMAID_WARN_MARK in (r.stderr or ""):
+        print(f"prdt viewer: 다이어그램이 있는 페이지인데 mermaid 의존성을 불러오지 못해 그림 대신 원문으로 보여요 — "
+              f"`cd {cli.parent.parent.parent} && {VIEWER_INSTALL_CMD}`", file=sys.stderr)
     # T-850 (review C3): a success clears the regen worker's failure stamp, so
     # the next doc write regenerates at once instead of waiting out the backoff.
     # unlink never follows a link; the directory chain is re-walked with O_NOFOLLOW.

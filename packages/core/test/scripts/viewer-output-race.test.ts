@@ -54,7 +54,7 @@ beforeEach(() => {
   fs.chmodSync(path.join(code, 'packages', 'core', 'scripts', 'prdt'), 0o755)
   fs.mkdirSync(v, { recursive: true })
   fs.writeFileSync(path.join(v, 'cli.mjs'), STUB)
-  for (const pkg of ['marked', 'subset-font']) {
+  for (const pkg of ['marked', 'subset-font', 'mermaid']) {
     fs.mkdirSync(path.join(v, 'node_modules', pkg), { recursive: true })
     fs.writeFileSync(path.join(v, 'node_modules', pkg, 'package.json'), '{}')
   }
