@@ -10571,13 +10571,53 @@ def feature_taxonomy_warnings(cfg, vocab):
     return warns
 
 
+# T-1049 (T-1055 = A): the surface keys a guide `ux[].at` may name — `<surface>.<part>` or a bare
+# `<surface>`. The viewer draws the same four surfaces (FEATURE.surfaces in
+# packages/viewer/lib/labels.mjs); a test keeps the two lists equal.
+SURFACE_KEYS = {
+    "terminal": ("chat", "hook"),
+    "statusline": ("stage", "ticket"),
+    "viewer": ("activity", "home", "prd", "wiki", "disc"),
+    "cli": ("doctor", "wiki", "inbox"),
+}
+# T-1049 (T-1056 = A): `guide.flow` is mermaid source; its first real line names the diagram type.
+MERMAID_DIAGRAM_TYPES = (
+    "flowchart", "graph", "sequenceDiagram", "classDiagram", "stateDiagram", "erDiagram", "journey",
+    "gantt", "pie", "quadrantChart", "requirementDiagram", "gitGraph", "mindmap", "timeline",
+    "sankey", "xychart", "block", "packet", "architecture", "kanban", "C4Context", "C4Container",
+    "C4Component", "C4Dynamic", "C4Deployment", "zenuml",
+)
+
+
+def _surface_key_known(at):
+    surface, _, part = at.partition(".")
+    return surface in SURFACE_KEYS and (part == "" and "." not in at or part in SURFACE_KEYS[surface])
+
+
+def _mermaid_first_line(src):
+    """The first line of mermaid source that is not blank, a `%%` comment or the `---` front matter."""
+    in_front = False
+    for i, raw in enumerate(src.splitlines()):
+        line = raw.strip()
+        if not line or line.startswith("%%"):
+            continue
+        if line == "---" and (in_front or not any(x.strip() for x in src.splitlines()[:i])):
+            in_front = not in_front
+            continue
+        if in_front:
+            continue
+        return line
+    return ""
+
+
 def feature_guide_warnings(where, guide):
-    """T-964 — `taxonomy.guide` = {when, ux, logic, limits, example} (the viewer's
-    feature detail draws it). when · ux · limits: string or list of strings;
-    logic: list of {text, ground?} or plain strings (ground = ticket id string
-    or list of them); example: string. Warns — never raises — on a malformed
-    type, and per feature on an empty when · ux · logic · example cell (limits
-    may be empty). An absent guide warns once as a whole."""
+    """T-964 — `taxonomy.guide` = {when, ux, logic, limits, example, flow?} (the viewer's
+    feature detail draws it). when · limits: string or list of strings; ux: string or
+    list of strings or {text, at?} (T-1049: `at` = a SURFACE_KEYS key the viewer's surface
+    map marks); logic: list of {text, ground?} or plain strings (ground = ticket id string
+    or list of them); example: string; flow (T-1049): mermaid source string. Warns — never
+    raises — on a malformed type, and per feature on an empty when · ux · logic · example
+    cell (limits and flow may be empty). An absent guide warns once as a whole."""
     g = f"{where} taxonomy guide"
     if guide is None:
         return [f"{g} is missing — the viewer's feature detail shows the new-feature notice"]
@@ -10597,6 +10637,31 @@ def feature_guide_warnings(where, guide):
         if v is None:
             if cell != "limits":
                 warns.append(f"{g}.{cell} is empty")
+            continue
+        if cell == "ux":
+            items = [v] if isinstance(v, str) else v if isinstance(v, list) else None
+            if items is None:
+                warns.append(f"{g}.ux is not a string or a list")
+                continue
+            filled = False
+            for i, it in enumerate(items):
+                if isinstance(it, str):
+                    filled = filled or bool(it.strip())
+                elif isinstance(it, dict):
+                    if not isinstance(it.get("text"), str):
+                        warns.append(f"{g}.ux[{i}] text is not a string")
+                    else:
+                        filled = filled or bool(it["text"].strip())
+                    at = it.get("at")
+                    if at is not None:
+                        if not isinstance(at, str):
+                            warns.append(f"{g}.ux[{i}] at is not a string")
+                        elif not _surface_key_known(at.strip()):
+                            warns.append(f"{g}.ux[{i}] at '{at}' names no surface (terminal · statusline · viewer · cli, as <surface>.<part>)")
+                else:
+                    warns.append(f"{g}.ux[{i}] is not a string or a {{text, at}} object")
+            if not filled:
+                warns.append(f"{g}.ux is empty")
             continue
         lst = strs(v)
         if lst is None:
@@ -10629,6 +10694,16 @@ def feature_guide_warnings(where, guide):
         warns.append(f"{g}.example is empty")
     elif not isinstance(ex, str):
         warns.append(f"{g}.example is not a string")
+    flow = guide.get("flow")
+    if flow is not None:
+        if not isinstance(flow, str):
+            warns.append(f"{g}.flow is not a string")
+        elif flow.strip():
+            head = _mermaid_first_line(flow)
+            first = head.split()[0] if head else ""
+            first = first.split("-beta")[0].split("-v2")[0].split(":")[0]
+            if first not in MERMAID_DIAGRAM_TYPES:
+                warns.append(f"{g}.flow does not start with a mermaid diagram type (flowchart TD · sequenceDiagram · ...)")
     return warns
 
 
@@ -12240,6 +12315,102 @@ def prd_form_warnings(root, st, tickets):
     return warns
 
 
+# T-1057 — the As-Is / To-Be sections may carry `#### <name> · <title>` MEANING
+# GROUPS (T-1048); those H4s are not What items, so the item-address check skips
+# them, and a mismatch between the two sides — which makes the viewer fall back
+# silently to a flat table — is warned here instead. Mirrors `pairGroups` /
+# `groupBody` in packages/viewer/lib/prd-reading.mjs.
+PRD_PAIR_SECTION_RE = re.compile(r"^### (As-Is|To-Be)(\s|$)")
+
+
+def _prd_pair_sections(body):
+    """[(side, heading_line, [(line_no, line), ...])] for each `### As-Is` /
+    `### To-Be` section of an open-section body — the lines after the heading up
+    to the next `### ` / `## ` heading (viewer: `^(As-Is|To-Be)(\\s|$)`; the old
+    Korean pair is not a group carrier)."""
+    out = []
+    cur = None
+    for ln, line in body:
+        if line.startswith("### ") or line.startswith("## "):
+            cur = None
+            m = PRD_PAIR_SECTION_RE.match(line)
+            if m:
+                cur = (m.group(1), ln, [])
+                out.append(cur)
+            continue
+        if cur is not None:
+            cur[2].append((ln, line))
+    return [(side, ln, rng) for side, ln, rng in out]
+
+
+def _prd_group_split(rng):
+    """(loose_lines, [(heading_text, line_no, body_lines)]) of one pair section:
+    loose = non-blank text before the first `#### `; groups = each H4 + its lines."""
+    loose, groups = [], []
+    for ln, line in rng:
+        m = PRD_H4_RE.match(line)
+        if m:
+            groups.append((m.group(1).strip(), ln, []))
+        elif groups:
+            groups[-1][2].append(line)
+        elif line.strip():
+            loose.append(ln)
+    return loose, groups
+
+
+def _prd_group_body_ok(lines):
+    """Viewer `groupBody`: an optional summary, then a `- ` list whose lines are
+    only items or indented continuations. Returns the item count, None if not so."""
+    first = next((i for i, l in enumerate(lines) if re.match(r"^[-*]\s+", l)), None)
+    if first is None:
+        return None
+    n = 0
+    for l in lines[first:]:
+        if not l.strip():
+            continue
+        if re.match(r"^[-*]\s+", l):
+            n += 1
+        elif n and re.match(r"^\s+\S", l):
+            continue
+        else:
+            return None
+    return n
+
+
+def _prd_group_parity_warnings(version, pair_ranges):
+    """Warn when the As-Is / To-Be groups would not pair in the viewer. Silent
+    when neither side has a group (a flat list is the legal plain form)."""
+    sides = {side: rng for side, _, rng in pair_ranges}
+    if "As-Is" not in sides or "To-Be" not in sides:
+        return []
+    (la, ga), (lb, gb) = _prd_group_split(sides["As-Is"]), _prd_group_split(sides["To-Be"])
+    if not ga and not gb:
+        return []
+    pre = f"{version}: As-Is/To-Be groups"
+    tail = " — the viewer falls back to a flat table"
+    if bool(ga) != bool(gb):
+        which = "As-Is" if ga else "To-Be"
+        return [f"{pre}: only {which} is grouped (`#### <name> · <title>`){tail}"]
+    warns = []
+    for side, loose in (("As-Is", la), ("To-Be", lb)):
+        if loose:
+            warns.append(f"{pre}: loose text under {side} outside a group (line "
+                         f"{loose[0]}); keep a summary line inside a group{tail}")
+    ha, hb = [t for t, _, _ in ga], [t for t, _, _ in gb]
+    if ha != hb:
+        warns.append(f"{pre}: headings differ in text or order (As-Is: {ha}; To-Be: {hb}){tail}")
+        return warns
+    for (title, _, ba), (_, _, bb) in zip(ga, gb):
+        na, nb = _prd_group_body_ok(ba), _prd_group_body_ok(bb)
+        if na is None or nb is None:
+            side = "As-Is" if na is None else "To-Be"
+            warns.append(f"{pre}: group `{title}` in {side} is not a `- ` item list "
+                         f"(an optional summary line, then items){tail}")
+        elif na != nb:
+            warns.append(f"{pre}: group `{title}` item counts differ (As-Is {na}, To-Be {nb}){tail}")
+    return warns
+
+
 def _prd_open_form_warnings(root, version, body, tickets):
     warns = []
     texts = {line for _, line in body}
@@ -12253,7 +12424,10 @@ def _prd_open_form_warnings(root, version, body, tickets):
                      f'"{PRD_TOBE_HEADING_OLD}") — rename them to "{PRD_ASIS_HEADING}" / '
                      f'"{PRD_TOBE_HEADING}"')
     seen = {}
-    for ln, key, content in _prd_h4_items(body):
+    pair_ranges = _prd_pair_sections(body)
+    in_pair = {ln for _, _, rng in pair_ranges for ln, _ in rng}
+    warns += _prd_group_parity_warnings(version, pair_ranges)
+    for ln, key, content in _prd_h4_items([(n, t) for n, t in body if n not in in_pair]):
         if key is None:
             warns.append(f"{version}: heading `#### {content}` at line {ln} is not item-address "
                          f"form (`#### <key> — <label>`)")

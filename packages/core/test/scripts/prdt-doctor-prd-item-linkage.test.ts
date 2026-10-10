@@ -79,17 +79,18 @@ const DEFAULT_REVERSED = '- [[decision--x]] — 뒤집었다.'
 
 function writePrd(opts: {
   asis?: boolean; tobe?: boolean; oldPair?: boolean; reversedHeading?: string | null;
-  reversedRows?: string[]; items?: string[];
+  reversedRows?: string[]; items?: string[]; asisBody?: string; tobeBody?: string;
 } = {}): void {
   const {
     asis = true, tobe = true, oldPair = false,
     reversedHeading = '### 이 버전이 뒤집은 것 (reversed)',
     reversedRows = [DEFAULT_REVERSED],
     items = ['#### alpha — 첫 항목\n\n본문.', '#### beta — 둘째 항목\n\n본문.'],
+    asisBody = '- as-is 본문.', tobeBody = '- to-be 본문.',
   } = opts
   const parts = ['## v1.10 — test round', '']
-  if (asis) parts.push(oldPair ? '### 이 버전 직전 (as-is)' : '### As-Is', '', '- as-is 본문.', '')
-  if (tobe) parts.push(oldPair ? '### 이 버전 직후 (to-be)' : '### To-Be', '', '- to-be 본문.', '')
+  if (asis) parts.push(oldPair ? '### 이 버전 직전 (as-is)' : '### As-Is', '', asisBody, '')
+  if (tobe) parts.push(oldPair ? '### 이 버전 직후 (to-be)' : '### To-Be', '', tobeBody, '')
   if (reversedHeading !== null) {
     parts.push(reversedHeading, '')
     parts.push(...reversedRows, '')
@@ -286,5 +287,71 @@ describe('T-674 slice 2b — P1 (prd form) + E4 (prd_item edge)', () => {
   test('E4: a prd_item naming a version with no record anywhere violates', () => {
     ticket('T-1', 'v0.1', { prd_item: 'v0.1#anything' })
     expect(doctor()).toContain('ticket: T-1 prd_item: v0.1#anything does not resolve to an item of v0.1')
+  })
+
+  // ── T-1057 — As-Is / To-Be `####` meaning groups ───────────────────────────
+
+  const grp = (title: string, ...items: string[]) =>
+    `#### ${title}\n\n${items.map((i) => `- ${i}`).join('\n')}`
+
+  test('T-1057: matching As-Is/To-Be groups are silent (no item-address P1, no parity warning)', () => {
+    writePrd({
+      asisBody: [grp('a · 하나', 'x', 'y'), grp('b · 둘', 'z')].join('\n\n'),
+      tobeBody: [grp('a · 하나', 'x2', 'y2'), grp('b · 둘', 'z2')].join('\n\n'),
+    })
+    const d = doctor()
+    expect(d).not.toContain('is not item-address form')
+    expect(d).not.toContain('As-Is/To-Be groups')
+  })
+
+  test('T-1057: a group summary line inside a group is allowed', () => {
+    writePrd({
+      asisBody: '#### a · 하나\n\n요약 한 줄.\n\n- x',
+      tobeBody: '#### a · 하나\n\n요약 한 줄.\n\n- x2',
+    })
+    expect(doctor()).not.toContain('As-Is/To-Be groups')
+  })
+
+  test('T-1057: a What-section H4 outside the pair is still graded', () => {
+    writePrd({
+      asisBody: grp('a · 하나', 'x'), tobeBody: grp('a · 하나', 'x2'),
+      items: ['#### 1. 번호 항목\n\n본문.'],
+    })
+    const d = doctor()
+    expect(d).toContain('is not item-address form')
+    expect(d).not.toContain('#### a · 하나')
+  })
+
+  test('T-1057: headings that differ in text warn', () => {
+    writePrd({ asisBody: grp('a · 하나', 'x'), tobeBody: grp('a · 다른', 'x2') })
+    expect(doctor()).toContain('headings differ in text or order')
+  })
+
+  test('T-1057: headings in a different order warn', () => {
+    writePrd({
+      asisBody: [grp('a · 하나', 'x'), grp('b · 둘', 'y')].join('\n\n'),
+      tobeBody: [grp('b · 둘', 'y'), grp('a · 하나', 'x')].join('\n\n'),
+    })
+    expect(doctor()).toContain('headings differ in text or order')
+  })
+
+  test('T-1057: only one side grouped warns', () => {
+    writePrd({ asisBody: grp('a · 하나', 'x'), tobeBody: '- x2' })
+    expect(doctor()).toContain('only As-Is is grouped')
+  })
+
+  test('T-1057: a group whose item counts differ warns', () => {
+    writePrd({ asisBody: grp('a · 하나', 'x', 'y'), tobeBody: grp('a · 하나', 'x2') })
+    expect(doctor()).toContain('item counts differ (As-Is 2, To-Be 1)')
+  })
+
+  test('T-1057: loose text under the section heading, outside any group, warns', () => {
+    writePrd({ asisBody: '떠도는 문장.\n\n' + grp('a · 하나', 'x'), tobeBody: grp('a · 하나', 'x2') })
+    expect(doctor()).toContain('loose text under As-Is')
+  })
+
+  test('T-1057: a flat (ungrouped) pair stays silent', () => {
+    writePrd()
+    expect(doctor()).not.toContain('As-Is/To-Be groups')
   })
 })

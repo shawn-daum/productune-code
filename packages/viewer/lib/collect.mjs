@@ -238,12 +238,23 @@ export function collectFeatures(repoRoot) {
 // `feature:` values against (W4), so the screen and that check read the same
 // keys. Null when the config has no `features.taxonomy.areas` (the screen's
 // empty state); a malformed config is the same null — doctor names the fault.
-// T-964: `taxonomy.guide` = {when, ux, logic, limits, example}. Lenient read —
-// when · ux · limits take a string or a string list, example a string (or list,
+// T-964: `taxonomy.guide` = {when, ux, logic, limits, example, flow?}. Lenient read —
+// when · limits take a string or a string list, ux a list of strings or `{text, at}` (T-1049), example a string (or list,
 // joined), logic a list of `{text, ground?}` or plain strings (ground = a
 // ticket id string or a list of them). Anything else is dropped; `prdt doctor`
 // names the malformed cell. Returns null when no cell has text.
 const textList = (v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? v : []).filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim())
+// T-1049 (T-1055 = A · T-1056 = A): ux items are `{text, at?}` (a plain string is `{text}`); `at` is
+// a surface key the viewer draws on its map (`viewer.prd` · bare `viewer`), kept as written —
+// the renderer ignores one it does not know, doctor warns. `flow` is mermaid source (a string).
+const uxItems = (v) =>
+  (Array.isArray(v) ? v : typeof v === 'string' ? [v] : [])
+    .map((it) => {
+      if (typeof it === 'string') return { text: it.trim(), at: '' }
+      if (it && typeof it === 'object' && typeof it.text === 'string') return { text: it.text.trim(), at: typeof it.at === 'string' ? it.at.trim() : '' }
+      return null
+    })
+    .filter((it) => it && it.text)
 export function normalizeGuide(g) {
   if (!g || typeof g !== 'object' || Array.isArray(g)) return null
   const logic = (Array.isArray(g.logic) ? g.logic : [])
@@ -253,8 +264,8 @@ export function normalizeGuide(g) {
       return null
     })
     .filter((it) => it && it.text)
-  const out = { when: textList(g.when), ux: textList(g.ux), logic, limits: textList(g.limits), example: textList(g.example).join(' ') }
-  return out.when.length || out.ux.length || out.logic.length || out.limits.length || out.example ? out : null
+  const out = { when: textList(g.when), ux: uxItems(g.ux), logic, limits: textList(g.limits), example: textList(g.example).join(' '), flow: typeof g.flow === 'string' ? g.flow.trim() : '' }
+  return out.when.length || out.ux.length || out.logic.length || out.limits.length || out.example || out.flow ? out : null
 }
 
 export function collectFeatureTaxonomy(repoRoot) {
