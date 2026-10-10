@@ -145,6 +145,8 @@ function cliHooksBlock(home: string): any {
       // opens its own hand-offs; this is the main-session-only relay that
       // reads a completed `prdt` Bash call's own printed stdout instead.
       { matcher: 'Bash', hooks: [h('prdt-auto-open.sh')] },
+      // T-977: prdt-wordlist-check.sh — its own Write|Edit|MultiEdit entry.
+      { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-wordlist-check.sh')] },
       // T-1025: prdt-user-prompt.sh's matcher-less PostToolUse entry (form=outline hot line).
       { hooks: [h('prdt-user-prompt.sh')] },
     ],

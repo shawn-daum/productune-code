@@ -131,6 +131,8 @@ export const CASES: readonly Case[] = [
             // T-794: a second registration of the same script — main-session-only
             // relay for the CLI's own hand-offs, off the Bash tool's stdout.
             { matcher: 'Bash', hooks: [h('prdt-auto-open.sh')] },
+            // T-977: prdt-wordlist-check.sh — its own Write|Edit|MultiEdit entry.
+            { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-wordlist-check.sh')] },
           ],
           UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
           PostToolBatch: [{ hooks: [h('prdt-call-governor.sh')] }],
@@ -146,6 +148,8 @@ export const CASES: readonly Case[] = [
             { matcher: 'Read|Bash', hooks: [h('prdt-secret-guard.sh')] },
             // T-779: prdt-worktree-guard.sh, a FOURTH PreToolUse entry (the write-shaped tools).
             { matcher: 'Edit|Write|MultiEdit|NotebookEdit|Bash', hooks: [h('prdt-worktree-guard.sh')] },
+            // T-976: prdt-identity-guard.sh, a FIFTH PreToolUse entry (outbound + write tools).
+            { matcher: 'Bash|WebFetch|WebSearch|Write|Edit|MultiEdit|NotebookEdit', hooks: [h('prdt-identity-guard.sh')] },
           ],
           // T-985: prdt-question-check.sh, matcher-less on Stop (PO only).
           Stop: [{ hooks: [h('prdt-question-check.sh')] }],
