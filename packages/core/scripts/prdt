@@ -16331,8 +16331,8 @@ def _wordlist_hook(root_hint):
         return
     if not hits and not warns:
         return
-    lines = [f"[prdt wordlist] {rel}: {len(hits)} hit(s) from the {lang} UX-writing word list. "
-             f"Rewrite each with its plain replacement (contracts §Language):"]
+    lines = [f"[prdt wordlist] {rel}: {len(hits)} hit(s) from the {lang} word list (contracts §Language). "
+             f"Edit {rel} this turn: replace each word below with one of the replacements after its →."]
     lines += [f"- warning: {w}" for w in warns]
     for h in hits[:_WORDLIST_HOOK_MAX_LINES]:
         lines.append(f"- line {h['line']} \"{_wordlist_label(h)}\" → {' · '.join(h['replace'])}")
