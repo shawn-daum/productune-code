@@ -204,9 +204,9 @@ describe('T-656 CLI write sites — a planted <target>.tmp symlink', () => {
       expect(fs.lstatSync(target).isSymbolicLink()).toBe(false)
       expect(fs.statSync(target).isFile()).toBe(true)
       // the helper's own temp name: the planted link was removed, not followed.
-      // init_project (T-905) writes through state_write, whose temp name is
+      // init_project (T-905), cmd_attest and features_vocab_seed (T-908) write through state_write, whose temp name is
       // `.<name>.<pid>.tmp` — the planted `<name>.tmp` is never opened, so it stays.
-      if (row.site !== 'init_project') expect(() => fs.lstatSync(`${target}.tmp`)).toThrow()
+      if (!['init_project', 'cmd_attest', 'features_vocab_seed'].includes(row.site)) expect(() => fs.lstatSync(`${target}.tmp`)).toThrow()
     })
   })
 })

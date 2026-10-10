@@ -344,3 +344,33 @@ describe('home fix round 1 (T-881 grill) — what a DOM-free test can pin; width
     for (const a of chips) for (const b of chips) if (a !== b) expect(hit(a, b)).toBe(false)
   })
 })
+
+describe('home scope explains why tickets fall outside the items (T-981)', () => {
+  const scope = (tickets: ReturnType<typeof tk>[]) => /<div class="cp-h">스코프[\s\S]*?(?=<\/div><\/div><\/div>|<div class="cp-block">)/.exec(page(tickets).home)?.[0] ?? ''
+  it('counts malformed and missing prd_item separately, each linking to the current-version ticket list', () => {
+    const s = scope([tk({ id: 'T-1', prd_item: 'v1.12#a' }), tk({ id: 'T-2', prd_item: 'nope' }), tk({ id: 'T-3', prd_item: 'nope2' }), tk({ id: 'T-4' }), tk({ id: 'T-5', prd_item: 'v1.12#zzz' })])
+    expect(s).toContain('prd_item 형식이 틀린 티켓 2개')
+    expect(s).toContain('prd_item 이 없는 티켓 1개')
+    expect(s).toContain('data-open-store="ticket" data-open-group="v1.12"')
+    expect(s).toContain('0/4')
+  })
+  it('a bare key equal to an open-section key counts under that item and is flagged 「형식 고치기」; any other malformed value stays outside', () => {
+    const s = scope([tk({ id: 'T-1', prd_item: 'a', status: 'done' }), tk({ id: 'T-2', prd_item: 'a' }), tk({ id: 'T-3', prd_item: 'A' })])
+    expect(s).toContain('형식 고치기 2')
+    expect(s).toContain('1/2')
+    expect(s).toContain('prd_item 형식이 틀린 티켓 1개')
+    expect(s).not.toContain('prd_item 이 없는')
+  })
+  it('well-formed tickets render no explanation and no flag', () => {
+    const s = scope([tk({ id: 'T-1', prd_item: 'v1.12#a' }), tk({ id: 'T-2', prd_item: 'v1.12#a' })])
+    expect(s).not.toContain('sc-why')
+    expect(s).not.toContain('sc-fix"')
+    expect(s).not.toContain('sc-out')
+  })
+  it('a decision ticket without prd_item adds no missing-prd_item count; any other type still does', () => {
+    const only = scope([tk({ id: 'T-1', type: 'decision' }), tk({ id: 'T-2', type: 'decision', status: 'done' })])
+    expect(only).not.toContain('prd_item 이 없는')
+    const mixed = scope([tk({ id: 'T-1', type: 'decision' }), tk({ id: 'T-2', type: 'design' }), tk({ id: 'T-3' })])
+    expect(mixed).toContain('prd_item 이 없는 티켓 2개')
+  })
+})
