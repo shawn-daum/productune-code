@@ -62,7 +62,10 @@ LINK_CHECK_REASON = (
 RUN_BUDGET_S = 5
 TICKET_DIR = os.path.join("docs", "tickets")
 
-ID_RE = re.compile(r"(?<![A-Za-z0-9_./\\-])(T-(?:PATCH-)?\d{1,6})(?![\dA-Za-z_]|-[A-Za-z]|\.(?:md|html)\b|/)")
+ID_RE = re.compile(r"(?<![A-Za-z0-9_.\\-])(T-(?:PATCH-)?\d{1,6})(?![\d_]|-\w|\.(?:md|html)\b|[A-Za-z])")
+# A whitespace-delimited token with a `/` is a path (blanked) unless it opens with
+# slash-joined ticket ids (`T-976/T-977`, T-899 fix): those ids are mentions.
+PAIR_RUN_RE = re.compile(r"^[(\[{\"'<*_]*T-(?:PATCH-)?\d{1,6}(?:/T-(?:PATCH-)?\d{1,6})+(?![\d/A-Za-z.])")
 FENCE_RE = re.compile(r"^\s*(?:`{3,}|~{3,})")
 CODE_SPAN_RE = re.compile(r"(`+)(?:(?!\1).)+?\1", re.S)
 LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)\n]*)\)")
@@ -122,8 +125,12 @@ def unlinked_first_mentions(text, known):
         labels.append((m.start(1), m.end(1)))
         dests.append((m.start(2), m.end(2)))
     inside = lambda spans, p: any(a <= p < b for a, b in spans)
+    scan = list(masked)
+    for a, b in dests:
+        scan[a:b] = " " * (b - a)
+    scan = re.sub(r"\S*/\S*", lambda m: m.group(0) if PAIR_RUN_RE.match(m.group(0)) else " " * len(m.group(0)), "".join(scan))
     seen, bad = set(), []
-    for m in ID_RE.finditer(masked):
+    for m in ID_RE.finditer(scan):
         tid, pos = m.group(1), m.start(1)
         if tid in seen or tid not in known or inside(dests, pos):
             continue
