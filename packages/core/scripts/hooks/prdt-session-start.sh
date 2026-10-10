@@ -204,6 +204,28 @@ PY
   fi
 fi
 
+# ── T-983: viewer ensure, PO SessionStart only ─────────────────────────────────
+# A project the PO opens gets its viewer without anyone asking: `prdt viewer
+# --ensure` installs the generator's dependencies when missing (a fresh install,
+# an update whose install failed offline) and builds viewer.html when absent —
+# silent and a no-op when both are in place, so every start may call it. Same
+# gates and the same python3 start_new_session detach as the backup tick above:
+# the session start never waits on an install or a build, and a failure just
+# leaves the viewer missing, so the NEXT PO session start tries again.
+if [ "$PART" = "1" ] && [ "$PERSONA" = "po" ] && [ "$EVENT_NAME" = "SessionStart" ] \
+   && [ -z "$SELF_LOAD" ] && [ -z "$PLAN_PERSONA" ] && [ "${PRDT_VIEWER_ENSURE:-1}" != "0" ]; then
+  VE_ROOT="$(find_proj "$EVENT_CWD")"
+  VE_CLI="${PRDT_BIN:-$PRDT_HOME/bin/prdt}"
+  if [ -n "$VE_ROOT" ] && [ -x "$VE_CLI" ] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$VE_CLI" "$VE_ROOT" >/dev/null 2>&1 <<'PY' || true
+import subprocess, sys
+subprocess.Popen([sys.argv[1], "viewer", "--ensure"], cwd=sys.argv[2],
+                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                 start_new_session=True)
+PY
+  fi
+fi
+
 if [ -n "$SELF_LOAD" ] && [ -z "$PERSONA" ]; then
   printf 'prdt-session-start: --self-load takes a prdt agent type (prdt-po|prdt-designer|prdt-developer|prdt-qa), got: %s\n' "$SELF_LOAD" >&2
   exit 1
