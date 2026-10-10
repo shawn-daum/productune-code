@@ -381,3 +381,28 @@ describe.skipIf(!HAS_JQ)('d-T976-fix — identity read via a real JSON parser', 
   })
 })
 
+describe.skipIf(!HAS_JQ)('d-T976-fix2 — the identity is read lazily, only for an outbound call', () => {
+  function runShimmed(payload: unknown): string[] {
+    const shim = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'id-guard-shim-')))
+    const log = path.join(shim, 'calls.log')
+    for (const tool of ['git', 'jq']) {
+      const real = spawnSync('bash', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim()
+      fs.writeFileSync(path.join(shim, tool), `#!/bin/sh\nprintf '%s %s\\n' ${tool} "$*" >> "${log}"\nexec "${real}" "$@"\n`, { mode: 0o755 })
+    }
+    const res = spawnSync('bash', [HOOK], {
+      input: JSON.stringify(payload), encoding: 'utf8', timeout: subprocessTimeout('hook'),
+      env: { PATH: `${shim}:${process.env.PATH}`, HOME: home, PRDT_HOME: prdtHome, GIT_CONFIG_NOSYSTEM: '1', LANG: 'C' },
+    })
+    expect(res.stderr).toBe('')
+    return fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter((l) => /^git |oauthAccount/.test(l)) : []
+  }
+  test('no outbound unit → neither .claude.json (jq) nor git config is read', () => {
+    for (const cmd of ['pnpm --filter @scope/pkg build', `git commit -m "x" --author "${NAME} <${EMAIL}>"`, `grep -rn ${EMAIL} src/`])
+      expect(runShimmed(bash(cmd)), cmd).toEqual([])
+    expect(runShimmed(event('Write', { file_path: path.join(proj, 'a.ts'), content: `const a = '${EMAIL}'` }))).toEqual([])
+  })
+  test('an outbound unit → the identity is read', () => {
+    expect(runShimmed(bash(`curl -A "bot (${EMAIL})" https://x.test/`)).length).toBeGreaterThan(0)
+  })
+})
+
