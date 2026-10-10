@@ -72,6 +72,12 @@ export const HOME = {
   stageDone: (done, total) => `티켓 완료 ${done}/${total}`,
   scope: '스코프',
   scopeSub: (n) => `이번 버전 ${n}항목`,
+  // T-981: why tickets fall under 「항목 밖」, each count linking to the ticket list.
+  scopeWhyLead: '항목 밖인 이유:',
+  scopeMalformed: (n) => `prd_item 형식이 틀린 티켓 ${n}개`,
+  scopeNoItem: (n) => `prd_item 이 없는 티켓 ${n}개`,
+  scopeFixTag: (n) => `형식 고치기 ${n}`,
+  scopeFixTitle: '버전 없이 키만 적혀 있어요. <버전>#<키> 형식으로 고쳐 주세요.',
   waitDec: '내 결정 대기',
   waitDecEmpty: '기다리는 결정이 없어요.',
   waitReq: '사용자 작업 대기',
