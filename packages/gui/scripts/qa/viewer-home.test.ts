@@ -228,7 +228,7 @@ describe('home screen — T-796 acceptance in the generated page', () => {
     expect(def).not.toContain(built)
     for (const stage of ['build', 'ship']) {
       const h = page(open, { stage }).home
-      expect(h).toContain('메인 패스가 아직 이어지지 않았어요 — ' + built)
+      expect(h).toContain('메인 패스가 아직 이어지지 않았어요. ' + built)
       expect(h).not.toContain('Build 진입 때 생겨요')
       expect(h).not.toContain('Build 진입 전')
     }
