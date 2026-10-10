@@ -93,6 +93,11 @@ function doctorOut(): string {
     { cwd: projectRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
 }
 
+/** The DE verdict line plus every `doctor:` detail line and ⚠ line, for a failure message. */
+function deBlock(out: string): string {
+  return out.split('\n').filter(l => l.startsWith('doctor:') || l.startsWith('⚠')).join('\n')
+}
+
 function frameWarnings(): string[] {
   const out = doctorOut()
   expect(out).toMatch(/^doctor: (clean|\d+ warning\(s\)) \(non-blocking\)$/m)
@@ -165,6 +170,8 @@ describe.skipIf(!CAN_RUN)('doctor: ticket frame (advisory)', () => {
     expect(out).toContain('⚠ ticket frame: T-804')
     const deLine = out.split('\n').find(l => l.startsWith('doctor: discipline↔execution —'))
     expect(deLine).toBeTruthy()
-    expect(deLine).toMatch(/violations=0/)
+    // On failure, name the mismatch itself (T-1062): the verdict line alone says
+    // only "1 mismatch" — the lines under it say which check.
+    expect(deLine, deBlock(out)).toMatch(/violations=0/)
   })
 })

@@ -47,6 +47,7 @@ import {
   OPTION_CARD,
   ENV,
 } from './labels.mjs'
+import { mermaidBlock, hasMermaid, mermaidScript, MERMAID_CSS } from './mermaid.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
 import { HOME_STAGES, stageSegments, buildHomeGraph, layoutHomeGraph, waitLists, compareTicketIds, NODE_W, NODE_H } from './home-graph.mjs'
 import { disciplineLoadCard, DISCIPLINE_LOAD_CSS, DISCIPLINE_LOAD_SCRIPT } from './discipline-load.mjs'
@@ -472,6 +473,13 @@ hardenedRenderer.text = function (token) {
   }
   return defaultTextRender.call(this, token)
 }
+// T-1049 (T-1056 = A): a ```mermaid fence becomes the same inert diagram block the guide's `flow`
+// uses (lib/mermaid.mjs); every other fence keeps marked's own renderer.
+const defaultCodeRender = hardenedRenderer.code
+hardenedRenderer.code = function (token) {
+  if (token && typeof token === 'object' && /^mermaid(\s|$)/.test(token.lang || '')) return mermaidBlock(token.text || '') + '\n'
+  return defaultCodeRender.call(this, token)
+}
 hardenedRenderer.codespan = function ({ text }) {
   if (linkContext.docs && pageDocTargets.has(text)) return `<code>${docPathAnchor(text, escapeHtml(text))}</code>`
   const linked = linkContext.disc ? linkDisciplineCode(text, linkContext.disc) : null
@@ -652,8 +660,8 @@ function fmtBytes(n) {
 // 621-627) — doctrine #2, don't re-draw what is already signed off.
 // T-880 = A: 현재 버전(home) · PRD · 티켓 · 위키 · 기능 · 아티팩트 · 용어 사전 ·
 // 릴리즈 노트 · 규율 — the discipline store (T-886) lands last, after 'release'.
-// T-958: env sits after 아티팩트 (screen set v1.13 #screen-env).
-const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'env', 'glossary', 'release', 'disc']
+// T-1047: env has no activity-bar item — it is the last current-version sidebar item (after 결정).
+const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release', 'disc']
 const STORE_ICON_PATHS = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
   prd: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/>',
@@ -664,12 +672,13 @@ const STORE_ICON_PATHS = {
   glossary: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m8 13 4-7 4 7"/><path d="M9.1 11h5.7"/>',
   release: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
   // T-886: copied from the approved screen set (define-screen-set.html 「규율」 activity button).
-  // T-958: copied from the approved screen set (v1.13 define-screen-set.html 「env」 activity button).
-  env: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2"/><path d="m16 7 3 3"/><path d="m19 4 2 2"/>',
   disc: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
   artifact:
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
 }
+// T-1047: lucide Eye / EyeOff, the same icons the GUI env pane's reveal toggle uses.
+const EYE_ICON_PATH = '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>'
+const EYE_OFF_ICON_PATH = '<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>'
 const CLOSE_ICON_PATH = '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
 const MOON_ICON_PATH = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'
 const SUN_ICON_PATH = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'
@@ -1045,8 +1054,7 @@ function ticketSection(tickets, currentVersion, views = []) {
 
 // ---------- release lines (T-961; release-lines.md §6b) ----------
 // The stores whose sidebar draws one section per release line, home line
-// first, each headed `<line> <version>` + its stage. The env store joins this
-// list when it lands (T-958). Every other store's sidebar is unchanged.
+// first, each headed `<line> <version>` + its stage. Every other store's sidebar is unchanged.
 export const LINE_SECTIONED_STORES = ['home', 'prd', 'ticket', 'feature', 'artifact']
 
 /**
@@ -1680,7 +1688,7 @@ function featureEvidence(e, anchors) {
     .join(' · ')
 }
 
-/** Detail order (T-808 outcome): definition and 「함께 쓰는 기능」 first, then the spec body (spec file present) or 근거 티켓. */
+/** Detail order (T-808 outcome): definition and 「연관 기능」 first, then the spec body (spec file present) or 근거 티켓. */
 // T-883: feature keys whose detail carries a 「읽기」 field, and the store each opens.
 const FEATURE_READ_STORE = { glossary: 'glossary', 'release-notes': 'release' }
 
@@ -1709,7 +1717,7 @@ export function specTruthCount(body) {
   return found ? n : null
 }
 
-/** T-964: the spec link under 어떻게 동작하나 — a fold, collapsed, that opens the spec body in place. */
+/** T-964: the spec link under 동작 방식 — a fold, collapsed, that opens the spec body in place. */
 function featureSpecFold(e, repoRootHref) {
   if (!e.spec) return ''
   const n = specTruthCount(e.spec.body)
@@ -1717,20 +1725,54 @@ function featureSpecFold(e, repoRootHref) {
   return `<details class="fd-spec"><summary class="fd-more">${escapeHtml(label)}</summary><div class="v-body">${md(e.spec.body, path.dirname(e.spec.rel), repoRootHref)}</div></details>`
 }
 
-/** T-964: the five guide sections, or the new-feature empty notice when the guide has no text. */
+/**
+ * T-1049 (T-1055 = A): the surface map over a numbered list. Draws only when some ux item's `at`
+ * names a known surface (`viewer.prd`, or a bare `viewer`); an item whose `at` is unknown or absent
+ * stays a plain numbered line. `items` = [{html, at}].
+ */
+function surfaceMapHtml(items) {
+  const marks = new Map()  // 'surface.part' or 'surface' -> [item numbers]
+  const known = new Set()
+  for (const s of FEATURE.surfaces) {
+    known.add(s.key)
+    for (const [part] of s.parts) known.add(`${s.key}.${part}`)
+  }
+  items.forEach((it, i) => { if (known.has(it.at)) marks.set(it.at, [...(marks.get(it.at) || []), i + 1]) })
+  if (marks.size === 0) return ''
+  const badge = (ns) => ns.map((n) => `<span class="fd-bn">${n}</span>`).join('')
+  const tiles = FEATURE.surfaces.map((s) => {
+    const tileNs = marks.get(s.key) || []
+    const anyPart = tileNs.length > 0 || s.parts.some(([part]) => marks.has(`${s.key}.${part}`))
+    const parts = s.parts.map(([part, name]) => {
+      const ns = marks.get(`${s.key}.${part}`) || []
+      return `<div class="fd-sp${ns.length ? ' hit' : ''}">${badge(ns)}${escapeHtml(name)}</div>`
+    }).join('')
+    return `<div class="fd-stile${anyPart ? ' hit' : ''}"><div class="fd-st">${badge(tileNs)}${escapeHtml(s.name)}</div>${parts}</div>`
+  }).join('')
+  return `<div class="fd-smap">${tiles}</div>`
+}
+
+/** T-964: the guide sections (T-1049: document headings, a surface map under 화면 구성, a flow diagram under 동작 방식), or the new-feature empty notice when the guide has no text. */
 function featureGuideHtml(e, anchors, specFold = '') {
   const g = e.guide
   if (!g) return `<p class="fd-empty"><b>${escapeHtml(FEATURE.guideEmptyHead)}</b> <span>${escapeHtml(FEATURE.guideEmptyDetail)}</span></p>${specFold}`
-  const sec = (key, body) => `<div class="fd-sec"><h2 class="pill pill-heading-2">${escapeHtml(FEATURE.guide[key])}</h2>${body}</div>`
+  const sec = (key, body) => `<div class="fd-sec"><h2 class="fd-h">${escapeHtml(FEATURE.guide[key])}</h2>${body}</div>`
   const ul = (items) => `<ul class="fd-list">${items.map((x) => `<li>${x}</li>`).join('')}</ul>`
   const noScreen = FEATURE.noScreenKinds.includes(e.kind)
-  const ux = [...(noScreen && !(g.ux[0] || '').startsWith(FEATURE.noScreen) ? [escapeHtml(FEATURE.noScreen)] : []), ...g.ux.map(guideInline)]
+  const ux = [...(noScreen && !(g.ux[0]?.text || '').startsWith(FEATURE.noScreen) ? [{ html: escapeHtml(FEATURE.noScreen), at: '' }] : []), ...g.ux.map((u) => ({ html: guideInline(u.text), at: u.at }))]
+  const uxBody = () => {
+    const map = surfaceMapHtml(ux)
+    return map
+      ? map + `<ol class="fd-ol">${ux.map((u, i) => `<li><span class="fd-bn">${i + 1}</span><span>${u.html}</span></li>`).join('')}</ol>`
+      : ul(ux.map((u) => u.html))
+  }
+  const flow = g.flow ? `<div class="fd-flow">${mermaidBlock(g.flow)}<details class="fd-mm"><summary>${escapeHtml(FEATURE.flowSource)}</summary><pre class="fd-mm-src">${escapeHtml(g.flow)}</pre></details></div>` : ''
   const out = []
   if (g.when.length) out.push(sec('when', ul(g.when.map(guideInline))))
-  if (ux.length) out.push(sec('ux', ul(ux)))
+  if (ux.length) out.push(sec('ux', uxBody()))
   if (g.logic.length) {
-    out.push(sec('logic', ul(g.logic.map((l) => guideInline(l.text) + (l.ground.length ? `<span class="cn-g">${ticketIdLinks(escapeHtml(l.ground.join(' · ')), anchors)}</span>` : ''))) + specFold))
-  } else if (specFold) out.push(sec('logic', specFold))
+    out.push(sec('logic', flow + ul(g.logic.map((l) => guideInline(l.text) + (l.ground.length ? `<span class="cn-g">${ticketIdLinks(escapeHtml(l.ground.join(' · ')), anchors)}</span>` : ''))) + specFold))
+  } else if (flow || specFold) out.push(sec('logic', flow + specFold))
   out.push(sec('limits', g.limits.length ? ul(g.limits.map(guideInline)) : `<p class="cn-empty">${escapeHtml(FEATURE.limitsNone)}</p>`))
   if (g.example) out.push(sec('example', `<p class="fd-ex">${guideInline(g.example)}</p>`))
   return out.join('')
@@ -1748,15 +1790,15 @@ function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
     (e.versions ? field(FEATURE.fields.version, escapeHtml(e.versions)) : '') +
     (readHtml ? field(FEATURE.fields.read, readHtml) : '') +
     '</div>'
-  const kdef = kind ? `<p class="kind-def">${escapeHtml(kind.name)} — ${escapeHtml(kind.def || '')}</p>` : ''
+  const kdef = kind ? `<p class="kind-def">${escapeHtml(kind.name)}: ${escapeHtml(kind.def || '')}</p>` : ''
   const items = [
     ...e.links.map((l) => featureLinkItem(model, l.to, l.text || '', l.ground || '', anchors)),
     ...e.rev.map((k) => featureLinkItem(model, k, undefined, undefined, anchors)),
   ]
   const guide = lean ? '' : featureGuideHtml(e, anchors, featureSpecFold(e, repoRootHref))
-  const links = lean ? '' : `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.linksHeading)}</h2>` +
+  const links = lean ? '' : `<h2 class="fd-h">${escapeHtml(FEATURE.linksHeading)}</h2>` +
     (items.length ? `<ul class="cn-list">${items.join('')}</ul>` : `<p class="cn-empty">${escapeHtml(FEATURE.linksEmpty)}</p>`)
-  const tail = `<h2 class="pill pill-heading-2">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
+  const tail = `<h2 class="fd-h">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
   return `${lean ? '' : `<p class="def-lead">${escapeHtml(e.def || '')}</p>`}${meta}${kdef}<div class="detail-doc body-prose">${guide}${links}${tail}</div>`
 }
 
@@ -2107,39 +2149,28 @@ function envSetCount(f) {
 
 function envFileBody(f, dir) {
   const set = envSetCount(f)
-  const rows = f.keys.map((k) => `<div class="erow"><code>${escapeHtml(k.name)}</code>${envPill(k.set)}</div>`).join('')
-  return `<div class="dash-card env-card"><div class="env-h"><b>${escapeHtml(f.name)}</b><span class="env-dir">${escapeHtml(dir || '')}</span>` +
-    `<span class="env-c">${envPill(true)} ${set} ${envPill(false)} ${f.keys.length - set}</span></div>` +
-    `<p class="env-note">${ENV.note}</p><div class="erows">${rows}</div></div>`
+  // A sample file counts no set / empty (every key reads empty by design): names only.
+  const rows = f.keys.map((k) => `<div class="erow"><code>${escapeHtml(k.name)}</code>${f.sample ? '' : envPill(k.set)}</div>`).join('')
+  const where = f.sample ? ENV.sampleKeys(f.keys.length) : dir || ''
+  const counts = f.sample ? '' : `<span class="env-c">${envPill(true)} ${set} ${envPill(false)} ${f.keys.length - set}</span>`
+  // T-1047: the key list is collapsed until the eye button reveals it (state per file card).
+  const eye = `<button type="button" class="env-eye" data-env-eye aria-expanded="false" aria-label="${ENV.reveal}" title="${ENV.reveal}" data-label-show="${ENV.reveal}" data-label-hide="${ENV.mask}">` +
+    `<span class="eye-on">${svgIcon(EYE_ICON_PATH, 14)}</span><span class="eye-off">${svgIcon(EYE_OFF_ICON_PATH, 14)}</span></button>`
+  return `<div class="dash-card env-card"><div class="env-h"><b>${escapeHtml(f.name)}</b><span class="env-dir">${escapeHtml(where)}</span>` +
+    `${counts}${eye}</div>` +
+    `<p class="env-note">${f.sample ? ENV.sampleNote : ENV.note}</p><div class="erows" hidden>${rows}</div></div>`
 }
 
-function envGroups(env, emptyHead) {
+/** One current-version sidebar group per view: env = the last item (after 결정), its count = env file count (samples included). */
+function envGroup(env, emptyHead) {
   if (!env || env.files.length === 0) {
     const body = `<div class="env-nofile"><b>${escapeHtml(emptyHead)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
-    return { groups: [{ key: 'none', label: ENV.noFile, dim: true, bodyHtml: body }] }
+    return { key: 'env', label: STORE_LABEL.env, count: 0, bodyHtml: body }
   }
-  return {
-    groups: env.files.map((f) => ({
-      key: f.name,
-      label: f.sample ? `${f.name} · ${ENV.sample}` : f.name,
-      count: f.keys.length,
-      dim: f.sample,
-      bodyHtml: envFileBody(f, env.dir),
-    })),
-  }
+  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir)).join('\n') }
 }
 
-function envSection(data) {
-  const views = lineViews(data)
-  const groups = views.length > 0
-    ? lineSectioned(views, (v) => envGroups(envOfView(data, v), ENV.emptyHead))
-    : envGroups(data.env, ENV.homeNone).groups
-  // Lands on the first real env file anywhere, else the first row.
-  const first = groups.find((g) => !g.dim)
-  return storeSection('env', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.env, crumbLabel: STORE_LABEL.env, groups, defaultKey: first ? first.key : undefined, alwaysButtons: true }) })
-}
-
-/** Home's env block: per real env file (samples only when there is no real one) 설정됨 n · 비어 있음 m, the empty keys named, a link to that file on the env screen; no env file → one line. */
+/** Home's env block: per real env file (samples only when there is no real one) 설정됨 n · 비어 있음 m, the empty keys named, a link to the env item of the same version; no env file → one line. */
 function homeEnvBlock(env, prefix, noneText) {
   const head = `<div class="cp-h">${STORE_LABEL.env}</div>`
   const all = env ? env.files : []
@@ -2151,7 +2182,7 @@ function homeEnvBlock(env, prefix, noneText) {
     const empty = f.keys.filter((k) => !k.set)
     const emptyHtml = empty.length === 0 ? '' : `<p class="env-empty"><span>${ENV.unset}</span>: ${empty.map((k) => `<code>${escapeHtml(k.name)}</code>`).join(' · ')}</p>`
     return `<div class="env-file"><code>${escapeHtml(f.name)}</code><span class="env-c">${envPill(true)} ${set} · ${envPill(false)} ${f.keys.length - set}</span>` +
-      `<button type="button" class="env-go" data-open-store="env" data-open-group="${escapeHtml(prefix + f.name)}">${escapeHtml(ENV.go)}</button></div>${emptyHtml}`
+      `<button type="button" class="env-go" data-open-store="home" data-open-group="${escapeHtml(prefix)}env">${escapeHtml(ENV.go)}</button></div>${emptyHtml}`
   }).join('')
   return `<div class="cp-block env-blk">${head}${rows}</div>\n`
 }
@@ -2454,6 +2485,7 @@ function homeLineGroups(data, v, views, repoRootHref) {
     { key: 'prd', label: STORE_LABEL.prd, count: v.currentVersion, bodyHtml: prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
+    envGroup(envOfView(data, v), ENV.emptyHead),
   ]
   return { groups, defaultKey: 'progress' }
 }
@@ -2487,6 +2519,7 @@ function homeSection(data, repoRootHref) {
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
+    envGroup(data.env, ENV.homeNone),
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
   const heading = `${STORE_LABEL.home} · ${data.currentVersion}`
@@ -2902,8 +2935,24 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .store-section[data-store="feature"] .area-a { color: var(--accent); text-decoration: underline; cursor: pointer; background: none; border: none; padding: 0; font: inherit; }
 .store-section[data-store="feature"] .kind-def { margin: calc(-1 * var(--space-4)) 0 var(--space-16); font-size: 12px; color: var(--text-tertiary); }
 .store-section[data-store="feature"] .def-lead { font-size: 14.5px; line-height: 1.65; color: var(--text-primary); margin: 0 0 var(--space-16); }
-.store-section[data-store="feature"] .detail-doc h2.pill { margin: var(--space-24) 0 var(--space-8); }
-.store-section[data-store="feature"] .detail-doc h2.pill:first-child { margin-top: 0; }
+.store-section[data-store="feature"] .detail-doc h2.fd-h { font-size: 13.5px; font-weight: 700; color: var(--text-primary); margin: var(--space-24) 0 var(--space-8); padding-bottom: var(--space-6); border-bottom: 1px solid var(--border-section); }
+.store-section[data-store="feature"] .detail-doc .fd-sec { margin-top: var(--space-24); }
+.store-section[data-store="feature"] .detail-doc .fd-sec > h2.fd-h { margin-top: 0; }
+.store-section[data-store="feature"] .detail-doc > .fd-sec:first-child { margin-top: 0; }
+.store-section[data-store="feature"] .fd-mm { margin: 0 0 var(--space-8); font-size: 11.5px; }
+.store-section[data-store="feature"] .fd-mm summary { cursor: pointer; color: var(--text-tertiary); }
+.store-section[data-store="feature"] .fd-mm-src { font-family: var(--font-mono); font-size: 11px; background: var(--bg-base); border: 1px solid var(--border-item); border-radius: var(--radius-8); padding: var(--space-8) var(--space-10); margin: var(--space-6) 0 0; }
+.store-section[data-store="feature"] .fd-smap { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-8); margin: 0 0 var(--space-12); }
+.store-section[data-store="feature"] .fd-stile { border: 1px solid var(--border-inline); border-radius: var(--radius-8); padding: var(--space-8) var(--space-10); background: var(--bg-base); min-height: 96px; }
+.store-section[data-store="feature"] .fd-stile.hit { border-color: var(--accent); }
+.store-section[data-store="feature"] .fd-st { display: flex; align-items: center; gap: var(--space-4); font-size: 11px; font-weight: 700; color: var(--text-tertiary); margin-bottom: var(--space-6); }
+.store-section[data-store="feature"] .fd-sp { display: flex; align-items: center; gap: var(--space-6); font-size: 11.5px; color: var(--text-quaternary); padding: 2px var(--space-4); border-radius: var(--radius-4); }
+.store-section[data-store="feature"] .fd-sp.hit { color: var(--text-primary); background: var(--accent-subtle); font-weight: 600; }
+.store-section[data-store="feature"] .fd-bn { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); color: var(--accent-contrast); font-size: 9.5px; font-weight: 700; }
+.store-section[data-store="feature"] .fd-ol { list-style: none; margin: 0; padding: 0; font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
+.store-section[data-store="feature"] .fd-ol li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--space-6); margin: var(--space-4) 0; align-items: baseline; }
+.store-section[data-store="feature"] .fd-flow { margin: 0 0 var(--space-8); }
+.store-section[data-store="feature"] .fd-ol code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
 .store-section[data-store="feature"] .cn-list { list-style: none; margin: 0; padding: 0; }
 .store-section[data-store="feature"] .cn-item { display: grid; grid-template-columns: minmax(180px, auto) 1fr; gap: 2px var(--space-16); align-items: baseline; padding: var(--space-10) 0; border-bottom: 1px solid var(--border-item); }
 .store-section[data-store="feature"] .cn-item:last-child { border-bottom: none; }
@@ -2969,6 +3018,15 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .env-file + .env-file, .env-empty + .env-file { margin-top: 8px; }
 .env-file code { font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); }
 .env-file .env-c { margin-left: 0; }
+.env-eye { background: none; border: none; padding: 4px; border-radius: 6px; cursor: pointer; color: var(--text-tertiary); display: inline-flex; align-items: center; margin-left: auto; }
+.env-c + .env-eye { margin-left: 0; }
+.env-eye:hover { background: var(--bg-state-hover); color: var(--text-primary); }
+.env-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.env-eye .eye-off, .env-eye[aria-expanded="true"] .eye-on { display: none; }
+.env-eye[aria-expanded="true"] .eye-off { display: inline-flex; }
+.env-eye .eye-on { display: inline-flex; }
+.erows[hidden] { display: none; }
+.env-card + .env-card { margin-top: 12px; }
 .env-go { margin-left: auto; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; background: none; border: none; padding: 0; }
 .env-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 .env-empty { margin: 6px 0 0; font-size: 12px; color: var(--text-tertiary); line-height: 1.8; }
@@ -3431,11 +3489,17 @@ ${PRD_READING_SCRIPT}
     var p = new URLSearchParams(location.search);
     var view = p.get('view');
     if (!view) return false;
+    var group = p.get('group');
+    if (view === 'env') {
+      // T-1047: env is a current-version item now; an old ?view=env&group=<line>/<file> link lands on that line's env item.
+      var cut = group ? group.lastIndexOf('/') : -1;
+      view = 'home';
+      group = (cut === -1 ? '' : group.slice(0, cut + 1)) + 'env';
+    }
     var section = findByAttr('.store-section', 'data-store', view);
     if (!section) return false;
     clearHashMarks();
     selectStore(view);
-    var group = p.get('group');
     if (group && findByAttr('.view-pane', 'data-group', group, section)) selectGroup(section, group);
     var kind = p.get('kind');
     var id = p.get('id');
@@ -3509,12 +3573,28 @@ ${PRD_READING_SCRIPT}
       return;
     }
 
+    // T-1047: the eye button shows / hides that env file's key list (names and set / empty only).
+    var eyeBtn = ev.target.closest('[data-env-eye]');
+    if (eyeBtn) {
+      ev.preventDefault();
+      var envCard = eyeBtn.closest('.env-card');
+      var envRows = envCard ? envCard.querySelector('.erows') : null;
+      if (!envRows) return;
+      var envOpen = eyeBtn.getAttribute('aria-expanded') !== 'true';
+      eyeBtn.setAttribute('aria-expanded', envOpen ? 'true' : 'false');
+      envRows.hidden = !envOpen;
+      var envLabel = eyeBtn.getAttribute(envOpen ? 'data-label-hide' : 'data-label-show');
+      eyeBtn.setAttribute('aria-label', envLabel);
+      eyeBtn.setAttribute('title', envLabel);
+      return;
+    }
+
     // T-883: a 「읽기」 field value opens the store it names (용어 사전 · 릴리즈 노트).
     var readBtn = ev.target.closest('[data-open-store]');
     if (readBtn) {
       ev.preventDefault();
       var openedSection = selectStore(readBtn.getAttribute('data-open-store'));
-      // T-958: Home's 「env 화면 →」 also names the file row to open.
+      // T-958 / T-1047: Home's 「env 보기」 names the store and the sidebar item to open.
       var openGroup = readBtn.getAttribute('data-open-group');
       if (openedSection && openGroup) selectGroup(openedSection, openGroup);
       clearHashMarks();
@@ -3803,37 +3883,43 @@ export function renderPage({
     build,
   }
 
-  return `<!doctype html>
-<html lang="ko">
-<head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="${views.length > 0 ? CSP_CONTENT_LINES : CSP_CONTENT}">
-<title>${pageTitle}</title>
-<meta property="og:title" content="${pageTitle}">
-<script>${THEME_HEAD_SCRIPT}</script>
-<style>
-${fontFaceCss}
-${TEMPLATE_CSS}
-${emitRootThemeCss(dark, light)}${views.length > 0 ? LINES_CSS : ''}
-</style>
-</head>
-<body>
-<!-- sha256:${escapeHtml(tokensSha256)} -->
-<div class="app-shell">
-${activityBar('home')}
+  const bodyHtml = `${activityBar('home')}
 ${homeSection(data, repoRootHref)}
 ${prdSection(data.prd, data.currentVersion, repoRootHref, data.tickets, views)}
 ${ticketSection(data.tickets, data.currentVersion, views)}
 ${wikiSection(data.wiki)}
 ${featuresSection(data)}
 ${artifactsSection(data.artifacts, data.currentVersion, views)}
-${envSection(data)}
 ${glossarySection(data.wiki)}
 ${releaseSection(data.releases || [])}
-${discSection(discipline, data.disciplineLoad || null)}
+${discSection(discipline, data.disciplineLoad || null)}`
+  const detailScript = detailDataScript(detailData)
+  // T-1049 (T-1056 = A): mermaid ships only on a page that carries a diagram block.
+  const mm = hasMermaid(bodyHtml, detailScript) ? mermaidScript() : null
+  const csp = views.length > 0 ? CSP_CONTENT_LINES : CSP_CONTENT
+  const cspMeta = mm ? csp.replace("'strict-dynamic'", `'sha256-${mm.sha256}' 'strict-dynamic'`) : csp
+
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${cspMeta}">
+<title>${pageTitle}</title>
+<meta property="og:title" content="${pageTitle}">
+<script>${THEME_HEAD_SCRIPT}</script>
+<style>
+${fontFaceCss}
+${TEMPLATE_CSS}
+${emitRootThemeCss(dark, light)}${views.length > 0 ? LINES_CSS : ''}${mm ? MERMAID_CSS : ''}
+</style>
+</head>
+<body>
+<!-- sha256:${escapeHtml(tokensSha256)} -->
+<div class="app-shell">
+${bodyHtml}
 </div>
-${detailDataScript(detailData)}
-<script>${views.length > 0 ? INTERACTION_SCRIPT_LINES : INTERACTION_SCRIPT}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}
+${detailScript}
+<script>${views.length > 0 ? INTERACTION_SCRIPT_LINES : INTERACTION_SCRIPT}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}${mm ? `\n<script>${mm.script}</script>` : ''}
 </body>
 </html>
 `

@@ -43,8 +43,12 @@ export const ENV = {
   sample: '견본',
   noFile: 'env 파일 없음',
   emptyHead: '이 줄에는 env 파일이 없어요.',
-  emptyDetail: (dir) => `코드 폴더에서 .env · .env.* 파일을 찾았어요 — ${dir}`,
-  go: 'env 화면 →',
+  emptyDetail: (dir) => `찾은 폴더: ${dir} · 찾은 이름: .env · .env.*`,
+  go: 'env 보기',
+  reveal: '키 목록 보기',
+  mask: '키 목록 가리기',
+  sampleKeys: (n) => `견본 · ${n}개 키`,
+  sampleNote: '견본 파일은 설정 여부를 세지 않아요.',
   homeNone: '코드 폴더에 env 파일이 없어요.',
   homeNoneLine: '이 줄의 코드 폴더에 env 파일이 없어요.',
 }
@@ -188,17 +192,27 @@ export const FEATURE = {
   empty: '기능 분류가 없어요.<br><span style="font-size:11px;">분류가 만들어지면 여기 나타나요.</span>',
   countUnit: '개',
   fields: { kind: '종류', area: '영역', tickets: '티켓', version: '버전', read: '읽기' },
-  linksHeading: '함께 쓰는 기능',
+  linksHeading: '연관 기능',
   linksEmpty: '연결된 기능이 아직 없어요.',
   evidenceHeading: '근거 티켓',
   evidenceEmpty: '근거 티켓이 아직 없어요.',
   specHeading: '스펙 파일',
   // T-964: the approved screen set's #screen-feature (T-955) — five guide sections from config
   // features.vocab.<key>.taxonomy.guide, in this order. No user screen (kind internal · component): T-1026 ③.
-  guide: { when: '언제 쓰나', ux: '어떻게 보이나', logic: '어떻게 동작하나', limits: '한계', example: '예시' },
+  guide: { when: '사용 상황', ux: '화면 구성', logic: '동작 방식', limits: '한계', example: '사례' },
+  // T-1049 (T-1055 = A): `guide.ux[].at` = `<surface>.<part>` (or a bare `<surface>`). The viewer draws
+  // these four surfaces as a map and numbers the tile whose part an item points at. `prdt doctor`
+  // (SURFACE_KEYS in packages/core/scripts/prdt) checks the same keys — a test keeps both in step.
+  surfaces: [
+    { key: 'terminal', name: '터미널 대화', parts: [['chat', 'PO · 에이전트 답'], ['hook', '훅 안내 줄']] },
+    { key: 'statusline', name: '상태줄', parts: [['stage', '단계 진행'], ['ticket', '티켓 번호']] },
+    { key: 'viewer', name: '뷰어', parts: [['activity', '왼쪽 막대'], ['home', '현재 버전'], ['prd', 'PRD'], ['wiki', '위키'], ['disc', '규율']] },
+    { key: 'cli', name: 'prdt 명령', parts: [['doctor', 'prdt doctor'], ['wiki', 'prdt wiki'], ['inbox', 'prdt inbox']] },
+  ],
   specLink: (n) => `스펙 파일 · 지금 참인 것 ${n}줄 ›`,
   specTruthHeading: '지금 참인 것',
   specLinkBare: '스펙 파일 ›',
+  flowSource: '흐름도 원문 (mermaid)',
   limitsNone: '알려진 한계 없음',
   noScreenKinds: ['internal', 'component'],
   noScreen: '사용자 화면 없음',

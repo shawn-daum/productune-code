@@ -159,7 +159,7 @@ describe.skipIf(!CAN_RUN)('prdt doctor — feature taxonomy (T-882)', () => {
       `${w} 'empty-cells' taxonomy guide.logic is empty`,
       `${w} 'empty-cells' taxonomy guide.example is empty`,
       `${w} 'bad-types' taxonomy guide.when is not a string or a list of strings`,
-      `${w} 'bad-types' taxonomy guide.ux is not a string or a list of strings`,
+      `${w} 'bad-types' taxonomy guide.ux[1] is not a string or a {text, at} object`,
       `${w} 'bad-types' taxonomy guide.limits is not a string or a list of strings`,
       `${w} 'bad-types' taxonomy guide.logic[0] text is not a string`,
       `${w} 'bad-types' taxonomy guide.logic[0] ground is not a ticket id string or a list of them`,
@@ -168,5 +168,38 @@ describe.skipIf(!CAN_RUN)('prdt doctor — feature taxonomy (T-882)', () => {
       `${w} 'bad-types' taxonomy guide.example is not a string`,
       `${w} 'guide-list' taxonomy guide is not an object`,
     ])
+  })
+
+  test('T-1049: ux {text, at} and flow — accepted when well-formed, each malformed one named', () => {
+    config({
+      taxonomy: TAXONOMY,
+      vocab: {
+        'ok-at': good([], { when: 'w', ux: [{ text: 'a', at: 'viewer.prd' }, { text: 'b', at: 'terminal' }, 'plain'], logic: ['l'], example: 'e', flow: '%% c\nflowchart TD\n  A --> B' }),
+        'ok-seq': good([], { when: 'w', ux: ['u'], logic: ['l'], example: 'e', flow: 'sequenceDiagram\n  A->>B: x' }),
+        'bad-at': good([], { when: 'w', ux: [{ text: 'a', at: 'viewer.nope' }, { text: 'b', at: 'nowhere' }, { text: 'c', at: 3 }, { at: 'viewer' }, { text: 'd', at: 'viewer.' }], logic: ['l'], example: 'e', flow: 'just prose' }),
+        'bad-flow': good([], { when: 'w', ux: ['u'], logic: ['l'], example: 'e', flow: ['flowchart TD'] }),
+      },
+    })
+    const w = 'feature: config features.vocab'
+    expect(featureWarnings()).toEqual([
+      `${w} 'bad-at' taxonomy guide.ux[0] at 'viewer.nope' names no surface (terminal · statusline · viewer · cli, as <surface>.<part>)`,
+      `${w} 'bad-at' taxonomy guide.ux[1] at 'nowhere' names no surface (terminal · statusline · viewer · cli, as <surface>.<part>)`,
+      `${w} 'bad-at' taxonomy guide.ux[2] at is not a string`,
+      `${w} 'bad-at' taxonomy guide.ux[3] text is not a string`,
+      `${w} 'bad-at' taxonomy guide.ux[4] at 'viewer.' names no surface (terminal · statusline · viewer · cli, as <surface>.<part>)`,
+      `${w} 'bad-at' taxonomy guide.flow does not start with a mermaid diagram type (flowchart TD · sequenceDiagram · ...)`,
+      `${w} 'bad-flow' taxonomy guide.flow is not a string`,
+    ])
+  })
+
+  test('T-1049: the surface keys doctor accepts are the ones the viewer draws', () => {
+    const py = fs.readFileSync(PRDT_CLI, 'utf8')
+    const block = /SURFACE_KEYS = \{([\s\S]*?)\n\}/.exec(py)![1]
+    const doctor = [...block.matchAll(/"(\w+)": \(([^)]*)\)/g)].map(m => [m[1], [...m[2].matchAll(/"(\w+)"/g)].map(x => x[1])])
+    const labels = fs.readFileSync(path.resolve(__dirname, '../../../viewer/lib/labels.mjs'), 'utf8')
+    const viewer = [...labels.matchAll(/\{ key: '(\w+)', name: '[^']*', parts: \[([^\]]*(?:\][^\]]*)*?)\] \}/g)]
+      .map(m => [m[1], [...m[2].matchAll(/\['(\w+)',/g)].map(x => x[1])])
+    expect(viewer.length).toBe(4)
+    expect(doctor).toEqual(viewer)
   })
 })
