@@ -6131,7 +6131,7 @@ def cmd_update(_args):
 # installs. Non-blocking by construction (doctrine #5). Design SoT:
 # docs/tickets/v1.4/T-393.md (original UX flow) · docs/tickets/v1.11/T-749.md
 # (version+notes box, plain-number choice, non-tty line).
-#   · state: ~/.prdt/update-state.json = {last_check(UTC date)}.
+#   · state: ~/.prdt/update-state.json = {last_check(local date, last_check_basis="local")}.
 #   · pending version + RN box come from <codeRoot>/docs/RELEASES.md (T-394 parse
 #     contract: section = ^## , version = first token after '## ' = git tag verbatim).
 #   · update now → cmd_update (pull --ff-only + install.sh) → os.execv re-runs the
@@ -6164,6 +6164,29 @@ def prdt_repo_dir():
 
 def _update_state_path():
     return Path.home() / ".prdt" / "update-state.json"
+
+
+def _local_day(ts=None):
+    """T-927: calendar day (YYYY-MM-DD) in the device's local timezone."""
+    d = datetime.now() if ts is None else datetime.fromtimestamp(ts)
+    return d.strftime("%Y-%m-%d")
+
+
+def _update_check_due(state, state_mtime, now_ts=None):
+    """T-927: True when the once-a-day update check has not run on today's LOCAL
+    day. A `last_check_basis == "local"` state stores the local date directly.
+    A legacy state (UTC date, no basis key) is read through the state file's
+    mtime — written at the moment of the last check — converted to a local day,
+    so neither a second prompt on the same local day nor a skipped extra day."""
+    today = _local_day(now_ts)
+    last = state.get("last_check")
+    if not last:
+        return True
+    if state.get("last_check_basis") == "local":
+        return last != today
+    if state_mtime is None:
+        return last != today
+    return _local_day(state_mtime) != today
 
 
 def _write_update_state(state):
@@ -6703,10 +6726,14 @@ def maybe_prompt_update(cmd):
         return                                          # `preflight` emits machine-read JSON on stdout
     if os.environ.get("CI"):
         return
-    # throttle — at most one check per UTC calendar day
-    today = now_iso()[:10]
+    # throttle — at most one check per local calendar day (T-927)
+    today = _local_day()
     state = read_json(_update_state_path()) or {}
-    if state.get("last_check") == today:
+    try:
+        mtime = _update_state_path().stat().st_mtime
+    except OSError:
+        mtime = None
+    if not _update_check_due(state, mtime):
         return
     repo = prdt_repo_dir()
     if repo is None:
@@ -6716,6 +6743,7 @@ def maybe_prompt_update(cmd):
         return
     # consume today's slot up front so the post-update re-exec can't loop
     state["last_check"] = today
+    state["last_check_basis"] = "local"
     _write_update_state(state)
     ahead = remote_ahead(code_root)                     # ls-remote + ancestry gate (network, 2s)
     if not ahead:                                       # None (degrade/offline) or False (equal / local ahead / diverged)
@@ -11207,6 +11235,17 @@ def doctor_verdict_lines(records):
     # second free to look like any line doctor prints. The refusals upstream are
     # the fix; this is the render-time floor under all of them, and the one
     # place that covers a reason path added later without one.
+    # T-941: `violations=N` is only actionable when each of the N is named — the
+    # check and the subject (its own warning line). An Advisory stores an explicit
+    # 0 and is not listed (it prints as ⚠ and was never counted).
+    for r in ran:
+        if r.get("violations", len(r["warnings"])):
+            for w in r["warnings"]:
+                # The subject is the warning minus its own `<tag>: ` lead — the
+                # ⚠ line above already carries the tag, and repeating it would
+                # make one finding match two lines for anything that greps it.
+                subject = re.sub(r"^[A-Za-z][\w .+/-]{0,40}: ", "", one_line(w), count=1)
+                lines.append(f"doctor:    mismatch · {r['name']} — {subject[:160]}")
     for r in attested:
         lines.append(f"doctor:    human record · {r['name']}: {one_line(r['reason'])}")
     for r in skipped:
@@ -15589,8 +15628,34 @@ def cmd_env(args):
     sys.exit(worst)
 
 
+def installed_prdt_version():
+    """The installed prdt's release version (T-941) — the newest `## <version>`
+    section of the code repo's docs/RELEASES.md, the same source `prdt update`
+    compares against. The repo is the script's own checkout when run from it,
+    else the `PRDT_REPO` the installer recorded in `prdt.env` (the installed
+    `~/.prdt/bin` copy has no repo beside it). None when neither is readable."""
+    parents = Path(__file__).resolve().parents
+    roots = [parents[3]] if len(parents) > 3 else []
+    try:
+        for line in (prdt_home() / "prdt.env").read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRDT_REPO="):
+                # install.sh writes `<clone>/packages/core` — resolve to the clone
+                # root (as maybe_prompt_update does); a clone-root value passes through.
+                repo = line.split("=", 1)[1].strip()
+                roots.append(Path(git_toplevel(repo) or repo))
+    except OSError:
+        pass
+    for r in roots:
+        v, _ = releases_local(r)
+        if v:
+            return v
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(prog="prdt", description=__doc__)
+    ap.add_argument("--version", dest="show_version", action="store_true",
+                    help="print the installed prdt version and exit")
     sub = ap.add_subparsers(dest="cmd")
     p = sub.add_parser("init", help="interactive 2-item project init (slug · version); stage defaults to define")
     p.add_argument("--slug")
@@ -15862,6 +15927,12 @@ def main():
         print(msg(load_messages(), "settings.error.usage"))
         sys.exit(0)
     args = ap.parse_args()
+    if args.show_version and not args.cmd:
+        v = installed_prdt_version()
+        if not v:
+            sys.exit("prdt: version unknown — no docs/RELEASES.md beside this script or at PRDT_REPO (~/.prdt/prdt.env)")
+        print(f"prdt {v}")
+        return
     # T-773: `schedule record` is the dispatch gate's (a per-turn hook's) call —
     # contracts §Git names no per-turn hook as a meta-backup trigger, and a hook
     # has no terminal to prompt on.
