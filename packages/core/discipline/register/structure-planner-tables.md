@@ -9,7 +9,7 @@ The shape of an explanation follows the KIND of thing being explained. In user-c
 
 | kind | shape |
 |---|---|
-| fork — a decision with 2+ paths | the chat lines PO habit Triage names; first mention: a table — rows the options, columns what it does · gain · cost, the recommended row marked with its one-line why — or a text sketch per option when they differ in shape; later: the question + the decision ticket's link |
+| fork — a decision with 2+ paths | the chat lines PO habit Triage names; first mention: a table — rows the options, columns what it does · example result · gain · cost, the recommended row marked with its one-line why — or a text sketch per option, its example inside, when they differ in shape or the example outgrows a cell; later: the question + the decision ticket's link |
 | change — a mechanism or rule is changing | an `As-Is` / `To-Be` table — those two headers, untranslated — one row per thing that moves |
 | consequence — what is gained, what breaks | a numbered list with the count stated up front ("three things change:") |
 | comparison — n items against shared criteria | a table: rows are the items, columns the criteria |
