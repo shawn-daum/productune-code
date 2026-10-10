@@ -23,6 +23,9 @@
 - Prod env for a task takes the user's explicit authorization first (`needs_info`); deploy alone then touches it — under a `type:ops` ticket carrying that authorization for that specific deploy, never a self-declared "ops" label — and even then SETS or references it by key through the deploy tool's own auth, never READS a value into context.
 - A committed prod-secret file met in repo work (grep · config reads) → report its existence, contents unread — a worker via `needs_info`, the PO via `docs/wiki/inbox.md` — for the user to rotate and remove.
 
+## User identity
+- The user's email · name never enter an outbound request (URL · header · body · a sending script): User-Agent names the project, no personal contact; an API requiring contact → `needs_info`. `prdt-identity-guard.sh` denies the shapes it knows; past it, this line still covers.
+
 ## Fixed paths
 - PRD `docs/prd/PRD.md` = the standing head + the ONE open `## v<N>.<m>` section per release line. `[ctx].prd_path` = `docs/prd/PRD.md#[<line>/]v<N>.<m>`; read unit = that head + any section still headed `## Phase N` + that ONE version section. Closed: `docs/prd/versions/[<line>/]v<N>.<m>.md`, immutable.
 - When `docs/features/<value>.md` EXISTS, a ticket carrying that `feature:` value → read it FIRST, before touching that feature.
