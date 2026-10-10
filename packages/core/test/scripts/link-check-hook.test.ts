@@ -123,6 +123,25 @@ describe('first mention only, code and paths ignored', () => {
   })
 })
 
+describe('slash-joined ids and id-plus-suffix tokens', () => {
+  test('T-976/T-977 머지 → both ids', () => {
+    expect(blocked(stop(['T-976', 'T-977'], 'T-976/T-977 머지'))).toBe(wording(['T-976', 'T-977']))
+  })
+  test('T-1006/T-1007 and T-980/T-991 작업', () => {
+    expect(blocked(stop(['T-1006', 'T-1007', 'T-980', 'T-991'], 'T-1006/T-1007\nT-980/T-991 작업'))).toBe(wording(['T-1006', 'T-1007', 'T-980', 'T-991']))
+  })
+  test('first-mention rule applies per id: a linked pair passes, an unlinked pair blocks', () => {
+    expect(blocked(stop(['T-5', 'T-6'], 'T-5/T-6'))).toBe(wording(['T-5', 'T-6']))
+    expect(stop(['T-5', 'T-6'], `${link('T-5')}/${link('T-6')}`)).toBe('')
+  })
+  test('paths stay excluded', () => {
+    expect(stop(['T-899', 'T-1', 'T-6'], 'tracks/T-899 docs/tickets/v1.13/T-899.md a/T-1/b T-6/foo')).toBe('')
+  })
+  test('T-899-2 and T-899-후속 are not T-899', () => {
+    expect(stop(['T-899'], 'T-899-2 와 T-899-후속')).toBe('')
+  })
+})
+
 describe('one retry, PO only, fails open', () => {
   test('stop_hook_active → silent (never blocks twice)', () => {
     expect(stop(['T-5'], 'T-5 를 봤어요', { stop_hook_active: true })).toBe('')
