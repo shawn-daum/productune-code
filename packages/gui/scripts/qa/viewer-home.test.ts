@@ -367,4 +367,10 @@ describe('home scope explains why tickets fall outside the items (T-981)', () =>
     expect(s).not.toContain('sc-fix"')
     expect(s).not.toContain('sc-out')
   })
+  it('a decision ticket without prd_item adds no missing-prd_item count; any other type still does', () => {
+    const only = scope([tk({ id: 'T-1', type: 'decision' }), tk({ id: 'T-2', type: 'decision', status: 'done' })])
+    expect(only).not.toContain('prd_item 이 없는')
+    const mixed = scope([tk({ id: 'T-1', type: 'decision' }), tk({ id: 'T-2', type: 'design' }), tk({ id: 'T-3' })])
+    expect(mixed).toContain('prd_item 이 없는 티켓 2개')
+  })
 })
