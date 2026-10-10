@@ -35,8 +35,12 @@ const OK_CLI = `import fs from 'node:fs'
 import path from 'node:path'
 const a = process.argv
 const out = a[a.indexOf('--out') + 1]
-fs.mkdirSync(path.dirname(out), { recursive: true })
-fs.writeFileSync(out, '<!doctype html>')
+if (a.includes('--emit')) {
+  process.stdout.write(JSON.stringify({ files: [{ name: path.basename(out), content: '<!doctype html>' }], at: [], prune: null }))
+} else {
+  fs.mkdirSync(path.dirname(out), { recursive: true })
+  fs.writeFileSync(out, '<!doctype html>')
+}
 `
 const STUB_PNPM = `#!/bin/bash
 printf '%s\\t%s\\n' "$PWD" "$*" >> "$STUB_LOG"
