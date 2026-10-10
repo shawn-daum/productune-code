@@ -479,6 +479,52 @@ def _tickets_check_stale(con):
     return not all(f"'{t}'" in sql for t in TICKET_TYPES)
 
 
+def _index_db_prepare(root, dbp):
+    """T-905: refuse a link at `.prdt`, at `index.db`, or at a sqlite sidecar
+    (`-journal` · `-wal` · `-shm`) before sqlite sees the path — `sqlite3.connect`
+    follows a link and CREATES the target when it dangles. The `.prdt` chain is
+    walked with O_NOFOLLOW (`state_open_dir`), a missing index is pre-created
+    O_EXCL|O_NOFOLLOW (an empty file is a valid empty database), the others are
+    lstat'd. Returns `(existed, (st_dev, st_ino))` of the checked file. A race
+    between this check and the connect needs a concurrent local process that
+    swaps a link in; `_index_db_connect` compares the identity again after
+    connecting and refuses a changed file (a swap that is swapped back before
+    that compare, and the write sqlite already did to the swapped-in target
+    in between, stay undetected — sqlite has no nofollow open)."""
+    dfd = _state_dir_or_raise(root, Path(".prdt") / "index.db", False)
+    try:
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            try:
+                st = os.stat(dbp.name + suffix, dir_fd=dfd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                raise StateLinkError(errno.ELOOP, f".prdt/index.db{suffix} is "
+                                     f"{'a symlink' if stat.S_ISLNK(st.st_mode) else 'not a regular file'} — not followed")
+        try:
+            os.close(os.open(dbp.name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644, dir_fd=dfd))
+            existed = False
+        except FileExistsError:
+            existed = True
+        st = os.stat(dbp.name, dir_fd=dfd, follow_symlinks=False)
+        return existed, (st.st_dev, st.st_ino)
+    finally:
+        os.close(dfd)
+
+
+def _index_db_connect(dbp, ident):
+    con = sqlite3.connect(dbp)
+    try:
+        st = os.lstat(dbp)
+        main_ok = stat.S_ISREG(st.st_mode) and (st.st_dev, st.st_ino) == ident
+    except OSError:
+        main_ok = False
+    if not main_ok:
+        con.close()
+        raise StateLinkError(errno.ELOOP, ".prdt/index.db changed while opening (a link, another file or a non-regular file) — not followed")
+    return con
+
+
 def open_db(root):
     """Attach to the derived index, creating whatever table is missing. Never
     destructive on purpose (T-480): `tickets`, `wiki_pages` and `wiki_fts` live in
@@ -510,13 +556,15 @@ def open_db(root):
     "whole index or none"), so this never turns into a second, half-applied
     migration path alongside `rebuild_index`."""
     dbp = root / ".prdt" / "index.db"
-    cold = not dbp.exists()
-    con = sqlite3.connect(dbp)
+    existed, ident = _index_db_prepare(root, dbp)
+    cold = not existed
+    con = _index_db_connect(dbp, ident)
     if not cold and _tickets_check_stale(con):
         con.close()
         dbp.unlink()
         cold = True
-        con = sqlite3.connect(dbp)
+        _existed, ident = _index_db_prepare(root, dbp)
+        con = _index_db_connect(dbp, ident)
     con.executescript(SCHEMA)
     try:
         con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(name, title, body, tokenize='trigram')")
@@ -1565,6 +1613,11 @@ def init_meta_split(root):
         if prob:
             return meta_git_refusal(prob)
         if not (gd / "HEAD").exists():
+            # T-905: `git init --bare` copies its template (info/exclude, hooks/*,
+            # description) into a half-carried directory, through any link in it.
+            linked = _state_tree_link(gd)
+            if linked:
+                return f"{linked} is a symlink in a carried .prdt/meta.git — not followed (remove it, then run `prdt init` again)"
             gd.parent.mkdir(parents=True, exist_ok=True)
             r = _git(["init", "--bare", "-q", str(gd)], root)
             if r.returncode != 0:
@@ -1579,12 +1632,11 @@ def init_meta_split(root):
                      ("user.name", "prdt"), ("user.email", "prdt@localhost"),
                      ("commit.gpgsign", "false"), ("core.hooksPath", str(gd / "hooks"))):
             _git(["--git-dir", str(gd), "config", k, v], root)
-        (gd / "info").mkdir(exist_ok=True)
         # Derived/gate excludes + the physical code dir (`<code.dir>/`) when split,
         # so the code tree never shows in meta `git status` (PRD §v1.3 설계 결정 3).
         cd = code_dir_name(root)
         excl = list(META_EXCLUDE_DEFAULT) + ([cd.rstrip("/") + "/"] if cd else [])
-        (gd / "info" / "exclude").write_text("\n".join(excl) + "\n", encoding="utf-8")
+        state_write(root, gd / "info" / "exclude", "\n".join(excl) + "\n")  # T-905 (C5): link-refusing, mode kept
         _meta_stage_and_commit(root, "initial meta snapshot (prdt init)")
         return None
     except Exception as e:  # git absent / perms — degrade, never block init
@@ -1881,7 +1933,7 @@ def cmd_attest(args):
     git_sec = cfg.get("git") if isinstance(cfg.get("git"), dict) else {}
     git_sec["prepush_reading"] = rec
     cfg["git"] = git_sec
-    atomic_write_text(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+    state_write(root, cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")  # T-908: link-refusing, keeps the file mode
     print(f"prdt attest prepush: recorded a human reading of {p} (sha256 {digest[:12]}…) in "
           f".prdt/config.json {PREPUSH_READING_KEY} — blocks_main={'yes' if rec['blocks_main'] else 'no'} "
           f"hotfix_escape={'yes' if rec['hotfix_escape'] else 'no'}. doctor honours it only while the "
@@ -2394,6 +2446,9 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     """The one init module (§10) — GUI onboarding shares this via `prdt init --json`."""
     root = Path(root).resolve()
     prdt = root / ".prdt"
+    if os.path.islink(prdt):
+        # T-905: before any read, mkdir or write — a `.prdt` link (to a dir or dangling) is never followed.
+        sys.exit(f"prdt init: {prdt} is a symlink — not followed. Remove the link, then run `prdt init` again.")
     if (prdt / "po-state.json").exists():
         # Already initialized — no-op. The code `.gitignore` managed block was
         # retired (PRD §v1.3 설계 결정 2, T-377), so there is nothing to resync here.
@@ -2430,17 +2485,17 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     elif not (root / ".git").exists():
         cfg["code"] = {"dir": CODE_DIR_DEFAULT}
         (root / CODE_DIR_DEFAULT).mkdir(parents=True, exist_ok=True)
-    atomic_write_text(prdt / "config.json", json.dumps(cfg, indent=2) + "\n")
-    (prdt / "po-state.json").write_text(json.dumps(
+    state_write(root, prdt / "config.json", json.dumps(cfg, indent=2) + "\n", mode=0o644)
+    state_write(root, prdt / "po-state.json", json.dumps(
         {"schema_version": 1, "stage": stage, "version": version, "current_task": None},
-        indent=2) + "\n", encoding="utf-8")
+        indent=2) + "\n")
     for d in ("docs/prd", "docs/tickets", "docs/artifacts", "docs/wiki"):
         (root / d).mkdir(parents=True, exist_ok=True)
     for f, head in (("inbox.md", "# Wiki inbox — 1-line memory_notes appends; curated at stage boundaries\n"),
                     ("log.md", "# Wiki log — append-only ritual/ingest/lint records\n")):
         fp = root / "docs" / "wiki" / f
-        if not fp.exists():
-            fp.write_text(head, encoding="utf-8")
+        if not os.path.lexists(fp):
+            state_write(root, fp, head)
             note_docs_write(fp)
     # Code-side release-notes stub (T-453) — after the config write above, so
     # code_root() resolves the layout this init just recorded.
@@ -5100,6 +5155,22 @@ TICKET_FRONTMATTER_ORDER = ("id", "slug", "type", "status", "assignee", "feature
                             "prd_item", "deps", "created")
 
 
+def prd_item_hint(root, line=None):
+    """T-992 — one line listing the open section's item keys as ready-to-paste
+    `--prd-item` values (`[<line>/]v<N>.<m>#<key>`); None when the open
+    section carries no item key (nothing to suggest)."""
+    st = read_json(Path(root) / ".prdt" / "po-state.json")
+    version, body = _prd_open_section(root, st, line)
+    if version is None:
+        return None
+    keys = [k for _, k, _ in _prd_h4_items(body) if k]
+    if not keys:
+        return None
+    vid = join_line_id(line, version)
+    return (f"hint — no --prd-item given; open section items: "
+            f"{' · '.join(f'{vid}#{k}' for k in dict.fromkeys(keys))} (pass one as --prd-item)")
+
+
 def cmd_tickets_new(args, root):
     """`prdt tickets new` — scaffold a frame ticket (T-685): the next global id,
     full frontmatter in frame order, and the frame's H2 keys already in place
@@ -5163,6 +5234,13 @@ def cmd_tickets_new(args, root):
     # only when the viewer cannot be generated.
     # A project that never generated its viewer has nothing to keep fresh (T-838):
     # it gets the file link, which opens as it is.
+    # T-992: a version-folder ticket created without `--prd-item` gets a one-line
+    # hint naming the open section's item keys — advisory, stderr (stdout stays
+    # the paste-ready link), never blocks the create above.
+    if not args.prd_item and ttype != "decision" and not version.endswith("backlog"):
+        hint = prd_item_hint(root, line)
+        if hint:
+            print(hint, file=sys.stderr)
     if (Path(root) / VIEWER_REL / "viewer.html").is_file():
         print(viewer_links(root, [tid], labels={tid: str(path.resolve())})[0])
     else:
@@ -5439,8 +5517,8 @@ def _first_error_line(text):
     return lines[0][:300] if lines else ""
 
 
-def _scratch_walk(root, parts):
-    """T-842: `(fd, None)` — a descriptor of `<root>/<parts…>` (created as
+def state_open_dir(root, parts, create=True):
+    """T-842 / T-905: `(fd, None)` — a descriptor of `<root>/<parts…>` (created as
     needed), opened one component at a time with O_NOFOLLOW — or `(None,
     (rel, kind))` naming the first component that stopped the walk, `kind` one
     of "symlink", "file" (a regular file), "notdir", "noopen" (no permission to open it), "nocreate" (no
@@ -5449,7 +5527,10 @@ def _scratch_walk(root, parts):
     ~/somewhere`); a writer that resolved the path string would create, rename
     or truncate files at the link's target, outside this project. mkdir with
     dir_fd never follows a link at its final component (EEXIST), and the
-    O_NOFOLLOW open right after refuses it."""
+    O_NOFOLLOW open right after refuses it. `create=False` walks only what
+    exists (a missing component is kind "missing"). This is the ONE directory
+    walk every state writer shares (`state_write` · `state_append` · `open_db`
+    · the viewer scratch folder) — T-905."""
     try:
         fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     except OSError:
@@ -5458,10 +5539,11 @@ def _scratch_walk(root, parts):
     for part in parts:
         rel = rel / part
         try:
-            try:
-                os.mkdir(part, 0o755, dir_fd=fd)
-            except FileExistsError:
-                pass
+            if create:
+                try:
+                    os.mkdir(part, 0o755, dir_fd=fd)
+                except FileExistsError:
+                    pass
             nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
         except OSError as e:
             # T-850: classify with lstat relative to the same parent descriptor,
@@ -5477,6 +5559,8 @@ def _scratch_walk(root, parts):
                 kind = "file"
             elif st is not None and not stat.S_ISDIR(st.st_mode):
                 kind = "notdir"
+            elif st is None and not create and e.errno == errno.ENOENT:
+                kind = "missing"
             elif e.errno in (errno.EACCES, errno.EPERM):
                 kind = "noopen" if st is not None else "nocreate"
             else:
@@ -5488,13 +5572,140 @@ def _scratch_walk(root, parts):
 
 
 def _open_scratch_dir(root, parts):
-    """A descriptor of `<root>/<parts…>` (see `_scratch_walk`), or None."""
-    return _scratch_walk(root, parts)[0]
+    """A descriptor of `<root>/<parts…>` (see `state_open_dir`), or None."""
+    return state_open_dir(root, parts)[0]
+
+
+class StateLinkError(OSError):
+    """A state write refused because a path component is a symlink (or is not
+    what the writer needs there). An OSError, so the older best-effort
+    `except OSError` sites keep degrading; a bare one reaching `__main__`
+    prints one line and exits 1 (T-905)."""
+
+
+def _state_rel(root, path):
+    root = Path(os.path.abspath(root))
+    rel = Path(os.path.abspath(path)).relative_to(root)
+    if not rel.parts:
+        raise ValueError(f"state path {path} is the root itself")
+    return rel
+
+
+def _state_dir_or_raise(root, rel, create):
+    fd, problem = state_open_dir(root, rel.parts[:-1], create=create)
+    if fd is None:
+        where, kind = problem
+        if kind == "missing":
+            raise FileNotFoundError(errno.ENOENT, "no such directory", str(rel.parent))
+        shown = where
+        raise StateLinkError(errno.ELOOP if kind == "symlink" else errno.ENOTDIR,
+                             f"{shown} is {'a symlink' if kind == 'symlink' else 'not a plain directory (' + kind + ')'}"
+                             " — not followed")
+    return fd
+
+
+def _state_tree_link(top, depth=2):
+    """First symlink inside `top` down to `depth` levels (never followed), as a
+    path relative to `top`'s parent, or None."""
+    top = Path(top)
+    try:
+        if not top.is_dir() or top.is_symlink():
+            return None
+        stack = [(top, 0)]
+        while stack:
+            d, n = stack.pop()
+            for e in os.scandir(d):
+                if e.is_symlink():
+                    return str(Path(e.path).relative_to(top.parent))
+                if n + 1 < depth and e.is_dir(follow_symlinks=False):
+                    stack.append((Path(e.path), n + 1))
+    except OSError:
+        return None
+    return None
+
+
+def _new_file_mode():
+    """0o666 & ~umask — what `Path.write_text` gives a new file."""
+    um = os.umask(0)
+    os.umask(um)
+    return 0o666 & ~um
+
+
+def state_write(root, path, text, mode=None, create_dirs=True):
+    """T-905: the one Python writer for project-local state (`.prdt/**`, the
+    docs the CLI scaffolds, `meta.git/info/exclude`). `path` must sit under
+    `root`; every component below `root` is walked with O_NOFOLLOW from a
+    directory descriptor (`state_open_dir`), a link — or a non-regular file —
+    at ANY component, the last included, raises `StateLinkError` with the
+    victim untouched. The text lands through a temp created O_EXCL|O_NOFOLLOW
+    in that same directory and is renamed over the name by descriptor, so no
+    string path is re-resolved after the check. `mode=None` keeps the existing
+    file's permission bits (a new file gets 0o644); an explicit `mode` is
+    exact, regardless of umask. `root` itself is the caller's trust anchor."""
+    rel = _state_rel(root, path)
+    dfd = _state_dir_or_raise(root, rel, create_dirs)
+    try:
+        name = rel.name
+        try:
+            st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+        except FileNotFoundError:
+            st = None
+        if st is not None and not stat.S_ISREG(st.st_mode):
+            raise StateLinkError(errno.ELOOP, f"{rel.as_posix()} is "
+                                 f"{'a symlink' if stat.S_ISLNK(st.st_mode) else 'not a regular file'} — not followed")
+        if mode is None:
+            mode = stat.S_IMODE(st.st_mode) if st is not None else _new_file_mode()
+        tmp = f".{name}.{os.getpid()}.tmp"
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
+        for attempt in (0, 1):
+            try:
+                fd = os.open(tmp, flags, 0o600, dir_fd=dfd)
+                break
+            except FileExistsError:
+                if attempt:
+                    raise
+                os.unlink(tmp, dir_fd=dfd)  # a leftover or a planted link — removed, never opened
+        try:
+            os.fchmod(fd, mode)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+        except BaseException:
+            try:
+                os.unlink(tmp, dir_fd=dfd)
+            except OSError:
+                pass
+            raise
+    finally:
+        os.close(dfd)
+    return Path(path)
+
+
+def state_append(root, path, text, mode=0o666, create_dirs=True):
+    """T-905: `state_write`'s appending twin — directory chain walked with
+    O_NOFOLLOW, the file itself opened O_APPEND|O_NOFOLLOW (a link there fails
+    with ELOOP, mapped to `StateLinkError`). An existing file keeps its mode."""
+    rel = _state_rel(root, path)
+    dfd = _state_dir_or_raise(root, rel, create_dirs)
+    try:
+        try:
+            fd = os.open(rel.name, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, mode, dir_fd=dfd)
+        except OSError as e:
+            if e.errno in (errno.ELOOP, errno.EMLINK):
+                raise StateLinkError(errno.ELOOP, f"{rel.as_posix()} is a symlink — not followed") from e
+            raise
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                raise StateLinkError(errno.ELOOP, f"{rel.as_posix()} is not a regular file")
+            f.write(text)
+    finally:
+        os.close(dfd)
+    return Path(path)
 
 
 def viewer_scratch_safe(root):
     """True when `<root>/.prdt/scratch/viewer/` is a real directory chain
-    (created if missing) — see `_scratch_walk`."""
+    (created if missing) — see `state_open_dir`."""
     fd = _open_scratch_dir(root, VIEWER_REL.parts)
     if fd is None:
         return False
@@ -5504,9 +5715,9 @@ def viewer_scratch_safe(root):
 
 def viewer_scratch_problem(root):
     """T-850: why `prdt viewer` cannot write its folder — `(rel, kind)` as in
-    `_scratch_walk`, or "nowrite" for an existing viewer folder that cannot be
+    `state_open_dir`, or "nowrite" for an existing viewer folder that cannot be
     written — or None when the folder chain is usable."""
-    fd, problem = _scratch_walk(root, VIEWER_REL.parts)
+    fd, problem = state_open_dir(root, VIEWER_REL.parts)
     if fd is None:
         return problem
     try:
@@ -5544,6 +5755,93 @@ def viewer_scratch_message(rel, kind):
     return f"prdt viewer: {rel} 를 열지 못해서 뷰어를 만들지 않았어요."
 
 
+_VIEWER_BUNDLE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_VIEWER_TICKET_PAGE_RE = re.compile(r"^T-\d+\.html$")
+
+
+def _viewer_bundle_name(name):
+    if not isinstance(name, str) or not _VIEWER_BUNDLE_NAME_RE.match(name) or name in (".", ".."):
+        raise ValueError(f"unsafe file name in the viewer bundle: {name!r}")
+    return name
+
+
+def _viewer_prune(root, parts, keep, match):
+    """Unlink the plain files (and links, never followed) in `<root>/<parts>`
+    that `match` selects and `keep` does not name — by directory descriptor,
+    so a folder swapped for a link meanwhile is not walked. A missing or
+    link-holding folder prunes nothing."""
+    fd, problem = state_open_dir(root, parts, create=False)
+    if fd is None:
+        return
+    try:
+        with os.scandir(fd) as it:
+            names = [e.name for e in it if match(e)]
+        for name in names:
+            if name not in keep:
+                try:
+                    os.unlink(name, dir_fd=fd)
+                except OSError:
+                    pass
+    finally:
+        os.close(fd)
+
+
+def _viewer_refused(rel, kind):
+    """One stderr line for a viewer path `state_write` refused (T-908)."""
+    what = "심볼릭 링크" if kind == "symlink" else f"폴더/일반 파일이 아닌 항목({kind})"
+    print(f"prdt viewer: {rel} 가 {what}라서 쓰지 않고 건너뛰었어요 — 링크 자체를 지우면 다시 만들어요.", file=sys.stderr)
+
+
+def viewer_apply_bundle(root, bundle):
+    """T-908: land the generator's `--emit` bundle under `<root>/.prdt/scratch/
+    viewer/` through `state_write` (link refused at every component, existing
+    file modes kept, a new file follows umask), in the generator's own order:
+    data files → page → build id → `at/` pages → prune. A link at the viewer
+    folder chain or a written file raises `StateLinkError`; an `at/` that is a
+    link skips only the ticket pages (the page itself is still fresh)."""
+    base = Path(root) / VIEWER_REL
+    for f in bundle["files"]:
+        state_write(root, base / _viewer_bundle_name(f["name"]), f["content"])
+    keep_at = set()
+    at_rel = (*VIEWER_REL.parts, VIEWER_JUMP_DIR)
+    afd, aprob = state_open_dir(root, at_rel, create=True)
+    if afd is None:
+        # a link (or non-folder) at at/ or above: no ticket page is written or
+        # pruned, the page itself is already fresh — one line names the path
+        _viewer_refused(aprob[0], aprob[1])
+        at_ok = False
+    else:
+        os.close(afd)
+        at_ok = True
+    for f in bundle["at"]:
+        name = _viewer_bundle_name(f["name"])
+        keep_at.add(name)
+        if not at_ok:
+            continue
+        target = base / VIEWER_JUMP_DIR / name
+        try:
+            cur = target.read_text(encoding="utf-8") if target.is_file() and not target.is_symlink() else None
+        except OSError:
+            cur = None
+        if cur == f["content"]:
+            continue
+        try:
+            state_write(root, target, f["content"])
+        except StateLinkError:
+            # this one page is a link: skipped, the others still refresh
+            _viewer_refused((Path(*at_rel) / name).as_posix(), "symlink")
+    if at_ok:
+        _viewer_prune(root, at_rel, keep_at,
+                      lambda e: _VIEWER_TICKET_PAGE_RE.match(e.name) and
+                      (e.is_file(follow_symlinks=False) or e.is_symlink()))
+    prune = bundle.get("prune") or {}
+    keep = {f["name"] for f in bundle["files"]}
+    pre, suf = prune.get("dataPrefix"), prune.get("dataSuffix")
+    if pre and suf:
+        _viewer_prune(root, VIEWER_REL.parts, keep,
+                      lambda e: e.name.startswith(pre) and e.name.endswith(suf) and e.is_file(follow_symlinks=False))
+
+
 def viewer_generate(root):
     """`(page, None)` after regenerating `<root>/.prdt/scratch/viewer/viewer.html`,
     or `(None, cause)` — the cause as `_viewer_diagnose` or the failed run names
@@ -5557,17 +5855,33 @@ def viewer_generate(root):
     if scratch:
         return None, viewer_scratch_message(*scratch).replace("prdt viewer: ", "", 1)
     out = Path(root) / VIEWER_REL / "viewer.html"
-    fix = f"직접 실행해 전체 오류를 보세요: `{node} {cli} --repo-root {root} --out {out}`"
+    # T-908: the generator only NAMES the page (`--out`) and emits the whole
+    # bundle on stdout (`--emit`); every file lands below through `state_write`,
+    # walked from `root` with O_NOFOLLOW per write, so a folder swapped for a
+    # link after the check above is refused instead of followed (T-850 race).
+    fix = f"직접 실행해 전체 오류를 보세요: `{node} {cli} --repo-root {root} --out {out} --emit >/dev/null`"
     try:
-        r = subprocess.run([node, str(cli), "--repo-root", str(root), "--out", str(out)],
-                           capture_output=True, text=True, timeout=120)
+        r = subprocess.run([node, str(cli), "--repo-root", str(root), "--out", str(out), "--emit"],
+                           capture_output=True, text=True, encoding="utf-8", timeout=120)
     except subprocess.TimeoutExpired:
         return None, f"뷰어 생성기가 120초 안에 끝나지 않았어요. {fix}"
     except OSError as e:
         return None, f"뷰어 생성기를 실행하지 못했어요 — {e}. {fix}"
-    if r.returncode != 0 or not out.is_file():
+    bundle = None
+    if r.returncode == 0:
+        try:
+            bundle = json.loads(r.stdout)
+        except ValueError:
+            bundle = None
+    if bundle is None:
         first = _first_error_line(r.stderr) or f"종료 코드 {r.returncode}, 오류 출력 없음"
         return None, f"뷰어 생성기가 실패했어요 — {first}. {fix}"
+    try:
+        viewer_apply_bundle(root, bundle)
+    except (OSError, KeyError, TypeError, ValueError) as e:
+        return None, f"뷰어 파일을 쓰지 못했어요 — {e}. 링크로 막힌 파일이면 그 링크 자체를 지우고 다시 실행하세요."
+    if not out.is_file():
+        return None, f"뷰어 생성기가 {out.name} 을 내보내지 않았어요. {fix}"
     # T-850 (review C3): a success clears the regen worker's failure stamp, so
     # the next doc write regenerates at once instead of waiting out the backoff.
     # unlink never follows a link; the directory chain is re-walked with O_NOFOLLOW.
@@ -5639,13 +5953,21 @@ def viewer_anchor(root, target):
     any other document → its repo-relative path."""
     if re.fullmatch(r"T-\d+", target):
         return target
+    # T-973: a `path#section` target (the `[ctx].prd_path` form,
+    # `docs/prd/PRD.md#v1.13`) names the document — the viewer opens a PRD as
+    # one pane, so the section part is dropped, never read as part of a filename.
+    target = target.split("#", 1)[0] or target
     p = Path(target)
     p = (p if p.is_absolute() else Path.cwd() / p).resolve()
     try:
         rel = p.relative_to(Path(root).resolve()).as_posix()
     except ValueError:
         return None
-    if not rel.endswith(".md"):
+    # T-973: an artifact is carried by manifest membership, any extension
+    # (the page's buildAnchors keys every manifest entry); everything else
+    # the viewer carries is a markdown file that must exist — a path to
+    # nothing gets the file fallback, never a jump link to nothing.
+    if not rel.startswith("docs/artifacts/") and not (rel.endswith(".md") and p.is_file()):
         return None
     if rel.startswith("docs/tickets/"):
         fm = parse_frontmatter(p) if p.is_file() else None
@@ -5690,32 +6012,15 @@ def viewer_jump(viewer_html, key):
     body = ('<!doctype html><meta charset="utf-8">'
             f'<meta http-equiv="refresh" content="0;url=../viewer.html#{html.escape(frag)}">'
             f'<a href="../viewer.html#{html.escape(frag)}">viewer.html#{html.escape(key)}</a>\n')
-    # T-842: written relative to a NOFOLLOW descriptor of `at/` (a symlinked
-    # `at/`, `viewer/`, `scratch/` or `.prdt/` → None, and the caller links the
-    # file itself); O_EXCL temp + rename within that directory, so a planted
-    # `<page>.tmp` or `<page>` symlink is removed or replaced, never followed.
+    # T-842 / T-908: written through `state_write` — every component from the
+    # project root walked with O_NOFOLLOW (a symlinked `at/`, `viewer/`,
+    # `scratch/`, `.prdt/` or page → None, and the caller links the file
+    # itself), temp + rename in the same directory, exact 0o644.
     root = Path(viewer_html).parent.parent.parent.parent
-    fd = _open_scratch_dir(root, (*VIEWER_REL.parts, VIEWER_JUMP_DIR))
-    if fd is None:
-        return None
     try:
-        tmp = page.name + ".tmp"
-        for attempt in (0, 1):
-            try:
-                wfd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644, dir_fd=fd)
-                break
-            except FileExistsError:
-                if attempt:
-                    raise
-                os.unlink(tmp, dir_fd=fd)
-        os.fchmod(wfd, 0o644)  # os.open()'s mode is masked by umask — same exact bits as atomic_write_text
-        with os.fdopen(wfd, "w", encoding="utf-8") as f:
-            f.write(body)
-        os.replace(tmp, page.name, src_dir_fd=fd, dst_dir_fd=fd)
+        state_write(root, page, body, mode=0o644)
     except OSError:
         return None
-    finally:
-        os.close(fd)
     return page
 
 
@@ -5753,6 +6058,77 @@ def viewer_links(root, targets, labels=None):
     return lines
 
 
+def _viewer_code_root():
+    """The prdt checkout root holding `packages/viewer/cli.mjs`, or None."""
+    for base in _repo_root_candidates():
+        if (base.parent / "viewer" / "cli.mjs").is_file():
+            return base.parent.parent
+    return None
+
+
+def viewer_install_deps():
+    """T-983: install the viewer generator's dependencies — the exact filtered,
+    frozen-lockfile, scripts-off install `install.sh` §1c runs (never electron).
+    None on success (or when another run holds the install lock — it is doing
+    this very work), else one line naming the cause. Never raises."""
+    code = _viewer_code_root()
+    if code is None:
+        return "prdt 체크아웃을 찾지 못해 뷰어 의존성을 설치하지 못했어요"
+    pnpm = shutil.which("pnpm")
+    if pnpm is None:
+        return (f"pnpm 이 PATH 에 없어 뷰어 의존성을 설치하지 못했어요 — "
+                f"`npm install -g pnpm` 뒤 `cd {code} && {VIEWER_INSTALL_CMD}`")
+    cmd = [pnpm, "install", "--frozen-lockfile", "--filter", "@productune/viewer"]
+    if (code / "packages" / "gui" / "node_modules").is_dir() and (code / "packages" / "gui" / "package.json").is_file():
+        cmd += ["--filter", "./packages/gui"]
+    cmd += ["--ignore-scripts", "--config.fetch-retries=1"]
+    lock = None
+    try:
+        run_dir = prdt_home() / "run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        lock = open(run_dir / "viewer-install.lock", "a")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return None
+        # pass_fds: the pnpm child holds the lock's open file description, so
+        # the lock outlives a killed ensure for as long as the install runs.
+        r = subprocess.run(cmd, cwd=str(code), capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=600, pass_fds=(lock.fileno(),))
+        if r.returncode == 0:
+            return None
+        lines = [l.strip() for l in ((r.stderr or "") + "\n" + (r.stdout or "")).splitlines() if l.strip()]
+        err = next((l for l in reversed(lines) if "ERR_PNPM" in l), None) or (lines[-1] if lines else "출력 없음")
+        return (f"뷰어 의존성 설치가 실패했어요 ({err[:200]}) — 다음 PO 세션 시작에 다시 시도해요. "
+                f"직접: `cd {code} && {VIEWER_INSTALL_CMD}`")
+    except subprocess.TimeoutExpired:
+        return f"뷰어 의존성 설치가 600초 안에 끝나지 않았어요 — 다음 PO 세션 시작에 다시 시도해요. 직접: `cd {code} && {VIEWER_INSTALL_CMD}`"
+    except OSError as e:
+        return f"뷰어 의존성 설치를 실행하지 못했어요 — {e}. 직접: `cd {code} && {VIEWER_INSTALL_CMD}`"
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+def viewer_ensure(root, refresh=False):
+    """T-983: make this project's viewer exist — install the generator's
+    dependencies when they are missing, then generate `viewer.html` when it is
+    absent (or always, `refresh`: a just-updated generator). None when the
+    viewer is ready, else one line naming why not. Deps present and the page
+    there → no install, no run."""
+    problem = viewer_problem()
+    if problem is not None:
+        # the two missing-dependency causes name this fix; PRDT_VIEWER_NO_INSTALL
+        # (`prdt update`: install.sh §1c just tried) reports instead of retrying
+        if VIEWER_INSTALL_CMD in problem and not os.environ.get("PRDT_VIEWER_NO_INSTALL"):
+            failed = viewer_install_deps()
+            if failed:
+                return failed
+    elif (Path(root) / VIEWER_REL / "viewer.html").is_file() and not refresh:
+        return None
+    return viewer_generate(root)[1]
+
+
 def cmd_viewer(args):
     """`prdt viewer [TARGET…] [--no-open]` — regenerate this project's viewer
     and print a link per target (ticket id or document path) at that item;
@@ -5762,6 +6138,12 @@ def cmd_viewer(args):
     on this same command line still suppresses that (`~/.prdt/auto-open` = off
     still wins too)."""
     root = require_root()
+    if getattr(args, "ensure", False):
+        # T-983: the session-start / post-update entry — silent when ready.
+        failed = viewer_ensure(root, refresh=getattr(args, "refresh", False))
+        if failed:
+            sys.exit(f"prdt viewer: {failed}")
+        return
     if not args.targets:
         problem = viewer_scratch_problem(root)
         if problem:
@@ -5843,7 +6225,7 @@ def legacy_kind(d):
     return None
 
 
-def reset_terminal_input_modes():
+def reset_terminal_input_modes(after_session=False):
     """T-799: some program run before us (a killed/interrupted arrow-key
     picker is the reproduced case — see below) can leave mouse tracking or
     focus reporting turned ON and never send the matching disable sequence.
@@ -5876,10 +6258,25 @@ def reset_terminal_input_modes():
     the disable, discard pending input, wait briefly for events still in
     flight from before the terminal processed the disable, and discard
     again. Cost: ~80 ms per launch; anything typed ahead during prdt's own
-    startup is dropped with it."""
+    startup is dropped with it.
+
+    T-957: `after_session=True` is the same reset run AFTER Claude Code exits
+    (`run_claude_then_restore`), additionally turning off bracketed paste
+    (2004), popping the kitty keyboard-protocol stack (`CSI < 99 u` — the
+    leftover that makes ctrl+c arrive as `^[[99;5u`) and resetting
+    modifyOtherKeys (`CSI > 4 ; 0 m`)."""
     if not sys.stdout.isatty():
         return
+    # T-957: with `stty -tostop` a background `prdt &` may still write to the
+    # tty and would spray these bytes into the foreground job's screen.
+    try:
+        if os.tcgetpgrp(sys.stdout.fileno()) != os.getpgrp():
+            return
+    except (OSError, ValueError):
+        return
     reset = "".join(f"\x1b[?{mode}l" for mode in (1000, 1002, 1003, 1006, 1015, 1004))
+    if after_session:
+        reset += "\x1b[?2004l\x1b[<99u\x1b[>4;0m"
     try:
         sys.stdout.write(reset)
         sys.stdout.flush()
@@ -5912,6 +6309,78 @@ def discard_pending_tty_input(settle=0.08):
         pass
 
 
+def run_claude_then_restore(cmd):
+    """T-957: run Claude Code as a child (not `execvp`) so prdt outlives it and
+    can put the terminal back. Claude Code turns on SGR any-motion mouse
+    (1003/1006), focus reporting (1004) and the kitty keyboard protocol for
+    its own UI; when it exits through /exit or ctrl+c some of those are still
+    on, and the shell prompt that follows prints every mouse move / focus
+    change / ctrl+c as `^[[<35;4;4M` `^[[O` `^[[I` `^[[99;5u`. After the
+    child ends: disable the modes, flush queued event bytes
+    (`reset_terminal_input_modes(after_session=True)`).
+
+    Handoff parity with exec: the child shares our process group, so tty
+    signals (ctrl+c, ctrl+z, SIGWINCH) reach it directly — SIGINT is ignored
+    here so ctrl+c only ends the child, and SIGTERM/SIGHUP/SIGQUIT sent to
+    prdt alone are forwarded. Exit status: the child's code; if it died by a
+    signal, restore, then die by that same signal. Raises FileNotFoundError
+    when `claude` is missing."""
+    import signal
+    # close_fds=False: exec parity — fds above 2 inherited from the caller
+    # (`prdt 3>file`) reach claude.
+    proc = subprocess.Popen(cmd, close_fds=False)
+    old = {signal.SIGINT: signal.signal(signal.SIGINT, signal.SIG_IGN)}
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
+        old[sig] = signal.signal(sig, lambda n, _f: proc.send_signal(n))
+    resumed = []
+
+    def on_cont(_n, _f):
+        # Shell job control SIGCONTs the whole process group, child included.
+        # Do NOT forward it: this handler runs late and a forwarded CONT would
+        # undo the child's NEXT self-stop.
+        resumed.append(1)
+    old[signal.SIGCONT] = signal.signal(signal.SIGCONT, on_cont)
+    try:
+        while True:
+            _pid, st = os.waitpid(proc.pid, os.WUNTRACED)
+            if os.WIFSTOPPED(st):
+                # Group stop (ctrl+z): we were stopped too and a SIGCONT already
+                # ran `on_cont`. Child stopped ALONE (kill(getpid(), SIGTSTP)):
+                # stop with it so the shell gets its prompt back; the shell's
+                # SIGCONT (sent to the whole group) resumes us and the child.
+                if resumed:
+                    del resumed[:]
+                else:
+                    os.kill(os.getpid(), signal.SIGSTOP)
+                    # Woke: wait for on_cont (Python-level handlers run late) and
+                    # clear its flag, or the NEXT self-stop would be mistaken
+                    # for a group stop.
+                    import time
+                    deadline = time.time() + 1
+                    while not resumed and time.time() < deadline:
+                        time.sleep(0.005)
+                    del resumed[:]
+                continue
+            rc = -os.WTERMSIG(st) if os.WIFSIGNALED(st) else os.WEXITSTATUS(st)
+            proc.returncode = rc
+            break
+    finally:
+        for sig, handler in old.items():
+            signal.signal(sig, handler)
+        try:
+            reset_terminal_input_modes(after_session=True)
+        except Exception:
+            pass
+    if rc < 0:
+        try:
+            signal.signal(-rc, signal.SIG_DFL)  # SIGKILL/SIGSTOP are uncatchable
+        except (OSError, ValueError):
+            pass
+        os.kill(os.getpid(), -rc)
+        sys.exit(128 - rc)
+    sys.exit(rc)
+
+
 def cmd_po(args):
     """Launch the PO conversation (thin exec over Claude Code)."""
     root = find_project_root()
@@ -5939,7 +6408,7 @@ def cmd_po(args):
     reset_terminal_input_modes()
     cmd = ["claude", "--agent", "prdt-po"] + (getattr(args, "rest", None) or [])
     try:
-        os.execvp("claude", cmd)
+        run_claude_then_restore(cmd)
     except FileNotFoundError:
         sys.exit("prdt po: `claude` CLI를 찾을 수 없어요 — Claude Code 설치/PATH 확인")
 
@@ -6008,6 +6477,31 @@ def _run_pull_install(repo, *, pull=True, target_sha=None):
             sys.exit("prdt update: 안내한 버전과 받아온 커밋이 달라 설치를 건너뜀 — 다시 시도하세요")
     if subprocess.run(["bash", str(Path(repo) / "scripts" / "install.sh")]).returncode:
         sys.exit("prdt update: install 실패 — 위 출력 확인")
+    _viewer_after_update()
+
+
+def _viewer_after_update():
+    """T-983: right after install.sh, build the viewer of the project this run
+    is in (other projects build on their first PO session start). Runs the
+    JUST-installed CLI — this process is the old code. Never fails the update:
+    a failure is one line, and the next PO session start retries."""
+    root = find_project_root()
+    if not root:
+        return
+    cli = prdt_home() / "bin" / "prdt"
+    argv = [str(cli)] if cli.is_file() and os.access(cli, os.X_OK) else [sys.executable, str(Path(__file__).resolve())]
+    try:
+        r = subprocess.run(argv + ["viewer", "--ensure", "--refresh"], cwd=str(root),
+                           env={**os.environ, "PRDT_VIEWER_NO_INSTALL": "1"},
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print(f"prdt update: 뷰어를 만들지 못했어요 — {e}. 다음 PO 세션 시작에 다시 시도해요")
+        return
+    if r.returncode:
+        first = next((l for l in (r.stderr or r.stdout or "").splitlines() if l.strip()), "원인 출력 없음")
+        if VIEWER_INSTALL_CMD in first:
+            return  # a dependency-install failure: install.sh §1c just said it (one line) — never twice
+        print(f"prdt update: 뷰어를 만들지 못했어요 — {first.replace('prdt viewer: ', '', 1)}")
 
 
 def _git_repo(repo, *a):
@@ -6123,7 +6617,7 @@ def cmd_update(_args):
 # installs. Non-blocking by construction (doctrine #5). Design SoT:
 # docs/tickets/v1.4/T-393.md (original UX flow) · docs/tickets/v1.11/T-749.md
 # (version+notes box, plain-number choice, non-tty line).
-#   · state: ~/.prdt/update-state.json = {last_check(UTC date)}.
+#   · state: ~/.prdt/update-state.json = {last_check(local date, last_check_basis="local")}.
 #   · pending version + RN box come from <codeRoot>/docs/RELEASES.md (T-394 parse
 #     contract: section = ^## , version = first token after '## ' = git tag verbatim).
 #   · update now → cmd_update (pull --ff-only + install.sh) → os.execv re-runs the
@@ -6156,6 +6650,29 @@ def prdt_repo_dir():
 
 def _update_state_path():
     return Path.home() / ".prdt" / "update-state.json"
+
+
+def _local_day(ts=None):
+    """T-927: calendar day (YYYY-MM-DD) in the device's local timezone."""
+    d = datetime.now() if ts is None else datetime.fromtimestamp(ts)
+    return d.strftime("%Y-%m-%d")
+
+
+def _update_check_due(state, state_mtime, now_ts=None):
+    """T-927: True when the once-a-day update check has not run on today's LOCAL
+    day. A `last_check_basis == "local"` state stores the local date directly.
+    A legacy state (UTC date, no basis key) is read through the state file's
+    mtime — written at the moment of the last check — converted to a local day,
+    so neither a second prompt on the same local day nor a skipped extra day."""
+    today = _local_day(now_ts)
+    last = state.get("last_check")
+    if not last:
+        return True
+    if state.get("last_check_basis") == "local":
+        return last != today
+    if state_mtime is None:
+        return last != today
+    return _local_day(state_mtime) != today
 
 
 def _write_update_state(state):
@@ -6695,10 +7212,14 @@ def maybe_prompt_update(cmd):
         return                                          # `preflight` emits machine-read JSON on stdout
     if os.environ.get("CI"):
         return
-    # throttle — at most one check per UTC calendar day
-    today = now_iso()[:10]
+    # throttle — at most one check per local calendar day (T-927)
+    today = _local_day()
     state = read_json(_update_state_path()) or {}
-    if state.get("last_check") == today:
+    try:
+        mtime = _update_state_path().stat().st_mtime
+    except OSError:
+        mtime = None
+    if not _update_check_due(state, mtime):
         return
     repo = prdt_repo_dir()
     if repo is None:
@@ -6708,6 +7229,7 @@ def maybe_prompt_update(cmd):
         return
     # consume today's slot up front so the post-update re-exec can't loop
     state["last_check"] = today
+    state["last_check_basis"] = "local"
     _write_update_state(state)
     ahead = remote_ahead(code_root)                     # ls-remote + ancestry gate (network, 2s)
     if not ahead:                                       # None (degrade/offline) or False (equal / local ahead / diverged)
@@ -8133,6 +8655,41 @@ def prdt_script_drift_warnings():
             f"differs from {repo} with no matching commit in the repo's history; promote it "
             f"into the repo (`cp {mirror} {repo}` then commit), or discard it instead with "
             f"the same resync the behind case uses: `{sync_cmd}` ({bootstrap_note})"]
+
+
+# T-906: helper modules the installed hooks / statusline import from bin/ —
+# install.sh, the GUI bootstrap and electron-builder mirror each one. Without it
+# the regen worker and the statusline ticket links stop silently, so doctor
+# names the file. Keep this list = every `import <module>` those scripts do from
+# their sibling directory.
+BIN_HELPER_MODULES = ("prdt_safe_fs.py",)
+
+
+def bin_helper_warnings():
+    """Doctor line for each bin/ helper module that is missing from the
+    installed mirror, or differs from the repo's copy (when a checkout is near)."""
+    bindir = prdt_home() / "bin"
+    if not (bindir / "prdt").is_file():
+        return Skipped(f"no installed copy at {bindir / 'prdt'} (quiet on source-only machines)")
+    warns = []
+    for name in BIN_HELPER_MODULES:
+        mirror = bindir / name
+        if not mirror.is_file():
+            warns.append(f"bin helper: {mirror} is missing — the viewer regen worker and the statusline "
+                         f"ticket links silently stop without it; re-run install.sh (`prdt update`) to restore {name}")
+            continue
+        for base in _repo_root_candidates():
+            repo = base / "scripts" / name
+            if repo.is_file():
+                try:
+                    differs = repo.read_bytes() != mirror.read_bytes()
+                except OSError:
+                    break
+                if differs and repo.resolve() != mirror.resolve():
+                    warns.append(f"bin helper: {mirror} differs from {repo} — stale or hand-edited; "
+                                 f"sync with `cp {repo} {mirror}` (or re-run install.sh)")
+                break
+    return warns
 
 
 def meta_bridge_staleness_warnings():
@@ -10132,7 +10689,7 @@ def features_vocab_seed(root):
     feat = {k: v for k, v in feat.items() if k != "non_features"}
     feat["vocab"] = vocab
     cfg["features"] = feat
-    atomic_write_text(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+    state_write(root, cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")  # T-908: link-refusing, keeps the file mode
     n_tag = sum(1 for e in vocab.values() if e["kind"] == "tag")
     n_area = len(vocab) - n_tag
     ghosts = sorted(a for a in areas if a not in hist)
@@ -10209,7 +10766,7 @@ def features_migrate(root, apply):
         if out is None:
             print(f"  skipped {p.relative_to(root)}: no frontmatter `feature: {old}` line found")
             continue
-        p.write_text(out, encoding="utf-8")
+        state_write(root, p, out)
         note_docs_write(p)
         done += 1
     rebuild_index(root)
@@ -11199,6 +11756,17 @@ def doctor_verdict_lines(records):
     # second free to look like any line doctor prints. The refusals upstream are
     # the fix; this is the render-time floor under all of them, and the one
     # place that covers a reason path added later without one.
+    # T-941: `violations=N` is only actionable when each of the N is named — the
+    # check and the subject (its own warning line). An Advisory stores an explicit
+    # 0 and is not listed (it prints as ⚠ and was never counted).
+    for r in ran:
+        if r.get("violations", len(r["warnings"])):
+            for w in r["warnings"]:
+                # The subject is the warning minus its own `<tag>: ` lead — the
+                # ⚠ line above already carries the tag, and repeating it would
+                # make one finding match two lines for anything that greps it.
+                subject = re.sub(r"^[A-Za-z][\w .+/-]{0,40}: ", "", one_line(w), count=1)
+                lines.append(f"doctor:    mismatch · {r['name']} — {subject[:160]}")
     for r in attested:
         lines.append(f"doctor:    human record · {r['name']}: {one_line(r['reason'])}")
     for r in skipped:
@@ -11761,6 +12329,42 @@ def prd_item_edge_warnings(root, st, trows):
             warns.append(f"ticket: {t['id']} prd_item: {raw} does not resolve to an item "
                          f"of {version_str}")
     return warns
+
+
+def prd_item_coverage_notes(root, st, trows):
+    """T-992 — one advisory line per open version: the share of its tickets
+    without `prd_item` (`type: decision` tickets legitimately carry none and
+    are left out of the count), and any single `feature` key holding more than
+    half of those tickets. Silent when nothing to say. The lead is
+    `prd_item coverage <version>:` — never a `<tag>: ` an existing warning
+    channel already uses."""
+    notes = []
+    for line in [None] + project_line_names(root):
+        vid = line_state(st, line)[1] if line is not None else (st or {}).get("version")
+        if not (isinstance(vid, str) and vid.strip()):
+            continue
+        rows = [t for t in trows if t["version"] == vid and t["type"] != "decision"]
+        if not rows:
+            continue
+        missing = 0
+        for t in rows:
+            fm, _ = parse_frontmatter(Path(root) / t["path"])
+            raw = fm.get("prd_item")
+            if not (isinstance(raw, str) and raw.strip()):
+                missing += 1
+        counts = {}
+        for t in rows:
+            if t.get("feature"):
+                counts[t["feature"]] = counts.get(t["feature"], 0) + 1
+        heavy = sorted((f, c) for f, c in counts.items() if c * 2 > len(rows))
+        if not missing and not heavy:
+            continue
+        msg = (f"prd_item coverage {vid}: {missing}/{len(rows)} tickets without prd_item "
+               f"({round(100 * missing / len(rows))}%)")
+        for f, c in heavy:
+            msg += f"; feature '{f}' holds {c}/{len(rows)} (more than half)"
+        notes.append(msg)
+    return notes
 
 
 # ── doctor: W7 (drift-carry commit trailer past ticket close) — T-674 slice 2d
@@ -12557,12 +13161,10 @@ def _track_record_path(code, tid):
 
 def _track_record_write(code, tid, branch, base):
     p = _track_record_path(code, tid)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps({"schema": 1, "ticket": tid, "branch": branch, "base": base,
-                               "opened_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}) + "\n",
-                   encoding="utf-8")
-    os.replace(tmp, p)
+    home = prdt_home()
+    home.mkdir(parents=True, exist_ok=True)
+    state_write(home, p, json.dumps({"schema": 1, "ticket": tid, "branch": branch, "base": base,
+                                     "opened_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}) + "\n")
 
 
 def _track_record_read(code, tid, branch):
@@ -12598,15 +13200,36 @@ def _track_require_open(code, wt, branch, tid):
         _track_die(f"branch {branch} does not exist in the code repo")
 
 
-def _exclude_add(gd):
-    """Append `/tracks/` to <gd>/info/exclude, once, best-effort (never raises)."""
+def _exclude_add(gd, root=None):
+    """Append `/tracks/` to <gd>/info/exclude, once, best-effort (never raises).
+    T-905: the chain below `root` (the project for the meta git dir; the git
+    dir itself when none is given) is walked with O_NOFOLLOW and the file is
+    opened O_APPEND|O_NOFOLLOW — a link anywhere skips the write."""
     ex = gd / "info" / "exclude"
+    anchor = root if root is not None else gd
     try:
-        cur = ex.read_text(encoding="utf-8") if ex.is_file() else ""
+        cur = ""
+        fd = None
+        try:
+            dfd = _state_dir_or_raise(anchor, _state_rel(anchor, ex), False)
+        except FileNotFoundError:
+            dfd = None
+        if dfd is not None:
+            try:
+                fd = os.open("exclude", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+            except FileNotFoundError:
+                fd = None
+            except OSError as e:
+                if e.errno in (errno.ELOOP, errno.EMLINK):
+                    raise StateLinkError(errno.ELOOP, "info/exclude is a symlink — not followed") from e
+                raise
+            finally:
+                os.close(dfd)
+        if fd is not None:
+            with os.fdopen(fd, "r", encoding="utf-8") as f:
+                cur = f.read()
         if "/tracks/" not in cur.splitlines():
-            ex.parent.mkdir(parents=True, exist_ok=True)
-            with open(ex, "a", encoding="utf-8") as f:
-                f.write(("" if cur == "" or cur.endswith("\n") else "\n") + "/tracks/\n")
+            state_append(anchor, ex, ("" if cur == "" or cur.endswith("\n") else "\n") + "/tracks/\n")
     except OSError:
         pass
 
@@ -12626,7 +13249,7 @@ def _track_exclude(code, root):
     if prob:
         print(f"meta exclude skipped: {prob}", file=sys.stderr)
     elif gd_meta.is_dir():
-        _exclude_add(gd_meta)
+        _exclude_add(gd_meta, root)
     if Path(code).resolve() != Path(root).resolve():
         return
     r = _tgit(["rev-parse", "--git-common-dir"], code)
@@ -13654,10 +14277,9 @@ def read_schedule_log(root):
 
 def append_schedule_row(root, row):
     """Symlink-proof append (T-647 primitive: O_NOFOLLOW) of one JSON line."""
-    p = _schedule_log_path(root)
-    fd = os.open(str(p), os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
-    with os.fdopen(fd, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    # T-908: state_append walks .prdt with O_NOFOLLOW too, so a linked `.prdt`
+    # is refused, not only a linked schedule.jsonl.
+    state_append(root, _schedule_log_path(root), json.dumps(row, ensure_ascii=False) + "\n", mode=0o644)
 
 
 def schedule_top(rows):
@@ -14613,6 +15235,8 @@ def cmd_doctor(_args):
         # T-663 Outcome literals. Project family, same posture as E2-E6 above.
         ("PRD form (P1)", FAMILY_PROJECT, lambda: prd_form_warnings(root, st, tickets)),
         ("prd_item edge (E4)", FAMILY_PROJECT, lambda: prd_item_edge_warnings(root, st, trows)),
+        # T-992: advisory — share of tickets without prd_item per open version.
+        ("prd_item coverage", FAMILY_PROJECT, lambda: Advisory(prd_item_coverage_notes(root, st, trows))),
         # W7 (T-674 slice 2d, design §2.2 A(a) / §2.7) — report-only, same
         # FAMILY_PROJECT posture as the edge-value checks above: a commit after
         # close can be a legitimate fix, never a discipline↔execution mismatch.
@@ -14678,6 +15302,9 @@ def cmd_doctor(_args):
         # prdt script mirror↔repo drift (T-507 follow-up) — independent of whether a
         # discipline mirror exists at all.
         ("prdt script mirror drift", FAMILY_DE, lambda: prdt_script_drift_warnings()),
+        ("bin helper modules", FAMILY_DE, lambda: bin_helper_warnings()),
+        # T-977: a broken project word list is skipped by the write-time hook
+        ("project word list", FAMILY_PROJECT, lambda: wordlist_project_warnings(root)),
         # meta-cli bridge (dist/bin/meta-cli.cjs) behind packages/core/src (T-731) —
         # a BUILD staleness, not a mirror-content diff like the three checks
         # around it, but the same family: a committed fix binds nothing until
@@ -14750,7 +15377,7 @@ def date_only(v):
     return m.group(1) if m else None
 
 
-def migrate_ticket(p, dry):
+def migrate_ticket(p, dry, root):
     fm, body = parse_frontmatter(p)
     if not fm.get("ticket_id") and not fm.get("id"):
         return None
@@ -14774,19 +15401,18 @@ def migrate_ticket(p, dry):
         pairs = " ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in dropped.items())
         note = f"<!-- migrated from full frontmatter: {pairs} -->\n\n"
     if not dry:
-        p.write_text(fm_serialize(new) + "\n" + note + body, encoding="utf-8")
+        state_write(root, p, fm_serialize(new) + "\n" + note + body)
         note_docs_write(p)
     return new["status"]
 
 
 def write_wiki_page(root, name, type_, title, body, version, dry):
     p = root / "docs" / "wiki" / f"{name}.md"
-    if p.exists():
+    if os.path.lexists(p):
         return False
     fm = {"title": title, "type": type_, "status": "live", "version": version or ""}
     if not dry:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(fm_serialize(fm) + "\n" + body.strip() + "\n", encoding="utf-8")
+        state_write(root, p, fm_serialize(fm) + "\n" + body.strip() + "\n")
         note_docs_write(p)
     return True
 
@@ -14878,10 +15504,9 @@ def migrate_claude_md(root, dry, assume_yes, to_archive, version):
             wrote = write_wiki_page(root, dst.stem, "fact", CLAUDE_MIGRATED_TITLE,
                                     body, version, dry=False) and dst.is_file()
         else:
-            dst.parent.mkdir(parents=True, exist_ok=True)
             fm = {"title": CLAUDE_MIGRATED_TITLE, "status": "archived",
                   "migrated_from": "CLAUDE.md"}
-            dst.write_text(fm_serialize(fm) + "\n" + body.strip() + "\n", encoding="utf-8")
+            state_write(root, dst, fm_serialize(fm) + "\n" + body.strip() + "\n")
             note_docs_write(dst)
             wrote = dst.is_file()
     except OSError as e:
@@ -14952,7 +15577,7 @@ def cmd_migrate(args):
     tdir = root / "docs" / "tickets"
     if kind == "full" and tdir.is_dir():
         for p in sorted(tdir.rglob("T-*.md")):
-            s = migrate_ticket(p, dry)
+            s = migrate_ticket(p, dry, root)
             if s:
                 n_tickets += 1
                 status_counts[s] = status_counts.get(s, 0) + 1
@@ -15025,28 +15650,28 @@ def cmd_migrate(args):
         slug = old_cfg.get("slug") or old_cfg.get("project_name") or root.name
         cfg = {"slug": slug, "created_at": now_iso(), "surfaces": old_cfg.get("surfaces") or {},
                "migrated_from": kind, "migrated_at": now_iso()}
-        (prdt / "config.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        (prdt / "po-state.json").write_text(json.dumps(
+        state_write(root, prdt / "config.json", json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+        state_write(root, prdt / "po-state.json", json.dumps(
             {"schema_version": 1, "stage": stage, "version": version, "current_task": None},
-            indent=2) + "\n", encoding="utf-8")
+            indent=2) + "\n")
         for d in ("docs/prd", "docs/tickets", "docs/artifacts", "docs/wiki"):
             (root / d).mkdir(parents=True, exist_ok=True)
         for f, head in (("inbox.md", "# Wiki inbox — 1-line memory_notes appends; curated at stage boundaries\n"),
                         ("log.md", "# Wiki log — append-only ritual/ingest/lint records\n")):
             fp = root / "docs" / "wiki" / f
-            if not fp.exists():
-                fp.write_text(head, encoding="utf-8")
-        with open(root / "docs" / "wiki" / "log.md", "a", encoding="utf-8") as f:
-            f.write(f"- ({now_iso()[:10]}) migrated from {kind}: {n_tickets} tickets, {n_pages} wiki pages — curation due at next Retro\n")
+            if not os.path.lexists(fp):
+                state_write(root, fp, head)
+        state_append(root, root / "docs" / "wiki" / "log.md",
+                     f"- ({now_iso()[:10]}) migrated from {kind}: {n_tickets} tickets, {n_pages} wiki pages — curation due at next Retro\n")
         note_docs_write(root / "docs" / "wiki" / "log.md")
         _con, v, _pages, _mpages = rebuild_index(root)
         if v:
             report.append(f"⚠ reindex: 티켓 위반 {len(v)}건 잔존 — `prdt doctor` 확인")
         # 1회용 온보딩 플래그 — hook#1이 다음 PO 세션에 자기 브리핑 지시를 주입 후 소거
-        (prdt / "migration-briefing-pending").write_text(json.dumps({
+        state_write(root, prdt / "migration-briefing-pending", json.dumps({
             "kind": kind, "open_tickets": status_counts.get("open", 0),
             "stage": stage, "version": version, "migrated_at": now_iso()},
-            ensure_ascii=False) + "\n", encoding="utf-8")
+            ensure_ascii=False) + "\n")
     prefix = "[dry-run] " if dry else ""
     print(f"{prefix}migrate 완료 → stage={stage} · version={version}")
     for r in report:
@@ -15522,6 +16147,427 @@ def _env_parse_file(p):
     return lengths
 
 
+# ── T-977: UX-writing word list ───────────────────────────────────────────────
+# A blacklist with a plain replacement per entry (T-978 = A), one JSON file per
+# BCP-47 language under discipline/wordlist/ (mirrored to ~/.prdt with the rest
+# of discipline/), extended per project by `.prdt/wordlist/<lang>.json` (same
+# schema; an entry whose `word` matches a canon entry replaces it, any other is
+# appended — canon is never edited). Checked by `prdt wordlist check` and, at
+# write time, by prdt-wordlist-check.sh (PostToolUse Write|Edit|MultiEdit) on the
+# UX-writing surfaces below. `prdt wordlist export` is the import path for a
+# product's runtime LLM prompts (patterns are kept to the Python/JS regex
+# common subset; `flags` is "i" or absent).
+WORDLIST_SURFACE_RES = (
+    re.compile(r"^docs/artifacts/.+\.(?:html?|md)$"),
+    re.compile(r"^docs/prd/PRD\.md$"),
+    re.compile(r"^docs/tickets/.+\.md$"),
+)
+_WORDLIST_HTML_SKIP = {"script", "style", "code", "pre", "del", "s", "template", "noscript"}
+_WORDLIST_HTML_ATTRS_RE = re.compile(r"""(?<![\w-])(?:title|alt|placeholder|aria-label)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
+_WORDLIST_HOOK_MAX_LINES = 15
+_WORDLIST_URL_RE = r"\bhttps?://[^\s<>\"')\]]+"
+# Per-entry, per-file match budget (seconds): a catastrophic pattern (a project
+# list's `(가+)+나`) is skipped with a warning instead of stalling the write.
+_WORDLIST_TIMEOUT_S = 0.5
+
+
+class WordlistError(Exception):
+    pass
+
+
+def wordlist_canon_dir():
+    d = discipline_root()
+    return d / "wordlist" if d and (d / "wordlist").is_dir() else None
+
+
+def _wordlist_read(path):
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise WordlistError(f"prdt wordlist: cannot read {path}: {e}")
+    if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
+        raise WordlistError(f"prdt wordlist: {path}: expected an object with an `entries` list")
+    return data["entries"]
+
+
+def _wordlist_project_file(root, lang):
+    return Path(root) / ".prdt" / "wordlist" / f"{lang}.json" if root else None
+
+
+def wordlist_entries(lang, root=None, warnings=None):
+    """Canon list for `lang` merged with the project's local one (by `word`).
+    Each returned entry carries its compiled `_re` and `_except` regexes.
+    With a `warnings` list, a broken PROJECT file or entry is reported there and
+    skipped (canon still applies); without one it raises WordlistError."""
+    merged, order = {}, []
+    sources = []
+    canon = wordlist_canon_dir()
+    if canon and (canon / f"{lang}.json").is_file():
+        sources.append(canon / f"{lang}.json")
+    proj = _wordlist_project_file(root, lang)
+    if proj and proj.is_file():
+        sources.append(proj)
+    for src in sources:
+        try:
+            raw = _wordlist_read(src)
+        except WordlistError as ex:
+            if warnings is None or src != proj:
+                raise
+            warnings.append(f"{ex} (project list skipped, canon list still applied)")
+            continue
+        for e in raw:
+            if not isinstance(e, dict) or not isinstance(e.get("word"), str) or not e.get("replace"):
+                msg = f"prdt wordlist: {src}: every entry needs `word` and `replace` ({e!r})"
+                if warnings is None or src != proj:
+                    raise WordlistError(msg)
+                warnings.append(msg + " (entry skipped)")
+                continue
+            w = e["word"]
+            if w not in merged:
+                order.append(w)
+            merged[w] = dict(e, _src=str(src))
+    out = []
+    for w in order:
+        e = merged[w]
+        if isinstance(e["replace"], str):
+            e["replace"] = [e["replace"]]
+        try:
+            e["_re"] = re.compile(e.get("pattern") or re.escape(w), re.I if "i" in (e.get("flags") or "") else 0)
+            e["_except"] = [re.compile(x) for x in (e.get("except_line") or [])]
+        except re.error as ex:
+            msg = f"prdt wordlist: {e['_src']}: entry {w!r}: bad pattern: {ex}"
+            if warnings is None or e["_src"] != str(proj):
+                raise WordlistError(msg)
+            warnings.append(msg + " (entry skipped)")
+            continue
+        out.append(e)
+    return out
+
+
+def wordlist_langs(root=None):
+    names = set()
+    canon = wordlist_canon_dir()
+    for d in (canon, Path(root) / ".prdt" / "wordlist" if root else None):
+        if d and d.is_dir():
+            names |= {p.stem for p in d.glob("*.json")}
+    return sorted(names)
+
+
+def wordlist_detect_lang(text, root=None):
+    """Project setting `.prdt/config.json` → `wordlist.lang` first; else the
+    text's own script: Hangul → ko, kana → ja, otherwise en."""
+    if root:
+        try:
+            cfg = json.loads((Path(root) / ".prdt" / "config.json").read_text(encoding="utf-8"))
+            lang = (cfg.get("wordlist") or {}).get("lang")
+            if isinstance(lang, str) and lang:
+                return lang
+        except (OSError, ValueError, AttributeError):
+            pass
+    if re.search(r"[가-힣]", text):
+        return "ko"
+    if re.search(r"[぀-ヿ]", text):
+        return "ja"
+    return "en"
+
+
+def _wordlist_mask(text, keep):
+    """`text` with every char outside the `keep` [start, end) ranges blanked
+    (newlines kept), so line/column positions survive the masking."""
+    out, pos = [], 0
+    for s, e in sorted(keep):
+        if s < pos:
+            s = pos
+        if e <= s:
+            continue
+        out.append(re.sub(r"[^\n]", " ", text[pos:s]))
+        out.append(text[s:e])
+        pos = e
+    out.append(re.sub(r"[^\n]", " ", text[pos:]))
+    return "".join(out)
+
+
+def _wordlist_md_visible(text):
+    """Markdown: blank frontmatter, fenced code, inline code spans, HTML
+    comments and verbatim `*"…"*` quotes (a quoted user line is evidence,
+    not copy)."""
+    spans = []
+    m = re.match(r"---\n.*?\n---[ \t]*(?:\n|$)", text, re.S)
+    if m:
+        spans.append((m.start(), m.end()))
+    for rx in (r"^(```|~~~).*?^\1[ \t]*$", r"<!--.*?-->", r"`[^`\n]+`", r"\*\"[^\"\n]*\"\*",
+               r"<code\b[^>]*>.*?</code>", r"<pre\b[^>]*>.*?</pre>", _WORDLIST_URL_RE):
+        for m in re.finditer(rx, text, re.S | re.M):
+            spans.append((m.start(), m.end()))
+    # indented code block: a run of 4-space / tab lines opened after a blank line
+    for m in re.finditer(r"(?:^|\n)[ \t]*\n((?:(?: {4}|\t)[^\n]*(?:\n|$))+)", text):
+        spans.append((m.start(1), m.end(1)))
+    spans.sort()
+    keep, pos = [], 0
+    for s, e in spans:
+        if s > pos:
+            keep.append((pos, s))
+        pos = max(pos, e)
+    keep.append((pos, len(text)))
+    return _wordlist_mask(text, keep)
+
+
+def _wordlist_html_visible(text):
+    """HTML: rendered text plus user-visible attributes (title · alt ·
+    placeholder · aria-label) and data label tables (`<script
+    type="application/json">` / `<script id="labels">` — the screen-set
+    skeleton renders copy from it). Comments, style, code, pre, del/s (old copy
+    shown for comparison) and other scripts are skipped."""
+    from html.parser import HTMLParser
+
+    starts = [0]
+    for m in re.finditer(r"\n", text):
+        starts.append(m.end())
+
+    def absolute(line, col):
+        return starts[line - 1] + col
+
+    keep = []
+
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=False)
+            self.depth = {}
+
+        def skipping(self):
+            return any(v > 0 for v in self.depth.values())
+
+        def handle_starttag(self, tag, attrs):
+            a = dict(attrs)
+            raw = self.get_starttag_text() or ""
+            at = absolute(*self.getpos())
+            if not self.skipping():
+                for m in _WORDLIST_HTML_ATTRS_RE.finditer(raw):
+                    g = 1 if m.group(1) is not None else 2
+                    keep.append((at + m.start(g), at + m.end(g)))
+            if tag == "script" and ("json" in (a.get("type") or "") or a.get("id") == "labels"):
+                return  # a label table: its strings are rendered copy
+            if tag in _WORDLIST_HTML_SKIP:
+                self.depth[tag] = self.depth.get(tag, 0) + 1
+
+        def handle_endtag(self, tag):
+            if self.depth.get(tag):
+                self.depth[tag] -= 1
+
+        def handle_data(self, data):
+            if not self.skipping():
+                at = absolute(*self.getpos())
+                pos = 0
+                for m in re.finditer(_WORDLIST_URL_RE, data):
+                    keep.append((at + pos, at + m.start()))
+                    pos = m.end()
+                keep.append((at + pos, at + len(data)))
+
+        def _ref(self, width):
+            if not self.skipping():
+                at = absolute(*self.getpos())
+                keep.append((at, at + width))
+
+        def handle_entityref(self, name):
+            self._ref(len(name) + 2)
+
+        def handle_charref(self, name):
+            self._ref(len(name) + 3)
+
+    p = P()
+    try:
+        p.feed(text)
+        p.close()
+    except Exception:  # a parser failure degrades to checking the raw text
+        return text
+    return _wordlist_mask(text, keep)
+
+
+class _WordlistTimeout(Exception):
+    pass
+
+
+def _wordlist_alarm(*_):
+    raise _WordlistTimeout()
+
+
+def wordlist_scan(text, entries, kind="md", warnings=None):
+    """[{line, col, match, word, replace}] for every entry hit in the checked
+    part of `text` (kind = md | html). One span is reported once: overlapping
+    hits keep the longer match. Each entry gets `_WORDLIST_TIMEOUT_S` per file
+    (SIGALRM, main thread only); past it the entry is skipped with a warning."""
+    import signal
+    visible = _wordlist_html_visible(text) if kind == "html" else _wordlist_md_visible(text)
+    raw_lines = text.split("\n")
+    vis_lines = visible.split("\n")
+    can_alarm = hasattr(signal, "setitimer") and __import__("threading").current_thread() is __import__("threading").main_thread()
+    found = []
+    for e in entries:
+        part = []
+        old = signal.signal(signal.SIGALRM, _wordlist_alarm) if can_alarm else None
+        try:
+            if can_alarm:
+                signal.setitimer(signal.ITIMER_REAL, _WORDLIST_TIMEOUT_S)
+            for i, line in enumerate(vis_lines):
+                if not line.strip():
+                    continue
+                raw = raw_lines[i] if i < len(raw_lines) else line
+                if any(x.search(raw) for x in e["_except"]):
+                    continue
+                for m in e["_re"].finditer(line):
+                    if m.group(0).strip():
+                        part.append((i + 1, m.start(), m.end(), m.group(0), e))
+        except _WordlistTimeout:
+            part = []
+            if warnings is not None:
+                warnings.append(f"prdt wordlist: entry {e['word']!r} ({e.get('_src', '?')}) exceeded "
+                                f"{_WORDLIST_TIMEOUT_S}s on this file and was skipped (catastrophic pattern?)")
+        finally:
+            if can_alarm:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                signal.signal(signal.SIGALRM, old)
+        found.extend(part)
+    taken, hits = {}, []
+    for ln, s, en, txt, e in sorted(found, key=lambda h: -(h[2] - h[1])):
+        spans = taken.setdefault(ln, [])
+        if any(s < b and a < en for a, b in spans):
+            continue
+        spans.append((s, en))
+        hits.append({"line": ln, "col": s + 1, "match": txt, "word": e["word"], "replace": list(e["replace"])})
+    hits.sort(key=lambda h: (h["line"], h["col"]))
+    return hits
+
+
+def _wordlist_kind(name):
+    return "html" if str(name).lower().endswith((".html", ".htm")) else "md"
+
+
+def _wordlist_project_root(start):
+    """Nearest ancestor holding `.prdt/` (the meta root in a split project)."""
+    p = Path(start).resolve()
+    for d in (p, *p.parents):
+        if (d / ".prdt").is_dir():
+            return d
+    return None
+
+
+def _wordlist_label(h):
+    return h["match"] if h["match"] == h["word"] else f"{h['match']} ({h['word']})"
+
+
+def wordlist_check_text(text, name, lang_arg, root, warnings=None):
+    lang = lang_arg or wordlist_detect_lang(text, root)
+    entries = wordlist_entries(lang, root, warnings)
+    return lang, wordlist_scan(text, entries, _wordlist_kind(name), warnings)
+
+
+def wordlist_project_warnings(root):
+    """Doctor: every `.prdt/wordlist/<lang>.json` that is unreadable, malformed
+    or carries a bad entry — the write-time hook skips it, so say so here."""
+    d = Path(root) / ".prdt" / "wordlist"
+    if not d.is_dir():
+        return Skipped("no project word list (.prdt/wordlist/)")
+    warns = []
+    for f in sorted(d.glob("*.json")):
+        w = []
+        try:
+            wordlist_entries(f.stem, root, w)
+        except WordlistError as ex:
+            w.append(str(ex))
+        warns.extend(f"wordlist: {x}" for x in w)
+    return warns
+
+
+def _wordlist_hook(root_hint):
+    """PostToolUse payload on stdin → additionalContext naming each hit, or
+    nothing. Fails open (silent) on anything unexpected."""
+    try:
+        ev = json.loads(sys.stdin.read() or "{}")
+        if ev.get("tool_name") not in ("Write", "Edit", "MultiEdit"):
+            return
+        fp = (ev.get("tool_input") or {}).get("file_path") or ""
+        if not fp:
+            return
+        f = Path(fp)
+        if not f.is_absolute():
+            f = Path(ev.get("cwd") or root_hint) / f
+        root = _wordlist_project_root(f.parent)
+        if not root or not f.is_file():
+            return
+        rel = f.resolve().relative_to(root).as_posix()
+        if not any(rx.match(rel) for rx in WORDLIST_SURFACE_RES):
+            return
+        warns = []
+        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns)
+    except Exception:
+        return
+    if not hits and not warns:
+        return
+    lines = [f"[prdt wordlist] {rel}: {len(hits)} hit(s) from the {lang} UX-writing word list. "
+             f"Rewrite each with its plain replacement (contracts §Language):"]
+    lines += [f"- warning: {w}" for w in warns]
+    for h in hits[:_WORDLIST_HOOK_MAX_LINES]:
+        lines.append(f"- line {h['line']} \"{_wordlist_label(h)}\" → {' · '.join(h['replace'])}")
+    if len(hits) > _WORDLIST_HOOK_MAX_LINES:
+        lines.append(f"- {len(hits) - _WORDLIST_HOOK_MAX_LINES} more: prdt wordlist check {rel}")
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                             "additionalContext": "\n".join(lines)}}, ensure_ascii=False))
+
+
+def cmd_wordlist(args):
+    """`prdt wordlist check|export|hook` (T-977) — read-only."""
+    root = _wordlist_project_root(os.getcwd())
+    if args.action == "hook":
+        _wordlist_hook(os.getcwd())
+        return
+    try:
+        if args.action == "export":
+            lang = args.lang or "ko"
+            entries = wordlist_entries(lang, root)
+            if not entries:
+                print(f"prdt wordlist: no list for {lang!r} (have: {', '.join(wordlist_langs(root)) or 'none'})", file=sys.stderr)
+                sys.exit(3)
+            if args.format == "lines":
+                for e in entries:
+                    print(f"- {e['word']} → {' · '.join(e['replace'])}")
+            else:
+                clean = [{k: v for k, v in e.items() if not k.startswith("_")} for e in entries]
+                print(json.dumps({"lang": lang, "schema": 1, "entries": clean}, ensure_ascii=False, indent=2))
+            return
+        if not args.paths:
+            print("prdt wordlist check: give one or more files, or `-` for stdin", file=sys.stderr)
+            sys.exit(3)
+        report = []
+        for name in args.paths:
+            if name == "-":
+                text, shown = sys.stdin.read(), "<stdin>"
+            else:
+                try:
+                    text, shown = Path(name).read_text(encoding="utf-8"), name
+                except (OSError, UnicodeDecodeError) as e:
+                    print(f"prdt wordlist check: cannot read {name}: {e}", file=sys.stderr)
+                    sys.exit(3)
+            warns = []
+            lang, hits = wordlist_check_text(text, shown, args.lang, root, warns)
+            for w in warns:
+                print(w, file=sys.stderr)
+            report.append({"path": shown, "lang": lang, "hits": hits})
+    except WordlistError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(3)
+    total = sum(len(r["hits"]) for r in report)
+    if args.json:
+        print(json.dumps({"total": total, "files": report}, ensure_ascii=False, indent=2))
+    else:
+        for r in report:
+            for h in r["hits"]:
+                print(f"{r['path']}:{h['line']}:{h['col']}: {_wordlist_label(h)} → {' · '.join(h['replace'])}")
+        langs = ", ".join(sorted({r["lang"] for r in report}))
+        files = sum(1 for r in report if r["hits"])
+        print(f"wordlist: {total} hits in {files} file{'s' if files != 1 else ''} ({langs})")
+    sys.exit(1 if total else 0)
+
+
 def cmd_env(args):
     """`prdt env check <file> [KEY ...]` — see module header above. Every
     branch below prints only: a key name FROM THE FILE (never the caller's
@@ -15581,8 +16627,34 @@ def cmd_env(args):
     sys.exit(worst)
 
 
+def installed_prdt_version():
+    """The installed prdt's release version (T-941) — the newest `## <version>`
+    section of the code repo's docs/RELEASES.md, the same source `prdt update`
+    compares against. The repo is the script's own checkout when run from it,
+    else the `PRDT_REPO` the installer recorded in `prdt.env` (the installed
+    `~/.prdt/bin` copy has no repo beside it). None when neither is readable."""
+    parents = Path(__file__).resolve().parents
+    roots = [parents[3]] if len(parents) > 3 else []
+    try:
+        for line in (prdt_home() / "prdt.env").read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRDT_REPO="):
+                # install.sh writes `<clone>/packages/core` — resolve to the clone
+                # root (as maybe_prompt_update does); a clone-root value passes through.
+                repo = line.split("=", 1)[1].strip()
+                roots.append(Path(git_toplevel(repo) or repo))
+    except OSError:
+        pass
+    for r in roots:
+        v, _ = releases_local(r)
+        if v:
+            return v
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(prog="prdt", description=__doc__)
+    ap.add_argument("--version", dest="show_version", action="store_true",
+                    help="print the installed prdt version and exit")
     sub = ap.add_subparsers(dest="cmd")
     p = sub.add_parser("init", help="interactive 2-item project init (slug · version); stage defaults to define")
     p.add_argument("--slug")
@@ -15650,6 +16722,10 @@ def main():
     p.add_argument("--no-open", action="store_true",
                    help="the PO's own run: suppress the main-session hook's open too (T-794); a worker's run "
                         "never opens regardless")
+    p.add_argument("--ensure", action="store_true",
+                   help="T-983: install the generator's dependencies if missing and build viewer.html if absent; "
+                        "silent when ready, one failure line otherwise (the PO session-start hook and `prdt update` run it)")
+    p.add_argument("--refresh", action="store_true", help="with --ensure: regenerate viewer.html even when it exists")
     p.set_defaults(fn=cmd_viewer)
     p = sub.add_parser("tickets", help="list tickets (--version --feature --status --assignee --ready --backlog) "
                                        "· --link T-NNN … prints paste-ready file:// links "
@@ -15847,6 +16923,17 @@ def main():
     p.add_argument("file")
     p.add_argument("keys", nargs="*", metavar="KEY")
     p.set_defaults(fn=cmd_env)
+    p = sub.add_parser("wordlist", help="UX-writing word list (T-977, read-only): check <file|-> ... "
+                                        "[--lang L] [--json] — each hit as path:line:col: word → plain replacement, "
+                                        "exit 1 on any hit · export [--lang L] [--format json|lines] — the merged "
+                                        "canon + project (.prdt/wordlist/<lang>.json) list, for a product's runtime prompts · "
+                                        "hook — the PostToolUse entry prdt-wordlist-check.sh calls")
+    p.add_argument("action", choices=("check", "export", "hook"))
+    p.add_argument("paths", nargs="*", metavar="FILE")
+    p.add_argument("--lang", default=None, help="BCP-47 list key (default: project wordlist.lang, else the text's script)")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--format", choices=("json", "lines"), default="json")
+    p.set_defaults(fn=cmd_wordlist)
     # `prdt settings -h`/`--help`: argparse's own subparser help is English
     # and bypasses the message catalog (T-750 QA grill) — answer from the
     # catalog, in the selected language, before parse_args() ever sees it.
@@ -15854,10 +16941,19 @@ def main():
         print(msg(load_messages(), "settings.error.usage"))
         sys.exit(0)
     args = ap.parse_args()
+    if args.show_version and not args.cmd:
+        v = installed_prdt_version()
+        if not v:
+            sys.exit("prdt: version unknown — no docs/RELEASES.md beside this script or at PRDT_REPO (~/.prdt/prdt.env)")
+        print(f"prdt {v}")
+        return
     # T-773: `schedule record` is the dispatch gate's (a per-turn hook's) call —
     # contracts §Git names no per-turn hook as a meta-backup trigger, and a hook
     # has no terminal to prompt on.
     hook_call = args.cmd == "schedule" and getattr(args, "action", None) == "record"
+    # T-977: `wordlist` is read-only and its `hook` action runs on every docs
+    # write — same no-side-effect boundary as a hook's own call.
+    hook_call = hook_call or args.cmd == "wordlist"
     # T-785 F3 / code review #1: the update nudge must be a full no-op — no
     # daily-slot write, no network check, same as `hook_call` above — from any
     # call a hook shells out to (the auto-open hook's own `prdt viewer
@@ -15872,10 +16968,15 @@ def main():
         or getattr(args, "json", False)
         or (args.cmd == "viewer" and getattr(args, "no_open", False))
         or args.cmd == "_shared-state-guard"
+        # T-983: the hook-spawned ensure is a background call of this same
+        # kind — it must never eat the user's daily nudge (update-state.json).
+        or (args.cmd == "viewer" and getattr(args, "ensure", False))
     )
     if not skip_update_nudge:
         maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
-    if not hook_call:
+    # T-983: `viewer --ensure` also skips the backup tick — the PO SessionStart
+    # hook that spawns it already ran that tick in the same start.
+    if not hook_call and not (args.cmd == "viewer" and getattr(args, "ensure", False)):
         maybe_meta_backup(args.cmd)    # T-504: detached meta backup tick (stage boundary / once daily; never blocks)
     if not args.cmd:
         # bare `prdt` = 구 productune UX 계승: init(필요 시 §10 3항목) → PO 대화 진입
@@ -15894,6 +16995,10 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except StateLinkError as e:
+        # T-905: a state write refused at a link — one line, nothing written.
+        print(f"prdt: {e}", file=sys.stderr)
+        sys.exit(1)
     except BrokenPipeError:
         # T-677 QA S3: a downstream reader that closes early (e.g.
         # `prdt env check big.env | head -c 1`) turns our next write — or

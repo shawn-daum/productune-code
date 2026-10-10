@@ -33,7 +33,8 @@
  */
 
 import fs from 'fs'
-import { poStatePath, stateDir, turnsJsonlPath } from './project-paths'
+import { stateWriteFileSync } from '@productune/core'
+import { poStatePath, turnsJsonlPath } from './project-paths'
 import { resolveVersion } from './po-state-fields'
 
 /** Normalized usage block — same key names ipc/costArchive.ts's readUsage reads. */
@@ -241,8 +242,7 @@ export function appendSubagentTurn(
   }
 
   try {
-    fs.mkdirSync(stateDir(projectDir), { recursive: true })
-    fs.appendFileSync(turnsJsonlPath(projectDir), JSON.stringify(line) + '\n')
+    stateWriteFileSync(projectDir, turnsJsonlPath(projectDir), JSON.stringify(line) + '\n', { append: true })
     return true
   } catch {
     return false

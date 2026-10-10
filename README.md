@@ -50,6 +50,7 @@ prdt viewer [TARGET ...]    # 정적 뷰어 생성 — TARGET(티켓 id·문서 
 prdt schedule                # 열린 티켓을 critical path 순으로 잰 다음 발주 순서 — 읽기 전용, 아무것도 쓰지 않음
 prdt track open|review|land|drop T-NNN  # 트랙별 worktree(tracks/T-NNN, branch track/T-NNN) — land는 테스트 뒤 base로 fast-forward, drop은 폐기, 둘 다 push 안 함
 prdt history                # 버전별 티켓 집계 + retro 포인터
+prdt wordlist check <파일|->   # UX 문구 금지 목록 검사: 줄:칸: 낱말 → 대체어 (export --format json|lines = 제품 프롬프트용 목록)
 prdt settings [set <키> <값>|unset <키>]  # register.*·viewer.auto-open·plan.tier 등 기기 설정 한 곳 (prdt register set도 그대로 동작)
 prdt meta log|remote|split  # 메타 git 조작 (v1.2 — 아래 참고)
 prdt update                  # 설치판 → 새 버전 + 그 사이 릴리스 노트를 보여주고 1/2(update/skip)로 물은 뒤에만 pull+재설치

@@ -1,0 +1,207 @@
+{
+  "lang": "en",
+  "schema": 1,
+  "entries": [
+    {
+      "word": "em dash (—)",
+      "pattern": "—|&mdash;|&#8212;|&#x2014;",
+      "replace": [
+        "comma",
+        "colon",
+        "parentheses",
+        "a new sentence"
+      ],
+      "except_line": [
+        "^## (?:[a-z0-9]+(?:-[a-z0-9]+)* )?v\\d+(?:\\.\\d+){0,2} — ",
+        "^#### [a-z0-9]+(?:-[a-z0-9]+)* — "
+      ]
+    },
+    {
+      "word": "delve",
+      "pattern": "\\bdelv(e|es|ed|ing)\\b",
+      "flags": "i",
+      "replace": [
+        "look at",
+        "examine"
+      ]
+    },
+    {
+      "word": "leverage",
+      "pattern": "\\bleverag(e|es|ed|ing)\\b",
+      "flags": "i",
+      "replace": [
+        "use"
+      ]
+    },
+    {
+      "word": "utilize",
+      "pattern": "\\butili[sz](e|es|ed|ing|ation)\\b",
+      "flags": "i",
+      "replace": [
+        "use"
+      ]
+    },
+    {
+      "word": "seamless",
+      "pattern": "\\bseamless(ly)?\\b",
+      "flags": "i",
+      "replace": [
+        "without extra steps",
+        "(drop it)"
+      ]
+    },
+    {
+      "word": "robust",
+      "pattern": "\\brobust(ly|ness)?\\b",
+      "flags": "i",
+      "replace": [
+        "name the property (e.g. retries 3 times)"
+      ]
+    },
+    {
+      "word": "streamline",
+      "pattern": "\\bstreamlin(e|es|ed|ing)\\b",
+      "flags": "i",
+      "replace": [
+        "simplify",
+        "shorten"
+      ]
+    },
+    {
+      "word": "empower",
+      "pattern": "\\bempower(s|ed|ing|ment)?\\b",
+      "flags": "i",
+      "replace": [
+        "let",
+        "allow"
+      ]
+    },
+    {
+      "word": "elevate",
+      "pattern": "\\belevat(e|es|ed|ing)\\b",
+      "flags": "i",
+      "replace": [
+        "improve",
+        "raise"
+      ]
+    },
+    {
+      "word": "embark",
+      "pattern": "\\bembark(s|ed|ing)?\\b",
+      "flags": "i",
+      "replace": [
+        "start"
+      ]
+    },
+    {
+      "word": "unlock",
+      "pattern": "\\bunlock(s|ed|ing)?\\b",
+      "flags": "i",
+      "replace": [
+        "enable",
+        "let"
+      ],
+      "note": "fine for a literal lock or credential"
+    },
+    {
+      "word": "tapestry",
+      "pattern": "\\btapestr(y|ies)\\b",
+      "flags": "i",
+      "replace": [
+        "(name the parts)"
+      ]
+    },
+    {
+      "word": "testament to",
+      "pattern": "\\btestament to\\b",
+      "flags": "i",
+      "replace": [
+        "shows"
+      ]
+    },
+    {
+      "word": "game-changer",
+      "pattern": "\\bgame[- ]chang(er|ers|ing)\\b",
+      "flags": "i",
+      "replace": [
+        "(name the effect and its size)"
+      ]
+    },
+    {
+      "word": "cutting-edge",
+      "pattern": "\\bcutting[- ]edge\\b",
+      "flags": "i",
+      "replace": [
+        "new",
+        "(name the technique)"
+      ]
+    },
+    {
+      "word": "realm",
+      "pattern": "\\brealms?\\b",
+      "flags": "i",
+      "replace": [
+        "area",
+        "field"
+      ]
+    },
+    {
+      "word": "holistic",
+      "pattern": "\\bholistic(ally)?\\b",
+      "flags": "i",
+      "replace": [
+        "complete",
+        "whole"
+      ]
+    },
+    {
+      "word": "synergy",
+      "pattern": "\\bsynerg(y|ies|istic)\\b",
+      "flags": "i",
+      "replace": [
+        "(name what combines and the result)"
+      ]
+    },
+    {
+      "word": "pivotal",
+      "pattern": "\\bpivotal\\b",
+      "flags": "i",
+      "replace": [
+        "key",
+        "important"
+      ]
+    },
+    {
+      "word": "meticulous",
+      "pattern": "\\bmeticulous(ly)?\\b",
+      "flags": "i",
+      "replace": [
+        "careful"
+      ]
+    },
+    {
+      "word": "underscore (verb)",
+      "pattern": "\\bunderscor(es|ed|ing)\\b",
+      "flags": "i",
+      "replace": [
+        "shows"
+      ]
+    },
+    {
+      "word": "it's worth noting",
+      "pattern": "\\b(it'?s|it is) worth noting\\b",
+      "flags": "i",
+      "replace": [
+        "(drop it, state the fact)"
+      ]
+    },
+    {
+      "word": "in today's fast-paced",
+      "pattern": "\\bin today'?s (fast-paced|digital|ever-changing)\\b",
+      "flags": "i",
+      "replace": [
+        "(drop it)"
+      ]
+    }
+  ]
+}

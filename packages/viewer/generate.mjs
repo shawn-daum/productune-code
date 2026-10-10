@@ -14,7 +14,7 @@ import subsetFont from 'subset-font'
 import { collectUsedChars, buildPretendardFontFaceCss } from './lib/font-subset.mjs'
 import { collectAll } from './lib/collect.mjs'
 import { ticketIdsOf } from './lib/jump-pages.mjs'
-import { renderPage, templateGuardErrors, pastTicketDataFiles, pastTicketDataContent, buildFileContent } from './lib/render.mjs'
+import { renderPage, templateGuardErrors, pastTicketDataFiles, pastTicketDataContent, buildFileContent, buildDocPathTargets } from './lib/render.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // T-718: computed relative to THIS file's own location, never from a
@@ -112,10 +112,12 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH,
   // T-885 (T-876 = D): past-version ticket bodies go to sibling data files;
   // the page carries only the bucket → src map, generator-written.
   const prefix = path.basename(outputPath).replace(/\.html?$/i, '')
+  // T-972: the paths a body may link, from the page's own anchor table.
+  const docTargets = buildDocPathTargets(data)
   const pastFiles = [
-    ...pastTicketDataFiles(data.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline }),
+    ...pastTicketDataFiles(data.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline, docTargets }),
     // T-961: an added release line's past-version bodies, file names carry the line.
-    ...(data.lines || []).flatMap((l) => pastTicketDataFiles(l.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline, line: l.name })),
+    ...(data.lines || []).flatMap((l) => pastTicketDataFiles(l.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline, line: l.name, docTargets })),
   ]
   const pastTicketSrc = {}
   for (const f of pastFiles) pastTicketSrc[f.bucket] = encodeURIComponent(f.name)

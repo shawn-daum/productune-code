@@ -380,7 +380,7 @@ function isAllowedRawHref(href) {
 // page's repoRootHref here right before parsing — safe because generation
 // is single-threaded and synchronous (no md() call is ever in flight while
 // another starts).
-let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF, disc: null, decision: null }
+let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF, disc: null, docs: null, decision: null }
 // T-886: the discipline documents' name index (discipline-links.mjs), built once per
 // page from the collected documents; a body links names only when its md() call asks
 // (ticket · wiki · PRD bodies — the three the acceptance names).
@@ -397,23 +397,94 @@ let pageViewerAbsPath = DEFAULT_VIEWER_ABS_PATH
 // inside an anchor — `link` below switches it off while it renders its own text)
 // and never in a fenced block, whose renderer this does not touch.
 const defaultTextRender = Renderer.prototype.text
+
+// T-972: a path this viewer itself shows (docs/artifacts · wiki · prd · tickets ·
+// features) becomes `<a href="#<path>">`, which the existing hash route opens
+// (and replaces with ?view=…&kind=…&id=… — same tab, back returns). The targets
+// are the page's own anchor table: a path the page does not carry stays text.
+// Never inside another link's text (`link` below switches it off), never in a
+// fenced block (not this renderer); an inline code span links only when the
+// whole span is one such path. A `[[wikilink]]` is left as it was.
+const DOC_PATH_RE = /(?<![\w./~-])(?<!\[\[)docs\/(?:artifacts|wiki|prd|tickets|features)\/[\w./-]*\w/g
+let pageDocTargets = null
+
+/**
+ * path → the `#` key the page's anchor table routes it by. Same table as
+ * `buildAnchors` (path keys of wiki · artifacts · features · PRD) plus every
+ * ticket file's own path, keyed by the ticket id.
+ * @param {object} data the collected project
+ * @param {Record<string, object>} [anchors] `buildAnchors(data)` when the caller has it
+ * @returns {Map<string, string>}
+ */
+export function buildDocPathTargets(data, anchors = buildAnchors(data)) {
+  const targets = new Map()
+  for (const key of Object.keys(anchors)) if (key.startsWith('docs/')) targets.set(key, key)
+  const put = (t) => {
+    const id = t.frontmatter?.id || t.rel
+    if (t.rel && Object.prototype.hasOwnProperty.call(anchors, id) && !targets.has(t.rel)) targets.set(t.rel, id)
+  }
+  for (const set of [data.tickets, ...(data.lines || []).map((l) => l.tickets)]) {
+    for (const t of set.included) put(t)
+    for (const b of set.omitted) for (const t of b.tickets) put(t)
+  }
+  return targets
+}
+
+function docPathAnchor(rel, textHtml) {
+  return `<a href="#${escapeHtml(pageDocTargets.get(rel))}">${textHtml}</a>`
+}
+
+function linkDocPathText(text, plain) {
+  DOC_PATH_RE.lastIndex = 0
+  let out = ''
+  let last = 0
+  let found = false
+  for (let m = DOC_PATH_RE.exec(text); m !== null; m = DOC_PATH_RE.exec(text)) {
+    if (!pageDocTargets.has(m[0])) continue
+    found = true
+    if (m.index > last) out += plain(text.slice(last, m.index))
+    out += docPathAnchor(m[0], escapeHtml(m[0]))
+    last = m.index + m[0].length
+  }
+  if (!found) return null
+  if (last < text.length) out += plain(text.slice(last))
+  return out
+}
+
 hardenedRenderer.text = function (token) {
-  if (linkContext.disc && !('tokens' in token && token.tokens) && !token.escaped) {
-    const linked = linkDisciplineText(token.text, linkContext.disc, (seg) => defaultTextRender.call(this, { type: 'text', raw: seg, text: seg, escaped: false }))
-    if (linked !== null) return linked
+  const plainText = (seg) => {
+    if (linkContext.disc) {
+      const linked = linkDisciplineText(seg, linkContext.disc, (s2) => defaultTextRender.call(this, { type: 'text', raw: s2, text: s2, escaped: false }))
+      if (linked !== null) return linked
+    }
+    return defaultTextRender.call(this, { type: 'text', raw: seg, text: seg, escaped: false })
+  }
+  if ((linkContext.disc || linkContext.docs) && !('tokens' in token && token.tokens) && !token.escaped) {
+    if (linkContext.docs) {
+      const docLinked = linkDocPathText(token.text, plainText)
+      if (docLinked !== null) return docLinked
+    }
+    if (linkContext.disc) {
+      const linked = linkDisciplineText(token.text, linkContext.disc, (seg) => defaultTextRender.call(this, { type: 'text', raw: seg, text: seg, escaped: false }))
+      if (linked !== null) return linked
+    }
   }
   return defaultTextRender.call(this, token)
 }
 hardenedRenderer.codespan = function ({ text }) {
+  if (linkContext.docs && pageDocTargets.has(text)) return `<code>${docPathAnchor(text, escapeHtml(text))}</code>`
   const linked = linkContext.disc ? linkDisciplineCode(text, linkContext.disc) : null
   return linked ?? `<code>${escapeHtml(text)}</code>`
 }
 
 hardenedRenderer.link = function ({ href, title, tokens }) {
   const outerDisc = linkContext.disc
+  const outerDocs = linkContext.docs
   linkContext.disc = null
+  linkContext.docs = null
   const text = this.parser.parseInline(tokens)
   linkContext.disc = outerDisc
+  linkContext.docs = outerDocs
   const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath)
   if (rewritten !== null) {
     const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
@@ -461,7 +532,7 @@ hardenedRenderer.image = function ({ href, title, text, tokens }) {
  * @param {{discipline?: boolean}} [opts] `discipline`: link the names of discipline documents (T-886).
  */
 function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF, { discipline = false, decision = false } = {}) {
-  linkContext = { sourceDirRel, repoRootHref, disc: discipline ? pageDisciplineIndex : null, decision: decision ? { chosen: decisionChosen(text ?? '') } : null }
+  linkContext = { sourceDirRel, repoRootHref, disc: discipline ? pageDisciplineIndex : null, docs: pageDocTargets, decision: decision ? { chosen: decisionChosen(text ?? '') } : null }
   try {
     return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
   } finally {
@@ -926,9 +997,10 @@ export const PAST_TICKET_GLOBAL = '__PRDT_VIEWER_DATA__'
  * loader takes a src from that map only.
  * @returns {Array<{ bucket: string, name: string, tickets: Record<string,{path:string,body:string}>, bodies: string[] }>}
  */
-export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [], line = null } = {}) {
+export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [], line = null, docTargets = null } = {}) {
   pageViewerAbsPath = viewerAbsPath
   pageDisciplineIndex = buildDisciplineIndex(discipline)
+  pageDocTargets = docTargets
   const files = []
   for (const bucket of tickets.omitted) {
     // T-961: an added line's bucket key is `<line>--<bucket>` (no `/` in a file name).
@@ -3703,6 +3775,7 @@ export function renderPage({
   const discipline = data.discipline || []
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   const anchors = buildAnchors(data)
+  pageDocTargets = buildDocPathTargets(data, anchors)
   const views = lineViews(data)
   const detailData = {
     ticket: ticketDetailEntries(data.tickets, repoRootHref, views.slice(1).map((v) => v.tickets)),

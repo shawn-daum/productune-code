@@ -283,3 +283,44 @@ test('C1: after logical split the code repo IGNORES meta — status clean, add -
   expect(exclude).toContain('/.prdt')
   expect(exclude).toContain('/docs/prd')
 })
+
+// ── T-848 S4: the code repo's info/exclude write refuses links, keeps the mode ──
+
+test('T-848 S4: info/exclude planted as a link to a victim → victim byte-identical, migration still ok', async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-victim-'))
+  try {
+    const victim = path.join(outside, 'precious')
+    fs.writeFileSync(victim, 'precious\n')
+    const ex = path.join(projectDir, '.git', 'info', 'exclude')
+    fs.mkdirSync(path.dirname(ex), { recursive: true })
+    fs.rmSync(ex, { force: true })
+    fs.symlinkSync(victim, ex)
+    expect((await runMetaMigration(projectDir)).ok).toBe(true)
+    expect(fs.readFileSync(victim, 'utf-8')).toBe('precious\n')
+    expect(fs.lstatSync(ex).isSymbolicLink()).toBe(true)
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test('T-848 S4: a link at .git/info (directory) is refused — nothing written through it', async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-victim-'))
+  try {
+    fs.rmSync(path.join(projectDir, '.git', 'info'), { recursive: true, force: true })
+    fs.symlinkSync(outside, path.join(projectDir, '.git', 'info'))
+    expect((await runMetaMigration(projectDir)).ok).toBe(true)
+    expect(fs.readdirSync(outside)).toEqual([])
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test('T-848 S4: an existing info/exclude keeps its mode when the managed block is written', async () => {
+  const ex = path.join(projectDir, '.git', 'info', 'exclude')
+  fs.mkdirSync(path.dirname(ex), { recursive: true })
+  fs.writeFileSync(ex, '# mine\n')
+  fs.chmodSync(ex, 0o600)
+  expect((await runMetaMigration(projectDir)).ok).toBe(true)
+  expect(fs.readFileSync(ex, 'utf-8')).toContain('/.prdt')
+  expect(fs.statSync(ex).mode & 0o7777).toBe(0o600)
+})
