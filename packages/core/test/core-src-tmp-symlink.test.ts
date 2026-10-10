@@ -158,16 +158,8 @@ const ROWS: Row[] = [
     call: (m, c) => m.setSnapshot(c.dir, 'T-1',
       { status: 'open', qa_status: null, qa_loops: null, lastCheckedAt: '2026-09-23T00:00:00Z' }),
   },
-  {
-    site: 'state/pending-promotions.ts writeStateAtomic (via appendPendingPromotion)',
-    file: 'state/pending-promotions.ts',
-    target: (c) => path.join(c.dir, '.prdt', 'po-state.json'),
-    prep: prdtProject,
-    call: (m, c) => m.appendPendingPromotion(c.dir, {
-      persona: 'developer', turn_id: 't1', scope: 'project', kind: 'habit',
-      target: 'docs/x.md', delta: 'd', rationale: 'r',
-    }),
-  },
+  // state/pending-promotions.ts moved to stateWriteFileSync (T-848 S4) — see
+  // test/fs/state-write-sites.test.ts for its planted-link cases.
 ]
 
 /** Plant `<target>.tmp` → victim, run the site, report what happened. */

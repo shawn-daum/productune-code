@@ -63,6 +63,7 @@ import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { stateDir } from '../state/project-kind'
+import { stateWriteFileSync, StateWriteRefused } from '../fs/state-write'
 import {
   metaGit,
   metaGitDir,
@@ -168,9 +169,13 @@ export function readMetaBackupState(projectDir: string): MetaBackupState {
 
 function writeMetaBackupState(projectDir: string, state: MetaBackupState): void {
   const fp = metaBackupStatePath(projectDir)
-  const tmp = `${fp}.tmp-${process.pid}`
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n')
-  fs.renameSync(tmp, fp)
+  try {
+    stateWriteFileSync(projectDir, fp, JSON.stringify(state, null, 2) + '\n')
+  } catch (err) {
+    // A link planted at the state file (or above it) is refused: the tick never
+    // throws, so the state simply goes unrecorded (T-848 S4).
+    if (!(err instanceof StateWriteRefused)) throw err
+  }
 }
 
 // ── The tick's own lock (T-686) — inside the git-dir, never the meta tree ─────
