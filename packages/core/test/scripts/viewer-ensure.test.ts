@@ -50,13 +50,13 @@ if [ "$STUB_MODE" = fail ]; then
 fi
 if [ "$STUB_MODE" = slow ]; then echo $$ > "$STUB_LOG.pid"; sleep 4; fi
 nm="$PWD/packages/viewer/node_modules"
-mkdir -p "$nm/marked" "$nm/subset-font" "$nm/pretendard/dist/web/static/woff2"
-echo '{}' > "$nm/marked/package.json"; echo '{}' > "$nm/subset-font/package.json"
+mkdir -p "$nm/marked" "$nm/subset-font" "$nm/mermaid" "$nm/pretendard/dist/web/static/woff2"
+echo '{}' > "$nm/marked/package.json"; echo '{}' > "$nm/subset-font/package.json"; echo '{}' > "$nm/mermaid/package.json"
 `
 
 let sb: string, home: string, root: string, code: string, prdt: string, log: string, binDir: string
 
-function fakeCheckout(withDeps: boolean) {
+function fakeCheckout(withDeps: boolean, omitPkg: string[] = []) {
   code = path.join(sb, 'code')
   const scripts = path.join(code, 'packages', 'core', 'scripts')
   const viewer = path.join(code, 'packages', 'viewer')
@@ -69,7 +69,7 @@ function fakeCheckout(withDeps: boolean) {
   fs.mkdirSync(path.join(code, 'packages', 'gui', 'src', 'styles'), { recursive: true })
   fs.writeFileSync(path.join(code, 'packages', 'gui', 'src', 'styles', 'tokens.css'), ':root{}')
   if (withDeps) {
-    for (const pkg of ['marked', 'subset-font']) {
+    for (const pkg of ['marked', 'subset-font', 'mermaid'].filter((x) => !omitPkg.includes(x))) {
       fs.mkdirSync(path.join(viewer, 'node_modules', pkg), { recursive: true })
       fs.writeFileSync(path.join(viewer, 'node_modules', pkg, 'package.json'), '{}')
     }
@@ -83,7 +83,7 @@ function pnpmCalls(): string[] {
 const page = () => path.join(root, '.prdt', 'scratch', 'viewer', 'viewer.html')
 
 function env(mode: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  return { ...process.env, PRDT_HOME: home, PRDT_BIN: prdt, STUB_LOG: log, STUB_MODE: mode,
+  return { ...process.env, HOME: path.join(sb, 'sandbox-home'), PRDT_HOME: home, PRDT_BIN: prdt, STUB_LOG: log, STUB_MODE: mode,
            PATH: `${binDir}${path.delimiter}${process.env.PATH}`, ...extra }
 }
 function ensure(mode: string, args: string[] = []) {
@@ -118,6 +118,15 @@ describe.skipIf(!PYTHON3 || !NODE)('prdt viewer --ensure (T-983)', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]).toBe(`${code}\tinstall --frozen-lockfile --filter @productune/viewer --ignore-scripts --config.fetch-retries=1`)
     expect(fs.existsSync(page())).toBe(true)
+  })
+
+  test('T-1063: every dep present except mermaid: ensure installs (the page exists already)', () => {
+    fakeCheckout(true, ['mermaid'])
+    fs.mkdirSync(path.dirname(page()), { recursive: true })
+    fs.writeFileSync(page(), 'old')
+    expect(ensure('ok')).toMatchObject({ code: 0, out: '', err: '' })
+    expect(pnpmCalls()).toHaveLength(1)
+    expect(fs.existsSync(path.join(code, 'packages', 'viewer', 'node_modules', 'mermaid', 'package.json'))).toBe(true)
   })
 
   test('deps present, page absent: builds without any install', () => {
@@ -184,6 +193,23 @@ describe.skipIf(!PYTHON3 || !NODE || !JQ)('PO session start runs the ensure (T-9
     fakeCheckout(false)
     hook('prdt-po', 'SessionStart')
     expect(await waitPage()).toBe(true)
+    expect(pnpmCalls()).toHaveLength(1)
+  })
+
+  test('T-1063: page present, only mermaid missing: the session start still spawns the ensure', async () => {
+    fakeCheckout(true, ['mermaid'])
+    const h = path.join(sb, 'hh')
+    fs.mkdirSync(h, { recursive: true })
+    fs.writeFileSync(path.join(h, 'prdt.env'), `PRDT_REPO=${path.join(code, 'packages', 'core')}\n`)
+    fs.mkdirSync(path.dirname(page()), { recursive: true })
+    fs.writeFileSync(page(), 'x')
+    spawnSync('bash', [HOOK], { cwd: root, encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      input: JSON.stringify({ agent_type: 'prdt-po', hook_event_name: 'SessionStart', cwd: root }),
+      env: { ...env('ok'), PRDT_HOME: h } })
+    const t0 = Date.now()
+    const done = path.join(code, 'packages', 'viewer', 'node_modules', 'mermaid', 'package.json')
+    while (!fs.existsSync(done) && Date.now() - t0 < 6000) await new Promise((r) => setTimeout(r, 50))
+    await new Promise((r) => setTimeout(r, 500)) // the detached ensure goes on to regenerate the page
     expect(pnpmCalls()).toHaveLength(1)
   })
 
@@ -270,5 +296,38 @@ describe.skipIf(!PYTHON3 || !NODE || !JQ)('T-983 hook skips the spawn when ready
     const t0 = Date.now()
     while (!fs.existsSync(`${log}.stub`) && Date.now() - t0 < 6000) await new Promise((r) => setTimeout(r, 50))
     expect(fs.readFileSync(`${log}.stub`, 'utf8').trim()).toBe('viewer --ensure')
+  })
+})
+
+describe.skipIf(!PYTHON3 || !NODE)('T-1063 generation without mermaid', () => {
+  const MARK = 'PRDT_VIEWER_WARN mermaid-missing'
+
+  test('mermaidScript() with no mermaid package prints the marker once and returns null', () => {
+    // the lib copied under the sandbox: `mermaid` resolves from nowhere
+    const lib = path.join(sb, 'lib')
+    fs.mkdirSync(lib)
+    fs.copyFileSync(path.join(CORE_ROOT, '..', 'viewer', 'lib', 'mermaid.mjs'), path.join(lib, 'mermaid.mjs'))
+    const r = spawnSync(NODE as string, ['--input-type=module', '-e',
+      `import { mermaidScript } from ${JSON.stringify(path.join(lib, 'mermaid.mjs'))}; console.log(String(mermaidScript()))`],
+      { encoding: 'utf8', timeout: subprocessTimeout('cli'), env: { ...process.env, NODE_PATH: '' } })
+    expect(r.stdout.trim()).toBe('null')
+    expect(r.stderr.trim().split('\n')).toEqual([MARK])
+  })
+
+  test('prdt viewer turns the generator marker into one line naming mermaid and the fix; absent marker: silent', () => {
+    fakeCheckout(true)
+    const cli = path.join(code, 'packages', 'viewer', 'cli.mjs')
+    const warn = OK_CLI.replace("if (a.includes('--emit')) {", `if (a.includes('--emit')) {\n  console.error('${MARK}')`)
+    fs.writeFileSync(cli, warn)
+    const run = () => spawnSync(PYTHON3 as string, [prdt, 'viewer'], {
+      cwd: root, encoding: 'utf8', timeout: subprocessTimeout('cli'), env: env('ok') })
+    const r = run()
+    expect(r.status).toBe(0)
+    const lines = r.stderr.trim().split('\n')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('mermaid')
+    expect(lines[0]).toContain('pnpm install --frozen-lockfile --filter @productune/viewer')
+    fs.writeFileSync(cli, OK_CLI)
+    expect(run().stderr).toBe('')
   })
 })

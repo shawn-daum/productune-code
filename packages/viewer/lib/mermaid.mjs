@@ -58,6 +58,14 @@ scan()})();`
  * package is not installed (the page then shows each diagram as source text).
  */
 export function mermaidScript() {
+  const s = loadMermaidScript()
+  // T-1063: the caller asks only for a page that carries a diagram, so a null here is a
+  // diagram left as source — one stderr marker lets `prdt viewer` name the fix.
+  if (!s) console.error('PRDT_VIEWER_WARN mermaid-missing')
+  return s
+}
+
+function loadMermaidScript() {
   let bundle
   try {
     const file = createRequire(import.meta.url).resolve('mermaid/dist/mermaid.min.js')
