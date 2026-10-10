@@ -113,7 +113,7 @@ describe('prdt wordlist check', () => {
 
   test('markdown exemptions: code spans, fences, verbatim *"…"* quotes, frontmatter, fixed heading separators', () => {
     const p = write('docs/tickets/v1.0/T-001.md', [
-      '---', 'title: 모름', '---', '## v1.2 — 라벨', '#### F-1 — 라벨',
+      '---', 'title: 모름', '---', '## v1.2 — 라벨', '#### f-1 — 라벨',
       '사용자: *"머무른다 착지한다 이런게 slop"*', '`모름`', '```', '착지', '```', '본문 — 끝',
     ].join('\n') + '\n')
     const r = cli(['check', '--json', p])
@@ -171,12 +171,78 @@ describe('prdt wordlist check', () => {
     }
   })
 
-  test('a malformed project list is named, exit 3', () => {
+  test('a malformed project list is named on stderr and skipped; canon still applies', () => {
     write('.prdt/wordlist/ko.json', '{ not json')
     try {
-      const r = cli(['check', '--lang', 'ko', '-'], { input: '가\n' })
-      expect(r.code).toBe(3)
+      const r = cli(['check', '--lang', 'ko', '-'], { input: '모름\n' })
+      expect(r.code).toBe(1)
+      expect(r.out).toContain('모름 →')
       expect(r.err).toContain('.prdt/wordlist/ko.json')
+    } finally {
+      fs.rmSync(path.join(project, '.prdt', 'wordlist'), { recursive: true, force: true })
+    }
+  })
+})
+
+describe('grill fixes (d-T977-fix)', () => {
+  test('every contract-legal fixed heading form keeps its em dash; prose em dash and HTML entities still hit', () => {
+    const p = write('docs/prd/heads.md', [
+      '## v2 — a', '## v1.1.0 — b', '## android v2.1 — c', '#### push-flow — d', '본문 — 끝', '<p>a &mdash; b &#8212; c</p>',
+    ].join('\n') + '\n')
+    const j = JSON.parse(cli(['check', '--json', '--lang', 'ko', p]).out)
+    expect(j.files[0].hits.map((h: any) => `${h.line}:${h.match}`)).toEqual(['5:—', '6:&mdash;', '6:&#8212;'])
+  })
+
+  test('URLs, data-* attribute names, inline <code> in md and indented code blocks are masked', () => {
+    const md = write('docs/prd/mask.md', '참고 https://x.io/모름/착지 링크\n<code>모름</code> 끝\n\n    착지 코드\n')
+    expect(JSON.parse(cli(['check', '--json', '--lang', 'ko', md]).out).total).toBe(0)
+    const html = write('docs/artifacts/v1.0/attr.html', '<p data-title="모름 x">https://a.io/착지 본문</p><a title="착지">링크</a>\n')
+    const j = JSON.parse(cli(['check', '--json', html]).out)
+    expect(j.files[0].hits.map((h: any) => h.match)).toEqual(['착지'])
+  })
+
+  test('one span is reported once, the longer entry wins (사람 손으로)', () => {
+    const j = JSON.parse(cli(['check', '--json', '--lang', 'ko', '-'], { input: '사람 손으로 했다\n' }).out)
+    expect(j.files[0].hits.map((h: any) => h.word)).toEqual(['사람 손'])
+  })
+
+  test('hook: a malformed project list still runs canon and names the bad file; doctor reports it', () => {
+    write('.prdt/wordlist/ko.json', '{ not json')
+    try {
+      const p = write('docs/artifacts/v1.0/bad.md', '상태 모름\n')
+      const r = spawnSync('bash', [path.join(prdtHome, 'hooks', 'prdt-wordlist-check.sh')], {
+        cwd: project, env: env(), encoding: 'utf-8', timeout: subprocessTimeout('hook'),
+        input: JSON.stringify({ tool_name: 'Write', cwd: project, tool_input: { file_path: p } }),
+      })
+      const ctx: string = JSON.parse(r.stdout).hookSpecificOutput.additionalContext
+      expect(ctx).toMatch(/"모름" → /)
+      expect(ctx).toMatch(/warning: .*\.prdt\/wordlist\/ko\.json.*canon list still applied/)
+      // doctor's check function, loaded in-process (fact--test-suite: SourceFileLoader pattern)
+      const py = [
+        'import sys, importlib.machinery as m',
+        'p = m.SourceFileLoader("prdt", sys.argv[1]).load_module()',
+        'print("\\n".join(p.wordlist_project_warnings(sys.argv[2])))',
+      ].join('\n')
+      const doc = spawnSync('python3', ['-c', py, PRDT_CLI, project], { cwd: project, env: env(), encoding: 'utf-8', timeout: subprocessTimeout('cli') })
+      expect(doc.stdout).toMatch(/wordlist: .*\.prdt\/wordlist\/ko\.json/)
+    } finally {
+      fs.rmSync(path.join(project, '.prdt', 'wordlist'), { recursive: true, force: true })
+    }
+  })
+
+  test('hook: a catastrophic project pattern is skipped with a context line, the write is not stalled', () => {
+    write('.prdt/wordlist/ko.json', JSON.stringify({ lang: 'ko', schema: 1, entries: [{ word: 'bad', pattern: '(가+)+나', replace: ['x'] }] }))
+    try {
+      const p = write('docs/artifacts/v1.0/redos.md', '가'.repeat(60) + ' 모름\n')
+      const t0 = Date.now()
+      const r = spawnSync('bash', [path.join(prdtHome, 'hooks', 'prdt-wordlist-check.sh')], {
+        cwd: project, env: env(), encoding: 'utf-8', timeout: subprocessTimeout('hook'),
+        input: JSON.stringify({ tool_name: 'Write', cwd: project, tool_input: { file_path: p } }),
+      })
+      expect(Date.now() - t0).toBeLessThan(10_000)
+      const ctx: string = JSON.parse(r.stdout).hookSpecificOutput.additionalContext
+      expect(ctx).toMatch(/warning: .*'bad'.*skipped/)
+      expect(ctx).toMatch(/"모름" → /)
     } finally {
       fs.rmSync(path.join(project, '.prdt', 'wordlist'), { recursive: true, force: true })
     }

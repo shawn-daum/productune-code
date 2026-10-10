@@ -14924,6 +14924,8 @@ def cmd_doctor(_args):
         # discipline mirror exists at all.
         ("prdt script mirror drift", FAMILY_DE, lambda: prdt_script_drift_warnings()),
         ("bin helper modules", FAMILY_DE, lambda: bin_helper_warnings()),
+        # T-977: a broken project word list is skipped by the write-time hook
+        ("project word list", FAMILY_PROJECT, lambda: wordlist_project_warnings(root)),
         # meta-cli bridge (dist/bin/meta-cli.cjs) behind packages/core/src (T-731) —
         # a BUILD staleness, not a mirror-content diff like the three checks
         # around it, but the same family: a committed fix binds nothing until
@@ -15784,8 +15786,12 @@ WORDLIST_SURFACE_RES = (
     re.compile(r"^docs/tickets/.+\.md$"),
 )
 _WORDLIST_HTML_SKIP = {"script", "style", "code", "pre", "del", "s", "template", "noscript"}
-_WORDLIST_HTML_ATTRS_RE = re.compile(r"""\b(?:title|alt|placeholder|aria-label)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
+_WORDLIST_HTML_ATTRS_RE = re.compile(r"""(?<![\w-])(?:title|alt|placeholder|aria-label)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
 _WORDLIST_HOOK_MAX_LINES = 15
+_WORDLIST_URL_RE = r"\bhttps?://[^\s<>\"')\]]+"
+# Per-entry, per-file match budget (seconds): a catastrophic pattern (a project
+# list's `(가+)+나`) is skipped with a warning instead of stalling the write.
+_WORDLIST_TIMEOUT_S = 0.5
 
 
 class WordlistError(Exception):
@@ -15811,9 +15817,11 @@ def _wordlist_project_file(root, lang):
     return Path(root) / ".prdt" / "wordlist" / f"{lang}.json" if root else None
 
 
-def wordlist_entries(lang, root=None):
+def wordlist_entries(lang, root=None, warnings=None):
     """Canon list for `lang` merged with the project's local one (by `word`).
-    Each returned entry carries its compiled `_re` and `_except` regexes."""
+    Each returned entry carries its compiled `_re` and `_except` regexes.
+    With a `warnings` list, a broken PROJECT file or entry is reported there and
+    skipped (canon still applies); without one it raises WordlistError."""
     merged, order = {}, []
     sources = []
     canon = wordlist_canon_dir()
@@ -15823,9 +15831,20 @@ def wordlist_entries(lang, root=None):
     if proj and proj.is_file():
         sources.append(proj)
     for src in sources:
-        for e in _wordlist_read(src):
+        try:
+            raw = _wordlist_read(src)
+        except WordlistError as ex:
+            if warnings is None or src != proj:
+                raise
+            warnings.append(f"{ex} (project list skipped, canon list still applied)")
+            continue
+        for e in raw:
             if not isinstance(e, dict) or not isinstance(e.get("word"), str) or not e.get("replace"):
-                raise WordlistError(f"prdt wordlist: {src}: every entry needs `word` and `replace` ({e!r})")
+                msg = f"prdt wordlist: {src}: every entry needs `word` and `replace` ({e!r})"
+                if warnings is None or src != proj:
+                    raise WordlistError(msg)
+                warnings.append(msg + " (entry skipped)")
+                continue
             w = e["word"]
             if w not in merged:
                 order.append(w)
@@ -15839,7 +15858,11 @@ def wordlist_entries(lang, root=None):
             e["_re"] = re.compile(e.get("pattern") or re.escape(w), re.I if "i" in (e.get("flags") or "") else 0)
             e["_except"] = [re.compile(x) for x in (e.get("except_line") or [])]
         except re.error as ex:
-            raise WordlistError(f"prdt wordlist: {e['_src']}: entry {w!r}: bad pattern: {ex}")
+            msg = f"prdt wordlist: {e['_src']}: entry {w!r}: bad pattern: {ex}"
+            if warnings is None or e["_src"] != str(proj):
+                raise WordlistError(msg)
+            warnings.append(msg + " (entry skipped)")
+            continue
         out.append(e)
     return out
 
@@ -15895,9 +15918,13 @@ def _wordlist_md_visible(text):
     m = re.match(r"---\n.*?\n---[ \t]*(?:\n|$)", text, re.S)
     if m:
         spans.append((m.start(), m.end()))
-    for rx in (r"^(```|~~~).*?^\1[ \t]*$", r"<!--.*?-->", r"`[^`\n]+`", r"\*\"[^\"\n]*\"\*"):
+    for rx in (r"^(```|~~~).*?^\1[ \t]*$", r"<!--.*?-->", r"`[^`\n]+`", r"\*\"[^\"\n]*\"\*",
+               r"<code\b[^>]*>.*?</code>", r"<pre\b[^>]*>.*?</pre>", _WORDLIST_URL_RE):
         for m in re.finditer(rx, text, re.S | re.M):
             spans.append((m.start(), m.end()))
+    # indented code block: a run of 4-space / tab lines opened after a blank line
+    for m in re.finditer(r"(?:^|\n)[ \t]*\n((?:(?: {4}|\t)[^\n]*(?:\n|$))+)", text):
+        spans.append((m.start(1), m.end(1)))
     spans.sort()
     keep, pos = [], 0
     for s, e in spans:
@@ -15953,7 +15980,22 @@ def _wordlist_html_visible(text):
         def handle_data(self, data):
             if not self.skipping():
                 at = absolute(*self.getpos())
-                keep.append((at, at + len(data)))
+                pos = 0
+                for m in re.finditer(_WORDLIST_URL_RE, data):
+                    keep.append((at + pos, at + m.start()))
+                    pos = m.end()
+                keep.append((at + pos, at + len(data)))
+
+        def _ref(self, width):
+            if not self.skipping():
+                at = absolute(*self.getpos())
+                keep.append((at, at + width))
+
+        def handle_entityref(self, name):
+            self._ref(len(name) + 2)
+
+        def handle_charref(self, name):
+            self._ref(len(name) + 3)
 
     p = P()
     try:
@@ -15964,23 +16006,57 @@ def _wordlist_html_visible(text):
     return _wordlist_mask(text, keep)
 
 
-def wordlist_scan(text, entries, kind="md"):
+class _WordlistTimeout(Exception):
+    pass
+
+
+def _wordlist_alarm(*_):
+    raise _WordlistTimeout()
+
+
+def wordlist_scan(text, entries, kind="md", warnings=None):
     """[{line, col, match, word, replace}] for every entry hit in the checked
-    part of `text` (kind = md | html)."""
+    part of `text` (kind = md | html). One span is reported once: overlapping
+    hits keep the longer match. Each entry gets `_WORDLIST_TIMEOUT_S` per file
+    (SIGALRM, main thread only); past it the entry is skipped with a warning."""
+    import signal
     visible = _wordlist_html_visible(text) if kind == "html" else _wordlist_md_visible(text)
     raw_lines = text.split("\n")
-    hits = []
-    for i, line in enumerate(visible.split("\n")):
-        if not line.strip():
+    vis_lines = visible.split("\n")
+    can_alarm = hasattr(signal, "setitimer") and __import__("threading").current_thread() is __import__("threading").main_thread()
+    found = []
+    for e in entries:
+        part = []
+        old = signal.signal(signal.SIGALRM, _wordlist_alarm) if can_alarm else None
+        try:
+            if can_alarm:
+                signal.setitimer(signal.ITIMER_REAL, _WORDLIST_TIMEOUT_S)
+            for i, line in enumerate(vis_lines):
+                if not line.strip():
+                    continue
+                raw = raw_lines[i] if i < len(raw_lines) else line
+                if any(x.search(raw) for x in e["_except"]):
+                    continue
+                for m in e["_re"].finditer(line):
+                    if m.group(0).strip():
+                        part.append((i + 1, m.start(), m.end(), m.group(0), e))
+        except _WordlistTimeout:
+            part = []
+            if warnings is not None:
+                warnings.append(f"prdt wordlist: entry {e['word']!r} ({e.get('_src', '?')}) exceeded "
+                                f"{_WORDLIST_TIMEOUT_S}s on this file and was skipped (catastrophic pattern?)")
+        finally:
+            if can_alarm:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                signal.signal(signal.SIGALRM, old)
+        found.extend(part)
+    taken, hits = {}, []
+    for ln, s, en, txt, e in sorted(found, key=lambda h: -(h[2] - h[1])):
+        spans = taken.setdefault(ln, [])
+        if any(s < b and a < en for a, b in spans):
             continue
-        raw = raw_lines[i] if i < len(raw_lines) else line
-        for e in entries:
-            if any(x.search(raw) for x in e["_except"]):
-                continue
-            for m in e["_re"].finditer(line):
-                if m.group(0).strip():
-                    hits.append({"line": i + 1, "col": m.start() + 1, "match": m.group(0),
-                                 "word": e["word"], "replace": list(e["replace"])})
+        spans.append((s, en))
+        hits.append({"line": ln, "col": s + 1, "match": txt, "word": e["word"], "replace": list(e["replace"])})
     hits.sort(key=lambda h: (h["line"], h["col"]))
     return hits
 
@@ -16002,9 +16078,27 @@ def _wordlist_label(h):
     return h["match"] if h["match"] == h["word"] else f"{h['match']} ({h['word']})"
 
 
-def wordlist_check_text(text, name, lang_arg, root):
+def wordlist_check_text(text, name, lang_arg, root, warnings=None):
     lang = lang_arg or wordlist_detect_lang(text, root)
-    return lang, wordlist_scan(text, wordlist_entries(lang, root), _wordlist_kind(name))
+    entries = wordlist_entries(lang, root, warnings)
+    return lang, wordlist_scan(text, entries, _wordlist_kind(name), warnings)
+
+
+def wordlist_project_warnings(root):
+    """Doctor: every `.prdt/wordlist/<lang>.json` that is unreadable, malformed
+    or carries a bad entry — the write-time hook skips it, so say so here."""
+    d = Path(root) / ".prdt" / "wordlist"
+    if not d.is_dir():
+        return Skipped("no project word list (.prdt/wordlist/)")
+    warns = []
+    for f in sorted(d.glob("*.json")):
+        w = []
+        try:
+            wordlist_entries(f.stem, root, w)
+        except WordlistError as ex:
+            w.append(str(ex))
+        warns.extend(f"wordlist: {x}" for x in w)
+    return warns
 
 
 def _wordlist_hook(root_hint):
@@ -16026,13 +16120,15 @@ def _wordlist_hook(root_hint):
         rel = f.resolve().relative_to(root).as_posix()
         if not any(rx.match(rel) for rx in WORDLIST_SURFACE_RES):
             return
-        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root)
+        warns = []
+        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns)
     except Exception:
         return
-    if not hits:
+    if not hits and not warns:
         return
     lines = [f"[prdt wordlist] {rel}: {len(hits)} hit(s) from the {lang} UX-writing word list. "
              f"Rewrite each with its plain replacement (contracts §Language):"]
+    lines += [f"- warning: {w}" for w in warns]
     for h in hits[:_WORDLIST_HOOK_MAX_LINES]:
         lines.append(f"- line {h['line']} \"{_wordlist_label(h)}\" → {' · '.join(h['replace'])}")
     if len(hits) > _WORDLIST_HOOK_MAX_LINES:
@@ -16074,7 +16170,10 @@ def cmd_wordlist(args):
                 except (OSError, UnicodeDecodeError) as e:
                     print(f"prdt wordlist check: cannot read {name}: {e}", file=sys.stderr)
                     sys.exit(3)
-            lang, hits = wordlist_check_text(text, shown, args.lang, root)
+            warns = []
+            lang, hits = wordlist_check_text(text, shown, args.lang, root, warns)
+            for w in warns:
+                print(w, file=sys.stderr)
             report.append({"path": shown, "lang": lang, "hits": hits})
     except WordlistError as e:
         print(str(e), file=sys.stderr)
