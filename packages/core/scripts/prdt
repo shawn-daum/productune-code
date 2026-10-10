@@ -11137,6 +11137,17 @@ def doctor_verdict_lines(records):
     # second free to look like any line doctor prints. The refusals upstream are
     # the fix; this is the render-time floor under all of them, and the one
     # place that covers a reason path added later without one.
+    # T-941: `violations=N` is only actionable when each of the N is named — the
+    # check and the subject (its own warning line). An Advisory stores an explicit
+    # 0 and is not listed (it prints as ⚠ and was never counted).
+    for r in ran:
+        if r.get("violations", len(r["warnings"])):
+            for w in r["warnings"]:
+                # The subject is the warning minus its own `<tag>: ` lead — the
+                # ⚠ line above already carries the tag, and repeating it would
+                # make one finding match two lines for anything that greps it.
+                subject = re.sub(r"^[A-Za-z][\w .+/-]{0,40}: ", "", one_line(w), count=1)
+                lines.append(f"doctor:    mismatch · {r['name']} — {subject[:160]}")
     for r in attested:
         lines.append(f"doctor:    human record · {r['name']}: {one_line(r['reason'])}")
     for r in skipped:
@@ -15519,8 +15530,31 @@ def cmd_env(args):
     sys.exit(worst)
 
 
+def installed_prdt_version():
+    """The installed prdt's release version (T-941) — the newest `## <version>`
+    section of the code repo's docs/RELEASES.md, the same source `prdt update`
+    compares against. The repo is the script's own checkout when run from it,
+    else the `PRDT_REPO` the installer recorded in `prdt.env` (the installed
+    `~/.prdt/bin` copy has no repo beside it). None when neither is readable."""
+    parents = Path(__file__).resolve().parents
+    roots = [parents[3]] if len(parents) > 3 else []
+    try:
+        for line in (prdt_home() / "prdt.env").read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRDT_REPO="):
+                roots.append(Path(line.split("=", 1)[1].strip()))
+    except OSError:
+        pass
+    for r in roots:
+        v, _ = releases_local(r)
+        if v:
+            return v
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(prog="prdt", description=__doc__)
+    ap.add_argument("--version", dest="show_version", action="store_true",
+                    help="print the installed prdt version and exit")
     sub = ap.add_subparsers(dest="cmd")
     p = sub.add_parser("init", help="interactive 2-item project init (slug · version); stage defaults to define")
     p.add_argument("--slug")
@@ -15792,6 +15826,12 @@ def main():
         print(msg(load_messages(), "settings.error.usage"))
         sys.exit(0)
     args = ap.parse_args()
+    if args.show_version and not args.cmd:
+        v = installed_prdt_version()
+        if not v:
+            sys.exit("prdt: version unknown — no docs/RELEASES.md beside this script or at PRDT_REPO (~/.prdt/prdt.env)")
+        print(f"prdt {v}")
+        return
     # T-773: `schedule record` is the dispatch gate's (a per-turn hook's) call —
     # contracts §Git names no per-turn hook as a meta-backup trigger, and a hook
     # has no terminal to prompt on.
