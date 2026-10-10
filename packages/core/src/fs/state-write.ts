@@ -37,7 +37,7 @@ export class StateWriteRefused extends Error {
 }
 
 export interface StateWriteOpts {
-  /** Mode for a NEW file (an existing file keeps its own). Default 0o644 (umask applies). */
+  /** Mode for a NEW file (an existing file keeps its own). Default 0o666 (umask applies, as fs.writeFileSync). */
   mode?: number
   /** Append instead of replace. */
   append?: boolean
@@ -139,7 +139,7 @@ export function stateWriteFileSync(
       fs.openSync(
         target,
         fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | NOFOLLOW,
-        opts.mode ?? 0o644,
+        opts.mode ?? 0o666,
       ),
     )
     try {
@@ -163,7 +163,7 @@ export function stateWriteFileSync(
     // A read-only existing file (0444) is left alone: refuse, never chmod it.
     const fd = refuseOn(() => {
       try {
-        return fs.openSync(target, flags, opts.mode ?? 0o644)
+        return fs.openSync(target, flags, opts.mode ?? 0o666)
       } catch (err) {
         const code = (err as NodeJS.ErrnoException)?.code
         if (existing && (code === 'EACCES' || code === 'EPERM')) throw new StateWriteRefused('readonly')
@@ -192,7 +192,7 @@ export function stateWriteFileSync(
     fs.openSync(
       tmp,
       fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NOFOLLOW,
-      existing ? 0o600 : (opts.mode ?? 0o644),
+      existing ? 0o600 : (opts.mode ?? 0o666),
     ),
   )
   let renamed = false
