@@ -174,3 +174,30 @@ test('T-847: a missing info/ dir is recreated and exclude written', async () => 
   expect(fs.lstatSync(excludePath()).isFile()).toBe(true)
   expect(fs.readFileSync(excludePath(), 'utf-8').split('\n')).toContain('.prdt/worktrees/')
 })
+
+test('T-848 S4: an existing exclude keeps its mode on rewrite (0600, 0755) and no temp file appears', async () => {
+  for (const mode of [0o600, 0o755]) {
+    fs.writeFileSync(excludePath(), 'stale\n')
+    fs.chmodSync(excludePath(), mode)
+    await metaAutosaveTick(projectDir)
+    expect(fs.readFileSync(excludePath(), 'utf-8')).not.toBe('stale\n')
+    expect(fs.statSync(excludePath()).mode & 0o7777).toBe(mode)
+    expect(fs.readdirSync(path.dirname(excludePath())).sort()).toEqual(['exclude'])
+  }
+})
+
+test('T-848 S4: a read-only (0444) exclude is skipped, not thrown on, and stays 0444', async () => {
+  fs.writeFileSync(excludePath(), 'stale\n')
+  fs.chmodSync(excludePath(), 0o444)
+  await expect(metaAutosaveTick(projectDir)).resolves.toBeDefined()
+  expect(fs.statSync(excludePath()).mode & 0o7777).toBe(0o444)
+  expect(fs.readdirSync(path.dirname(excludePath()))).toEqual(['exclude'])
+})
+
+test('T-848 S4: a swapped-in link above exclude leaves no temp file outside the project', async () => {
+  const info = path.join(metaGitDir(projectDir), 'info')
+  fs.rmSync(info, { recursive: true, force: true })
+  fs.symlinkSync(outside, info)
+  await expect(metaAutosaveTick(projectDir)).resolves.toBeDefined()
+  expect(fs.readdirSync(outside)).toEqual([])
+})
