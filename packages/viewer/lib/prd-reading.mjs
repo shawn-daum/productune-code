@@ -195,21 +195,78 @@ function declarationItems(text) {
   return items
 }
 
+/** A group body: an optional one-line summary paragraph, then the item list. null when it is neither. */
+function groupBody(text) {
+  const lines = String(text ?? '').split('\n')
+  const first = lines.findIndex((l) => /^[-*]\s+/.test(l))
+  if (first < 0) return null
+  const items = declarationItems(lines.slice(first).join('\n'))
+  if (!items || items.length === 0) return null
+  const summary = lines.slice(0, first).map((l) => l.trim()).filter(Boolean).join(' ')
+  return { summary, items }
+}
+
+/**
+ * T-1048: `### As-Is` and `### To-Be` that each hold the same `####` headings in the same order become
+ * meaning groups. Heading text is `name · one-line title`. Pairs whose To-Be item starts with the
+ * 「(v1.14 로 옮김, T-1021)」 prefix leave their group and gather into one group at the bottom.
+ * Returns null (today's view) on any mismatch.
+ */
+function pairGroups(a, b) {
+  if (a.children.length === 0 || a.children.length !== b.children.length) return null
+  if (a.ownText.trim() !== '' || b.ownText.trim() !== '') return null
+  const groups = []
+  for (let k = 0; k < a.children.length; k++) {
+    const [x, y] = [a.children[k], b.children[k]]
+    if (x.level !== 4 || y.level !== 4 || x.title !== y.title || x.children.length || y.children.length) return null
+    const [ga, gb] = [groupBody(x.ownText), groupBody(y.ownText)]
+    if (!ga || !gb || ga.items.length !== gb.items.length) return null
+    const [name, ...rest] = x.title.split(/\s+·\s+/)
+    groups.push({ name, label: rest.join(' · '), sumA: ga.summary && gb.summary ? ga.summary : '', sumB: ga.summary && gb.summary ? gb.summary : '', pairs: ga.items.map((it, i) => [it, gb.items[i]]) })
+  }
+  const kept = []
+  const moved = { pairs: [], from: new Set(), tag: '' }
+  for (const g of groups) {
+    const stay = []
+    for (const p of g.pairs) {
+      const m = L.movedPrefix.exec(p[1])
+      if (m) {
+        moved.pairs.push(p)
+        moved.from.add(g)
+        moved.tag ||= L.movedTag(m[1], m[2])
+      } else stay.push(p)
+    }
+    if (stay.length) kept.push({ ...g, pairs: stay })
+  }
+  if (moved.pairs.length) {
+    const only = moved.from.size === 1 ? [...moved.from][0] : null
+    kept.push({ name: only ? only.name : L.movedTitle, label: only ? only.label : '', sumA: only ? only.sumA : '', sumB: only ? only.sumB : '', pairs: moved.pairs, moved: true, tag: moved.tag })
+  }
+  return kept
+}
+
 /**
  * T-928: sibling `### As-Is` + `### To-Be` whose bodies are item lists of the same length become ONE
- * synthesized node (`pair`), shown as a paired table. Anything else is left as it is.
+ * synthesized node (`pair`), shown as a paired table. T-1048: when both hold matching `####` groups
+ * the node carries `pair.groups` instead. Anything else is left as it is.
  */
 function pairAsIsToBe(children) {
   const i = children.findIndex((c) => L.asIsSection.test(c.title))
   const j = children.findIndex((c, k) => k > i && L.toBeSection.test(c.title))
   if (i < 0 || j < 0) return children
   const [a, b] = [children[i], children[j]]
-  if (a.children.length || b.children.length || a.level !== b.level) return children
+  if (a.level !== b.level) return children
+  const join = (pair) => {
+    const node = { level: a.level, title: L.pairTitle, ownText: '', children: [], lines: a.lines + b.lines, pair }
+    return children.flatMap((c, k) => (k === i ? [node] : k === j ? [] : [c]))
+  }
+  const groups = a.children.length || b.children.length ? pairGroups(a, b) : null
+  if (groups) return join({ groups, asIs: groups.flatMap((g) => g.pairs.map((p) => p[0])), toBe: groups.flatMap((g) => g.pairs.map((p) => p[1])) })
+  if (a.children.length || b.children.length) return children
   const asIs = declarationItems(a.ownText)
   const toBe = declarationItems(b.ownText)
   if (!asIs || !toBe || asIs.length === 0 || asIs.length !== toBe.length) return children
-  const node = { level: a.level, title: L.pairTitle, ownText: '', children: [], lines: a.lines + b.lines, pair: { asIs, toBe } }
-  return children.flatMap((c, k) => (k === i ? [node] : k === j ? [] : [c]))
+  return join({ asIs, toBe })
 }
 
 /** Wrap every markdown table: its column count as a class (2 = label | text, wide = grid) + a scroll box. */
@@ -277,11 +334,27 @@ export function renderPrdReading({ body, currentVersion, decisionTickets, idPref
       const { asIs, toBe } = node.pair
       const open = ctx.underOpen && L.initialOpen.test(node.title)
       const rowsHtml = asIs.map((a, k) => `<tr><td>${inline(a)}</td><td class="pr-arr">→</td><td>${inline(toBe[k])}</td></tr>`).join('')
-      const table =
-        `<div class="pr-tw"><table class="pr-tbl pr-pair"><thead><tr><th>${esc(L.pairHeads[0])}</th><th></th><th>${esc(L.pairHeads[1])}</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`
+      const pairHtml = (a, b, moved) => `<div class="pr-pr${moved ? ' is-moved' : ''}"><span class="a">${inline(a)}</span><span class="ar">→</span><span class="b">${inline(b)}</span></div>`
+      const groupsHtml = (node.pair.groups ?? [])
+        .map((g) => {
+          const gid = `${idPrefix}-s${++seq}`
+          const gkey = `${foldKey}/${plainInline(g.name)}${g.moved ? '~moved' : ''}`
+          return (
+            `<details class="pr-sec pr-grp${g.moved ? ' is-moved' : ''}" id="${gid}" data-fold="${esc(gkey)}" data-open0="0"><summary>` +
+            `<div class="pr-gh"><div class="pr-gt">${esc(g.name)}${g.tag ? `<span class="pr-gtag">${esc(g.tag)}</span>` : ''}</div>` +
+            (g.label ? `<div class="pr-gl">${inline(g.label)}</div>` : '') +
+            (g.sumA ? `<div class="pr-gsum"><span class="a">${inline(g.sumA)}</span><span class="ar">→</span><span class="b">${inline(g.sumB)}</span></div>` : '') +
+            `</div><span class="pr-meta mono">${esc(L.pairCount(g.pairs.length))}</span></summary>` +
+            `<div class="pr-pairs">${g.pairs.map((p) => pairHtml(p[0], p[1], g.moved)).join('')}</div></details>`
+          )
+        })
+        .join('')
+      const table = node.pair.groups
+        ? groupsHtml
+        : `<div class="pr-tw"><table class="pr-tbl pr-pair"><thead><tr><th>${esc(L.pairHeads[0])}</th><th></th><th>${esc(L.pairHeads[1])}</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`
       return (
         `<details class="pr-sec pr-l${node.level}" id="${id}" data-fold="${esc(foldKey)}" data-open0="${open ? 1 : 0}"${open ? ' open' : ''}>` +
-        `<summary><span class="pr-mark mono">${marks}</span><span class="pr-t">${esc(L.pairTitle)}</span><span class="pr-meta mono">${esc(L.pairCount(asIs.length))}</span></summary>` +
+        `<summary><span class="pr-mark mono">${marks}</span><span class="pr-t">${esc(L.pairTitle)}</span><span class="pr-meta mono">${esc(node.pair.groups ? L.groupCount(node.pair.groups.length, asIs.length) : L.pairCount(asIs.length))}</span></summary>` +
         `<div class="pr-body v-body">${table}</div></details>`
       )
     }
@@ -469,6 +542,24 @@ export const PRD_READING_CSS = `
 .pr-doc .v-body table.pr-pair td:last-child { color: var(--text-primary); font-weight: 600; }
 .pr-doc .v-body table.pr-pair td.pr-arr { width: 6%; text-align: center; color: var(--text-quaternary); padding-left: 0; padding-right: 0; font-weight: 400; }
 .pr-sec { margin: 0; }
+/* T-1048: As-Is → To-Be meaning groups (approved mockup docs/artifacts/v1.13/observation-fixes.html tab T-1048) */
+.pr-grp { border: 1px solid var(--border-item); border-radius: var(--radius-12); background: var(--bg-surface-base); margin: 0 0 var(--space-12); overflow: hidden; }
+.pr-grp > summary { align-items: start; padding: var(--space-12) var(--space-16); border-radius: 0; }
+.pr-grp > summary::before { align-self: start; margin-top: 6px; }
+.pr-gh { flex: 1; min-width: 0; }
+.pr-gt { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.pr-gtag { font-size: 10.5px; font-weight: 400; border: 1px dashed var(--border-inline); border-radius: var(--radius-100); padding: 0 7px; color: var(--text-tertiary); margin-left: var(--space-6); }
+.pr-gl { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
+.pr-gsum, .pr-pr { display: grid; grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr); gap: var(--space-6); }
+.pr-gsum { margin-top: var(--space-8); font-size: 12px; }
+.pr-gsum .a, .pr-pr .a { color: var(--text-tertiary); }
+.pr-gsum .b, .pr-pr .b { font-weight: 600; color: var(--text-primary); }
+.pr-gsum .ar, .pr-pr .ar { color: var(--text-quaternary); text-align: center; }
+.pr-pairs { border-top: 1px solid var(--border-item); padding: var(--space-4) var(--space-4) var(--space-6) var(--space-16); }
+.pr-pr { padding: var(--space-8) var(--space-12); border-bottom: 1px solid var(--border-section); font-size: 12.5px; line-height: 1.55; }
+.pr-pr:last-child { border-bottom: 0; }
+.pr-grp.is-moved .pr-gt { color: var(--text-tertiary); }
+.pr-grp.is-moved .pr-pr .a, .pr-grp.is-moved .pr-pr .b { color: var(--text-quaternary); font-weight: 400; }
 .pr-sec > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: var(--space-8); padding: var(--space-8) var(--space-8); border-radius: var(--radius-8); position: relative; }
 .pr-sec > summary::-webkit-details-marker { display: none; }
 .pr-sec > summary::before { content: ""; flex: 0 0 auto; width: 7px; height: 7px; border-right: 1.5px solid var(--text-tertiary); border-bottom: 1.5px solid var(--text-tertiary); transform: rotate(-45deg) translateY(-2px); transition: transform 120ms; margin-right: 2px; align-self: center; }
