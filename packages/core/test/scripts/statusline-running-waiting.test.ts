@@ -140,10 +140,13 @@ function jumpPagePath(id: string): string {
   return path.join(root, '.prdt', 'scratch', 'viewer', 'at', `${id}.html`)
 }
 
-function runStatusline(): string {
+function runStatusline(columns?: number): string {
+  const env: NodeJS.ProcessEnv = { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en' }
+  if (columns === undefined) delete env.COLUMNS
+  else env.COLUMNS = String(columns)
   return execFileSync('bash', [STATUSLINE_SH], {
     cwd: root, input: '', encoding: 'utf-8',
-    env: { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en' },
+    env,
   })
 }
 
@@ -290,7 +293,43 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const running = segment(out, 'working')
     const dec = segment(out, 'dec')
     expect(running).toBe('T-750(developer)>T-760,T-761+1 T-751(qa) T-752(developer) +1')
-    expect(dec).toBe('T-770>T-780 T-771 T-772 +1')
+    // T-1044: the action row has its own width budget — 4 open decisions all fit, no `+1`
+    expect(dec).toBe('T-770>T-780 T-771 T-772 T-773')
+  })
+
+  describe('T-1044 action row width budget', () => {
+    const decRow = (out: string): string => unwrapLinks(out.trim().split('\n').at(-1)!)
+    const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `T-${900 + i}`)
+
+    for (const n of [4, 10, 30]) {
+      for (const cols of [80, 120, 200]) {
+        test(`${n} open decisions at ${cols} columns: fits the width, whole ids, +N only on overflow`, () => {
+          ids(n).forEach((tid) => writeTicket(tid, { type: 'decision' }))
+          const row = decRow(runStatusline(cols))
+          expect(row.length).toBeLessThanOrEqual(cols)
+          expect(row.startsWith('decision ')).toBe(true)
+          const text = row.split(' | ')[0].slice('decision '.length)
+          const shown = text.match(/T-\d+/g) ?? []
+          const plus = text.match(/\+(\d+)$/)
+          // every shown id is a whole, real id; shown + overflow = all open ones
+          expect(shown.every((t) => ids(n).includes(t))).toBe(true)
+          expect(shown.length + (plus ? Number(plus[1]) : 0)).toBe(n)
+          // all fit → no `+N`; otherwise the row really would overflow with one more id
+          const full = `decision ${ids(n).join(' ')} | request 0`
+          if (full.length <= cols) expect(plus).toBeNull()
+          else expect(plus).not.toBeNull()
+        })
+      }
+    }
+
+    test('working row keeps its (3,3,2) limits while the action row lists all', () => {
+      ;['T-750', 'T-751', 'T-752', 'T-753'].forEach((tid, i) =>
+        writeMarker({ agentId: `run-${tid}`, ticketId: tid, persona: 'developer', ageMs: (4 - i) * 60_000 }))
+      ids(6).forEach((tid) => writeTicket(tid, { type: 'decision' }))
+      const out = runStatusline(200)
+      expect(segment(out, 'working')).toBe('T-750(developer) T-751(developer) T-752(developer) +1')
+      expect(segment(out, 'dec')).toBe(ids(6).join(' '))
+    })
   })
 
   test('a dispatch marker with no resolvable ticket_id never surfaces (belt: statusline itself still requires TICKET_RE)', () => {
@@ -557,7 +596,8 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     }
     const waiting = segment(out, 'dec')
     expect(waiting).toBeDefined()
-    expect(waiting).toMatch(/^T-770(>T-\d+(,T-\d+)?(\+\d+)?)? .*\+\d+$/) // first id(s) + a count tail, intact
+    // T-1044: the action row has its own budget — all 5 ids fit, so no `+N` (overflow is pinned by the width tests)
+    expect(waiting).toMatch(/^T-770(>[^ ]+)? T-771(>[^ ]+)? T-772(>[^ ]+)? T-773 T-774$/)
     expect(segment(out, 'working')).toMatch(/\+\d+$/)
   })
 
