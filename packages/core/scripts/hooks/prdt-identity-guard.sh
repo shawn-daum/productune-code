@@ -165,27 +165,34 @@ my (@emails, @names);
 sub add_email { my $e = lc(shift // ""); $e =~ s/\A\s+|\s+\z//g; push @emails, $e if $e =~ /\A[^\s\@]+\@[^\s\@]+\.[^\s\@]+\z/ && length($e) >= 6 }
 sub add_name  { my $n = shift // ""; $n =~ s/\A\s+|\s+\z//g; push @names, $n if $n =~ /\S\s+\S/ && length($n) >= 5 }
 
-my $cfgdir = $ENV{CLAUDE_CONFIG_DIR} // "";
-my $cj = ($cfgdir ne "" && -f "$cfgdir/.claude.json") ? "$cfgdir/.claude.json" : (($ENV{HOME} // "") . "/.claude.json");
-if (-f $cj) {
-  # jq parses the whole document; a parse failure prints nothing (stderr is
-  # /dev/null) and the git identity below still applies.
-  if (open(my $j, "-|", "jq", "-r", "(.oauthAccount // {}) | if type == \"object\" then ((.emailAddress // \"\") | tostring), ((.fullName // \"\") | tostring) else empty end", $cj)) {
-    my @v = split /\n/, (<$j> // "");
-    close $j;
-    add_email($v[0]) if defined $v[0];
-    add_name($v[1])  if defined $v[1];
+# Lazy (d-T976-fix2): nothing below reads the identity until the call is
+# known to be outbound — a call with no outbound unit never touches
+# .claude.json or git config.
+my $ID_LOADED = 0;
+sub load_identity {
+  return if $ID_LOADED; $ID_LOADED = 1;
+  my $cfgdir = $ENV{CLAUDE_CONFIG_DIR} // "";
+  my $cj = ($cfgdir ne "" && -f "$cfgdir/.claude.json") ? "$cfgdir/.claude.json" : (($ENV{HOME} // "") . "/.claude.json");
+  if (-f $cj) {
+    # jq parses the whole document; a parse failure prints nothing (stderr is
+    # /dev/null) and the git identity below still applies.
+    if (open(my $j, "-|", "jq", "-r", "(.oauthAccount // {}) | if type == \"object\" then ((.emailAddress // \"\") | tostring), ((.fullName // \"\") | tostring) else empty end", $cj)) {
+      my @v = split /\n/, (<$j> // "");
+      close $j;
+      add_email($v[0]) if defined $v[0];
+      add_name($v[1])  if defined $v[1];
+    }
   }
-}
-my $gdir = ($cwd ne "" && -d $cwd) ? $cwd : ($ENV{HOME} // "/");
-if (open(my $g, "-|", "git", "-C", $gdir, "config", "--get-regexp", "^user[.](email|name)\$")) {
-  my $out = <$g>; close $g; $out = "" unless defined $out;
-  for my $ln (split /\n/, $out) {
-    if    ($ln =~ /\Auser\.email\s+(.*)\z/i) { add_email($1) }
-    elsif ($ln =~ /\Auser\.name\s+(.*)\z/i)  { add_name($1) }
+  my $gdir = ($cwd ne "" && -d $cwd) ? $cwd : ($ENV{HOME} // "/");
+  if (open(my $g, "-|", "git", "-C", $gdir, "config", "--get-regexp", "^user[.](email|name)\$")) {
+    my $out = <$g>; close $g; $out = "" unless defined $out;
+    for my $ln (split /\n/, $out) {
+      if    ($ln =~ /\Auser\.email\s+(.*)\z/i) { add_email($1) }
+      elsif ($ln =~ /\Auser\.name\s+(.*)\z/i)  { add_name($1) }
+    }
   }
+  exit 0 unless @emails || @names;
 }
-exit 0 unless @emails || @names;
 
 # which identity a text holds: "email", "name", or ""
 sub ident_in {
@@ -211,6 +218,7 @@ my $PROSE = qr/\.(?:md|markdown|mdx|txt|rst|adoc|asciidoc|org)\z/i;
 sub verdict { print "$_[0] $_[1]"; exit 0 }
 
 if ($tool eq "WebFetch" || $tool eq "WebSearch") {
+  load_identity();
   my $w = ident_in($subject);
   if (!$w) {
     my $d = $subject;
@@ -223,8 +231,10 @@ if ($tool eq "WebFetch" || $tool eq "WebSearch") {
 
 if ($tool ne "Bash") {
   exit 0 if $target =~ $PROSE;
+  exit 0 unless $subject =~ $MARK;
+  load_identity();
   my $w = ident_in($subject);
-  verdict("file", $w) if $w && $subject =~ $MARK;
+  verdict("file", $w) if $w;
   exit 0;
 }
 
@@ -298,8 +308,10 @@ my %NET    = map { $_ => 1 } qw(curl wget nc ncat netcat telnet socat http https
 my %WRITER = map { $_ => 1 } qw(cat echo printf tee);
 my %LOCAL_GIT = map { $_ => 1 } qw(commit log config add status diff show tag branch rev-parse checkout switch reset restore stash merge rebase cherry-pick revert blame shortlog init mv rm grep worktree notes describe ls-files ls-tree cat-file for-each-ref reflog show-ref symbolic-ref update-ref format-patch apply am bisect clean gc mailmap var check-ignore);
 my %FILE_FLAG = map { $_ => 1 } qw(-T --upload-file -K --config --post-file --body-file --input);
-my $dir = ($cwd ne "" && -d $cwd) ? $cwd : "";
+my $dir0 = ($cwd ne "" && -d $cwd) ? $cwd : "";
+my $dir = $dir0;
 my %taint;
+my $PROBE = 1;
 
 sub resolve { my $p = shift; return $p if $p =~ m{\A/}; return "" if $dir eq ""; return "$dir/$p" }
 sub slurp {
@@ -344,6 +356,11 @@ my @units; my @u;
 for my $m (@mem) { push @u, $m; if (!$m->{pipe}) { push @units, [@u]; @u = () } }
 push @units, [@u] if @u;
 
+# Two passes over the same units: the PROBE pass only asks "is any unit
+# outbound" (identity not loaded, verdicts suppressed); the identity is
+# loaded and the units judged for real only when it says yes.
+sub judge_units {
+my $any_out = 0;
 for my $unit (@units) {
   my ($out, $ident, $where) = (0, "", "command");
   my @pipe_files;
@@ -441,6 +458,8 @@ for my $unit (@units) {
     $out ||= $m_out;
   }
   next unless $out;
+  $any_out = 1;
+  next if $PROBE;
   if (!$ident) {
     for my $f (@pipe_files) {
       next if $f eq "-" || !is_file($f);
@@ -450,6 +469,13 @@ for my $unit (@units) {
   }
   verdict($where, $ident) if $ident;
 }
+return $any_out;
+}
+
+exit 0 unless judge_units();
+load_identity();
+($PROBE, $dir, %taint) = (0, $dir0);
+judge_units();
 exit 0;
 PERL_EOF
 
