@@ -5951,7 +5951,7 @@ def legacy_kind(d):
     return None
 
 
-def reset_terminal_input_modes():
+def reset_terminal_input_modes(after_session=False):
     """T-799: some program run before us (a killed/interrupted arrow-key
     picker is the reproduced case — see below) can leave mouse tracking or
     focus reporting turned ON and never send the matching disable sequence.
@@ -5984,10 +5984,18 @@ def reset_terminal_input_modes():
     the disable, discard pending input, wait briefly for events still in
     flight from before the terminal processed the disable, and discard
     again. Cost: ~80 ms per launch; anything typed ahead during prdt's own
-    startup is dropped with it."""
+    startup is dropped with it.
+
+    T-957: `after_session=True` is the same reset run AFTER Claude Code exits
+    (`run_claude_then_restore`), additionally turning off bracketed paste
+    (2004), popping the kitty keyboard-protocol stack (`CSI < 99 u` — the
+    leftover that makes ctrl+c arrive as `^[[99;5u`) and resetting
+    modifyOtherKeys (`CSI > 4 ; 0 m`)."""
     if not sys.stdout.isatty():
         return
     reset = "".join(f"\x1b[?{mode}l" for mode in (1000, 1002, 1003, 1006, 1015, 1004))
+    if after_session:
+        reset += "\x1b[?2004l\x1b[<99u\x1b[>4;0m"
     try:
         sys.stdout.write(reset)
         sys.stdout.flush()
@@ -6020,6 +6028,43 @@ def discard_pending_tty_input(settle=0.08):
         pass
 
 
+def run_claude_then_restore(cmd):
+    """T-957: run Claude Code as a child (not `execvp`) so prdt outlives it and
+    can put the terminal back. Claude Code turns on SGR any-motion mouse
+    (1003/1006), focus reporting (1004) and the kitty keyboard protocol for
+    its own UI; when it exits through /exit or ctrl+c some of those are still
+    on, and the shell prompt that follows prints every mouse move / focus
+    change / ctrl+c as `^[[<35;4;4M` `^[[O` `^[[I` `^[[99;5u`. After the
+    child ends: disable the modes, flush queued event bytes
+    (`reset_terminal_input_modes(after_session=True)`).
+
+    Handoff parity with exec: the child shares our process group, so tty
+    signals (ctrl+c, ctrl+z, SIGWINCH) reach it directly — SIGINT is ignored
+    here so ctrl+c only ends the child, and SIGTERM/SIGHUP/SIGQUIT sent to
+    prdt alone are forwarded. Exit status: the child's code; if it died by a
+    signal, restore, then die by that same signal. Raises FileNotFoundError
+    when `claude` is missing."""
+    import signal
+    proc = subprocess.Popen(cmd)
+    old = {signal.SIGINT: signal.signal(signal.SIGINT, signal.SIG_IGN)}
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
+        old[sig] = signal.signal(sig, lambda n, _f: proc.send_signal(n))
+    try:
+        rc = proc.wait()
+    finally:
+        for sig, handler in old.items():
+            signal.signal(sig, handler)
+        try:
+            reset_terminal_input_modes(after_session=True)
+        except Exception:
+            pass
+    if rc < 0:
+        signal.signal(-rc, signal.SIG_DFL)
+        os.kill(os.getpid(), -rc)
+        sys.exit(128 - rc)
+    sys.exit(rc)
+
+
 def cmd_po(args):
     """Launch the PO conversation (thin exec over Claude Code)."""
     root = find_project_root()
@@ -6047,7 +6092,7 @@ def cmd_po(args):
     reset_terminal_input_modes()
     cmd = ["claude", "--agent", "prdt-po"] + (getattr(args, "rest", None) or [])
     try:
-        os.execvp("claude", cmd)
+        run_claude_then_restore(cmd)
     except FileNotFoundError:
         sys.exit("prdt po: `claude` CLI를 찾을 수 없어요 — Claude Code 설치/PATH 확인")
 
