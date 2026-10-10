@@ -5786,8 +5786,10 @@ def viewer_install_deps():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             return None
+        # pass_fds: the pnpm child holds the lock's open file description, so
+        # the lock outlives a killed ensure for as long as the install runs.
         r = subprocess.run(cmd, cwd=str(code), capture_output=True, text=True,
-                           stdin=subprocess.DEVNULL, timeout=600)
+                           stdin=subprocess.DEVNULL, timeout=600, pass_fds=(lock.fileno(),))
         if r.returncode == 0:
             return None
         lines = [l.strip() for l in ((r.stderr or "") + "\n" + (r.stdout or "")).splitlines() if l.strip()]
@@ -5795,9 +5797,9 @@ def viewer_install_deps():
         return (f"뷰어 의존성 설치가 실패했어요 ({err[:200]}) — 다음 PO 세션 시작에 다시 시도해요. "
                 f"직접: `cd {code} && {VIEWER_INSTALL_CMD}`")
     except subprocess.TimeoutExpired:
-        return "뷰어 의존성 설치가 600초 안에 끝나지 않았어요 — 다음 PO 세션 시작에 다시 시도해요"
+        return f"뷰어 의존성 설치가 600초 안에 끝나지 않았어요 — 다음 PO 세션 시작에 다시 시도해요. 직접: `cd {code} && {VIEWER_INSTALL_CMD}`"
     except OSError as e:
-        return f"뷰어 의존성 설치를 실행하지 못했어요 — {e}"
+        return f"뷰어 의존성 설치를 실행하지 못했어요 — {e}. 직접: `cd {code} && {VIEWER_INSTALL_CMD}`"
     finally:
         if lock is not None:
             lock.close()
@@ -5811,7 +5813,9 @@ def viewer_ensure(root, refresh=False):
     there → no install, no run."""
     problem = viewer_problem()
     if problem is not None:
-        if VIEWER_INSTALL_CMD in problem:  # the two missing-dependency causes name this fix
+        # the two missing-dependency causes name this fix; PRDT_VIEWER_NO_INSTALL
+        # (`prdt update`: install.sh §1c just tried) reports instead of retrying
+        if VIEWER_INSTALL_CMD in problem and not os.environ.get("PRDT_VIEWER_NO_INSTALL"):
             failed = viewer_install_deps()
             if failed:
                 return failed
@@ -6096,6 +6100,7 @@ def _viewer_after_update():
     argv = [str(cli)] if cli.is_file() and os.access(cli, os.X_OK) else [sys.executable, str(Path(__file__).resolve())]
     try:
         r = subprocess.run(argv + ["viewer", "--ensure", "--refresh"], cwd=str(root),
+                           env={**os.environ, "PRDT_VIEWER_NO_INSTALL": "1"},
                            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900)
     except (subprocess.TimeoutExpired, OSError) as e:
         print(f"prdt update: 뷰어를 만들지 못했어요 — {e}. 다음 PO 세션 시작에 다시 시도해요")
@@ -15911,10 +15916,15 @@ def main():
         or getattr(args, "json", False)
         or (args.cmd == "viewer" and getattr(args, "no_open", False))
         or args.cmd == "_shared-state-guard"
+        # T-983: the hook-spawned ensure is a background call of this same
+        # kind — it must never eat the user's daily nudge (update-state.json).
+        or (args.cmd == "viewer" and getattr(args, "ensure", False))
     )
     if not skip_update_nudge:
         maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
-    if not hook_call:
+    # T-983: `viewer --ensure` also skips the backup tick — the PO SessionStart
+    # hook that spawns it already ran that tick in the same start.
+    if not hook_call and not (args.cmd == "viewer" and getattr(args, "ensure", False)):
         maybe_meta_backup(args.cmd)    # T-504: detached meta backup tick (stage boundary / once daily; never blocks)
     if not args.cmd:
         # bare `prdt` = 구 productune UX 계승: init(필요 시 §10 3항목) → PO 대화 진입
