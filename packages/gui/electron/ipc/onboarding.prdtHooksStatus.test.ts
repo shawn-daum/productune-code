@@ -131,6 +131,8 @@ export const CASES: readonly Case[] = [
             // T-794: a second registration of the same script — main-session-only
             // relay for the CLI's own hand-offs, off the Bash tool's stdout.
             { matcher: 'Bash', hooks: [h('prdt-auto-open.sh')] },
+            // T-977: prdt-wordlist-check.sh — its own Write|Edit|MultiEdit entry.
+            { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-wordlist-check.sh')] },
           ],
           UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
           PostToolBatch: [{ hooks: [h('prdt-call-governor.sh')] }],
