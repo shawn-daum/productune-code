@@ -6102,6 +6102,8 @@ def _viewer_after_update():
         return
     if r.returncode:
         first = next((l for l in (r.stderr or r.stdout or "").splitlines() if l.strip()), "원인 출력 없음")
+        if VIEWER_INSTALL_CMD in first:
+            return  # a dependency-install failure: install.sh §1c just said it (one line) — never twice
         print(f"prdt update: 뷰어를 만들지 못했어요 — {first.replace('prdt viewer: ', '', 1)}")
 
 
