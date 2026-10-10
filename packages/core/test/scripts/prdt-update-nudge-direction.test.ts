@@ -763,3 +763,91 @@ describe.skipIf(!PYTHON3)('T-785 F3 / code review #1 · skip_update_nudge (main(
     expect(fs.existsSync(stateFile(home))).toBe(true)
   })
 })
+
+describe.skipIf(!PYTHON3)('T-927 · the once-a-day check counts LOCAL days (non-UTC TZ)', () => {
+  /** Evaluate `expr` in scripts/prdt with the process TZ pinned. */
+  function pyTz(tz: string, expr: string): unknown {
+    const script = `
+import importlib.util, importlib.machinery, json
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+print(json.dumps(${expr}))
+`
+    return JSON.parse(execFileSync('python3', ['-c', script], {
+      encoding: 'utf-8', cwd: os.tmpdir(), timeout: subprocessTimeout('cli'), env: { ...process.env, TZ: tz },
+    }))
+  }
+  // 2026-10-10T14:59:59Z = 23:59:59 KST Oct 10 · 15:00:00Z = 00:00:00 KST Oct 11
+  const BEFORE = Date.UTC(2026, 9, 10, 14, 59, 59) / 1000
+  const AFTER = Date.UTC(2026, 9, 10, 15, 0, 0) / 1000
+  const EARLY_UTC = Date.UTC(2026, 9, 10, 1, 0, 0) / 1000 // 10:00 KST Oct 10
+
+  test('KST rolls over at 00:00 KST, not 09:00 KST', () => {
+    expect(pyTz('Asia/Seoul', `m._local_day(${BEFORE})`)).toBe('2026-10-10')
+    expect(pyTz('Asia/Seoul', `m._local_day(${AFTER})`)).toBe('2026-10-11')
+    // a check consumed at 23:59:59 KST is due again one second later (new local day)
+    const st = `{"last_check": "2026-10-10", "last_check_basis": "local"}`
+    expect(pyTz('Asia/Seoul', `m._update_check_due(${st}, None, ${BEFORE})`)).toBe(false)
+    expect(pyTz('Asia/Seoul', `m._update_check_due(${st}, None, ${AFTER})`)).toBe(true)
+    // 09:00 KST (00:00 UTC) is NOT a rollover: a check at 10:00 KST blocks 20:00 KST same day
+    const eve = Date.UTC(2026, 9, 10, 11, 0, 0) / 1000
+    expect(pyTz('Asia/Seoul', `m._update_check_due(${st}, None, ${eve})`)).toBe(false)
+  })
+
+  test('a western TZ (America/Los_Angeles) also follows its own midnight', () => {
+    // 06:59:59Z = 23:59:59 PDT Oct 9 · 07:00:00Z = 00:00:00 PDT Oct 10
+    const a = Date.UTC(2026, 9, 10, 6, 59, 59) / 1000
+    const b = Date.UTC(2026, 9, 10, 7, 0, 0) / 1000
+    const st = `{"last_check": "2026-10-09", "last_check_basis": "local"}`
+    expect(pyTz('America/Los_Angeles', `m._update_check_due(${st}, None, ${a})`)).toBe(false)
+    expect(pyTz('America/Los_Angeles', `m._update_check_due(${st}, None, ${b})`)).toBe(true)
+  })
+
+  test('legacy UTC last_check: judged by the state file mtime as a local day (no 2nd prompt, no skipped day)', () => {
+    // legacy "2026-10-10" (UTC) written at 00:30 KST Oct 11 (= 15:30Z Oct 10)
+    const written = Date.UTC(2026, 9, 10, 15, 30, 0) / 1000
+    const legacy = `{"last_check": "2026-10-10"}`
+    const laterSameLocalDay = Date.UTC(2026, 9, 10, 16, 0, 0) / 1000 // 01:00 KST Oct 11
+    expect(pyTz('Asia/Seoul', `m._update_check_due(${legacy}, ${written}, ${laterSameLocalDay})`)).toBe(false)
+    // written 20:00 KST Oct 10 (11:00Z) → next local day Oct 11 is due, not skipped
+    const writtenPrev = Date.UTC(2026, 9, 10, 11, 0, 0) / 1000
+    expect(pyTz('Asia/Seoul', `m._update_check_due(${legacy}, ${writtenPrev}, ${laterSameLocalDay})`)).toBe(true)
+    // no mtime available → plain local-date comparison
+    expect(pyTz('Asia/Seoul', `m._update_check_due(${legacy}, None, ${EARLY_UTC})`)).toBe(false)
+  })
+
+  test('maybe_prompt_update end to end: legacy state written today (mtime) throttles; stale legacy state checks and stamps the local basis', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, ['v1.6', 'v1.5'])
+    const run = (stateBody: string, ageDays: number) => {
+      const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
+      fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
+      fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
+      const sf = path.join(home, '.prdt', 'update-state.json')
+      fs.writeFileSync(sf, stateBody)
+      const t = new Date(Date.now() - ageDays * 86400_000)
+      fs.utimesSync(sf, t, t)
+      const script = `
+import importlib.util, importlib.machinery
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+m.maybe_prompt_update("status")
+`
+      const r = spawnSync('python3', ['-c', script], {
+        encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
+        env: { ...process.env, HOME: home, CI: '', TZ: 'Asia/Seoul' },
+      })
+      return { err: r.stderr.trim(), state: JSON.parse(fs.readFileSync(sf, 'utf-8')) }
+    }
+    const fresh = run(`{"last_check": "2000-01-01"}`, 0) // mtime = now → same local day
+    expect(fresh.err).toBe('')
+    expect(fresh.state.last_check_basis).toBeUndefined()
+    const stale = run(`{"last_check": "2000-01-01"}`, 2) // mtime two days old → due
+    expect(stale.err).toContain('업데이트 가능')
+    expect(stale.state.last_check_basis).toBe('local')
+  })
+})

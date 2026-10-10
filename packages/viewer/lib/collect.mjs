@@ -145,6 +145,13 @@ function readDoc(repoRoot, absPath) {
 // (never `body: undefined` either — the key is absent), so a later change to
 // render.mjs cannot accidentally interpolate a closed round's ticket prose by
 // reaching for `.body` on one of these: the value simply is not there to read.
+// T-964: legacy tickets (docs/tickets/v0.5/T-PATCH-*) carry `ticket_id:` instead of `id:` — key them by that id.
+function withTicketId(doc) {
+  const fm = doc && doc.frontmatter
+  if (fm && !fm.id && typeof fm.ticket_id === 'string' && fm.ticket_id.trim()) fm.id = fm.ticket_id.trim()
+  return doc
+}
+
 function ticketLite(doc) {
   const fm = doc.frontmatter
   return { rel: doc.rel, frontmatter: { id: fm.id, slug: fm.slug, type: fm.type, status: fm.status, assignee: fm.assignee, feature: fm.feature, created: fm.created } }
@@ -174,7 +181,7 @@ export function collectTickets(repoRoot, currentVersion, { line = null, exclude 
     const isCurrent = sameVersion(bucket, currentVersion) || bucket === 'backlog'
     if (isCurrent) {
       for (const f of files) {
-        const doc = readDoc(repoRoot, path.join(bucketDir, f))
+        const doc = withTicketId(readDoc(repoRoot, path.join(bucketDir, f)))
         included.push({ bucket, ...doc })
       }
     } else if (files.length > 0) {
@@ -189,7 +196,7 @@ export function collectTickets(repoRoot, currentVersion, { line = null, exclude 
       const bodies = {}
       for (const f of files) {
         const filePath = path.join(bucketDir, f)
-        const doc = readDoc(repoRoot, filePath)
+        const doc = withTicketId(readDoc(repoRoot, filePath))
         bytes += fs.statSync(containedFile(repoRoot, filePath)).size
         tickets.push(ticketLite(doc))
         bodies[doc.rel] = doc.body
@@ -230,6 +237,25 @@ export function collectFeatures(repoRoot) {
 // `feature:` values against (W4), so the screen and that check read the same
 // keys. Null when the config has no `features.taxonomy.areas` (the screen's
 // empty state); a malformed config is the same null — doctor names the fault.
+// T-964: `taxonomy.guide` = {when, ux, logic, limits, example}. Lenient read —
+// when · ux · limits take a string or a string list, example a string (or list,
+// joined), logic a list of `{text, ground?}` or plain strings (ground = a
+// ticket id string or a list of them). Anything else is dropped; `prdt doctor`
+// names the malformed cell. Returns null when no cell has text.
+const textList = (v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? v : []).filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim())
+export function normalizeGuide(g) {
+  if (!g || typeof g !== 'object' || Array.isArray(g)) return null
+  const logic = (Array.isArray(g.logic) ? g.logic : [])
+    .map((it) => {
+      if (typeof it === 'string') return { text: it.trim(), ground: [] }
+      if (it && typeof it === 'object' && typeof it.text === 'string') return { text: it.text.trim(), ground: textList(it.ground) }
+      return null
+    })
+    .filter((it) => it && it.text)
+  const out = { when: textList(g.when), ux: textList(g.ux), logic, limits: textList(g.limits), example: textList(g.example).join(' ') }
+  return out.when.length || out.ux.length || out.logic.length || out.limits.length || out.example ? out : null
+}
+
 export function collectFeatureTaxonomy(repoRoot) {
   const cfgPath = path.join(repoRoot, '.prdt/config.json')
   let cfg
@@ -258,6 +284,7 @@ export function collectFeatureTaxonomy(repoRoot) {
       kind: typeof t.kind === 'string' ? t.kind : '',
       area: t.area,
       def: typeof t.def === 'string' ? t.def : '',
+      guide: normalizeGuide(t.guide),
       aliases: Array.isArray(ent.aliases) ? ent.aliases.filter((a) => typeof a === 'string') : [],
       links: (Array.isArray(t.links) ? t.links : [])
         .filter((l) => l && typeof l.to === 'string')

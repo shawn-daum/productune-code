@@ -6123,7 +6123,7 @@ def cmd_update(_args):
 # installs. Non-blocking by construction (doctrine #5). Design SoT:
 # docs/tickets/v1.4/T-393.md (original UX flow) · docs/tickets/v1.11/T-749.md
 # (version+notes box, plain-number choice, non-tty line).
-#   · state: ~/.prdt/update-state.json = {last_check(UTC date)}.
+#   · state: ~/.prdt/update-state.json = {last_check(local date, last_check_basis="local")}.
 #   · pending version + RN box come from <codeRoot>/docs/RELEASES.md (T-394 parse
 #     contract: section = ^## , version = first token after '## ' = git tag verbatim).
 #   · update now → cmd_update (pull --ff-only + install.sh) → os.execv re-runs the
@@ -6156,6 +6156,29 @@ def prdt_repo_dir():
 
 def _update_state_path():
     return Path.home() / ".prdt" / "update-state.json"
+
+
+def _local_day(ts=None):
+    """T-927: calendar day (YYYY-MM-DD) in the device's local timezone."""
+    d = datetime.now() if ts is None else datetime.fromtimestamp(ts)
+    return d.strftime("%Y-%m-%d")
+
+
+def _update_check_due(state, state_mtime, now_ts=None):
+    """T-927: True when the once-a-day update check has not run on today's LOCAL
+    day. A `last_check_basis == "local"` state stores the local date directly.
+    A legacy state (UTC date, no basis key) is read through the state file's
+    mtime — written at the moment of the last check — converted to a local day,
+    so neither a second prompt on the same local day nor a skipped extra day."""
+    today = _local_day(now_ts)
+    last = state.get("last_check")
+    if not last:
+        return True
+    if state.get("last_check_basis") == "local":
+        return last != today
+    if state_mtime is None:
+        return last != today
+    return _local_day(state_mtime) != today
 
 
 def _write_update_state(state):
@@ -6695,10 +6718,14 @@ def maybe_prompt_update(cmd):
         return                                          # `preflight` emits machine-read JSON on stdout
     if os.environ.get("CI"):
         return
-    # throttle — at most one check per UTC calendar day
-    today = now_iso()[:10]
+    # throttle — at most one check per local calendar day (T-927)
+    today = _local_day()
     state = read_json(_update_state_path()) or {}
-    if state.get("last_check") == today:
+    try:
+        mtime = _update_state_path().stat().st_mtime
+    except OSError:
+        mtime = None
+    if not _update_check_due(state, mtime):
         return
     repo = prdt_repo_dir()
     if repo is None:
@@ -6708,6 +6735,7 @@ def maybe_prompt_update(cmd):
         return
     # consume today's slot up front so the post-update re-exec can't loop
     state["last_check"] = today
+    state["last_check_basis"] = "local"
     _write_update_state(state)
     ahead = remote_ahead(code_root)                     # ls-remote + ancestry gate (network, 2s)
     if not ahead:                                       # None (degrade/offline) or False (equal / local ahead / diverged)
@@ -10000,6 +10028,7 @@ def feature_taxonomy_warnings(cfg, vocab):
             warns.append(f"{where} has no label — the feature screen shows the key instead")
         if not isinstance(t.get("def"), str) or not t["def"].strip():
             warns.append(f"{where} taxonomy has no def")
+        warns.extend(feature_guide_warnings(where, t.get("guide")))
         links = t.get("links", [])
         if not isinstance(links, list):
             warns.append(f"{where} taxonomy links is not a list")
@@ -10010,6 +10039,67 @@ def feature_taxonomy_warnings(cfg, vocab):
                 warns.append(f"{where} taxonomy link to is not a string")
             elif to not in vocab or to == key:
                 warns.append(f"{where} taxonomy link to '{to}' names no other vocab key")
+    return warns
+
+
+def feature_guide_warnings(where, guide):
+    """T-964 — `taxonomy.guide` = {when, ux, logic, limits, example} (the viewer's
+    feature detail draws it). when · ux · limits: string or list of strings;
+    logic: list of {text, ground?} or plain strings (ground = ticket id string
+    or list of them); example: string. Warns — never raises — on a malformed
+    type, and per feature on an empty when · ux · logic · example cell (limits
+    may be empty). An absent guide warns once as a whole."""
+    g = f"{where} taxonomy guide"
+    if guide is None:
+        return [f"{g} is missing — the viewer's feature detail shows the new-feature notice"]
+    if not isinstance(guide, dict):
+        return [f"{g} is not an object"]
+
+    def strs(v):
+        if isinstance(v, str):
+            return [v]
+        if isinstance(v, list) and all(isinstance(x, str) for x in v):
+            return v
+        return None
+
+    warns = []
+    for cell in ("when", "ux", "limits"):
+        v = guide.get(cell)
+        if v is None:
+            if cell != "limits":
+                warns.append(f"{g}.{cell} is empty")
+            continue
+        lst = strs(v)
+        if lst is None:
+            warns.append(f"{g}.{cell} is not a string or a list of strings")
+        elif cell != "limits" and not any(x.strip() for x in lst):
+            warns.append(f"{g}.{cell} is empty")
+    logic = guide.get("logic")
+    if logic is None:
+        warns.append(f"{g}.logic is empty")
+    elif not isinstance(logic, list):
+        warns.append(f"{g}.logic is not a list")
+    else:
+        filled = False
+        for i, it in enumerate(logic):
+            if isinstance(it, str):
+                filled = filled or bool(it.strip())
+            elif isinstance(it, dict):
+                if not isinstance(it.get("text"), str):
+                    warns.append(f"{g}.logic[{i}] text is not a string")
+                else:
+                    filled = filled or bool(it["text"].strip())
+                if "ground" in it and strs(it["ground"]) is None:
+                    warns.append(f"{g}.logic[{i}] ground is not a ticket id string or a list of them")
+            else:
+                warns.append(f"{g}.logic[{i}] is not a string or a {{text, ground}} object")
+        if not filled:
+            warns.append(f"{g}.logic is empty")
+    ex = guide.get("example")
+    if ex is None or (isinstance(ex, str) and not ex.strip()):
+        warns.append(f"{g}.example is empty")
+    elif not isinstance(ex, str):
+        warns.append(f"{g}.example is not a string")
     return warns
 
 
