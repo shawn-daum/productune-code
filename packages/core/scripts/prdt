@@ -6061,11 +6061,10 @@ def run_claude_then_restore(cmd):
     resumed = []
 
     def on_cont(_n, _f):
+        # Shell job control SIGCONTs the whole process group, child included.
+        # Do NOT forward it: this handler runs late and a forwarded CONT would
+        # undo the child's NEXT self-stop.
         resumed.append(1)
-        try:
-            proc.send_signal(signal.SIGCONT)
-        except OSError:
-            pass
     old[signal.SIGCONT] = signal.signal(signal.SIGCONT, on_cont)
     try:
         while True:
@@ -6074,11 +6073,19 @@ def run_claude_then_restore(cmd):
                 # Group stop (ctrl+z): we were stopped too and a SIGCONT already
                 # ran `on_cont`. Child stopped ALONE (kill(getpid(), SIGTSTP)):
                 # stop with it so the shell gets its prompt back; the shell's
-                # SIGCONT resumes us and `on_cont` resumes the child.
+                # SIGCONT (sent to the whole group) resumes us and the child.
                 if resumed:
                     del resumed[:]
                 else:
                     os.kill(os.getpid(), signal.SIGSTOP)
+                    # Woke: wait for on_cont (Python-level handlers run late) and
+                    # clear its flag, or the NEXT self-stop would be mistaken
+                    # for a group stop.
+                    import time
+                    deadline = time.time() + 1
+                    while not resumed and time.time() < deadline:
+                        time.sleep(0.005)
+                    del resumed[:]
                 continue
             rc = -os.WTERMSIG(st) if os.WIFSIGNALED(st) else os.WEXITSTATUS(st)
             proc.returncode = rc

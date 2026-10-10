@@ -78,7 +78,8 @@ function writeStub(): void {
     'os.write(1, b"READY")',
     'if mode == "exit": os._exit(int(os.environ.get("STUB_RC", "0")))',
     'if mode == "tstp":',
-    '    os.kill(os.getpid(), signal.SIGTSTP)',
+    '    for _ in range(int(os.environ.get("STUB_STOPS", "1"))):',
+    '        os.kill(os.getpid(), signal.SIGTSTP)',
     '    open(marker + ".resumed", "w").write("yes"); os._exit(0)',
     'if mode == "die9":',
     '    os.kill(os.getpid(), signal.SIGKILL)',
@@ -94,7 +95,7 @@ interface Run { hung: boolean; status: number; sig: number; out: string; marker:
  *  `tstp` / `ctrl-z` run prdt as a foreground JOB of a mini shell (a real
  *  job-control layout: an orphaned process group would silently ignore
  *  SIGTSTP). The shell reports STOPPED when prdt is stopped, then SIGCONTs it. */
-function runPrdt(mode: string, act: 'none' | 'ctrl-c' | 'term' | 'tstp' | 'ctrl-z', env: Record<string, string> = {}): Run {
+function runPrdt(mode: string, act: 'none' | 'ctrl-c' | 'term' | 'tstp' | 'ctrl-z', env: Record<string, string> = {}, stops = 1): Run {
   const marker = path.join(shimDir, 'm')
   const job = act === 'tstp' || act === 'ctrl-z'
   const exec = `os.execvp(sys.executable, [sys.executable, ${JSON.stringify(PRDT_CLI)}])`
@@ -116,7 +117,7 @@ function runPrdt(mode: string, act: 'none' | 'ctrl-c' | 'term' | 'tstp' | 'ctrl-
       '            os.write(1, b"STOPPED"); time.sleep(0.3); os.killpg(g, signal.SIGCONT); continue',
       '        os._exit(os.WEXITSTATUS(st) if os.WIFEXITED(st) else 99)',
     ] : [`    ${exec}`]),
-    'buf = b""; acted = False; stopped_seen = False; end = time.time() + 15',
+    'buf = b""; acted = False; handled = 0; end = time.time() + 15',
     'while time.time() < end:',
     '    r, _, _ = select.select([m], [], [], 0.05)',
     '    if r:',
@@ -131,9 +132,10 @@ function runPrdt(mode: string, act: 'none' | 'ctrl-c' | 'term' | 'tstp' | 'ctrl-
     '        elif a == "term": os.kill(pid, signal.SIGTERM)',
     '        elif a == "ctrl-z": os.write(m, b"\\x1a")',
     '        end = min(end, time.time() + 10)',
-    '    if a == "ctrl-z" and not stopped_seen and b"STOPPED" in buf:',
-    '        stopped_seen = True; time.sleep(0.6); os.write(m, b"\\x03")',
-    'hung = a in ("tstp", "ctrl-z") and b"STOPPED" not in buf',
+    '    if a == "ctrl-z" and buf.count(b"STOPPED") > handled:',
+    '        handled += 1; time.sleep(0.6)',
+    `        os.write(m, b"\\x1a" if handled < ${stops} else b"\\x03")`,
+    `hung = a in ("tstp", "ctrl-z") and buf.count(b"STOPPED") != ${stops}`,
     'os.close(m)',
     '_, st = os.waitpid(pid, 0)',
     'print(json.dumps({"hung": hung, "status": os.WEXITSTATUS(st) if os.WIFEXITED(st) else -1,',
@@ -241,6 +243,19 @@ describe.skipIf(!PYTHON3)('prdt launch — terminal restored after Claude Code e
     expect(r.status).toBe(0)
     expect(fs.readFileSync(`${r.marker}.resumed`, 'utf8')).toBe('yes')
   }, 30000)
+
+  test.each([2, 3])('child self-suspends %i times in a row: each stop returns the prompt, each resume continues', (n) => {
+    const r = runPrdt('tstp', 'tstp', { STUB_STOPS: String(n) }, n)
+    expect(r.hung).toBe(false)
+    expect(r.status).toBe(0)
+    expect(fs.readFileSync(`${r.marker}.resumed`, 'utf8')).toBe('yes')
+  }, 40000)
+
+  test('group ctrl+z twice, then ctrl+c ends rc 130', () => {
+    const r = runPrdt('sigint', 'ctrl-z', {}, 2)
+    expect(r.hung).toBe(false)
+    expect(r.status).toBe(130)
+  }, 40000)
 
   test('ctrl+z on the whole group: no double stop, resumes, ctrl+c then ends', () => {
     const r = runPrdt('sigint', 'ctrl-z')
