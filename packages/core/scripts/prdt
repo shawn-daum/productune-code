@@ -5993,6 +5993,13 @@ def reset_terminal_input_modes(after_session=False):
     modifyOtherKeys (`CSI > 4 ; 0 m`)."""
     if not sys.stdout.isatty():
         return
+    # T-957: with `stty -tostop` a background `prdt &` may still write to the
+    # tty and would spray these bytes into the foreground job's screen.
+    try:
+        if os.tcgetpgrp(sys.stdout.fileno()) != os.getpgrp():
+            return
+    except (OSError, ValueError):
+        return
     reset = "".join(f"\x1b[?{mode}l" for mode in (1000, 1002, 1003, 1006, 1015, 1004))
     if after_session:
         reset += "\x1b[?2004l\x1b[<99u\x1b[>4;0m"
@@ -6045,12 +6052,37 @@ def run_claude_then_restore(cmd):
     signal, restore, then die by that same signal. Raises FileNotFoundError
     when `claude` is missing."""
     import signal
-    proc = subprocess.Popen(cmd)
+    # close_fds=False: exec parity — fds above 2 inherited from the caller
+    # (`prdt 3>file`) reach claude.
+    proc = subprocess.Popen(cmd, close_fds=False)
     old = {signal.SIGINT: signal.signal(signal.SIGINT, signal.SIG_IGN)}
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
         old[sig] = signal.signal(sig, lambda n, _f: proc.send_signal(n))
+    resumed = []
+
+    def on_cont(_n, _f):
+        resumed.append(1)
+        try:
+            proc.send_signal(signal.SIGCONT)
+        except OSError:
+            pass
+    old[signal.SIGCONT] = signal.signal(signal.SIGCONT, on_cont)
     try:
-        rc = proc.wait()
+        while True:
+            _pid, st = os.waitpid(proc.pid, os.WUNTRACED)
+            if os.WIFSTOPPED(st):
+                # Group stop (ctrl+z): we were stopped too and a SIGCONT already
+                # ran `on_cont`. Child stopped ALONE (kill(getpid(), SIGTSTP)):
+                # stop with it so the shell gets its prompt back; the shell's
+                # SIGCONT resumes us and `on_cont` resumes the child.
+                if resumed:
+                    del resumed[:]
+                else:
+                    os.kill(os.getpid(), signal.SIGSTOP)
+                continue
+            rc = -os.WTERMSIG(st) if os.WIFSIGNALED(st) else os.WEXITSTATUS(st)
+            proc.returncode = rc
+            break
     finally:
         for sig, handler in old.items():
             signal.signal(sig, handler)
@@ -6059,7 +6091,10 @@ def run_claude_then_restore(cmd):
         except Exception:
             pass
     if rc < 0:
-        signal.signal(-rc, signal.SIG_DFL)
+        try:
+            signal.signal(-rc, signal.SIG_DFL)  # SIGKILL/SIGSTOP are uncatchable
+        except (OSError, ValueError):
+            pass
         os.kill(os.getpid(), -rc)
         sys.exit(128 - rc)
     sys.exit(rc)
