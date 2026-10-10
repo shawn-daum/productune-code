@@ -5639,6 +5639,10 @@ def viewer_anchor(root, target):
     any other document → its repo-relative path."""
     if re.fullmatch(r"T-\d+", target):
         return target
+    # T-973: a `path#section` target (the `[ctx].prd_path` form,
+    # `docs/prd/PRD.md#v1.13`) names the document — the viewer opens a PRD as
+    # one pane, so the section part is dropped, never read as part of a filename.
+    target = target.split("#", 1)[0] or target
     p = Path(target)
     p = (p if p.is_absolute() else Path.cwd() / p).resolve()
     try:
