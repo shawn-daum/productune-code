@@ -91,7 +91,7 @@ IFS= read -r -d '' EV 2>/dev/null
 
 shopt -s nocasematch
 case "$EV" in
-  *WebFetch*|*WebSearch*|*@*|*%40*|*user-agent*|*curl*|*wget*|*http*|*url*|*request*|*fetch*|*axios*|*python*|*node*|*bun*|*deno*|*tsx*|*ts-node*|*ruby*|*perl*|*php*|*sh\ *|*source*|*./*|*osascript*|*user.email*|*user.name*|*emailaddress*|*oauthaccount*) _hit=1 ;;
+  *WebFetch*|*WebSearch*|*@*|*%40*|*user-agent*|*curl*|*wget*|*http*|*url*|*request*|*fetch*|*axios*|*python*|*node*|*bun*|*deno*|*tsx*|*ruby*|*perl*|*php*|*sh\ *|*source*|*./*|*osascript*|*user.email*|*user.name*|*emailaddress*|*oauthaccount*) _hit=1 ;;
   *) _hit=0 ;;
 esac
 shopt -u nocasematch
