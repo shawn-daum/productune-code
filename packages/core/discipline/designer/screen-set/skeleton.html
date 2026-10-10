@@ -294,13 +294,21 @@ body.editing [data-value]{outline:1px dotted var(--edit-value); outline-offset:2
 <section class="spec-decide" aria-label="decide">
   <h2>정할 것</h2>
   <ol>
-    <li>Decision 1 as one line — <a data-go="example-a:empty">화면</a><span class="rec">추천 · 이대로</span></li>
+    <li>CONDITION · Decision 1 as one line — <a data-go="example-a:empty">화면</a><span class="rec">추천 · 이대로</span></li>
   </ol>
   <h2 class="sub">정해진 것</h2>   <!-- optional: settled forks of this set, one line each + where; delete when none -->
   <ul class="done">
     <li>Settled fork = option A (T-NNN) <a data-go="example-b">화면</a></li>
   </ul>
 </section>
+
+<!-- ================= autonomous fold, screen set — under the decide block: one line per call the designer made (item · call), closed on load ================= -->
+<details class="spec-fold">
+  <summary>디자이너가 정한 것 · N</summary>
+  <ul>
+    <li>Item · call</li>
+  </ul>
+</details>
 
 <!-- ================= folded: scope · provenance · history ================= -->
 <details class="spec-fold">
