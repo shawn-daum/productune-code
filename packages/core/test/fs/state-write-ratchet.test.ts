@@ -20,8 +20,21 @@ import { describe, test, expect } from 'vitest'
 const PKGS = path.resolve(__dirname, '..', '..', '..')
 const rel = (p: string) => path.relative(PKGS, p).split(path.sep).join('/')
 
-const PY_RAW = /\.write_text\(|\.write_bytes\(|\bopen\([^()]*,\s*['"][wax]b?\+?['"]|\batomic_write_text\(|shutil\.(?:copyfile|copy2?|move)\(/
-const TS_RAW = /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|copyFileSync|renameSync|atomicWriteFileSync|atomicWriteFile)\(|\b(?:fs|fsp|promises)\.(?:rename|copyFile)\(/
+// open(...) with a write mode anywhere in its args (nested parens one deep: open(str(p), "w")),
+// Path.open("w"), os.open with a write/create flag, os.write
+const PY_RAW = new RegExp([
+  String.raw`\.write_text\(`, String.raw`\.write_bytes\(`, String.raw`\batomic_write_text\(`, String.raw`shutil\.(?:copyfile|copy2?|move)\(`,
+  String.raw`\bopen\((?:[^()]|\([^()]*\))*,\s*(?:mode\s*=\s*)?['"][wax]b?\+?['"]`,
+  String.raw`\.open\(\s*(?:mode\s*=\s*)?['"][wax]b?\+?['"]`,
+  String.raw`\bos\.open\([^\n]*\bO_(?:WRONLY|RDWR|CREAT|APPEND|TRUNC)\b`, String.raw`\bos\.write\(`,
+].join('|'))
+const TS_RAW = new RegExp([
+  String.raw`\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|copyFileSync|renameSync|atomicWriteFileSync|atomicWriteFile)\(`,
+  String.raw`\b(?:fs|fsp|promises)\.(?:rename|copyFile)\(`,
+  String.raw`\bwriteSync\(`, String.raw`\bopenSync\([^\n]*(?:['"][wa]x?\+?['"]|O_WRONLY|O_RDWR|O_CREAT|O_APPEND)`,
+].join('|'))
+/** A `>` / `>>` redirect to a file or variable path in shell (not `>&`, `>=`, `->`, `2>&1`, /dev/null). */
+const SH_REDIR = /(?<![<>=\-|&\\])(?<![0-9]>)>>?(?![>&=])\s*["']?(?!\/dev\/null)[$./~A-Za-z_{]/
 
 /** Python functions that ARE the primitives (their own raw calls are the point). */
 const PY_PRIMITIVES = new Set(['atomic_write_text', 'state_write', 'state_append', 'state_open_dir'])
@@ -69,7 +82,7 @@ function scanRepo(): Record<string, number> {
   const scripts = path.join(PKGS, 'core', 'scripts')
   // hooks and the status line carry embedded Python — counted per file
   const shell = [...walk(path.join(scripts, 'hooks'), (f) => f.endsWith('.sh')), path.join(scripts, 'statusline-prdt.sh')]
-  for (const f of shell) add(scanFlat(rel(f), read(f), PY_RAW))
+  for (const f of shell) add(scanFlat(rel(f), read(f), new RegExp(`${PY_RAW.source}|${SH_REDIR.source}`)))
   const isSrc = (f: string) => /\.(ts|tsx|mjs)$/.test(f) && !/\.(test|spec)\.|test-fixtures|\/tests?\//.test(f)
   for (const root of [path.join(PKGS, 'core', 'src'), path.join(PKGS, 'gui', 'electron'), path.join(PKGS, 'gui', 'src'), path.join(PKGS, 'gui', 'shared'), path.join(PKGS, 'viewer')]) {
     if (!fs.existsSync(root)) continue
@@ -111,6 +124,28 @@ const ALLOW: Record<string, number> = {
   'core/scripts/prdt::cmd_resource': 2,
   'core/scripts/prdt::_lume_resident_resources': 1,
   'core/scripts/prdt::write_canary_latch': 1,
+  // lock files / exclusive creates with dir_fd + O_NOFOLLOW by design (index.db create, track and resource locks) and /dev/null opens
+  'core/scripts/prdt::_index_db_prepare': 1,
+  'core/scripts/prdt::_track_lock': 2,
+  'core/scripts/prdt::_resource_lock': 1,
+  'core/scripts/prdt::main': 1,
+  // hook / status-line shell: `>` `>>` redirects (temp files, stderr captures, per-session stamps) — not audited for .prdt targets; hooks write project state through prdt_safe_fs.py
+  'core/scripts/hooks/prdt-audience-inject.sh': 2,
+  'core/scripts/hooks/prdt-auto-open.sh': 1,
+  'core/scripts/hooks/prdt-call-governor.sh': 6,
+  'core/scripts/hooks/prdt-dispatch-gate.sh': 13,
+  'core/scripts/hooks/prdt-identity-guard.sh': 3,
+  'core/scripts/hooks/prdt-inbox-inject.sh': 1,
+  'core/scripts/hooks/prdt-overrides-inject.sh': 1,
+  'core/scripts/hooks/prdt-post-dispatch.sh': 8,
+  'core/scripts/hooks/prdt-question-check.sh': 2,
+  'core/scripts/hooks/prdt-return-check.sh': 7,
+  'core/scripts/hooks/prdt-secret-guard.sh': 2,
+  'core/scripts/hooks/prdt-session-start.sh': 4,
+  'core/scripts/hooks/prdt-user-prompt.sh': 6,
+  'core/scripts/hooks/prdt-worktree-guard.sh': 1,
+  'core/scripts/statusline-prdt.sh': 6,
+  'core/src/git-workflow/meta-backup.ts': 2,
   // TypeScript — core src / GUI electron / the generator's direct dev mode; targets not yet audited for .prdt/ (T-848 follow-up)
   'core/src/git-workflow/autosave.ts': 1,
   'core/src/git-workflow/meta-git.ts': 1,
@@ -141,6 +176,9 @@ const ALLOW: Record<string, number> = {
 describe('state-write ratchet (T-908)', () => {
   test('the scanner flags raw writes and ignores the primitives', () => {
     expect(scanPython('f', 'def a():\n    p.write_text("x")\n    open(q, "w")\n    atomic_write_text(p, t)\n')).toEqual({ 'f::a': 3 })
+    expect(scanPython('f', 'def a():\n    p.open("w")\n    open(str(p), "a")\n    open(p, mode="w")\n    os.open(p, os.O_WRONLY)\n    os.write(fd, b)\n    os.open(p, os.O_RDONLY)\n    open(p)\n')).toEqual({ 'f::a': 5 })
+    expect(scanFlat('s.sh', 'echo x > "$F"\necho y >> out.txt\nx 2>&1\nx >/dev/null\nx >&2\njq \'. >= 4\'\nx | jq -r .a\n', SH_REDIR)).toEqual({ 's.sh': 2 })
+    expect(scanFlat('g.ts', 'const fd = fs.openSync(p, "w")\nfs.writeSync(fd, d)\nfs.openSync(p, "r")\n', TS_RAW)).toEqual({ 'g.ts': 2 })
     expect(scanPython('f', 'def state_write(r):\n    p.write_text("x")\n')).toEqual({})
     expect(scanPython('f', 'def a():\n    # p.write_text("x")\n    state_write(root, p, t)\n    open(q)\n')).toEqual({})
     expect(scanFlat('g.ts', 'fs.writeFileSync(p, d)\nstateWriteFileSync(root, p, d)\n', TS_RAW)).toEqual({ 'g.ts': 1 })

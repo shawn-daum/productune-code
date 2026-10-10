@@ -27,7 +27,7 @@ const files = [
   { name: path.basename(out), content: '<!doctype html>NEW' },
   { name: 'viewer.build.js', content: 'build' },
 ]
-const at = [{ name: 'T-001.html', content: 'at-page' }]
+const at = [{ name: 'T-001.html', content: 'at-page' }, { name: 'T-002.html', content: 'at-page-2' }]
 if (process.env.STUB_SWAP) {
   const [from, to] = process.env.STUB_SWAP.split('|')
   fs.renameSync(from, from + '.moved')
@@ -103,17 +103,59 @@ describe('T-908 viewer output goes through state_write', () => {
     expect(fs.readdirSync(outside)).toEqual([])
   })
 
-  test('a link at an at/ page, or at at/ itself → victim untouched, the page itself still lands', () => {
+  test('a linked at/ page: that page skipped with one stderr line, the others refresh, pruning still runs, exit 0', () => {
     fs.mkdirSync(path.join(viewer, 'at'), { recursive: true })
     const victim = path.join(outside, 'victim'); fs.writeFileSync(victim, 'VICTIM ORIGINAL')
     fs.symlinkSync(victim, path.join(viewer, 'at', 'T-001.html'))
-    expect(run().status).toBe(0)
+    fs.writeFileSync(path.join(viewer, 'at', 'T-999.html'), 'stale')
+    const r = run()
+    expect(r.status).toBe(0)
     expect(fs.readFileSync(victim, 'utf8')).toBe('VICTIM ORIGINAL')
     expect(fs.readFileSync(path.join(viewer, 'viewer.html'), 'utf8')).toBe('<!doctype html>NEW')
-    fs.rmSync(path.join(viewer, 'at'), { recursive: true })
+    expect(fs.readFileSync(path.join(viewer, 'at', 'T-002.html'), 'utf8')).toBe('at-page-2')
+    expect(fs.existsSync(path.join(viewer, 'at', 'T-999.html'))).toBe(false)
+    const lines = r.stderr.split('\n').filter((l) => l.includes('.prdt/scratch/viewer/at/T-001.html'))
+    expect(lines).toHaveLength(1)
+  })
+
+  test('a linked at/ folder: victim folder untouched, page still lands, exit 0, one stderr line naming at', () => {
+    fs.mkdirSync(viewer, { recursive: true })
     fs.symlinkSync(outside, path.join(viewer, 'at'))
-    expect(run().status).toBe(0)
+    const r = run()
+    expect(r.status).toBe(0)
+    expect(fs.readdirSync(outside)).toEqual([])
+    expect(fs.readFileSync(path.join(viewer, 'viewer.html'), 'utf8')).toBe('<!doctype html>NEW')
+    expect(r.stderr.split('\n').filter((l) => l.includes('.prdt/scratch/viewer/at'))).toHaveLength(1)
+  })
+
+  test('the refusal for a linked viewer.html names the file, says to remove the link, never suggests --emit', () => {
+    fs.mkdirSync(viewer, { recursive: true })
+    fs.symlinkSync(path.join(outside, 'v'), path.join(viewer, 'viewer.html'))
+    const r = run()
+    const out = r.stdout + r.stderr
+    expect(r.status).not.toBe(0)
+    expect(out).toContain('viewer.html')
+    expect(out).toContain('링크 자체를 지우고')
+    expect(out).not.toContain('--emit')
+  })
+
+  test('append_schedule_row refuses a linked .prdt and a linked schedule.jsonl', () => {
+    const prdt = path.join(sb, 'code', 'packages', 'core', 'scripts', 'prdt')
+    const call = (proj: string) => spawnSync('python3', ['-c',
+      `import importlib.machinery as m, importlib.util as u, sys
+l=m.SourceFileLoader('prdt', sys.argv[1]); sp=u.spec_from_loader('prdt', l); mod=u.module_from_spec(sp); l.exec_module(mod)
+mod.append_schedule_row(sys.argv[2], {"a": 1})`, prdt, proj], { encoding: 'utf8', env: { PATH: process.env.PATH ?? '', HOME: home, PRDT_HOME: path.join(home, '.prdt') } })
+    const victim = path.join(outside, 'victim'); fs.writeFileSync(victim, 'VICTIM ORIGINAL\n')
+    fs.symlinkSync(victim, path.join(root, '.prdt', 'schedule.jsonl'))
+    expect(call(root).status).not.toBe(0)
+    expect(fs.readFileSync(victim, 'utf8')).toBe('VICTIM ORIGINAL\n')
+    const p2 = path.join(sb, 'proj2'); fs.mkdirSync(p2)
+    fs.symlinkSync(outside, path.join(p2, '.prdt'))
+    expect(call(p2).status).not.toBe(0)
     expect(fs.readdirSync(outside)).toEqual(['victim'])
+    const p3 = path.join(sb, 'proj3'); fs.mkdirSync(path.join(p3, '.prdt'), { recursive: true })
+    expect(call(p3).status).toBe(0)
+    expect(fs.readFileSync(path.join(p3, '.prdt', 'schedule.jsonl'), 'utf8')).toBe('{"a": 1}\n')
   })
 
   test('existing file modes are kept; new files follow umask', () => {
@@ -133,7 +175,7 @@ describe('T-908 viewer output goes through state_write', () => {
     fs.writeFileSync(path.join(viewer, 'at', 'fact--x.html'), 'keep')
     fs.writeFileSync(path.join(viewer, 'viewer.tickets-v0.0.js'), 'stale')
     expect(run().status).toBe(0)
-    expect(fs.readdirSync(path.join(viewer, 'at')).sort()).toEqual(['T-001.html', 'fact--x.html'])
+    expect(fs.readdirSync(path.join(viewer, 'at')).sort()).toEqual(['T-001.html', 'T-002.html', 'fact--x.html'])
     expect(fs.existsSync(path.join(viewer, 'viewer.tickets-v0.0.js'))).toBe(false)
     expect(fs.readFileSync(path.join(viewer, 'viewer.tickets-v0.1.js'), 'utf8')).toBe('data')
   })

@@ -5786,6 +5786,12 @@ def _viewer_prune(root, parts, keep, match):
         os.close(fd)
 
 
+def _viewer_refused(rel, kind):
+    """One stderr line for a viewer path `state_write` refused (T-908)."""
+    what = "심볼릭 링크" if kind == "symlink" else f"폴더/일반 파일이 아닌 항목({kind})"
+    print(f"prdt viewer: {rel} 가 {what}라서 쓰지 않고 건너뛰었어요 — 링크 자체를 지우면 다시 만들어요.", file=sys.stderr)
+
+
 def viewer_apply_bundle(root, bundle):
     """T-908: land the generator's `--emit` bundle under `<root>/.prdt/scratch/
     viewer/` through `state_write` (link refused at every component, existing
@@ -5796,25 +5802,36 @@ def viewer_apply_bundle(root, bundle):
     base = Path(root) / VIEWER_REL
     for f in bundle["files"]:
         state_write(root, base / _viewer_bundle_name(f["name"]), f["content"])
-    at_ok = True
     keep_at = set()
+    at_rel = (*VIEWER_REL.parts, VIEWER_JUMP_DIR)
+    afd, aprob = state_open_dir(root, at_rel, create=True)
+    if afd is None:
+        # a link (or non-folder) at at/ or above: no ticket page is written or
+        # pruned, the page itself is already fresh — one line names the path
+        _viewer_refused(aprob[0], aprob[1])
+        at_ok = False
+    else:
+        os.close(afd)
+        at_ok = True
     for f in bundle["at"]:
         name = _viewer_bundle_name(f["name"])
         keep_at.add(name)
+        if not at_ok:
+            continue
         target = base / VIEWER_JUMP_DIR / name
-        if at_ok:
-            try:
-                cur = target.read_text(encoding="utf-8") if target.is_file() and not target.is_symlink() else None
-            except OSError:
-                cur = None
-            if cur == f["content"]:
-                continue
-            try:
-                state_write(root, target, f["content"])
-            except StateLinkError:
-                at_ok = False  # a linked at/ (or page): nothing more goes there
+        try:
+            cur = target.read_text(encoding="utf-8") if target.is_file() and not target.is_symlink() else None
+        except OSError:
+            cur = None
+        if cur == f["content"]:
+            continue
+        try:
+            state_write(root, target, f["content"])
+        except StateLinkError:
+            # this one page is a link: skipped, the others still refresh
+            _viewer_refused((Path(*at_rel) / name).as_posix(), "symlink")
     if at_ok:
-        _viewer_prune(root, (*VIEWER_REL.parts, VIEWER_JUMP_DIR), keep_at,
+        _viewer_prune(root, at_rel, keep_at,
                       lambda e: _VIEWER_TICKET_PAGE_RE.match(e.name) and
                       (e.is_file(follow_symlinks=False) or e.is_symlink()))
     prune = bundle.get("prune") or {}
@@ -5842,7 +5859,7 @@ def viewer_generate(root):
     # bundle on stdout (`--emit`); every file lands below through `state_write`,
     # walked from `root` with O_NOFOLLOW per write, so a folder swapped for a
     # link after the check above is refused instead of followed (T-850 race).
-    fix = f"직접 실행해 전체 오류를 보세요: `{node} {cli} --repo-root {root} --out {out} --emit`"
+    fix = f"직접 실행해 전체 오류를 보세요: `{node} {cli} --repo-root {root} --out {out} --emit >/dev/null`"
     try:
         r = subprocess.run([node, str(cli), "--repo-root", str(root), "--out", str(out), "--emit"],
                            capture_output=True, text=True, encoding="utf-8", timeout=120)
@@ -5862,7 +5879,7 @@ def viewer_generate(root):
     try:
         viewer_apply_bundle(root, bundle)
     except (OSError, KeyError, TypeError, ValueError) as e:
-        return None, f"뷰어 파일을 쓰지 못했어요 — {e}. {fix}"
+        return None, f"뷰어 파일을 쓰지 못했어요 — {e}. 링크로 막힌 파일이면 그 링크 자체를 지우고 다시 실행하세요."
     if not out.is_file():
         return None, f"뷰어 생성기가 {out.name} 을 내보내지 않았어요. {fix}"
     # T-850 (review C3): a success clears the regen worker's failure stamp, so
@@ -14173,10 +14190,9 @@ def read_schedule_log(root):
 
 def append_schedule_row(root, row):
     """Symlink-proof append (T-647 primitive: O_NOFOLLOW) of one JSON line."""
-    p = _schedule_log_path(root)
-    fd = os.open(str(p), os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
-    with os.fdopen(fd, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    # T-908: state_append walks .prdt with O_NOFOLLOW too, so a linked `.prdt`
+    # is refused, not only a linked schedule.jsonl.
+    state_append(root, _schedule_log_path(root), json.dumps(row, ensure_ascii=False) + "\n", mode=0o644)
 
 
 def schedule_top(rows):
