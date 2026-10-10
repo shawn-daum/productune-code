@@ -1,5 +1,5 @@
-// T-964: the feature detail draws `taxonomy.guide` — 언제 쓰나 · 어떻게 보이나 · 어떻게 동작하나 ·
-// 한계 · 예시 (approved screen set #screen-feature, T-955), each logic rule with its ground
+// T-964 · T-1049: the feature detail draws `taxonomy.guide` — 사용 상황 · 화면 구성 · 동작 방식 ·
+// 한계 · 사례 (document headings; `ux[].at` surface map; `flow` mermaid) (approved screen set #screen-feature, T-955), each logic rule with its ground
 // ticket at the line end, the new-feature notice when no cell has text, 「사용자 화면 없음」 for
 // internal · component kinds (T-1026 ③ ⑤).
 import { describe, it, expect } from 'vitest'
@@ -65,7 +65,7 @@ describe('feature guide (T-964)', () => {
     expect(h).not.toContain('다음에 이 기능을 건드리는')
     expect(h).not.toContain('fd-sec')
   })
-  it('internal kind: 「사용자 화면 없음」 first under 어떻게 보이나, then the guide text; a user-screen kind has no such line', () => {
+  it('internal kind: 「사용자 화면 없음」 first under 화면 구성, then the guide text; a user-screen kind has no such line', () => {
     expect(html('vm')).toContain('<li>사용자 화면 없음</li><li>QA 가 화면 대신 쓴다</li>')
     expect(html('full')).not.toContain('사용자 화면 없음')
   })
@@ -76,7 +76,7 @@ describe('feature guide (T-964)', () => {
     const h = JSON.parse(/<script id="detail-data" type="application\/json">(.*?)<\/script>/s.exec(out)![1]).feature.full.html
     expect(h).toContain('<a href="#T-PATCH-147"><code>T-PATCH-147</code></a>')
   })
-  it('spec-backed: a collapsed fold right under 어떻게 동작하나 (before 한계), 「스펙 파일 · 지금 참인 것 N줄 ›」, then links and 근거 티켓', () => {
+  it('spec-backed: a collapsed fold right under 동작 방식 (before 한계), 「스펙 파일 · 지금 참인 것 N줄 ›」, then links and 근거 티켓', () => {
     const h = html('spec')
     expect(h).toContain('<details class="fd-spec"><summary class="fd-more">스펙 파일 · 지금 참인 것 3줄 ›</summary>')
     expect(h).not.toContain('<details class="fd-spec" open')
@@ -101,8 +101,67 @@ describe('feature guide (T-964)', () => {
     expect(html('vm2').split('사용자 화면 없음').length - 1).toBe(1)
   })
   it('normalizeGuide: lenient reads, drops malformed cells, null when empty', () => {
-    expect(normalizeGuide({ when: 'w', ux: ['a', 3], logic: [{ text: 't', ground: 'T-1' }, 4], limits: 'l', example: 'e' })).toEqual({ when: ['w'], ux: ['a'], logic: [{ text: 't', ground: ['T-1'] }], limits: ['l'], example: 'e' })
+    expect(normalizeGuide({ when: 'w', ux: ['a', 3], logic: [{ text: 't', ground: 'T-1' }, 4], limits: 'l', example: 'e' })).toEqual({ when: ['w'], ux: [{ text: 'a', at: '' }], logic: [{ text: 't', ground: ['T-1'] }], limits: ['l'], example: 'e', flow: '' })
     expect(normalizeGuide({ when: [], ux: '', logic: [], example: '' })).toBeNull()
     expect(normalizeGuide(['x'])).toBeNull()
+  })
+  it('T-1049 headings: document headings (no pill chip), the six names in order', () => {
+    const h = html('full')
+    expect(FEATURE.guide).toEqual({ when: '사용 상황', ux: '화면 구성', logic: '동작 방식', limits: '한계', example: '사례' })
+    expect(FEATURE.linksHeading).toBe('연관 기능')
+    expect(h).toContain('<h2 class="fd-h">사용 상황</h2>')
+    expect(h).not.toContain('pill-heading-2')
+  })
+  it('T-1049 ux `{text, at}`: the surface map numbers the tile an item points at; plain strings still list', () => {
+    const d = data()
+    d.featureTaxonomy.entries[0].guide = normalizeGuide({ when: ['w'], ux: [{ text: 'PRD 목차', at: 'viewer.prd' }, '표면 없는 줄', { text: '훅 줄', at: 'terminal.hook' }, { text: '모르는 표면', at: 'nowhere.x' }], logic: ['l'], example: 'e' })
+    const out = renderPage({ data: d, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const h = JSON.parse(/<script id="detail-data" type="application\/json">(.*?)<\/script>/s.exec(out)![1]).feature.full.html
+    expect(h).toContain('<div class="fd-sp hit"><span class="fd-bn">1</span>PRD</div>')
+    expect(h).toContain('<div class="fd-sp hit"><span class="fd-bn">3</span>훅 안내 줄</div>')
+    expect(h).toContain('<li><span class="fd-bn">2</span><span>표면 없는 줄</span></li>')
+    expect(h).toContain('<li><span class="fd-bn">4</span><span>모르는 표면</span></li>')
+    expect((h.match(/fd-stile hit/g) || []).length).toBe(2)
+    expect(html('spec')).not.toContain('fd-smap')
+    expect(html('full')).toContain('<ul class="fd-list"><li>명령보다 먼저 한 번')
+  })
+  it('T-1049 flow: a diagram block under 동작 방식; mermaid ships only when a page has a diagram', () => {
+    const d = data()
+    d.featureTaxonomy.entries[0].guide = normalizeGuide({ when: ['w'], ux: ['u'], flow: 'flowchart TD\n  A[시작] --> B{분기?}', logic: ['l'], example: 'e' })
+    const out = renderPage({ data: d, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const h = JSON.parse(/<script id="detail-data" type="application\/json">(.*?)<\/script>/s.exec(out)![1]).feature.full.html
+    expect(h).toContain('<div class="fd-flow"><pre class="mm-src" data-mermaid>flowchart TD\n  A[시작] --&gt; B{분기?}</pre><details class="fd-mm">')
+    expect(h.indexOf('fd-flow')).toBeGreaterThan(h.indexOf('>동작 방식<'))
+    expect(out).toContain('globalThis.mermaid')
+    const m = /script-src ([^;]*)/.exec(/Content-Security-Policy" content="([^"]*)"/.exec(out)![1])![1]
+    expect(m).toMatch(/'sha256-[^']+' 'sha256-[^']+' 'sha256-[^']+' 'strict-dynamic'/)
+    const plain = renderPage({ data: data(), dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    expect(plain).not.toContain('globalThis.mermaid')
+    expect(plain).not.toContain('mm-fig')
+  })
+  it('T-1049 mermaid fence in a PRD body becomes a diagram block (page ships mermaid); other fences stay code', () => {
+    const d = data()
+    d.prd = { current: { body: '## 흐름\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\n```js\nconst a = 1\n```\n' }, closed: [] }
+    const out = renderPage({ data: d, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    expect(out).toContain('<pre class="mm-src" data-mermaid>flowchart LR\n  A --&gt; B</pre>')
+    expect(out).toContain('const a = 1')
+    expect(out).toContain('globalThis.mermaid')
+  })
+  it('T-1049 spacing: every guide section carries the same 24px top gap as 연관 기능; the flow has a closed source fold', () => {
+    const out = renderPage({ data: data(), dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    expect(out).toContain('.detail-doc .fd-sec { margin-top: var(--space-24); }')
+    expect(out).toContain('.detail-doc > .fd-sec:first-child { margin-top: 0; }')
+    expect(out).toContain('.detail-doc h2.fd-h { font-size: 13.5px; font-weight: 700; color: var(--text-primary); margin: var(--space-24) 0 var(--space-8)')
+    expect(out).not.toContain('h2.fd-h:first-child')
+    const d = data()
+    d.featureTaxonomy.entries[0].guide = normalizeGuide({ when: ['w'], ux: ['u'], flow: 'flowchart TD\n  A --> B', logic: ['l'], example: 'e' })
+    const o2 = renderPage({ data: d, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const h = JSON.parse(/<script id="detail-data" type="application\/json">(.*?)<\/script>/s.exec(o2)![1]).feature.full.html
+    expect(h).toContain('<details class="fd-mm"><summary>흐름도 원문 (mermaid)</summary><pre class="fd-mm-src">flowchart TD\n  A --&gt; B</pre></details>')
+    expect(h).not.toContain('<details class="fd-mm" open')
+  })
+  it('T-1049: the kind definition line joins name and definition with a colon, no em dash', () => {
+    expect(html('full')).toContain('<p class="kind-def">기능: </p>')
+    expect(html('full')).not.toContain('기능 — ')
   })
 })

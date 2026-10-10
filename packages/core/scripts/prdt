@@ -10571,13 +10571,53 @@ def feature_taxonomy_warnings(cfg, vocab):
     return warns
 
 
+# T-1049 (T-1055 = A): the surface keys a guide `ux[].at` may name — `<surface>.<part>` or a bare
+# `<surface>`. The viewer draws the same four surfaces (FEATURE.surfaces in
+# packages/viewer/lib/labels.mjs); a test keeps the two lists equal.
+SURFACE_KEYS = {
+    "terminal": ("chat", "hook"),
+    "statusline": ("stage", "ticket"),
+    "viewer": ("activity", "home", "prd", "wiki", "disc"),
+    "cli": ("doctor", "wiki", "inbox"),
+}
+# T-1049 (T-1056 = A): `guide.flow` is mermaid source; its first real line names the diagram type.
+MERMAID_DIAGRAM_TYPES = (
+    "flowchart", "graph", "sequenceDiagram", "classDiagram", "stateDiagram", "erDiagram", "journey",
+    "gantt", "pie", "quadrantChart", "requirementDiagram", "gitGraph", "mindmap", "timeline",
+    "sankey", "xychart", "block", "packet", "architecture", "kanban", "C4Context", "C4Container",
+    "C4Component", "C4Dynamic", "C4Deployment", "zenuml",
+)
+
+
+def _surface_key_known(at):
+    surface, _, part = at.partition(".")
+    return surface in SURFACE_KEYS and (part == "" and "." not in at or part in SURFACE_KEYS[surface])
+
+
+def _mermaid_first_line(src):
+    """The first line of mermaid source that is not blank, a `%%` comment or the `---` front matter."""
+    in_front = False
+    for i, raw in enumerate(src.splitlines()):
+        line = raw.strip()
+        if not line or line.startswith("%%"):
+            continue
+        if line == "---" and (in_front or not any(x.strip() for x in src.splitlines()[:i])):
+            in_front = not in_front
+            continue
+        if in_front:
+            continue
+        return line
+    return ""
+
+
 def feature_guide_warnings(where, guide):
-    """T-964 — `taxonomy.guide` = {when, ux, logic, limits, example} (the viewer's
-    feature detail draws it). when · ux · limits: string or list of strings;
-    logic: list of {text, ground?} or plain strings (ground = ticket id string
-    or list of them); example: string. Warns — never raises — on a malformed
-    type, and per feature on an empty when · ux · logic · example cell (limits
-    may be empty). An absent guide warns once as a whole."""
+    """T-964 — `taxonomy.guide` = {when, ux, logic, limits, example, flow?} (the viewer's
+    feature detail draws it). when · limits: string or list of strings; ux: string or
+    list of strings or {text, at?} (T-1049: `at` = a SURFACE_KEYS key the viewer's surface
+    map marks); logic: list of {text, ground?} or plain strings (ground = ticket id string
+    or list of them); example: string; flow (T-1049): mermaid source string. Warns — never
+    raises — on a malformed type, and per feature on an empty when · ux · logic · example
+    cell (limits and flow may be empty). An absent guide warns once as a whole."""
     g = f"{where} taxonomy guide"
     if guide is None:
         return [f"{g} is missing — the viewer's feature detail shows the new-feature notice"]
@@ -10597,6 +10637,31 @@ def feature_guide_warnings(where, guide):
         if v is None:
             if cell != "limits":
                 warns.append(f"{g}.{cell} is empty")
+            continue
+        if cell == "ux":
+            items = [v] if isinstance(v, str) else v if isinstance(v, list) else None
+            if items is None:
+                warns.append(f"{g}.ux is not a string or a list")
+                continue
+            filled = False
+            for i, it in enumerate(items):
+                if isinstance(it, str):
+                    filled = filled or bool(it.strip())
+                elif isinstance(it, dict):
+                    if not isinstance(it.get("text"), str):
+                        warns.append(f"{g}.ux[{i}] text is not a string")
+                    else:
+                        filled = filled or bool(it["text"].strip())
+                    at = it.get("at")
+                    if at is not None:
+                        if not isinstance(at, str):
+                            warns.append(f"{g}.ux[{i}] at is not a string")
+                        elif not _surface_key_known(at.strip()):
+                            warns.append(f"{g}.ux[{i}] at '{at}' names no surface (terminal · statusline · viewer · cli, as <surface>.<part>)")
+                else:
+                    warns.append(f"{g}.ux[{i}] is not a string or a {{text, at}} object")
+            if not filled:
+                warns.append(f"{g}.ux is empty")
             continue
         lst = strs(v)
         if lst is None:
@@ -10629,6 +10694,16 @@ def feature_guide_warnings(where, guide):
         warns.append(f"{g}.example is empty")
     elif not isinstance(ex, str):
         warns.append(f"{g}.example is not a string")
+    flow = guide.get("flow")
+    if flow is not None:
+        if not isinstance(flow, str):
+            warns.append(f"{g}.flow is not a string")
+        elif flow.strip():
+            head = _mermaid_first_line(flow)
+            first = head.split()[0] if head else ""
+            first = first.split("-beta")[0].split("-v2")[0].split(":")[0]
+            if first not in MERMAID_DIAGRAM_TYPES:
+                warns.append(f"{g}.flow does not start with a mermaid diagram type (flowchart TD · sequenceDiagram · ...)")
     return warns
 
 
