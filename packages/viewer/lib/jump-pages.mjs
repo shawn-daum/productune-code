@@ -33,6 +33,11 @@ export function jumpPageContent(key) {
     `<a href="../viewer.html#${frag}">viewer.html#${escapeHtml(key)}</a>\n`
 }
 
+/** T-908: the `at/` pages a run carries, as `{name, content}` (the emit bundle). */
+export function ticketJumpPages(ids) {
+  return ids.map((id) => ({ name: `${id}.html`, content: jumpPageContent(id) }))
+}
+
 /**
  * Write `at/<id>.html` for each id and remove `at/T-NNN.html` pages of ids not
  * in the set. A symlinked `at/` is never followed (T-842): nothing is written
