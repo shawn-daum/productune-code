@@ -50,6 +50,7 @@ import {
 import { mermaidBlock, hasMermaid, mermaidScript, MERMAID_CSS } from './mermaid.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
 import { HOME_STAGES, stageSegments, buildHomeGraph, layoutHomeGraph, waitLists, compareTicketIds, NODE_W, NODE_H } from './home-graph.mjs'
+import { disciplineLoadCard, DISCIPLINE_LOAD_CSS, DISCIPLINE_LOAD_SCRIPT } from './discipline-load.mjs'
 import { renderPrdReading, openDecisionTickets, PRD_READING_CSS, PRD_READING_SCRIPT } from './prd-reading.mjs'
 
 function escapeHtml(str) {
@@ -1425,7 +1426,7 @@ function discRowsTable(docs) {
   return `<div class="table-wrap"><table class="t-disc"><thead>${head}</thead><tbody>\n${rows}</tbody></table></div>\n`
 }
 
-function discStoreInner(docs) {
+function discStoreInner(docs, load = null) {
   if (docs.length === 0) {
     const bodyHtml = `<p class="empty-note"><span>${escapeHtml(DISCIPLINE.emptyLine1)}</span><br><span>${escapeHtml(DISCIPLINE.emptyLine2)}</span></p>`
     const groups = [{ key: 'all', label: DISCIPLINE.allLabel, count: 0, bodyHtml }]
@@ -1433,7 +1434,7 @@ function discStoreInner(docs) {
   }
   const pane = (list) =>
     `<div class="count-line section-meta"><span class="count-badge">${escapeHtml(DISCIPLINE.countLabel)} <b>${list.length}</b>${escapeHtml(DISCIPLINE.countUnit)}</span></div>\n${discRowsTable(list)}`
-  const groups = [{ key: 'all', label: DISCIPLINE.allLabel, count: docs.length, bodyHtml: pane(docs) }]
+  const groups = [{ key: 'all', label: DISCIPLINE.allLabel, count: docs.length, bodyHtml: disciplineLoadCard(load) + pane(docs) }]
   const keys = []
   for (const d of docs) if (!keys.includes(d.group)) keys.push(d.group)
   for (const key of keys) {
@@ -1458,8 +1459,8 @@ function discDetailEntries(docs) {
   return entries
 }
 
-function discSection(docs) {
-  return storeSection('disc', { innerHtml: discStoreInner(docs) })
+function discSection(docs, load = null) {
+  return storeSection('disc', { innerHtml: discStoreInner(docs, load) })
 }
 
 // ---------- feature store (T-882: the T-808 feature screen) ----------
@@ -2082,7 +2083,7 @@ const INFO_ICON_SVG =
 /** docs/design.md §8.4 Banner (no side stripe, T-756) — hidden until the page is opened at an `#id` it cannot show; the script fills in the id and the text. */
 const HASH_NOTICE_HTML = `<div class="notice" id="hash-notice" role="status" hidden>
 <span class="notice-icon">${INFO_ICON_SVG}</span>
-<span class="notice-body"><b class="js-notice-id"></b> — <span class="js-notice-text"></span></span>
+<span class="notice-body"><b class="js-notice-id"></b>: <span class="js-notice-text"></span></span>
 <button type="button" class="notice-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 13)}</button>
 </div>
 `
@@ -3064,6 +3065,7 @@ a.dl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; bord
 .store-section[data-store="disc"] .empty-note span { font-size: 11px; }
 .store-section[data-store="disc"] .sidebar .nav-item:not(.nav-item-clickable) { cursor: default; }
 ${PRD_READING_CSS}
+${DISCIPLINE_LOAD_CSS}
 `
 
 /**
@@ -3745,6 +3747,7 @@ ${PRD_READING_SCRIPT}
       document.head.appendChild(probe);
     }, ${VIEWER_AUTO_REFRESH_MS});
   }
+${DISCIPLINE_LOAD_SCRIPT}
 })();
 `
 
@@ -3889,7 +3892,7 @@ ${featuresSection(data)}
 ${artifactsSection(data.artifacts, data.currentVersion, views)}
 ${glossarySection(data.wiki)}
 ${releaseSection(data.releases || [])}
-${discSection(discipline)}`
+${discSection(discipline, data.disciplineLoad || null)}`
   const detailScript = detailDataScript(detailData)
   // T-1049 (T-1056 = A): mermaid ships only on a page that carries a diagram block.
   const mm = hasMermaid(bodyHtml, detailScript) ? mermaidScript() : null
