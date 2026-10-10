@@ -5649,7 +5649,11 @@ def viewer_anchor(root, target):
         rel = p.relative_to(Path(root).resolve()).as_posix()
     except ValueError:
         return None
-    if not rel.endswith(".md"):
+    # T-973: an artifact is carried by manifest membership, any extension
+    # (the page's buildAnchors keys every manifest entry); everything else
+    # the viewer carries is a markdown file that must exist — a path to
+    # nothing gets the file fallback, never a jump link to nothing.
+    if not rel.startswith("docs/artifacts/") and not (rel.endswith(".md") and p.is_file()):
         return None
     if rel.startswith("docs/tickets/"):
         fm = parse_frontmatter(p) if p.is_file() else None
