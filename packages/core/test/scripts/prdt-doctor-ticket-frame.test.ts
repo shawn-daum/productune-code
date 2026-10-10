@@ -58,6 +58,11 @@ function makeFixture(): void {
     PRDT_HOME: path.join(home, '.prdt'),
     PRDT_DISCIPLINE: path.join(CORE_ROOT, 'discipline'),
     PATH: `${binDir}:${process.env.PATH}`,
+    // T-1064: the meta-cli bridge check judges a REAL checkout's
+    // dist/bin/meta-cli.cjs (PRDT_REPO, else this CLI's own self-reference) —
+    // state outside the sandbox. A track worktree whose bridge predates freshly
+    // merged sources used to flip this file's `violations=0` to 1.
+    PRDT_BRIDGE_CHECK: '0',
   }
   projectRoot = path.join(sandbox, 'proj')
   fs.mkdirSync(path.join(projectRoot, '.prdt'), { recursive: true })
@@ -172,6 +177,29 @@ describe.skipIf(!CAN_RUN)('doctor: ticket frame (advisory)', () => {
     expect(deLine).toBeTruthy()
     // On failure, name the mismatch itself (T-1062): the verdict line alone says
     // only "1 mismatch" — the lines under it say which check.
+    expect(deLine, deBlock(out)).toMatch(/violations=0/)
+  })
+
+  test('T-1064: a stale meta-cli bridge in the judged checkout leaves violations=0', () => {
+    // A checkout whose bridge predates its src (the track-after-merge shape),
+    // named as PRDT_REPO — the candidate the bridge check judges first.
+    const repo = path.join(sandbox, 'stale-repo')
+    fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true })
+    fs.copyFileSync(PRDT_CLI, path.join(repo, 'scripts', 'prdt'))
+    fs.mkdirSync(path.join(repo, 'src', 'bin'), { recursive: true })
+    fs.writeFileSync(path.join(repo, 'src', 'bin', 'meta-cli.ts'), '// fixture\n')
+    fs.mkdirSync(path.join(repo, 'dist', 'bin'), { recursive: true })
+    const bridge = path.join(repo, 'dist', 'bin', 'meta-cli.cjs')
+    fs.writeFileSync(bridge, '// fixture bridge\n')
+    const old = Date.now() / 1000 - 3600
+    fs.utimesSync(bridge, old, old)
+    fs.mkdirSync(env.PRDT_HOME!, { recursive: true })
+    fs.writeFileSync(path.join(env.PRDT_HOME!, 'prdt.env'), `PRDT_REPO=${repo}\n`)
+    ticket('v1.10', 'T-805', { created: '2026-09-24', body: '## Request\nx\n\n## Acceptance\ny\n' })
+    prdRecord('v1.10')
+    const out = doctorOut()
+    expect(out).not.toMatch(/meta-cli bridge STALE/)
+    const deLine = out.split('\n').find(l => l.startsWith('doctor: discipline↔execution —'))
     expect(deLine, deBlock(out)).toMatch(/violations=0/)
   })
 })
