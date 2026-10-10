@@ -98,12 +98,12 @@ describe('feature screen (T-882)', () => {
     expect(h).not.toContain('<p class="ev-text">—</p>')
   })
 
-  it('a link written on one side shows on the other side name-only; a spec file replaces 근거 티켓 with its body', () => {
+  it('a link written on one side shows on the other side name-only; a spec file adds a collapsed fold under the guide, then 근거 티켓', () => {
     const v: string = detailData(render(data())).feature.viewer.html
     expect(v).toContain('<button type="button" class="cn-a" data-feature-go="install-cli">설치</button><span class="kp kp-feature">기능</span></span><span></span></li>')
     expect(v).toContain(FEATURE.specHeading)
-    expect(v).toContain('SPEC BODY LINE')
-    expect(v).not.toContain(FEATURE.evidenceHeading)
+    expect(v).toContain('<details class="fd-spec"><summary class="fd-more">스펙 파일 ›</summary>')
+    expect(v).toContain(FEATURE.evidenceHeading)
   })
 
   it('no link at all → the approved one-line note', () => {
