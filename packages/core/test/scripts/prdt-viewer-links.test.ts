@@ -99,4 +99,21 @@ describe.skipIf(!HAS_GENERATOR)('prdt viewer <path> — hand-off links per item 
       ['fact--x', 'docs/prd/PRD.md', 'docs/features/f.md', 'docs/artifacts/v1.0/notes.md'])
     for (const l of lines) expect(l).toMatch(new RegExp(`\\(file://${atDir(p.root)}/[^)]+\\.html\\)$`))
   }, 60000)
+
+  test('a manifest-listed .html artifact → viewer link (any extension the manifest carries)', () => {
+    const p = project()
+    write(p.root, 'docs/artifacts/v1.0/screen-set-layout.html', '<p>x</p>')
+    write(p.root, 'docs/artifacts/manifest.json', JSON.stringify({ entries: [
+      { bucket: 'v1.0', path: 'notes.md' }, { bucket: 'v1.0', path: 'screen-set-layout.html' }] }))
+    const [line] = viewerLines(p, 'docs/artifacts/v1.0/screen-set-layout.html')
+    expect(line).toMatch(new RegExp(`^\\[docs/artifacts/v1\\.0/screen-set-layout\\.html\\]\\(file://${atDir(p.root)}/.+\\.html\\)$`))
+    expect(jumpOf(p.root, path.basename(line.replace(/\)$/, '')))).toContain('url=../viewer.html#docs/artifacts/v1.0/screen-set-layout.html')
+  }, 60000)
+
+  test('wiki / feature / PRD-version / ticket paths whose file does not exist → file:// fallback, no jump link', () => {
+    const p = project()
+    const rels = ['docs/wiki/not-a-page.md', 'docs/features/nope.md', 'docs/prd/versions/v9.9.md', 'docs/tickets/v1.0/T-777.md']
+    const lines = viewerLines(p, ...rels)
+    expect(lines).toEqual(rels.map((r) => `[${r}](file://${path.join(p.root, r)})`))
+  }, 60000)
 })
