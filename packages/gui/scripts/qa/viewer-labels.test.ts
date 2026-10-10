@@ -156,7 +156,7 @@ describe('viewer/lib/labels.mjs — PROGRESS_ITEM_LABEL is gone (T-795)', () => 
   })
 
   it('still exports the one label that is not PRD-derived (the out-of-scope trailing row)', () => {
-    expect(labels.PROGRESS_OUT_OF_SCOPE_LABEL).toBe('항목 밖')
+    expect(labels.PROGRESS_OUT_OF_SCOPE_LABEL).toBe('PRD 항목 밖 티켓')
   })
 })
 
