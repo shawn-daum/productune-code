@@ -127,6 +127,32 @@ describe.each(MODES)('$name', ({ opts }) => {
     }
   })
 
+  test('no explicit mode: a NEW file is 0666 & ~umask (umask 077 → 0600, 022 → 0644)', () => {
+    for (const [um, want] of [[0o077, 0o600], [0o022, 0o644]] as const) {
+      const old = process.umask(um)
+      try {
+        const f = `d${um.toString(8)}/n.txt`
+        stateWriteFileSync(root, f, 'x', opts)
+        expect(fs.statSync(path.join(root, f)).mode & 0o7777).toBe(want)
+      } finally {
+        process.umask(old)
+      }
+    }
+  })
+
+  test('no explicit mode: a NEW file is 0666 & ~umask (umask 077 → 0600, 022 → 0644)', () => {
+    for (const [um, want] of [[0o077, 0o600], [0o022, 0o644]] as const) {
+      const old = process.umask(um)
+      try {
+        const f = `d${um.toString(8)}/n.txt`
+        stateWriteFileSync(root, f, 'x', opts)
+        expect(fs.statSync(path.join(root, f)).mode & 0o7777).toBe(want)
+      } finally {
+        process.umask(old)
+      }
+    }
+  })
+
   test('a new file gets opts.mode (umask applies)', () => {
     const old = process.umask(0o022)
     try {

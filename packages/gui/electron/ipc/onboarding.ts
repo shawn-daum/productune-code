@@ -211,7 +211,7 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
     updated_at: new Date().toISOString(),
   }
   // Symlink-safe under the project root; an existing file keeps its mode (T-848 S4).
-  stateWriteFileSync(projectDir, onboardingPath, JSON.stringify(record, null, 2), { mode: 0o644 })
+  stateWriteFileSync(projectDir, onboardingPath, JSON.stringify(record, null, 2))
 }
 
 // ── Claude hooks install (prdt-only; legacy downgraded to read-only, T-311) ────
@@ -692,7 +692,7 @@ export function register(): void {
       try { data = JSON.parse(fs.readFileSync(p, 'utf-8')) } catch { /* new file */ }
       data.status = 'done'
       data.updated_at = new Date().toISOString()
-      stateWriteFileSync(projectDir, p, JSON.stringify(data, null, 2), { mode: 0o644 })
+      stateWriteFileSync(projectDir, p, JSON.stringify(data, null, 2))
       return { ok: true }
     } catch (e: any) {
       return { ok: false, error: e?.message ?? 'unknown error' }

@@ -585,7 +585,7 @@ function ensureMetaExclude(projectDir: string): void {
   try {
     // In place, no temp file (a swapped-in link can never leave one outside the
     // project), mode of an existing file kept (T-848 S4).
-    stateWriteFileSync(projectDir, excludePath, desired, { atomic: false, mode: 0o644 })
+    stateWriteFileSync(projectDir, excludePath, desired, { atomic: false })
   } catch (err) {
     // A refusal (symlink / non-regular / hard link / a race that swapped one in)
     // skips silently — the tick must go on. Genuine I/O errors surface.
