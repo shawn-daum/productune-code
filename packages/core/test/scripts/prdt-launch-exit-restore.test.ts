@@ -63,6 +63,10 @@ function writeStub(): void {
     'fg = os.isatty(0) and os.tcgetpgrp(0) == os.getpgrp()',
     'open(marker + ".handoff", "w").write("fg" if fg else "notfg")',
     'open(marker + ".argv", "w").write(" ".join(sys.argv[1:]))',
+    'try:',
+    '    os.fstat(3); open(marker + ".fd3", "w").write("open")',
+    'except OSError:',
+    '    open(marker + ".fd3", "w").write("closed")',
     'os.write(1, b"\\x1b[?1003h\\x1b[?1006h\\x1b[?1004h\\x1b[?2004h\\x1b[>1u")',
     'def done(tag, rc):',
     '    def h(*_):',
@@ -73,23 +77,46 @@ function writeStub(): void {
     'signal.signal(signal.SIGTERM, done("TERM", 3))',
     'os.write(1, b"READY")',
     'if mode == "exit": os._exit(int(os.environ.get("STUB_RC", "0")))',
+    'if mode == "tstp":',
+    '    os.kill(os.getpid(), signal.SIGTSTP)',
+    '    open(marker + ".resumed", "w").write("yes"); os._exit(0)',
+    'if mode == "die9":',
+    '    os.kill(os.getpid(), signal.SIGKILL)',
     'if mode == "die":',
     '    signal.signal(signal.SIGUSR1, signal.SIG_DFL); os.kill(os.getpid(), signal.SIGUSR1)',
     'time.sleep(10)',
   ].join('\n'), { mode: 0o755 })
 }
 
-interface Run { status: number; sig: number; out: string; marker: string }
+interface Run { hung: boolean; status: number; sig: number; out: string; marker: string }
 
-/** Run `prdt` under a pty. `act`: how the harness-as-terminal reacts after READY. */
-function runPrdt(mode: string, act: 'none' | 'ctrl-c' | 'term', env: Record<string, string> = {}): Run {
+/** Run `prdt` under a pty. `act`: how the harness-as-terminal reacts after READY.
+ *  `tstp` / `ctrl-z` run prdt as a foreground JOB of a mini shell (a real
+ *  job-control layout: an orphaned process group would silently ignore
+ *  SIGTSTP). The shell reports STOPPED when prdt is stopped, then SIGCONTs it. */
+function runPrdt(mode: string, act: 'none' | 'ctrl-c' | 'term' | 'tstp' | 'ctrl-z', env: Record<string, string> = {}): Run {
   const marker = path.join(shimDir, 'm')
+  const job = act === 'tstp' || act === 'ctrl-z'
+  const exec = `os.execvp(sys.executable, [sys.executable, ${JSON.stringify(PRDT_CLI)}])`
   const harness = [
     'import os, pty, sys, select, time, json, signal',
     'pid, m = pty.fork()',
     'if pid == 0:',
-    `    os.execvp(sys.executable, [sys.executable, ${JSON.stringify(PRDT_CLI)}])`,
-    'buf = b""; acted = False; end = time.time() + 15',
+    ...(job ? [
+      '    signal.signal(signal.SIGTTOU, signal.SIG_IGN)',
+      '    g = os.fork()',
+      '    if g == 0:',
+      '        os.setpgid(0, 0)',
+      `        ${exec}`,
+      '    os.setpgid(g, g); os.tcsetpgrp(0, g)',
+      '    end = time.time() + 20',
+      '    while True:',
+      '        _, st = os.waitpid(g, os.WUNTRACED)',
+      '        if os.WIFSTOPPED(st):',
+      '            os.write(1, b"STOPPED"); time.sleep(0.3); os.killpg(g, signal.SIGCONT); continue',
+      '        os._exit(os.WEXITSTATUS(st) if os.WIFEXITED(st) else 99)',
+    ] : [`    ${exec}`]),
+    'buf = b""; acted = False; stopped_seen = False; end = time.time() + 15',
     'while time.time() < end:',
     '    r, _, _ = select.select([m], [], [], 0.05)',
     '    if r:',
@@ -97,13 +124,19 @@ function runPrdt(mode: string, act: 'none' | 'ctrl-c' | 'term', env: Record<stri
     '        except OSError: break',
     '        if not d: break',
     '        buf += d',
-    `    if not acted and b"READY" in buf and ${JSON.stringify(act)} != "none":`,
-    '        acted = True; time.sleep(0.2)',
-    `        if ${JSON.stringify(act)} == "ctrl-c": os.write(m, b"\\x03")`,
-    '        else: os.kill(pid, signal.SIGTERM)',
-    '        end = min(end, time.time() + 8)',
+    `    a = ${JSON.stringify(act)}`,
+    '    if not acted and b"READY" in buf and a != "none":',
+    '        acted = True; t_act = time.time(); time.sleep(0.3)',
+    '        if a in ("ctrl-c",): os.write(m, b"\\x03")',
+    '        elif a == "term": os.kill(pid, signal.SIGTERM)',
+    '        elif a == "ctrl-z": os.write(m, b"\\x1a")',
+    '        end = min(end, time.time() + 10)',
+    '    if a == "ctrl-z" and not stopped_seen and b"STOPPED" in buf:',
+    '        stopped_seen = True; time.sleep(0.6); os.write(m, b"\\x03")',
+    'hung = a in ("tstp", "ctrl-z") and b"STOPPED" not in buf',
+    'os.close(m)',
     '_, st = os.waitpid(pid, 0)',
-    'print(json.dumps({"status": os.WEXITSTATUS(st) if os.WIFEXITED(st) else -1,',
+    'print(json.dumps({"hung": hung, "status": os.WEXITSTATUS(st) if os.WIFEXITED(st) else -1,',
     '                  "sig": os.WTERMSIG(st) if os.WIFSIGNALED(st) else 0,',
     '                  "out": buf.decode("latin1")}))',
   ].join('\n')
@@ -179,6 +212,82 @@ describe.skipIf(!PYTHON3)('prdt launch — terminal restored after Claude Code e
     expect(r.sig).toBe(os.constants.signals.SIGUSR1)
     expect([...endState(r.out).modes]).toEqual([])
   }, 20000)
+
+  test('kill -9 of claude: prdt dies by SIGKILL, no traceback, terminal restored', () => {
+    const r = runPrdt('die9', 'none')
+    expect(r.out).not.toContain('Traceback')
+    expect(r.sig).toBe(9)
+    expect([...endState(r.out).modes]).toEqual([])
+  }, 20000)
+
+  test('fd 3 inherited by claude as under exec', () => {
+    const marker = path.join(shimDir, 'm')
+    execFileSync('python3', ['-c', [
+      'import os, subprocess, sys',
+      `f = open(${JSON.stringify(path.join(shimDir, 'fd3.txt'))}, "w")`,
+      'os.dup2(f.fileno(), 3); os.set_inheritable(3, True)',
+      `subprocess.run([sys.executable, ${JSON.stringify(PRDT_CLI)}], stdout=subprocess.DEVNULL, close_fds=False)`,
+    ].join('\n')], {
+      cwd: projectDir, timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: fakeHome, PATH: `${shimDir}:${process.env.PATH ?? ''}`,
+             STUB_MODE: 'exit', STUB_MARKER: marker },
+    })
+    expect(fs.readFileSync(`${marker}.fd3`, 'utf8')).toBe('open')
+  }, 20000)
+
+  test('child suspends only itself (SIGTSTP): prdt stops too, resumes the child', () => {
+    const r = runPrdt('tstp', 'tstp')
+    expect(r.hung).toBe(false)
+    expect(r.status).toBe(0)
+    expect(fs.readFileSync(`${r.marker}.resumed`, 'utf8')).toBe('yes')
+  }, 30000)
+
+  test('ctrl+z on the whole group: no double stop, resumes, ctrl+c then ends', () => {
+    const r = runPrdt('sigint', 'ctrl-z')
+    expect(r.hung).toBe(false)
+    expect(r.status).toBe(130)
+    expect([...endState(r.out).modes]).toEqual([])
+  }, 30000)
+
+  test('background `prdt &` (tostop off): no restore bytes written', () => {
+    const marker = path.join(shimDir, 'm')
+    const harness = [
+      'import os, pty, sys, select, time, termios, json',
+      'pid, m = pty.fork()',
+      'if pid == 0:',
+      '    a = termios.tcgetattr(0); a[3] &= ~termios.TOSTOP; termios.tcsetattr(0, termios.TCSANOW, a)',
+      '    g = os.fork()',
+      '    if g == 0:',
+      '        os.setpgid(0, 0)',
+      `        os.execvp(sys.executable, [sys.executable, ${JSON.stringify(PRDT_CLI)}])`,
+      '    end = time.time() + 8',
+      '    while time.time() < end:',
+      '        p, st = os.waitpid(g, os.WNOHANG | os.WUNTRACED)',
+      '        if p: os._exit(0 if os.WIFEXITED(st) and os.WEXITSTATUS(st) == 0 else 4)',
+      '        time.sleep(0.02)',
+      '    os.kill(g, 9); os._exit(3)',
+      'buf = b""; end = time.time() + 15',
+      'while time.time() < end:',
+      '    r, _, _ = select.select([m], [], [], 0.05)',
+      '    if r:',
+      '        try: d = os.read(m, 65536)',
+      '        except OSError: break',
+      '        if not d: break',
+      '        buf += d',
+      'os.close(m)',
+      '_, st = os.waitpid(pid, 0)',
+      'print(json.dumps({"rc": os.WEXITSTATUS(st), "out": buf.decode("latin1")}))',
+    ].join('\n')
+    const res = JSON.parse(execFileSync('python3', ['-c', harness], {
+      cwd: projectDir, encoding: 'utf-8', timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: fakeHome, PATH: `${shimDir}:${process.env.PATH ?? ''}`,
+             STUB_MODE: 'exit', STUB_MARKER: marker },
+    }))
+    expect(res.rc).toBe(0)
+    expect(res.out).toContain(`${ESC}[>1u`) // the stub did write
+    expect(res.out).not.toContain(`${ESC}[<99u`)
+    expect(res.out).not.toContain(`${ESC}[?2004l`)
+  }, 30000)
 
   test('non-tty: no restore bytes, rc propagates', () => {
     const out = execFileSync('python3', ['-c', [
