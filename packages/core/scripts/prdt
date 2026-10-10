@@ -10028,6 +10028,7 @@ def feature_taxonomy_warnings(cfg, vocab):
             warns.append(f"{where} has no label — the feature screen shows the key instead")
         if not isinstance(t.get("def"), str) or not t["def"].strip():
             warns.append(f"{where} taxonomy has no def")
+        warns.extend(feature_guide_warnings(where, t.get("guide")))
         links = t.get("links", [])
         if not isinstance(links, list):
             warns.append(f"{where} taxonomy links is not a list")
@@ -10038,6 +10039,67 @@ def feature_taxonomy_warnings(cfg, vocab):
                 warns.append(f"{where} taxonomy link to is not a string")
             elif to not in vocab or to == key:
                 warns.append(f"{where} taxonomy link to '{to}' names no other vocab key")
+    return warns
+
+
+def feature_guide_warnings(where, guide):
+    """T-964 — `taxonomy.guide` = {when, ux, logic, limits, example} (the viewer's
+    feature detail draws it). when · ux · limits: string or list of strings;
+    logic: list of {text, ground?} or plain strings (ground = ticket id string
+    or list of them); example: string. Warns — never raises — on a malformed
+    type, and per feature on an empty when · ux · logic · example cell (limits
+    may be empty). An absent guide warns once as a whole."""
+    g = f"{where} taxonomy guide"
+    if guide is None:
+        return [f"{g} is missing — the viewer's feature detail shows the new-feature notice"]
+    if not isinstance(guide, dict):
+        return [f"{g} is not an object"]
+
+    def strs(v):
+        if isinstance(v, str):
+            return [v]
+        if isinstance(v, list) and all(isinstance(x, str) for x in v):
+            return v
+        return None
+
+    warns = []
+    for cell in ("when", "ux", "limits"):
+        v = guide.get(cell)
+        if v is None:
+            if cell != "limits":
+                warns.append(f"{g}.{cell} is empty")
+            continue
+        lst = strs(v)
+        if lst is None:
+            warns.append(f"{g}.{cell} is not a string or a list of strings")
+        elif cell != "limits" and not any(x.strip() for x in lst):
+            warns.append(f"{g}.{cell} is empty")
+    logic = guide.get("logic")
+    if logic is None:
+        warns.append(f"{g}.logic is empty")
+    elif not isinstance(logic, list):
+        warns.append(f"{g}.logic is not a list")
+    else:
+        filled = False
+        for i, it in enumerate(logic):
+            if isinstance(it, str):
+                filled = filled or bool(it.strip())
+            elif isinstance(it, dict):
+                if not isinstance(it.get("text"), str):
+                    warns.append(f"{g}.logic[{i}] text is not a string")
+                else:
+                    filled = filled or bool(it["text"].strip())
+                if "ground" in it and strs(it["ground"]) is None:
+                    warns.append(f"{g}.logic[{i}] ground is not a ticket id string or a list of them")
+            else:
+                warns.append(f"{g}.logic[{i}] is not a string or a {{text, ground}} object")
+        if not filled:
+            warns.append(f"{g}.logic is empty")
+    ex = guide.get("example")
+    if ex is None or (isinstance(ex, str) and not ex.strip()):
+        warns.append(f"{g}.example is empty")
+    elif not isinstance(ex, str):
+        warns.append(f"{g}.example is not a string")
     return warns
 
 
