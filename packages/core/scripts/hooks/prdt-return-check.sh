@@ -120,6 +120,17 @@ set +e
 # Everything after the `# ---- python ----` line below is the python program; bash
 # hands it to python3 as ONE argument and passes its own stdin (the event) through
 # untouched. `exit 0` right after keeps bash from ever parsing the python lines.
+# T-906: dir of prdt_safe_fs.py (the shared symlink-safe walk) — installed
+# mirror ($PRDT_HOME/bin, one level up from hooks/) or a source checkout (one
+# level up from hooks/). Empty when absent: `_append_line` then keeps its
+# leaf-only O_NOFOLLOW append (the pre-T-906 behavior), never fails.
+PRDT_SAFE_DIR=""
+_hd="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+for _d in "$_hd/../bin" "$_hd/.."; do
+  [ -f "$_d/prdt_safe_fs.py" ] && { PRDT_SAFE_DIR="$(cd -P -- "$_d" 2>/dev/null && pwd -P)"; break; }
+done
+export PRDT_SAFE_DIR
+
 python3 -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
 exit 0
 # The heredoc below is never executed (`exit 0` above): it only keeps the python
@@ -385,12 +396,21 @@ def atomic_write(path, obj):
 
 
 def _append_line(path, text):
-    # Symlink-proof append (T-647, same guarantee as atomic_write above): a
-    # planted symlink at this exact append path is the append-side form of the
-    # same clone-carried attack. O_NOFOLLOW refuses to open through a symlink at
-    # all (raises, ELOOP) rather than silently widening the write onto whatever
-    # it points at; a regular file — the normal case, every gate event — opens
-    # and appends exactly as before.
+    # Symlink-proof append (T-647; T-906 extends it from the leaf to EVERY
+    # component under the project root). A planted symlink at the leaf OR at
+    # `.prdt` / a directory in between is the append-side form of the same
+    # clone-carried attack: prdt_safe_fs.append_line opens each component with
+    # O_NOFOLLOW (refusing, raising OSError, never widening the write onto
+    # whatever a link points at) and reuses the leaf only when it is a regular
+    # single-link file. Module absent (stale mirror) → the leaf-only form.
+    rel = os.path.relpath(path, root).split(os.sep)
+    safe_dir = os.environ.get("PRDT_SAFE_DIR", "")
+    if safe_dir and rel[0] != "..":
+        if safe_dir not in sys.path:
+            sys.path.append(safe_dir)
+        import prdt_safe_fs
+        prdt_safe_fs.append_line(root, rel, text)
+        return
     fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "a") as f:
         f.write(text)

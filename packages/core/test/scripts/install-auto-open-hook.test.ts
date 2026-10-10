@@ -62,6 +62,8 @@ test.skipIf(!hasJq())('re-running install.sh is idempotent (single auto-open ent
 test.skipIf(!hasJq())('installed prdt settings reads the mirrored message catalog', () => {
   const { prdtHome } = installedMachine()
   expect(fs.existsSync(path.join(prdtHome, 'bin', 'prdt-messages.json'))).toBe(true)
+  // T-906: the shared symlink-safe walk the statusline + hooks import sits beside the statusline
+  expect(fs.existsSync(path.join(prdtHome, 'bin', 'prdt_safe_fs.py'))).toBe(true)
   const out = execFileSync('python3', [path.join(prdtHome, 'bin', 'prdt'), 'settings'], {
     cwd: prdtHome, encoding: 'utf8',
     env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: path.join(prdtHome, 'discipline'), PRDT_LANG: 'ko' },
