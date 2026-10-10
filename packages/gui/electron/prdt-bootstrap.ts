@@ -219,6 +219,8 @@ export function runBootstrap(paths: BootstrapPaths): BootstrapResult {
     const statusline = path.join(prdtHome, 'bin', 'statusline-prdt.sh')
     fs.copyFileSync(path.join(payloadRoot, 'scripts', 'statusline-prdt.sh'), statusline)
     fs.chmodSync(statusline, 0o755)
+    // T-906: the shared symlink-safe walk the statusline + hooks import (install.sh parity)
+    fs.copyFileSync(path.join(payloadRoot, 'scripts', 'prdt_safe_fs.py'), path.join(prdtHome, 'bin', 'prdt_safe_fs.py'))
 
     // menus are derived — regenerate against the installed mirror (install.sh §1)
     execFileSync(binPrdt, ['menus'], {

@@ -355,6 +355,73 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(fs.readdirSync(victimDir)).toEqual(['T-682.html'])
   })
 
+  /** T-906: a link at EVERY component of .prdt/scratch/viewer/at/<id>.html (the
+   *  directory chain through the shared prdt_safe_fs walk; the leaf by the
+   *  rename-over) never moves a byte of the victim, and the id renders unlinked
+   *  whenever the walk itself is refused. */
+  for (const where of ['scratch', 'viewer', 'at', 'leaf'] as const) {
+    test(`T-906: a symlink at ${where} is refused — victim byte-identical`, () => {
+      writeMarker({ agentId: 'linked', ticketId: 'T-682', ageMs: 60_000 })
+      buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], [])
+      stubViewerHtml()
+      const victimRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t906-victim-'))
+      const mk = (rel: string, body = 'victim\n') => {
+        const f = path.join(victimRoot, rel)
+        fs.mkdirSync(path.dirname(f), { recursive: true })
+        fs.writeFileSync(f, body)
+        const old = Date.now() / 1000 - 3600
+        fs.utimesSync(f, old, old)
+        return f
+      }
+      const scratch = path.join(root, '.prdt', 'scratch')
+      const vdir = path.join(scratch, 'viewer')
+      const files: string[] = []
+      if (where === 'scratch') {
+        files.push(mk('viewer/viewer.html'), mk('viewer/at/T-682.html'))
+        fs.rmSync(scratch, { recursive: true, force: true })
+        fs.symlinkSync(victimRoot, scratch)
+      } else if (where === 'viewer') {
+        files.push(mk('viewer.html'), mk('at/T-682.html'))
+        fs.rmSync(vdir, { recursive: true, force: true })
+        fs.symlinkSync(victimRoot, vdir)
+      } else if (where === 'at') {
+        files.push(mk('T-682.html'))
+        fs.symlinkSync(victimRoot, path.join(vdir, 'at'))
+      } else {
+        fs.mkdirSync(path.join(vdir, 'at'), { recursive: true })
+        files.push(mk('T-682.html'))
+        fs.symlinkSync(files[0], jumpPagePath('T-682'))
+      }
+      const snap = () => files.map((f) => [fs.readFileSync(f, 'utf-8'), fs.statSync(f).mtimeMs])
+      const before = snap()
+      const out = runStatusline()
+      expect(out).toContain('T-682')
+      expect(snap()).toEqual(before)
+      if (where !== 'leaf') expect(out).not.toMatch(TICKET_LINK_RE)
+      // the leaf case: the link ENTRY is replaced by a real stub, the target is untouched
+      if (where === 'leaf') expect(fs.lstatSync(jumpPagePath('T-682')).isSymbolicLink()).toBe(false)
+    })
+  }
+
+  test('T-906 (N3): the jump stub is 0644 under umask 077, and an existing stub keeps its mode', () => {
+    writeMarker({ agentId: 'linked', ticketId: 'T-682', ageMs: 60_000 })
+    buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], [])
+    stubViewerHtml()
+    const run = () => execFileSync('bash', ['-c', 'umask 077; exec bash "$0"', STATUSLINE_SH], {
+      cwd: root, input: '', encoding: 'utf-8',
+      env: { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en' },
+    })
+    run()
+    expect(fs.statSync(jumpPagePath('T-682')).mode & 0o777).toBe(0o644)
+    fs.chmodSync(jumpPagePath('T-682'), 0o600)
+    run()
+    expect(fs.statSync(jumpPagePath('T-682')).mode & 0o777).toBe(0o600)
+    fs.chmodSync(jumpPagePath('T-682'), 0o444)
+    run()
+    expect(fs.statSync(jumpPagePath('T-682')).mode & 0o777).toBe(0o444)
+    expect(fs.readFileSync(jumpPagePath('T-682'), 'utf-8')).toContain('url=../viewer.html#T-682')
+  })
+
   test('T-805: no viewer generated yet → the id renders unlinked, never falls back to the raw ticket md', () => {
     writeMarker({ agentId: 'linked', ticketId: 'T-682', ageMs: 60_000 })
     buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], [])
