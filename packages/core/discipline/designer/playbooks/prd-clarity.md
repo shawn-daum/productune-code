@@ -60,7 +60,7 @@ Weights are defaults — a project with no brand surface reweights, and you say 
 
 ## North star (Define-time scope input, not retro trivia)
 - Derive `north_star · input_metrics · validation_method` into the PRD's success-signals section.
-- **If measuring requires a product feature (analytics, event log, feedback hook) → that feature enters PRD scope now.** Qualitative goal → name the observation method (user watch session, interview). Never leave measurement unstated.
+- **If measuring requires a product feature (analytics, event log, feedback hook) → that feature enters PRD scope now.** Qualitative goal → name the observation method (user watch session, interview). A watch session on user-facing screens is set in Build — the real screens on `dev`, before Ship entry — never at version close; close-time gate rows measure against baselines. Never leave measurement unstated.
 - Previous version's retro shows an unobserved outcome → surface it as your first question (the PO already confirmed once at Define entry).
 
 ## What the PRD does NOT hold

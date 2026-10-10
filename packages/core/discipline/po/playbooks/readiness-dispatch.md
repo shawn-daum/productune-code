@@ -10,7 +10,7 @@ effort: medium
 Soft ritual: nothing blocks mechanically; every skip is a judgment + one `wiki/log.md` line. Findings become patch tickets (Ship-internal loop), not stage bounces.
 
 ## Sequence
-1. **Run-prompt (once, skippable)** — strongly recommend the user run the app and eyeball the core screens before shipping (cross-screen spacing / CSS / scroll). Surface ONCE; their skip is fine.
+1. **Build observation** *(screen set not N/A)* — its ticket (`build-entry` §Build observation) is `done`; open → run it now, before step 2, cross-screen spacing / CSS / scroll included; findings → patch tickets. The user's skip is fine: ask ONCE, log it.
 2. **Cumulative code-review · whole suite** — dispatch a FRESH developer session on the `code-review` playbook over the whole version diff, at **opus/medium** (T-391: scoped override of the menu's per-change sonnet/high floor — see the playbook's model-routing note; opus = temporary stand-in for fable until T-737 configurable routing). Correctness findings → patch tickets now; reuse/simplify → backlog tickets. Whole suite: every test file runs once here — the only slot; one invocation, and one that does not complete (killed · silent past its timeout) → per-directory slices, then single files, until every file has run once. A file red alone → patch ticket · a file that cannot complete alone → patch ticket on that test. The ritual line carries `suite ✓ <files>/<slices>` or `suite ✗ T-NNN`, never a skip.
 3. **DS conformance** *(user-facing surfaces only)* — dispatch Designer (producer checklist) or QA (independent review), your call — route by what you distrust: fidelity to the DS → Designer; the DS itself going stale/sloppy → QA.
 4. **Security pass** *(surface-conditional)* — dispatch QA on `security-pass`. You judge which items apply; a skipped item is named, never silent.
@@ -19,7 +19,7 @@ Soft ritual: nothing blocks mechanically; every skip is a judgment + one `wiki/l
 ## After
 - All findings sliced and patched (dev → QA loop as usual) → confirm deploy with the user (deploy itself = the version's single `ops` ticket; redeploys append to it; post-deploy → QA `live-verify`).
 - Promote by the path `prdt doctor` names for THIS repo — a `dev → main` PR self-merge where the repo requires one (org hook / branch protection), the local merge where it does not; doctor's signals are local and offline (no visibility into server-side branch protection, and a squash- or rebase-merged PR repo leaves no local trail), so a doctor silent on promotion is no local evidence of a PR requirement, not proof there is none — proceed with the local merge as the default, and treat a rejected push as the signal to stop and re-check rather than retry or force. Either shape is a push: it happens inside the deploy the user just confirmed and nowhere else, and any push beyond that confirm's scope needs its own instruction.
-- Ritual close: ONE `log.md` line — `(date) readiness [<line>/]v<N>.<m>: review ✓ · suite ✓ · ds ✓/N-A · security ✓ · prd ✓` with any forgiven items named.
+- Ritual close: ONE `log.md` line — `(date) readiness [<line>/]v<N>.<m>: observation ✓/N-A · review ✓ · suite ✓ · ds ✓/N-A · security ✓ · prd ✓` with any forgiven items named.
 
 ## Rules
 - N/A is normal (no UI → no DS check; pure-local tool → most security items N/A; no test dir → suite N-A). Judged skips are logged, not defended.
