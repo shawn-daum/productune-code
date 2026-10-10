@@ -997,7 +997,7 @@ function lineHead(v) {
 
 /** `data` with tickets · PRD · version · stage scoped to one line. */
 function lineData(data, v) {
-  return { ...data, tickets: v.tickets, prd: v.prd, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, allLineTickets: allLineTickets(data) }
+  return { ...data, tickets: v.tickets, prd: v.prd, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
 }
 
 /** Flattens per-line `{groups, defaultKey}` into one group list: keys prefixed `<line>/` (home line bare), the first group of each line carrying the section head. `defaultKey` = the home line's default. */
@@ -2158,13 +2158,26 @@ function homeScope(data, currentTickets) {
   const openItems = data.prd.openItems || []
   const byItem = new Map(openItems.map((i) => [i.key, []]))
   const outOfScope = []
+  // T-981: why a ticket sits outside the items — a malformed `prd_item` (no `<version>#<key>` shape) or none at all.
+  let malformed = 0
+  let noItem = 0
+  const fixCount = new Map()
   for (const t of currentTickets) {
     if (t.frontmatter.status !== 'open' && t.frontmatter.status !== 'done') continue
-    const key = prdItemKey(t.frontmatter.prd_item || '', data.currentVersion)
+    const raw = typeof t.frontmatter.prd_item === 'string' ? t.frontmatter.prd_item : ''
+    const key = prdItemKey(raw, data.currentVersion)
     if (key && byItem.has(key)) byItem.get(key).push(t)
-    else outOfScope.push(t)
+    else if (!raw.includes('#') && byItem.has(raw)) {
+      // A bare key that is exactly an open-section key: counted under that item, flagged 「형식 고치기」 (doctor keeps warning).
+      byItem.get(raw).push(t)
+      fixCount.set(raw, (fixCount.get(raw) || 0) + 1)
+    } else {
+      outOfScope.push(t)
+      if (raw === '') noItem += 1
+      else if (!/^[^#]+#[^#]+$/.test(raw)) malformed += 1
+    }
   }
-  const row = (label, title, tickets, extra = '') => {
+  const row = (label, title, tickets, extra = '', fix = 0) => {
     const sorted = [...tickets.filter((t) => t.frontmatter.status === 'done'), ...tickets.filter((t) => t.frontmatter.status !== 'done')]
       .map((t) => t)
       .sort((x, y) => (x.frontmatter.status === 'done' ? 0 : 1) - (y.frontmatter.status === 'done' ? 0 : 1) || compareTicketIds(x.frontmatter.id, y.frontmatter.id))
@@ -2172,14 +2185,20 @@ function homeScope(data, currentTickets) {
     const sq = sorted
       .map((t) => `<span class="stage-sq sc-btn${t.frontmatter.status === 'done' ? ' sq-done' : ''}" ${ticketButtonAttrs(t.frontmatter.id)} aria-label="${escapeHtml(t.frontmatter.id)}" title="${escapeHtml(t.frontmatter.id)}"></span>`)
       .join('')
-    return `<div class="sc-row${extra}"><span class="sc-lab" title="${escapeHtml(title)}">${escapeHtml(label)}</span><span class="sc-sq">${sq}</span><span class="mono sc-n">${done}/${tickets.length}</span></div>`
+    const fixTag = fix > 0 ? `<span class="sc-fix" title="${escapeHtml(HOME.scopeFixTitle)}">${escapeHtml(HOME.scopeFixTag(fix))}</span>` : ''
+    return `<div class="sc-row${extra}"><span class="sc-lab" title="${escapeHtml(title)}">${escapeHtml(label)}</span><span class="sc-sq">${sq}${fixTag}</span><span class="mono sc-n">${done}/${tickets.length}</span></div>`
   }
   const rows = openItems.map((i) => {
     const plain = i.label.replace(/`/g, '')
-    return row(plain.split(/[:：]/)[0].trim(), plain, byItem.get(i.key))
+    return row(plain.split(/[:：]/)[0].trim(), plain, byItem.get(i.key), '', fixCount.get(i.key) || 0)
   })
   if (outOfScope.length > 0) rows.push(row(PROGRESS_OUT_OF_SCOPE_LABEL, PROGRESS_OUT_OF_SCOPE_LABEL, outOfScope, ' sc-out'))
-  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div>${rows.join('')}</div>`
+  // T-981: each reason links to the ticket list (this line's current-version group).
+  const listKey = `${data.listPrefix || ''}${currentTicketBucketKey(data.tickets, data.currentVersion)}`
+  const why = (text) => `<button type="button" class="sc-why-link" data-open-store="ticket" data-open-group="${escapeHtml(listKey)}">${escapeHtml(text)}</button>`
+  const whys = [malformed > 0 ? why(HOME.scopeMalformed(malformed)) : '', noItem > 0 ? why(HOME.scopeNoItem(noItem)) : ''].filter(Boolean)
+  const whyHtml = whys.length > 0 ? `<p class="sc-why">${HOME.scopeWhyLead} ${whys.join(' · ')}</p>` : ''
+  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div>${rows.join('')}${whyHtml}</div>`
 }
 
 function homeWaits(data) {
@@ -2569,6 +2588,9 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .cp-h { font-size: 12px; font-weight: 600; color: var(--text-primary); margin: 0 0 var(--space-10); display: flex; align-items: baseline; gap: var(--space-8); flex-wrap: wrap; }
 .cp-sub { font-weight: 400; color: var(--text-tertiary); font-size: 11.5px; }
 .cp-n { font-size: 10.5px; color: var(--text-quaternary); font-weight: 400; }
+.sc-fix { font-size: 10.5px; color: var(--text-tertiary); border: 1px dashed var(--border-item); border-radius: 8px; padding: 0 6px; margin-left: var(--space-4); }
+.sc-why { font-size: 11.5px; color: var(--text-tertiary); margin: var(--space-8) 0 0; }
+.sc-why-link { font: inherit; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
 .cp-empty { font-size: 11.5px; color: var(--text-tertiary); margin: var(--space-4) 0 0; }
 .cp-wlist { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .cp-went { font: inherit; font-size: 12px; text-align: left; display: inline-flex; align-items: center; gap: 6px; background: var(--bg-surface-base); color: var(--text-primary); border: 1px solid var(--border-inline); border-radius: var(--radius-8); padding: 4px 8px; cursor: pointer; }
