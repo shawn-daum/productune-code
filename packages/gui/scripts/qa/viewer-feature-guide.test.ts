@@ -4,7 +4,11 @@
 // internal · component kinds (T-1026 ③ ⑤).
 import { describe, it, expect } from 'vitest'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
-import { normalizeGuide } from '@productune/viewer/lib/collect.mjs'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import { normalizeGuide, collectTickets } from '@productune/viewer/lib/collect.mjs'
+import { specTruthCount } from '@productune/viewer/lib/render.mjs'
 import { FEATURE } from '@productune/viewer/lib/labels.mjs'
 
 const guide = {
@@ -24,7 +28,7 @@ function data() {
       omitted: [{ bucket: 'v0.5', count: 1, bytes: 1, tickets: [{ rel: 'docs/tickets/v0.5/T-PATCH-147.md', frontmatter: { id: 'T-PATCH-147', slug: 'p', status: 'done', feature: 'full' } }] }],
     },
     wiki: [],
-    features: [{ rel: 'docs/features/spec.md', frontmatter: {}, body: 'SPEC BODY LINE' }],
+    features: [{ rel: 'docs/features/spec.md', frontmatter: {}, body: '## 지금 참인 것\n### a\n- SPEC BODY LINE\n- b\n### c\n- d\n## 출처\n- x' }],
     featureTaxonomy: {
       areas: [{ key: 'a', name: '영역', def: '' }],
       kinds: [{ key: 'feature', name: '기능', def: '' }, { key: 'internal', name: '제품 외', def: '' }],
@@ -72,12 +76,26 @@ describe('feature guide (T-964)', () => {
     const h = JSON.parse(/<script id="detail-data" type="application\/json">(.*?)<\/script>/s.exec(out)![1]).feature.full.html
     expect(h).toContain('<a href="#T-PATCH-147"><code>T-PATCH-147</code></a>')
   })
-  it('spec-backed: spec link + 근거 티켓, no spec body', () => {
+  it('spec-backed: a collapsed fold right under 어떻게 동작하나 (before 한계), 「스펙 파일 · 지금 참인 것 N줄 ›」, then links and 근거 티켓', () => {
     const h = html('spec')
-    expect(h).not.toContain('SPEC BODY LINE')
-    expect(h).toContain('href="#docs/features/spec.md"')
-    expect(h).toContain(FEATURE.evidenceHeading)
-    expect(h).toContain(FEATURE.linksHeading)
+    expect(h).toContain('<details class="fd-spec"><summary class="fd-more">스펙 파일 · 지금 참인 것 3줄 ›</summary>')
+    expect(h).not.toContain('<details class="fd-spec" open')
+    const at = [`>${FEATURE.guide.logic}<`, 'fd-spec', `>${FEATURE.guide.limits}<`, FEATURE.linksHeading, FEATURE.evidenceHeading].map((x) => h.indexOf(x))
+    expect([...at].sort((x, y) => x - y)).toEqual(at)
+    expect(at.every((x) => x >= 0)).toBe(true)
+    expect(h).toContain('SPEC BODY LINE')
+  })
+  it('specTruthCount: items under 지금 참인 것 incl. ### subsections, fences ignored, null without the section', () => {
+    expect(specTruthCount('## 지금 참인 것\n### a\n- x\n  - y\n### b\n1. z\n```\n- no\n```\n## 출처\n- no')).toBe(3)
+    expect(specTruthCount('## 출처\n- a')).toBeNull()
+  })
+  it('ticket_id: frontmatter (legacy T-PATCH) keys the ticket by that id', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 't964-'))
+    fs.mkdirSync(path.join(root, 'docs/tickets/v0.5'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'docs/tickets/v0.5/T-PATCH-147.md'), '---\nticket_id: T-PATCH-147\nversion: v0.5\nslug: p\nstatus: done\n---\nbody\n')
+    const t = collectTickets(root, 'v1.13')
+    expect(t.omitted[0].tickets[0].frontmatter.id).toBe('T-PATCH-147')
+    fs.rmSync(root, { recursive: true, force: true })
   })
   it('「사용자 화면 없음」 once when the first ux line already starts with it', () => {
     expect(html('vm2').split('사용자 화면 없음').length - 1).toBe(1)

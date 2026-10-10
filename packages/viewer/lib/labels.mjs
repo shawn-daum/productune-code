@@ -187,6 +187,9 @@ export const FEATURE = {
   // T-964: the approved screen set's #screen-feature (T-955) — five guide sections from config
   // features.vocab.<key>.taxonomy.guide, in this order. No user screen (kind internal · component): T-1026 ③.
   guide: { when: '언제 쓰나', ux: '어떻게 보이나', logic: '어떻게 동작하나', limits: '한계', example: '예시' },
+  specLink: (n) => `스펙 파일 · 지금 참인 것 ${n}줄 ›`,
+  specTruthHeading: '지금 참인 것',
+  specLinkBare: '스펙 파일 ›',
   limitsNone: '알려진 한계 없음',
   noScreenKinds: ['internal', 'component'],
   noScreen: '사용자 화면 없음',

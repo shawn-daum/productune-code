@@ -145,6 +145,13 @@ function readDoc(repoRoot, absPath) {
 // (never `body: undefined` either — the key is absent), so a later change to
 // render.mjs cannot accidentally interpolate a closed round's ticket prose by
 // reaching for `.body` on one of these: the value simply is not there to read.
+// T-964: legacy tickets (docs/tickets/v0.5/T-PATCH-*) carry `ticket_id:` instead of `id:` — key them by that id.
+function withTicketId(doc) {
+  const fm = doc && doc.frontmatter
+  if (fm && !fm.id && typeof fm.ticket_id === 'string' && fm.ticket_id.trim()) fm.id = fm.ticket_id.trim()
+  return doc
+}
+
 function ticketLite(doc) {
   const fm = doc.frontmatter
   return { rel: doc.rel, frontmatter: { id: fm.id, slug: fm.slug, type: fm.type, status: fm.status, assignee: fm.assignee, feature: fm.feature, created: fm.created } }
@@ -174,7 +181,7 @@ export function collectTickets(repoRoot, currentVersion, { line = null, exclude 
     const isCurrent = sameVersion(bucket, currentVersion) || bucket === 'backlog'
     if (isCurrent) {
       for (const f of files) {
-        const doc = readDoc(repoRoot, path.join(bucketDir, f))
+        const doc = withTicketId(readDoc(repoRoot, path.join(bucketDir, f)))
         included.push({ bucket, ...doc })
       }
     } else if (files.length > 0) {
@@ -189,7 +196,7 @@ export function collectTickets(repoRoot, currentVersion, { line = null, exclude 
       const bodies = {}
       for (const f of files) {
         const filePath = path.join(bucketDir, f)
-        const doc = readDoc(repoRoot, filePath)
+        const doc = withTicketId(readDoc(repoRoot, filePath))
         bytes += fs.statSync(containedFile(repoRoot, filePath)).size
         tickets.push(ticketLite(doc))
         bodies[doc.rel] = doc.body
