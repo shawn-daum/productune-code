@@ -152,7 +152,8 @@ export const CASES: readonly Case[] = [
             { matcher: 'Bash|WebFetch|WebSearch|Write|Edit|MultiEdit|NotebookEdit', hooks: [h('prdt-identity-guard.sh')] },
           ],
           // T-985: prdt-question-check.sh, matcher-less on Stop (PO only).
-          Stop: [{ hooks: [h('prdt-question-check.sh')] }],
+          // T-899: prdt-link-check.sh, its own matcher-less Stop entry (PO only).
+          Stop: [{ hooks: [h('prdt-question-check.sh')] }, { hooks: [h('prdt-link-check.sh')] }],
         },
       }))
       const status = checkPrdtHooksStatus(home)
