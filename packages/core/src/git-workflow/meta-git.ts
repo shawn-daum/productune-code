@@ -28,6 +28,7 @@ import path from 'path'
 import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
 import { atomicWriteFileSync } from '../fs/atomic-write'
+import { stateWriteFileSync, StateWriteRefused } from '../fs/state-write'
 import {
   stateDir,
   STATE_DIR_NAME,
@@ -575,123 +576,20 @@ function ensureMetaExclude(projectDir: string): void {
   const excludePath = path.join(metaGitDir(projectDir), 'info', 'exclude')
   const desired = desiredMetaExclude(projectDir)
   try {
-    writeExcludeNoFollow(projectDir, excludePath, desired)
+    // Unchanged → no write at all (no mtime churn). A plain read only compares.
+    const st = fs.lstatSync(excludePath)
+    if (st.isFile() && fs.readFileSync(excludePath, 'utf-8') === desired) return
+  } catch {
+    /* absent / unreadable → fall through to the guarded write */
+  }
+  try {
+    // In place, no temp file (a swapped-in link can never leave one outside the
+    // project), mode of an existing file kept (T-848 S4).
+    stateWriteFileSync(projectDir, excludePath, desired, { atomic: false, mode: 0o644 })
   } catch (err) {
     // A refusal (symlink / non-regular / hard link / a race that swapped one in)
-    // skips silently — the tick must go on. Other I/O errors surface as before.
-    if (!(err instanceof ExcludeRefused)) throw err
-  }
-}
-
-class ExcludeRefused extends Error {}
-
-const REFUSE_CODES = new Set(['ELOOP', 'EEXIST', 'ENOTDIR', 'EMLINK'])
-
-function refuseOn<T>(fn: () => T): T {
-  try {
-    return fn()
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException)?.code
-    if (code && REFUSE_CODES.has(code)) throw new ExcludeRefused(code)
-    throw err
-  }
-}
-
-/**
- * Write `excludePath` without ever following a symlink (T-847): a repository
- * can commit `.prdt`, `meta.git`, `info` or `exclude` itself as a link to a
- * file of the user's, and this runs on every autosave tick. Node has no
- * openat(), so the directory chain from `projectDir` down is checked with
- * lstat (missing dirs created one level at a time, never through a link),
- * the new contents go to an O_CREAT|O_EXCL|O_NOFOLLOW temp file beside the
- * target, the chain is re-checked by realpath, and rename() replaces the
- * `exclude` entry itself (rename never follows its destination). An existing
- * `exclude` that is a symlink, not a regular file, or hard-linked elsewhere
- * (st_nlink > 1) is left alone. Any refusal throws ExcludeRefused.
- */
-function writeExcludeNoFollow(projectDir: string, excludePath: string, desired: string): void {
-  const infoDir = path.dirname(excludePath)
-  const rel = path.relative(projectDir, infoDir)
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new ExcludeRefused('outside')
-
-  // 1. Directory chain: every component a real directory, never a link.
-  let cur = projectDir
-  for (const part of rel.split(path.sep)) {
-    cur = path.join(cur, part)
-    let st: fs.Stats | undefined
-    try {
-      st = fs.lstatSync(cur)
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err
-    }
-    if (!st) {
-      // mkdir never follows a link at its final component (EEXIST instead).
-      refuseOn(() => fs.mkdirSync(cur))
-      st = fs.lstatSync(cur)
-    }
-    if (st.isSymbolicLink() || !st.isDirectory()) throw new ExcludeRefused('dir')
-  }
-
-  // 2. The existing file: compare through an O_NOFOLLOW descriptor.
-  let existing: fs.Stats | undefined
-  try {
-    existing = fs.lstatSync(excludePath)
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err
-  }
-  if (existing) {
-    if (existing.isSymbolicLink() || !existing.isFile() || existing.nlink > 1) {
-      throw new ExcludeRefused('file')
-    }
-    const fd = refuseOn(() =>
-      fs.openSync(excludePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW),
-    )
-    try {
-      const fst = fs.fstatSync(fd)
-      if (!fst.isFile() || fst.nlink > 1 || fst.ino !== existing.ino || fst.dev !== existing.dev) {
-        throw new ExcludeRefused('file')
-      }
-      if (fs.readFileSync(fd, 'utf-8') === desired) return
-    } finally {
-      fs.closeSync(fd)
-    }
-  }
-
-  // 3. Temp file beside the target, never through a link, then rename over.
-  const tmp = path.join(infoDir, `.exclude.prdt-${process.pid}-${Math.random().toString(36).slice(2)}`)
-  const wfd = refuseOn(() =>
-    fs.openSync(
-      tmp,
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
-      0o644,
-    ),
-  )
-  let renamed = false
-  try {
-    try {
-      fs.writeSync(wfd, desired)
-    } finally {
-      fs.closeSync(wfd)
-    }
-    // Re-check the chain just before the rename: a link swapped in since
-    // step 1 changes the resolved directory.
-    if (fs.realpathSync(infoDir) !== path.join(fs.realpathSync(projectDir), rel)) {
-      throw new ExcludeRefused('race')
-    }
-    const now = fs.lstatSync(excludePath, { throwIfNoEntry: false })
-    if (now && (now.isSymbolicLink() || !now.isFile() || now.nlink > 1)) {
-      throw new ExcludeRefused('race')
-    }
-    fs.renameSync(tmp, excludePath)
-    renamed = true
-  } finally {
-    if (!renamed) {
-      try {
-        fs.unlinkSync(tmp)
-      } catch {
-        /* already gone */
-      }
-    }
+    // skips silently — the tick must go on. Genuine I/O errors surface.
+    if (!(err instanceof StateWriteRefused)) throw err
   }
 }
 

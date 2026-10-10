@@ -5,7 +5,7 @@ import os from 'os'
 import { execFile, spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
-import { setUiLanguage, setAudienceMode, atomicWriteFileSync } from '@productune/core'
+import { setUiLanguage, setAudienceMode, atomicWriteFileSync, stateWriteFileSync } from '@productune/core'
 import type { UiLanguage, AudienceMode } from '@productune/core'
 import { withLoginShellPath, resetLoginShellPathCache } from '../surface-runner'
 import { installClaudeCli, resolveClaudeCli } from '../claude-installer'
@@ -210,7 +210,8 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
     source,
     updated_at: new Date().toISOString(),
   }
-  fs.writeFileSync(onboardingPath, JSON.stringify(record, null, 2), 'utf-8')
+  // Symlink-safe under the project root; an existing file keeps its mode (T-848 S4).
+  stateWriteFileSync(projectDir, onboardingPath, JSON.stringify(record, null, 2), { mode: 0o644 })
 }
 
 // ── Claude hooks install (prdt-only; legacy downgraded to read-only, T-311) ────
@@ -691,7 +692,7 @@ export function register(): void {
       try { data = JSON.parse(fs.readFileSync(p, 'utf-8')) } catch { /* new file */ }
       data.status = 'done'
       data.updated_at = new Date().toISOString()
-      fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf-8')
+      stateWriteFileSync(projectDir, p, JSON.stringify(data, null, 2), { mode: 0o644 })
       return { ok: true }
     } catch (e: any) {
       return { ok: false, error: e?.message ?? 'unknown error' }

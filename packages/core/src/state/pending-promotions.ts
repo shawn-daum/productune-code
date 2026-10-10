@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { stateDir } from './project-kind'
-import { atomicWriteFileSync } from '../fs/atomic-write'
+import { stateWriteFileSync } from '../fs/state-write'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 //
@@ -55,10 +55,9 @@ function readState(statePath: string): Record<string, unknown> {
   }
 }
 
-function writeStateAtomic(filePath: string, state: Record<string, unknown>): void {
-  const dir = path.dirname(filePath)
-  fs.mkdirSync(dir, { recursive: true })
-  atomicWriteFileSync(filePath, JSON.stringify(state, null, 2), { mode: 0o600 })
+function writeStateAtomic(projectDir: string, filePath: string, state: Record<string, unknown>): void {
+  // Symlink-safe under the project root; an existing file keeps its mode (T-848 S4).
+  stateWriteFileSync(projectDir, filePath, JSON.stringify(state, null, 2), { mode: 0o600 })
 }
 
 function getPromotions(state: Record<string, unknown>): PendingPromotion[] {
@@ -105,7 +104,7 @@ export function appendPendingPromotion(
     status: 'pending',
   }
   state['pending_promotions'] = [...promotions, entry]
-  writeStateAtomic(sp, state)
+  writeStateAtomic(projectDir, sp, state)
   return entry
 }
 
@@ -144,7 +143,7 @@ export function resolvePendingPromotion(
   }
   promotions[idx] = updated
   state['pending_promotions'] = promotions
-  writeStateAtomic(sp, state)
+  writeStateAtomic(projectDir, sp, state)
   return updated
 }
 
@@ -171,7 +170,7 @@ export function autoDropStale(projectDir: string): number {
   })
   if (dropped > 0) {
     state['pending_promotions'] = updated
-    writeStateAtomic(sp, state)
+    writeStateAtomic(projectDir, sp, state)
   }
   return dropped
 }
@@ -188,7 +187,7 @@ export function markSurfaced(projectDir: string, id: string): void {
   if (idx < 0) return
   promotions[idx] = { ...promotions[idx], surfaced_at: new Date().toISOString() }
   state['pending_promotions'] = promotions
-  writeStateAtomic(sp, state)
+  writeStateAtomic(projectDir, sp, state)
 }
 
 /**

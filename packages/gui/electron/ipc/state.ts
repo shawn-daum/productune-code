@@ -8,6 +8,7 @@ import {
   autoDropStale,
   markSurfaced,
   listAllPromotions,
+  stateWriteFileSync,
 } from '@productune/core'
 import type { PendingPromotion } from '@productune/core'
 import { mechanicalWrite } from '../mechanical-write'
@@ -279,7 +280,7 @@ export function register(): void {
 
       state.pending_gate = null
 
-      fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8')
+      stateWriteFileSync(args.projectDir, statePath, JSON.stringify(state, null, 2))
       return { ok: true }
     } catch (e: any) {
       return { ok: false, error: e?.message ?? 'unknown error' }
