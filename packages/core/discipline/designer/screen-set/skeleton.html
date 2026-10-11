@@ -9,8 +9,9 @@
     screen set    = head (ID · one-line definition) → set block [list · device chip · status chip + ONE screen · description]
                     → decide block BELOW the set (only when the set puts something to the user)
     decision doc  = head → decide block (one line per decision, its recommendation on the line)
-                    → one options table per decision, recommended column marked
-                    → evidence (the set block when screens exist; tables / measurements otherwise)
+                    → one options table per decision, recommended column marked, + the picture it is judged on
+                    → evidence, each block a closed <details class="spec-fold"> (the set block when screens exist;
+                      tables / measurements / source wording / diffs otherwise)
   Copy to docs/artifacts/<version>/<slug>.html; fill in the playbook's order: criteria → this shell → screens.
 
   SCROLL: no fixed-height pane, no overflow:hidden on anything that can overflow. List and description stick
