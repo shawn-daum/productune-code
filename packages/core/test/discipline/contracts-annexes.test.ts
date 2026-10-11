@@ -260,7 +260,7 @@ describe('po habit — Define entry and dispatch failure live in playbooks the h
   })
 
   test('the release-notes rule moved to the retro playbook; patch-cycle points there, not at the habit', () => {
-    const rule = 'Release notes on any `v*` tag cut (version close OR patch close): in the SAME change that cuts the tag, add a `## <version>` section to `<codeRoot>/docs/RELEASES.md`'
+    const rule = 'Release notes on any version tag cut (`v*` or `<line>/v*`; version close OR patch close): in the SAME change that cuts the tag, add a `## <version>` section, the tag string verbatim, to the line\'s `<codeRoot>/docs/RELEASES.md`'
     expect(pb('retro')).toContain(rule)
     expect(HABITS.po).not.toContain(rule)
     expect(pb('patch-cycle')).toContain('the release-notes rule applies — `retro` playbook, Rules:')

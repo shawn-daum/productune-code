@@ -617,3 +617,18 @@ describe('T-686 — two prdt processes triggering the auto-backup at once', () =
     expect(fs.existsSync(path.join(metaGitDir(projectDir), BACKUP_LOCK_FILE))).toBe(false) // still released
   })
 })
+
+test('T-848 S4: a link planted at the backup state file is refused — victim untouched, tick does not throw', async () => {
+  metaGitSync(['remote', 'add', 'backup', networkAlias(path.join(os.tmpdir(), 'no-such-remote-s4-' + process.pid))])
+  const victimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bk-victim-'))
+  try {
+    const victim = path.join(victimDir, 'precious')
+    fs.writeFileSync(victim, 'precious\n')
+    fs.symlinkSync(victim, metaBackupStatePath(projectDir))
+    await expect(metaBackupTick(projectDir, { now: new Date('2026-10-01T02:00:00Z') })).resolves.toBeDefined()
+    expect(fs.readFileSync(victim, 'utf-8')).toBe('precious\n')
+    expect(fs.lstatSync(metaBackupStatePath(projectDir)).isSymbolicLink()).toBe(true)
+  } finally {
+    fs.rmSync(victimDir, { recursive: true, force: true })
+  }
+})

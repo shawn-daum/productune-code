@@ -125,6 +125,8 @@ function cliHooksBlock(home: string): any {
     SessionStart: [
       { matcher: 'startup|resume|clear', hooks: disciplineEntry },
       { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), ...partSlots, ...injectors] },
+      // T-479: the cross-project inbox line is its OWN SessionStart entry (PO only, never compact/SubagentStart).
+      { matcher: 'startup|resume|clear', hooks: [h('prdt-inbox-inject.sh')] },
     ],
     // T-682 slice 3: prdt-post-dispatch.sh rides SubagentStart too (the
     // mode-independent START of a dispatch — its in-flight marker), as its OWN
@@ -143,6 +145,10 @@ function cliHooksBlock(home: string): any {
       // opens its own hand-offs; this is the main-session-only relay that
       // reads a completed `prdt` Bash call's own printed stdout instead.
       { matcher: 'Bash', hooks: [h('prdt-auto-open.sh')] },
+      // T-977: prdt-wordlist-check.sh — its own Write|Edit|MultiEdit entry.
+      { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-wordlist-check.sh')] },
+      // T-1025: prdt-user-prompt.sh's matcher-less PostToolUse entry (form=outline hot line).
+      { hooks: [h('prdt-user-prompt.sh')] },
     ],
     UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
     // T-491 call governor: matcher-less on both halves, and LAST in event order
@@ -161,6 +167,10 @@ function cliHooksBlock(home: string): any {
     PreToolUse: REGISTRATIONS
       .filter(r => r.event === 'PreToolUse')
       .map(r => ({ ...(r.matcher !== undefined ? { matcher: r.matcher } : {}), hooks: r.hooks.map(h) })),
+    // T-985: the PO's unticketed-question check — matcher-less, Stop takes none.
+    // T-1022: prdt-user-prompt.sh's own second Stop entry (the PO form=outline reply check).
+    // T-899: prdt-link-check.sh, its own Stop entry between the two.
+    Stop: [{ hooks: [h('prdt-question-check.sh')] }, { hooks: [h('prdt-link-check.sh')] }, { hooks: [h('prdt-user-prompt.sh')] }],
   }
 }
 

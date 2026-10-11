@@ -99,6 +99,26 @@ describe('home wait lists — the T-849 rule the statusline dec / req uses', () 
   })
 })
 
+describe('home wait lists — req hides blocked user tasks (T-961)', () => {
+  const row = (bucket: string, o: T) => ({ bucket, fm: tk(o).frontmatter })
+  it('req keeps an assignee-user ticket only when no dep is still open', () => {
+    const r = waitLists([
+      row('v1.13', { id: 'T-1', type: 'impl', assignee: 'developer' }),
+      row('v1.13', { id: 'T-2', type: 'impl', assignee: 'developer', status: 'done' }),
+      row('v1.13', { id: 'T-10', type: 'ops', assignee: 'user', deps: ['T-1'] }),
+      row('v1.13', { id: 'T-11', type: 'ops', assignee: 'user', deps: ['T-2'] }),
+      row('v1.13', { id: 'T-12', type: 'ops', assignee: 'user' }),
+    ])
+    expect(r.req.map((f) => f.id)).toEqual(['T-11', 'T-12'])
+  })
+  it('a dep that is open in another line blocks too (allRows spans every line); backlog never blocks', () => {
+    const mine = [row('v2.2', { id: 'T-720', type: 'ops', assignee: 'user', deps: ['T-9102'] }), row('v2.2', { id: 'T-721', type: 'ops', assignee: 'user', deps: ['T-9103'] })]
+    const other = [row('v1.2', { id: 'T-9102', type: 'impl', assignee: 'developer' }), row('backlog', { id: 'T-9103', type: 'impl', assignee: 'developer' })]
+    expect(waitLists(mine).req.map((f) => f.id)).toEqual(['T-720', 'T-721'])
+    expect(waitLists(mine, [...mine, ...other]).req.map((f) => f.id)).toEqual(['T-721'])
+  })
+})
+
 describe('home stage bar and PRD gate path', () => {
   it('reads design and decision as define, qa and ops as ship, everything else as build; retro stays empty', () => {
     expect(['design', 'decision', 'impl', 'qa', 'ops', 'x'].map(stageOfTicketType)).toEqual(['define', 'define', 'build', 'ship', 'ship', 'build'])
@@ -163,6 +183,11 @@ describe('home screen — T-796 acceptance in the generated page', () => {
     expect(connected.home).not.toContain('stage-matrix')
     expect(connected.home).not.toContain('>홈<')
   })
+  it('T-961: stage-bar labels read 「티켓 n」 per stage and 「티켓 완료 n/m」 for the version (v1.13 screen set, T-955)', () => {
+    expect(connected.home).toContain('<span class="sb-n">티켓 1</span>')
+    expect(connected.home).toContain('<span class="sb-n">티켓 0</span>')
+    expect(connected.home).toContain('<span class="sb-total">티켓 완료 0/3</span>')
+  })
   it('draws the stage bar, 스코프, both wait lists and the dependency block (named 「dependency」)', () => {
     expect(connected.home).toContain('class="sb"')
     expect(connected.home).toContain('스코프')
@@ -170,6 +195,15 @@ describe('home screen — T-796 acceptance in the generated page', () => {
     expect(connected.home).toContain('사용자 작업 대기')
     expect(connected.home).toContain('dependency')
     expect(connected.home).toContain('메인 패스 · 크리티컬 패스')
+  })
+  it('T-961: 내 결정 대기 · 사용자 작업 대기 sit left of 스코프, dependency stays below', () => {
+    const h = connected.home
+    const w = h.indexOf('class="sc-waits"')
+    const sc = h.indexOf('class="cp-h">스코프')
+    const dep = h.indexOf('class="cp-h">dependency')
+    expect(w).toBeGreaterThan(-1)
+    expect(w).toBeLessThan(sc)
+    expect(sc).toBeLessThan(dep)
   })
   it('before Build: the not-connected notice and 「크리티컬 패스」 only', () => {
     expect(before.home).toContain('메인 패스가 아직 이어지지 않았어요')
@@ -194,7 +228,7 @@ describe('home screen — T-796 acceptance in the generated page', () => {
     expect(def).not.toContain(built)
     for (const stage of ['build', 'ship']) {
       const h = page(open, { stage }).home
-      expect(h).toContain('메인 패스가 아직 이어지지 않았어요 — ' + built)
+      expect(h).toContain('메인 패스가 아직 이어지지 않았어요. ' + built)
       expect(h).not.toContain('Build 진입 때 생겨요')
       expect(h).not.toContain('Build 진입 전')
     }
@@ -242,7 +276,7 @@ describe('home fix round 1 (T-881 grill) — what a DOM-free test can pin; width
     expect(TEMPLATE_CSS).toMatch(/\.sb-seg \{[^}]*flex: 0 1 auto; min-width: 56px/)
     expect(TEMPLATE_CSS).toMatch(/\.sb-sq \{[^}]*flex-wrap: wrap/)
     expect(TEMPLATE_CSS).toMatch(/\.sb-total \{[^}]*flex: 0 0 auto/)
-    expect(TEMPLATE_CSS).toMatch(/\.sc-grid \{[^}]*grid-template-columns: minmax\(0, 3fr\) minmax\(300px, 2fr\)/)
+    expect(TEMPLATE_CSS).toMatch(/\.sc-grid \{[^}]*grid-template-columns: 280px minmax\(0, 1fr\)/)
     expect(TEMPLATE_CSS).toMatch(/\.sc-sq \{[^}]*flex-wrap: wrap/)
     expect(TEMPLATE_CSS).toMatch(/\.sc-waits \{ min-width: 0;/)
   })
@@ -308,5 +342,43 @@ describe('home fix round 1 (T-881 grill) — what a DOM-free test can pin; width
     expect(new Set(threeChip.map((c) => c.y)).size).toBeLessThanOrEqual(2)
     for (const c of chips) for (const b of boxes) expect(hit(c, b)).toBe(false)
     for (const a of chips) for (const b of chips) if (a !== b) expect(hit(a, b)).toBe(false)
+  })
+})
+
+describe('home scope: the 「PRD 항목 밖 티켓」 block (T-981 → T-1046)', () => {
+  const scope = (tickets: ReturnType<typeof tk>[]) => /<div class="cp-h">스코프[\s\S]*?(?=<\/div><\/div><\/div>|<div class="cp-block">)/.exec(page(tickets).home)?.[0] ?? ''
+  const outside = (s: string) => /<div class="sc-outside">[\s\S]*$/.exec(s)?.[0] ?? ''
+  it('is its own block with the new label, a one-line definition, and the malformed count linking to the current-version ticket list', () => {
+    const s = scope([tk({ id: 'T-1', prd_item: 'v1.12#a' }), tk({ id: 'T-2', prd_item: 'nope' }), tk({ id: 'T-3', prd_item: 'nope2' }), tk({ id: 'T-4' }), tk({ id: 'T-5', prd_item: 'v1.12#zzz' })])
+    const o = outside(s)
+    expect(o).toContain('PRD 항목 밖 티켓')
+    expect(o).toContain('어느 PRD 항목에도 묶이지 않은 작업 티켓이에요.')
+    expect(o).toContain('형식이 틀린 티켓 2건')
+    expect(o).toContain('data-open-store="ticket" data-open-group="v1.12"')
+    expect(o).toContain('0/4')
+    expect(s).not.toContain('항목 밖인 이유')
+  })
+  it('a bare key equal to an open-section key counts under that item and is flagged 「형식 고치기」; any other malformed value stays outside', () => {
+    const s = scope([tk({ id: 'T-1', prd_item: 'a', status: 'done' }), tk({ id: 'T-2', prd_item: 'a' }), tk({ id: 'T-3', prd_item: 'A' })])
+    expect(s).toContain('형식 고치기 2')
+    expect(s).toContain('1/2')
+    expect(outside(s)).toContain('형식이 틀린 티켓 1건')
+  })
+  it('0 outside tickets keeps the row with 「없음」 and no definition line', () => {
+    const o = outside(scope([tk({ id: 'T-1', prd_item: 'v1.12#a' }), tk({ id: 'T-2', prd_item: 'v1.12#a' })]))
+    expect(o).toContain('PRD 항목 밖 티켓')
+    expect(o).toContain('없음')
+    expect(o).not.toContain('어느 PRD 항목에도')
+    expect(o).not.toContain('결정 기록')
+  })
+  it('decision tickets are not counted outside; a note with a link to the current version 「결정」 appears only when there are any', () => {
+    const only = outside(scope([tk({ id: 'T-1', type: 'decision' }), tk({ id: 'T-2', type: 'decision', status: 'done' })]))
+    expect(only).toContain('없음')
+    expect(only).toContain('결정 기록 2건은 항목에 묶지 않아 여기서 세지 않아요.')
+    expect(only).toContain('data-open-store="home" data-open-group="decision"')
+    const mixed = outside(scope([tk({ id: 'T-1', type: 'decision' }), tk({ id: 'T-2', type: 'design' }), tk({ id: 'T-3' })]))
+    expect(mixed).toContain('0/2')
+    expect(mixed).toContain('결정 기록 1건')
+    expect(mixed).not.toContain('형식이 틀린')
   })
 })

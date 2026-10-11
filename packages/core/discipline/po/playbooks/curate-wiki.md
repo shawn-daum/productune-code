@@ -1,16 +1,17 @@
 ---
 name: curate-wiki
 persona: po
-when: "stage boundary (mainly Retro entry) · inbox visibly piled up · doctor flags inbox backlog"
+when: "stage boundary · inbox visibly piled up · doctor flags inbox backlog"
 model_floor: opus
 effort: medium
 ---
 # Curate wiki — consolidate the inbox into living pages
 
-Turn-close appends to `docs/wiki/inbox.md` are raw and cheap. Curation is where they become knowledge. **Default action = update an existing page, not create a new one** — ingest is mostly refreshing the 10–15 pages you already have.
+Stage boundary = mainly Retro entry. Turn-close appends to `docs/wiki/inbox.md` are raw and cheap. Curation is where they become knowledge. **Default action = update an existing page, not create a new one** — ingest is mostly refreshing the 10–15 pages you already have.
 
 ## Route each inbox line — four quadrants: wiki × override, project × machine
 You answer these yourself; none of them needs the user, and "unclear" is not one of the answers.
+A line carrying a user's complaint about a persona's conduct with no row in `prdt feedback list <persona>` → `prdt feedback record` it against the ticket quoting those words (none → quote them in the ticket of the work they were said about), then route it on.
 1. **Knowledge, or work?** A line stating work still to be done rather than something that stays true is a **ticket, not a page** — open it (or drop it as already done) and delete the line. A durable lesson sitting inside it still routes on below: one entry exiting twice is normal.
 2. **Row — does it hold off this machine?** Carry the project to another machine and the line is still true / still needed → **project** (`docs/wiki/` · `.prdt/overrides/<persona>.md`). Tied to THIS machine's hardware, installed tools, VM, or live user session → **machine** (`~/.prdt/wiki/` · `~/.prdt/overrides/<persona>.md`). A line welding a general claim to a locally measured value is under-specified, not undecidable — split it and route each half.
 3. **Column — constraint, or description?** "Violating" it is meaningless → **wiki**. A constraint earns an **override** line only with BOTH: ① violation cost is accident-grade (irreversible · real-environment pollution · security · data loss) ② nothing cues you to look the wiki up at the moment of violation (non-recall). Either one short → wiki `learning--`/`fact--`; that is the common outcome, not a consolation prize.

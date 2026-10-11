@@ -120,6 +120,8 @@ export const CASES: readonly Case[] = [
             // hand-listed — "installed" means the WHOLE roster is registered, so a
             // literal list here would have quietly redefined what installed means.
             { matcher: 'startup|resume|clear', hooks: [h('prdt-session-start.sh'), ...partSlots.map(h), h('prdt-audience-inject.sh'), h('prdt-plan-tier-inject.sh'), h('prdt-overrides-inject.sh'), h('prdt-project-overrides-inject.sh')] },
+            // T-479: prdt-inbox-inject.sh, its own startup|resume|clear entry (PO-only inbox lines).
+            { matcher: 'startup|resume|clear', hooks: [h('prdt-inbox-inject.sh')] },
             { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), ...partSlots.map(h), h('prdt-audience-inject.sh'), h('prdt-plan-tier-inject.sh'), h('prdt-overrides-inject.sh'), h('prdt-project-overrides-inject.sh')] },
           ],
           SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh'), h('prdt-return-check.sh')] }],
@@ -129,6 +131,8 @@ export const CASES: readonly Case[] = [
             // T-794: a second registration of the same script — main-session-only
             // relay for the CLI's own hand-offs, off the Bash tool's stdout.
             { matcher: 'Bash', hooks: [h('prdt-auto-open.sh')] },
+            // T-977: prdt-wordlist-check.sh — its own Write|Edit|MultiEdit entry.
+            { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-wordlist-check.sh')] },
           ],
           UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
           PostToolBatch: [{ hooks: [h('prdt-call-governor.sh')] }],
@@ -144,7 +148,12 @@ export const CASES: readonly Case[] = [
             { matcher: 'Read|Bash', hooks: [h('prdt-secret-guard.sh')] },
             // T-779: prdt-worktree-guard.sh, a FOURTH PreToolUse entry (the write-shaped tools).
             { matcher: 'Edit|Write|MultiEdit|NotebookEdit|Bash', hooks: [h('prdt-worktree-guard.sh')] },
+            // T-976: prdt-identity-guard.sh, a FIFTH PreToolUse entry (outbound + write tools).
+            { matcher: 'Bash|WebFetch|WebSearch|Write|Edit|MultiEdit|NotebookEdit', hooks: [h('prdt-identity-guard.sh')] },
           ],
+          // T-985: prdt-question-check.sh, matcher-less on Stop (PO only).
+          // T-899: prdt-link-check.sh, its own matcher-less Stop entry (PO only).
+          Stop: [{ hooks: [h('prdt-question-check.sh')] }, { hooks: [h('prdt-link-check.sh')] }],
         },
       }))
       const status = checkPrdtHooksStatus(home)

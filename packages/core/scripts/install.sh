@@ -245,6 +245,13 @@ EOF
 cp "$ROOT/scripts/prdt" "$PRDT_HOME/bin/prdt"
 cp "$ROOT/scripts/prdt-messages.json" "$PRDT_HOME/bin/prdt-messages.json"
 cp "$ROOT/scripts/statusline-prdt.sh" "$PRDT_HOME/bin/statusline-prdt.sh"
+# T-906: the shared symlink-safe walk/writers the statusline, prdt-auto-open.sh's
+# regen worker and the post-dispatch / return-check appends import; always
+# beside statusline-prdt.sh (hooks find it at ../bin). A source tree without it
+# (a synthetic test root) just skips — every importer degrades without it.
+if [ -f "$ROOT/scripts/prdt_safe_fs.py" ]; then
+  cp "$ROOT/scripts/prdt_safe_fs.py" "$PRDT_HOME/bin/prdt_safe_fs.py"
+fi
 chmod +x "$PRDT_HOME/hooks/"*.sh "$PRDT_HOME/bin/prdt" "$PRDT_HOME/bin/statusline-prdt.sh"
 
 # Never let §4 register a command that is not an executable file on this machine.

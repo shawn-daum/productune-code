@@ -56,14 +56,19 @@ function makeProject(state: object): string {
   return dir
 }
 
-/** The hook's additionalContext for one prompt ('' when it stayed silent). */
+/** The hook's additionalContext for one prompt ('' when it stayed silent), minus
+ *  the T-1072 `[prdt reply]` line every prompt carries (pinned in
+ *  outline-stop-check-hook.test.ts / user-prompt-stage-guard.test.ts) — these
+ *  cases are about the state line and its guard lines. */
 function stateContext(state: object, prompt = 'hello'): string {
   const cwd = makeProject(state)
   const out = execFileSync('bash', [PROMPT_HOOK], {
     input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 't471', cwd, prompt }),
     encoding: 'utf8',
   })
-  return out.trim() ? (JSON.parse(out).hookSpecificOutput.additionalContext as string) : ''
+  if (!out.trim()) return ''
+  const ctx = JSON.parse(out).hookSpecificOutput.additionalContext as string
+  return ctx.split('\n').filter((l) => !l.startsWith('[prdt reply] ')).join('\n')
 }
 
 const LEGIT = { schema_version: 1, stage: 'build', version: 'v1.6', current_task: null }

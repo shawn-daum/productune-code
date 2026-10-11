@@ -50,6 +50,8 @@ function runPrdt(args: string[]): string {
     cwd: projectDir,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    // T-1074: the meta-cli bridge check judges the real checkout, not the sandbox.
+    env: { ...process.env, PRDT_BRIDGE_CHECK: '0' },
     timeout: subprocessTimeout('cli'),
   })
 }

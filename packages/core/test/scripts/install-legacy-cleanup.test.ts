@@ -105,8 +105,17 @@ test.skipIf(!hasJq())('install.sh strips deleted legacy pdt-* hooks + legacy sta
   // 5. Unrelated settings untouched.
   expect(s.permissions?.allow).toEqual(['Bash(ls *)'])
 
-  // 6. A legacy-only event array left empty after cleanup is dropped (no dangling key).
-  expect(s.hooks?.Stop).toBeUndefined()
+  // 6. Legacy pdt-* Stop entries are gone (stop-verify.sh asserted stripped above). The legacy-only
+  //    array is dropped by cleanup; the only Stop entry left is the prdt one the manifest registers
+  //    (T-985 prdt-question-check.sh), so no legacy command and no foreign entry remains there.
+  const stopCmds = allCommands({ hooks: { Stop: s.hooks?.Stop ?? [] } })
+  // T-1022: plus prdt-user-prompt.sh, the PO form=outline reply check, as its own Stop entry.
+  // T-899: plus prdt-link-check.sh between them (the PO unlinked-ticket-mention check).
+  expect(stopCmds).toHaveLength(3)
+  expect(stopCmds[0]).toContain('prdt-question-check.sh')
+  expect(stopCmds[1]).toContain('prdt-link-check.sh')
+  expect(stopCmds[2]).toContain('prdt-user-prompt.sh')
+  expect(stopCmds.some((c) => LEGACY_BASENAMES.some((b) => c.includes(b)))).toBe(false)
 })
 
 test.skipIf(!hasJq())('install.sh preserves a user custom statusLine (only the repo-distributed one is stripped)', () => {

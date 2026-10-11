@@ -88,7 +88,7 @@ export default defineConfig({
     reporters: ['default', new TimeoutTallyReporter(timeouts)],
     // T-450 THE FLOOR: the run's verdict. A config field, so `--reporter` cannot
     // remove it — which is exactly how S4 removed the R1 floor.
-    globalSetup: ['../../scripts/vitest-real-home-verdict.ts', '../../scripts/vitest-cwd-verdict.ts'],
+    globalSetup: ['../../scripts/vitest-real-home-verdict.ts', '../../scripts/vitest-cwd-verdict.ts', '../../scripts/vitest-claude-trust-verdict.ts'],
     // T-442: repoint HOME at a per-worker temp dir before any test module
     // loads. Several tests here shell out to the real `prdt` CLI (which
     // rewrites ~/.claude.json) or call `getDefault()` (which auto-creates

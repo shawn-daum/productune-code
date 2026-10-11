@@ -25,6 +25,7 @@ Three checks, in order. Report what you ran, not what you assume.
 - Responsive-surface component with rendered text (a nav/button row counts, not just text-heavy blocks) → eyeball legibility at the surface's width extremes; obvious text-crush (habit *Width set*) = `fail`. A line needing the scored multi-width pass → `escalate_to {playbooks:[ds-conformance], model: sonnet}` over a shallow pass.
 - Multi-variant component → enumerate the variants yourself, render-verify each, per-variant verdicts in `variant_matrix[]` (habit *Variant coverage*).
 - Data-layer touches close only via a real render or probe of the data actually flowing — never "the code looks right".
+- Line on what a screen does (shows · hides · warns · moves) with an automated screen check (`contracts/definition-of-done.md`) → run it yourself; `evidence` = test file · case · outcome, beside the rendered pixels, never in their place. Developer `unresolved[]` holds `unverified:` rows → the render alone decides; name the missing check in `summary`.
 
 ## Verdict
 - Verdict per habit (pass + commands run · failing check + excerpt per fail).

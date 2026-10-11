@@ -140,6 +140,8 @@ beforeEach(() => {
     PRDT_HOME: path.join(home, '.prdt'),
     PRDT_DISCIPLINE: disciplineDir,
     PATH: `${binDir}:${process.env.PATH}`,
+    // T-1074: the meta-cli bridge check judges the real checkout, not the sandbox.
+    PRDT_BRIDGE_CHECK: '0',
   }
   projectRoot = path.join(sandbox, 'proj')
   fs.mkdirSync(path.join(projectRoot, '.prdt'), { recursive: true })

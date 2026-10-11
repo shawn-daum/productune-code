@@ -11,8 +11,17 @@
 // `prdt tickets --link`, the auto-open hook), so a project with no
 // `code/packages/viewer` of its own still gets one. Without them, the defaults
 // are this repo's own layout, unchanged.
+//
+// T-908: `--emit` (with `--out`, which then only NAMES the page — nothing is
+// written) prints ONE JSON bundle on stdout instead of writing files:
+// `{ files: [{name, content}…] (data files, page, build id — in write order),
+//    at: [{name, content}…] (every ticket's at/ page),
+//    prune: { dataPrefix, dataSuffix } }`. `prdt` writes the bundle itself through
+// its link-refusing `state_write` and prunes by directory descriptor, so no
+// generator process resolves the output folder's path string (T-850 race).
 import fs from 'node:fs'
 import path from 'node:path'
+import { writeTicketJumpPages, ticketJumpPages } from './lib/jump-pages.mjs'
 import { generate, checkUpToDate, isPastTicketDataFileName, OUTPUT_PATH, REPO_ROOT } from './generate.mjs'
 
 function argValue(name) {
@@ -44,7 +53,18 @@ async function main() {
     return
   }
 
-  const { html, dataFiles, buildFile } = await generate({ repoRoot, outputPath })
+  const { html, dataFiles, buildFile, ticketIds } = await generate({ repoRoot, outputPath })
+  if (process.argv.includes('--emit')) {
+    const base = path.basename(outputPath)
+    const prefix = base.replace(/\.html?$/i, '')
+    const bundle = {
+      files: [...dataFiles, { name: base, content: html }, buildFile],
+      at: ticketJumpPages(ticketIds, base),
+      prune: { dataPrefix: `${prefix}.tickets-`, dataSuffix: '.js' },
+    }
+    process.stdout.write(JSON.stringify(bundle))
+    return
+  }
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
   // T-885: the past-version data files land before the page that names them.
   const dir = path.dirname(outputPath)
@@ -53,6 +73,8 @@ async function main() {
   // T-803: the build-id file lands after the page, so an open tab that sees the
   // new id always reloads into the new page.
   writeAtomic(path.join(dir, buildFile.name), buildFile.content)
+  // T-995: every ticket in the page gets its `at/T-NNN.html`; gone tickets' pages are pruned.
+  writeTicketJumpPages(dir, ticketIds, writeAtomic, path.basename(outputPath))
   // A bucket that no longer exists leaves no stale data file behind; only
   // this page's own `<prefix>.tickets-*.js` names are ever removed.
   const keep = new Set(dataFiles.map((f) => f.name))

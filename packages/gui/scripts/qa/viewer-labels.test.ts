@@ -57,7 +57,7 @@ const RENDER_MJS_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 // syntax is not copy). Excluding them by declaration name, not by content, so
 // this checker cannot be fooled by *wrapping* a real hard-coded label in
 // either of those two constants.
-const OPAQUE_BLOB_DECLARATIONS = new Set(['TEMPLATE_CSS', 'INTERACTION_SCRIPT'])
+const OPAQUE_BLOB_DECLARATIONS = new Set(['TEMPLATE_CSS', 'INTERACTION_SCRIPT', 'LINES_CSS', 'LINES_SCRIPT'])
 
 // A dev-facing diagnostic message (`templateGuardErrors`'s own guard-failure
 // text, e.g. "template CSS contains a hex or rgb() literal") is real English
@@ -156,7 +156,7 @@ describe('viewer/lib/labels.mjs — PROGRESS_ITEM_LABEL is gone (T-795)', () => 
   })
 
   it('still exports the one label that is not PRD-derived (the out-of-scope trailing row)', () => {
-    expect(labels.PROGRESS_OUT_OF_SCOPE_LABEL).toBe('항목 밖')
+    expect(labels.PROGRESS_OUT_OF_SCOPE_LABEL).toBe('PRD 항목 밖 티켓')
   })
 })
 
@@ -229,8 +229,8 @@ function renderStructureFixture(): string {
 describe('viewer/lib/render.mjs — T-705 §G structures the approved mockup showed', () => {
   it('artifact table has a size column, formatted from bytes', () => {
     const html = renderStructureFixture()
-    expect(html).toContain('<th>크기</th>')
-    expect(html).toContain('<td class="num-col">2.0 KB</td>')
+    expect(html).toContain('>크기<span class="sort-ind"')
+    expect(html).toContain('<td class="num-col" data-sort="2048">2.0 KB</td>')
   })
 
   // T-709 결정 2: no more closed-round TABLE / separate title extraction —
@@ -268,7 +268,7 @@ describe('viewer/lib/render.mjs — T-705 §G structures the approved mockup sho
   it.skipIf(metaMissingReason)(
     `holds for the real generated viewer.html, not only the fixture${metaMissingReason ? ` — SKIPPED: ${metaMissingReason}` : ''}`,
     () => {
-      expect(realHtml).toContain('<th>크기</th>')
+      expect(realHtml).toContain('>크기<span class="sort-ind"')
       expect(realHtml).toContain('<th>제목</th>')
       expect(realHtml).toMatch(/class="count-badge">/)
     },

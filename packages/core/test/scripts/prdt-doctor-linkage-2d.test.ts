@@ -50,7 +50,10 @@ function runPrdt(cli: string, args: string[]): string {
     cwd: projectDir,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` },
+    // T-1074: PRDT_BRIDGE_CHECK=0 — the meta-cli bridge check judges the REAL
+    // checkout's dist/bin/meta-cli.cjs, which install-builds-meta-bridge.test.ts
+    // ages mid-suite; between this file's two doctor runs it flipped violations 0→1.
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, PRDT_BRIDGE_CHECK: '0' },
     timeout: subprocessTimeout('cli'),
   })
 }
