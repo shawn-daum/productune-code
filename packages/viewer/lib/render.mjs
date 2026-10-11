@@ -3899,6 +3899,9 @@ export function renderPage({
   viewerAbsPath = DEFAULT_VIEWER_ABS_PATH,
   pastTicketSrc = {},
   build = null,
+  // T-1076: true when a past-version data file carries a diagram block — its
+  // bodies never sit in this page, so the page itself cannot tell.
+  pastMermaid = false,
 }) {
   pageViewerAbsPath = viewerAbsPath
   const pageTitle = escapeHtml(pageTitleText(data.project))
@@ -3940,7 +3943,7 @@ ${releaseSection(data.releases || [])}
 ${discSection(discipline, data.disciplineLoad || null)}`
   const detailScript = detailDataScript(detailData)
   // T-1049 (T-1056 = A): mermaid ships only on a page that carries a diagram block.
-  const mm = hasMermaid(bodyHtml, detailScript) ? mermaidScript() : null
+  const mm = pastMermaid || hasMermaid(bodyHtml, detailScript) ? mermaidScript() : null
   const csp = views.length > 0 ? CSP_CONTENT_LINES : CSP_CONTENT
   const cspMeta = mm ? csp.replace("'strict-dynamic'", `'sha256-${mm.sha256}' 'strict-dynamic'`) : csp
 

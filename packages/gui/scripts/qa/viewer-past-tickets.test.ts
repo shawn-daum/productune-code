@@ -170,3 +170,44 @@ describe('render.mjs — loader state is safe for bucket names that collide with
     expect(ctx.out.cbs).toBe(2)
   })
 })
+
+// T-1076: a ```mermaid fence in a past-version body lives only in its data file,
+// so the page must ship the diagram runtime because of the data file alone; and
+// the `at/` pages open the page by its real `--out` name.
+describe('T-1076 — past-version diagrams and the --out name', () => {
+  let r: string
+  let o: string
+  beforeAll(() => {
+    r = fs.mkdtempSync(path.join(os.tmpdir(), 't1076-repo-'))
+    o = fs.mkdtempSync(path.join(os.tmpdir(), 't1076-out-'))
+    fs.mkdirSync(path.join(r, '.prdt'))
+    fs.writeFileSync(path.join(r, '.prdt/po-state.json'), JSON.stringify({ schema_version: 1, stage: 'build', version: 'v2.0', current_task: null }))
+    for (const d of ['v2.0', 'v1.0']) fs.mkdirSync(path.join(r, 'docs/tickets', d), { recursive: true })
+    fs.writeFileSync(path.join(r, 'docs/tickets/v2.0/T-3.md'), ticket('T-3', '지금 버전 본문'))
+    fs.writeFileSync(path.join(r, 'docs/tickets/v1.0/T-1.md'), ticket('T-1', '```mermaid\nflowchart TD\n  A --> B\n```'))
+  })
+  afterAll(() => {
+    fs.rmSync(r, { recursive: true, force: true })
+    fs.rmSync(o, { recursive: true, force: true })
+  })
+
+  it('a diagram only in a past-version data file still puts the mermaid runtime (and its CSP hash) on the page', async () => {
+    const { html, dataFiles } = await generate({ repoRoot: r, outputPath: path.join(o, 'viewer.html') })
+    expect(dataFiles).toHaveLength(1)
+    expect(dataFiles[0].content).toContain('data-mermaid')
+    expect(html).not.toContain('data-mermaid>')
+    expect(html).toContain('pre[data-mermaid]')
+    expect(/script-src ([^;"]+)/.exec(html)![1].match(/'sha256-[^']+'/g)!.length).toBeGreaterThan(2)
+  })
+
+  it('cli --out custom.html: every at/ page and the --emit bundle point at ../custom.html', () => {
+    const out = path.join(o, 'custom.html')
+    execFileSync(process.execPath, [CLI, '--repo-root', r, '--out', out])
+    const page = fs.readFileSync(path.join(o, 'at', 'T-1.html'), 'utf8')
+    expect(page).toContain('url=../custom.html#T-1')
+    expect(page).toContain('href="../custom.html#T-1"')
+    expect(page).not.toContain('viewer.html')
+    const bundle = JSON.parse(execFileSync(process.execPath, [CLI, '--repo-root', r, '--out', out, '--emit'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }))
+    for (const f of bundle.at) expect(f.content).toContain('../custom.html#')
+  })
+})
