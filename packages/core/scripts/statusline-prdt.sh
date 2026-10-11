@@ -80,7 +80,7 @@ done
 
 SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
 ROOT="$ROOT" SCRIPT_DIR="$SCRIPT_DIR" python3 - <<'PYEOF'
-import json, os, re, sqlite3, subprocess, sys, unicodedata
+import json, os, re, sqlite3, stat, subprocess, sys, unicodedata
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -595,12 +595,17 @@ def viewer_jump_path(tid):
     # O_EXCL|O_NOFOLLOW temp renamed inside the same directory; an existing
     # stub keeps its mode, a new one is 0644 whatever the umask. A module that
     # is not beside this script degrades the same way a refused link does.
+    # T-1081: written only when missing — an existing plain single-link stub
+    # holding exactly `body` is left untouched (no rename, mode and mtime
+    # kept); anything else at the leaf (absent, a link, other bytes) is
+    # replaced as before. The read goes through the same O_NOFOLLOW walk.
     if _sfs is None:
         return None
     fd = None
     try:
         fd = _sfs.open_dir(root, VIEWER_JUMP_REL.split(os.sep), create=True)
-        _sfs.write_atomic(fd, f"{tid}.html", body)
+        if not _stub_current(fd, f"{tid}.html", body):
+            _sfs.write_atomic(fd, f"{tid}.html", body)
     except OSError:
         return None
     finally:
@@ -609,7 +614,39 @@ def viewer_jump_path(tid):
     return page
 
 
+def _stub_current(dfd, name, body):
+    """True when `name` in `dfd` is a regular single-link file whose bytes are
+    exactly `body` — read with O_NOFOLLOW, so a link at the leaf is never
+    read through (it reads as not current and gets replaced)."""
+    st = _sfs.lstat(dfd, name)
+    if st is None or not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+        return False
+    want = body.encode("utf-8")
+    if st.st_size != len(want):
+        return False
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+    except OSError:
+        return False
+    try:
+        return os.read(fd, len(want) + 1) == want
+    finally:
+        os.close(fd)
+
+
+_link_memo = {}  # T-1081: tid -> link target, resolved once per render
+
+
 def ticket_link_target(con, tid):
+    """Memoized per id for the render (T-1081): action_row() rebuilds its
+    segments once per (limit, successor tier) candidate, and every rebuild
+    asks for the same ids again — the answer cannot change within one render."""
+    if tid not in _link_memo:
+        _link_memo[tid] = _ticket_link_target(con, tid)
+    return _link_memo[tid]
+
+
+def _ticket_link_target(con, tid):
     """The OSC 8 link target for `tid`: `ticket_path()` still gates existence
     + path safety exactly as before (an id the index doesn't know, or whose
     path carries a control byte, links to nothing at all — unchanged); once
@@ -679,7 +716,7 @@ def working_seg(ids, limits):
 
 
 def action_seg(wait_lim, succ_lim):
-    """T-984: the things the user must act on — `dec … | req …`, `—` when empty."""
+    """T-984: the things the user must act on — `dec … | req …`, `0` when empty (T-1019)."""
     return " | ".join([L("decision") + " " + (fmt_group(dec, wait_lim, succ_lim) if dec else "0"),
                        L("request") + " " + (fmt_group(req, wait_lim, succ_lim) if req else "0")])
 
@@ -722,7 +759,7 @@ def fit(build, tail=""):
 # T-984 layout (user-confirmed 2026-10-06):
 #   <label> <version> | stage: <stage> n/m | total tickets n/m | working … | branch: <b>   (T-1017)
 # One row per line, home first, then ALWAYS one `dec … | req …` row last
-# (`dec — | req —` when empty), single-line and multi-line alike.
+# (`dec 0 | req 0` when empty, T-1019), single-line and multi-line alike.
 # Never more than MAX_ROWS rows: past it, the last line rows fold into `+N lines`.
 line_budget = MAX_ROWS - 1
 shown = rows if len(rows) <= line_budget else rows[:line_budget - 1]
