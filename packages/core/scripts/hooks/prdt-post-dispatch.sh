@@ -257,9 +257,13 @@ def _append_line(path, text):
     if safe_dir and rel[0] != "..":
         if safe_dir not in sys.path:
             sys.path.append(safe_dir)
-        import prdt_safe_fs
         try:
-            prdt_safe_fs.append_line(root, rel, text)
+            import prdt_safe_fs
+            append_line = prdt_safe_fs.append_line
+        except Exception:
+            return  # T-1076: a missing/old module (mirror skew) skips THIS append only — the event's handling goes on
+        try:
+            append_line(root, rel, text)
         except OSError:
             pass  # a refused link (or an unwritable log) skips THIS append only — the rest of the event's handling goes on
         return
