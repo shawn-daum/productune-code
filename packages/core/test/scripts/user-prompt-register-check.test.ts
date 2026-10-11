@@ -322,6 +322,20 @@ const FIXTURES: Array<{ name: string, reply: string, violations: number[] | null
     name: 'an unmarked line after a label paragraph still flags on 2 sentences (T-1070)',
     reply: '**초안:** 준비됐어요.\n\n이건 하나입니다. 그리고 둘입니다.',
     violations: [3],
+  },  {
+    name: 'a `[링크]` line then link-only lines (the missed-link follow-up) — not flagged (T-1072)',
+    reply: '[링크]\n[T-1070](file:///Users/x/proj/.prdt/scratch/viewer/at/T-1070.html)\n[T-1069](file:///Users/x/proj/.prdt/scratch/viewer/at/T-1069.html)',
+    violations: null,
+  },
+  {
+    name: 'a `[링크]` line carrying a sentence, then a 2-sentence line — still flagged (T-1072)',
+    reply: '[링크] 아래가 빠진 링크예요.\n이건 하나입니다. 그리고 둘입니다.',
+    violations: [2],
+  },
+  {
+    name: 'link lines with a sentence after the link are prose — the run still flags (T-1072)',
+    reply: '[T-1070](file:///Users/x/T-1070.html) 고쳤어요.\n[T-1069](file:///Users/x/T-1069.html) 남았어요.',
+    violations: [2],
   },
 ]
 

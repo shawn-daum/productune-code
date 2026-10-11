@@ -52,6 +52,9 @@ function stop(sb: ReturnType<typeof sandbox>, reply: unknown, extra: Record<stri
 
 const HOT = '[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 each point its own paragraph opened by a `**label:**`, never a `-` item; `\u00b7` sub-lines right under its first line only when needed; never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; one blank line after each point\'s block, none inside it.'
 
+// T-1072: the reply hot line, every PO PostToolUse / UserPromptSubmit whatever the register.
+const REPLY = "[prdt reply] Final user-chat reply only \u2192 each ticket id's first mention = its `prdt tickets --link` output line, in this reply itself; over one line \u2192 `prdt wordlist check --lang <user_lang> -` on the draft first, each hit (`\u2014` \u00b7 합치기 \u00b7 모름) \u2192 a listed replacement."
+
 function post(sb: ReturnType<typeof sandbox>, extra: Record<string, unknown> = {}) {
   const ev = { session_id: 's', hook_event_name: 'PostToolUse', agent_type: 'prdt-po', cwd: sb.proj, tool_name: 'Bash', ...extra }
   return execFileSync('bash', [sb.hook], { input: JSON.stringify(ev), encoding: 'utf8', timeout: 20_000, env: { ...process.env, PRDT_HOME: path.join(sb.root, 'home') } })
@@ -61,16 +64,21 @@ const rows = (sb: ReturnType<typeof sandbox>) => {
   return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []
 }
 
-test('PostToolUse for the PO while form=outline is bound returns the hot line', () => {
+test('PostToolUse for the PO while form=outline is bound returns the reply line then the form hot line, one additionalContext (T-1072)', () => {
   const r = JSON.parse(post(sandbox(OUTLINE)))
   expect(r.hookSpecificOutput.hookEventName).toBe('PostToolUse')
-  expect(r.hookSpecificOutput.additionalContext).toBe(HOT)
+  expect(r.hookSpecificOutput.additionalContext).toBe(REPLY + '\n' + HOT)
 })
 
-test('PostToolUse: nothing for a worker, prose, or outside a project', () => {
+test('PostToolUse for the PO under prose returns the reply line alone (T-1072)', () => {
+  const r = JSON.parse(post(sandbox(PROSE)))
+  expect(r.hookSpecificOutput.additionalContext).toBe(REPLY)
+  expect(Buffer.byteLength(REPLY, 'utf8')).toBe(284)
+})
+
+test('PostToolUse: nothing for a worker or outside a project', () => {
   expect(post(sandbox(OUTLINE), { agent_type: 'prdt-developer' })).toBe('')
   expect(post(sandbox(OUTLINE), { agent_type: undefined })).toBe('')
-  expect(post(sandbox(PROSE))).toBe('')
   const sb = sandbox(OUTLINE)
   fs.rmSync(path.join(sb.proj, '.prdt'), { recursive: true })
   expect(post(sb)).toBe('')
@@ -138,6 +146,7 @@ test('next-turn variant keeps its own wording, and reads the rewrite when one fo
   expect(ctx).toContain('your last user-chat reply broke form=outline')
   expect(ctx).toContain('Leave the sent reply as is')
   expect(ctx).toContain(HOT)
+  expect(ctx).toContain(REPLY)
   expect(run([asst(VIOLATING), asst(COMPLIANT)])).not.toContain(TAG)
 })
 

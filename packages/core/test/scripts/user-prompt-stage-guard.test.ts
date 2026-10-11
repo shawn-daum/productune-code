@@ -78,6 +78,8 @@ function assertRegisterBindingLineShape(line: string, opts: { keys: string; gove
 
 // T-1025: while form=outline is bound the per-turn assembly appends the hot line as
 // the line right AFTER the `[prdt register]` line (same assembly point, same order).
+// T-1072: the reply hot line closes the register section of every prompt, whatever the register.
+const REPLY_HOT_LINE = "[prdt reply] Final user-chat reply only \u2192 each ticket id's first mention = its `prdt tickets --link` output line, in this reply itself; over one line \u2192 `prdt wordlist check --lang <user_lang> -` on the draft first, each hit (`\u2014` \u00b7 합치기 \u00b7 모름) \u2192 a listed replacement."
 const FORM_OUTLINE_HOT_LINE = "[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 each point its own paragraph opened by a `**label:**`, never a `-` item; `\u00b7` sub-lines right under its first line only when needed; never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; one blank line after each point's block, none inside it."
 
 describe('state line (turn-open refresher)', () => {
@@ -407,34 +409,35 @@ describe('register binding (T-586) — the per-turn channel has ONE assembly poi
 
   test('a machine with no register file gets exactly the state line — no binding, no empty line, no warning', () => {
     const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome(null) }))
-    expect(ctx.split('\n')).toHaveLength(1)
-    expect(ctx).toMatch(/^\[prdt state\] /)
+    expect(ctx.split('\n')).toEqual([expect.stringMatching(/^\[prdt state\] /), REPLY_HOT_LINE])
     expect(ctx).not.toContain('[prdt register]')
   })
 
   test('every key at its default (explicitly) → still no binding line', () => {
     const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('audience=planner\nform=prose\n') }))
-    expect(ctx.split('\n')).toHaveLength(1)
+    expect(ctx.split('\n')).toEqual([expect.stringMatching(/^\[prdt state\] /), REPLY_HOT_LINE])
     expect(ctx).not.toContain('[prdt register]')
   })
 
   test('non-default keys with real bodies present → one `[prdt register]` line right after the state line, values verbatim, no tail (S7-b)', () => {
     const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('form=outline\nstructure=planner-tables\naddress=션님\n', true) }))
     const lines = ctx.split('\n')
-    expect(lines).toHaveLength(3)
+    expect(lines).toHaveLength(4)
     expect(lines[0]).toMatch(/^\[prdt state\] /)
     assertRegisterBindingLineShape(lines[1], { keys: 'form=outline · structure=planner-tables · address="션님"', governs: 'user-chat', bodyArrived: true })
     expect(lines[2]).toBe(FORM_OUTLINE_HOT_LINE)
+    expect(lines[3]).toBe(REPLY_HOT_LINE)
     expect(Buffer.byteLength(lines[1], 'utf8')).toBeLessThanOrEqual(180)
   })
 
   test('non-default keys with NO body files for the resolved values → same line, "No body is in force" tail', () => {
     const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('form=outline\nstructure=planner-tables\naddress=션님\n') }))
     const lines = ctx.split('\n')
-    expect(lines).toHaveLength(3)
+    expect(lines).toHaveLength(4)
     expect(lines[0]).toMatch(/^\[prdt state\] /)
     assertRegisterBindingLineShape(lines[1], { keys: 'form=outline · structure=planner-tables · address="션님"', governs: 'user-chat', bodyArrived: false })
     expect(lines[2]).toBe(FORM_OUTLINE_HOT_LINE)
+    expect(lines[3]).toBe(REPLY_HOT_LINE)
   })
 
   // Not empty coverage: a fixture with exactly one property surgically removed
@@ -476,8 +479,7 @@ describe('register binding (T-586) — the per-turn channel has ONE assembly poi
       input: JSON.stringify(event), encoding: 'utf8', env: { ...process.env, PRDT_HOME: prdtHome('form=outline\naddress=션님\n') },
     })
     const ctx = contextOf(out)
-    expect(ctx.split('\n')).toHaveLength(1)
-    expect(ctx).toMatch(/^\[prdt state\] /)
+    expect(ctx.split('\n')).toEqual([expect.stringMatching(/^\[prdt state\] /), REPLY_HOT_LINE])
   })
 
   test('outside a prdt project the hook stays silent even with a full register (today\'s behavior)', () => {

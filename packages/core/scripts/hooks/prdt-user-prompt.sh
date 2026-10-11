@@ -89,6 +89,18 @@ FORM_OUTLINE_HOT_LINE = (
     "never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; "
     "one blank line after each point's block, none inside it."
 )
+# T-1072: the reply hot line — the two user-chat rules the PO breaks most (ticket
+# link at first mention, wordlist check on the draft), at the moment it writes its
+# final reply. PO only, every PostToolUse and UserPromptSubmit, whatever the register
+# (the link check at Stop runs regardless of register too). User-approved wording
+# (T-1073 = A, 2026-10-11; docs/artifacts/v1.13/hot-line-links-and-voice-draft.md,
+# draft 1). po/habit.md lines 51/54 point here.
+REPLY_HOT_LINE = (
+    "[prdt reply] Final user-chat reply only \u2192 each ticket id's first mention = "
+    "its `prdt tickets --link` output line, in this reply itself; over one line \u2192 "
+    "`prdt wordlist check --lang <user_lang> -` on the draft first, "
+    "each hit (`\u2014` \u00b7 합치기 \u00b7 모름) \u2192 a listed replacement."
+)
 # T-869: the second form=outline notice — top-level point blocks run together with
 # no blank line between them (form-outline.md: "One blank line after each point's
 # block, none inside it."). One line, line numbers only, same register as above.
@@ -128,6 +140,8 @@ FORM_OUTLINE_LIST_CAP = 5
 #   bold    — the WHOLE line is one bold span (`**...**`) — a sub-heading —
 #             or a line opening with one (`**label:**`, T-1070: a point is a
 #             paragraph opened by a bold label, so its sentences are marked)
+#   link-only: a `[링크]` line or a line made only of markdown links (T-1072
+#             follow-up shape)
 #   indent  — 2+ leading spaces/tabs and none of the above — a wrapped
 #             continuation
 # Anything left is a CANDIDATE line ("표식 없는 줄"). A candidate is a
@@ -150,6 +164,9 @@ FORM_OUTLINE_MARKER_RE = re.compile(
 FORM_OUTLINE_HR_RE = re.compile(r"^-{3,}$")  # thematic break: "---", "- - -"
 FORM_OUTLINE_BOLD_RE = re.compile(r"^\*\*.+\*\*$")
 FORM_OUTLINE_LABEL_RE = re.compile(r"^\*\*[^*]+\*\*")
+# T-1072: link-only line — a `[링크]` line, or a line made only of markdown links
+# (the missed-link follow-up shape the link check asks for).
+FORM_OUTLINE_LINK_ONLY_RE = re.compile(r"^(?:\[링크\]|(?:\[[^\]\n]+\]\([^)\s]+\)[ \t]*)+)$")
 # Self-labelled item (T-768, form-outline.md line 10): a bare single Latin
 # letter (A, a — either case, any letter) or a lowercase roman numeral up to
 # xx, optionally closed with `.`/`)`, then whitespace or end-of-line. Plain
@@ -185,6 +202,8 @@ def _form_outline_line_kind(line):
     if FORM_OUTLINE_BOLD_RE.match(line.strip()) or FORM_OUTLINE_LABEL_RE.match(body):
         return "marker"
     if FORM_OUTLINE_SELF_LABEL_RE.match(body):
+        return "marker"
+    if FORM_OUTLINE_LINK_ONLY_RE.match(line.strip()):
         return "marker"
     if lead >= 2:
         return "indent"
@@ -423,13 +442,16 @@ def stop_main():
 
 
 def post_tool_main():
-    """T-1025: the hot line after every PO tool call, while form=outline is bound."""
+    """T-1025 / T-1072: after every PO tool call, the reply hot line — joined by the
+    form=outline hot line in the same additionalContext while form=outline is bound."""
     if ev.get("agent_type") != "prdt-po":
         return
+    ctx = REPLY_HOT_LINE
     if form_outline_bound():
-        sys.stdout.write(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PostToolUse",
-            "additionalContext": FORM_OUTLINE_HOT_LINE}}, ensure_ascii=False))
+        ctx += "\n" + FORM_OUTLINE_HOT_LINE
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "additionalContext": ctx}}, ensure_ascii=False))
 
 
 # project root: walk the WHOLE ancestor chain from the event cwd and take the
@@ -907,6 +929,9 @@ if hook_dir and os.path.isfile(resolver):
                       % ("the call exceeded its %gs limit" % REGISTER_RESOLVER_TIMEOUT_S))
     except Exception:
         lines.append(REGISTER_UNCONFIRMED_NOTICE % "the call could not be run")
+# T-1072: the reply hot line on every prompt, whatever the register binding or the
+# resolver's outcome — a turn with no tool call (~18%, T-1024) still gets it.
+lines.append(REPLY_HOT_LINE)
 
 # Next to the state line, because it is a statement ABOUT that line's absence on
 # the previous turn. Silent in the normal case: `guard_begin` returns None and
