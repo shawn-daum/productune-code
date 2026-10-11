@@ -10,6 +10,7 @@ import path from 'path'
 import { normalizeGuide, collectTickets } from '@productune/viewer/lib/collect.mjs'
 import { specTruthCount } from '@productune/viewer/lib/render.mjs'
 import { FEATURE } from '@productune/viewer/lib/labels.mjs'
+import { MERMAID_RUNTIME } from '@productune/viewer/lib/mermaid.mjs'
 
 const guide = {
   when: ['prdt 를 실행했더니 새 버전 안내가 떴을 때'],
@@ -163,5 +164,14 @@ describe('feature guide (T-964)', () => {
   it('T-1049: the kind definition line joins name and definition with a colon, no em dash', () => {
     expect(html('full')).toContain('<p class="kind-def">기능: </p>')
     expect(html('full')).not.toContain('기능 — ')
+  })
+})
+
+describe('T-1078 mermaid labels are SVG text, never HTML', () => {
+  it('pins the root htmlLabels (the key mermaid 11 reads) and puts it beyond a diagram directive', () => {
+    expect(MERMAID_RUNTIME).toContain("securityLevel:'strict',htmlLabels:false,")
+    expect(MERMAID_RUNTIME).toContain("flowchart:{htmlLabels:false,")
+    const secure = MERMAID_RUNTIME.match(/secure:\[([^\]]*)\]/)?.[1] ?? ''
+    for (const k of ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges', 'htmlLabels', 'flowchart']) expect(secure).toContain(`'${k}'`)
   })
 })

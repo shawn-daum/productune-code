@@ -265,7 +265,8 @@ const personaRules = PERSONAS.map((p) => `.dl-card[data-dl-persona-now="${p}"] [
 
 export const DISCIPLINE_LOAD_CSS = `
 /* T-1050: discipline load diagram (docs/artifacts/v1.13/observation-fixes.html 「규율 로드 그림」) */
-.dl-card { border: 1px solid var(--border-item); border-radius: 10px; background: var(--bg-surface-base); padding: 14px; margin: 0 0 var(--space-16); }
+.dl-card { border: 1px solid var(--border-item); border-radius: 10px; background: var(--bg-surface-base); padding: 14px; margin: 0 0 var(--space-16); word-break: keep-all; overflow-wrap: break-word; }
+/* T-1078 F1: Korean labels wrap at word gaps only (1024px lanes split '페르소 / 나'); a long path still breaks. */
 .dl-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 4px; }
 .dl-h b { font-size: 14px; }
 .dl-src { font-size: 11px; color: var(--text-tertiary); margin: 0 0 12px; }
@@ -281,12 +282,15 @@ export const DISCIPLINE_LOAD_CSS = `
 .dl-ls { font-size: 11px; color: var(--text-tertiary); margin: 0 0 8px; }
 .dl-note { font-size: 11px; color: var(--text-tertiary); margin: 0; }
 .dl-ev { display: inline-block; font-family: var(--font-mono); font-size: 10px; border-radius: 4px; padding: 1px 6px; background: var(--bg-interaction-neutral); color: var(--text-secondary); margin: 0 4px 4px 0; }
+/* T-1078 F3: dark text-secondary on --bg-interaction-neutral is ~4.0:1; the approved dark step (T-887) is --bg-surface-onlayer. */
+:root[data-theme="dark"] .dl-ev { background: var(--bg-surface-onlayer); }
 .dl-g { font-size: 10.5px; color: var(--text-tertiary); margin: 8px 0 4px; font-weight: 600; }
 .dl-part, .dl-layer, .dl-cold, .dl-hk { font: inherit; text-align: left; color: inherit; cursor: pointer; }
 .dl-part { display: block; width: 100%; border: 1px solid var(--accent); border-radius: 8px; background: var(--bg-surface-base); padding: 5px 8px; margin: 0 0 5px; font-size: 11.5px; }
 .dl-pn { font-family: var(--font-mono); font-size: 10px; color: var(--accent); margin-right: 6px; font-weight: 700; }
 .dl-layer { display: flex; width: 100%; justify-content: space-between; gap: 6px; border: 1px dashed var(--border-inline); border-radius: 8px; padding: 4px 8px; margin: 0 0 5px; font-size: 11.5px; background: var(--bg-surface-base); }
-.dl-who { font-size: 10px; color: var(--text-tertiary); text-align: right; }
+.dl-layer > span:first-child { min-width: 0; }
+.dl-who { flex: 0 0 auto; white-space: nowrap; font-size: 10px; color: var(--text-tertiary); text-align: right; }
 .dl-cold { display: block; width: 100%; background: none; border: 0; border-left: 2px solid var(--border-inline); padding: 3px 0 3px 8px; margin: 0 0 4px; font-size: 11.5px; }
 .dl-cold b { font-family: var(--font-mono); font-size: 11px; font-weight: 600; }
 .dl-w { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--text-tertiary); font-size: 10.5px; line-height: 1.45; font-family: var(--font-mono); }

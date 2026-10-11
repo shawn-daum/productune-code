@@ -34,13 +34,17 @@ export function hasMermaid(...parts) {
 // Runtime: finds `pre[data-mermaid]` anywhere in the document (the page body or a detail pane an
 // interaction just filled in), renders each in turn, and re-renders the drawn ones when the
 // light/dark theme flips. A diagram that fails to parse stays as its source text, marked `mm-fail`.
+// T-1078: labels are SVG text, never HTML. mermaid 11 reads the ROOT `htmlLabels` (flowchart.htmlLabels
+// alone no longer turns HTML labels off, so `<a href>` / `<img>` in a label rendered), and some shapes still read
+// flowchart.htmlLabels directly — both are pinned false and listed in `secure`, so an `%%{init}%%` directive or
+// frontmatter config in a diagram cannot switch them back on (mermaid's default secure keys kept as they are).
 export const MERMAID_RUNTIME = `;(function(){
 var m=globalThis.mermaid;if(m&&m.default)m=m.default;if(!m||!m.render)return;
 var cur=null,seq=0,queue=Promise.resolve(),pending=false;
 function theme(){return document.documentElement.getAttribute('data-theme')==='dark'?'dark':'neutral'}
 function tok(n,f){var d=document.createElement('div');d.style.cssText='position:absolute;visibility:hidden;color:var(--'+n+')';document.body.appendChild(d);var c=getComputedStyle(d).color;d.remove();return c||f}
 function init(){var t=theme();if(t!==cur){var ac=tok('accent','#666'),bg=tok('bg-surface-base','#fff'),tx=tok('text-primary','#000'),ln=tok('text-quaternary','#888'),wn=tok('health-warn',ac);
-m.initialize({startOnLoad:false,securityLevel:'strict',theme:'base',fontFamily:'inherit',flowchart:{htmlLabels:false,padding:8,nodeSpacing:30,rankSpacing:30},
+m.initialize({startOnLoad:false,securityLevel:'strict',htmlLabels:false,secure:['secure','securityLevel','startOnLoad','maxTextSize','suppressErrorRendering','maxEdges','htmlLabels','flowchart'],theme:'base',fontFamily:'inherit',flowchart:{htmlLabels:false,padding:8,nodeSpacing:30,rankSpacing:30},
 themeVariables:{darkMode:t==='dark',fontSize:'12px',background:bg,primaryColor:bg,primaryBorderColor:ac,primaryTextColor:tx,lineColor:ln,secondaryColor:bg,tertiaryColor:bg,edgeLabelBackground:bg,textColor:tx,actorBkg:bg,actorBorder:ac,actorTextColor:tx,signalColor:ln,signalTextColor:tx},
 themeCSS:'.node polygon{stroke:'+wn+' !important;fill:color-mix(in srgb,'+wn+' 10%,'+bg+') !important}'});cur=t}}
 function draw(host,src){return queue=queue.then(function(){init();return m.render('mm'+(++seq),src).then(function(r){host.innerHTML=r.svg;host.removeAttribute('data-mm-fail')},function(){host.setAttribute('data-mm-fail','1')})}).catch(function(){})}

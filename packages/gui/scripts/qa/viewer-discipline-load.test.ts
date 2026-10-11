@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process'
 import vm from 'node:vm'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
 import { collectDiscipline } from '@productune/viewer/lib/collect.mjs'
-import { collectDisciplineLoad, disciplineLoadCard, DEFAULT_HOOK_MANIFEST, DEFAULT_PLAN_SCRIPT, DISCIPLINE_LOAD_SCRIPT } from '@productune/viewer/lib/discipline-load.mjs'
+import { collectDisciplineLoad, disciplineLoadCard, DEFAULT_HOOK_MANIFEST, DEFAULT_PLAN_SCRIPT, DISCIPLINE_LOAD_SCRIPT, DISCIPLINE_LOAD_CSS } from '@productune/viewer/lib/discipline-load.mjs'
 
 const REAL_DISCIPLINE = path.resolve(__dirname, '../../../core/discipline')
 const NO_PLAN = path.join(os.tmpdir(), 'no-such-plan-script.sh')
@@ -216,5 +216,15 @@ describe('discipline load diagram: in the page', () => {
     const f = fixture()
     const bare = render({ currentVersion: 'v1.13', prd: { current: { body: '' }, closed: [] }, tickets: { included: [], omitted: [] }, wiki: [], features: [], featureTaxonomy: null, artifacts: { entries: [] }, releases: [], discipline: [] , disciplineLoad: load(f) })
     expect(section(bare)).not.toContain('data-dl-card')
+  })
+})
+
+describe('T-1078 discipline load diagram: 1024px wrap and dark chip contrast', () => {
+  it('Korean labels wrap at word gaps; the scope label never wraps', () => {
+    expect(DISCIPLINE_LOAD_CSS).toMatch(/\.dl-card \{[^}]*word-break: keep-all; overflow-wrap: break-word; \}/)
+    expect(DISCIPLINE_LOAD_CSS).toContain('.dl-who { flex: 0 0 auto; white-space: nowrap;')
+  })
+  it('dark SessionStart chips sit on the approved onlayer step', () => {
+    expect(DISCIPLINE_LOAD_CSS).toContain(':root[data-theme="dark"] .dl-ev { background: var(--bg-surface-onlayer); }')
   })
 })
