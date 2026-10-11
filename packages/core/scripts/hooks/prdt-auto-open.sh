@@ -214,63 +214,58 @@ schedule_viewer_regen_root() {
   [ -x "$prdt_cli" ] || prdt_cli="$(command -v prdt 2>/dev/null)"
   [ -n "$prdt_cli" ] || return 0
   command -v python3 >/dev/null 2>&1 || return 0
-  python3 - "$root" "$prdt_cli" >/dev/null 2>&1 <<'PY'
+  # T-906: the symlink-safe directory walk + writers live in ONE module,
+  # prdt_safe_fs.py — beside statusline-prdt.sh in an installed mirror
+  # ($PRDT_HOME/bin, one level up from hooks/) and one level up from hooks/
+  # in a source checkout. Absent → the worker skips its regen, silently, the
+  # same as a refused link (never an unsafe fallback walk).
+  local hook_dir safe_dir="" d
+  hook_dir="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+  for d in "$hook_dir/../bin" "$hook_dir/.."; do
+    [ -f "$d/prdt_safe_fs.py" ] && { safe_dir="$(cd -P -- "$d" 2>/dev/null && pwd -P)"; break; }
+  done
+  python3 - "$root" "$prdt_cli" "$safe_dir" >/dev/null 2>&1 <<'PY'
 import subprocess, sys
 
-root, cli = sys.argv[1], sys.argv[2]
+root, cli, safe_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 
 # The actual single-flight worker: spawned as its OWN detached process (below)
 # so this outer script — the one the hook waits on — never itself blocks on a
 # regen, however long one takes.
 WORKER = r'''
 import fcntl, os, stat, subprocess, sys, time
-root, cli = sys.argv[1], sys.argv[2]
+root, cli, safe_dir = sys.argv[1], sys.argv[2], sys.argv[3]
 # T-842: `.prdt/scratch/viewer/` is inside a repository someone else may have
-# committed, symlinks included. Every step below goes through a descriptor of
-# the viewer directory opened component by component with O_NOFOLLOW (a
-# symlinked `.prdt`, `scratch` or `viewer` is refused, never followed, never
-# replaced), and every state file is opened, stat'ed and unlinked relative to
-# it with O_NOFOLLOW / follow_symlinks=False. Any symlink among them → this
-# regen is skipped, silently: the caller never waits on this process anyway.
-NOFOLLOW_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+# committed, symlinks included. T-906: every step below goes through a
+# descriptor of the viewer directory opened by the shared prdt_safe_fs module
+# component by component with O_NOFOLLOW (a symlinked `.prdt`, `scratch` or
+# `viewer` is refused, never followed, never replaced), and every state file is
+# stat'ed, opened and unlinked relative to it, link-refusing. Any link among
+# them (or the module itself missing) → this regen is skipped, silently: the
+# caller never waits on this process anyway.
 try:
-    vfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-    for part in (".prdt", "scratch", "viewer"):
-        try:
-            os.mkdir(part, 0o755, dir_fd=vfd)
-        except FileExistsError:
-            pass
-        nfd = os.open(part, NOFOLLOW_DIR, dir_fd=vfd)
-        os.close(vfd)
-        vfd = nfd
-except OSError:
+    sys.path.append(safe_dir)
+    import prdt_safe_fs as sfs
+    vfd = sfs.open_dir(root, (".prdt", "scratch", "viewer"), create=True)
+except (ImportError, OSError):
     sys.exit(0)
 DIRTY, LOCK, FAILED = ".regen-dirty", ".regen-lock", ".regen-failed"
 
 def lst(name):
-    try:
-        return os.stat(name, dir_fd=vfd, follow_symlinks=False)
-    except OSError:
-        return None
+    return sfs.lstat(vfd, name)
 
 for name in (DIRTY, LOCK, FAILED):
     st = lst(name)
     # st_nlink > 1: a hard link planted at a state file is a regular file whose
-    # inode is shared with a file elsewhere — O_TRUNC would write through it.
-    if st is not None and (not stat.S_ISREG(st.st_mode) or st.st_nlink > 1):
+    # inode is shared with a file elsewhere — a write would go through it.
+    if not sfs.is_plain_file(st):
         sys.exit(0)
 
 def write_flag(name, text):
     try:
-        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644, dir_fd=vfd)
+        sfs.write_inplace(vfd, name, text)
     except OSError:
         return
-    try:
-        os.write(fd, text.encode())
-    except OSError:
-        pass
-    finally:
-        os.close(fd)
 
 def unlink(name):
     try:
@@ -284,7 +279,7 @@ except ValueError:
     backoff = 60.0
 write_flag(DIRTY, "1")
 try:
-    fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o644, dir_fd=vfd)
+    fd = sfs.open_lock(vfd, LOCK)
 except OSError:
     sys.exit(0)
 try:
@@ -321,7 +316,7 @@ finally:
     os.close(vfd)
 '''
 
-subprocess.Popen([sys.executable, "-c", WORKER, root, cli],
+subprocess.Popen([sys.executable, "-c", WORKER, root, cli, safe_dir],
                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                   start_new_session=True)
 PY
@@ -366,6 +361,29 @@ if [ -z "$OPEN_MODE" ]; then
       case "$REGEN_FILE" in
         */docs/*.md|docs/*.md) schedule_viewer_regen "$REGEN_FILE" ;;
       esac
+      ;;
+  esac
+fi
+
+# T-995: a ticket (or any docs/**/*.md) written from a shell — python/sed/tee/
+# mv inside a Bash call — never passes through Write/Edit, so the case above
+# never saw it and the viewer kept serving the old corpus. Trigger: a completed
+# Bash call (PO or worker) whose command names `docs/` schedules the same
+# coalesced regen when the project's viewer.html exists and some docs/**/*.md
+# is newer than it — a read-only `cat docs/...` finds nothing newer and costs
+# one `find`. Coalescing, lock and failure backoff are the worker's, unchanged.
+if [ -z "$OPEN_MODE" ] && [ "$TOOL_NAME" = "Bash" ]; then
+  case "$EVENT_JSON" in
+    *docs/*)
+      BASH_CWD="$(printf '%s' "$EVENT_JSON" | jq -r '.cwd // ""' 2>/dev/null)"
+      if [ -n "$BASH_CWD" ] && [ -d "$BASH_CWD" ]; then
+        BASH_ROOT="$(find_proj "$BASH_CWD" 2>/dev/null)"
+        BASH_VIEWER="$BASH_ROOT/.prdt/scratch/viewer/viewer.html"
+        if [ -n "$BASH_ROOT" ] && [ -f "$BASH_VIEWER" ] && [ -d "$BASH_ROOT/docs" ] \
+          && [ -n "$(find "$BASH_ROOT/docs" -name '*.md' -newer "$BASH_VIEWER" -print -quit 2>/dev/null)" ]; then
+          schedule_viewer_regen_root "$BASH_ROOT"
+        fi
+      fi
       ;;
   esac
 fi
@@ -428,6 +446,30 @@ MODE="$(cat "$PRDT_HOME/auto-open" 2>/dev/null | tr -d '[:space:]')"
 [ "$MODE" = "off" ] && { printf '{}'; exit 0; }
 
 command -v open >/dev/null 2>&1 || { printf '{}'; exit 0; }
+
+# Same-path debounce: a rewritten-in-place deliverable (designer iterating on
+# an artifact, a subagent re-saving) should surface once, not on every Write.
+# Keyed on the raw file_path string (not a resolved realpath — cheap, and two
+# different paths that merely resolve to the same inode is a rare enough edge
+# to not be worth a stat/readlink chain here). T-789: checked HERE, before the
+# viewer-routed `prdt viewer --no-open` call (~1.2s per Write) and the handler
+# lookup — a debounced Write exits before paying for either. The marker is
+# still stamped only once an open is actually decided, below.
+DEBOUNCE_SECS="${PRDT_AUTO_OPEN_DEBOUNCE_SECS:-30}"
+DEBOUNCE_DIR="$PRDT_HOME/.auto-open-debounce"
+KEY="$(printf '%s' "$FILE_PATH" | cksum 2>/dev/null | tr -s ' ' '-')"
+[ -n "$OPEN_MODE" ] && KEY=""
+NOW="$(date +%s 2>/dev/null)"
+if [ -n "$KEY" ] && [ -f "$DEBOUNCE_DIR/$KEY" ] && [ -n "$NOW" ]; then
+  LAST="$(cat "$DEBOUNCE_DIR/$KEY" 2>/dev/null | tr -d '[:space:]')"
+  if [ -n "$LAST" ] && [ "$LAST" -eq "$LAST" ] 2>/dev/null; then
+    AGE=$((NOW - LAST))
+    if [ "$AGE" -lt "$DEBOUNCE_SECS" ] 2>/dev/null; then
+      printf '{}'
+      exit 0
+    fi
+  fi
+fi
 
 BASENAME="$(basename -- "$FILE_PATH")"
 LOWER="$(printf '%s' "$BASENAME" | tr '[:upper:]' '[:lower:]')"
@@ -543,30 +585,10 @@ if [ "$ACTION" = "open" ]; then
   [ "$HANDLER_WARM" = "yes" ] || ACTION="reveal"
 fi
 
-# Same-path debounce: a rewritten-in-place deliverable (designer iterating on
-# an artifact, a subagent re-saving) should surface once, not on every Write.
-# Keyed on the raw file_path string (not a resolved realpath — cheap, and two
-# different paths that merely resolve to the same inode is a rare enough edge
-# to not be worth a stat/readlink chain here).
-DEBOUNCE_SECS="${PRDT_AUTO_OPEN_DEBOUNCE_SECS:-30}"
-DEBOUNCE_DIR="$PRDT_HOME/.auto-open-debounce"
-mkdir -p "$DEBOUNCE_DIR" 2>/dev/null
-KEY="$(printf '%s' "$FILE_PATH" | cksum 2>/dev/null | tr -s ' ' '-')"
-[ -n "$OPEN_MODE" ] && KEY=""
-if [ -n "$KEY" ]; then
-  MARKER="$DEBOUNCE_DIR/$KEY"
-  NOW="$(date +%s 2>/dev/null)"
-  if [ -f "$MARKER" ] && [ -n "$NOW" ]; then
-    LAST="$(cat "$MARKER" 2>/dev/null | tr -d '[:space:]')"
-    if [ -n "$LAST" ] && [ "$LAST" -eq "$LAST" ] 2>/dev/null; then
-      AGE=$((NOW - LAST))
-      if [ "$AGE" -lt "$DEBOUNCE_SECS" ] 2>/dev/null; then
-        printf '{}'
-        exit 0
-      fi
-    fi
-  fi
-  [ -n "$NOW" ] && printf '%s' "$NOW" > "$MARKER" 2>/dev/null
+# Stamp the debounce marker (checked above) now that an open is decided.
+if [ -n "$KEY" ] && [ -n "$NOW" ]; then
+  mkdir -p "$DEBOUNCE_DIR" 2>/dev/null
+  printf '%s' "$NOW" > "$DEBOUNCE_DIR/$KEY" 2>/dev/null
 fi
 
 if [ "$ACTION" = "reveal" ]; then

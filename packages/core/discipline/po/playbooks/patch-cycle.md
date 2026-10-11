@@ -1,7 +1,7 @@
 ---
 name: patch-cycle
 persona: po
-when: "post-close patch (a fix or a deliberately split-off scope arrives at stage `idle`) · emergency `main` hotfix (`dev` tip not deployable and delivery cannot wait) · in-build regression patch (stage is `build`, both trigger questions below are yes, delivered via a parallel worktree — the round does not stop)"
+when: "stage `idle`: a fix or split-off scope arrives · emergency `main` hotfix · stage `build`: a regression `main` carries"
 model_floor: opus
 effort: medium
 ---
@@ -10,10 +10,10 @@ effort: medium
 Three openings, one machine. The first two assume the version's tag is cut and Retro has run; the in-build one does NOT — it runs while the round is still open, which is exactly why it goes through a parallel worktree instead of the round's scope. A bug found while stage is still `ship` is NOT this — that is the in-ship patch loop (PO habit lifecycle), which stays on the same release and rolls nothing.
 
 ## Post-close patch (`idle` → patch)
-1. **Roll the patch, never a minor** — `po-state.version` `v<N>.<m>[.<p>]` → `v<N>.<m>.<p+1>`; the first patch on a `v<N>.<m>` is `.1`. A scope deliberately split off (kept out so the next minor's gated goal stays clean) opens the SAME cycle — only the opening trigger differs.
-2. **Same machine as a minor** — new `docs/tickets/v<N>.<m>.<p>/` dir, fix + auto-QA, confirm-gated deploy, live-verify, immutable `v<N>.<m>.<p>` tag at close.
+1. **Roll the patch, never a minor** — the line's `version` (`po-state.version`, or `lines.<line>.version`) `v<N>.<m>[.<p>]` → `v<N>.<m>.<p+1>`; the first patch on a `v<N>.<m>` is `.1`. A scope deliberately split off (kept out so the next minor's gated goal stays clean) opens the SAME cycle — only the opening trigger differs.
+2. **Same machine as a minor** — new `docs/tickets/[<line>/]v<N>.<m>.<p>/` dir, fix + auto-QA, confirm-gated deploy, live-verify, immutable `v<N>.<m>.<p>` tag at close.
 3. **Lightweight retro, both openings** — one `wiki/log.md` line: what shipped + outcome-if-any, and for a split-off release also WHY it was split. NO `retro--` page and NO full `retro` sequence — that page exists to harvest a whole minor's cross-ticket learning, which a handful of tickets does not have.
-4. **Close** — cut the tag (the release-notes rule applies — `retro` playbook, Rules: the `## <version>` RELEASES section lands in the SAME change), then stage back to `idle`.
+4. **Close** — cut the tag (the release-notes rule applies — `retro` playbook, Rules: the `## <version>` RELEASES section lands in the SAME change), then that line's stage back to `idle`.
 
 ## Rules
 - All three openings end in a `v*` tag cut, so the tag-cut document rules bind all three (`retro` playbook, §Rules): the `## <version>` RELEASES section AND the `<codeRoot>/README.md` pass land in that same change. A patch rarely moves what the README claims — then the pass writes nothing, which is a check, not a rewrite.

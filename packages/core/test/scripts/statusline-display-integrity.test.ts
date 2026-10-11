@@ -37,6 +37,9 @@ const ANY_BREAK = /\r\n|[\n\r\u000b\u000c\u0085\u2028\u2029]/
 /** Cc control, Cf format, Zl/Zp line & paragraph separators — asked by category. */
 const CTRL = /\p{Cc}|\p{Cf}|\p{Zl}|\p{Zp}/u
 
+/** Line row + the always-present `dec … · req …` row (T-988 = A). */
+const ROWS = 2
+
 let root: string
 
 function seed(cfg: unknown, state: unknown): void {
@@ -56,10 +59,10 @@ function unsanitizedCopy(): string {
   for (const [from, to] of [
     ['slug = clean(cfg_slug) or clean(os.path.basename(root)) or "?"',
       'slug = cfg_slug or os.path.basename(root)'],
-    ['stage = token(st.get("stage"), lambda v: v in STAGES, absent="?") or "?"',
-      'stage = st.get("stage") or "?"'],
-    ['version = token(st.get("version"), lambda v: VERSION_RE.match(v) is not None)',
-      'version = st.get("version") or ""'],
+    ['stage = token(raw_stage, lambda v: v in STAGES, absent="?") or "?"',
+      'stage = raw_stage or "?"'],
+    ['r["version"] = token(r["st"].get("version"), lambda v: VERSION_RE.match(v) is not None)',
+      'r["version"] = r["st"].get("version") or ""'],
     // T-682 slice 1 split the old one-line `print(clean(...))` into an
     // assignment (`line = clean(...)`) followed by the OSC 8 wrap step and a
     // separate `print(wrap_links(line, links))` — the literal this control
@@ -68,7 +71,8 @@ function unsanitizedCopy(): string {
     // marker, so `links` stays `{}` and `wrap_links(line, {})` is a no-op —
     // `print(wrap_links(line, links))` prints exactly `line` either way.
     // Slice 3 named the cap (`cap=LINE_CAP`); the literal follows it.
-    ['line = clean(candidate, cap=LINE_CAP, bar=True)', 'line = candidate'],
+    // T-961 moved the per-row belt into `fit()`, one call per printed row.
+    ['cut = clean(candidate, cap=LINE_CAP - dw(sep), bar=True)', 'cut = candidate'],
   ] as const) {
     expect(weak, `the production line must exist to be undone: ${from.slice(0, 40)}`).toContain(from)
     weak = weak.replace(from, to)
@@ -76,12 +80,15 @@ function unsanitizedCopy(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t493-sl-prefix-'))
   const p = path.join(dir, 'statusline-prdt.sh')
   fs.writeFileSync(p, weak, { mode: 0o755 })
+  // T-1015: labels come from the sibling catalog.
+  fs.copyFileSync(path.join(CORE_ROOT, 'scripts', 'prdt-messages.json'), path.join(dir, 'prdt-messages.json'))
   return p
 }
 
 const run = (script = STATUSLINE) =>
   execFileSync('bash', [script], {
     input: JSON.stringify({ workspace: { current_dir: root } }), encoding: 'utf8',
+    env: { ...process.env, PRDT_LANG: 'en' },
   })
 
 beforeEach(() => {
@@ -106,20 +113,20 @@ describe.skipIf(!READY)('the statusline cannot be made to misrepresent by file c
       seed({ slug: a.slug }, GOOD_STATE)
       const out = run().replace(/\n$/, '')
 
-      // exactly one display line, by the superset splitter
-      expect(out.split(ANY_BREAK)).toHaveLength(1)
+      // exactly the two display rows (line row + dec/req row), by the superset splitter
+      expect(out.split(ANY_BREAK)).toHaveLength(ROWS)
       // no cursor-moving, line-adding or text-hiding character survived
-      expect(CTRL.test(out)).toBe(false)
+      expect(CTRL.test(out.replace(/\n/g, ''))).toBe(false) // the one legitimate row break aside
       // the real state still shows, and the forged text never holds a segment
       expect(out).toContain('build')
-      expect(out.split(' | ').slice(1)).not.toContain(a.forged)
+      expect(out.split(ANY_BREAK)[0].split(' | ').slice(1)).not.toContain(a.forged)
 
       // control: before the fix the same file content got through
       const before = execFileSync('bash', [unsanitizedCopy()], {
         input: JSON.stringify({ workspace: { current_dir: root } }), encoding: 'utf8',
       }).replace(/\n$/, '')
-      const brokeOut = before.split(ANY_BREAK).length > 1
-        || CTRL.test(before)
+      const brokeOut = before.split(ANY_BREAK).length > ROWS
+        || CTRL.test(before.replace(/\n/g, ''))
         || before.split(' | ').slice(1).includes(a.forged)
       expect(brokeOut, 'the pre-fix script was expected to leak this').toBe(true)
     })
@@ -140,7 +147,7 @@ describe.skipIf(!READY)('the statusline cannot be made to misrepresent by file c
       current_task: { ticket_id: 'T-1\rX', slug: 'ok-slug', assignee: 'root' },
     })
     const out = run().replace(/\n$/, '')
-    expect(out.split(ANY_BREAK)).toHaveLength(1)
+    expect(out.split(ANY_BREAK)).toHaveLength(ROWS)
     expect(out).not.toContain('stage=retro')
     expect(out).not.toContain('v9.9-FORGED')
     expect(out).not.toContain('root')
@@ -157,11 +164,11 @@ describe.skipIf(!READY)('the statusline cannot be made to misrepresent by file c
     seed({ slug: 'realproj' }, { ...GOOD_STATE, version: '../tickets/v1.6' })
     const out = run().replace(/\n$/, '')
     expect(out).not.toContain('../')
-    expect(out).not.toMatch(/\d+\/\d+/)      // no count from a traversed dir
+    expect(out).not.toMatch(/(ticket|티켓) \d+\/\d+/)      // no count from a traversed dir
   })
 
   test('a legitimate project renders exactly as before (nothing traded away)', () => {
     seed({ slug: 'realproj' }, GOOD_STATE)
-    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | build | T-493 honest-injection→developer | running — | dec — | req —')
+    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | stage: build 0/0 | working 0\ndecision 0 | request 0')
   })
 })

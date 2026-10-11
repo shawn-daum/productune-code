@@ -1,6 +1,8 @@
 // T-884 (T-860 / T-874): the open PRD's reading screen — outline hierarchy, folds with the approved
 // initial open set, the 「결정할 것」 box, What cards with 「N줄」, and the h3/h4 heading split.
 import { describe, it, expect } from 'vitest'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { PRD_READING_SCRIPT } from '@productune/viewer/lib/prd-reading.mjs'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
 import { plainInline, parsePrdTree, parseQuestions, openDecisionTickets, renderPrdReading, PRD_READING_CSS } from '@productune/viewer/lib/prd-reading.mjs'
@@ -97,6 +99,17 @@ describe('parsePrdTree', () => {
     // table 4 rows + 0 text, plus two #### headings, plus their bodies (alpha: 4 incl. fence lines, beta: 1)
     expect(what.lines).toBe(4 + (1 + 4) + (1 + 1))
   })
+  it('reads both As-Is/To-Be heading forms — the open section\'s English pair and a closed section\'s Korean pair', () => {
+    const body = '## v1.13 — open\n\n### As-Is\n\n- a\n\n### To-Be\n\n- b\n\n'
+      + '## v1.12 — closed\n\n### 이 버전 직전 (as-is)\n\nold a\n\n### 이 버전 직후 (to-be)\n\nold b\n'
+    const t = parsePrdTree(body)
+    expect(t.sections.map((s: any) => s.children.map((c: any) => [c.level, c.title]))).toEqual([
+      [[3, 'As-Is'], [3, 'To-Be']],
+      [[3, '이 버전 직전 (as-is)'], [3, '이 버전 직후 (to-be)']],
+    ])
+    const html = renderPrdReading({ body, currentVersion: 'v1.13', decisionTickets: [], idPrefix: 'prd', deps }) as string
+    for (const s of ['As-Is', 'To-Be', '이 버전 직전 (as-is)', '이 버전 직후 (to-be)']) expect(html).toContain(s)
+  })
   it('a level jump hangs the node under the nearest shallower heading', () => {
     const t = parsePrdTree('## v1\n\n#### k — x\n\nbody\n')
     expect(t.sections[0].children[0].level).toBe(4)
@@ -188,6 +201,9 @@ describe('generated page', () => {
   it('renders the reading screen in the PRD pane and keeps the script hash-pinned; closed versions stay plain', () => {
     const html = renderPage({ data: data as any, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: 'x' }) as string
     expect(html).toContain('class="pr-wrap"')
+    // T-1007: outline sits to the right of the body (DOM after the body, grid column 2)
+    expect(html.indexOf('class="pr-doc"')).toBeLessThan(html.indexOf('<nav class="pr-outline"'))
+    expect(html).toContain('grid-template-columns: minmax(0, 1fr) 264px')
     expect(html).toContain('<li id="prd-oq-3">') // numbered like the markdown list (starts at 3)
     expect(html).toContain('<ol start="3">')
     expect(html).toContain('data-detail-kind="ticket" data-detail-id="T-9"')
@@ -284,5 +300,107 @@ describe('fold state script', () => {
     api.prdRestoreFolds(saved)
     expect(secs.map((x) => x.open)).toEqual([false, true, true])
     expect(api.prdFoldState()).toEqual({ '/A': false, '/B': true, '/NEW': true })
+  })
+})
+
+describe('T-928 PRD screen scanability', () => {
+  const OPEN = (extra: string) => `# PRD: demo\n\n**Slug**: demo  **Created**: 2026-01-01\n\n> file layout note\n\n## v1.13 — open\n\n${extra}`
+  const run = (body: string) => renderPrdReading({ body, currentVersion: 'v1.13', decisionTickets: [], idPrefix: 'prd', deps }) as string
+
+  it('folds the head meta paragraph behind one summary line, closed by default', () => {
+    const html = run(OPEN('### 합격선\n\n- a\n'))
+    expect(html).toMatch(/<details class="pr-pre"><summary>이 문서에 대해: 만든 날 · 상태 · 파일 구성<\/summary>/)
+    expect(html).not.toMatch(/<details class="pr-pre"[^>]* open/)
+    expect(html).toContain('Slug')
+  })
+
+  it('shows As-Is + To-Be as one fold labelled `As-Is → To-Be`, a paired table with English column heads, open at first', () => {
+    const html = run(OPEN('### As-Is\n\n- 지금 하나\n- 지금 둘\n\n### To-Be\n\n- 뒤 하나\n- 뒤 둘\n\n### 합격선\n\n- a\n'))
+    expect(html).toContain('As-Is → To-Be')
+    expect(html).toContain('2쌍')
+    expect(html).toContain('<th>As-Is</th><th></th><th>To-Be</th>')
+    expect(html).toContain('<td>지금 하나</td><td class="pr-arr">→</td><td>뒤 하나</td>')
+    expect(html).not.toMatch(/<span class="pr-t">As-Is<\/span>/)
+    expect(html).toMatch(/<details class="pr-sec pr-l3" id="prd-s2" data-fold="[^"]*As-Is → To-Be" data-open0="1" open>/)
+  })
+
+  it('leaves As-Is / To-Be as plain folds when the item counts differ or the body is prose', () => {
+    const uneven = run(OPEN('### As-Is\n\n- a\n- b\n\n### To-Be\n\n- c\n'))
+    expect(uneven).not.toContain('pr-pair')
+    expect(uneven).toMatch(/<span class="pr-t">As-Is<\/span>/)
+    const prose = run(OPEN('### As-Is\n\n한 문단 산문이다.\n\n### To-Be\n\n또 산문이다.\n'))
+    expect(prose).not.toContain('pr-pair')
+  })
+
+  it('tags markdown tables with their column count inside a scroll box, and ships the row-scan table CSS', () => {
+    const html = run(OPEN('### 합격선\n\n| 항목 | 문언 |\n|:--|:--|\n| a | b |\n'))
+    // the test md stub flattens tables; the tagger itself is exercised through a md that emits one
+    const md = (t: string) => '<table><thead><tr><th>항목</th><th>문언</th></tr></thead><tbody><tr><td>a</td><td>b</td></tr></tbody></table>' + t.length
+    const tagged = renderPrdReading({ body: OPEN('### 합격선\n\nx\n'), currentVersion: 'v1.13', decisionTickets: [], idPrefix: 'prd', deps: { ...deps, md } }) as string
+    expect(tagged).toContain('<div class="pr-tw"><table class="pr-tbl pr-cols-2">')
+    expect(html).toBeTruthy()
+    expect(PRD_READING_CSS).toContain('table.pr-tbl')
+    expect(PRD_READING_CSS).toContain('border-bottom: 1px solid var(--border-section)')
+  })
+})
+
+describe('T-1048 As-Is → To-Be meaning groups', () => {
+  const OPEN = (extra: string) => `# PRD: demo\n\n## v1.13 — open\n\n${extra}`
+  const run = (body: string) => renderPrdReading({ body, currentVersion: 'v1.13', decisionTickets: [], idPrefix: 'prd', deps }) as string
+  const GROUPED =
+    '### As-Is\n\n#### 기기 위키 · 지식을 한곳에서\n\n지금 요약\n\n- a1\n- a2\n\n#### 줄 · 릴리스 줄\n\n- a3\n- a4\n\n#### 화면 · 화면 세트\n\n- a5\n\n' +
+    '### To-Be\n\n#### 기기 위키 · 지식을 한곳에서\n\n뒤 요약\n\n- b1\n- b2\n\n#### 줄 · 릴리스 줄\n\n- (v1.14 로 옮김, T-1021) b3\n- (v1.14 로 옮김, T-1021) b4\n\n#### 화면 · 화면 세트\n\n- b5\n'
+
+  it('renders one folded group per #### heading with its summary line, moved pairs last and muted', () => {
+    const html = run(OPEN(GROUPED))
+    const groups = html.match(/<details class="pr-sec pr-grp[^"]*"[^>]*>/g) ?? []
+    expect(groups).toHaveLength(3)
+    for (const g of groups) expect(g).toContain('data-open0="0"')
+    expect(groups.join('')).not.toMatch(/ open>/)
+    expect(html).toContain('묶음 3 · 5쌍')
+    expect(html).toContain('<div class="pr-gt">기기 위키</div>')
+    expect(html).toContain('<div class="pr-gl">지식을 한곳에서</div>')
+    expect(html).toContain('<div class="pr-gsum"><span class="a">지금 요약</span><span class="ar">→</span><span class="b">뒤 요약</span></div>')
+    // order: 기기 위키, 화면, then the moved group last
+    const order = [...html.matchAll(/<div class="pr-gt">([^<]*)/g)].map((m) => m[1])
+    expect(order).toEqual(['기기 위키', '화면', '줄'])
+    expect(html).toContain('<details class="pr-sec pr-grp is-moved"')
+    expect(html).toContain('<span class="pr-gtag">v1.14 로 옮김 · T-1021</span>')
+    expect(html).toContain('<div class="pr-pr is-moved"><span class="a">a3</span><span class="ar">→</span><span class="b">(v1.14 로 옮김, T-1021) b3</span></div>')
+    expect(html).not.toContain('pr-tbl pr-pair')
+  })
+
+  it('falls back to the pair table when the #### headings differ, are reordered, or counts differ', () => {
+    const swap = GROUPED.replace('#### 화면 · 화면 세트\n\n- b5', '#### 다른 · 제목\n\n- b5')
+    expect(run(OPEN(swap))).not.toContain('pr-grp')
+    const reorder = '### As-Is\n\n#### x\n\n- a\n\n#### y\n\n- b\n\n### To-Be\n\n#### y\n\n- b\n\n#### x\n\n- a\n'
+    expect(run(OPEN(reorder))).not.toContain('pr-grp')
+    const uneven = '### As-Is\n\n#### x\n\n- a\n- b\n\n### To-Be\n\n#### x\n\n- c\n'
+    expect(run(OPEN(uneven))).not.toContain('pr-grp')
+  })
+
+  it('leaves an ungrouped PRD as the T-928 pair table', () => {
+    const html = run(OPEN('### As-Is\n\n- 지금 하나\n\n### To-Be\n\n- 뒤 하나\n'))
+    expect(html).toContain('pr-tbl pr-pair')
+    expect(html).not.toContain('pr-grp')
+  })
+
+  it('the real v1.13 PRD (no #### groups yet) still renders as the pair table', () => {
+    let dir = process.cwd()
+    let prd = ''
+    for (let i = 0; i < 8 && !prd; i++, dir = dirname(dir)) {
+      const f = join(dir, 'docs/prd/PRD.md')
+      if (existsSync(f)) prd = readFileSync(f, 'utf8')
+    }
+    if (!prd || !/^### As-Is/m.test(prd)) return // meta repo not reachable from this checkout
+    const start = prd.search(/^## v1\.13 /m)
+    if (start < 0) return
+    const rest = prd.slice(start)
+    const end = rest.slice(3).search(/^## /m)
+    const sec = end < 0 ? rest : rest.slice(0, end + 3)
+    const html = run(sec)
+    if (/^#### .* · /m.test(sec.slice(sec.indexOf('### As-Is'), sec.indexOf('### To-Be')))) return // PRD already carries groups
+    expect(html).toContain('pr-tbl pr-pair')
+    expect(html).toContain('As-Is → To-Be')
   })
 })

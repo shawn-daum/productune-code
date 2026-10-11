@@ -53,7 +53,8 @@ const TAXONOMY = {
   areas: [{ key: 'start', name: '시작', def: 'd' }],
   kinds: [{ key: 'feature', name: '기능', def: 'd' }],
 }
-const good = (links: unknown[] = []) => ({ kind: 'tag', label: '설치', taxonomy: { kind: 'feature', area: 'start', def: 'd', links } })
+const GUIDE = { when: ['w'], ux: 'u', logic: [{ text: 'l', ground: 'T-1' }], limits: [], example: 'e' }
+const good = (links: unknown[] = [], guide: unknown = GUIDE) => ({ kind: 'tag', label: '설치', taxonomy: { kind: 'feature', area: 'start', def: 'd', links, guide } })
 
 describe.skipIf(!CAN_RUN)('prdt doctor — feature taxonomy (T-882)', () => {
   test('a complete taxonomy and a ticket on its key: no feature line', () => {
@@ -83,9 +84,12 @@ describe.skipIf(!CAN_RUN)('prdt doctor — feature taxonomy (T-882)', () => {
     expect(featureWarnings()).toEqual([
       "feature: config features.vocab 'no-tax' has no taxonomy — the viewer's feature screen leaves it out",
       "feature: config features.vocab 'bad-area' taxonomy area 'nowhere' is not a features.taxonomy.areas key — the viewer's feature screen leaves it out",
+      "feature: config features.vocab 'bad-area' taxonomy guide is missing — the viewer's feature detail shows the new-feature notice",
       "feature: config features.vocab 'bad-kind' taxonomy kind 'other' is not a features.taxonomy.kinds key",
+      "feature: config features.vocab 'bad-kind' taxonomy guide is missing — the viewer's feature detail shows the new-feature notice",
       "feature: config features.vocab 'bare' has no label — the feature screen shows the key instead",
       "feature: config features.vocab 'bare' taxonomy has no def",
+      "feature: config features.vocab 'bare' taxonomy guide is missing — the viewer's feature detail shows the new-feature notice",
       "feature: config features.vocab 'bare' taxonomy link to 'ghost' names no other vocab key",
     ])
   })
@@ -108,11 +112,15 @@ describe.skipIf(!CAN_RUN)('prdt doctor — feature taxonomy (T-882)', () => {
     expect(featureWarnings()).toEqual([
       "feature: config features.vocab 'label-list' label is not a string",
       "feature: config features.vocab 'area-list' taxonomy area is not a string — the viewer's feature screen leaves it out",
+      "feature: config features.vocab 'area-list' taxonomy guide is missing — the viewer's feature detail shows the new-feature notice",
       "feature: config features.vocab 'kind-dict' taxonomy kind is not a string",
+      "feature: config features.vocab 'kind-dict' taxonomy guide is missing — the viewer's feature detail shows the new-feature notice",
+      "feature: config features.vocab 'link-list' taxonomy guide is missing — the viewer's feature detail shows the new-feature notice",
       "feature: config features.vocab 'link-list' taxonomy link to is not a string",
       "feature: config features.vocab 'link-list' taxonomy link to is not a string",
       "feature: config features.vocab 'label-list' has no label — the feature screen shows the key instead",
       "feature: config features.vocab 'label-list' taxonomy has no def",
+      "feature: config features.vocab 'label-list' taxonomy guide is missing — the viewer's feature detail shows the new-feature notice",
     ])
   })
 
@@ -130,5 +138,72 @@ describe.skipIf(!CAN_RUN)('prdt doctor — feature taxonomy (T-882)', () => {
     config({ taxonomy: TAXONOMY, vocab: { 'install-cli': good(), 'weird': ['x'], 'bad-tax': { kind: 'tag', label: 'x', taxonomy: ['feature'] } } })
     const w = featureWarnings()
     expect(w).toContain("feature: config features.vocab 'bad-tax' has no taxonomy — the viewer's feature screen leaves it out")
+  })
+
+  test('T-964: a guide missing, empty cells and malformed types are each named, never a crash', () => {
+    config({
+      taxonomy: TAXONOMY,
+      vocab: {
+        'no-guide': good([], null),
+        'empty-cells': good([], { when: [], ux: '  ', logic: [], limits: [], example: '' }),
+        'bad-types': good([], { when: 3, ux: ['a', 1], logic: [{ text: 5, ground: 7 }, 9], limits: { a: 1 }, example: ['x'] }),
+        'guide-list': good([], ['x']),
+        'ok-string-logic': good([], { when: 'w', ux: ['u'], logic: ['plain', { text: 't', ground: ['T-1', 'T-2'] }, { text: 't', ground: 'T-ABC-3' }], example: 'e' }),
+        // T-1080 C5: a string that is not ticket-id shaped fails the check its message names
+        'bad-ground': good([], { when: 'w', ux: ['u'], logic: [{ text: 't', ground: 'see the PRD' }, { text: 't', ground: ['T-1', 'later'] }], example: 'e' }),
+      },
+    })
+    const w = 'feature: config features.vocab'
+    expect(featureWarnings()).toEqual([
+      `${w} 'no-guide' taxonomy guide is missing — the viewer's feature detail shows the new-feature notice`,
+      `${w} 'empty-cells' taxonomy guide.when is empty`,
+      `${w} 'empty-cells' taxonomy guide.ux is empty`,
+      `${w} 'empty-cells' taxonomy guide.logic is empty`,
+      `${w} 'empty-cells' taxonomy guide.example is empty`,
+      `${w} 'bad-types' taxonomy guide.when is not a string or a list of strings`,
+      `${w} 'bad-types' taxonomy guide.ux[1] is not a string or a {text, at} object`,
+      `${w} 'bad-types' taxonomy guide.limits is not a string or a list of strings`,
+      `${w} 'bad-types' taxonomy guide.logic[0] text is not a string`,
+      `${w} 'bad-types' taxonomy guide.logic[0] ground is not a ticket id string or a list of them`,
+      `${w} 'bad-types' taxonomy guide.logic[1] is not a string or a {text, ground} object`,
+      `${w} 'bad-types' taxonomy guide.logic is empty`,
+      `${w} 'bad-types' taxonomy guide.example is not a string`,
+      `${w} 'guide-list' taxonomy guide is not an object`,
+      `${w} 'bad-ground' taxonomy guide.logic[0] ground is not a ticket id string or a list of them`,
+      `${w} 'bad-ground' taxonomy guide.logic[1] ground is not a ticket id string or a list of them`,
+    ])
+  })
+
+  test('T-1049: ux {text, at} and flow — accepted when well-formed, each malformed one named', () => {
+    config({
+      taxonomy: TAXONOMY,
+      vocab: {
+        'ok-at': good([], { when: 'w', ux: [{ text: 'a', at: 'viewer.prd' }, { text: 'b', at: 'terminal' }, 'plain'], logic: ['l'], example: 'e', flow: '%% c\nflowchart TD\n  A --> B' }),
+        'ok-seq': good([], { when: 'w', ux: ['u'], logic: ['l'], example: 'e', flow: 'sequenceDiagram\n  A->>B: x' }),
+        'bad-at': good([], { when: 'w', ux: [{ text: 'a', at: 'viewer.nope' }, { text: 'b', at: 'nowhere' }, { text: 'c', at: 3 }, { at: 'viewer' }, { text: 'd', at: 'viewer.' }], logic: ['l'], example: 'e', flow: 'just prose' }),
+        'bad-flow': good([], { when: 'w', ux: ['u'], logic: ['l'], example: 'e', flow: ['flowchart TD'] }),
+      },
+    })
+    const w = 'feature: config features.vocab'
+    expect(featureWarnings()).toEqual([
+      `${w} 'bad-at' taxonomy guide.ux[0] at 'viewer.nope' names no surface (terminal · statusline · viewer · cli, as <surface>.<part>)`,
+      `${w} 'bad-at' taxonomy guide.ux[1] at 'nowhere' names no surface (terminal · statusline · viewer · cli, as <surface>.<part>)`,
+      `${w} 'bad-at' taxonomy guide.ux[2] at is not a string`,
+      `${w} 'bad-at' taxonomy guide.ux[3] text is not a string`,
+      `${w} 'bad-at' taxonomy guide.ux[4] at 'viewer.' names no surface (terminal · statusline · viewer · cli, as <surface>.<part>)`,
+      `${w} 'bad-at' taxonomy guide.flow does not start with a mermaid diagram type (flowchart TD · sequenceDiagram · ...)`,
+      `${w} 'bad-flow' taxonomy guide.flow is not a string`,
+    ])
+  })
+
+  test('T-1049: the surface keys doctor accepts are the ones the viewer draws', () => {
+    const py = fs.readFileSync(PRDT_CLI, 'utf8')
+    const block = /SURFACE_KEYS = \{([\s\S]*?)\n\}/.exec(py)![1]
+    const doctor = [...block.matchAll(/"(\w+)": \(([^)]*)\)/g)].map(m => [m[1], [...m[2].matchAll(/"(\w+)"/g)].map(x => x[1])])
+    const labels = fs.readFileSync(path.resolve(__dirname, '../../../viewer/lib/labels.mjs'), 'utf8')
+    const viewer = [...labels.matchAll(/\{ key: '(\w+)', name: '[^']*', parts: \[([^\]]*(?:\][^\]]*)*?)\] \}/g)]
+      .map(m => [m[1], [...m[2].matchAll(/\['(\w+)',/g)].map(x => x[1])])
+    expect(viewer.length).toBe(4)
+    expect(doctor).toEqual(viewer)
   })
 })

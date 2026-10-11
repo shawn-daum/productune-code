@@ -52,6 +52,18 @@ function runInstallSettling(env: NodeJS.ProcessEnv, maxAttempts = 5): string {
   return r // exhausted retries — let the assertions below fail with a readable diff
 }
 
+/**
+ * The shared CORE_ROOT/dist means a concurrent install from another test file
+ * can rebuild the bridge between this test's mtime touch and install.sh's FIRST
+ * staleness check — install.sh then sees a fresh bridge and prints no `1b)`
+ * line at all (neither "Building" nor "already up to date"). That is a correct
+ * outcome of the race, not a missed rebuild; the mtime assertions in each test
+ * pin the behavior. So the output check only rules out the failure/skip lines.
+ */
+function expectInstallDidNotFail(out: string): void {
+  expect(out).not.toMatch(/node bridge build FAILED|node bridge NOT rebuilt|busy 30s\+/)
+}
+
 describe.skipIf(!hasJq() || !hasNpm())('install.sh rebuilds the node bridge (T-731)', () => {
   test('a bridge older than the newest src file is rebuilt newer by install', () => {
     // Bring the bridge to a KNOWN-fresh state first (skip if this machine
@@ -87,7 +99,7 @@ describe.skipIf(!hasJq() || !hasNpm())('install.sh rebuilds the node bridge (T-7
     // are what actually pins the behavior under test — the bridge ends up
     // rebuilt after the source touch regardless of which install did it.
     // (runInstallSettling already retries past a transient "busy 30s+".)
-    expect(r).toMatch(/Building node bridge|node bridge already up to date \(built by another install/)
+    expectInstallDidNotFail(r)
     const afterMtime = fs.statSync(BRIDGE).mtimeMs
     expect(afterMtime).toBeGreaterThan(beforeMtime)
     expect(afterMtime / 1000).toBeGreaterThanOrEqual(now - 1)
@@ -116,7 +128,7 @@ describe.skipIf(!hasJq() || !hasNpm())('install.sh rebuilds the node bridge (T-7
     const r = runInstallSettling(sb.env)
     fs.rmSync(sb.root, { recursive: true, force: true })
 
-    expect(r).toMatch(/Building node bridge|node bridge already up to date \(built by another install/)
+    expectInstallDidNotFail(r)
     const afterMtime = fs.statSync(BRIDGE).mtimeMs
     expect(afterMtime).toBeGreaterThan(beforeMtime)
     expect(afterMtime / 1000).toBeGreaterThanOrEqual(now - 1)

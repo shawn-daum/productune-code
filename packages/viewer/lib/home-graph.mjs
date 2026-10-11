@@ -363,15 +363,21 @@ export function layoutHomeGraph(graph) {
 /**
  * The decision and user-task wait lists, by the T-849 rule the statusline
  * `dec` / `req` uses: `dec` = every open `type: decision` ticket, `req` = every
- * open `assignee: user` ticket that is not a decision — across every version
+ * open `assignee: user` ticket that is not a decision and whose `deps` name no
+ * open ticket (blocked ones are hidden) — across every version
  * directory, not only the current one (backlog is not a version directory).
- * `rows` is `[{ bucket, fm }]` for every ticket of every bucket.
+ * `rows` is `[{ bucket, fm }]` for every ticket of every bucket. `allRows`
+ * (default `rows`) is the same shape over EVERY release line: a dep that is an
+ * open ticket in another line's folder blocks too (T-961, as the statusline's
+ * `tid_status` spans all lines).
  */
-export function waitLists(rows) {
+export function waitLists(rows, allRows = rows) {
   const open = rows.filter((r) => r.bucket !== 'backlog' && r.fm.status === 'open')
   const pick = (pred) => open.filter((r) => pred(r.fm)).map((r) => r.fm).sort((a, b) => compareTicketIds(a.id, b.id))
+  // req = what the user can do NOW: a ticket whose deps still name an open ticket is blocked and hidden.
+  const openIds = new Set(allRows.filter((r) => r.bucket !== 'backlog' && r.fm.status === 'open').map((r) => r.fm.id))
   return {
     dec: pick((fm) => fm.type === 'decision'),
-    req: pick((fm) => fm.assignee === 'user' && fm.type !== 'decision'),
+    req: pick((fm) => fm.assignee === 'user' && fm.type !== 'decision' && !ticketDeps(fm).some((d) => openIds.has(d))),
   }
 }

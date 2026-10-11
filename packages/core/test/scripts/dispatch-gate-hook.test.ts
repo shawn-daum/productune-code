@@ -247,8 +247,8 @@ function denyReason(o: EventOpts, r: RunEnv = {}): string {
 const CLAUSE_CTX =
   'One inline `[ctx]` JSON line opens every dispatch:\n' +
   '  `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},' +
-  '"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#v<N>.<m>"}`'
-const CLAUSE_PRD = '`[ctx].prd_path` = `docs/prd/PRD.md#v<N>.<m>`'
+  '"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#[<line>/]v<N>.<m>"}`'
+const CLAUSE_PRD = '`[ctx].prd_path` = `docs/prd/PRD.md#[<line>/]v<N>.<m>`'
 const CLAUSE_LANG =
   'Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · ' +
   '`dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.'
@@ -587,6 +587,11 @@ describe('deny: `prd_path` shape', () => {
     ['docs/prd/PRD-v1.md#v1.7', 'a versioned FILENAME, which git history replaces'],
     ['docs/prd/PRD.md#v1.7 ', 'a trailing space'],
     ['PRD.md#v1.7', 'a bare filename'],
+    ['docs/prd/PRD.md#Android/v1.7', 'an uppercase line name'],
+    ['docs/prd/PRD.md#backlog/v1.7', 'the reserved name `backlog` as a line'],
+    ['docs/prd/PRD.md#v2/v1.7', 'a line name shaped like a version'],
+    ['docs/prd/PRD.md#android/v1.7.1', 'a patch version on an added line'],
+    ['docs/prd/PRD.md#a/b/v1.7', 'two line prefixes'],
     ['docs/prd/prd.md#v1.7', 'wrong case'],
   ])('%s (%s) is denied', (prd_path) => {
     const reason = denyReason({ cwd: makeProject(), prompt: promptWith({ ...VALID_CTX, prd_path }) })
@@ -602,7 +607,7 @@ describe('deny: `prd_path` shape', () => {
     }
   })
 
-  test.each(['docs/prd/PRD.md#v1.7', 'docs/prd/PRD.md#v0.1', 'docs/prd/PRD.md#v12.34'])(
+  test.each(['docs/prd/PRD.md#v1.7', 'docs/prd/PRD.md#v0.1', 'docs/prd/PRD.md#v12.34', 'docs/prd/PRD.md#ntf-archive/v1.2', 'docs/prd/PRD.md#android/v2.1'])(
     '%s passes', (prd_path) => {
       expect(run({ cwd: makeProject(), prompt: promptWith({ ...VALID_CTX, prd_path }) })).toBe('')
     })
@@ -1024,7 +1029,7 @@ describe('T-695: the machine resource cap', () => {
 
   test('load over cap: one line — the user-approved wording, the over-cap value / cap, nothing else (T-893)', () => {
     const d = denyReason({ cwd: proj }, { machine: { loadavg: '{ 31.20 28.00 20.00 }' } })
-    expect(d).toBe('[prdt dispatch gate] WAITING — not spawned: CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+    expect(d).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
   })
 
   test('T-893: `prdt dispatch caps` mode prints every axis with value, cap, cap key + source, remedy, and the cap keys', () => {
@@ -1069,7 +1074,7 @@ describe('T-695: the machine resource cap', () => {
     fs.writeFileSync(path.join(home, 'run', 'dispatches', 'half-written.json'), '{"agent_id": "x", "since": "2026-09-26T0')
     const d = denyReason({ cwd: proj, sessionId: 'sess-T893' }, { machine: { loadavg: '{ 31.20 28.00 20.00 }' }, home })
     const [first, second, ...more] = d.split('\n')
-    expect(first).toBe('[prdt dispatch gate] WAITING — not spawned: CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+    expect(first).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
     expect(second).toContain('[prdt dispatch gate] resource check: unmeasured dispatches')
     expect(more).toEqual([])
   })
@@ -1080,7 +1085,7 @@ describe('T-695: the machine resource cap', () => {
 
   test('memory under the minimum: denied on the memory axis', () => {
     const d = denyReason({ cwd: proj }, { machine: { memp: MEMP_OK(9) } })
-    expect(d).toContain('not spawned: free memory 9% / min 15%.')
+    expect(d).toContain('not spawned (developer dispatch): free memory 9% / min 15%.')
   })
 
   test('in-flight dispatches: fresh never-stopped markers count, stopped and stale ones do not', () => {
@@ -1098,7 +1103,7 @@ describe('T-695: the machine resource cap', () => {
     // T-774: every marker here has no `model` (pre-T-774 fixture shape), so
     // they all fall into the "default" tier bucket, same as this request
     // (no `model` override either) — the new model_tier axis is over too.
-    expect(d).toContain('not spawned: in-flight dispatches 6 / cap 5, in-flight on tier "default" 6 / cap 5.')
+    expect(d).toContain('not spawned (developer dispatch): in-flight dispatches 6 / cap 5, in-flight on tier "default" 6 / cap 5.')
   })
 
   describe('T-774: model tier axis — in-flight dispatches per model tier', () => {
@@ -1117,7 +1122,7 @@ describe('T-695: the machine resource cap', () => {
       fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 10, inflight_opus_max: 5 }))
       for (let i = 0; i < 6; i++) marker(home, `o${i}`, 60 * i, false, 'live', 45, false, 'opus')
       const d = denyReason({ cwd: proj, model: 'opus' }, { home })
-      expect(d).toContain('not spawned: in-flight on tier "opus" 6 / cap 5.')
+      expect(d).toContain('not spawned (developer dispatch): in-flight on tier "opus" 6 / cap 5.')
       expect(d).not.toContain('in-flight dispatches 6')
     })
 
@@ -1134,7 +1139,7 @@ describe('T-695: the machine resource cap', () => {
       // the machine-wide count still sees all six (persona + liveness do not rest on the pairing)
       fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_max: 5, inflight_opus_max: 5 }))
       const d = denyReason({ cwd: proj, model: 'opus' }, { home })
-      expect(d).toContain('not spawned: in-flight dispatches 6 / cap 5.')
+      expect(d).toContain('not spawned (developer dispatch): in-flight dispatches 6 / cap 5.')
       expect(report({ home })).toContain('in-flight dispatches on tier "opus": 0 / cap 5')
     })
 
@@ -1151,7 +1156,7 @@ describe('T-695: the machine resource cap', () => {
       const home = tmp('prdt-t774-home-')
       for (let i = 0; i < 6; i++) marker(home, `d${i}`, 60 * i) // no model field: legacy shape
       const d = denyReason({ cwd: proj }, { home })
-      expect(d).toContain('not spawned: in-flight dispatches 6 / cap 5, in-flight on tier "default" 6 / cap 5.')
+      expect(d).toContain('not spawned (developer dispatch): in-flight dispatches 6 / cap 5, in-flight on tier "default" 6 / cap 5.')
     })
 
     test('a per-tier override in dispatch-caps.json (inflight_opus_max) is honored independently of inflight_max', () => {
@@ -1163,7 +1168,7 @@ describe('T-695: the machine resource cap', () => {
       marker(home, 'one', 10, false, 'live', 45, false, 'opus')
       marker(home, 'two', 20, false, 'live', 45, false, 'opus')
       const d = denyReason({ cwd: proj, model: 'opus' }, { home })
-      expect(d).toContain('not spawned: in-flight on tier "opus" 2 / cap 1.')
+      expect(d).toContain('not spawned (developer dispatch): in-flight on tier "opus" 2 / cap 1.')
       expect(d).not.toContain('in-flight dispatches 2')
       // a sonnet dispatch on the same machine is untouched by the opus override
       expect(run({ cwd: proj, model: 'sonnet' }, { home })).toBe('')
@@ -1201,11 +1206,11 @@ describe('T-695: the machine resource cap', () => {
 
       fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_opus_max: 0 }))
       const dOpus = denyReason({ cwd: proj, model: 'opus' }, { home })
-      expect(dOpus).toContain('not spawned: in-flight on tier "opus" 1 / cap 0.')
+      expect(dOpus).toContain('not spawned (developer dispatch): in-flight on tier "opus" 1 / cap 0.')
 
       fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_sonnet_max: 0 }))
       const dSonnet = denyReason({ cwd: proj, model: 'sonnet' }, { home })
-      expect(dSonnet).toContain('not spawned: in-flight on tier "sonnet" 1 / cap 0.')
+      expect(dSonnet).toContain('not spawned (developer dispatch): in-flight on tier "sonnet" 1 / cap 0.')
     })
 
     test('an unknown/malformed `tool_input.model` value falls back to the "default" bucket, never denies on a bad key', () => {
@@ -1213,7 +1218,7 @@ describe('T-695: the machine resource cap', () => {
       marker(home, 'one', 10, false, 'live', 45, false, 'default')
       fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_default_max: 0 }))
       const d = denyReason({ cwd: proj, model: 'claude-opus-5-not-a-tier' }, { home })
-      expect(d).toContain('not spawned: in-flight on tier "default" 1 / cap 0.')
+      expect(d).toContain('not spawned (developer dispatch): in-flight on tier "default" 1 / cap 0.')
     })
   })
 
@@ -1252,7 +1257,7 @@ describe('T-695: the machine resource cap', () => {
     marker(home, 'fine', 60)
     fs.writeFileSync(path.join(home, 'run', 'dispatches', 'half-written.json'), '{"agent_id": "x", "since": "2026-09-26T0')
     const d = denyReason({ cwd: proj, sessionId: 'sess-C' }, { machine: { loadavg: '{ 31.20 28.00 20.00 }' }, home })
-    expect(d).toContain('not spawned: CPU load ratio 2.23 / cap 1.5.')
+    expect(d).toContain('not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5.')
     expect(d).toContain('unmeasured dispatches')
     expect(report({ home })).toContain('in-flight dispatches: unmeasured')
     // under cap: the note once, then silence for that session
@@ -1285,10 +1290,26 @@ describe('T-695: the machine resource cap', () => {
     expect(run({ cwd: proj }, { machine: { ps: [PS_QUIET, ...noise, ...tree].join('\n') } })).toBe('')  // cap 1: one suite admits
   })
 
-  // A REAL process tree, never a shim: the suite starts `pnpm exec vitest run` /
-  // `pnpm test` / `vitest watch` in a scratch root (node_modules symlinked to this
-  // package's), reads the gate's count off the host's real `ps` before and after,
-  // and asserts the delta is exactly 1 — the host may be running other suites.
+  // T-1009: a busy host's `ps -axo args=` can pass the OS argument-size limit
+  // (3600 processes, 1.07 MB, against ARG_MAX 1 MiB on macOS); the report must
+  // still render, and the two axes that read ps must still count.
+  test('a process table past the OS argument limit still reports every axis (T-1009)', () => {
+    const filler = Array.from({ length: 6000 }, (_, i) => `/usr/bin/python3 /Users/u/dev/worker/job-${i}.py ${'x'.repeat(200)}`)
+    const ps = [PS_QUIET, ...filler, VITEST_ROOT, VM_PROC].join('\n')
+    expect(ps.length).toBeGreaterThan(1_100_000)
+    const out = report({ machine: { ps }, home: capsHome })
+    expect(out).toContain('running full test suites: 1 /')
+    expect(out).toContain('resident VMs: 1 /')
+  })
+
+  // A REAL process tree, never a hand-written fixture: the suite starts `pnpm exec
+  // vitest run` / `pnpm test` / `vitest watch` in a scratch root (node_modules
+  // symlinked to this package's), takes the host's real `ps` rows, keeps only the
+  // rows of THAT child's own process tree, feeds them to the gate through the
+  // machine.ps stub, and asserts the count is exactly 1. T-790: the earlier form
+  // read the whole host `ps` before and after and asserted the delta — any other
+  // suite starting or ending on the host in that window moved the delta (seen
+  // as 0 and 2 on a busy machine running parallel full runs).
   const VARIANTS: Array<[string, string, string[]]> = [
     ['pnpm exec vitest run', 'pnpm', ['exec', 'vitest', 'run']],
     ['pnpm test', 'pnpm', ['test']],
@@ -1308,26 +1329,53 @@ describe('T-695: the machine resource cap', () => {
     walk(rootPid)
     for (const pid of order) { try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ } }
   }
+  /** The `args` of every live process in `rootPid`'s tree (itself included), read off
+   *  the host's real `ps` — the rows the gate would see if this child were alone. */
+  function treeArgs(rootPid: number): string {
+    const ps = spawnSync('ps', ['-axww', '-o', 'pid=,ppid=,args='], { encoding: 'utf8' }).stdout
+    const rows = new Map<number, { ppid: number; args: string }>()
+    for (const line of ps.split('\n')) {
+      const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line)
+      if (m) rows.set(Number(m[1]), { ppid: Number(m[2]), args: m[3] })
+    }
+    const inTree = (pid: number): boolean => {
+      for (let p = pid, hops = 0; p > 1 && hops < 64; hops++) {
+        if (p === rootPid) return true
+        const r = rows.get(p)
+        if (!r) return false
+        p = r.ppid
+      }
+      return false
+    }
+    return [...rows].filter(([pid]) => inTree(pid)).map(([, r]) => r.args).join('\n')
+  }
   test.each(VARIANTS)('real process tree: one `%s` counts as exactly 1 on the host ps', async (_label, cmd, cmdArgs) => {
-    const root = tmp('prdt-t695-vt-')
+    // Mirror the workspace depth (<repo>/packages/core): pnpm ≥10 writes .bin shims that reach
+    // the store as `$basedir/../../../../node_modules/.pnpm/...` off the UNRESOLVED shim path,
+    // so a project at the tmp root alone would escape to a missing store (T-787).
+    const base = tmp('prdt-t695-vt-')
+    fs.symlinkSync(path.join(CORE_ROOT, '..', '..', 'node_modules'), path.join(base, 'node_modules'))
+    const root = path.join(base, 'packages', 'vt')
+    fs.mkdirSync(root, { recursive: true })
     fs.symlinkSync(path.join(CORE_ROOT, 'node_modules'), path.join(root, 'node_modules'))
     fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'vt', private: true, type: 'module', scripts: { test: 'vitest run' } }))
     fs.writeFileSync(path.join(root, 'sleep.test.ts'), 'import { test } from "vitest"\ntest("sleep", async () => { await new Promise(r => setTimeout(r, 40000)) }, 60000)\n')
     fsCaps(-1)
-    const count = () => Number(/running full test suites: (-?\d+) \//.exec(report({ machine: { realPs: true }, home: capsHome }))![1])
-    const before = count()
+    const count = (ps: string) => Number(/running full test suites: (-?\d+) \//.exec(report({ machine: { ps: [PS_QUIET, ps].join('\n') }, home: capsHome }))![1])
     // never `detached` (T-442 isolation rule): the tree is reaped by walking `ps` from the child's pid
     const child = spawn(cmd, cmdArgs, { cwd: root, stdio: 'ignore', env: { ...process.env, CI: '1' } })
     try {
-      // wait until the vitest entry process of THIS root is up (its cwd is the scratch root; ps shows the entry script)
+      // wait until the vitest entry process of THIS tree is up (ps shows the entry script)
       const deadline = Date.now() + 30_000
-      let after = before
+      let n = 0
+      let rows = ''
       while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, 500))
-        after = count()
-        if (after !== before) break
+        rows = treeArgs(child.pid!)
+        n = count(rows)
+        if (n !== 0) break
       }
-      expect(after - before).toBe(1)
+      expect(n, rows).toBe(1)
     } finally {
       // reap the whole process group before returning — the suite's shim fails a test that leaves a child behind
       const exited = new Promise<void>(resolve => { child.once('exit', () => resolve()); setTimeout(resolve, 8_000) })
@@ -1341,19 +1389,38 @@ describe('T-695: the machine resource cap', () => {
     expect(run({ cwd: proj }, { machine: { ps: one } })).toBe('')
     const two = [one, VITEST_ROOT + ' --reporter=dot'].join('\n')
     const d = denyReason({ cwd: proj }, { machine: { ps: two } })
-    expect(d).toContain('not spawned: full test suites 2 / cap 1.')
+    expect(d).toContain('not spawned (developer dispatch): full test suites 2 / cap 1.')
   })
 
   test('resident VMs: Virtualization.VirtualMachine processes count, two admit, three deny', () => {
     const two = [PS_QUIET, VM_PROC, VM_PROC].join('\n')
     expect(run({ cwd: proj }, { machine: { ps: two } })).toBe('')
     const d = denyReason({ cwd: proj }, { machine: { ps: [two, VM_PROC].join('\n') } })
-    expect(d).toContain('not spawned: resident VMs 3 / cap 2.')
+    expect(d).toContain('not spawned (developer dispatch): resident VMs 3 / cap 2.')
+  })
+
+  test('T-1004: a designer dispatch at load ratio 3.7 with 2 suites running is spawned; a developer dispatch in the same state waits', () => {
+    const machine = { loadavg: '{ 51.80 40.00 30.00 }', ps: [PS_QUIET, VITEST_ROOT, VITEST_ROOT].join('\n') }
+    expect(run({ cwd: proj, subagentType: 'prdt-designer' }, { machine })).toBe('')
+    const d = denyReason({ cwd: proj }, { machine })
+    expect(d).toContain('WAITING — not spawned (developer dispatch): CPU load ratio 3.7 / cap 1.5, full test suites 2 / cap 1.')
+  })
+
+  test('T-1004: a no-suite dispatch is still held by free memory, and the line names its kind', () => {
+    const d = denyReason({ cwd: proj, subagentType: 'prdt-designer' }, { machine: { loadavg: '{ 51.80 40.00 30.00 }', memp: MEMP_OK(9) } })
+    expect(d).toContain('not spawned (no-suite dispatch): free memory 9% / min 15%.')
+    expect(d).not.toContain('CPU load')
+  })
+
+  test('T-1004: `prdt dispatch caps` says which dispatch kinds each cap applies to', () => {
+    const r = report()
+    expect(r).toMatch(/CPU load ratio[^\n]*\n\s+applies to: developer, qa/)
+    expect(r).toMatch(/free memory[^\n]*\n\s+applies to: every dispatch/)
   })
 
   test('several axes over at once: all of them named, in axis order', () => {
     const d = denyReason({ cwd: proj }, { machine: { loadavg: '{ 40.00 30.00 20.00 }', ps: [PS_QUIET, VITEST_ROOT, VITEST_ROOT].join('\n') } })
-    expect(d).toContain('not spawned: CPU load ratio 2.86 / cap 1.5, full test suites 2 / cap 1.')
+    expect(d).toContain('not spawned (developer dispatch): CPU load ratio 2.86 / cap 1.5, full test suites 2 / cap 1.')
   })
 
   test('a Hangul warning under cap is still exactly the one warning line', () => {
@@ -1388,7 +1455,7 @@ describe('T-695: the machine resource cap', () => {
 
     test('an unmeasured axis rides along inside a deny on another axis', () => {
       const d = denyReason({ cwd: proj }, { machine: { noPs: true, loadavg: '{ 30.00 1.00 1.00 }' } })
-      expect(d).toContain('not spawned: CPU load ratio 2.14 / cap 1.5.')
+      expect(d).toContain('not spawned (developer dispatch): CPU load ratio 2.14 / cap 1.5.')
       expect(d).toContain('unmeasured suites, vms')
     })
 

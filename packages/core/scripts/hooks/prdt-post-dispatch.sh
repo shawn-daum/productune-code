@@ -105,6 +105,17 @@ set +e
 EVENT_JSON="$(cat 2>/dev/null || true)"
 [ -z "$EVENT_JSON" ] && exit 0
 
+# T-906: dir of prdt_safe_fs.py (the shared symlink-safe walk) — installed
+# mirror ($PRDT_HOME/bin, one level up from hooks/) or a source checkout (one
+# level up from hooks/). Empty when absent: `_append_line` then keeps its
+# leaf-only O_NOFOLLOW append (the pre-T-906 behavior), never fails.
+PRDT_SAFE_DIR=""
+_hd="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+for _d in "$_hd/../bin" "$_hd/.."; do
+  [ -f "$_d/prdt_safe_fs.py" ] && { PRDT_SAFE_DIR="$(cd -P -- "$_d" 2>/dev/null && pwd -P)"; break; }
+done
+export PRDT_SAFE_DIR
+
 PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
 import contextlib, fcntl, hashlib, json, os, re, shlex, shutil, subprocess, sys
 from datetime import datetime, timezone
@@ -234,12 +245,28 @@ def atomic_write(path, obj):
 
 
 def _append_line(path, text):
-    # Symlink-proof append (T-647, same guarantee as atomic_write above): a
-    # planted symlink at this exact append path is the append-side form of the
-    # same clone-carried attack. O_NOFOLLOW refuses to open through a symlink at
-    # all (raises, ELOOP) rather than silently widening the write onto whatever
-    # it points at; a regular file — the normal case, every dispatch — opens and
-    # appends exactly as before.
+    # Symlink-proof append (T-647; T-906 extends it from the leaf to EVERY
+    # component under the project root). A planted symlink at the leaf OR at
+    # `.prdt` / a directory in between is the append-side form of the same
+    # clone-carried attack: prdt_safe_fs.append_line opens each component with
+    # O_NOFOLLOW (refusing, raising OSError, never widening the write onto
+    # whatever a link points at) and reuses the leaf only when it is a regular
+    # single-link file. Module absent (stale mirror) → the leaf-only form.
+    rel = os.path.relpath(path, root).split(os.sep)
+    safe_dir = os.environ.get("PRDT_SAFE_DIR", "")
+    if safe_dir and rel[0] != "..":
+        if safe_dir not in sys.path:
+            sys.path.append(safe_dir)
+        try:
+            import prdt_safe_fs
+            append_line = prdt_safe_fs.append_line
+        except Exception:
+            return  # T-1076: a missing/old module (mirror skew) skips THIS append only — the event's handling goes on
+        try:
+            append_line(root, rel, text)
+        except OSError:
+            pass  # a refused link (or an unwritable log) skips THIS append only — the rest of the event's handling goes on
+        return
     fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "a") as f:
         f.write(text)

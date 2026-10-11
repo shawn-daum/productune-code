@@ -34,10 +34,9 @@ describe('viewer shell overflow and home layout (T-909)', () => {
     expect(d).toMatch(/margin-bottom:\s*var\(--space-16\)/)
   })
 
-  it('Home scope column is the narrower one and the waits column has a wide floor', () => {
-    const m = decls('.sc-grid').match(/grid-template-columns:\s*minmax\(0,\s*(\d+)fr\)\s*minmax\((\d+)px,\s*(\d+)fr\)/)
-    expect(m, 'sc-grid columns: scope fr, waits minmax(px, fr)').not.toBeNull()
-    expect(Number(m![1])).toBeGreaterThan(Number(m![3]))
-    expect(Number(m![2])).toBeGreaterThanOrEqual(300)
+  it('Home waits column (left) has a fixed width and scope takes the remaining width (T-961)', () => {
+    const m = decls('.sc-grid').match(/grid-template-columns:\s*(\d+)px\s+minmax\(0,\s*1fr\)/)
+    expect(m, 'sc-grid columns: waits Npx, scope minmax(0, 1fr)').not.toBeNull()
+    expect(Number(m![1])).toBeGreaterThanOrEqual(240)
   })
 })

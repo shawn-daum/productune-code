@@ -354,8 +354,8 @@ FORK_DENY="$(printf '%s' "$EV" | jq -rc '
 # Single-quoted so backticks and braces are inert; the embedded newline is
 # literal. A test asserts each of these appears verbatim in contracts.md.
 CLAUSE_CTX='One inline `[ctx]` JSON line opens every dispatch:
-  `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#v<N>.<m>"}`'
-CLAUSE_PRD='`[ctx].prd_path` = `docs/prd/PRD.md#v<N>.<m>`'
+  `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#[<line>/]v<N>.<m>"}`'
+CLAUSE_PRD='`[ctx].prd_path` = `docs/prd/PRD.md#[<line>/]v<N>.<m>`'
 CLAUSE_LANG='Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · `dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.'
 CLAUSE_DISPATCH_ID='`"dispatch_id"` = the PO'\''s minted id, one per dispatch, never per session and never a harness agent id — it owns that dispatch'\''s resource markers; the gate denies its absence on a `prdt-qa` or `prdt-developer` `subagent_type`.'
 
@@ -403,7 +403,7 @@ else (.tool_input // {}) as $ti
           | if ($missing | length) > 0 then
               deny(head + "the `[ctx]` line is missing required key(s): " + ($missing | join(", ")) + ".\ncontracts.md §Dispatch, verbatim:\n" + $clause_ctx + "\nEvery key in that schema is required; extra keys of your own are fine." + tail)
             elif (($ctx.prd_path | type) != "string")
-                 or (($ctx.prd_path | test("^docs/prd/PRD\\.md#v[0-9]+\\.[0-9]+$")) | not) then
+                 or (($ctx.prd_path | test("^docs/prd/PRD\\.md#((?!backlog/)(?!v[0-9])[a-z0-9]+(-[a-z0-9]+)*/)?v[0-9]+\\.[0-9]+$")) | not) then
               deny(head + "`[ctx].prd_path` is malformed.\ncontracts.md §Fixed paths, verbatim:\n" + $clause_prd + "\nSet it to exactly that shape — the fragment scopes the worker's read to ONE version section, so it has no tolerance." + tail)
             elif ($ti.subagent_type == "prdt-qa" or $ti.subagent_type == "prdt-developer")
                  and (($ctx.dispatch_id // "") == "") then
@@ -624,6 +624,16 @@ MEMSIZE="${SYS%%$'\n'*}"
 [ -n "$NCPU" ] || NCPU="$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
 MEMP="$(memory_pressure 2>/dev/null)"
 PSOUT="$(ps -axo args= 2>/dev/null)"
+# T-1009: the process table goes to jq as an `--arg`, and a busy host's table
+# (3600 processes ≈ 1.07 MB) passes the OS argument limit (ARG_MAX 1 MiB on
+# macOS) — jq then never starts and the report (and the verdict) fails. Only the
+# two axes that read it need a row: vitest entries and VM processes. A table
+# that read fine but holds none of them becomes one inert row, never "", which
+# the program reads as "ps unmeasured".
+if [ -n "$PSOUT" ]; then
+  PSOUT="$(printf '%s\n' "$PSOUT" | grep -E 'vitest|com\.apple\.Virtualization\.VirtualMachine$')"
+  [ -n "$PSOUT" ] || PSOUT="-"
+fi
 
 # ── dispatches axis: markers, then liveness (T-695 slice 2) ──────────────────
 # Each marker file is read on its own (bash builtin, no fork) and joined with a
@@ -922,7 +932,7 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
        how: "same run/dispatches liveness rule as the dispatches axis, grouped by the requested model tier; a marker not yet paired with its own Agent call is grouped by the model of the dispatch its own worker's first prompt names, never its own possibly-swapped `model` field, and dropped from every tier when that cannot be read yet",
        free: "wait for a worker on the same model tier to return, or dispatch on a different tier"};
   ([
-  {k: "load", name: "CPU load ratio", ok: ($ratio != null), over: ($ratio != null and $ratio > $cap.load_ratio),
+  {k: "load", suite: true, name: "CPU load ratio", ok: ($ratio != null), over: ($ratio != null and $ratio > $cap.load_ratio),
    short: "CPU load ratio \(($ratio // 0) | r2) / cap \($cap.load_ratio)",
    val: (if $ratio != null then "\($ratio | r2) (1m \($load1 | r2) on \($ncpu) cores)" else "" end),
    cap: "cap \($cap.load_ratio)", key: "load_ratio", src: src("load_ratio"),
@@ -939,7 +949,7 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
    val: ($inflight | tostring), cap: "cap \($cap.inflight_max)", key: "inflight_max", src: src("inflight_max"),
    how: "machine-wide, every project: run/dispatches markers with no stopped_at, since < \($stale_h) h, and a live worker transcript (not ended by the harness, written within \($idle_min) min); unmeasured when a marker is unreadable or a liveness probe failed — `prdt dispatch ls` names it",
    free: "wait for a worker to return (`prdt dispatch ls` lists every project's in-flight dispatches and each marker's state)"},
-  {k: "suites", name: "running full test suites", ok: ($suites != null), over: ($suites != null and $suites > $cap.suites_max),
+  {k: "suites", suite: true, name: "running full test suites", ok: ($suites != null), over: ($suites != null and $suites > $cap.suites_max),
    short: "full test suites \($suites) / cap \($cap.suites_max)",
    val: ($suites | tostring), cap: "cap \($cap.suites_max)", key: "suites_max", src: src("suites_max"),
    how: "vitest entry processes (node …/vitest/vitest.mjs) with no .test. file filter, from ps; pnpm wrappers and pool workers are not counted",
@@ -956,7 +966,14 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
      "[prdt dispatch gate] resource check: unmeasured " + ($unm | join(", "))
      + " — a measurement failed (tool missing or output unparsed), so that axis never blocks a dispatch; said once per session."
      + (if $caps_bad == "1" then " `dispatch-caps.json` is not a JSON object of numbers — defaults in force." else "" end) end) as $note
-| ($axes | map(select(.over))) as $over
+# T-1004 (user decision T-1002 = C): the CPU-load and running-suites caps guard
+# TEST-RUNNING work — a `prdt-developer` / `prdt-qa` dispatch (`$want_persona`
+# is non-empty only for those two). Any other prdt dispatch (designer, po) is
+# judged on free memory, in-flight count and VMs alone. The kind is named in
+# the WAITING line.
+| ($want_persona != "") as $runs_suites
+| (if $runs_suites then "\($want_persona) dispatch" else "no-suite dispatch" end) as $kind
+| ($axes | map(select(.over and (($runs_suites or (.suite // false | not)))))) as $over
 | ($want_persona == "qa" and (($want_files | try fromjson catch null) | meta_only($proj_root; $code_rel; $allow))) as $self_meta
 | (if $want_persona == "" or $self_meta or $live_cands == null then [] else
      (if $want_co == "" then "code" else ($want_co | norm_co($proj_root; $code_abs)) end) as $mine
@@ -974,14 +991,15 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
 # T-893: one line, user-approved wording — over-cap axes only; the full
 # measurement, sources and remedies are `prdt dispatch caps` (report mode below).
 | (if ($over | length) == 0 then "" else
-     deny("[prdt dispatch gate] WAITING — not spawned: " + ($over | map(.short) | join(", "))
+     deny("[prdt dispatch gate] WAITING — not spawned (\($kind)): " + ($over | map(.short) | join(", "))
           + ". Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`."
           + (if $note == "" then "" else "\n" + $note end)) | tojson end) as $deny
 | ($axes | map(
      "\(if .over then "OVER " elif .ok then "ok   " else "?    " end) \(.name): \(if .ok then "\(.val) / \(.cap)" else "unmeasured" end)"
+     + "\n       applies to: \(if .suite // false then "developer, qa dispatches (test-running work)" else "every dispatch" end)"
      + "\n       cap key: \(.key) (\(.src)) · source: \(.how)"
      + "\n       to free: \(.free)") | join("\n")) as $axes_text
-| ("[prdt dispatch gate] caps — measured now, machine-wide; over a cap = the gate denies a dispatch until it clears.\n"
+| ("[prdt dispatch gate] caps — measured now, machine-wide; over a cap = the gate denies a dispatch it applies to until it clears (T-1004: CPU load and full test suites apply only to developer/qa dispatches; the rest are checked on memory, in-flight count and VMs).\n"
    + $axes_text
    + "\nCap keys (numbers only; default in prdt-dispatch-gate.sh, override `$PRDT_HOME/dispatch-caps.json`): load_ratio · mem_free_pct_min · inflight_max · suites_max · vms_max · inflight_sonnet_max · inflight_opus_max · inflight_haiku_max · inflight_fable_max · inflight_default_max. Change with `prdt settings set dispatch.<key> <number>`, remove with `prdt settings unset dispatch.<key>`."
    + (if $caps_bad == "1" then "\n`dispatch-caps.json` is not a JSON object of numbers — defaults in force." else "" end)) as $report_text

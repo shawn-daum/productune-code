@@ -28,22 +28,455 @@
 # read/parse failure (a state hook must never break a session).
 
 set +e
+# T-1022: the event travels on stdin, never through an environment variable (T-688
+# 개정 1: a ~1 MB `last_assistant_message` in execve's environment hits ARG_MAX and
+# silently skips the hook). Bash reads nothing from stdin before python does; the
+# only bash-side filter is a fork-0 `case` that drops a Stop event that is not the
+# PO's before python3 starts (every Stop on the machine reaches this hook).
+# Needs the event text for that, so it is captured once and piped back via the
+# `printf` builtin (no exec, no argv).
 EVENT_JSON="$(cat 2>/dev/null || true)"
 [ -z "$EVENT_JSON" ] && exit 0
+case "$EVENT_JSON" in
+  *'"hook_event_name":"Stop"'*|*'"hook_event_name": "Stop"'*|*'"hook_event_name":"PostToolUse"'*|*'"hook_event_name": "PostToolUse"'*)
+    # T-1025: PostToolUse joins Stop here — every tool call on the machine reaches this
+    # hook, so a non-PO event leaves before python3 starts.
+    case "$EVENT_JSON" in
+      *'"prdt-po"'*) ;;
+      *) exit 0 ;;
+    esac ;;
+esac
 
 # T-586: the register binding rides THIS channel (see below) and is computed by the
 # resolver hook next to this file — the mirror dir, so both come from one install.
 PRDT_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 export PRDT_HOOK_DIR
-PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
+printf '%s' "$EVENT_JSON" | python3 -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
+exit 0
+# The heredoc below is never executed (`exit 0` above): it only keeps the python
+# body out of bash's parser, so `bash -n` still reads this file end to end.
+: <<'PYEOF'
+# ---- python ----
 import hashlib, json, os, re, subprocess, sys, time
 
 try:
-    ev = json.loads(os.environ.get("PRDT_EVENT_JSON", ""))
+    ev = json.loads(sys.stdin.read())
 except Exception:
     sys.exit(0)
 if not isinstance(ev, dict):
     sys.exit(0)
+
+# T-651: the form=outline compliance notice — rendered on a violating turn only
+# (0 B on a compliant one), line numbers only, never the reply's text. Wording is
+# the designer's `inject-edit` (contracts: hook-injected text); the detector that
+# fills and appends it lands in its own diff, so this constant is unreferenced
+# until then. %d = violating line count, %s = their numbers ("1, 12, 14"), capped
+# per FORM_OUTLINE_LIST_CAP below.
+REGISTER_CHECK_NOTICE = (
+    "[prdt register check] your last user-chat reply broke form=outline: %d paragraph line(s) "
+    "(lines %s) — an unmarked line holding 2+ sentences, or 2+ unmarked lines in a row. "
+    "Leave the sent reply as is; write this reply one labelled point per paragraph."
+)
+# T-1025: the hot line — the two form=outline rules at the moment the PO writes its
+# final reply (PostToolUse after every tool call, and UserPromptSubmit). User-approved
+# wording (T-1024, 2026-10-08); T-1070 (2026-10-11): points as bold-label paragraphs,
+# since the terminal renderer drops blank lines between `-` items
+# (docs/artifacts/v1.13/outline-form-less-dense-draft.md, draft 2).
+FORM_OUTLINE_HOT_LINE = (
+    "[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 "
+    "each point its own paragraph opened by a `**label:**`, never a `-` item; "
+    "`\u00b7` sub-lines right under its first line only when needed; "
+    "never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; "
+    "one blank line after each point's block, none inside it."
+)
+# T-1072: the reply hot line — the two user-chat rules the PO breaks most (ticket
+# link at first mention, wordlist check on the draft), at the moment it writes its
+# final reply. PO only, every PostToolUse and UserPromptSubmit, whatever the register
+# (the link check at Stop runs regardless of register too). User-approved wording
+# (T-1073 = A, 2026-10-11; docs/artifacts/v1.13/hot-line-links-and-voice-draft.md,
+# draft 1). po/habit.md lines 51/54 point here.
+REPLY_HOT_LINE = (
+    "[prdt reply] Final user-chat reply only \u2192 each ticket id's first mention = "
+    "its `prdt tickets --link` output line, in this reply itself; over one line \u2192 "
+    "`prdt wordlist check --lang <user_lang> -` on the draft first, "
+    "each hit (`\u2014` \u00b7 합치기 \u00b7 모름) \u2192 a listed replacement."
+)
+# T-869: the second form=outline notice — top-level point blocks run together with
+# no blank line between them (form-outline.md: "One blank line after each point's
+# block, none inside it."). One line, line numbers only, same register as above.
+REGISTER_BLANK_NOTICE = (
+    "[prdt register check] your last user-chat reply broke form=outline: %d point block(s) "
+    "(lines %s) — a labelled point right under another point's block with no blank line. "
+    "Leave the sent reply as is; write this reply with one blank line after each point's block, none inside it."
+)
+# T-651 grill: how many violating line numbers the notice actually lists before
+# collapsing the rest into "+N more" — the COUNT (%d above) always stays the
+# true total, only the printed list is capped (a QA-round PO decision: an
+# unbounded list on a badly-broken reply would itself become paragraph-shaped).
+FORM_OUTLINE_LIST_CAP = 5
+
+# T-651 detector — turned on only when THIS turn's resolved binding carries the
+# `form=outline` pair (checked below, on the resolver's own successful output —
+# never a register file read, never a domain copy: contracts §Fixed paths keeps
+# the resolver the sole authority on legal values). Everything here is pure
+# string/regex judgment ("기계 판정" — the ticket's own requirement): no model
+# call, no human-in-the-loop, so the same reply always gets the same verdict.
+#
+# Exclusion classes (판정식, T-651 §판정식 + QA-round PO decisions), applied
+# top to bottom per line:
+#   fence   — a ``` or ~~~ delimiter (either counts, T-651 grill) or anything
+#             between a pair of them
+#   blank   — an empty (or whitespace-only) line
+#   marker  — a line opening (after leading spaces/TABS) with a list/quote/
+#             heading/table/enumeration token: `-` `*` `+` `•` `1.` `1)` `#`
+#             through `######` `|` `>` `→` `①`–`⑳` `ⓐ`–`ⓩ` — or a thematic
+#             break made only of 3+ `-` (a table row's own `---` separator is
+#             already caught by the leading `|`/table case) — OR a self-labelled
+#             item per form-outline.md line 10 (T-768: "A B C a b c i ii 같은
+#             머리가 이미 있는 리스트는 - 안써도"): a bare single Latin letter
+#             (`A`, `a`) or a lowercase roman numeral (`i` through `xx`),
+#             optionally closed with `.`/`)`, then whitespace or end-of-line —
+#             it drops the `-` precisely because it IS already a label
+#   bold    — the WHOLE line is one bold span (`**...**`) — a sub-heading —
+#             or a line opening with one (`**label:**`, T-1070: a point is a
+#             paragraph opened by a bold label, so its sentences are marked)
+#   link-only: a `[링크]` line or a line made only of markdown links (T-1072
+#             follow-up shape)
+#   indent  — 2+ leading spaces/tabs and none of the above — a wrapped
+#             continuation
+# Anything left is a CANDIDATE line ("표식 없는 줄"). A candidate is a
+# VIOLATION when either (a) it alone holds 2+ sentence-ending marks, or
+# (b) the line immediately before it is ALSO a candidate (paragraph flow) — a
+# lone single-sentence candidate (no candidate before it, <2 sentence-ends)
+# is explicitly NOT flagged (T-651: "결론 첫 줄 · 표 앞 안내 줄").
+FORM_OUTLINE_FENCE_RE = re.compile(r"^(?:`{3,}|~{3,})")
+FORM_OUTLINE_MARKER_RE = re.compile(
+    r"^(?:"
+    r"\||"                              # table row
+    r"→|"                          # leading arrow →
+    r"[-*+•>](?:\s|$)|"            # -, *, +, •, > (blockquote)
+    r"#{1,6}(?:\s|$)|"                  # ATX heading, # through ######
+    r"[0-9]{1,9}[.)](?:\s|$)|"          # ordered list "1." / "1)"
+    r"[①-⑳]|"                 # circled digits ①–⑳
+    r"[ⓐ-ⓩ]"                  # circled letters ⓐ–ⓩ
+    r")"
+)
+FORM_OUTLINE_HR_RE = re.compile(r"^-{3,}$")  # thematic break: "---", "- - -"
+FORM_OUTLINE_BOLD_RE = re.compile(r"^\*\*.+\*\*$")
+FORM_OUTLINE_LABEL_RE = re.compile(r"^\*\*[^*]+\*\*")
+# T-1072: link-only line — a `[링크]` line, or a line made only of markdown links
+# (the missed-link follow-up shape the link check asks for).
+FORM_OUTLINE_LINK_ONLY_RE = re.compile(r"^(?:\[링크\]|(?:\[[^\]\n]+\]\([^)\s]+\)[ \t]*)+)$")
+# Self-labelled item (T-768, form-outline.md line 10): a bare single Latin
+# letter (A, a — either case, any letter) or a lowercase roman numeral up to
+# xx, optionally closed with `.`/`)`, then whitespace or end-of-line. Plain
+# digit-dot ("1.") is already a marker above; this covers the letter/roman
+# labels the PO approved dropping the `-` for. T-789: a bare `A` / `a` / `I`
+# (no `.`/`)` closer) followed by a lowercase ASCII word is an English
+# sentence opener ("A dispatch was denied."), not a label; "A 그대로 두기",
+# "A. ..." and "A) ..." still are.
+FORM_OUTLINE_SELF_LABEL_RE = re.compile(
+    r"^(?![AaI][ \t]+[a-z])"
+    r"(?:[A-Za-z]|ii|iii|iv|vi|vii|viii|ix|xi|xii|xiii|xiv|xv|xvi|xvii|xviii|xix|xx)"
+    r"[.)]?(?=\s|$)"
+)
+# Sentence end = one of `. ! ? 。`, optionally followed by a closing wrapper
+# (`**`, `*`, `」`, `)`, `"` — a QA-round PO decision: "정말 좋아요.**" still
+# ends the sentence AT the period, the bold-close is not new content), then
+# whitespace or end-of-line — EXCEPT a `.` right after a digit (T-651: "숫자
+# 뒤 `.` 제외" — an inline enumeration like "옵션은 1. 저장 2. 취소 중" must
+# not read as two sentence boundaries).
+FORM_OUTLINE_CLOSER = r"(?:\*\*|\*|」|\)|\")"
+FORM_OUTLINE_SENT_END_RE = re.compile(
+    r"[.!?。]" + FORM_OUTLINE_CLOSER + r"{0,3}(?=\s|$)"
+)
+
+
+def _form_outline_line_kind(line):
+    if line.strip() == "":
+        return "blank"
+    body = line.lstrip(" \t")            # tab-led bullets are marked lines
+    lead = len(line) - len(body)
+    if FORM_OUTLINE_MARKER_RE.match(body) or FORM_OUTLINE_HR_RE.match(line.strip()):
+        return "marker"
+    if FORM_OUTLINE_BOLD_RE.match(line.strip()) or FORM_OUTLINE_LABEL_RE.match(body):
+        return "marker"
+    if FORM_OUTLINE_SELF_LABEL_RE.match(body):
+        return "marker"
+    if FORM_OUTLINE_LINK_ONLY_RE.match(line.strip()):
+        return "marker"
+    if lead >= 2:
+        return "indent"
+    return "candidate"
+
+
+def _form_outline_sentence_ends(line):
+    n = 0
+    for m in FORM_OUTLINE_SENT_END_RE.finditer(line):
+        pos = m.start()
+        if line[pos] == "." and pos > 0 and line[pos - 1].isdigit():
+            continue
+        n += 1
+    return n
+
+
+def form_outline_violations(text):
+    """1-indexed line numbers of `text` that break form=outline (T-651
+    §판정식). [] on a compliant reply AND on a reply with only one non-blank
+    line — a one-line answer is body-allowed, never judged."""
+    if not isinstance(text, str) or not text:
+        return []
+    raw_lines = [ln.rstrip("\r") for ln in text.split("\n")]
+    if sum(1 for ln in raw_lines if ln.strip() != "") <= 1:
+        return []
+    kinds = []
+    in_fence = False
+    for ln in raw_lines:
+        if FORM_OUTLINE_FENCE_RE.match(ln.strip()):
+            kinds.append("marker")
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            kinds.append("marker")
+            continue
+        kinds.append(_form_outline_line_kind(ln))
+    out = []
+    for i, k in enumerate(kinds):
+        if k != "candidate":
+            continue
+        prev_is_candidate = i > 0 and kinds[i - 1] == "candidate"
+        if _form_outline_sentence_ends(raw_lines[i]) >= 2 or prev_is_candidate:
+            out.append(i + 1)
+    return out
+
+
+def form_outline_blank_violations(text):
+    """1-indexed line numbers of point blocks that start with no blank line
+    above, directly under another point's block (T-869, T-1070). A block = a
+    column-0 start line plus the indented lines right under it; the start line
+    is one of three kinds:
+      label — opens with a bold span (`**label:**`): flagged whenever glued to
+              the block above, sub-lines or not (T-1070);
+      dash  — `- `: flagged only when glued to a `-` block above and at least
+              one of the two carries sub-lines (`·` or indented `- `) — the
+              T-869 rule, unchanged; plain one-line bullets stacked together
+              are an ordinary list;
+      self  — a self-label (`A`, `b.`, `iii)`): flagged when glued to any block
+              above and at least one of the two carries sub-lines, so a bare
+              A/B/C choice list stays an ordinary list (T-768).
+    Fenced code and table rows are never a block, and a non-block line (blank,
+    table, heading, prose) ends one."""
+    if not isinstance(text, str) or not text:
+        return []
+    raw_lines = [ln.rstrip("\r") for ln in text.split("\n")]
+    blocks = []   # [start_idx, has_dot, prev_block_if_glued, kind]
+    cur = None
+    in_fence = False
+    for i, ln in enumerate(raw_lines):
+        if FORM_OUTLINE_FENCE_RE.match(ln.strip()):
+            in_fence = not in_fence
+            cur = None
+            continue
+        if in_fence or ln.strip() == "":
+            cur = None
+            continue
+        kind = None
+        if re.match(r"^- \S", ln):
+            kind = "dash"
+        elif FORM_OUTLINE_LABEL_RE.match(ln):
+            kind = "label"
+        elif ln[:1] not in (" ", "\t") and FORM_OUTLINE_SELF_LABEL_RE.match(ln):
+            kind = "self"
+        if kind is not None:
+            cur = [i, False, cur, kind]
+            blocks.append(cur)
+        elif cur is not None and ln[:1] in (" ", "\t"):
+            if ln.lstrip(" \t").startswith(("·", "- ")):
+                cur[1] = True
+        else:
+            cur = None
+    out = []
+    for b in blocks:
+        prev = b[2]
+        if prev is None:
+            continue
+        if b[3] == "label":
+            out.append(b[0] + 1)
+        elif b[3] == "dash":
+            if prev[3] == "dash" and (b[1] or prev[1]):
+                out.append(b[0] + 1)
+        elif b[1] or prev[1]:
+            out.append(b[0] + 1)
+    return out
+
+
+FORM_OUTLINE_TAIL_CHUNK = 256 * 1024
+FORM_OUTLINE_TAIL_MAX = 1024 * 1024
+
+
+def last_main_session_text(transcript_path):
+    """Read `transcript_path` from the end in 256 KB steps (max 1 MB) for the
+    last main-session (`isSidechain` false) assistant TEXT block — never a
+    sidechain/subagent transcript, never a tool-call description. None on any
+    miss (no such block within budget) or failure — silent, per T-651 spec
+    ("준수·판정 불가·읽기 실패 → 0 B")."""
+    try:
+        if not (isinstance(transcript_path, str) and os.path.isfile(transcript_path)):
+            return None
+        size = os.path.getsize(transcript_path)
+        if size <= 0:
+            return None
+        total = min(size, FORM_OUTLINE_TAIL_CHUNK)
+        while True:
+            with open(transcript_path, "rb") as f:
+                f.seek(max(0, size - total))
+                raw = f.read()
+            text_lines = raw.decode("utf-8", "replace").split("\n")
+            if size - total > 0:
+                text_lines = text_lines[1:]  # drop the partial leading line
+            for jline in reversed(text_lines):
+                jline = jline.strip()
+                if not jline:
+                    continue
+                try:
+                    rec = json.loads(jline)
+                except Exception:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                if rec.get("type") != "assistant" or rec.get("isSidechain") is not False:
+                    continue
+                msg = rec.get("message")
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if not isinstance(content, list):
+                    continue
+                for blk in reversed(content):
+                    if (isinstance(blk, dict) and blk.get("type") == "text"
+                            and isinstance(blk.get("text"), str)):
+                        return blk["text"]
+            if total >= FORM_OUTLINE_TAIL_MAX or total >= size:
+                return None
+            total = min(total + FORM_OUTLINE_TAIL_CHUNK, FORM_OUTLINE_TAIL_MAX, size)
+    except Exception:
+        return None
+
+
+def register_binding_has_form_outline(binding_line):
+    """True only when the resolver's OWN successful `[prdt register] …` line
+    carries the exact `form=outline` pair — never a file read, never a legality
+    judgment of our own (the resolver stays the sole authority, contracts
+    §Fixed paths).
+
+    T-651 grill FAIL 1: the real line is `[prdt register] <pairs> — governs
+    <surface>. <tail>` (prdt-audience-inject.sh `--binding`, literal em dash
+    U+2014 with spaces both sides) — so when `form=outline` is the LAST pair,
+    a bare split on `·` left it fused with " — governs …" and the exact-token
+    match failed. Cut the pairs off at the em dash FIRST, then split only that
+    part on `·`."""
+    if not (isinstance(binding_line, str) and binding_line.startswith("[prdt register] ")):
+        return False
+    body = binding_line[len("[prdt register] "):]
+    pairs_part = body.split(" — ", 1)[0]
+    tokens = [t.strip() for t in pairs_part.split("·")]
+    return "form=outline" in tokens
+
+
+
+def form_outline_notices(reply_text):
+    """The rendered form=outline notice lines for `reply_text` ([] when it is
+    None or compliant). One place for both callers: the next-turn notice here
+    (UserPromptSubmit)."""
+    notices = []
+    if reply_text is None:
+        return notices
+    check_t = REGISTER_CHECK_NOTICE
+    blank_t = REGISTER_BLANK_NOTICE
+    for found, template in ((form_outline_violations(reply_text), check_t),
+                            (form_outline_blank_violations(reply_text), blank_t)):
+        if found:
+            shown = found[:FORM_OUTLINE_LIST_CAP]
+            rest_n = len(found) - len(shown)
+            numbers = ", ".join(str(n) for n in shown)
+            if rest_n > 0:
+                numbers += f", +{rest_n} more"
+            notices.append(template % (len(found), numbers))
+    return notices
+
+
+def form_outline_bound():
+    """True when the resolver's own `--binding` line carries `form=outline`.
+    Any failure (no resolver, timeout, non-zero exit) is False: the Stop path
+    below never blocks on a binding it could not confirm."""
+    hd = os.environ.get("PRDT_HOOK_DIR") or ""
+    res = os.path.join(hd, "prdt-audience-inject.sh")
+    if not (hd and os.path.isfile(res)):
+        return False
+    try:
+        r = subprocess.run(["bash", res, "--binding"], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=5)
+        first = (r.stdout or "").split("\n", 1)[0].strip()
+        return r.returncode == 0 and register_binding_has_form_outline(first)
+    except Exception:
+        return False
+
+
+def stop_main():
+    """T-1025: the Stop check no longer blocks or prints. While form=outline is bound
+    it appends one data row per PO reply (paragraph-line count, blank-block count) to
+    ~/.prdt/run/form-outline-counts.jsonl (newest FORM_OUTLINE_MAX_ROWS kept, T-1081);
+    a stop with no reply text writes nothing."""
+    if ev.get("agent_type") != "prdt-po":
+        return
+    reply = ev.get("last_assistant_message")
+    if not (isinstance(reply, str) and reply.strip()):
+        return
+    if not form_outline_bound():
+        return
+    home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+    run = os.path.join(home, "run")
+    os.makedirs(run, exist_ok=True)
+    row = {"ts": int(time.time()), "session_id": ev.get("session_id"),
+           "paragraph_lines": len(form_outline_violations(reply)),
+           "blank_blocks": len(form_outline_blank_violations(reply))}
+    path = os.path.join(run, "form-outline-counts.jsonl")
+    with open(path, "a") as f:
+        f.write(json.dumps(row) + "\n")
+    cap_jsonl(path, FORM_OUTLINE_MAX_ROWS)
+
+
+# T-1081: the counts file keeps its newest rows only — one row per PO reply
+# otherwise grows without end. This hook owns the file, so it caps it.
+FORM_OUTLINE_MAX_ROWS = 1000
+
+
+def cap_jsonl(path, keep):
+    """Trim `path` to its last `keep` lines (temp + rename in the same dir).
+    Best effort: any failure leaves the file as it was."""
+    try:
+        with open(path, "rb") as f:
+            lines = f.read().splitlines(keepends=True)
+        if len(lines) <= keep:
+            return
+        tmp = "%s.tmp%d" % (path, os.getpid())
+        with open(tmp, "wb") as f:
+            f.writelines(lines[-keep:])
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def post_tool_main():
+    """T-1025 / T-1072: after every PO tool call, the reply hot line — joined by the
+    form=outline hot line in the same additionalContext while form=outline is bound."""
+    if ev.get("agent_type") != "prdt-po":
+        return
+    ctx = REPLY_HOT_LINE
+    if form_outline_bound():
+        ctx += "\n" + FORM_OUTLINE_HOT_LINE
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "additionalContext": ctx}}, ensure_ascii=False))
+
 
 # project root: walk the WHOLE ancestor chain from the event cwd and take the
 # OUTERMOST dir holding `.prdt/po-state.json` (T-484 — never the nearest: a
@@ -65,6 +498,15 @@ while d and d != "/":
         break
     d = up
 if not state_path:
+    sys.exit(0)
+
+# T-1022: a Stop event leaves here — after the one project-root walk above (so it is
+# in a prdt project) and before any state-flow side effect (guard marker, flag drain).
+if ev.get("hook_event_name") in ("Stop", "PostToolUse"):
+    try:
+        (stop_main if ev.get("hook_event_name") == "Stop" else post_tool_main)()
+    except BaseException:
+        pass
     sys.exit(0)
 
 try:
@@ -491,215 +933,6 @@ REGISTER_UNCONFIRMED_NOTICE = (
     "resolver is the sole authority on the current binding and it did not get to answer, so treat "
     "the binding as UNKNOWN rather than default for this turn (T-627)."
 )
-# T-651: the form=outline compliance notice — rendered on a violating turn only
-# (0 B on a compliant one), line numbers only, never the reply's text. Wording is
-# the designer's `inject-edit` (contracts: hook-injected text); the detector that
-# fills and appends it lands in its own diff, so this constant is unreferenced
-# until then. %d = violating line count, %s = their numbers ("1, 12, 14"), capped
-# per FORM_OUTLINE_LIST_CAP below.
-REGISTER_CHECK_NOTICE = (
-    "[prdt register check] your last user-chat reply broke form=outline: %d paragraph line(s) "
-    "(lines %s) — an unmarked line holding 2+ sentences, or 2+ unmarked lines in a row. "
-    "Leave the sent reply as is; write this reply one point per marked line."
-)
-# T-651 grill: how many violating line numbers the notice actually lists before
-# collapsing the rest into "+N more" — the COUNT (%d above) always stays the
-# true total, only the printed list is capped (a QA-round PO decision: an
-# unbounded list on a badly-broken reply would itself become paragraph-shaped).
-FORM_OUTLINE_LIST_CAP = 5
-
-# T-651 detector — turned on only when THIS turn's resolved binding carries the
-# `form=outline` pair (checked below, on the resolver's own successful output —
-# never a register file read, never a domain copy: contracts §Fixed paths keeps
-# the resolver the sole authority on legal values). Everything here is pure
-# string/regex judgment ("기계 판정" — the ticket's own requirement): no model
-# call, no human-in-the-loop, so the same reply always gets the same verdict.
-#
-# Exclusion classes (판정식, T-651 §판정식 + QA-round PO decisions), applied
-# top to bottom per line:
-#   fence   — a ``` or ~~~ delimiter (either counts, T-651 grill) or anything
-#             between a pair of them
-#   blank   — an empty (or whitespace-only) line
-#   marker  — a line opening (after leading spaces/TABS) with a list/quote/
-#             heading/table/enumeration token: `-` `*` `+` `•` `1.` `1)` `#`
-#             through `######` `|` `>` `→` `①`–`⑳` `ⓐ`–`ⓩ` — or a thematic
-#             break made only of 3+ `-` (a table row's own `---` separator is
-#             already caught by the leading `|`/table case) — OR a self-labelled
-#             item per form-outline.md line 10 (T-768: "A B C a b c i ii 같은
-#             머리가 이미 있는 리스트는 - 안써도"): a bare single Latin letter
-#             (`A`, `a`) or a lowercase roman numeral (`i` through `xx`),
-#             optionally closed with `.`/`)`, then whitespace or end-of-line —
-#             it drops the `-` precisely because it IS already a label
-#   bold    — the WHOLE line is one bold span (`**...**`) — a sub-heading
-#   indent  — 2+ leading spaces/tabs and none of the above — a wrapped
-#             continuation
-# Anything left is a CANDIDATE line ("표식 없는 줄"). A candidate is a
-# VIOLATION when either (a) it alone holds 2+ sentence-ending marks, or
-# (b) the line immediately before it is ALSO a candidate (paragraph flow) — a
-# lone single-sentence candidate (no candidate before it, <2 sentence-ends)
-# is explicitly NOT flagged (T-651: "결론 첫 줄 · 표 앞 안내 줄").
-FORM_OUTLINE_FENCE_RE = re.compile(r"^(?:`{3,}|~{3,})")
-FORM_OUTLINE_MARKER_RE = re.compile(
-    r"^(?:"
-    r"\||"                              # table row
-    r"→|"                          # leading arrow →
-    r"[-*+•>](?:\s|$)|"            # -, *, +, •, > (blockquote)
-    r"#{1,6}(?:\s|$)|"                  # ATX heading, # through ######
-    r"[0-9]{1,9}[.)](?:\s|$)|"          # ordered list "1." / "1)"
-    r"[①-⑳]|"                 # circled digits ①–⑳
-    r"[ⓐ-ⓩ]"                  # circled letters ⓐ–ⓩ
-    r")"
-)
-FORM_OUTLINE_HR_RE = re.compile(r"^-{3,}$")  # thematic break: "---", "- - -"
-FORM_OUTLINE_BOLD_RE = re.compile(r"^\*\*.+\*\*$")
-# Self-labelled item (T-768, form-outline.md line 10): a bare single Latin
-# letter (A, a — either case, any letter) or a lowercase roman numeral up to
-# xx, optionally closed with `.`/`)`, then whitespace or end-of-line. Plain
-# digit-dot ("1.") is already a marker above; this covers the letter/roman
-# labels the PO approved dropping the `-` for.
-FORM_OUTLINE_SELF_LABEL_RE = re.compile(
-    r"^(?:[A-Za-z]|ii|iii|iv|vi|vii|viii|ix|xi|xii|xiii|xiv|xv|xvi|xvii|xviii|xix|xx)"
-    r"[.)]?(?=\s|$)"
-)
-# Sentence end = one of `. ! ? 。`, optionally followed by a closing wrapper
-# (`**`, `*`, `」`, `)`, `"` — a QA-round PO decision: "정말 좋아요.**" still
-# ends the sentence AT the period, the bold-close is not new content), then
-# whitespace or end-of-line — EXCEPT a `.` right after a digit (T-651: "숫자
-# 뒤 `.` 제외" — an inline enumeration like "옵션은 1. 저장 2. 취소 중" must
-# not read as two sentence boundaries).
-FORM_OUTLINE_CLOSER = r"(?:\*\*|\*|」|\)|\")"
-FORM_OUTLINE_SENT_END_RE = re.compile(
-    r"[.!?。]" + FORM_OUTLINE_CLOSER + r"{0,3}(?=\s|$)"
-)
-
-
-def _form_outline_line_kind(line):
-    if line.strip() == "":
-        return "blank"
-    body = line.lstrip(" \t")            # tab-led bullets are marked lines
-    lead = len(line) - len(body)
-    if FORM_OUTLINE_MARKER_RE.match(body) or FORM_OUTLINE_HR_RE.match(line.strip()):
-        return "marker"
-    if FORM_OUTLINE_BOLD_RE.match(line.strip()):
-        return "marker"
-    if FORM_OUTLINE_SELF_LABEL_RE.match(body):
-        return "marker"
-    if lead >= 2:
-        return "indent"
-    return "candidate"
-
-
-def _form_outline_sentence_ends(line):
-    n = 0
-    for m in FORM_OUTLINE_SENT_END_RE.finditer(line):
-        pos = m.start()
-        if line[pos] == "." and pos > 0 and line[pos - 1].isdigit():
-            continue
-        n += 1
-    return n
-
-
-def form_outline_violations(text):
-    """1-indexed line numbers of `text` that break form=outline (T-651
-    §판정식). [] on a compliant reply AND on a reply with only one non-blank
-    line — a one-line answer is body-allowed, never judged."""
-    if not isinstance(text, str) or not text:
-        return []
-    raw_lines = [ln.rstrip("\r") for ln in text.split("\n")]
-    if sum(1 for ln in raw_lines if ln.strip() != "") <= 1:
-        return []
-    kinds = []
-    in_fence = False
-    for ln in raw_lines:
-        if FORM_OUTLINE_FENCE_RE.match(ln.strip()):
-            kinds.append("marker")
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            kinds.append("marker")
-            continue
-        kinds.append(_form_outline_line_kind(ln))
-    out = []
-    for i, k in enumerate(kinds):
-        if k != "candidate":
-            continue
-        prev_is_candidate = i > 0 and kinds[i - 1] == "candidate"
-        if _form_outline_sentence_ends(raw_lines[i]) >= 2 or prev_is_candidate:
-            out.append(i + 1)
-    return out
-
-
-FORM_OUTLINE_TAIL_CHUNK = 256 * 1024
-FORM_OUTLINE_TAIL_MAX = 1024 * 1024
-
-
-def last_main_session_text(transcript_path):
-    """Read `transcript_path` from the end in 256 KB steps (max 1 MB) for the
-    last main-session (`isSidechain` false) assistant TEXT block — never a
-    sidechain/subagent transcript, never a tool-call description. None on any
-    miss (no such block within budget) or failure — silent, per T-651 spec
-    ("준수·판정 불가·읽기 실패 → 0 B")."""
-    try:
-        if not (isinstance(transcript_path, str) and os.path.isfile(transcript_path)):
-            return None
-        size = os.path.getsize(transcript_path)
-        if size <= 0:
-            return None
-        total = min(size, FORM_OUTLINE_TAIL_CHUNK)
-        while True:
-            with open(transcript_path, "rb") as f:
-                f.seek(max(0, size - total))
-                raw = f.read()
-            text_lines = raw.decode("utf-8", "replace").split("\n")
-            if size - total > 0:
-                text_lines = text_lines[1:]  # drop the partial leading line
-            for jline in reversed(text_lines):
-                jline = jline.strip()
-                if not jline:
-                    continue
-                try:
-                    rec = json.loads(jline)
-                except Exception:
-                    continue
-                if not isinstance(rec, dict):
-                    continue
-                if rec.get("type") != "assistant" or rec.get("isSidechain") is not False:
-                    continue
-                msg = rec.get("message")
-                content = msg.get("content") if isinstance(msg, dict) else None
-                if not isinstance(content, list):
-                    continue
-                for blk in reversed(content):
-                    if (isinstance(blk, dict) and blk.get("type") == "text"
-                            and isinstance(blk.get("text"), str)):
-                        return blk["text"]
-            if total >= FORM_OUTLINE_TAIL_MAX or total >= size:
-                return None
-            total = min(total + FORM_OUTLINE_TAIL_CHUNK, FORM_OUTLINE_TAIL_MAX, size)
-    except Exception:
-        return None
-
-
-def register_binding_has_form_outline(binding_line):
-    """True only when the resolver's OWN successful `[prdt register] …` line
-    carries the exact `form=outline` pair — never a file read, never a legality
-    judgment of our own (the resolver stays the sole authority, contracts
-    §Fixed paths).
-
-    T-651 grill FAIL 1: the real line is `[prdt register] <pairs> — governs
-    <surface>. <tail>` (prdt-audience-inject.sh `--binding`, literal em dash
-    U+2014 with spaces both sides) — so when `form=outline` is the LAST pair,
-    a bare split on `·` left it fused with " — governs …" and the exact-token
-    match failed. Cut the pairs off at the em dash FIRST, then split only that
-    part on `·`."""
-    if not (isinstance(binding_line, str) and binding_line.startswith("[prdt register] ")):
-        return False
-    body = binding_line[len("[prdt register] "):]
-    pairs_part = body.split(" — ", 1)[0]
-    tokens = [t.strip() for t in pairs_part.split("·")]
-    return "form=outline" in tokens
-
-
 hook_dir = os.environ.get("PRDT_HOOK_DIR") or ""
 resolver = os.path.join(hook_dir, "prdt-audience-inject.sh")
 if hook_dir and os.path.isfile(resolver):
@@ -711,14 +944,8 @@ if hook_dir and os.path.isfile(resolver):
             lines.append(first)
             if register_binding_has_form_outline(first):
                 reply_text = last_main_session_text(ev.get("transcript_path"))
-                violations = form_outline_violations(reply_text) if reply_text is not None else []
-                if violations:
-                    shown = violations[:FORM_OUTLINE_LIST_CAP]
-                    rest = len(violations) - len(shown)
-                    numbers = ", ".join(str(n) for n in shown)
-                    if rest > 0:
-                        numbers += f", +{rest} more"
-                    lines.append(REGISTER_CHECK_NOTICE % (len(violations), numbers))
+                lines.extend(form_outline_notices(reply_text))
+                lines.append(FORM_OUTLINE_HOT_LINE)
         elif r.returncode != 0:
             lines.append(REGISTER_UNCONFIRMED_NOTICE % "the resolver exited non-zero")
     except subprocess.TimeoutExpired:
@@ -726,6 +953,9 @@ if hook_dir and os.path.isfile(resolver):
                       % ("the call exceeded its %gs limit" % REGISTER_RESOLVER_TIMEOUT_S))
     except Exception:
         lines.append(REGISTER_UNCONFIRMED_NOTICE % "the call could not be run")
+# T-1072: the reply hot line on every prompt, whatever the register binding or the
+# resolver's outcome — a turn with no tool call (~18%, T-1024) still gets it.
+lines.append(REPLY_HOT_LINE)
 
 # Next to the state line, because it is a statement ABOUT that line's absence on
 # the previous turn. Silent in the normal case: `guard_begin` returns None and
@@ -948,4 +1178,3 @@ print(json.dumps({"hookSpecificOutput": {
 # is the harmless direction: one advisory line, never a lost state line.
 guard_finish(_guard_marker, _guard_t0, _guard_started)
 PYEOF
-exit 0

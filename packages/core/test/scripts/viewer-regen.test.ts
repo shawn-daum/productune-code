@@ -65,6 +65,9 @@ function sandbox() {
     'if [ "${1:-}" = "viewer" ] && [ "${2:-}" = "--no-open" ]; then',
     '  [ -n "$PRDT_TEST_COUNT" ] && printf x >> "$PRDT_TEST_COUNT"',
     '  [ -n "$PRDT_TEST_SLEEP" ] && sleep "$PRDT_TEST_SLEEP"',
+    // T-790: hold the run until the test creates the release file (capped at
+    // ~60 s so a test that dies early never leaves a stub spinning forever).
+    '  if [ -n "$PRDT_TEST_RELEASE" ]; then i=0; while [ ! -e "$PRDT_TEST_RELEASE" ] && [ $i -lt 1200 ]; do sleep 0.05; i=$((i+1)); done; fi',
     '  mkdir -p "$(pwd)/.prdt/scratch/viewer"',
     '  echo "<!doctype html>" > "$(pwd)/.prdt/scratch/viewer/viewer.html"',
     '  echo "[viewer](file://$(pwd)/.prdt/scratch/viewer/viewer.html)"',
@@ -84,6 +87,7 @@ function sandbox() {
   }
   delete env.PRDT_GUI_SESSION
   delete env.PRDT_TEST_SLEEP
+  delete env.PRDT_TEST_RELEASE
   return { dir, openLog, countFile, env, prdtHome }
 }
 
@@ -186,7 +190,13 @@ describe.skipIf(!RUN)('T-802 — background regen on any docs/**/*.md write', ()
   test('a burst of rapid writes regenerates once or a few times, never once per write', async () => {
     const s = sandbox()
     const root = project(s.dir)
-    const env = { ...s.env, PRDT_TEST_SLEEP: '0.3' }
+    // T-790: the first regen is HELD (the stub waits on a release file) until
+    // every write has landed and every worker it spawned has either taken the
+    // lock or exited on it. The earlier form slept 0.3 s per regen, so on a
+    // loaded host a worker that took longer than that to start found the lock
+    // free and ran again — coalescing then depended on spawn speed.
+    const release = path.join(s.dir, 'release')
+    const env = { ...s.env, PRDT_TEST_RELEASE: release }
     const N = 6
     // A ticket path on purpose: it is outside the T-746 VIEWER_DOC open
     // allowlist, so this exercises ONLY the new background regen path, never
@@ -198,6 +208,13 @@ describe.skipIf(!RUN)('T-802 — background regen on any docs/**/*.md write', ()
     for (let i = 0; i < N; i++) {
       execFileSync('bash', [HOOK], { input: writeEvent('Write', target, i % 2 ? 'developer' : undefined), env })
     }
+    // Every hook call has returned, so every worker process already exists.
+    // Release only once exactly one worker of this root is left (the lock
+    // holder, parked in the stub) — the rest saw the lock and exited.
+    const workers = () => execFileSync('ps', ['-axww', '-o', 'args='], { encoding: 'utf8' })
+      .split('\n').filter((l) => l.includes(' -c ') && l.includes(root)).length
+    expect(await waitFor(() => countOf(s.countFile) === 1 && workers() === 1, 30000)).toBe(true)
+    fs.writeFileSync(release, '')
     // Wait until the count file goes quiet (no growth for two consecutive polls)
     // — proves the single-flight loop has drained, not just "at least one ran".
     let last = -1
@@ -211,6 +228,8 @@ describe.skipIf(!RUN)('T-802 — background regen on any docs/**/*.md write', ()
     }
     const finalCount = countOf(s.countFile)
     expect(finalCount).toBeGreaterThan(0)
+    // the holder's run + at most one more for the dirty flag the others set
+    expect(finalCount).toBeLessThanOrEqual(2)
     expect(finalCount).toBeLessThan(N)
     expect(readLog(s.openLog)).toBe('')
   })
@@ -236,6 +255,9 @@ function cliSandbox(opts: { fail?: boolean; sleep?: string; viewer?: boolean } =
     'if [ "${1:-}" = "viewer" ] && [ "${2:-}" = "--no-open" ]; then',
     '  printf x >> "$PRDT_TEST_COUNT"',
     '  [ -n "$PRDT_TEST_SLEEP" ] && sleep "$PRDT_TEST_SLEEP"',
+    // T-790: hold the run until the test creates the release file (capped at
+    // ~60 s so a test that dies early never leaves a stub spinning forever).
+    '  if [ -n "$PRDT_TEST_RELEASE" ]; then i=0; while [ ! -e "$PRDT_TEST_RELEASE" ] && [ $i -lt 1200 ]; do sleep 0.05; i=$((i+1)); done; fi',
     '  [ -n "$PRDT_TEST_FAIL" ] && exit 1',
     '  echo "<!doctype html>" > "$(pwd)/.prdt/scratch/viewer/viewer.html"',
     '  find "$(pwd)/docs/tickets" -name "T-*.md" | sed "s#.*/##" >> "$(pwd)/.prdt/scratch/viewer/viewer.html"',
@@ -259,6 +281,7 @@ function cliSandbox(opts: { fail?: boolean; sleep?: string; viewer?: boolean } =
   }
   delete env.PRDT_GUI_SESSION
   delete env.PRDT_TEST_SLEEP
+  delete env.PRDT_TEST_RELEASE
   delete env.PRDT_TEST_FAIL
   delete env.PRDT_VIEWER_REGEN_BACKOFF_SECS
   const run = (args: string[], extra: NodeJS.ProcessEnv = {}, input = '') =>
@@ -295,6 +318,22 @@ async function settledCount(p: string, minWaitMs = 400): Promise<number> {
 function newTicket(s: ReturnType<typeof cliSandbox>, slug: string): string {
   const out = s.run(['tickets', 'new', '--type', 'impl', '--slug', slug])
   return out.match(/\[(T-\d+)\]/)![1]
+}
+
+/** T-995: `tickets new` regenerates synchronously with the real generator when a
+ *  viewer exists, so tests of the DETACHED worker (stub generator, failure
+ *  stamp) drive it with a doc write that only schedules: a ticket file written
+ *  directly (as a shell would) + `wiki reindex` over a fresh wiki page. */
+let shellSeq = 0
+function shellTicket(s: ReturnType<typeof cliSandbox>, slug: string, extra: NodeJS.ProcessEnv = {}): string {
+  const id = `T-${900 + ++shellSeq}`
+  const dir = path.join(s.root, 'docs', 'tickets', 'v0.1')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, `${id}.md`), `---\nid: ${id}\nslug: ${slug}\ntype: impl\nstatus: open\nassignee: po\ncreated: 2026-10-07\n---\n\n## problem\n\nx\n`)
+  fs.mkdirSync(path.join(s.root, 'docs', 'wiki'), { recursive: true })
+  fs.writeFileSync(path.join(s.root, 'docs', 'wiki', `fact--${slug}.md`), `---\ntitle: ${slug}\ntype: fact\nstatus: live\n---\nbody\n`)
+  s.run(['wiki', 'reindex'], extra)
+  return id
 }
 
 describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the viewer themselves', () => {
@@ -377,7 +416,7 @@ describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the vie
 
   test('20 doc-writing calls against a failing generator make at most a few attempts (failure stamp)', async () => {
     const s = cliSandbox({ fail: true })
-    for (let i = 0; i < 20; i++) newTicket(s, `burst-${i}`)
+    for (let i = 0; i < 20; i++) shellTicket(s, `burst-${i}`)
     const attempts = await settledCount(s.countFile)
     expect(attempts).toBeGreaterThan(0)
     expect(attempts).toBeLessThanOrEqual(3)
@@ -386,14 +425,14 @@ describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the vie
 
   test('a success after the backoff window clears the failure stamp', async () => {
     const s = cliSandbox({ fail: true })
-    newTicket(s, 'fails')
+    shellTicket(s, 'fails')
     expect(await waitFor(() => fs.existsSync(path.join(s.vdir, '.regen-failed')))).toBe(true)
     await settledCount(s.countFile)
     const base = countOf(s.countFile)
     delete s.env.PRDT_TEST_FAIL
-    newTicket(s, 'recovers-too-soon')
+    shellTicket(s, 'recovers-too-soon')
     expect(await settledCount(s.countFile)).toBe(base)
-    s.run(['tickets', 'new', '--type', 'impl', '--slug', 'recovers'], { PRDT_VIEWER_REGEN_BACKOFF_SECS: '0' })
+    shellTicket(s, 'recovers', { PRDT_VIEWER_REGEN_BACKOFF_SECS: '0' })
     expect(await waitFor(() => !fs.existsSync(path.join(s.vdir, '.regen-failed')))).toBe(true)
     expect(countOf(s.countFile)).toBe(base + 1)
   })
@@ -403,16 +442,16 @@ describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the vie
   // doc-writing command once the stamp is older than the window.
   test('reviewer sequence: failing generator, then a working one — the next doc write after the window shows the second ticket', async () => {
     const s = cliSandbox({ fail: true })
-    newTicket(s, 'first')
+    shellTicket(s, 'first')
     expect(await waitFor(() => fs.existsSync(path.join(s.vdir, '.regen-failed')))).toBe(true)
     await settledCount(s.countFile)
     delete s.env.PRDT_TEST_FAIL
-    const second = newTicket(s, 'second')
+    const second = shellTicket(s, 'second')
     await settledCount(s.countFile)
     expect(fs.readFileSync(path.join(s.vdir, 'viewer.html'), 'utf8')).not.toContain(second)
     const old = Date.now() / 1000 - 120
     fs.utimesSync(path.join(s.vdir, '.regen-failed'), old, old)
-    newTicket(s, 'third')
+    shellTicket(s, 'third')
     // The detached worker writes viewer.html first and clears .regen-failed only
     // after the generator exits: wait for BOTH (a load-dependent gap between the
     // two), with a generous timeout, instead of asserting the stamp right after.
@@ -678,6 +717,30 @@ describe.skipIf(!RUN)('T-842 — regen state files and scratch writers never fol
       } finally {
         fs.chmodSync(dir, 0o755)
       }
+    })
+  }
+})
+
+// T-1076: the jump page names the viewer's own file, never a hardcoded
+// viewer.html — and stays byte-identical to the generator's jumpPageContent.
+describe('viewer_jump — the page it forwards to is the viewer file it was given', () => {
+  for (const name of ['viewer.html', 'custom.html']) {
+    test(`${name}: prdt and jump-pages.mjs write the same bytes, pointing at ../${name}`, async () => {
+      const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1076-')))
+      fs.mkdirSync(path.join(root, '.prdt', 'scratch', 'viewer'), { recursive: true })
+      const probe = [
+        'import importlib.machinery, importlib.util, sys',
+        'from pathlib import Path',
+        'spec = importlib.util.spec_from_loader("prdt_mod", importlib.machinery.SourceFileLoader("prdt_mod", sys.argv[1]))',
+        'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+        'page = m.viewer_jump(Path(sys.argv[2]) / ".prdt/scratch/viewer" / sys.argv[3], "T-001")',
+        'sys.stdout.write(Path(page).read_text(encoding="utf-8"))',
+      ].join('\n')
+      const py = execFileSync('python3', ['-c', probe, PRDT_CLI, root, name], { encoding: 'utf8' })
+      const { jumpPageContent } = await import(path.resolve(__dirname, '../../../viewer/lib/jump-pages.mjs'))
+      expect(py).toBe(jumpPageContent('T-001', name))
+      expect(py).toContain(`url=../${name}#T-001`)
+      fs.rmSync(root, { recursive: true, force: true })
     })
   }
 })

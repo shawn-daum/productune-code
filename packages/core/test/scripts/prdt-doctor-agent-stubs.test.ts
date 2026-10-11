@@ -111,7 +111,8 @@ type Run = { stubLines: string[]; violations: number; skipped: string[]; raw: st
 function doctor(): Run {
   const raw = execFileSync('python3', [cliCopy, 'doctor'], {
     cwd: projectDir,
-    env: { ...process.env, PRDT_HOME: machineHome, CLAUDE_DIR: claudeDir, PRDT_DISCIPLINE: disciplineDir },
+    // T-1074: PRDT_BRIDGE_CHECK=0 — the meta-cli bridge check judges a checkout, not the sandbox.
+    env: { ...process.env, PRDT_HOME: machineHome, CLAUDE_DIR: claudeDir, PRDT_DISCIPLINE: disciplineDir, PRDT_BRIDGE_CHECK: '0' },
     encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
   const lines = raw.split('\n')

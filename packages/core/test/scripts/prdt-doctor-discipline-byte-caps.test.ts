@@ -77,7 +77,8 @@ type Run = { raw: string; violations: number; warnings: string[] }
 function doctor(): Run {
   const raw = execFileSync('python3', [PRDT_CLI, 'doctor'], {
     cwd: projectDir,
-    env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir },
+    // T-1074: PRDT_BRIDGE_CHECK=0 — the meta-cli bridge check judges the real checkout.
+    env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir, PRDT_BRIDGE_CHECK: '0' },
     encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('doctor'),
   })
   const verdict = raw.split('\n').find((l) => l.includes('[verdict='))
@@ -118,12 +119,17 @@ describe.skipIf(!PYTHON3)('prdt doctor — discipline byte caps are a GATE, not 
 
   describe('contracts.md', () => {
     test(`fires at ${CONTRACTS_BYTES + 1} B`, () => {
+      // contracts.md is injected into every persona, so padding it can ALSO push a
+      // persona_total past its own budget when that headroom is smaller than
+      // contracts'. Assert the contracts line fires exactly once; do not pin the
+      // total violation count (a persona_total overflow is correct, separate doctor output).
       const base = doctor().violations
       padTo(path.join(disciplineDir, 'contracts.md'), CONTRACTS_BYTES, 1)
       const r = doctor()
-      expect(r.warnings.some((w) => w.includes(`contracts.md is ${(CONTRACTS_BYTES + 1).toLocaleString('en-US')} B`)
-        && w.includes("CAPS['contracts_bytes']"))).toBe(true)
-      expect(r.violations).toBe(base + 1)
+      const hits = r.warnings.filter((w) => w.includes(`contracts.md is ${(CONTRACTS_BYTES + 1).toLocaleString('en-US')} B`)
+        && w.includes("CAPS['contracts_bytes']"))
+      expect(hits).toHaveLength(1)
+      expect(r.violations).toBeGreaterThanOrEqual(base + 1)
     })
 
     test(`silent at exactly ${CONTRACTS_BYTES} B (the budget itself)`, () => {

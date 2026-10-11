@@ -42,8 +42,12 @@ const OK_CLI = `import fs from 'node:fs'
 import path from 'node:path'
 const a = process.argv
 const out = a[a.indexOf('--out') + 1]
-fs.mkdirSync(path.dirname(out), { recursive: true })
-fs.writeFileSync(out, '<!doctype html>')
+if (a.includes('--emit')) {
+  process.stdout.write(JSON.stringify({ files: [{ name: path.basename(out), content: '<!doctype html>' }], at: [], prune: null }))
+} else {
+  fs.mkdirSync(path.dirname(out), { recursive: true })
+  fs.writeFileSync(out, '<!doctype html>')
+}
 `
 
 interface Fake { prdt: string; code: string; gui: string; viewer: string }
@@ -64,7 +68,7 @@ function fakeCheckout(opts: { omit?: string[]; cli?: string } = {}): Fake {
     fs.writeFileSync(path.join(viewer, 'cli.mjs'), opts.cli ?? OK_CLI)
   }
   if (!omit.has('node_modules')) {
-    for (const pkg of ['marked', 'subset-font']) {
+    for (const pkg of ['marked', 'subset-font', 'mermaid']) {
       if (omit.has(pkg)) continue
       fs.mkdirSync(path.join(viewer, 'node_modules', pkg), { recursive: true })
       fs.writeFileSync(path.join(viewer, 'node_modules', pkg, 'package.json'), `{"name":"${pkg}"}`)
@@ -167,7 +171,7 @@ describe.skipIf(!PYTHON3)('prdt viewer — the cause is named, with the one fix 
   })
 
   test('node_modules present but marked + subset-font missing (the old-install state): both named', () => {
-    const f = fakeCheckout({ omit: ['marked', 'subset-font'] })
+    const f = fakeCheckout({ omit: ['marked', 'subset-font', 'mermaid'] })
     const r = run(f.prdt, ['viewer'])
     expect(r.code).not.toBe(0)
     expect(r.err).toContain('marked')
@@ -273,7 +277,7 @@ function doctorLines(prdt: string): string[] {
 
 describe.skipIf(!PYTHON3)('prdt doctor — viewer generator', () => {
   test('reports the missing package with the fix command', () => {
-    const f = fakeCheckout({ omit: ['marked', 'subset-font'] })
+    const f = fakeCheckout({ omit: ['marked', 'subset-font', 'mermaid'] })
     const lines = doctorLines(f.prdt)
     expect(lines.length).toBe(1)
     expect(lines[0]).toContain('marked')

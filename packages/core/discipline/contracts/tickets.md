@@ -10,8 +10,8 @@ Continues `contracts.md` §Tickets; binds every persona the same way, loaded on 
 ## The frame — H2 keys, this order, nothing else at H2
 | key | holds | writer |
 |---|---|---|
-| `problem` | `As-is` · `To-be` · the analysis | PO |
-| `options` | the scaffolded table filled — one row per option; columns `pros` · `cons` · `trade-off` · `recommend` with its 1-line why, plus one To-be column (§`type: decision`) | PO |
+| `problem` | `As-Is` · `To-Be` · the analysis | PO |
+| `options` | the scaffolded table filled — one row per option; columns `pros` · `cons` · `trade-off` · `recommend` with its 1-line why, plus one To-Be column (§`type: decision`) | PO |
 | `related` | hand-written: stakeholders · purpose · out-of-scope. Version position and feature map are DRAWN by the viewer from `prd_item` · `feature` · `deps` — never written | PO |
 | `acceptance` | the target; later additions as `###` | PO |
 | `evidence` | verbatim quotes · measurements | PO · designer |
@@ -29,21 +29,28 @@ Continues `contracts.md` §Tickets; binds every persona the same way, loaded on 
 ## `type: decision` — a fork the PO puts to the user
 - `assignee: user` always; `options` is its centre; every ticket the answer blocks names it in ITS `deps` — the viewer draws the reverse edge; no `blocks` key.
 - Any other `assignee: user` body: `contracts/user-tickets.md`.
-- `problem`, this order: one plain line — what goes wrong for the user, never tool names alone (worktree · land · patch-cycle line 32) · the observed instance — real ids · versions · commit hashes from the project record; not yet happened → say so + the observation the risk derives from; never invented ("v1.11.2", "pnpm test | head -50") · each term defined at first use, technical terms in English (contracts §Language): `hotfix` for "긴급 수정" · `merge` for "합치기" · `branch` · `As-is` · `To-be`, each an ASCII flow sketch in a code block · where the options diverge.
-- `options`: one added column ties each row to the To-be it produces — its procedure, or its result on the observed instance. An option proposing text carries its draft verbatim in its row; `[ctx].user_lang` ≠ English → the translation beside the original.
+- `problem`, this order: one plain line — what goes wrong for the user, never tool names alone (worktree · land · patch-cycle line 32) · the observed instance — real ids · versions · commit hashes from the project record; not yet happened → say so + the observation the risk derives from; never invented ("v1.11.2", "pnpm test | head -50") · each term defined at first use, technical terms in English (contracts §Language): `hotfix` for "긴급 수정" · `merge` for "합치기" · `branch` · `As-Is` · `To-Be`, each an ASCII flow sketch in a code block · where the options diverge.
+- `options`: one added column ties each row to the To-Be it produces — an example of its result: the actual screen, output or text the option yields, on the observed instance (real project data) where possible, never invented; situations that differ (empty · non-empty) side by side. The chat's first mention shows the same example (PO habit Triage). An option proposing text carries its draft verbatim in its row, one proposing a layout or screen its text sketch — chat and row alike; a screen → the row also links one HTML mock `docs/artifacts/[<line>/]<version>/<slug>.html`, a tab per option, rendered by the Designer; `[ctx].user_lang` ≠ English → the translation beside the original.
 - Closes only on the user's own reply, quoted verbatim into `outcome` by the PO. Its `done` records a direction: consent for push · deploy · destructive git is the user's own words in the live session (contracts §Overrides floor) — no option cell, `direction_pin` or ticket status is that consent.
 
 ## `feature:` — the graph key
 - On `status: done`, the purpose row of a spec-backed feature lands as a `(vX~)` fact in `docs/features/<f>.md` (authoring: `contracts/fixed-paths.md`); no spec file → it stays in the ticket and the value counts toward promotion (`prdt doctor`, fixed-paths annex).
 - `deps` is the one precedence source: `prdt schedule` computes the critical path from it, and a PRD precedence row lands as a `deps` entry, never a second list — it ranks dispatches, never blocks one. A carry-over ticket's `deps` names the ticket it continues; a `done` dep reads as continued from.
 
+## `rider:` — spare-capacity eligibility, written at creation
+- PO, at creation, backlog included: `rider: true` + `touches: [<path>…]` only when all hold — `type` design|impl|qa · `assignee` designer|developer|qa · every `deps` entry `done`, or none · no open ticket names it in `deps` · no product-shape change (PO habit Triage) · `touches` = every file or `/`-terminated dir it would edit, `change_meta.files` form. One fails → no `rider` key; absent = not a rider. A `deps` edge added later, either end → drop `rider` in that same write.
+- Read by the PO's `spare-capacity` run; never a consent source (§`type: decision`).
+
 ## Redeploys
 - Redeploys append to the version's single `ops` ticket, not new tickets.
 
 ## The ticket rules (moved from contracts.md §Tickets)
-- Frontmatter (PO-only write): `id · slug · type(design|impl|qa|ops|decision) · status(open|done|dropped) · assignee(designer|developer|qa|po|user — user = work only the person's own hands can do) · feature? · prd_item?(v<N>.<m>#<key>) · deps?[] · created · closed?`. `id` is a global counter (`T-NNN` unique across ALL ticket dirs); moving a file never renumbers it. Backlog promotion = `git mv` into the current version dir.
+- Frontmatter (PO-only write): `id · slug · type(design|impl|qa|ops|decision) · status(open|done|dropped) · assignee(designer|developer|qa|po|user — user = work only the person's own hands can do) · feature? · prd_item?([<line>/]v<N>.<m>#<key>) · deps?[] · rider? · touches?[] · created · closed?`. `id` is a global counter (`T-NNN` unique across ALL ticket dirs); moving a file never renumbers it. Backlog promotion = `git mv` into its line's current version dir.
 - Body = the frame: H2 = its keys in its order, nothing else; slices and amendments are `###` inside a key. Keys · required-by-condition · the purpose/out-of-scope/unobserved rows owed when an `acceptance` line changes after first dispatch or `feature:` names a spec file · `deps` · redeploys: `contracts/tickets.md`. Progress notes = `log` — no briefs file.
 - An access-control `acceptance` line (gate / hide / restrict / limit) names its exact target — page, asset, API route, or field; a bare verb with no named target is not acceptance-complete.
+- **Acceptance enumerates variants** (moved from PO habit): multi-variant/conditional user-facing UI → ticket acceptance lists each variant as its own line, never folded into one sentence.
+- **An acceptance never places a recording duty in `docs/wiki/`** (contracts §Return): the PO resolves every "record it / write it down" acceptance to an actual path BEFORE dispatch, one naming a reader or a place instead of a path included ("where the north-star reader will look"); resolves under `docs/wiki/` → the PO cuts that line from the dispatch and writes the page itself.
+- `prd_item`, however the ticket is born (build-entry slice · mid-build · split · carry-over): set when its work delivers a What item of the version dir it sits in, a carry-over its new version's key, never the parent's; `prdt tickets new` lists the keys. No item fits → none, never forced.
 - Deliverable work (design / impl / qa / ops) and a user fork (decision) get a ticket; rituals (retro · readiness · curation) get one `docs/wiki/log.md` line instead.
 - `type: decision`: `assignee: user`; closed only by the user's reply, quoted verbatim into `outcome` — a direction, never consent (§Overrides floor); form: `contracts/tickets.md`.
 - `feature` is the graph key: a ticket split from another carries the parent's value — neither has one → the PO names one, set on both. Carry-over of unfinished work IS a split, with `deps: [<parent>]`; a `done` dep reads as continued from.

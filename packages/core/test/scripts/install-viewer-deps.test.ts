@@ -37,8 +37,8 @@ if [ "$STUB_MODE" = fail ]; then
   exit 1
 fi
 nm="$PWD/packages/viewer/node_modules"
-mkdir -p "$nm/marked" "$nm/subset-font" "$nm/pretendard/dist/web/static/woff2"
-echo '{}' > "$nm/marked/package.json"; echo '{}' > "$nm/subset-font/package.json"
+mkdir -p "$nm/marked" "$nm/subset-font" "$nm/mermaid" "$nm/pretendard/dist/web/static/woff2"
+echo '{}' > "$nm/marked/package.json"; echo '{}' > "$nm/subset-font/package.json"; echo '{}' > "$nm/mermaid/package.json"
 case "$*" in *"--filter ./packages/gui"*)
   mkdir -p "$PWD/packages/gui/node_modules/@productune/viewer"
   echo '{}' > "$PWD/packages/gui/node_modules/@productune/viewer/package.json";;

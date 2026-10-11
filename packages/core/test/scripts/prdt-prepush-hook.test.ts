@@ -109,6 +109,8 @@ function makeFixture(): void {
     PRDT_DISCIPLINE: path.join(CORE_ROOT, 'discipline'),
     GIT_CONFIG_NOSYSTEM: '1',
     PATH: `${binDir}:${process.env.PATH}`,
+    // T-1074: the meta-cli bridge check judges the real checkout, not the sandbox.
+    PRDT_BRIDGE_CHECK: '0',
   }
   remote = path.join(sandbox, 'origin.git')
   git(['init', '-q', '--bare', remote], sandbox)
