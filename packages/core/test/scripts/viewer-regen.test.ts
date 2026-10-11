@@ -720,3 +720,27 @@ describe.skipIf(!RUN)('T-842 — regen state files and scratch writers never fol
     })
   }
 })
+
+// T-1076: the jump page names the viewer's own file, never a hardcoded
+// viewer.html — and stays byte-identical to the generator's jumpPageContent.
+describe('viewer_jump — the page it forwards to is the viewer file it was given', () => {
+  for (const name of ['viewer.html', 'custom.html']) {
+    test(`${name}: prdt and jump-pages.mjs write the same bytes, pointing at ../${name}`, async () => {
+      const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1076-')))
+      fs.mkdirSync(path.join(root, '.prdt', 'scratch', 'viewer'), { recursive: true })
+      const probe = [
+        'import importlib.machinery, importlib.util, sys',
+        'from pathlib import Path',
+        'spec = importlib.util.spec_from_loader("prdt_mod", importlib.machinery.SourceFileLoader("prdt_mod", sys.argv[1]))',
+        'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+        'page = m.viewer_jump(Path(sys.argv[2]) / ".prdt/scratch/viewer" / sys.argv[3], "T-001")',
+        'sys.stdout.write(Path(page).read_text(encoding="utf-8"))',
+      ].join('\n')
+      const py = execFileSync('python3', ['-c', probe, PRDT_CLI, root, name], { encoding: 'utf8' })
+      const { jumpPageContent } = await import(path.resolve(__dirname, '../../../viewer/lib/jump-pages.mjs'))
+      expect(py).toBe(jumpPageContent('T-001', name))
+      expect(py).toContain(`url=../${name}#T-001`)
+      fs.rmSync(root, { recursive: true, force: true })
+    })
+  }
+})

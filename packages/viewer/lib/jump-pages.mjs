@@ -26,16 +26,19 @@ export function ticketIdsOf(data) {
   return [...ids].filter((id) => /^T-\d+$/.test(id)).sort()
 }
 
-export function jumpPageContent(key) {
+// T-1076: `page` = the viewer's own file name (the `--out` basename), so a
+// page generated under another name is still the one an `at/` page opens.
+export function jumpPageContent(key, page = 'viewer.html') {
   const frag = escapeHtml(encodeURIComponent(key))
+  const href = escapeHtml(encodeURIComponent(page))
   return '<!doctype html><meta charset="utf-8">' +
-    `<meta http-equiv="refresh" content="0;url=../viewer.html#${frag}">` +
-    `<a href="../viewer.html#${frag}">viewer.html#${escapeHtml(key)}</a>\n`
+    `<meta http-equiv="refresh" content="0;url=../${href}#${frag}">` +
+    `<a href="../${href}#${frag}">${escapeHtml(page)}#${escapeHtml(key)}</a>\n`
 }
 
 /** T-908: the `at/` pages a run carries, as `{name, content}` (the emit bundle). */
-export function ticketJumpPages(ids) {
-  return ids.map((id) => ({ name: `${id}.html`, content: jumpPageContent(id) }))
+export function ticketJumpPages(ids, page = 'viewer.html') {
+  return ids.map((id) => ({ name: `${id}.html`, content: jumpPageContent(id, page) }))
 }
 
 /**
@@ -44,7 +47,7 @@ export function ticketJumpPages(ids) {
  * or removed. Only ticket pages are pruned — other jump pages (wiki, docs) stay.
  * @returns {{ written: number, pruned: number }}
  */
-export function writeTicketJumpPages(viewerDir, ids, writeAtomic) {
+export function writeTicketJumpPages(viewerDir, ids, writeAtomic, page = 'viewer.html') {
   const atDir = path.join(viewerDir, 'at')
   let st = null
   try { st = fs.lstatSync(atDir) } catch { /* absent → created below */ }
@@ -53,7 +56,7 @@ export function writeTicketJumpPages(viewerDir, ids, writeAtomic) {
   let written = 0
   for (const id of ids) {
     const target = path.join(atDir, `${id}.html`)
-    const content = jumpPageContent(id)
+    const content = jumpPageContent(id, page)
     let cur = null
     try { if (fs.lstatSync(target).isFile()) cur = fs.readFileSync(target, 'utf8') } catch { /* absent */ }
     if (cur === content) continue
