@@ -40,7 +40,8 @@ function doctor(): string {
   try {
     return execFileSync('python3', [PRDT_CLI, 'doctor'], {
       cwd: projectDir,
-      env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir },
+      // T-1074: PRDT_BRIDGE_CHECK=0 — the meta-cli bridge check judges the real checkout.
+      env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir, PRDT_BRIDGE_CHECK: '0' },
       encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('doctor'),
     })
   } catch (e: any) {
@@ -51,7 +52,7 @@ function doctor(): string {
 /** `prdt doctor` with PRDT_HOME pointed at `home` and NO PRDT_DISCIPLINE override —
  *  the shape a real machine has, so the hook commands below see exactly what doctor saw. */
 function doctorAtHome(home: string): string {
-  const env = { ...process.env, PRDT_HOME: home }
+  const env = { ...process.env, PRDT_HOME: home, PRDT_BRIDGE_CHECK: '0' } // T-1074: bridge judges the real checkout
   delete (env as any).PRDT_DISCIPLINE
   try {
     return execFileSync('python3', [PRDT_CLI, 'doctor'], {
