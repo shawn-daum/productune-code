@@ -3058,9 +3058,9 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .env-file + .env-file, .env-empty + .env-file { margin-top: 8px; }
 .env-file code { font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); }
 .env-file .env-c { margin-left: 0; }
-.env-eye { background: none; border: none; padding: 4px; border-radius: 6px; cursor: pointer; color: var(--text-tertiary); display: inline-flex; align-items: center; margin-left: auto; }
+.env-eye { background: none; border: 1px solid transparent; padding: 4px; min-width: 24px; min-height: 24px; justify-content: center; border-radius: 6px; cursor: pointer; color: var(--text-tertiary); display: inline-flex; align-items: center; margin-left: auto; }
 .env-c + .env-eye { margin-left: 0; }
-.env-eye:hover { background: var(--bg-state-hover); color: var(--text-primary); }
+.env-eye:hover { background: var(--bg-state-hover); border-color: var(--border-hover); color: var(--text-primary); }
 .env-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .env-eye .eye-off, .env-eye[aria-expanded="true"] .eye-on { display: none; }
 .env-eye[aria-expanded="true"] .eye-off { display: inline-flex; }
