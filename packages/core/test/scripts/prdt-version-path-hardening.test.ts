@@ -191,3 +191,67 @@ describe('installed_prdt_version reads a checkout root only from packages/core/s
     expect(py(body, [], path.join(repo, 'packages/core/scripts/prdt'), home)).toBe('v9.9.9')
   }, T)
 })
+
+describe('QA round 2: Unicode digits are not version digits', () => {
+  test('tickets new refuses v١ / v１ (home) and v٢ (line); nothing written', () => {
+    for (const [st, args, field] of [
+      [{ version: 'v١' }, [], '`version` \'v١\''],
+      [{ version: 'v１' }, [], '`version` \'v１\''],
+      [{ version: 'v1.0', lines: { arc: { stage: 'build', version: 'v٢' } } }, ['--line', 'arc'], '`lines.arc.version` \'v٢\''],
+    ] as const) {
+      const { scratch, root, home } = project(st as Record<string, unknown>)
+      const r = cli(root, home, ['tickets', 'new', ...args, '--type', 'impl', '--slug', 'probe'])
+      expect(r.code).not.toBe(0)
+      expect(r.err).toContain(`${field} is not a version id`)
+      expect(findAll(scratch, 'T-001.md')).toEqual([])
+    }
+  }, T)
+
+  test('canon, bucket names, prd_item and doctor all reject non-ASCII digits', () => {
+    const p = py(`print(json.dumps([m._version_id_canon("v١"), m._version_id_canon("v1"), m.is_artifact_bucket_name("v１"),
+      bool(m.PRD_ITEM_RE.match("v١#k")), bool(m.PRD_VERSION_FILE_RE.match("v١.md")),
+      m.po_state_warnings({"schema_version": 1, "stage": "build", "current_task": None, "version": "v١",
+        "lines": {"arc": {"stage": "build", "version": "v٢"}}})]))`)
+    expect(p.slice(0, 5)).toEqual([null, [1], false, false, false])
+    expect(p[5]).toEqual([
+      "state: version 'v١' is not a version id (v<N>[.<m>[.<p>]] or backlog)",
+      "state: lines.arc.version 'v٢' is not a version id (v<N>[.<m>[.<p>]] or backlog)",
+    ])
+  }, T)
+})
+
+describe('QA round 2: schedule report builds its dir from a version id only', () => {
+  test('`v١` and `../x` refused with nothing written; `v1\\n` and `  v1.13` are stripped (PO decision)', () => {
+    for (const bad of ['v١', '../x', 'backlog']) {
+      const { root, home } = project({ version: bad }, undefined)
+      const r = cli(root, home, ['schedule', 'report'])
+      expect(r.code).not.toBe(0)
+      expect(r.err).toContain('is not a version id')
+      expect(fs.existsSync(path.join(root, 'docs/artifacts'))).toBe(false)
+    }
+    const { root, home } = project({ version: 'v1\n' }, undefined)
+    const r = cli(root, home, ['schedule', 'report'])
+    expect(r.code).toBe(0)
+    expect(r.out.split('\n')[0]).toBe('schedule report: docs/artifacts/v1/schedule-observation.md — 0 dispatch row(s) for v1')
+    const w = project({ version: '  v1.13' }, undefined)
+    expect(cli(w.root, w.home, ['schedule', 'report']).code).toBe(0)
+    expect(fs.readdirSync(path.join(w.root, 'docs/artifacts'))).toEqual(['v1.13'])
+    const a = project({ version: 'v1.0' }, undefined)
+    const ra = cli(a.root, a.home, ['schedule', 'report', '--version', 'v١'])
+    expect(ra.code).not.toBe(0)
+    expect(ra.err).toContain("--version 'v١' is not a version id")
+  }, T)
+})
+
+describe('QA round 2: doctor stage signal never prints a raw version', () => {
+  test('a forged version produces no `verdict=` line; the state warning names it safely', () => {
+    const forged = '../../escaped\nverdict=clean'
+    const p = py(`print(json.dumps(m.stage_signal_warnings({"stage": "build", "version": sys.argv[2]}, {})))`, [forged])
+    expect(p).toEqual([])
+    const { root, home } = project({ version: forged }, undefined)
+    const r = cli(root, home, ['doctor'])
+    expect(r.out.split('\n').some((l) => l.startsWith('verdict='))).toBe(false)
+    expect(r.out).not.toContain('escaped\n')
+    expect(r.out).toContain("state: version '<a name imitating doctor's own output>' is not a version id")
+  }, T)
+})
