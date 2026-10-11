@@ -10698,7 +10698,8 @@ def feature_guide_warnings(where, guide):
                     warns.append(f"{g}.logic[{i}] text is not a string")
                 else:
                     filled = filled or bool(it["text"].strip())
-                if "ground" in it and strs(it["ground"]) is None:
+                gl = strs(it["ground"]) if "ground" in it else []
+                if gl is None or not all(TICKET_ID_RE.match(x.strip()) for x in gl):
                     warns.append(f"{g}.logic[{i}] ground is not a ticket id string or a list of them")
             else:
                 warns.append(f"{g}.logic[{i}] is not a string or a {{text, ground}} object")
@@ -16379,6 +16380,17 @@ def _wordlist_read(path):
     return data["entries"]
 
 
+# T-1080 — a language tag reaches a path (`<lang>.json`) and hook output, and
+# `.prdt/config.json` arrives with a clone: only a BCP-47-shaped tag
+# (language subtag + alphanumeric subtags) is ever used, so `../..`, `/`, a
+# line break or any other byte never gets there.
+WORDLIST_LANG_RE = re.compile(r"[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*")
+
+
+def wordlist_lang_ok(lang):
+    return isinstance(lang, str) and WORDLIST_LANG_RE.fullmatch(lang) is not None
+
+
 def _wordlist_project_file(root, lang):
     return Path(root) / ".prdt" / "wordlist" / f"{lang}.json" if root else None
 
@@ -16387,7 +16399,10 @@ def wordlist_entries(lang, root=None, warnings=None):
     """Canon list for `lang` merged with the project's local one (by `word`).
     Each returned entry carries its compiled `_re` and `_except` regexes.
     With a `warnings` list, a broken PROJECT file or entry is reported there and
-    skipped (canon still applies); without one it raises WordlistError."""
+    skipped (canon still applies); without one it raises WordlistError.
+    A `lang` that is not BCP-47-shaped always raises (T-1080: no path use)."""
+    if not wordlist_lang_ok(lang):
+        raise WordlistError(f"prdt wordlist: {one_line(repr(lang))} is not a BCP-47 language tag (e.g. ko, en, zh-Hant)")
     merged, order = {}, []
     sources = []
     canon = wordlist_canon_dir()
@@ -16444,12 +16459,13 @@ def wordlist_langs(root=None):
 
 def wordlist_detect_lang(text, root=None):
     """Project setting `.prdt/config.json` → `wordlist.lang` first; else the
-    text's own script: Hangul → ko, kana → ja, otherwise en."""
+    text's own script: Hangul → ko, kana → ja, otherwise en. A setting that
+    is not BCP-47-shaped is ignored (T-1080: it arrives with a clone)."""
     if root:
         try:
             cfg = json.loads((Path(root) / ".prdt" / "config.json").read_text(encoding="utf-8"))
             lang = (cfg.get("wordlist") or {}).get("lang")
-            if isinstance(lang, str) and lang:
+            if wordlist_lang_ok(lang):
                 return lang
         except (OSError, ValueError, AttributeError):
             pass
@@ -16641,7 +16657,16 @@ def _wordlist_project_root(start):
 
 
 def _wordlist_label(h):
-    return h["match"] if h["match"] == h["word"] else f"{h['match']} ({h['word']})"
+    m, w = one_line(h["match"]), one_line(h["word"])
+    return m if m == w else f"{m} ({w})"
+
+
+def _wordlist_repl(replace):
+    """T-1080 — word, match and replace strings come from a project word list
+    that arrives with a clone; every one is folded to a single line before it
+    reaches hook context or CLI output, so a line break can never open a
+    forged `[prdt …]` header line."""
+    return " · ".join(one_line(r) for r in replace)
 
 
 def wordlist_check_text(text, name, lang_arg, root, warnings=None):
@@ -16692,11 +16717,12 @@ def _wordlist_hook(root_hint):
         return
     if not hits and not warns:
         return
+    rel = one_line(rel)
     lines = [f"[prdt wordlist] {rel}: {len(hits)} hit(s) from the {lang} word list (contracts §Language). "
              f"Edit {rel} this turn: replace each word below with one of the replacements after its →."]
-    lines += [f"- warning: {w}" for w in warns]
+    lines += [f"- warning: {one_line(w)}" for w in warns]
     for h in hits[:_WORDLIST_HOOK_MAX_LINES]:
-        lines.append(f"- line {h['line']} \"{_wordlist_label(h)}\" → {' · '.join(h['replace'])}")
+        lines.append(f"- line {h['line']} \"{_wordlist_label(h)}\" → {_wordlist_repl(h['replace'])}")
     if len(hits) > _WORDLIST_HOOK_MAX_LINES:
         lines.append(f"- {len(hits) - _WORDLIST_HOOK_MAX_LINES} more: prdt wordlist check {rel}")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
@@ -16714,11 +16740,11 @@ def cmd_wordlist(args):
             lang = args.lang or "ko"
             entries = wordlist_entries(lang, root)
             if not entries:
-                print(f"prdt wordlist: no list for {lang!r} (have: {', '.join(wordlist_langs(root)) or 'none'})", file=sys.stderr)
+                print(f"prdt wordlist: no list for {lang!r} (have: {one_line(', '.join(wordlist_langs(root))) or 'none'})", file=sys.stderr)
                 sys.exit(3)
             if args.format == "lines":
                 for e in entries:
-                    print(f"- {e['word']} → {' · '.join(e['replace'])}")
+                    print(f"- {one_line(e['word'])} → {_wordlist_repl(e['replace'])}")
             else:
                 clean = [{k: v for k, v in e.items() if not k.startswith("_")} for e in entries]
                 print(json.dumps({"lang": lang, "schema": 1, "entries": clean}, ensure_ascii=False, indent=2))
@@ -16739,7 +16765,7 @@ def cmd_wordlist(args):
             warns = []
             lang, hits = wordlist_check_text(text, shown, args.lang, root, warns)
             for w in warns:
-                print(w, file=sys.stderr)
+                print(one_line(w), file=sys.stderr)
             report.append({"path": shown, "lang": lang, "hits": hits})
     except WordlistError as e:
         print(str(e), file=sys.stderr)
@@ -16750,10 +16776,12 @@ def cmd_wordlist(args):
     else:
         for r in report:
             for h in r["hits"]:
-                print(f"{r['path']}:{h['line']}:{h['col']}: {_wordlist_label(h)} → {' · '.join(h['replace'])}")
+                print(f"{one_line(r['path'])}:{h['line']}:{h['col']}: {_wordlist_label(h)} → {_wordlist_repl(h['replace'])}")
         langs = ", ".join(sorted({r["lang"] for r in report}))
-        files = sum(1 for r in report if r["hits"])
-        print(f"wordlist: {total} hits in {files} file{'s' if files != 1 else ''} ({langs})")
+        # T-1080 C3: hits and files checked are two counts — a clean run of one
+        # file reads '0 hits · 1 file checked', never '0 hits in 0 files'.
+        files = len(report)
+        print(f"wordlist: {total} hits · {files} file{'s' if files != 1 else ''} checked ({langs})")
     sys.exit(1 if total else 0)
 
 

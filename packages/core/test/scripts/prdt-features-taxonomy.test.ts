@@ -148,7 +148,9 @@ describe.skipIf(!CAN_RUN)('prdt doctor — feature taxonomy (T-882)', () => {
         'empty-cells': good([], { when: [], ux: '  ', logic: [], limits: [], example: '' }),
         'bad-types': good([], { when: 3, ux: ['a', 1], logic: [{ text: 5, ground: 7 }, 9], limits: { a: 1 }, example: ['x'] }),
         'guide-list': good([], ['x']),
-        'ok-string-logic': good([], { when: 'w', ux: ['u'], logic: ['plain', { text: 't', ground: ['T-1', 'T-2'] }], example: 'e' }),
+        'ok-string-logic': good([], { when: 'w', ux: ['u'], logic: ['plain', { text: 't', ground: ['T-1', 'T-2'] }, { text: 't', ground: 'T-ABC-3' }], example: 'e' }),
+        // T-1080 C5: a string that is not ticket-id shaped fails the check its message names
+        'bad-ground': good([], { when: 'w', ux: ['u'], logic: [{ text: 't', ground: 'see the PRD' }, { text: 't', ground: ['T-1', 'later'] }], example: 'e' }),
       },
     })
     const w = 'feature: config features.vocab'
@@ -167,6 +169,8 @@ describe.skipIf(!CAN_RUN)('prdt doctor — feature taxonomy (T-882)', () => {
       `${w} 'bad-types' taxonomy guide.logic is empty`,
       `${w} 'bad-types' taxonomy guide.example is not a string`,
       `${w} 'guide-list' taxonomy guide is not an object`,
+      `${w} 'bad-ground' taxonomy guide.logic[0] ground is not a ticket id string or a list of them`,
+      `${w} 'bad-ground' taxonomy guide.logic[1] ground is not a ticket id string or a list of them`,
     ])
   })
 
