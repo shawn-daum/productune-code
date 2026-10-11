@@ -98,9 +98,7 @@ function scanRepo(): Record<string, number> {
 /** Today's remaining raw sites (T-908). Shrink only. */
 const ALLOW: Record<string, number> = {
   // docs / release text the CLI scaffolds or derives (not under .prdt/)
-  'core/scripts/prdt::reindex_wiki': 1,
   'core/scripts/prdt::scaffold_releases': 1,
-  'core/scripts/prdt::write_machine_index': 1,
   'core/scripts/prdt::cmd_menus': 1,
   'core/scripts/prdt::wiki_promote': 1,
   'core/scripts/prdt::cmd_tickets_new': 1,
