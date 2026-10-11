@@ -382,7 +382,7 @@ function isAllowedRawHref(href) {
 // page's repoRootHref here right before parsing — safe because generation
 // is single-threaded and synchronous (no md() call is ever in flight while
 // another starts).
-let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF, disc: null, docs: null, decision: null }
+let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF, disc: null, docs: null, ids: null, decision: null }
 // T-886: the discipline documents' name index (discipline-links.mjs), built once per
 // page from the collected documents; a body links names only when its md() call asks
 // (ticket · wiki · PRD bodies — the three the acceptance names).
@@ -409,6 +409,7 @@ const defaultTextRender = Renderer.prototype.text
 // whole span is one such path. A `[[wikilink]]` is left as it was.
 const DOC_PATH_RE = /(?<![\w./~-])(?<!\[\[)docs\/(?:artifacts|wiki|prd|tickets|features)\/[\w./-]*\w/g
 let pageDocTargets = null
+let pageTicketIds = null
 
 /**
  * path → the `#` key the page's anchor table routes it by. Same table as
@@ -434,6 +435,35 @@ export function buildDocPathTargets(data, anchors = buildAnchors(data)) {
 
 function docPathAnchor(rel, textHtml) {
   return `<a href="#${escapeHtml(pageDocTargets.get(rel))}">${textHtml}</a>`
+}
+
+// T-1066: a ticket id (T-NNN · T-PATCH-NNN · T-P4-NNN) in running text links to
+// that ticket the same way. The known ids are the ticket-id values of the doc
+// targets table (every ticket the page carries); an id it lacks stays text. Not
+// in code (the codespan path checks only doc paths), not inside a path or word.
+const BODY_TICKET_ID_RE = /(?<![\w./#~-])T-(?:[A-Z][A-Z0-9]*-)?\d+(?![\w-])/g
+
+function ticketIdsOf(targets) {
+  const ids = new Set()
+  if (targets) for (const v of targets.values()) if (!v.startsWith('docs/')) ids.add(v)
+  return ids
+}
+
+function linkTicketIdText(text, ids, plain) {
+  BODY_TICKET_ID_RE.lastIndex = 0
+  let out = ''
+  let last = 0
+  let found = false
+  for (let m = BODY_TICKET_ID_RE.exec(text); m !== null; m = BODY_TICKET_ID_RE.exec(text)) {
+    if (!ids.has(m[0])) continue
+    found = true
+    if (m.index > last) out += plain(text.slice(last, m.index))
+    out += `<a href="#${escapeHtml(m[0])}">${escapeHtml(m[0])}</a>`
+    last = m.index + m[0].length
+  }
+  if (!found) return null
+  if (last < text.length) out += plain(text.slice(last))
+  return out
 }
 
 function linkDocPathText(text, plain) {
@@ -463,8 +493,14 @@ hardenedRenderer.text = function (token) {
   }
   if ((linkContext.disc || linkContext.docs) && !('tokens' in token && token.tokens) && !token.escaped) {
     if (linkContext.docs) {
-      const docLinked = linkDocPathText(token.text, plainText)
+      const ids = linkContext.ids
+      const idOrPlain = (seg) => (ids && ids.size ? linkTicketIdText(seg, ids, plainText) : null) ?? plainText(seg)
+      const docLinked = linkDocPathText(token.text, idOrPlain)
       if (docLinked !== null) return docLinked
+      if (ids && ids.size) {
+        const idLinked = linkTicketIdText(token.text, ids, plainText)
+        if (idLinked !== null) return idLinked
+      }
     }
     if (linkContext.disc) {
       const linked = linkDisciplineText(token.text, linkContext.disc, (seg) => defaultTextRender.call(this, { type: 'text', raw: seg, text: seg, escaped: false }))
@@ -489,11 +525,14 @@ hardenedRenderer.codespan = function ({ text }) {
 hardenedRenderer.link = function ({ href, title, tokens }) {
   const outerDisc = linkContext.disc
   const outerDocs = linkContext.docs
+  const outerIds = linkContext.ids
   linkContext.disc = null
   linkContext.docs = null
+  linkContext.ids = null
   const text = this.parser.parseInline(tokens)
   linkContext.disc = outerDisc
   linkContext.docs = outerDocs
+  linkContext.ids = outerIds
   const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath)
   if (rewritten !== null) {
     const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
@@ -541,7 +580,7 @@ hardenedRenderer.image = function ({ href, title, text, tokens }) {
  * @param {{discipline?: boolean}} [opts] `discipline`: link the names of discipline documents (T-886).
  */
 function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF, { discipline = false, decision = false } = {}) {
-  linkContext = { sourceDirRel, repoRootHref, disc: discipline ? pageDisciplineIndex : null, docs: pageDocTargets, decision: decision ? { chosen: decisionChosen(text ?? '') } : null }
+  linkContext = { sourceDirRel, repoRootHref, disc: discipline ? pageDisciplineIndex : null, docs: pageDocTargets, ids: pageTicketIds, decision: decision ? { chosen: decisionChosen(text ?? '') } : null }
   try {
     return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
   } finally {
@@ -1011,6 +1050,7 @@ export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_
   pageViewerAbsPath = viewerAbsPath
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   pageDocTargets = docTargets
+  pageTicketIds = ticketIdsOf(pageDocTargets)
   const files = []
   for (const bucket of tickets.omitted) {
     // T-961: an added line's bucket key is `<line>--<bucket>` (no `/` in a file name).
@@ -3862,6 +3902,7 @@ export function renderPage({
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   const anchors = buildAnchors(data)
   pageDocTargets = buildDocPathTargets(data, anchors)
+  pageTicketIds = ticketIdsOf(pageDocTargets)
   const views = lineViews(data)
   const detailData = {
     ticket: ticketDetailEntries(data.tickets, repoRootHref, views.slice(1).map((v) => v.tickets)),
