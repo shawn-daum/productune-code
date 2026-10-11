@@ -59,7 +59,7 @@ async function main() {
     const prefix = base.replace(/\.html?$/i, '')
     const bundle = {
       files: [...dataFiles, { name: base, content: html }, buildFile],
-      at: ticketJumpPages(ticketIds),
+      at: ticketJumpPages(ticketIds, base),
       prune: { dataPrefix: `${prefix}.tickets-`, dataSuffix: '.js' },
     }
     process.stdout.write(JSON.stringify(bundle))
@@ -74,7 +74,7 @@ async function main() {
   // new id always reloads into the new page.
   writeAtomic(path.join(dir, buildFile.name), buildFile.content)
   // T-995: every ticket in the page gets its `at/T-NNN.html`; gone tickets' pages are pruned.
-  writeTicketJumpPages(dir, ticketIds, writeAtomic)
+  writeTicketJumpPages(dir, ticketIds, writeAtomic, path.basename(outputPath))
   // A bucket that no longer exists leaves no stale data file behind; only
   // this page's own `<prefix>.tickets-*.js` names are ever removed.
   const keep = new Set(dataFiles.map((f) => f.name))

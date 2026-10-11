@@ -6,7 +6,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { describe, test, expect, beforeEach, afterEach } from 'vitest'
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { stateWriteFileSync, StateWriteRefused } from '../../src/fs/state-write'
 
 let root: string
@@ -188,4 +188,26 @@ test('append appends to an existing regular file', () => {
   stateWriteFileSync(root, 'l.jsonl', 'a\n', { append: true })
   stateWriteFileSync(root, 'l.jsonl', 'b\n', { append: true })
   expect(fs.readFileSync(path.join(root, 'l.jsonl'), 'utf-8')).toBe('a\nb\n')
+})
+
+// T-1076: fs.writeSync may return fewer bytes than asked; every mode loops until all are out.
+describe('short writes', () => {
+  for (const m of MODES) {
+    test(`${m.name}: a writeSync that writes at most 3 bytes per call still lands every byte`, () => {
+      const real = fs.writeSync.bind(fs) as (...a: unknown[]) => number
+      const spy = vi.spyOn(fs, 'writeSync').mockImplementation(((fd: number, buf: Uint8Array, off: number, len: number, pos: number | null) =>
+        real(fd, buf, off, Math.min(len, 3), pos)) as typeof fs.writeSync)
+      try {
+        const f = path.join(root, '.prdt', 'state.txt')
+        fs.mkdirSync(path.dirname(f), { recursive: true })
+        fs.writeFileSync(f, m.opts?.append ? 'head\n' : 'an older, longer body that must not survive\n')
+        const body = 'short-write body — 한글 포함\n'.repeat(5)
+        stateWriteFileSync(root, f, body, m.opts)
+        expect(fs.readFileSync(f, 'utf8')).toBe(m.opts?.append ? 'head\n' + body : body)
+        expect(spy.mock.calls.length).toBeGreaterThan(1)
+      } finally {
+        spy.mockRestore()
+      }
+    })
+  }
 })

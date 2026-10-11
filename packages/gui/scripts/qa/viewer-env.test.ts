@@ -188,6 +188,11 @@ describe('env item + Home env block — several lines', () => {
     expect(pane).not.toMatch(/len=|<input|<textarea|contenteditable|clipboard|copy/i)
   })
 
+  it('T-1078: the eye button is a 24px target with a visible hover boundary', () => {
+    expect(html).toContain('.env-eye { background: none; border: 1px solid transparent; padding: 4px; min-width: 24px; min-height: 24px;')
+    expect(html).toContain('.env-eye:hover { background: var(--bg-state-hover); border-color: var(--border-hover);')
+  })
+
   it('the eye handler toggles aria-expanded and the hidden list per file', () => {
     expect(html).toContain("ev.target.closest('[data-env-eye]')")
     expect(html).toContain('envRows.hidden = !envOpen;')
