@@ -6860,7 +6860,7 @@ def _releases_sections(code_root_path):
 
 # Version-shaped tags only (`v1.5`, `v1.5.1`) — a `v`-prefixed non-release tag
 # (`vendor-sync`) is not a release cut and must not raise a release-notes miss.
-TAG_RE = re.compile(r"^v\d+(?:\.\d+)*$")
+TAG_RE = re.compile(r"^v\d+(?:\.\d+)*$", re.ASCII)
 
 
 def release_notes_gap_warnings(root):
@@ -7217,7 +7217,7 @@ def remote_ahead(code_root, timeout=2):
 def _version_key(v):
     """Sortable key for a `v<N>.<m>[.<p>]` release tag, or None when unparseable.
     Tuple compare gives the right order across lengths: v1.5 < v1.5.1 < v1.6."""
-    m = re.match(r"^v?(\d+(?:\.\d+)*)", (v or "").strip())
+    m = re.match(r"^v?(\d+(?:\.\d+)*)", (v or "").strip(), re.ASCII)
     return tuple(int(x) for x in m.group(1).split(".")) if m else None
 
 
@@ -11167,7 +11167,9 @@ def ticket_frame_warnings(root, tickets):
 # define, so `v1.2.3.4` names no round. The bound is the narrower of the two
 # readers on purpose — code and contract text then say exactly the same thing,
 # and a fourth component is reported rather than quietly accepted as a version.
-VERSION_ID_RE = re.compile(r"^v\d+(?:\.\d+){0,2}$")
+# re.ASCII (T-1082 QA): `\d` alone also takes Unicode digits — `v١` passed,
+# became a ticket dir and canonicalized to (1,), aliasing `v1`.
+VERSION_ID_RE = re.compile(r"^v\d+(?:\.\d+){0,2}$", re.ASCII)
 
 
 def is_version_path_id(v):
@@ -11176,8 +11178,8 @@ def is_version_path_id(v):
     return isinstance(v, str) and (v == "backlog" or VERSION_ID_RE.fullmatch(v) is not None)
 # `(?![\d.])` rather than `\b`: after the greedy component run, a heading like
 # `## v1.x` is not a version heading at all (with `\b` it read as `v1`).
-PRD_VERSION_HEADING_RE = re.compile(r"^## (v\d+(?:\.\d+){0,2})(?![\d.])")
-PRD_VERSION_FILE_RE = re.compile(r"^v\d+(?:\.\d+){0,2}\.md$")
+PRD_VERSION_HEADING_RE = re.compile(r"^## (v\d+(?:\.\d+){0,2})(?![\d.])", re.ASCII)
+PRD_VERSION_FILE_RE = re.compile(r"^v\d+(?:\.\d+){0,2}\.md$", re.ASCII)
 
 
 # ── release lines (T-960 · T-946 = B · T-951 = A) ───────────────────────────
@@ -11304,7 +11306,7 @@ def _prd_line_headings(text, lines):
     if not lines:
         return [(None, v, ln) for v, ln in _prd_version_headings(text)]
     alt = "|".join(re.escape(x) for x in lines)
-    rx = re.compile(rf"^## (?:({alt}) )?(v\d+(?:\.\d+){{0,2}})(?![\d.])")
+    rx = re.compile(rf"^## (?:({alt}) )?(v\d+(?:\.\d+){{0,2}})(?![\d.])", re.ASCII)
     out = []
     for i, line in _md_structural_lines(text):
         m = rx.match(line)
@@ -11718,7 +11720,7 @@ def prd_layout_warnings(root, st):
                     continue
                 warns.append(f"prd: closed section `## {v}` found in {rel(prd_md)}:{ln} — the working "
                              f"file is the standing head + the ONE open section{one_open}, which "
-                             f"`.prdt/po-state.json` names as `{open_id}`; {home_clause(v, rel(prd_md))}")
+                             f"`.prdt/po-state.json` names as `{safe_label(open_id)}`; {home_clause(v, rel(prd_md))}")
         elif len(heads) > 1:
             # No readable open version: the count is all that is left to judge on.
             warns.append(f"prd: {rel(prd_md)} holds {len(heads)} `## v` sections "
@@ -12098,7 +12100,8 @@ def stage_signal_warnings(st, tickets, lines=()):
     for ln in lines:
         lstage, lver, _ = line_state(st, ln)
         warns += _stage_signal_one(lstage, lver, tickets)
-    return _stage_signal_one(st.get("stage"), st.get("version"), tickets) + warns
+    # line_state validates (T-1082 QA): a raw version could forge a doctor line.
+    return _stage_signal_one(st.get("stage"), line_state(st)[1], tickets) + warns
 
 
 def _stage_signal_one(stage, version, tickets):
@@ -12355,7 +12358,7 @@ PRD_REVERSED_ROW_RE = re.compile(
 PRD_ITEM_KEY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 PRD_H4_RE = re.compile(r"^#### (.+)$")
 # A ticket's src half: `prd_item: <version>#<key>` (T-663 §「항목 주소」).
-PRD_ITEM_RE = re.compile(r"^((?:[a-z0-9]+(?:-[a-z0-9]+)*/)?v\d+(?:\.\d+){0,2})#([a-z0-9]+(?:-[a-z0-9]+)*)$")
+PRD_ITEM_RE = re.compile(r"^((?:[a-z0-9]+(?:-[a-z0-9]+)*/)?v\d+(?:\.\d+){0,2})#([a-z0-9]+(?:-[a-z0-9]+)*)$", re.ASCII)
 
 
 def _prd_open_section(root, st, line=None):
@@ -12688,7 +12691,7 @@ def prd_item_coverage_notes(root, st, trows):
     channel already uses."""
     notes = []
     for line in [None] + project_line_names(root):
-        vid = line_state(st, line)[1] if line is not None else (st or {}).get("version")
+        vid = line_state(st, line)[1]
         if not (isinstance(vid, str) and vid.strip()):
             continue
         rows = [t for t in trows if t["version"] == vid and t["type"] != "decision"]
@@ -14345,10 +14348,7 @@ def compute_schedule(root, tickets=None, line=None):
     import graphlib
     root = Path(root)
     st = read_json(root / ".prdt" / "po-state.json") or {}
-    if line is None:
-        version = st.get("version") if isinstance(st.get("version"), str) else None
-    else:
-        version = line_state(st, line)[1]
+    version = line_state(st, line)[1]
     if tickets is None:
         tickets = _schedule_tickets(root)
     out = {"version": version, "cycle": None, "critical_path": [], "cp_length": 0,
@@ -14934,11 +14934,18 @@ def cmd_schedule_record(_args):
 def cmd_schedule_report(args):
     root = require_root()
     version = args.version
+    src = "--version"
     if not version:
         st = read_json(root / ".prdt" / "po-state.json") or {}
-        version = st.get("version") if isinstance(st.get("version"), str) else None
-    if not version or _version_id_canon(version) is None or "/" in version:
+        version, src = st.get("version"), ".prdt/po-state.json `version`"
+    if not isinstance(version, str) or not version.strip():
         sys.exit("prdt schedule report: no version — pass --version v<N>.<m> (po-state.json has none)")
+    # T-1082 QA: the value becomes docs/artifacts/<version>/ — a version id
+    # only (whitespace stripped, `backlog` and `<line>/…` refused).
+    version = version.strip()
+    if version == "backlog" or not is_version_path_id(version):
+        sys.exit(f"prdt schedule report: {src} '{safe_label(version)}' is not a version id "
+                 f"— pass --version v<N>.<m>")
     p, n, bad = schedule_report(root, version)
     print(f"schedule report: {p.relative_to(root)} — {n} dispatch row(s) for {version}")
     if bad:
@@ -15894,7 +15901,7 @@ def cmd_migrate(args):
                   "루트 CLAUDE.md를 건드리지 않고 종료합니다. (no-op)")
             return
         st = read_json(root / ".prdt" / "po-state.json") or {}
-        version = st.get("version") or ""
+        version = line_state(st)[1] or ""
         print(("[dry-run] " if dry else "") + "migrate: 루트 CLAUDE.md 이관 (PO walk-up 오염 제거)")
         res = migrate_claude_md(root, dry, assume_yes, to_archive, version)
         if res and res.get("moved"):
@@ -15917,6 +15924,13 @@ def cmd_migrate(args):
     else:
         stage = old.get("stage") if old.get("stage") in STAGES else "define"
         version = old.get("version") or "v1"
+    # T-1082 QA: the legacy value becomes po-state `version` (later a path) and
+    # wiki frontmatter — a version id only, else the `v1` default, reported.
+    vs = version.strip() if isinstance(version, str) else version
+    if not is_version_path_id(vs):
+        report.append(f"version: '{safe_label(str(version))}' is not a version id → v1")
+        vs = "v1"
+    version = vs
     if old.get("current_task"):
         report.append("current_task: 이식 불가 스크래치 → null 리셋 (진행 중이던 작업은 다음 턴에 재개 지시)")
 
