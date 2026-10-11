@@ -313,6 +313,16 @@ const FIXTURES: Array<{ name: string, reply: string, violations: number[] | null
     reply: '정리입니다.\n\nA 그대로 두기\nB. 고치기\nC) Fix it now',
     violations: null,
   },
+  {
+    name: 'a **label:** paragraph holding 2 sentences is a marked line — not flagged (T-1070)',
+    reply: '**초안:** 수정안이 준비됐어요. 10행을 바꿔요.\n\n**다음:** 반영할지 확인 부탁드려요. 답 주시면 바로 진행해요.',
+    violations: null,
+  },
+  {
+    name: 'an unmarked line after a label paragraph still flags on 2 sentences (T-1070)',
+    reply: '**초안:** 준비됐어요.\n\n이건 하나입니다. 그리고 둘입니다.',
+    violations: [3],
+  },
 ]
 
 describe('§판정식 fixture — pinned sample-line classification', () => {
@@ -437,6 +447,16 @@ const BLANK_FIXTURES: Array<{ name: string, reply: string, lines: number[] | nul
     lines: null,
   },
   { name: 'plain one-line bullets stacked — an ordinary list, not flagged', reply: '- 하나\n- 둘\n- 셋', lines: null },
+  { name: 'two label paragraphs glued with no blank line, no sub-lines — flagged (T-1070)', reply: '**초안:** 준비됐어요.\n**다음:** 확인 부탁드려요.', lines: [2] },
+  {
+    name: 'label paragraphs with `·` sub-lines and a blank line after each block — not flagged (T-1070)',
+    reply: '**초안:** 준비됐어요\n   · 10행을 바꿔요\n\n**다음:** 확인 부탁드려요',
+    lines: null,
+  },
+  { name: 'a label paragraph glued under a `-` block — flagged (T-1070)', reply: '- 하나\n**다음:** 확인 부탁드려요', lines: [2] },
+  { name: 'a bare A/B/C self-label list stacked — an ordinary list, not flagged (T-768, T-1070)', reply: '정리입니다.\n\nA 그대로 두기\nB 고치기\nC 미루기', lines: null },
+  { name: 'a self-label block with sub-lines glued to the next — flagged (T-1070)', reply: 'A 그대로 두기\n   · 비용 없음\nB 고치기', lines: [3] },
+  { name: 'a `-` list right under a bold sub-heading — `-` behavior unchanged, not flagged', reply: '**소제목**\n- 하나\n   · 세부\n\n- 둘', lines: null },
   {
     name: 'table and code block between points — not flagged',
     reply: '- 하나\n   · 세부\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```\n- 코드\n   · 안\n- 코드2\n```\n- 둘\n   · 세부',

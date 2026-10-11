@@ -50,7 +50,7 @@ function stop(sb: ReturnType<typeof sandbox>, reply: unknown, extra: Record<stri
   return execFileSync('bash', [sb.hook], { input: JSON.stringify(ev), encoding: 'utf8', timeout: 20_000, env: { ...process.env, PRDT_HOME: path.join(sb.root, 'home') } })
 }
 
-const HOT = '[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 one point per marked line: never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; one blank line after each point\'s block, none inside it.'
+const HOT = '[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 each point its own paragraph opened by a `**label:**`, never a `-` item; `\u00b7` sub-lines right under its first line only when needed; never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; one blank line after each point\'s block, none inside it.'
 
 function post(sb: ReturnType<typeof sandbox>, extra: Record<string, unknown> = {}) {
   const ev = { session_id: 's', hook_event_name: 'PostToolUse', agent_type: 'prdt-po', cwd: sb.proj, tool_name: 'Bash', ...extra }

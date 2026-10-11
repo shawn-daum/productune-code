@@ -75,14 +75,18 @@ if not isinstance(ev, dict):
 REGISTER_CHECK_NOTICE = (
     "[prdt register check] your last user-chat reply broke form=outline: %d paragraph line(s) "
     "(lines %s) — an unmarked line holding 2+ sentences, or 2+ unmarked lines in a row. "
-    "Leave the sent reply as is; write this reply one point per marked line."
+    "Leave the sent reply as is; write this reply one labelled point per paragraph."
 )
 # T-1025: the hot line — the two form=outline rules at the moment the PO writes its
 # final reply (PostToolUse after every tool call, and UserPromptSubmit). User-approved
-# wording (T-1024, 2026-10-08), verbatim.
+# wording (T-1024, 2026-10-08); T-1070 (2026-10-11): points as bold-label paragraphs,
+# since the terminal renderer drops blank lines between `-` items
+# (docs/artifacts/v1.13/outline-form-less-dense-draft.md, draft 2).
 FORM_OUTLINE_HOT_LINE = (
     "[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 "
-    "one point per marked line: never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; "
+    "each point its own paragraph opened by a `**label:**`, never a `-` item; "
+    "`\u00b7` sub-lines right under its first line only when needed; "
+    "never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; "
     "one blank line after each point's block, none inside it."
 )
 # T-869: the second form=outline notice — top-level point blocks run together with
@@ -90,8 +94,7 @@ FORM_OUTLINE_HOT_LINE = (
 # block, none inside it."). One line, line numbers only, same register as above.
 REGISTER_BLANK_NOTICE = (
     "[prdt register check] your last user-chat reply broke form=outline: %d point block(s) "
-    "(lines %s) — a top-level point right under another point's block with no blank line, "
-    "either block holding sub-lines. "
+    "(lines %s) — a labelled point right under another point's block with no blank line. "
     "Leave the sent reply as is; write this reply with one blank line after each point's block, none inside it."
 )
 # T-651 grill: how many violating line numbers the notice actually lists before
@@ -122,7 +125,9 @@ FORM_OUTLINE_LIST_CAP = 5
 #             (`A`, `a`) or a lowercase roman numeral (`i` through `xx`),
 #             optionally closed with `.`/`)`, then whitespace or end-of-line —
 #             it drops the `-` precisely because it IS already a label
-#   bold    — the WHOLE line is one bold span (`**...**`) — a sub-heading
+#   bold    — the WHOLE line is one bold span (`**...**`) — a sub-heading —
+#             or a line opening with one (`**label:**`, T-1070: a point is a
+#             paragraph opened by a bold label, so its sentences are marked)
 #   indent  — 2+ leading spaces/tabs and none of the above — a wrapped
 #             continuation
 # Anything left is a CANDIDATE line ("표식 없는 줄"). A candidate is a
@@ -144,6 +149,7 @@ FORM_OUTLINE_MARKER_RE = re.compile(
 )
 FORM_OUTLINE_HR_RE = re.compile(r"^-{3,}$")  # thematic break: "---", "- - -"
 FORM_OUTLINE_BOLD_RE = re.compile(r"^\*\*.+\*\*$")
+FORM_OUTLINE_LABEL_RE = re.compile(r"^\*\*[^*]+\*\*")
 # Self-labelled item (T-768, form-outline.md line 10): a bare single Latin
 # letter (A, a — either case, any letter) or a lowercase roman numeral up to
 # xx, optionally closed with `.`/`)`, then whitespace or end-of-line. Plain
@@ -176,7 +182,7 @@ def _form_outline_line_kind(line):
     lead = len(line) - len(body)
     if FORM_OUTLINE_MARKER_RE.match(body) or FORM_OUTLINE_HR_RE.match(line.strip()):
         return "marker"
-    if FORM_OUTLINE_BOLD_RE.match(line.strip()):
+    if FORM_OUTLINE_BOLD_RE.match(line.strip()) or FORM_OUTLINE_LABEL_RE.match(body):
         return "marker"
     if FORM_OUTLINE_SELF_LABEL_RE.match(body):
         return "marker"
@@ -226,16 +232,25 @@ def form_outline_violations(text):
 
 
 def form_outline_blank_violations(text):
-    """1-indexed line numbers of top-level `- ` points that start with no blank
-    line above, directly under another point's block, where at least one of the
-    two blocks carries sub-lines (`·` or indented `- `) (T-869). A block = a column-0 `- ` line plus
-    the indented lines right under it. Plain one-line bullets stacked together
-    are an ordinary list and never flagged; fenced code and table rows are never
-    a block, and a non-block line (blank, table, heading, prose) ends one."""
+    """1-indexed line numbers of point blocks that start with no blank line
+    above, directly under another point's block (T-869, T-1070). A block = a
+    column-0 start line plus the indented lines right under it; the start line
+    is one of three kinds:
+      label — opens with a bold span (`**label:**`): flagged whenever glued to
+              the block above, sub-lines or not (T-1070);
+      dash  — `- `: flagged only when glued to a `-` block above and at least
+              one of the two carries sub-lines (`·` or indented `- `) — the
+              T-869 rule, unchanged; plain one-line bullets stacked together
+              are an ordinary list;
+      self  — a self-label (`A`, `b.`, `iii)`): flagged when glued to any block
+              above and at least one of the two carries sub-lines, so a bare
+              A/B/C choice list stays an ordinary list (T-768).
+    Fenced code and table rows are never a block, and a non-block line (blank,
+    table, heading, prose) ends one."""
     if not isinstance(text, str) or not text:
         return []
     raw_lines = [ln.rstrip("\r") for ln in text.split("\n")]
-    blocks = []   # [start_idx, has_dot, glued_to_prev_block]
+    blocks = []   # [start_idx, has_dot, prev_block_if_glued, kind]
     cur = None
     in_fence = False
     for i, ln in enumerate(raw_lines):
@@ -246,9 +261,15 @@ def form_outline_blank_violations(text):
         if in_fence or ln.strip() == "":
             cur = None
             continue
+        kind = None
         if re.match(r"^- \S", ln):
-            glued = cur is not None
-            cur = [i, False, glued]
+            kind = "dash"
+        elif FORM_OUTLINE_LABEL_RE.match(ln):
+            kind = "label"
+        elif ln[:1] not in (" ", "\t") and FORM_OUTLINE_SELF_LABEL_RE.match(ln):
+            kind = "self"
+        if kind is not None:
+            cur = [i, False, cur, kind]
             blocks.append(cur)
         elif cur is not None and ln[:1] in (" ", "\t"):
             if ln.lstrip(" \t").startswith(("·", "- ")):
@@ -256,8 +277,16 @@ def form_outline_blank_violations(text):
         else:
             cur = None
     out = []
-    for k, b in enumerate(blocks):
-        if b[2] and k > 0 and (b[1] or blocks[k - 1][1]):
+    for b in blocks:
+        prev = b[2]
+        if prev is None:
+            continue
+        if b[3] == "label":
+            out.append(b[0] + 1)
+        elif b[3] == "dash":
+            if prev[3] == "dash" and (b[1] or prev[1]):
+                out.append(b[0] + 1)
+        elif b[1] or prev[1]:
             out.append(b[0] + 1)
     return out
 
