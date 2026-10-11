@@ -14,6 +14,7 @@ import subsetFont from 'subset-font'
 import { collectUsedChars, buildPretendardFontFaceCss } from './lib/font-subset.mjs'
 import { collectAll } from './lib/collect.mjs'
 import { ticketIdsOf } from './lib/jump-pages.mjs'
+import { hasMermaid } from './lib/mermaid.mjs'
 import { renderPage, templateGuardErrors, pastTicketDataFiles, pastTicketDataContent, buildFileContent, buildDocPathTargets } from './lib/render.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -121,14 +122,16 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH,
   ]
   const pastTicketSrc = {}
   for (const f of pastFiles) pastTicketSrc[f.bucket] = encodeURIComponent(f.name)
-  const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc })
+  // T-1076: a diagram in a past-version body still needs the runtime on the page.
+  const pastMermaid = pastFiles.some((f) => hasMermaid(...f.bodies))
+  const draft = renderPage({ data, dark, light, fontFaceCss: '', tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc, pastMermaid })
   const usedText = collectUsedChars(draft)
 
   const regularBuffer = fs.readFileSync(REGULAR_WOFF2)
   const semiboldBuffer = fs.readFileSync(SEMIBOLD_WOFF2)
   const fontFaceCss = await buildPretendardFontFaceCss({ regularBuffer, semiboldBuffer, usedText })
 
-  const htmlNoBuild = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc })
+  const htmlNoBuild = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc, pastMermaid })
   // The data-file bodies render in this page, so the font must paint them
   // too — but folding every past body's glyphs into the page's own subset
   // would grow viewer.html by ~80KB (measured). Each data file instead
@@ -148,7 +151,7 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH,
   for (const f of dataFiles) hash.update('\0' + f.name + '\0' + f.content)
   const id = hash.digest('hex').slice(0, 16)
   const buildName = `${prefix}.build.js`
-  const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc, build: { id, src: encodeURIComponent(buildName) } })
+  const html = renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref, repoRootHref, viewerAbsPath, pastTicketSrc, pastMermaid, build: { id, src: encodeURIComponent(buildName) } })
   return { html, dataFiles, buildFile: { name: buildName, content: buildFileContent(id) }, ticketIds: ticketIdsOf(data) }
 }
 

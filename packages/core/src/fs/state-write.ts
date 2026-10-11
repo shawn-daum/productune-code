@@ -77,6 +77,16 @@ function bestEffortUnlinkIfSame(p: string, fd: number): void {
   }
 }
 
+/** T-1076: fs.writeSync may write fewer bytes than asked — loop until every byte is out. */
+function writeAll(fd: number, buf: Buffer, position: number | null = null): void {
+  let off = 0
+  while (off < buf.length) {
+    const n = fs.writeSync(fd, buf, off, buf.length - off, position === null ? null : position + off)
+    if (n <= 0) throw new Error('state write: writeSync wrote 0 bytes')
+    off += n
+  }
+}
+
 export function stateWriteFileSync(
   root: string,
   filePath: string,
@@ -150,7 +160,7 @@ export function stateWriteFileSync(
         if (!existing) bestEffortUnlinkIfSame(target, fd)
         throw err
       }
-      fs.writeSync(fd, buf)
+      writeAll(fd, buf)
     } finally {
       fs.closeSync(fd)
     }
@@ -179,7 +189,7 @@ export function stateWriteFileSync(
         throw err
       }
       fs.ftruncateSync(fd, 0)
-      fs.writeSync(fd, buf, 0, buf.length, 0)
+      writeAll(fd, buf, 0)
     } finally {
       fs.closeSync(fd)
     }
@@ -198,7 +208,7 @@ export function stateWriteFileSync(
   let renamed = false
   try {
     try {
-      fs.writeSync(wfd, buf)
+      writeAll(wfd, buf)
       if (existing) fs.fchmodSync(wfd, existing.mode & 0o7777) // keep the mode, umask-proof
     } finally {
       fs.closeSync(wfd)

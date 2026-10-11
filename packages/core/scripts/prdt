@@ -6015,9 +6015,13 @@ def viewer_jump(viewer_html, key):
         safe += "-" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
     frag = urllib.parse.quote(key, safe="/-._~")
     page = jdir / f"{safe}.html"
+    # T-1076: the viewer's own file name, never a hardcoded `viewer.html`
+    # (same bytes as jump-pages.mjs's jumpPageContent for the same name).
+    name = Path(viewer_html).name
+    href = html.escape(urllib.parse.quote(name, safe="-._~!*'()"))
     body = ('<!doctype html><meta charset="utf-8">'
-            f'<meta http-equiv="refresh" content="0;url=../viewer.html#{html.escape(frag)}">'
-            f'<a href="../viewer.html#{html.escape(frag)}">viewer.html#{html.escape(key)}</a>\n')
+            f'<meta http-equiv="refresh" content="0;url=../{href}#{html.escape(frag)}">'
+            f'<a href="../{href}#{html.escape(frag)}">{html.escape(name)}#{html.escape(key)}</a>\n')
     # T-842 / T-908: written through `state_write` — every component from the
     # project root walked with O_NOFOLLOW (a symlinked `at/`, `viewer/`,
     # `scratch/`, `.prdt/` or page → None, and the caller links the file
