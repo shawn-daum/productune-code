@@ -237,6 +237,12 @@ def parse_frontmatter(path):
         text = Path(path).read_text(encoding="utf-8")
     except OSError:
         return {}, ""
+    return parse_frontmatter_text(text)
+
+
+def parse_frontmatter_text(text):
+    """`parse_frontmatter` over text already read (T-1079: a caller that read
+    the file through a link-refusing descriptor parses the same bytes)."""
     if not text.startswith("---\n"):
         return {}, text
     end = text.find("\n---", 4)
