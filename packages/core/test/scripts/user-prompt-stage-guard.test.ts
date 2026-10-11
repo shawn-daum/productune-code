@@ -78,7 +78,7 @@ function assertRegisterBindingLineShape(line: string, opts: { keys: string; gove
 
 // T-1025: while form=outline is bound the per-turn assembly appends the hot line as
 // the line right AFTER the `[prdt register]` line (same assembly point, same order).
-const FORM_OUTLINE_HOT_LINE = "[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 one point per marked line: never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; one blank line after each point's block, none inside it."
+const FORM_OUTLINE_HOT_LINE = "[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 each point its own paragraph opened by a `**label:**`, never a `-` item; `\u00b7` sub-lines right under its first line only when needed; never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; one blank line after each point's block, none inside it."
 
 describe('state line (turn-open refresher)', () => {
   test('every prompt in a prdt project gets one live state line', () => {
