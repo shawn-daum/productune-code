@@ -102,7 +102,7 @@ const ALLOW: Record<string, number> = {
   'core/scripts/prdt::scaffold_releases': 1,
   'core/scripts/prdt::write_machine_index': 1,
   'core/scripts/prdt::cmd_menus': 1,
-  'core/scripts/prdt::wiki_promote': 2,
+  'core/scripts/prdt::wiki_promote': 1,
   'core/scripts/prdt::cmd_tickets_new': 1,
   'core/scripts/prdt::cmd_tickets_fmt': 1,
   'core/scripts/prdt::schedule_report': 1,

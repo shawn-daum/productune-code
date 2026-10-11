@@ -94,3 +94,47 @@ test('missing section / re-promoting a pointer / batch of pages are refused', ()
   expect(again.code).not.toBe(0); expect(again.out).toContain('already a pointer')
   expect(fs.existsSync(mach('fact--copy2'))).toBe(false)
 })
+
+// T-1079 — the two QA repros (d-v113-sec-1): promote never reads or writes outside docs/wiki/.
+test('traversal <page> is refused before any read or write', () => {
+  const victim = path.join(sandbox, 'victim')
+  fs.mkdirSync(victim, { recursive: true })
+  const outside = path.join(victim, 'outside.md')
+  fs.writeFileSync(outside, 'secret outside text\n')
+  for (const bad of ['../../../victim/outside', '../../victim/outside', 'sub/page', '.hidden']) {
+    const r = run(proj, ['wiki', 'promote', bad, '--as', 'fact--stolen', '--yes'])
+    expect(r.code).not.toBe(0)
+    expect(r.out).toContain('not a usable page name')
+    expect(r.out).not.toContain('promote plan')
+  }
+  expect(read(outside)).toBe('secret outside text\n')
+  expect(fs.existsSync(mach('fact--stolen'))).toBe(false)
+})
+
+test('symlinked project page is refused; its target is never read or overwritten', () => {
+  const victim = path.join(sandbox, 'victim')
+  fs.mkdirSync(victim, { recursive: true })
+  const target = path.join(victim, 'target.md')
+  fs.writeFileSync(target, PAGE)
+  fs.symlinkSync(target, pw('fact--linked'))
+  const r = run(proj, ['wiki', 'promote', 'fact--linked', '--yes'])
+  expect(r.code).not.toBe(0)
+  expect(r.out).toContain('symlink')
+  expect(r.out).not.toContain('promote plan')
+  expect(read(target)).toBe(PAGE)
+  expect(fs.lstatSync(pw('fact--linked')).isSymbolicLink()).toBe(true)
+  expect(fs.existsSync(mach('fact--linked'))).toBe(false)
+})
+
+test('symlinked docs/wiki directory is refused', () => {
+  const victim = path.join(sandbox, 'victim')
+  fs.mkdirSync(victim, { recursive: true })
+  fs.writeFileSync(path.join(victim, 'fact--x.md'), PAGE)
+  fs.rmSync(path.join(proj, 'docs', 'wiki'), { recursive: true })
+  fs.symlinkSync(victim, path.join(proj, 'docs', 'wiki'))
+  const r = run(proj, ['wiki', 'promote', 'fact--x', '--yes'])
+  expect(r.code).not.toBe(0)
+  expect(r.out).toContain('symlink')
+  expect(read(path.join(victim, 'fact--x.md'))).toBe(PAGE)
+  expect(fs.existsSync(mach('fact--x'))).toBe(false)
+})

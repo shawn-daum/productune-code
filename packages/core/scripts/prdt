@@ -2772,6 +2772,43 @@ def _promote_find_section(body, heading):
     return lines, out
 
 
+def _promote_read_src(root, page):
+    """T-1079: the project page's text, read without following a link —
+    `docs/` and `docs/wiki/` walked with O_NOFOLLOW from a directory
+    descriptor (`state_open_dir`), the page opened O_NOFOLLOW and checked
+    regular by fstat. None when the page is absent; StateLinkError when any
+    component is a link or not a plain file/directory (a cloned repository
+    may plant `docs/wiki/x.md -> ~/elsewhere`)."""
+    fd, problem = state_open_dir(root, ["docs", "wiki"], create=False)
+    if fd is None:
+        where, kind = problem
+        if kind == "symlink":
+            raise StateLinkError(errno.ELOOP, f"{where} is a symlink — not followed")
+        return None
+    name = f"{page}.md"
+    try:
+        try:
+            st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        if stat.S_ISLNK(st.st_mode):
+            raise StateLinkError(errno.ELOOP, f"docs/wiki/{name} is a symlink — not followed")
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        try:
+            ffd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+        except OSError as e:
+            if e.errno in (errno.ELOOP, errno.EMLINK):
+                raise StateLinkError(errno.ELOOP, f"docs/wiki/{name} is a symlink — not followed") from e
+            raise
+        with os.fdopen(ffd, "r", encoding="utf-8") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return None
+            return fh.read()
+    finally:
+        os.close(fd)
+
+
 def wiki_promote(root, args):
     """`prdt wiki promote <page> [--section <heading>] [--as <machine-name>] [--yes]`.
 
@@ -2785,15 +2822,25 @@ def wiki_promote(root, args):
     page = args.query[0]
     if page.startswith(MACHINE):
         sys.exit(f"prdt wiki promote: {page} is already a machine page — nothing to promote")
+    # T-1079: <page> names a file inside docs/wiki/ — the same name rule as
+    # --as, checked before anything is read, so `../../x` never leaves it.
+    if PROMOTE_NAME_BAD.search(page):
+        sys.exit(f"prdt wiki promote: `{page}` is not a usable page name (no slash, space, "
+                 "leading dot or `..`) — nothing was read or written")
     src = root / "docs" / "wiki" / f"{page}.md"
-    if page in ("index", "inbox", "log") or not src.is_file():
+    try:
+        text = None if page in ("index", "inbox", "log") else _promote_read_src(root, page)
+    except StateLinkError as e:
+        sys.exit(f"refused: {e.strerror} — promote reads and rewrites only a plain file "
+                 "inside docs/wiki/. Nothing was read or written.")
+    if text is None:
         sys.exit(f"prdt wiki promote: no project wiki page `{page}` (looked for docs/wiki/{page}.md)")
     target = args.as_name or page
     if PROMOTE_NAME_BAD.search(target) or target.lower() in ("index", "inbox", "log", *MACHINE_WIKI_RESERVED):
         sys.exit(f"prdt wiki promote: `{target}` is not a usable page name (no slash, space, "
                  "leading dot or `..`; not index/inbox/log/feedback)")
     dest = machine_wiki_root() / f"{target}.md"
-    fm, body = parse_frontmatter(src)
+    fm, body = parse_frontmatter_text(text)
     if fm.get("promoted_to"):
         sys.exit(f"prdt wiki promote: docs/wiki/{page}.md is already a pointer to "
                  f"{fm['promoted_to']} — nothing to move")
@@ -2803,7 +2850,6 @@ def wiki_promote(root, args):
                  "Nothing was written — promote never overwrites or merges. Pick another "
                  f"name with `--as <name>`, or reconcile the two by hand and then delete "
                  f"the project copy.")
-    text = src.read_text(encoding="utf-8")
     pointer_line = f"→ {PROMOTE_POINTER_MARK}: [[{ref}]] ({_display_path(dest)})"
     if args.section:
         full_lines, found = _promote_find_section(text, args.section)
@@ -2853,7 +2899,7 @@ def wiki_promote(root, args):
     except FileExistsError:
         sys.exit(f"refused: machine page {ref} appeared while promoting — nothing was written")
     try:
-        src.write_text(ptext, encoding="utf-8")
+        state_write(root, src, ptext, create_dirs=False)   # T-1079: a link swapped in now is refused
     except OSError as e:
         dest.unlink()
         sys.exit(f"prdt wiki promote: could not rewrite the project page ({e}) — machine "
