@@ -601,6 +601,78 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(segment(out, 'working')).toMatch(/\+\d+$/)
   })
 
+  /** T-1081: 60 open decision tickets, every one indexed — enough that the
+   *  action row overflows at COLUMNS=80 and action_row() walks its candidates. */
+  function sixtyDecisions(): string[] {
+    const ids = Array.from({ length: 60 }, (_, i) => `T-${100 + i}`)
+    ids.forEach((id) => writeTicket(id, { type: 'decision', assignee: 'user' }))
+    buildIndexDb(ids.map((id) => ({ id, relPath: `docs/tickets/v9.9/${id}.md` })), [])
+    return ids
+  }
+
+  test('T-1081: one render writes each jump stub at most once, and only when missing or stale', () => {
+    sixtyDecisions()
+    stubViewerHtml()
+    // the same script beside a prdt_safe_fs that logs every write_atomic call
+    const dir = fs.realpathSync(tmp('prdt-t1081-sfs-'))
+    const log = path.join(dir, 'writes.log')
+    try {
+      fs.copyFileSync(STATUSLINE_SH, path.join(dir, 'statusline-prdt.sh'))
+      fs.copyFileSync(path.join(CORE_ROOT, 'scripts', 'prdt-messages.json'), path.join(dir, 'prdt-messages.json')) // the labels
+      fs.writeFileSync(path.join(dir, 'prdt_safe_fs.py'), [
+        'import importlib.util, os',
+        '_s = importlib.util.spec_from_file_location("_real_sfs", os.environ["REAL_SFS"])',
+        '_real = importlib.util.module_from_spec(_s); _s.loader.exec_module(_real)',
+        'globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})',
+        'def write_atomic(dfd, name, data, default_mode=0o644):',
+        '    with open(os.environ["SFS_LOG"], "a") as f: f.write(name + "\\n")',
+        '    return _real.write_atomic(dfd, name, data, default_mode)',
+        '',
+      ].join('\n'))
+      const render = () => {
+        fs.rmSync(log, { force: true })
+        const out = execFileSync('bash', [path.join(dir, 'statusline-prdt.sh')], {
+          cwd: root, input: '', encoding: 'utf-8',
+          env: { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en', COLUMNS: '80',
+            REAL_SFS: path.join(CORE_ROOT, 'scripts', 'prdt_safe_fs.py'), SFS_LOG: log },
+        })
+        return { out, writes: fs.existsSync(log) ? fs.readFileSync(log, 'utf-8').trim().split('\n') : [] }
+      }
+      const first = render()
+      expect(segment(first.out, 'dec')).toMatch(/\+\d+$/) // overflowed: the candidate walk ran
+      expect(first.writes.length).toBeGreaterThan(0)
+      expect(new Set(first.writes).size).toBe(first.writes.length) // never the same stub twice
+      for (const w of first.writes) expect(fs.existsSync(jumpPagePath(w.replace(/\.html$/, '')))).toBe(true)
+      const second = render()
+      expect(second.writes).toEqual([]) // every stub already current
+      expect(second.out).toBe(first.out) // byte-identical for the same state
+      fs.writeFileSync(jumpPagePath('T-100'), 'stale\n')
+      expect(render().writes).toEqual(['T-100.html'])
+      expect(fs.readFileSync(jumpPagePath('T-100'), 'utf-8')).toContain('url=../viewer.html#T-100')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('T-1081: with 60 open decisions, a render with viewer.html is within 2x of one without', () => {
+    sixtyDecisions()
+    const median = () => {
+      const ms: number[] = []
+      for (let k = 0; k < 3; k++) {
+        const t0 = Date.now()
+        runStatusline(80)
+        ms.push(Date.now() - t0)
+      }
+      return ms.sort((a, b) => a - b)[1]
+    }
+    const without = median()
+    stubViewerHtml()
+    runStatusline(80) // first render with a viewer writes the stubs
+    const withViewer = median()
+    // before T-1081: ~2200 ms vs ~220 ms (10x). 200 ms slack absorbs process-start noise.
+    expect(withViewer).toBeLessThanOrEqual(2 * without + 200)
+  })
+
   test('F7/F8: an EXCLUSIVE lock on index.db never stalls the render, and the render leaves no sidecar file', () => {
     writeMarker({ agentId: 'a', ticketId: 'T-682', ageMs: 60_000 })
     buildIndexDb([{ id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' }], [])
