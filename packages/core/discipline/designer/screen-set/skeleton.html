@@ -6,12 +6,13 @@
 <!--
   Review artifact — skeleton (designer `hifi` §Shell). ONE scrolling page, two shapes; delete the block the
   artifact has no use for:
-    screen set    = head (ID · one-line definition) → set block [list · device chip · status chip + ONE screen · description]
+    screen set    = head (ID · one-line definition) → set block, OPEN (it is the subject) [list · device chip · status chip + ONE screen · description]
                     → decide block BELOW the set (only when the set puts something to the user)
     decision doc  = head → decide block (one line per decision, its recommendation on the line)
                     → one options table per decision, recommended column marked, + the picture it is judged on
-                    → evidence, each block a closed <details class="spec-fold"> (the set block when screens exist;
-                      tables / measurements / source wording / diffs otherwise)
+                    → evidence, each block a closed <details class="spec-fold spec-ev"> (the set block wrapped in
+                      one, id="ev-set", when screens exist; tables / measurements / source wording / diffs otherwise)
+  A link (href="#…" or data-go) whose target sits in a closed <details> opens it first — valid in both shapes.
   Copy to docs/artifacts/<version>/<slug>.html; fill in the playbook's order: criteria → this shell → screens.
 
   SCROLL: no fixed-height pane, no overflow:hidden on anything that can overflow. List and description stick
@@ -113,6 +114,13 @@ code,.mono{font-family:var(--spec-mono);}
 .spec-options th.pick{border-top:2px solid var(--spec-current);}
 .spec-options td.pick{box-shadow:inset 3px 0 0 var(--spec-current); background:var(--spec-panel);}
 .spec-options .rec{margin:0;}
+.spec-opt{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; align-items:start;}
+.spec-pic{margin:0; padding:10px; border:1px solid var(--spec-border); border-radius:10px; background:var(--spec-panel);}
+.pic-pair{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+.pic-k{display:block; font-size:11px; font-weight:700; color:var(--spec-muted); margin:0 0 4px;}
+.spec-pic figcaption{font-size:12px; color:var(--spec-muted); margin:8px 0 0;}
+.spec-ev{margin:0 0 10px;}
+.spec-ev + .spec-sec{margin-top:22px;}
 
 /* ---------- fold: scope · provenance · history — closed on load ---------- */
 .spec-fold{font-size:12.5px; color:var(--spec-muted); margin:6px 0 0;}
@@ -200,6 +208,7 @@ body.editing [data-value]{outline:1px dotted var(--edit-value); outline-offset:2
   .r-struct{display:none;}
   .spec-desc{position:static; max-height:none;}
   .spec-options{display:block; overflow-x:auto;}
+  .spec-opt{grid-template-columns:1fr;}
 }
 </style>
 </head>
@@ -217,14 +226,15 @@ body.editing [data-value]{outline:1px dotted var(--edit-value); outline-offset:2
 <section class="spec-decide" aria-label="decide">
   <h2>정할 것</h2>
   <ol>
-    <li>Decision 1 as one question — <a href="#opt-1">표 ①</a> · <a href="#set">화면 A</a><span class="rec">추천 · B</span></li>
+    <li>Decision 1 as one question — <a href="#opt-1">표 ①</a> · <a href="#ev-1">근거</a><span class="rec">추천 · B</span></li>
     <li>Decision 2 …<span class="rec">추천 · 이대로</span></li>
   </ol>
 </section>
 
-<!-- ================= options — one table per decision, recommended column marked (decision doc only) ================= -->
+<!-- ================= options — one table per decision, recommended column marked, beside the picture it is judged on (decision doc only) ================= -->
 <section class="spec-sec" id="opt-1">
   <h2>① Decision 1 — 대안</h2>
+  <div class="spec-opt">
   <table class="spec-options">
     <thead><tr><th></th><th>A. …</th><th class="pick">B. … <span class="rec">추천</span></th></tr></thead>
     <tbody>
@@ -233,9 +243,32 @@ body.editing [data-value]{outline:1px dotted var(--edit-value); outline-offset:2
       <tr><td class="rk">recommend</td><td>—</td><td class="pick">why B, one line</td></tr>
     </tbody>
   </table>
+  <!-- the picture this decision is judged on: As-Is · To-Be render, or the screen it changes; delete when the table alone decides -->
+  <figure class="spec-pic">
+    <div class="pic-pair">
+      <div><span class="pic-k">As-Is</span><!-- render --></div>
+      <div><span class="pic-k">To-Be · B</span><!-- render --></div>
+    </div>
+    <figcaption>One line: what differs between the two.</figcaption>
+  </figure>
+  </div>
 </section>
 
-<!-- ================= evidence / the set: list · ONE screen · description ================= -->
+<!-- ================= evidence, decision doc only — each block its own closed <details>; delete for a screen set ================= -->
+<details class="spec-fold spec-ev" id="ev-1">
+  <summary>근거 ① · source wording · numbers</summary>
+  <ul>
+    <li>Source wording, rationale, numbers — one line each.</li>
+  </ul>
+</details>
+<details class="spec-fold spec-ev" id="ev-2">
+  <summary>측정 · diff</summary>
+  <p>Measurements, draft diffs.</p>
+</details>
+
+<!-- ================= the set: list · ONE screen · description. Screen set: the subject, stays open as is.
+     Decision doc with screens: evidence — wrap this section in <details class="spec-fold spec-ev" id="ev-set"><summary>실물</summary> … </details>;
+     no screens: delete it ================= -->
 <section class="spec-sec spec-set-sec" id="set">
   <h2>실물</h2>
   <div class="spec-set">
@@ -528,13 +561,17 @@ const DEVICE_LABELS = { mobile: '모바일', pc: 'PC' };   /* chip order = this 
     renderDesc(key);
   }
 
+  const unfold = el => { for (let d = el; d; d = d.parentElement) if (d.tagName === 'DETAILS') d.open = true; };
+
   document.addEventListener('click', ev => {
     const item = ev.target.closest('[data-screen]');
     if (item && roster.contains(item)) { ev.preventDefault(); select(item.dataset.screen); return; }
     const open = ev.target.closest('[data-open]');
     if (open) { ev.preventDefault(); select(open.dataset.open); return; }
     const go = ev.target.closest('[data-go]');   /* decide-block link under the set: select, then bring the set into view */
-    if (go) { ev.preventDefault(); const [k, c] = go.dataset.go.split(':'); select(k, c); document.getElementById('set').scrollIntoView({ block: 'start' }); return; }
+    if (go) { ev.preventDefault(); const [k, c] = go.dataset.go.split(':'); select(k, c); unfold(document.getElementById('set')); document.getElementById('set').scrollIntoView({ block: 'start' }); return; }
+    const hash = ev.target.closest('a[href^="#"]');   /* a link into a closed evidence <details>: open it, then go */
+    if (hash && hash.getAttribute('href').length > 1) { unfold(document.getElementById(hash.getAttribute('href').slice(1))); return; }
     const chip = ev.target.closest('.chip');
     if (chip && chip.getAttribute('aria-disabled') !== 'true') {
       if (device.contains(chip)) curDevice = chip.dataset.v; else if (cond.contains(chip)) curCond = chip.dataset.v; else return;
