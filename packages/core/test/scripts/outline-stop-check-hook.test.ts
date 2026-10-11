@@ -157,6 +157,19 @@ test('a ~1.3 MB reply is still recorded (event travels on stdin, not in the envi
   expect(rows(sb)).toHaveLength(1)
 })
 
+test('the counts file keeps its newest 1000 rows (T-1081)', () => {
+  const sb = sandbox(OUTLINE)
+  const f = path.join(sb.root, 'home', 'run', 'form-outline-counts.jsonl')
+  fs.mkdirSync(path.dirname(f), { recursive: true })
+  fs.writeFileSync(f, Array.from({ length: 1000 }, (_, i) => JSON.stringify({ ts: i, seq: i }) + '\n').join(''))
+  expect(stop(sb, VIOLATING)).toBe('')
+  const r = rows(sb)
+  expect(r).toHaveLength(1000)
+  expect(r[0]).toMatchObject({ seq: 1 })
+  expect(r[999]).toMatchObject({ session_id: 's', paragraph_lines: 2 })
+  expect(fs.readdirSync(path.dirname(f))).toEqual(['form-outline-counts.jsonl'])
+})
+
 test('a non-PO Stop leaves before python3 starts (fork-0 case filter)', () => {
   const src = fs.readFileSync(HOOK, 'utf8')
   expect(src).toMatch(/"hook_event_name":"Stop"[\s\S]*?"prdt-po"[\s\S]*?exit 0[\s\S]*?python3 -c/)

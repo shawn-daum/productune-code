@@ -98,11 +98,9 @@ function scanRepo(): Record<string, number> {
 /** Today's remaining raw sites (T-908). Shrink only. */
 const ALLOW: Record<string, number> = {
   // docs / release text the CLI scaffolds or derives (not under .prdt/)
-  'core/scripts/prdt::reindex_wiki': 1,
   'core/scripts/prdt::scaffold_releases': 1,
-  'core/scripts/prdt::write_machine_index': 1,
   'core/scripts/prdt::cmd_menus': 1,
-  'core/scripts/prdt::wiki_promote': 2,
+  'core/scripts/prdt::wiki_promote': 1,
   'core/scripts/prdt::cmd_tickets_new': 1,
   'core/scripts/prdt::cmd_tickets_fmt': 1,
   'core/scripts/prdt::schedule_report': 1,
@@ -142,7 +140,7 @@ const ALLOW: Record<string, number> = {
   'core/scripts/hooks/prdt-return-check.sh': 7,
   'core/scripts/hooks/prdt-secret-guard.sh': 2,
   'core/scripts/hooks/prdt-session-start.sh': 4,
-  'core/scripts/hooks/prdt-user-prompt.sh': 6,
+  'core/scripts/hooks/prdt-user-prompt.sh': 7, // T-1081: +1 = cap_jsonl's trim of $PRDT_HOME/run/form-outline-counts.jsonl (home, never .prdt/)
   'core/scripts/hooks/prdt-worktree-guard.sh': 1,
   'core/scripts/statusline-prdt.sh': 6,
   'core/src/git-workflow/meta-backup.ts': 2,

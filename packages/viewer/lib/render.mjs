@@ -1548,9 +1548,11 @@ function ticketNumber(id) {
   return (String(id).match(/\d+/g) || []).map(Number)
 }
 
-/** T-961: the taxonomy-less taxonomy — one area, one entry per distinct `feature:` value of the tickets in `data` (no kind, definition or links). */
+/** T-961: the taxonomy-less taxonomy — one area, one entry per distinct `feature:` value of the tickets in `data` (no kind, definition or links). T-1075: plus one per `docs/features/<key>.md` spec, so a spec no ticket carries still lists. */
 function derivedFeatureTaxonomy(data) {
-  const keys = [...new Set(allTicketRows(data.tickets).map((r) => (typeof r.fm.feature === 'string' ? r.fm.feature.trim() : '')).filter(Boolean))].sort()
+  const ticketKeys = allTicketRows(data.tickets).map((r) => (typeof r.fm.feature === 'string' ? r.fm.feature.trim() : ''))
+  const specKeys = (data.features || []).map((p) => p.rel.split('/').pop().replace(/\.md$/, ''))
+  const keys = [...new Set([...ticketKeys, ...specKeys].filter(Boolean))].sort()
   return {
     areas: [{ key: '_', name: FEATURE.allLabel, def: '' }],
     kinds: [],
@@ -1655,11 +1657,12 @@ function featureSpecListRows(pages) {
   return html + '</tbody></table></div>\n'
 }
 
-/** T-961: one line's feature groups — the home line lists every taxonomy entry, an added line the entries its own tickets carry; counts are that line's tickets. Null when there is no taxonomy (the spec list is not line-scoped). */
+/** T-961: one line's feature groups — the home line lists every taxonomy entry, an added line the entries its own tickets carry; counts are that line's tickets. Without a taxonomy (derived model) the home line lists the entries its tickets carry plus every `docs/features/` spec (T-1075: specs are not line-scoped, so they sit on the home line). Null only when featureScreenModel is (single-line, no taxonomy → the spec list). */
 function featureLineGroups(data, v) {
   const full = featureScreenModel(lineData(data, v))
   if (!full) return null
-  const entries = v.line || full.derived ? full.entries.filter((e) => e.tickets.length > 0) : full.entries
+  const entries = v.line ? full.entries.filter((e) => e.tickets.length > 0)
+    : full.derived ? full.entries.filter((e) => e.tickets.length > 0 || e.spec) : full.entries
   const model = { ...full, entries, idPrefix: v.prefix }
   if (full.derived) return { groups: [{ key: 'all', label: FEATURE.allLabel, count: entries.length, bodyHtml: featurePane(model, model.areas, entries.length) }], defaultKey: undefined, model }
   const groups = [
@@ -1835,7 +1838,8 @@ function featureDetailHtml(model, e, anchors, repoRootHref, readHtml = '') {
     ...e.links.map((l) => featureLinkItem(model, l.to, l.text || '', l.ground || '', anchors)),
     ...e.rev.map((k) => featureLinkItem(model, k, undefined, undefined, anchors)),
   ]
-  const guide = lean ? '' : featureGuideHtml(e, anchors, featureSpecFold(e, repoRootHref))
+  // T-1075: lean has no guide, but the spec fold still carries the `docs/features/<key>.md` body.
+  const guide = lean ? featureSpecFold(e, repoRootHref) : featureGuideHtml(e, anchors, featureSpecFold(e, repoRootHref))
   const links = lean ? '' : `<h2 class="fd-h">${escapeHtml(FEATURE.linksHeading)}</h2>` +
     (items.length ? `<ul class="cn-list">${items.join('')}</ul>` : `<p class="cn-empty">${escapeHtml(FEATURE.linksEmpty)}</p>`)
   const tail = `<h2 class="fd-h">${escapeHtml(FEATURE.evidenceHeading)}</h2>${e.tickets.length === 0 ? `<p class="cn-empty">${escapeHtml(FEATURE.evidenceEmpty)}</p>` : `<p class="ev-text">${featureEvidence(e, anchors)}</p>`}`
@@ -3058,9 +3062,9 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .env-file + .env-file, .env-empty + .env-file { margin-top: 8px; }
 .env-file code { font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); }
 .env-file .env-c { margin-left: 0; }
-.env-eye { background: none; border: none; padding: 4px; border-radius: 6px; cursor: pointer; color: var(--text-tertiary); display: inline-flex; align-items: center; margin-left: auto; }
+.env-eye { background: none; border: 1px solid transparent; padding: 4px; min-width: 24px; min-height: 24px; justify-content: center; border-radius: 6px; cursor: pointer; color: var(--text-tertiary); display: inline-flex; align-items: center; margin-left: auto; }
 .env-c + .env-eye { margin-left: 0; }
-.env-eye:hover { background: var(--bg-state-hover); color: var(--text-primary); }
+.env-eye:hover { background: var(--bg-state-hover); border-color: var(--border-hover); color: var(--text-primary); }
 .env-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .env-eye .eye-off, .env-eye[aria-expanded="true"] .eye-on { display: none; }
 .env-eye[aria-expanded="true"] .eye-off { display: inline-flex; }
@@ -3899,6 +3903,9 @@ export function renderPage({
   viewerAbsPath = DEFAULT_VIEWER_ABS_PATH,
   pastTicketSrc = {},
   build = null,
+  // T-1076: true when a past-version data file carries a diagram block — its
+  // bodies never sit in this page, so the page itself cannot tell.
+  pastMermaid = false,
 }) {
   pageViewerAbsPath = viewerAbsPath
   const pageTitle = escapeHtml(pageTitleText(data.project))
@@ -3940,7 +3947,7 @@ ${releaseSection(data.releases || [])}
 ${discSection(discipline, data.disciplineLoad || null)}`
   const detailScript = detailDataScript(detailData)
   // T-1049 (T-1056 = A): mermaid ships only on a page that carries a diagram block.
-  const mm = hasMermaid(bodyHtml, detailScript) ? mermaidScript() : null
+  const mm = pastMermaid || hasMermaid(bodyHtml, detailScript) ? mermaidScript() : null
   const csp = views.length > 0 ? CSP_CONTENT_LINES : CSP_CONTENT
   const cspMeta = mm ? csp.replace("'strict-dynamic'", `'sha256-${mm.sha256}' 'strict-dynamic'`) : csp
 

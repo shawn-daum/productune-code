@@ -423,7 +423,8 @@ def form_outline_bound():
 def stop_main():
     """T-1025: the Stop check no longer blocks or prints. While form=outline is bound
     it appends one data row per PO reply (paragraph-line count, blank-block count) to
-    ~/.prdt/run/form-outline-counts.jsonl; a stop with no reply text writes nothing."""
+    ~/.prdt/run/form-outline-counts.jsonl (newest FORM_OUTLINE_MAX_ROWS kept, T-1081);
+    a stop with no reply text writes nothing."""
     if ev.get("agent_type") != "prdt-po":
         return
     reply = ev.get("last_assistant_message")
@@ -437,8 +438,31 @@ def stop_main():
     row = {"ts": int(time.time()), "session_id": ev.get("session_id"),
            "paragraph_lines": len(form_outline_violations(reply)),
            "blank_blocks": len(form_outline_blank_violations(reply))}
-    with open(os.path.join(run, "form-outline-counts.jsonl"), "a") as f:
+    path = os.path.join(run, "form-outline-counts.jsonl")
+    with open(path, "a") as f:
         f.write(json.dumps(row) + "\n")
+    cap_jsonl(path, FORM_OUTLINE_MAX_ROWS)
+
+
+# T-1081: the counts file keeps its newest rows only — one row per PO reply
+# otherwise grows without end. This hook owns the file, so it caps it.
+FORM_OUTLINE_MAX_ROWS = 1000
+
+
+def cap_jsonl(path, keep):
+    """Trim `path` to its last `keep` lines (temp + rename in the same dir).
+    Best effort: any failure leaves the file as it was."""
+    try:
+        with open(path, "rb") as f:
+            lines = f.read().splitlines(keepends=True)
+        if len(lines) <= keep:
+            return
+        tmp = "%s.tmp%d" % (path, os.getpid())
+        with open(tmp, "wb") as f:
+            f.writelines(lines[-keep:])
+        os.replace(tmp, path)
+    except OSError:
+        pass
 
 
 def post_tool_main():
