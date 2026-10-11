@@ -770,17 +770,44 @@ MACHINE_INDEX_HEADER = ("# Machine wiki index — this machine, every prdt proje
 MACHINE_WIKI_RESERVED = ("feedback",)
 
 
-def wiki_store_pages(wdir, relative_to=None, prefix="", reserved=()):
+def _read_text_nofollow(p):
+    """T-1079: a page's text opened O_NOFOLLOW and checked regular by fstat —
+    None for a link, a non-regular file or an unreadable one."""
+    try:
+        fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as fh:
+        if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+            return None
+        return fh.read()
+
+
+def wiki_store_pages(wdir, relative_to=None, prefix="", reserved=(), no_links_below=None):
     """Page rows for ONE wiki store. Both stores share the page convention
     (`<type>--<slug>.md` + frontmatter); only the directory, the name prefix and
-    how a path is reported differ."""
+    how a path is reported differ. `no_links_below` (T-1079, the project store —
+    a cloned repository may plant links): every directory from that anchor down
+    to `wdir` must be a plain directory, and a page that is a link is skipped,
+    never read."""
+    if no_links_below is not None:
+        fd, _problem = state_open_dir(no_links_below, wdir.relative_to(no_links_below).parts, create=False)
+        if fd is None:
+            return []
+        os.close(fd)
     if not wdir.is_dir():
         return []
     pages = []
     for p in sorted(wdir.glob("*.md")):
         if p.name in ("index.md", "inbox.md", "log.md") or p.stem.lower() in reserved:
             continue
-        fm, body = parse_frontmatter(p)
+        if no_links_below is not None:
+            text = _read_text_nofollow(p)
+            if text is None:
+                continue
+            fm, body = parse_frontmatter_text(text)
+        else:
+            fm, body = parse_frontmatter(p)
         links = set(fm.get("links") or []) | set(WIKILINK.findall(body))
         # Same index-write contract as scan_tickets (T-550): this store feeds the
         # OTHER write into index.db, on the same rebuild_index the doctor run opens
@@ -797,7 +824,7 @@ def wiki_store_pages(wdir, relative_to=None, prefix="", reserved=()):
 
 
 def scan_wiki(root):
-    return wiki_store_pages(root / "docs" / "wiki", relative_to=root)
+    return wiki_store_pages(root / "docs" / "wiki", relative_to=root, no_links_below=Path(root))
 
 
 def machine_wiki_root():
@@ -847,9 +874,15 @@ def index_project_wiki(root, con):
 def reindex_wiki(root, con):
     pages = index_project_wiki(root, con)
     idx = root / "docs" / "wiki" / "index.md"
-    idx.parent.mkdir(parents=True, exist_ok=True)
-    before, text = _prior_text(idx), render_wiki_index(pages, PROJECT_INDEX_HEADER)
-    idx.write_text(text, encoding="utf-8")
+    text = render_wiki_index(pages, PROJECT_INDEX_HEADER)
+    try:
+        if os.path.islink(idx):
+            raise StateLinkError(errno.ELOOP, "docs/wiki/index.md is a symlink — not followed")
+        before = _prior_text(idx)
+        state_write(root, idx, text)   # T-1079: a link at docs/, docs/wiki/ or index.md is refused
+    except StateLinkError as e:
+        print(f"warning: {e.strerror} — docs/wiki/index.md not regenerated", file=sys.stderr)
+        return pages
     note_docs_write(idx, before, text)
     return pages
 
@@ -2660,8 +2693,12 @@ def write_machine_index(mpages):
     not exist yet — a reader of an absent store must not create it)."""
     mdir = machine_wiki_root()
     if mdir.is_dir():
-        (mdir / "index.md").write_text(render_wiki_index(mpages, MACHINE_INDEX_HEADER),
-                                       encoding="utf-8")
+        try:   # T-1079: a link planted at the machine index.md is refused, never written through
+            state_write(mdir, mdir / "index.md", render_wiki_index(mpages, MACHINE_INDEX_HEADER),
+                        create_dirs=False)
+        except StateLinkError as e:
+            print(f"warning: machine wiki {e.strerror} — machine index.md not regenerated",
+                  file=sys.stderr)
 
 
 def cmd_wiki(args):
@@ -2736,6 +2773,14 @@ def cmd_wiki(args):
 # pointer — never the text — so there is one place to maintain it.
 PROMOTE_NAME_BAD = re.compile(r"[/\\\s]|^\.|\.\.")
 PROMOTE_POINTER_MARK = "기기 위키로 옮겼어요"
+PROMOTE_NAME_MAX = 200   # bytes; `<name>.md` and the temp name stay under NAME_MAX (255)
+
+
+def _promote_name_bad(name):
+    """T-1079: one name rule for <page> and --as — non-empty, no separator,
+    space, leading dot or `..`, short enough to be a file name."""
+    return (not name or PROMOTE_NAME_BAD.search(name) is not None
+            or len(name.encode("utf-8")) > PROMOTE_NAME_MAX)
 
 
 def _display_path(p):
@@ -2824,21 +2869,24 @@ def wiki_promote(root, args):
         sys.exit(f"prdt wiki promote: {page} is already a machine page — nothing to promote")
     # T-1079: <page> names a file inside docs/wiki/ — the same name rule as
     # --as, checked before anything is read, so `../../x` never leaves it.
-    if PROMOTE_NAME_BAD.search(page):
-        sys.exit(f"prdt wiki promote: `{page}` is not a usable page name (no slash, space, "
-                 "leading dot or `..`) — nothing was read or written")
+    if _promote_name_bad(page):
+        shown = page if len(page) <= 60 else page[:60] + "…"
+        sys.exit(f"prdt wiki promote: `{shown}` is not a usable page name (empty, slash, space, "
+                 f"leading dot, `..`, or over {PROMOTE_NAME_MAX} bytes) — nothing was read or written")
     src = root / "docs" / "wiki" / f"{page}.md"
     try:
-        text = None if page in ("index", "inbox", "log") else _promote_read_src(root, page)
+        # lower(): on a case-insensitive volume (APFS) `INDEX` opens index.md
+        text = None if page.lower() in ("index", "inbox", "log") else _promote_read_src(root, page)
     except StateLinkError as e:
         sys.exit(f"refused: {e.strerror} — promote reads and rewrites only a plain file "
                  "inside docs/wiki/. Nothing was read or written.")
     if text is None:
         sys.exit(f"prdt wiki promote: no project wiki page `{page}` (looked for docs/wiki/{page}.md)")
     target = args.as_name or page
-    if PROMOTE_NAME_BAD.search(target) or target.lower() in ("index", "inbox", "log", *MACHINE_WIKI_RESERVED):
-        sys.exit(f"prdt wiki promote: `{target}` is not a usable page name (no slash, space, "
-                 "leading dot or `..`; not index/inbox/log/feedback)")
+    if _promote_name_bad(target) or target.lower() in ("index", "inbox", "log", *MACHINE_WIKI_RESERVED):
+        shown = target if len(target) <= 60 else target[:60] + "…"
+        sys.exit(f"prdt wiki promote: `{shown}` is not a usable page name (empty, slash, space, "
+                 f"leading dot, `..`, over {PROMOTE_NAME_MAX} bytes; not index/inbox/log/feedback)")
     dest = machine_wiki_root() / f"{target}.md"
     fm, body = parse_frontmatter_text(text)
     if fm.get("promoted_to"):
@@ -2850,6 +2898,11 @@ def wiki_promote(root, args):
                  "Nothing was written — promote never overwrites or merges. Pick another "
                  f"name with `--as <name>`, or reconcile the two by hand and then delete "
                  f"the project copy.")
+    for idx_path, label in ((src.parent / "index.md", "docs/wiki/index.md"),
+                            (dest.parent / "index.md", f"machine wiki index ({_display_path(dest.parent / 'index.md')})")):
+        if os.path.islink(idx_path):   # T-1079: the rebuild after the move would write through it
+            sys.exit(f"refused: {label} is a symlink — promote rewrites both wiki indexes and "
+                     "never follows a link. Nothing was written.")
     pointer_line = f"→ {PROMOTE_POINTER_MARK}: [[{ref}]] ({_display_path(dest)})"
     if args.section:
         full_lines, found = _promote_find_section(text, args.section)
