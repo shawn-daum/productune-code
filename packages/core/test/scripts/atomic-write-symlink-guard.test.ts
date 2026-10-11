@@ -261,3 +261,27 @@ describe('atomic_write / append symlink guard (T-647)', () => {
     })
   })
 })
+
+// T-1076: a stale prdt_safe_fs.py beside the hook (mirror version skew — the
+// module is there, its `append_line` is not) skips only the log append; the
+// rest of the event's handling still runs.
+describe('prdt-post-dispatch.sh — a stale prdt_safe_fs module skips only the append (T-1076)', () => {
+  test('SubagentStop still records the subagent gate; no traceback', () => {
+    const dir = tmp('prdt-t1076-hook-')
+    fs.mkdirSync(path.join(dir, 'hooks'))
+    const hook = path.join(dir, 'hooks', 'prdt-post-dispatch.sh')
+    fs.copyFileSync(POST_DISPATCH_FIXED, hook)
+    fs.writeFileSync(path.join(dir, 'prdt_safe_fs.py'), '# an older mirror: no append_line\n')
+    const project = makeProject()
+    const t = path.join(project, 'transcript.jsonl')
+    fs.writeFileSync(t, JSON.stringify({ message: { model: 'claude-sonnet-5', usage: { input_tokens: 10, output_tokens: 5 } } }) + '\n')
+    const res = run(hook, project, {
+      hook_event_name: 'SubagentStop', agent_type: 'prdt-developer', agent_id: 'agent-t1076', cwd: project, agent_transcript_path: t,
+    })
+    expect(res.status).toBe(0)
+    expect(res.stderr).not.toContain('Traceback')
+    const gate = JSON.parse(fs.readFileSync(path.join(project, '.prdt', '.subagent-gate.json'), 'utf8'))
+    expect(gate['agent-t1076']).toBe(true)
+    expect(fs.existsSync(path.join(project, '.prdt', 'turns.jsonl'))).toBe(false)
+  })
+})

@@ -94,3 +94,106 @@ test('missing section / re-promoting a pointer / batch of pages are refused', ()
   expect(again.code).not.toBe(0); expect(again.out).toContain('already a pointer')
   expect(fs.existsSync(mach('fact--copy2'))).toBe(false)
 })
+
+// T-1079 — the two QA repros (d-v113-sec-1): promote never reads or writes outside docs/wiki/.
+test('traversal <page> is refused before any read or write', () => {
+  const victim = path.join(sandbox, 'victim')
+  fs.mkdirSync(victim, { recursive: true })
+  const outside = path.join(victim, 'outside.md')
+  fs.writeFileSync(outside, 'secret outside text\n')
+  for (const bad of ['../../../victim/outside', '../../victim/outside', 'sub/page', '.hidden']) {
+    const r = run(proj, ['wiki', 'promote', bad, '--as', 'fact--stolen', '--yes'])
+    expect(r.code).not.toBe(0)
+    expect(r.out).toContain('not a usable page name')
+    expect(r.out).not.toContain('promote plan')
+  }
+  expect(read(outside)).toBe('secret outside text\n')
+  expect(fs.existsSync(mach('fact--stolen'))).toBe(false)
+})
+
+test('symlinked project page is refused; its target is never read or overwritten', () => {
+  const victim = path.join(sandbox, 'victim')
+  fs.mkdirSync(victim, { recursive: true })
+  const target = path.join(victim, 'target.md')
+  fs.writeFileSync(target, PAGE)
+  fs.symlinkSync(target, pw('fact--linked'))
+  const r = run(proj, ['wiki', 'promote', 'fact--linked', '--yes'])
+  expect(r.code).not.toBe(0)
+  expect(r.out).toContain('symlink')
+  expect(r.out).not.toContain('promote plan')
+  expect(read(target)).toBe(PAGE)
+  expect(fs.lstatSync(pw('fact--linked')).isSymbolicLink()).toBe(true)
+  expect(fs.existsSync(mach('fact--linked'))).toBe(false)
+})
+
+test('symlinked docs/wiki directory is refused', () => {
+  const victim = path.join(sandbox, 'victim')
+  fs.mkdirSync(victim, { recursive: true })
+  fs.writeFileSync(path.join(victim, 'fact--x.md'), PAGE)
+  fs.rmSync(path.join(proj, 'docs', 'wiki'), { recursive: true })
+  fs.symlinkSync(victim, path.join(proj, 'docs', 'wiki'))
+  const r = run(proj, ['wiki', 'promote', 'fact--x', '--yes'])
+  expect(r.code).not.toBe(0)
+  expect(r.out).toContain('symlink')
+  expect(read(path.join(victim, 'fact--x.md'))).toBe(PAGE)
+  expect(fs.existsSync(mach('fact--x'))).toBe(false)
+})
+
+// T-1079 round 2 (QA grill): the index rebuild that promote runs must not follow links either.
+test('symlinked docs/wiki/index.md: promote refuses and the link target is untouched; reindex skips it', () => {
+  const victim = path.join(home, 'victim.md')
+  fs.writeFileSync(victim, 'victim bytes\n')
+  fs.symlinkSync(victim, pw('index'))
+  const r = run(proj, ['wiki', 'promote', 'fact--apfs', '--yes'])
+  expect(r.code).not.toBe(0)
+  expect(r.out).toContain('symlink')
+  expect(read(victim)).toBe('victim bytes\n')
+  expect(read(pw('fact--apfs'))).toBe(PAGE)
+  expect(fs.existsSync(mach('fact--apfs'))).toBe(false)
+  expect(run(proj, ['wiki', 'reindex']).code).toBe(0)   // warns on stderr, keeps reindexing
+  expect(read(victim)).toBe('victim bytes\n')
+  expect(fs.lstatSync(pw('index')).isSymbolicLink()).toBe(true)
+})
+
+test('symlinked machine index.md: promote refuses; reindex never writes through it', () => {
+  const victim = path.join(sandbox, 'mvictim.md')
+  fs.writeFileSync(victim, 'machine victim\n')
+  fs.symlinkSync(victim, path.join(home, '.prdt', 'wiki', 'index.md'))
+  const r = run(proj, ['wiki', 'promote', 'fact--apfs', '--yes'])
+  expect(r.code).not.toBe(0)
+  expect(r.out).toContain('symlink')
+  expect(read(pw('fact--apfs'))).toBe(PAGE)
+  run(proj, ['wiki', 'reindex'])
+  expect(read(victim)).toBe('machine victim\n')
+})
+
+test('a symlinked project page is never read into the regenerated index', () => {
+  const outside = path.join(sandbox, 'outside')
+  fs.mkdirSync(outside, { recursive: true })
+  fs.writeFileSync(path.join(outside, 'secret.md'), '---\ntitle: TOPSECRETTITLE\ntype: fact\n---\n\nTOPSECRETBODY\n')
+  fs.symlinkSync(path.join(outside, 'secret.md'), pw('fact--evil'))
+  const r = run(proj, ['wiki', 'promote', 'fact--apfs', '--yes'])
+  expect(r.code).toBe(0)
+  const idx = read(pw('index'))
+  expect(idx).not.toContain('TOPSECRETTITLE'); expect(idx).not.toContain('fact--evil')
+  expect(run(proj, ['wiki', 'search', 'TOPSECRETBODY']).out).not.toContain('fact--evil')
+})
+
+test('empty, case-folded reserved and over-long <page> are refused with one line', () => {
+  fs.writeFileSync(pw(''), PAGE)                     // docs/wiki/.md
+  const e = run(proj, ['wiki', 'promote', '', '--as', 'fact--dot', '--yes'])
+  expect(e.code).not.toBe(0); expect(e.out).toContain('not a usable page name')
+  expect(fs.existsSync(mach('fact--dot'))).toBe(false); expect(read(pw(''))).toBe(PAGE)
+  run(proj, ['wiki', 'reindex'])
+  const before = read(pw('index'))
+  for (const n of ['INDEX', 'Index', 'Inbox', 'LOG']) {
+    const r = run(proj, ['wiki', 'promote', n, '--as', 'fact--foo', '--yes'])
+    expect(r.code).not.toBe(0); expect(r.out).not.toContain('promote plan')
+  }
+  expect(fs.existsSync(mach('fact--foo'))).toBe(false); expect(read(pw('index'))).toBe(before)
+  const long = run(proj, ['wiki', 'promote', 'a'.repeat(300), '--yes'])
+  expect(long.code).not.toBe(0); expect(long.out).not.toContain('Traceback')
+  expect(long.out).toContain('not a usable page name')
+  const longAs = run(proj, ['wiki', 'promote', 'fact--apfs', '--as', 'b'.repeat(300), '--yes'])
+  expect(longAs.code).not.toBe(0); expect(longAs.out).not.toContain('Traceback')
+})
