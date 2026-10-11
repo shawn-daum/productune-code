@@ -31,7 +31,7 @@
 #
 # ONE BLOCK, NEVER TWO. `stop_hook_active` true → silent.
 # WORDING: LINK_CHECK_REASON is the user-approved text (T-899 log, 2026-10-01
-# "ㅇㅇ"), used verbatim.
+# "ㅇㅇ"; T-1072, decision T-1073 = A, 2026-10-11 "a"), used verbatim.
 #
 # FAILS OPEN. No project (`.prdt/po-state.json` on the cwd chain), malformed
 # JSON, missing python3, an unreadable tickets dir, a run past RUN_BUDGET_S —
@@ -54,10 +54,12 @@ exit 0
 # ---- python ----
 import json, os, re, signal, sys
 
-# User-approved wording (T-899, 2026-10-01). %s #1 joined ', ', #2 joined ' '.
+# User-approved wording (T-899, 2026-10-01; T-1072 / T-1073 = A, 2026-10-11).
+# %s #1 joined ', ', #2 joined ' '.
 LINK_CHECK_REASON = (
     "[prdt link check] unlinked first mention: %s. "
-    "Post `prdt tickets --link %s` output now, in this turn."
+    "Post now, in this turn, only a `[링크]` line, then `prdt tickets --link %s` output, "
+    "one id per line; no sentence."
 )
 RUN_BUDGET_S = 5
 TICKET_DIR = os.path.join("docs", "tickets")

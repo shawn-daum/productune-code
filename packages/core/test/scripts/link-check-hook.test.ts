@@ -1,6 +1,7 @@
 /**
  * prdt-link-check.sh — the PO's unlinked-first-mention check at Stop (T-899,
- * need and wording T-898 = A; wording approved by the user 2026-10-01).
+ * need and wording T-898 = A; wording approved by the user 2026-10-01;
+ * WORDING reworded T-1072, decision T-1073 = A, 2026-10-11: the `[링크]` follow-up shape).
  *
  * FIXTURES are the PO's real replies of 2026-10-06 (test/fixtures/question-check/,
  * shared with the question-check tests). Unlinked cases run them as sent; linked
@@ -26,7 +27,7 @@ afterEach(() => {
 })
 
 const wording = (ids: string[]) =>
-  `[prdt link check] unlinked first mention: ${ids.join(', ')}. Post \`prdt tickets --link ${ids.join(' ')}\` output now, in this turn.`
+  `[prdt link check] unlinked first mention: ${ids.join(', ')}. Post now, in this turn, only a \`[링크]\` line, then \`prdt tickets --link ${ids.join(' ')}\` output, one id per line; no sentence.`
 const link = (id: string) => `[${id}](file:///Users/x/proj/.prdt/scratch/viewer/at/${id}.html)`
 
 function makeProject(ids: string[], opts: { prdt?: boolean } = {}) {
