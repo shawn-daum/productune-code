@@ -77,7 +77,8 @@ type Run = { raw: string; violations: number; warnings: string[] }
 function doctor(): Run {
   const raw = execFileSync('python3', [PRDT_CLI, 'doctor'], {
     cwd: projectDir,
-    env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir },
+    // T-1074: PRDT_BRIDGE_CHECK=0 — the meta-cli bridge check judges the real checkout.
+    env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir, PRDT_BRIDGE_CHECK: '0' },
     encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('doctor'),
   })
   const verdict = raw.split('\n').find((l) => l.includes('[verdict='))

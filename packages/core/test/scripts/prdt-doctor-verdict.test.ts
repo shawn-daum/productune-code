@@ -89,6 +89,8 @@ function runDoctor(): string {
     env: {
       ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir, CLAUDE_DIR: claudeDir,
       PATH: `${binDir}:${process.env.PATH}`,
+      // T-1074: the meta-cli bridge check judges the real checkout, not the sandbox.
+      PRDT_BRIDGE_CHECK: '0',
     },
     encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('doctor'),
   })
