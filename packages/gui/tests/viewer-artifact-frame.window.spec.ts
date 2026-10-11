@@ -100,18 +100,15 @@ test.describe('HTML artifact renders in the side panel @window', () => {
       await expect(frame.locator('#m')).toHaveAttribute('data-js', 'ran')
       await expect(frame.locator('#m')).toHaveAttribute('data-blocked', 'yes')
       expect(await page.title()).not.toBe('pwn')
-      await expect(page.locator('.detail-panel.active .detail-frame-hint')).toBeVisible()
-      const link = page.locator('.detail-panel.active .detail-frame-bar a')
+      // T-1067: the link is an item of the attribute row; no hint line anywhere
+      await expect(page.locator('.detail-panel.active .detail-frame-hint')).toHaveCount(0)
+      await expect(page.locator('.detail-panel.active .detail-frame-bar')).toHaveCount(0)
+      const link = page.locator('.detail-panel.active .detail-meta .detail-field-open a')
       await expect(link).toHaveText('새 탭에서 열기')
       const [popup] = await Promise.all([ctx.waitForEvent('page'), link.click({ force: true })])
       await popup.waitForLoadState()
       expect(popup.url()).toMatch(/docs\/artifacts\/v1\.10\/mock\.html$/)
       await expect(popup.locator('#m')).toHaveText('MOCKUP-RENDERED')
-      // deleted after generation: the panel still shows the hint line next to the (empty) frame
-      fs.rmSync(path.join(dir, 'docs/artifacts/v1.10/mock.html'))
-      await page.click('.detail-panel.active .detail-panel-close', { force: true })
-      await page.click('.store-section[data-store="artifact"] tr[data-detail-kind="artifact"][data-detail-id="v1.10/mock.html"]', { force: true })
-      await expect(page.locator('.detail-panel.active .detail-frame-hint')).toBeVisible()
       await page.click('.detail-panel.active .detail-panel-close', { force: true })
       // missing file -> existing fallback note, no iframe
       await page.click('.store-section[data-store="artifact"] tr[data-detail-kind="artifact"][data-detail-id="v1.10/gone.html"]', { force: true })

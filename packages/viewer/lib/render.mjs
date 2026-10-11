@@ -2626,10 +2626,10 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .detail-field { display: flex; align-items: baseline; gap: 6px; font-size: 12px; }
 .detail-field-label { color: var(--text-tertiary); }
 .detail-field-value { color: var(--text-primary); font-weight: 500; }
+.detail-field-open a { color: var(--accent); font-weight: 500; }
 .detail-doc { font-size: 13.5px; }
 .detail-doc :first-child { margin-top: 0; }
 .detail-doc a, .v-body a { color: var(--accent); }
-.detail-frame-bar { margin: 0 0 var(--space-8); }
 .detail-frame-view { display: block; width: 100%; height: 70vh; border: 1px solid var(--border-item); color-scheme: light; background: Canvas; }
 
 /* ---------- pills (ticket type/status/role + T-666 heading chips) ---------- */
@@ -3314,6 +3314,11 @@ ${PRD_READING_SCRIPT}
       metaRows.push('<div class="detail-field"><span class="detail-field-label">' + DETAIL_FIELD_LABELS[k] +
         '</span><span class="detail-field-value">' + shown + '</span></div>');
     });
+    // T-1067: an HTML artifact's 「새 탭에서 열기」 is one item of this attribute row.
+    if (!fields.body && fields.fileHref && fields.frame) {
+      metaRows.push('<div class="detail-field detail-field-open"><a href="' + escAttr(fields.fileHref) +
+        '" target="_blank" rel="noopener">' + ${JSON.stringify(FRAME.openInNewTab)} + '</a></div>');
+    }
     var metaHtml = metaRows.length ? '<div class="detail-meta">' + metaRows.join('') + '</div>' : '';
     // T-666 slice 1b acceptance line 2: an artifact with no inlinable body
     // (.html/.json) says so and links the file, instead of an empty panel.
@@ -3331,8 +3336,7 @@ ${PRD_READING_SCRIPT}
     } else if (fields.body) {
       docHtml = '<div class="detail-doc body-prose">' + fields.body + '</div>';
     } else if (fields.fileHref && fields.frame) {
-      docHtml = '<div class="detail-doc detail-frame"><p class="detail-frame-bar"><a href="' + escAttr(fields.fileHref) +
-        '" target="_blank" rel="noopener">' + ${JSON.stringify(FRAME.openInNewTab)} + '</a> <span class="detail-frame-hint">' + ${JSON.stringify(FRAME.hint)} + '</span></p><iframe class="detail-frame-view" sandbox="allow-scripts" title="' +
+      docHtml = '<div class="detail-doc detail-frame"><iframe class="detail-frame-view" sandbox="allow-scripts" title="' +
         ${JSON.stringify(FRAME.frameTitle)} + '" src="' + escAttr(fields.fileHref) + '"></iframe></div>';
     } else if (fields.fileHref) {
       docHtml = '<div class="detail-doc detail-nobody"><p>' + ${JSON.stringify(FILE_HREF_NOTE)} + '</p><p><a href="' +

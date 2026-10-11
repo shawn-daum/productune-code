@@ -46,8 +46,12 @@ describe('artifact HTML in the side panel (T-1010)', () => {
   it('CSP allows frames from file: only', () => {
     expect(html).toMatch(/frame-src file:(;|")/)
   })
-  it('the panel always carries the visible hint line beside the frame (file gone after generation)', () => {
-    expect(html).toContain(FRAME.hint)
+  it('T-1067: no hint line; the new-tab link is an item of the attribute row, not a bar above the frame', () => {
+    expect(FRAME).not.toHaveProperty('hint')
+    expect(html).not.toContain('detail-frame-hint')
+    expect(html).not.toContain('detail-frame-bar')
+    expect(html).not.toContain('뷰어를 다시 만들어 봐요')
+    expect(html).toMatch(/metaRows\.push\('<div class="detail-field detail-field-open"><a href="/)
   })
   it.skipIf(process.getuid?.() === 0)('a file unreadable at generation (chmod 000) is not framed', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'frame-unreadable-'))
