@@ -277,6 +277,27 @@ describe('multi-line project without features.taxonomy (T-961)', () => {
   })
 })
 
+describe('multi-line project without features.taxonomy — docs/features specs (T-1075)', () => {
+  let h: string
+  const sec = (store: string) => h.split(`id="store-${store}"`)[1].split('</section>')[0]
+  const paneOf = (store: string, group: string) => { const x = sec(store); return x.slice(x.indexOf(`data-group="${group}"`)).split('<div class="view-pane')[0] }
+  const spec = (key: string, body: string) => ({ rel: `docs/features/${key}.md`, frontmatter: { feature: key, title: `${key} spec`, status: 'live' }, body })
+  beforeAll(() => {
+    h = render({ ...data, featureTaxonomy: null, features: [spec('login', '## 지금 참인 것\n\n- LOGIN-SPEC-BODY\n'), spec('export', 'EXPORT-SPEC-BODY\n')] })
+  })
+  it('the home line lists every spec, a spec no ticket carries included; an added line lists only its own tickets\' features', () => {
+    expect(paneOf('feature', 'all')).toContain('data-detail-id="login"')
+    expect(paneOf('feature', 'all')).toContain('data-detail-id="export"')
+    expect(paneOf('feature', 'ntf-archive/all')).not.toContain('export')
+  })
+  it('each spec body renders in its feature detail', () => {
+    const blob = JSON.parse(h.split('<script id="detail-data" type="application/json">')[1].split('</script>')[0])
+    expect(blob.feature.login.html).toContain('LOGIN-SPEC-BODY')
+    expect(blob.feature.export.html).toContain('EXPORT-SPEC-BODY')
+    expect(blob.feature['ntf-archive/search'].html).not.toContain('SPEC-BODY')
+  })
+})
+
 describe('single-line project — no section heads, unchanged output', () => {
   it('lineViews is empty and no line markup, CSS or script appears', () => {
     const one = { ...data, lines: [] }
