@@ -5243,12 +5243,24 @@ def current_version_id(root, line=None):
     """`docs/tickets/<version>/` for a freshly scaffolded ticket — the
     project's OPEN version (`po-state.json.version`), never a guess; falls
     back to `backlog` only when the state file is unreadable (a corrupt or
-    pre-init project — `new` still has to land the file somewhere)."""
+    pre-init project — `new` still has to land the file somewhere).
+
+    T-1082: the value becomes a path segment, so only a version id
+    (`is_version_path_id`) passes — anything else (`../../escaped`) raises
+    ValueError naming the po-state field, never a file outside the project."""
     st = read_json(root / ".prdt" / "po-state.json")
+    src, field = (st if isinstance(st, dict) else None), "version"
     if line is not None:
-        return line_state(st, line)[1] or join_line_id(line, "backlog")
-    v = (st or {}).get("version")
-    return v if isinstance(v, str) and v.strip() else "backlog"
+        ls = src.get("lines") if src is not None else None
+        src, field = (ls.get(line) if isinstance(ls, dict) else None), f"lines.{line}.version"
+    raw = src.get("version") if isinstance(src, dict) else None
+    v = raw.strip() if isinstance(raw, str) else raw
+    if v is None or v == "":
+        return join_line_id(line, "backlog")
+    if not is_version_path_id(v):
+        raise ValueError(f".prdt/po-state.json `{field}` '{safe_label(str(raw))}' is not a version id "
+                         f"(v<N>[.<m>[.<p>]] or backlog)")
+    return join_line_id(line, v)
 
 
 SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -5295,7 +5307,10 @@ def cmd_tickets_new(args, root):
         else:
             sys.exit(f"prdt tickets new: --line {safe_label(line)} is not a line declared in "
                      f".prdt/config.json `lines`")
-    version = current_version_id(root, line)
+    try:
+        version = current_version_id(root, line)
+    except ValueError as e:
+        sys.exit(f"prdt tickets new: {e} — no ticket written")
     # `type: decision` forces `assignee: user` (contracts §Tickets) — never a
     # CLI choice, the same way the frame itself is never a per-ticket choice.
     assignee = "user" if ttype == "decision" else (args.assignee or "po")
@@ -9896,7 +9911,10 @@ def artifact_buckets(root):
 
 def bucket_id(bucket):
     """A bucket's manifest id: `<version>`, or `<line>/<version>` for an added line."""
-    return bucket.name if bucket.parent.name == "artifacts" else f"{bucket.parent.name}/{bucket.name}"
+    # T-1082: the real artifacts root (docs/artifacts), not any dir named
+    # `artifacts` — a line called `artifacts` keeps its `artifacts/` prefix.
+    home = bucket.parent.name == "artifacts" and bucket.parent.parent.name == "docs"
+    return bucket.name if home else f"{bucket.parent.name}/{bucket.name}"
 
 
 def legacy_bucket_manifests(root):
@@ -11150,6 +11168,12 @@ def ticket_frame_warnings(root, tickets):
 # readers on purpose — code and contract text then say exactly the same thing,
 # and a fourth component is reported rather than quietly accepted as a version.
 VERSION_ID_RE = re.compile(r"^v\d+(?:\.\d+){0,2}$")
+
+
+def is_version_path_id(v):
+    """T-1082 — True for a value po-state may hand to a path: a version id
+    (`v<N>[.<m>[.<p>]]`, matched whole — no trailing newline) or `backlog`."""
+    return isinstance(v, str) and (v == "backlog" or VERSION_ID_RE.fullmatch(v) is not None)
 # `(?![\d.])` rather than `\b`: after the greedy component run, a heading like
 # `## v1.x` is not a version heading at all (with `\b` it read as `v1`).
 PRD_VERSION_HEADING_RE = re.compile(r"^## (v\d+(?:\.\d+){0,2})(?![\d.])")
@@ -11163,7 +11187,9 @@ PRD_VERSION_FILE_RE = re.compile(r"^v\d+(?:\.\d+){0,2}\.md$")
 # stands (`ntf-archive/v1.2`), and heads its PRD section `## <line> v<N>.<m>`.
 # No `lines` → a single-line project, byte-identical to before
 # (docs/artifacts/v1.13/release-lines.md §1–§6).
-LINE_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$")
+# `\Z`, not `$` (T-1082): `$` also matches before a trailing newline, which let
+# `android\n` through as a line name and split doctor lines in two.
+LINE_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 
 
 def _line_config_entries(root):
@@ -11252,6 +11278,9 @@ def line_state(st, line=None):
             return None, None, None
     v = src.get("version")
     v = v.strip() if isinstance(v, str) and v.strip() else None
+    # T-1082: a malformed version is no version here (po_state_warnings names it).
+    if v is not None and not is_version_path_id(v):
+        v = None
     return src.get("stage"), (join_line_id(line, v) if v else None), src.get("checks")
 
 
@@ -11302,6 +11331,7 @@ def prd_line_layout_warnings(root, st):
     heads = _prd_line_headings(text, lines) if text is not None else []
     warns = []
     for ln_name in lines:
+        lab = safe_label(ln_name)
         _, vid, _ = line_state(st, ln_name)
         open_v = split_line_id(vid)[1] if vid else None
         open_key = _version_id_canon(open_v) if open_v else None
@@ -11311,7 +11341,7 @@ def prd_line_layout_warnings(root, st):
             for f in sorted(vdir.glob("*.md")):
                 k = _version_id_canon(f.stem) if PRD_VERSION_FILE_RE.match(f.name) else None
                 if k is None:
-                    warns.append(f"prd: docs/prd/versions/{ln_name}/{f.name} is not a version file — "
+                    warns.append(f"prd: docs/prd/versions/{lab}/{f.name} is not a version file — "
                                  f"only v<N>.<m>.md files live there (contracts/fixed-paths.md)")
                     continue
                 on_disk.setdefault(k, f)
@@ -11322,28 +11352,28 @@ def prd_line_layout_warnings(root, st):
                 fh = _prd_line_headings(body, lines)
                 if not fh:
                     if _prd_version_file_kind(body) != "stub":
-                        warns.append(f"prd: docs/prd/versions/{ln_name}/{f.name} is neither a "
-                                     f"`## {ln_name} {f.stem}` section nor a one-line stub")
+                        warns.append(f"prd: docs/prd/versions/{lab}/{f.name} is neither a "
+                                     f"`## {lab} {f.stem}` section nor a one-line stub")
                     continue
                 fl, fv, fln = fh[0]
                 if fl != ln_name or _version_id_canon(fv) != k or fln != 1:
-                    warns.append(f"prd: docs/prd/versions/{ln_name}/{f.name} must open with "
-                                 f"`## {ln_name} {f.stem}` on line 1 — the file is that block and nothing else")
+                    warns.append(f"prd: docs/prd/versions/{lab}/{f.name} must open with "
+                                 f"`## {lab} {f.stem}` on line 1 — the file is that block and nothing else")
         mine = [(v, ln) for l, v, ln in heads if l == ln_name]
         seen_open = 0
         for v, ln in mine:
             if open_key is not None and _version_id_canon(v) == open_key:
                 seen_open += 1
                 if seen_open > 1:
-                    warns.append(f"prd: docs/prd/PRD.md:{ln} repeats the open section `## {ln_name} {v}` — "
+                    warns.append(f"prd: docs/prd/PRD.md:{ln} repeats the open section `## {lab} {v}` — "
                                  f"the working file carries it once (contracts §Fixed paths)")
                 continue
             if open_key is None and len(mine) == 1:
                 continue
-            warns.append(f"prd: closed section `## {ln_name} {v}` found in docs/prd/PRD.md:{ln} — the "
+            warns.append(f"prd: closed section `## {lab} {v}` found in docs/prd/PRD.md:{ln} — the "
                          f"working file is the standing head + the ONE open section per line, which "
                          f"`.prdt/po-state.json` names as `{vid or '-'}`; its home is "
-                         f"docs/prd/versions/{ln_name}/{v}.md, moved byte-identical")
+                         f"docs/prd/versions/{lab}/{v}.md, moved byte-identical")
         tdir = root / "docs" / "tickets" / ln_name
         if tdir.is_dir():
             current = {k for k in (_version_id_canon(v) for v, _ in mine) if k is not None}
@@ -11358,8 +11388,8 @@ def prd_line_layout_warnings(root, st):
                     continue
                 if ceiling is not None and k >= ceiling:
                     continue
-                warns.append(f"prd: docs/tickets/{ln_name}/{d.name}/ has no "
-                             f"docs/prd/versions/{ln_name}/{d.name}.md — a closed round's section, or a "
+                warns.append(f"prd: docs/tickets/{lab}/{d.name}/ has no "
+                             f"docs/prd/versions/{lab}/{d.name}.md — a closed round's section, or a "
                              f"one-line `no PRD section — <decision>` stub (contracts/fixed-paths.md §PRD)")
     return warns
 
@@ -11980,6 +12010,16 @@ def doctor_verdict_lines(records):
     return lines
 
 
+def _malformed_version_label(v):
+    """T-1082 — a po-state `version` that is set but not a version id, as a safe
+    one-line label; None when absent/empty (nothing to name) or well-formed."""
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return None
+    if is_version_path_id(v.strip() if isinstance(v, str) else v):
+        return None
+    return safe_label(str(v))
+
+
 def po_state_warnings(st, root=None):
     """`.prdt/po-state.json` is the state the harness actually runs on, against
     the shape the discipline declares — a discipline↔execution check by
@@ -11995,6 +12035,9 @@ def po_state_warnings(st, root=None):
         warns.append(f"state: missing keys {sorted(missing)}")
     if st.get("stage") not in STAGES:
         warns.append(f"state: stage '{st.get('stage')}' not in {'/'.join(STAGES)}")
+    bad_v = _malformed_version_label(st.get("version"))
+    if bad_v is not None:
+        warns.append(f"state: version '{bad_v}' is not a version id (v<N>[.<m>[.<p>]] or backlog)")
     ct = st.get("current_task")
     multi = bool(root) and project_declares_lines(root)
     if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee", "line"} >= set(ct)):
@@ -12012,6 +12055,10 @@ def po_state_warnings(st, root=None):
             continue
         if ent.get("stage") not in STAGES:
             warns.append(f"state: lines.{lab}.stage '{safe_label(str(ent.get('stage')))}' not in {'/'.join(STAGES)}")
+        bad_v = _malformed_version_label(ent.get("version"))
+        if bad_v is not None:
+            warns.append(f"state: lines.{lab}.version '{bad_v}' is not a version id "
+                         f"(v<N>[.<m>[.<p>]] or backlog)")
         if declared is not None and name not in declared:
             warns.append(f"state: lines.{lab} is not a line declared in .prdt/config.json `lines`")
         if set(ent) - {"stage", "version", "checks"}:
@@ -12617,7 +12664,10 @@ def prd_item_edge_warnings(root, st, trows):
             continue
         raw = raw.strip()
         m = PRD_ITEM_RE.match(raw)
-        if not m:
+        m_line = split_line_id(m.group(1))[0] if m else None
+        if not m or (m_line is not None and m_line not in project_line_names(root)):
+            # T-1082: `foo/v1.2#k` with no declared line `foo` is a form error,
+            # not an unresolved item of a version that cannot exist.
             warns.append(f"ticket: {t['id']} prd_item: '{raw}' is not `<version>#<key>` form")
             continue
         version_str, key = m.group(1), m.group(2)
@@ -16932,7 +16982,10 @@ def installed_prdt_version():
     else the `PRDT_REPO` the installer recorded in `prdt.env` (the installed
     `~/.prdt/bin` copy has no repo beside it). None when neither is readable."""
     parents = Path(__file__).resolve().parents
-    roots = [parents[3]] if len(parents) > 3 else []
+    # T-1082: the checkout root only when this file really sits in
+    # <repo>/packages/core/scripts — never parents[3] of an arbitrary copy.
+    in_checkout = len(parents) > 3 and [parents[i].name for i in range(3)] == ["scripts", "core", "packages"]
+    roots = [parents[3]] if in_checkout else []
     try:
         for line in (prdt_home() / "prdt.env").read_text(encoding="utf-8").splitlines():
             if line.startswith("PRDT_REPO="):
