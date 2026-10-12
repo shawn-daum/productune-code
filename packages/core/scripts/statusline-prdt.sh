@@ -18,8 +18,8 @@
 #   scripts/prdt (PRDT_LANG en*/ko* wins, else the device token `cli-lang`,
 #   default ko; OS LANG never read) — from the `statusline.*` keys of the
 #   sibling `prdt-messages.json`. The labels in this comment are the English forms.
-#   - One row per release line, home line (the project slug) first, then each
-#     line declared in `.prdt/config.json` `lines` (release-lines.md §6b).
+#   - One row per product, the first product (the project slug) first, then each
+#     product declared in `.prdt/config.json` `products` (T-1108; old `lines` still read).
 #   - The `dec … | req …` row is ALWAYS its own last row (`dec 0 | req 0` when
 #     empty), single-line and multi-line projects alike (T-988 = A, T-984
 #     reversed by the user 2026-10-06).
@@ -263,11 +263,12 @@ def L(key, **kw):
 
 slug = clean(cfg_slug) or clean(os.path.basename(root)) or "?"
 
-# ── T-961: release lines (docs/artifacts/v1.13/release-lines.md §1 · §5 · §6b) ─
-# The home line is the project slug and reads po-state's top-level stage /
-# version; every added line is declared in `.prdt/config.json` `lines`
-# and reads `po-state.lines.<line>`, its tickets under `docs/tickets/<line>/`.
-# No `lines` → one row, the single-line project as before (plus T-984 layout).
+# ── T-961 / T-1108: products (pre-v1.14 name: release lines) ─
+# The first product is the project slug and reads po-state's top-level stage /
+# version; every added product is declared in `.prdt/config.json` `products`
+# and reads `po-state.products.<product>`, its tickets under `docs/<product>/tickets/`
+# (legacy layout: `docs/tickets/<product>/`). Old `lines` keys are still read.
+# No `products` → one row, the single-product project as before (plus T-984 layout).
 # KEEP LINE_NAME_RE and the declared-line filter in lockstep with
 # LINE_NAME_RE / project_lines in scripts/prdt.
 LINE_NAME_RE = re.compile(r"\A(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -299,7 +300,8 @@ cfg = cfg if isinstance(cfg, dict) else {}
 
 def declared_lines():
     """Added lines in declaration order — legal, unique, not the slug."""
-    raw = cfg.get("lines")
+    # T-1108 ⑦: `products`; the pre-v1.14 `lines` is still read.
+    raw = cfg.get("products") if "products" in cfg or "lines" not in cfg else cfg.get("lines")
     out, seen = [], set()
     for e in (raw if isinstance(raw, list) else []):
         name = e.get("name") if isinstance(e, dict) else None
@@ -370,7 +372,8 @@ def home_branch():
     return br
 
 
-st_lines = st.get("lines") if isinstance(st.get("lines"), dict) else {}
+_st_pk = "products" if "products" in st or "lines" not in st else "lines"
+st_lines = st.get(_st_pk) if isinstance(st.get(_st_pk), dict) else {}
 rows = [{"line": None, "label": slug, "st": st, "branch": home_branch()}]
 for e in declared_lines():
     ent = st_lines.get(e["name"])

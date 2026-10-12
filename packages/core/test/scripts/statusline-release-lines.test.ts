@@ -5,7 +5,7 @@
  *   - T-984 (user-confirmed 2026-10-06): `<label> <version> | branch: <b> |
  *     <stage> n/m | total tickets n/m | working …`; single-line: an empty dec/req pair
  *     is always its own last row, `dec 0 · req 0` when empty.
- *   - T-961: one row per release line (home first, then config `lines` in
+ *   - T-961: one row per release line (home first, then config `products`, T-1108 (old `lines` still read) in
  *     declaration order), one shared dec/req row; never more than 17 rows
  *     (the limit measured on the user's machine, T-961 log).
  *   - T-923: `<stage> n/m` counts this version's tickets of the stage (no `checks` record);
@@ -92,7 +92,7 @@ describe.skipIf(!READY)('statusline — T-961 req hides blocked user tasks', () 
 
 describe.skipIf(!READY)('statusline — T-961 req blocked rule spans lines', () => {
   test('a dep that is an open ticket in another line folder blocks the user task', () => {
-    seed({ slug: 'ntf-pm', lines: [{ name: 'ntf-archive' }] }, { stage: 'build', version: 'v2.2', lines: { 'ntf-archive': { stage: 'build', version: 'v1.2' } } })
+    seed({ slug: 'ntf-pm', products: [{ name: 'ntf-archive' }] }, { stage: 'build', version: 'v2.2', products: { 'ntf-archive': { stage: 'build', version: 'v1.2' } } })
     ticket('ntf-archive/v1.2', 'T-9102')
     ticket('v2.2', 'T-720', { assignee: 'user', deps: '[T-9102]' })
     ticket('v2.2', 'T-721', { assignee: 'user' })
@@ -162,9 +162,9 @@ describe.skipIf(!READY)('statusline — stage ticket count (T-923)', () => {
 describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
   test('one row per line, home first, then one shared dec · req row; each line reads its own state and folder', () => {
     seed(
-      { slug: 'ntf-pm', lines: [{ name: 'ntf-archive' }] },
+      { slug: 'ntf-pm', products: [{ name: 'ntf-archive' }] },
       {
-        stage: 'define', version: 'v2.2',         lines: { 'ntf-archive': { stage: 'build', version: 'v1.2' } },
+        stage: 'define', version: 'v2.2',         products: { 'ntf-archive': { stage: 'build', version: 'v1.2' } },
       },
     )
     ticket('v2.2', 'T-760', { type: 'decision', assignee: 'user' })
@@ -181,8 +181,8 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
   })
 
   test('multi-line keeps the shared dec · req row even when both are empty', () => {
-    seed({ slug: 'shop', lines: [{ name: 'android' }, { name: 'ios' }] },
-      { stage: 'ship', version: 'v3.4', lines: { android: { stage: 'build', version: 'v2.1' }, ios: { stage: 'define', version: 'v2.1' } } })
+    seed({ slug: 'shop', products: [{ name: 'android' }, { name: 'ios' }] },
+      { stage: 'ship', version: 'v3.4', products: { android: { stage: 'build', version: 'v2.1' }, ios: { stage: 'define', version: 'v2.1' } } })
     expect(rows()).toEqual([
       'shop v3.4 | stage: ship 0/0 | working 0',
       'android v2.1 | stage: build 0/0 | working 0',
@@ -192,6 +192,7 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
   })
 
   test('a declared line with no po-state entry still gets its row; an undeclared po-state line and illegal names get none', () => {
+    // legacy `lines` keys (pre-v1.14): still read, T-1108
     seed({ slug: 'ntf-pm', lines: [{ name: 'ntf-archive' }, { name: 'v2-bad' }, { name: 'ntf-pm' }, { name: 'ntf-archive' }] },
       { stage: 'build', version: 'v2.2', lines: { ghost: { stage: 'ship', version: 'v9.9' } } })
     const r = rows()
@@ -204,8 +205,8 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     try {
       execFileSync('git', ['init', '-q', '-b', 'release', sib])
       execFileSync('git', ['-C', sib, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'i'])
-      seed({ slug: 'ntf-pm', lines: [{ name: 'ntf-archive', code: { dir: path.relative(root, sib) } }] },
-        { stage: 'build', version: 'v2.2', lines: { 'ntf-archive': { stage: 'ship', version: 'v1.2' } } })
+      seed({ slug: 'ntf-pm', products: [{ name: 'ntf-archive', code: { dir: path.relative(root, sib) } }] },
+        { stage: 'build', version: 'v2.2', products: { 'ntf-archive': { stage: 'ship', version: 'v1.2' } } })
       expect(rows()[1]).toBe('ntf-archive v1.2 | stage: ship 0/0 | working 0 | branch: release')
     } finally {
       fs.rmSync(sib, { recursive: true, force: true })
@@ -214,8 +215,8 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
 
   test('never more than 17 rows: past the limit the last line rows fold into `+N lines`', () => {
     const names = Array.from({ length: 20 }, (_, i) => `line-${i + 1}`)
-    seed({ slug: 'big', lines: names.map((name) => ({ name })) },
-      { stage: 'build', version: 'v1.0', lines: Object.fromEntries(names.map((n) => [n, { stage: 'build', version: 'v1.0' }])) })
+    seed({ slug: 'big', products: names.map((name) => ({ name })) },
+      { stage: 'build', version: 'v1.0', products: Object.fromEntries(names.map((n) => [n, { stage: 'build', version: 'v1.0' }])) })
     const r = rows()
     expect(r).toHaveLength(17)
     expect(r[0]).toBe('big v1.0 | stage: build 0/0 | working 0')
