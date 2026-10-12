@@ -689,16 +689,250 @@ TICKET_INDEX_FIELDS = ("id", "slug", "type", "status", "assignee", "feature", "c
 WIKI_INDEX_FIELDS = ("title", "type", "status", "version", "ticket")
 
 
+# ── T-1104: the docs-layout seam — every docs/ path reader goes through here ──
+# Design: docs/artifacts/v1.14/product-first-docs-layout.html (fixed-path table,
+# layer table, ② ③ ⑤ ⑧ = A). Two layouts:
+#   product (To-Be) — `docs/_shared/` exists: product rows (prd · tickets ·
+#     artifacts · DEPLOY.md · wiki/retro--v*.md) live in `docs/<product>/`,
+#     everything else in `docs/_shared/`. First product = config `slug`.
+#   legacy (As-Is) — no `docs/_shared/`: an unmigrated single-product project,
+#     read AND written exactly as before (⑤ A). Every helper below returns the
+#     pre-v1.14 path in this layout, so its byte output is unchanged.
+DOCS_SHARED = "_shared"
+# Fixed-path table rows that live in the product folder; the rest go to _shared.
+PRODUCT_DOCS_KINDS = ("prd", "tickets", "artifacts", "DEPLOY.md")
+
+
+def docs_layout(root):
+    """"product" when `docs/_shared/` is a real dir, else "legacy"."""
+    if not root:
+        return "legacy"
+    d = Path(root) / "docs" / DOCS_SHARED
+    return "product" if d.is_dir() and not d.is_symlink() else "legacy"
+
+
+def project_products(root):
+    """Products in the product layout, first product (config `slug`) first, then
+    config `products[].name`, then any other `docs/<kebab>/` dir holding `prd/`
+    or `tickets/`. [] in the legacy layout."""
+    if docs_layout(root) != "product":
+        return []
+    root = Path(root)
+    cfg = read_json(root / ".prdt" / "config.json") or {}
+    out = []
+
+    def add(n):
+        if isinstance(n, str) and LINE_NAME_RE.match(n) and n not in out:
+            out.append(n)
+    add(cfg.get("slug") if isinstance(cfg, dict) else None)
+    prods = cfg.get("products") if isinstance(cfg, dict) else None
+    for e in (prods if isinstance(prods, list) else []):
+        add(e.get("name") if isinstance(e, dict) else None)
+    try:
+        dirs = sorted((root / "docs").iterdir())
+    except OSError:
+        dirs = []
+    for d in dirs:
+        if d.is_dir() and not d.is_symlink() and not d.name.startswith(("_", ".")) \
+                and ((d / "prd").is_dir() or (d / "tickets").is_dir()):
+            add(d.name)
+    return out
+
+
+def _product_from_docs_path(root, p, prods):
+    """`docs/<product>/…` (relative or absolute under root) → product, else None."""
+    if not isinstance(p, (str, Path)) or not str(p):
+        return None
+    s = str(p).split("#", 1)[0]
+    pp = Path(s)
+    if pp.is_absolute():
+        try:
+            pp = pp.relative_to(Path(root))
+        except ValueError:
+            return None
+    parts = pp.parts
+    if len(parts) >= 2 and parts[0] == "docs" and parts[1] in prods:
+        return parts[1]
+    return None
+
+
+def current_product(root, hint=None):
+    """The product in focus (design layer table, 현재 제품): the `docs/<p>/` of
+    `hint` (a `[ctx].prd_path` or a ticket file path) → po-state
+    `current_task.product` → the first product. None in the legacy layout."""
+    prods = project_products(root)
+    if not prods:
+        return None
+    p = _product_from_docs_path(root, hint, prods)
+    if p:
+        return p
+    st = read_json(Path(root) / ".prdt" / "po-state.json") or {}
+    ct = st.get("current_task") if isinstance(st, dict) else None
+    if isinstance(ct, dict):
+        if ct.get("product") in prods:
+            return ct["product"]
+        p = _product_from_docs_path(root, ct.get("path"), prods)
+        if p:
+            return p
+    return prods[0]
+
+
+def product_docs_dir(root, product=None):
+    """`docs/<product>/` (product layout) or `docs/` (legacy)."""
+    root = Path(root)
+    if docs_layout(root) != "product":
+        return root / "docs"
+    return root / "docs" / (product or current_product(root) or DOCS_SHARED)
+
+
+def shared_docs_dir(root):
+    """`docs/_shared/` (product layout) or `docs/` (legacy)."""
+    root = Path(root)
+    return root / "docs" / DOCS_SHARED if docs_layout(root) == "product" else root / "docs"
+
+
+def docs_path(root, kind, product=None):
+    """Home of one fixed-path row: `kind` is the first segment under docs/ in
+    the As-Is layout (`prd`, `tickets`, `wiki`, `design.md`, `po`, …)."""
+    if kind in PRODUCT_DOCS_KINDS:
+        return product_docs_dir(root, product) / kind
+    return shared_docs_dir(root) / kind
+
+
+def docs_rel(root, p):
+    """A docs path as the project-relative posix string messages print."""
+    try:
+        return Path(p).relative_to(Path(root)).as_posix()
+    except ValueError:
+        return str(p)
+
+
+def product_docs_dirs(root, kind):
+    """[(product|None, dir)] of `kind` across every product, first product
+    first; legacy → [(None, docs/<kind>)]. The product layout adds the shared
+    backlog (`docs/_shared/tickets/`, ① A) for `tickets` as product None."""
+    prods = project_products(root)
+    if not prods:
+        return [(None, Path(root) / "docs" / kind)]
+    out = [(p, Path(root) / "docs" / p / kind) for p in prods]
+    if kind == "tickets":
+        out.append((None, shared_docs_dir(root) / "tickets"))
+    return out
+
+
+def docs_layer_chain(root, rel, product=None):
+    """Read order for a layered doc (② A: both read, product wins where they
+    overlap): [product file, _shared file] — the ones that exist. `rel` is the
+    As-Is path under docs/ (`design.md`, `features/x.md`, `wiki/x.md`).
+    Legacy → [docs/<rel>] when it exists."""
+    root = Path(root)
+    if docs_layout(root) != "product":
+        p = root / "docs" / rel
+        return [p] if p.exists() else []
+    cands = [product_docs_dir(root, product) / rel, shared_docs_dir(root) / rel]
+    return [p for p in cands if p.exists()]
+
+
+def resolve_docs_ref(root, rel, product=None):
+    """③ A: an As-Is `docs/…` path (as written inside a closed PRD, a ticket, a
+    wiki page) → its To-Be file. Files stay byte-identical; the READER maps.
+    `docs/{prd,tickets,artifacts}/X` and `docs/DEPLOY.md` → `docs/<p>/…`;
+    `docs/{wiki,features}/X` → product file when it exists, else `_shared`;
+    any other `docs/X` → `docs/_shared/X`. A path already in the new layout,
+    a non-docs path, or the legacy layout → unchanged."""
+    if not isinstance(rel, str) or docs_layout(root) != "product":
+        return rel
+    parts = rel.split("/")
+    if len(parts) < 2 or parts[0] != "docs":
+        return rel
+    head = parts[1]
+    prods = project_products(root)
+    if head == DOCS_SHARED or head in prods:
+        return rel
+    p = product or current_product(root)
+    tail = "/".join(parts[1:])
+    if head in PRODUCT_DOCS_KINDS or (head == "wiki" and len(parts) == 3
+                                      and parts[2].startswith("retro--v")):
+        return f"docs/{p}/{tail}"
+    if head in ("wiki", "features") and (Path(root) / "docs" / p / tail).exists():
+        return f"docs/{p}/{tail}"
+    return f"docs/{DOCS_SHARED}/{tail}"
+
+
+def resolve_docs_link(root, base_dir, href, product=None):
+    """A relative link written in a docs file (closed PRD sections were written
+    against `docs/prd/`) → the project-relative posix path it opens. Joined
+    against `base_dir`; a target under `docs/<p>/X` that does not exist falls
+    back to `docs/_shared/X` (product → _shared, ③ A); an As-Is `docs/…`
+    result goes through `resolve_docs_ref`. None when it leaves the project."""
+    if not isinstance(href, str) or not href or "://" in href or href.startswith(("#", "/")):
+        return None
+    root = Path(root)
+    target = href.split("#", 1)[0]
+    try:
+        base_rel = Path(base_dir).relative_to(root) if Path(base_dir).is_absolute() else Path(base_dir)
+    except ValueError:
+        return None
+    joined = os.path.normpath((base_rel / target).as_posix())
+    if joined.startswith("..") or os.path.isabs(joined):
+        return None
+    joined = Path(joined).as_posix()
+    if docs_layout(root) != "product":
+        return joined
+    prods = project_products(root)
+    parts = joined.split("/")
+    if len(parts) >= 3 and parts[0] == "docs" and parts[1] in prods:
+        if not (root / joined).exists():
+            alt = "docs/" + DOCS_SHARED + "/" + "/".join(parts[2:])
+            if (root / alt).exists():
+                return alt
+        return joined
+    return resolve_docs_ref(root, joined, product)
+
+
+def docs_as_is_rel(root, rel):
+    """The inverse view of `resolve_docs_ref`: a To-Be `docs/<p>/X` or
+    `docs/_shared/X` → `docs/X`, so shape checks written against the As-Is
+    tree keep one pattern. Legacy / other paths → unchanged."""
+    if not isinstance(rel, str) or docs_layout(root) != "product":
+        return rel
+    parts = rel.split("/")
+    if len(parts) >= 3 and parts[0] == "docs" and (
+            parts[1] == DOCS_SHARED or parts[1] in project_products(root)):
+        return "docs/" + "/".join(parts[2:])
+    return rel
+
+
+def tickets_version_dir(root, version_id):
+    """Ticket dir of one version id: `v1.2` → the first (or current) product's
+    `tickets/v1.2`; `<p>/v1.2` → product p (product layout) or the T-951 line
+    dir `docs/tickets/<line>/v1.2` (legacy)."""
+    root = Path(root)
+    pref, bare = split_line_id(version_id)
+    if docs_layout(root) == "product":
+        return product_docs_dir(root, pref) / "tickets" / bare
+    return root / "docs" / "tickets" / version_id
+
+
 def scan_tickets(root):
     """Yield (dict, path, problems[]) per ticket md. Enum violations reported, row still listed.
 
     Scalar fields are str-or-None by the time they leave here (T-550): the index
     write, and every check reading these rows, gets one shape contract instead of
     whatever the md happened to hold."""
-    tdir = root / "docs" / "tickets"
-    if not tdir.is_dir():
-        return
-    lines = set(project_line_names(root))
+    # T-1104: product layout → every `docs/<p>/tickets/` plus the shared backlog;
+    # a non-first product's row carries `<p>/<version>` (⑧ A: prefix only
+    # outside its own folder). Legacy → `docs/tickets/` as before.
+    homes = product_docs_dirs(root, "tickets")
+    first = homes[0][0]
+    lines = set(project_line_names(root)) if first is None else set()
+    for prod, tdir in homes:
+        if tdir.is_dir():
+            yield from _scan_ticket_dir(root, tdir, lines,
+                                        prod if prod not in (None, first) else None)
+
+
+def _scan_ticket_dir(root, tdir, lines, prefix):
     for p in sorted(tdir.rglob("T-*.md")):
         fm, _ = parse_frontmatter(p)
         version = p.parent.name
@@ -706,6 +940,8 @@ def scan_tickets(root):
         # row carries the line id `<line>/<version>` (T-951 = A).
         if lines and p.parent.parent.parent == tdir and p.parent.parent.name in lines:
             version = f"{p.parent.parent.name}/{version}"
+        if prefix:
+            version = f"{prefix}/{version}"
         problems = []
         f = _index_fields(fm, TICKET_INDEX_FIELDS, problems)
         deps, deps_shape = index_list(fm.get("deps"))
@@ -824,7 +1060,23 @@ def wiki_store_pages(wdir, relative_to=None, prefix="", reserved=(), no_links_be
 
 
 def scan_wiki(root):
-    return wiki_store_pages(root / "docs" / "wiki", relative_to=root, no_links_below=Path(root))
+    # T-1104 (layer table: wiki — every layer read; same page name → product ›
+    # _shared). The current product's pages keep their bare names (a
+    # `[[retro--v1.10]]` from a _shared page still resolves); another
+    # product's carry `<product>:`. Legacy → docs/wiki alone, unchanged.
+    pages = list(wiki_store_pages(shared_docs_dir(root) / "wiki", relative_to=root,
+                                  no_links_below=Path(root)))
+    cur = current_product(root)
+    for prod in project_products(root):
+        wdir = Path(root) / "docs" / prod / "wiki"
+        if not wdir.is_dir():
+            continue
+        mine = list(wiki_store_pages(wdir, relative_to=root,
+                                     prefix="" if prod == cur else f"{prod}:",
+                                     no_links_below=Path(root)))
+        names = {pg["name"] for pg in mine}
+        pages = [pg for pg in pages if pg["name"] not in names] + mine
+    return pages
 
 
 def machine_wiki_root():
@@ -873,7 +1125,7 @@ def index_project_wiki(root, con):
 
 def reindex_wiki(root, con):
     pages = index_project_wiki(root, con)
-    idx = root / "docs" / "wiki" / "index.md"
+    idx = shared_docs_dir(root) / "wiki" / "index.md"
     text = render_wiki_index(pages, PROJECT_INDEX_HEADER)
     try:
         if os.path.islink(idx):
@@ -1359,13 +1611,16 @@ def read_meta_allowlist(root):
     docs/design.md) reaches projects initialized before it existed too."""
     cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
     lst = (cfg.get("meta") or {}).get("allowlist") if isinstance(cfg.get("meta"), dict) else None
+    # T-1104: product layout → `docs/_shared` + `docs/<p>` per product join the
+    # defaults (fixed-path table, meta allowlist row); legacy adds nothing.
+    merged = list(META_ALLOWLIST_DEFAULT)
+    if docs_layout(root) == "product":
+        merged += [f"docs/{DOCS_SHARED}"] + [f"docs/{p}" for p in project_products(root)]
     if isinstance(lst, list) and all(isinstance(x, str) for x in lst):
-        merged = list(META_ALLOWLIST_DEFAULT)
         for e in lst:
             if e not in merged:
                 merged.append(e)
-        return merged
-    return list(META_ALLOWLIST_DEFAULT)
+    return merged
 
 
 # ── meta doctor checks (T-428 · T-427 재발방지: 침묵 드리프트 신호화) ─────────
@@ -2824,7 +3079,8 @@ def _promote_read_src(root, page):
     regular by fstat. None when the page is absent; StateLinkError when any
     component is a link or not a plain file/directory (a cloned repository
     may plant `docs/wiki/x.md -> ~/elsewhere`)."""
-    fd, problem = state_open_dir(root, ["docs", "wiki"], create=False)
+    parts = ["docs", "wiki"] if docs_layout(root) == "legacy" else ["docs", DOCS_SHARED, "wiki"]
+    fd, problem = state_open_dir(root, parts, create=False)
     if fd is None:
         where, kind = problem
         if kind == "symlink":
@@ -2873,7 +3129,7 @@ def wiki_promote(root, args):
         shown = page if len(page) <= 60 else page[:60] + "…"
         sys.exit(f"prdt wiki promote: `{shown}` is not a usable page name (empty, slash, space, "
                  f"leading dot, `..`, or over {PROMOTE_NAME_MAX} bytes) — nothing was read or written")
-    src = root / "docs" / "wiki" / f"{page}.md"
+    src = docs_path(root, "wiki") / f"{page}.md"
     try:
         # lower(): on a case-insensitive volume (APFS) `INDEX` opens index.md
         text = None if page.lower() in ("index", "inbox", "log") else _promote_read_src(root, page)
@@ -3475,13 +3731,13 @@ def wiki_lint(root):
             tgt = mach_by_name.get(l) if l.startswith(MACHINE) else by_name.get(l)
             if tgt and tgt["status"] == "superseded" and pg["status"] == "live":
                 warns.append(f"wiki: live page {pg['name']} references superseded [[{l}]]")
-    inbox = root / "docs" / "wiki" / "inbox.md"
+    inbox = docs_path(root, "wiki") / "inbox.md"
     if inbox.exists():
         n = sum(1 for l in inbox.read_text(encoding="utf-8").splitlines()
                 if l.strip().startswith("-"))
         if n >= INBOX_PILE_LINES:
             warns.append(f"wiki: inbox has {n} uncurated lines (≥{INBOX_PILE_LINES}) — run curate-wiki")
-    idx = root / "docs" / "wiki" / "index.md"
+    idx = docs_path(root, "wiki") / "index.md"
     if pages and not idx.exists():
         warns.append("wiki: index.md missing — run `prdt wiki reindex`")
     # C1 (design linkage §2) — the same `[[…]]` scan, widened to docs/prd/**
@@ -3570,7 +3826,7 @@ def wiki_single_site_warnings(root, trows):
     not a live restatement; a `done` ticket is closed record the same way;
     docs/prd/versions/*.md and docs/artifacts/** are never globbed here at
     all, for the same reason; `.html` never matches an `*.md` glob."""
-    wiki_dir = root / "docs" / "wiki"
+    wiki_dir = docs_path(root, "wiki")
     sites = []  # (slug, path, subject_tokens, claim_tokens)
     if wiki_dir.is_dir():
         for p in sorted(wiki_dir.glob("*.md")):
@@ -3601,18 +3857,18 @@ def wiki_single_site_warnings(root, trows):
                 if any(t in text for t in subj_tokens) and any(t in text for t in claim_tokens):
                     warns.append(f"wiki-single-site: {rel_path}:{lineno} restates {slug} without citing it")
 
-    prd_path = root / "docs" / "prd" / "PRD.md"
+    prd_path = docs_path(root, "prd") / "PRD.md"
     if prd_path.is_file():
-        _scan("docs/prd/PRD.md", _read_lines(prd_path))
+        _scan(docs_rel(root, prd_path), _read_lines(prd_path))
 
-    design_path = root / "docs" / "design.md"
-    if design_path.is_file():
-        _scan("docs/design.md", _read_lines(design_path))
+    for design_path in docs_layer_chain(root, "design.md"):
+        if design_path.is_file():
+            _scan(docs_rel(root, design_path), _read_lines(design_path))
 
-    features_dir = root / "docs" / "features"
-    if features_dir.is_dir():
-        for p in sorted(features_dir.glob("*.md")):
-            _scan(str(p.relative_to(root)), _read_lines(p))
+    for features_dir in dict.fromkeys((docs_path(root, "features"), product_docs_dir(root) / "features")):
+        if features_dir.is_dir():
+            for p in sorted(features_dir.glob("*.md")):
+                _scan(str(p.relative_to(root)), _read_lines(p))
 
     for pg in scan_wiki(root):
         if pg["type"] in ("decision", "retro", "learning"):
@@ -3683,11 +3939,11 @@ def _live_sot_discipline_docs(root):
     docs/retrospectives/, docs/artifacts/ is out of scope on the same
     closed-record logic."""
     out = []
-    design = root / "docs" / "design.md"
-    if design.is_file():
-        out.append(design)
+    for design in docs_layer_chain(root, "design.md"):
+        if design.is_file():
+            out.append(design)
     for persona in ("po", "designer", "developer", "qa"):
-        pdir = root / "docs" / persona
+        pdir = docs_path(root, persona)
         h = pdir / "habit.md"
         if h.is_file():
             out.append(h)
@@ -5219,10 +5475,12 @@ def next_ticket_id(root):
     `scan_tickets` problem row, not this allocator's job to resolve, but
     either one already having claimed a number must still keep this call
     from reissuing it."""
-    tdir = root / "docs" / "tickets"
+    # T-1104: one number space per project — every product's dir + _shared.
     max_n = 0
-    if tdir.is_dir():
-        idre = re.compile(r"^T-(\d+)$")
+    idre = re.compile(r"^T-(\d+)$")
+    for _prod, tdir in product_docs_dirs(root, "tickets"):
+        if not tdir.is_dir():
+            continue
         for p in tdir.rglob("T-*.md"):
             m = idre.match(p.stem)
             if m:
@@ -5338,7 +5596,7 @@ def cmd_tickets_new(args, root):
         return f"## {k}\n\n"
     body = "".join(_section(k) for k in body_keys)
     text = "\n".join(fm_lines) + "\n\n" + body
-    tdir = root / "docs" / "tickets" / version
+    tdir = tickets_version_dir(root, version)
     tdir.mkdir(parents=True, exist_ok=True)
     path = tdir / f"{tid}.md"
     if path.exists():
@@ -6089,6 +6347,9 @@ def viewer_anchor(root, target):
         rel = p.relative_to(Path(root).resolve()).as_posix()
     except ValueError:
         return None
+    # T-1104: classify by the As-Is shape (`docs/<p>/x` / `docs/_shared/x` →
+    # `docs/x`); the anchor itself stays the real repo-relative path.
+    real, rel = rel, docs_as_is_rel(root, rel)
     # T-973: an artifact is carried by manifest membership, any extension
     # (the page's buildAnchors keys every manifest entry); everything else
     # the viewer carries is a markdown file that must exist — a path to
@@ -6103,7 +6364,7 @@ def viewer_anchor(root, target):
         return p.stem
     if rel == "docs/prd/PRD.md" or re.fullmatch(r"docs/prd/versions/[^/]+\.md", rel) \
             or re.fullmatch(r"docs/features/[^/]+\.md", rel):
-        return rel
+        return real
     if rel.startswith("docs/artifacts/"):
         # T-785 code review #6: the page's own anchor table (buildAnchors)
         # keys an artifact entry off `docs/artifacts/manifest.json` alone —
@@ -6117,7 +6378,7 @@ def viewer_anchor(root, target):
         if art_path:
             entries, _err, _malformed, _present = read_artifact_manifest(root)
             if (bucket, art_path) in entries:
-                return rel
+                return real
         return None
     return None
 
@@ -7500,7 +7761,9 @@ def cmd_history(_args):
         "SELECT version, COUNT(*), SUM(status='done'), SUM(status='open'), SUM(status='dropped') "
         "FROM tickets GROUP BY version ORDER BY version").fetchall()
     for v, total, done, opn, dropped in rows:
-        retro = root / "docs" / "wiki" / f"retro--{v}.md"
+        _rp, _rv = split_line_id(v)
+        retro = (product_docs_dir(root, _rp) / "wiki" / f"retro--{_rv}.md"
+                 if docs_layout(root) == "product" else root / "docs" / "wiki" / f"retro--{v}.md")
         print(f"{v:<10} {total} tickets · {done or 0} done · {opn or 0} open · {dropped or 0} dropped"
               + (f" · retro--{v}" if retro.exists() else ""))
     if not rows:
@@ -9880,8 +10143,8 @@ ARTIFACT_EXTS = (".md", ".mmd", ".mermaid", ".html", ".json", ".excalidraw.json"
 ARTIFACT_DERIVED_KEYS = ("bucket", "path", "ticket", "kind", "status", "lang", "added_at")
 
 
-def artifacts_root(root):
-    return root / "docs" / "artifacts"
+def artifacts_root(root, product=None):
+    return docs_path(root, "artifacts", product)
 
 
 def artifact_manifest_path(root):
@@ -9913,7 +10176,11 @@ def bucket_id(bucket):
     """A bucket's manifest id: `<version>`, or `<line>/<version>` for an added line."""
     # T-1082: the real artifacts root (docs/artifacts), not any dir named
     # `artifacts` — a line called `artifacts` keeps its `artifacts/` prefix.
-    home = bucket.parent.name == "artifacts" and bucket.parent.parent.name == "docs"
+    # T-1104: product layout — `docs/<p>/artifacts/<v>`, one manifest per product.
+    home = bucket.parent.name == "artifacts" and (
+        bucket.parent.parent.name == "docs"
+        or (bucket.parent.parent.parent.name == "docs"
+            and (bucket.parent.parent.parent / DOCS_SHARED).is_dir()))
     return bucket.name if home else f"{bucket.parent.name}/{bucket.name}"
 
 
@@ -10036,7 +10303,8 @@ def derive_artifact_ticket(root, bucket, rel):
                 break
     if not title:
         return None
-    known = {q.stem for q in (root / "docs" / "tickets").rglob("T-*.md")}
+    known = {q.stem for _p, td in product_docs_dirs(root, "tickets") if td.is_dir()
+             for q in td.rglob("T-*.md")}
     for cand in ARTIFACT_TICKET_ANY_RE.findall(title):
         if cand in known:
             return cand
@@ -10417,7 +10685,7 @@ def cmd_artifacts(args):
 
 
 def feature_spec_dir(root):
-    return Path(root) / "docs" / "features"
+    return docs_path(root, "features")
 
 
 def ticket_feature_values(tickets):
@@ -11326,7 +11594,7 @@ def prd_line_layout_warnings(root, st):
     lines = project_line_names(root)
     if not lines:
         return []
-    prd_md = root / "docs" / "prd" / "PRD.md"
+    prd_md = docs_path(root, "prd") / "PRD.md"
     try:
         text = prd_md.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -11597,7 +11865,7 @@ def prd_layout_warnings(root, st):
     round itself, whose section is the open one in PRD.md (or not yet written
     between close and Define)."""
     root = Path(root)
-    prd_dir = root / "docs" / "prd"
+    prd_dir = docs_path(root, "prd")
     prd_md = prd_dir / "PRD.md"
     vdir = prd_dir / "versions"
     warns = []
@@ -11779,7 +12047,7 @@ def prd_layout_warnings(root, st):
                          f"a section starts with `## {own}` on line 1")
 
     # Rounds with tickets and no PRD record — the gap the lump hid.
-    tdir = root / "docs" / "tickets"
+    tdir = docs_path(root, "tickets")
     if tdir.is_dir():
         current = {k for k in (_version_id_canon(v) for v in prd_section_ids) if k is not None}
         if open_key is not None:
@@ -12209,7 +12477,7 @@ def version_set_from_disk(root, st):
             if k is not None and k not in ids:
                 ids[k] = v.strip()
 
-    vdir = root / "docs" / "prd" / "versions"
+    vdir = docs_path(root, "prd") / "versions"
     if vdir.is_dir():
         for f in sorted(vdir.glob("*.md")):
             if PRD_VERSION_FILE_RE.match(f.name):
@@ -12218,7 +12486,7 @@ def version_set_from_disk(root, st):
     if isinstance(pv, str) and pv.strip():
         add(pv)
     else:
-        prd_md = root / "docs" / "prd" / "PRD.md"
+        prd_md = docs_path(root, "prd") / "PRD.md"
         if prd_md.is_file():
             try:
                 text = prd_md.read_text(encoding="utf-8")
@@ -12227,7 +12495,7 @@ def version_set_from_disk(root, st):
             if text:
                 for v, _ in _prd_version_headings(text):
                     add(v)
-    tdir = root / "docs" / "tickets"
+    tdir = docs_path(root, "tickets")
     if tdir.is_dir():
         for d in sorted(tdir.iterdir()):
             if d.is_dir():
@@ -12375,7 +12643,7 @@ def _prd_open_section(root, st, line=None):
     (T-657's own posture: `prd_layout_warnings` is the check that judges the
     tree shape itself)."""
     root = Path(root)
-    prd_md = root / "docs" / "prd" / "PRD.md"
+    prd_md = docs_path(root, "prd") / "PRD.md"
     try:
         text = prd_md.read_text(encoding="utf-8")
     except OSError:
@@ -12634,7 +12902,7 @@ def _prd_item_keys_for_version(root, st, version_str):
     open_v, open_body = _prd_open_section(root, st, line)
     if open_v is not None and _version_id_canon(open_v) == vkey:
         return {k for _, k, _ in _prd_h4_items(open_body) if k}
-    vdir = Path(root) / "docs" / "prd" / "versions"
+    vdir = docs_path(root, "prd") / "versions"
     if line is not None:
         vdir = vdir / line
     if vdir.is_dir():
@@ -12976,15 +13244,15 @@ def _reversed_section_lines(text):
 def _prd_and_ticket_files(root):
     root = Path(root)
     out = []
-    prd_md = root / "docs" / "prd" / "PRD.md"
+    prd_md = docs_path(root, "prd") / "PRD.md"
     if prd_md.is_file():
         out.append(prd_md)
-    vdir = root / "docs" / "prd" / "versions"
+    vdir = docs_path(root, "prd") / "versions"
     if vdir.is_dir():
         out += sorted(vdir.glob("*.md"))
-    tdir = root / "docs" / "tickets"
-    if tdir.is_dir():
-        out += sorted(tdir.rglob("T-*.md"))
+    for _prod, tdir in product_docs_dirs(root, "tickets"):
+        if tdir.is_dir():
+            out += sorted(tdir.rglob("T-*.md"))
     return out
 
 
@@ -14900,7 +15168,7 @@ def schedule_report(root, version):
     writes at close — is never touched. Returns (path, row_count, bad_lines)."""
     rows, bad = read_schedule_log(root)
     block, n = schedule_report_text(rows, version)
-    p = Path(root) / "docs" / "artifacts" / version / "schedule-observation.md"
+    p = artifacts_root(Path(root)) / version / "schedule-observation.md"
     try:
         cur = p.read_text(encoding="utf-8")
     except OSError:
@@ -15467,7 +15735,7 @@ def design_token_name_warnings(root):
     the file its `ds_html:` names must exist on disk. Silent entirely
     (both halves) when `tokens:` is absent."""
     root = Path(root)
-    design_path = root / "docs" / "design.md"
+    design_path = docs_path(root, "design.md")
     if not design_path.is_file():
         return []
     fm, _ = parse_frontmatter(design_path)
