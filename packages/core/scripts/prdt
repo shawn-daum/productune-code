@@ -314,7 +314,7 @@ def read_json(path):
         return None
 
 
-def atomic_write_text(path, text, mode=0o644):
+def atomic_write_text(path, text, mode=0o644, errors="strict"):
     """Symlink-proof atomic write (T-656) — the CLI-side counterpart of
     `atomic_write` in prdt-post-dispatch.sh (T-647 precedent, same primitive).
     A fixed `<path>.tmp` name is project-local and clone-carried, so a cloned
@@ -346,7 +346,7 @@ def atomic_write_text(path, text, mode=0o644):
                 raise
             os.unlink(tmp)  # our own leftover from a killed run, or a planted link — gone unopened either way
     os.fchmod(fd, mode)  # os.open()'s mode is masked by umask — force the exact bits requested
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
+    with os.fdopen(fd, "w", encoding="utf-8", errors=errors) as f:
         f.write(text)
     os.replace(tmp, path)
     note_docs_write(path, before, text)
@@ -17453,18 +17453,88 @@ def _env_quote(value):
     return None
 
 
-def _machine_env_store(values):
-    """The one write of the machine store: dir 0700, file 0600, atomic. An
-    empty store removes the file."""
+def _machine_env_text():
+    """Raw text of the machine store ("" when absent), decoded so that every
+    byte round-trips (surrogateescape) — set/unset rewrite only the lines of
+    the key they touch and write every other byte back as read (T-1110 S1:
+    re-serializing every key turned a value no quote style holds into the
+    literal `None`). A link at the store directory or file is refused."""
     p = machine_env_file()
-    if not values:
-        try:
-            p.unlink()
-        except FileNotFoundError:
-            pass
-        return
-    p.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    atomic_write_text(p, "".join(f"{k}={_env_quote(v)}\n" for k, v in values.items()), mode=0o600)
+    for q in (p.parent, p):
+        if q.is_symlink():
+            _env_fail("기기 범위 env 저장소가 링크라서 쓰지 않았어요. 저장소 경로를 확인하세요.")
+    try:
+        with p.open("r", encoding="utf-8", errors="surrogateescape", newline="") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+    except OSError as e:
+        _env_fail(f"기기 범위 env 저장소를 읽을 수 없어요: {e.strerror or 'read error'}", 3)
+
+
+def _env_spans(lines):
+    """[(key, first_line, end_line_exclusive)] over `text.split("\\n")` — the
+    same line grammar as `_env_parse_values` (open-quote continuation lines
+    belong to their key), so a span covers exactly the lines one key owns."""
+    spans = []
+    n = len(lines)
+    i = 0
+    while i < n:
+        i0 = i
+        raw = lines[i]
+        i += 1
+        if i0 == 0 and raw.startswith("﻿"):
+            raw = raw[1:]
+        parsed = _env_parse_line(raw)
+        if parsed is None:
+            continue
+        key, value = parsed
+        if value and value[0] in ("'", '"') and value.find(value[0], 1) == -1:
+            while i < n:
+                cont = _env_strip_cr(lines[i])
+                i += 1
+                if cont.find(value[0]) != -1:
+                    break
+        spans.append((key, i0, i))
+    return spans
+
+
+@contextlib.contextmanager
+def _machine_env_locked(fail_head):
+    """Serialize set/unset (flock on the store directory) and hold the
+    directory at 0700 — a directory that already existed wider is tightened."""
+    d = machine_env_file().parent
+    for q in (d, machine_env_file()):
+        if q.is_symlink():
+            _env_fail("기기 범위 env 저장소가 링크라서 쓰지 않았어요. 저장소 경로를 확인하세요.")
+    try:
+        d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(d, 0o700)
+        fd = os.open(d, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as e:
+        _env_fail(f"{fail_head}: 기기 범위 env 저장소를 열 수 없어요 ({e.strerror or 'error'}).", 3)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def _machine_env_store(text, fail_head, fail_tail):
+    """The one write of the machine store: file 0600, atomic, bytes of every
+    line not being changed kept as read. A store with nothing but blank lines
+    left is removed. A write failure is one line, never a traceback."""
+    p = machine_env_file()
+    try:
+        if not text.strip():
+            try:
+                p.unlink()
+            except FileNotFoundError:
+                pass
+            return
+        atomic_write_text(p, text, mode=0o600, errors="surrogateescape")
+    except OSError as e:
+        _env_fail(f"{fail_head}: 기기 범위 env 저장소에 쓸 수 없어요 ({e.strerror or 'write error'}). {fail_tail}", 3)
 
 
 def _env_product_code_keys():
@@ -17497,6 +17567,11 @@ def _env_product_code_keys():
 
 
 _ENV_NO_TTY = "저장 실패: 값을 숨겨서 받을 수 있는 터미널이 아니에요. 저장한 키가 없어요.\n다음: 터미널에서 직접 실행하세요."
+_ENV_UNSET_NO_TTY = "지우기 실패: 터미널에서만 지울 수 있어요. 지운 키가 없어요.\n다음: 터미널에서 직접 실행하세요."
+
+
+def _env_is_terminal():
+    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def _env_set(args_rest):
@@ -17506,7 +17581,7 @@ def _env_set(args_rest):
     if not _ENV_MACHINE_KEY_RE.match(key):
         # never echoed: a mistaken argument may BE the value (T-677 precedent)
         _env_fail("저장 실패: 키 이름이 맞지 않아요. 영문 대문자 · 숫자 · _ 만 쓸 수 있어요.\n다음: 키 이름을 고쳐 다시 실행하세요.")
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+    if not _env_is_terminal():
         _env_fail(_ENV_NO_TTY)
     try:
         import termios
@@ -17516,10 +17591,12 @@ def _env_set(args_rest):
         _env_fail(_ENV_NO_TTY)
     hidden = old[:]
     hidden[3] &= ~termios.ECHO
-    print(f"{key} 의 값을 입력하세요 (화면에 보이지 않아요)", flush=True)
     try:
-        termios.tcsetattr(fd, termios.TCSADRAIN, hidden)
+        # ECHO goes off BEFORE the prompt is printed (T-1110): a value typed
+        # ahead of the prompt is never echoed by the terminal.
+        termios.tcsetattr(fd, termios.TCSANOW, hidden)
         try:
+            print(f"{key} 의 값을 입력하세요 (화면에 보이지 않아요)", flush=True)
             line = sys.stdin.readline()
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
@@ -17529,24 +17606,44 @@ def _env_set(args_rest):
     value = line.rstrip("\r\n")
     if not value:
         _env_fail("저장 실패: 값이 비어 있어요. 저장한 키가 없어요.")
-    if _env_quote(value) is None:
+    quoted = _env_quote(value)
+    if quoted is None:
         _env_fail("저장 실패: 값에 저장할 수 없는 문자가 있어요 (줄바꿈 · 제어 문자 · 작은따옴표와 큰따옴표를 함께 쓴 값). 저장한 키가 없어요.")
-    values = _machine_env_values()
-    values[key] = value
-    _machine_env_store(values)
+    with _machine_env_locked("저장 실패"):
+        text = _machine_env_text()
+        lines = text.split("\n")
+        mine = [s for s in _env_spans(lines) if s[0] == key]
+        if mine:
+            # the last occurrence is the live one (dotenv: last wins); only its lines change
+            _, i0, i1 = mine[-1]
+            head = re.match(r"﻿?[ \t]*(?:export[ \t]+)?", lines[i0]).group(0)
+            cr = "\r" if lines[i1 - 1].endswith("\r") else ""
+            lines[i0:i1] = [f"{head}{key}={quoted}{cr}"]
+        elif lines[-1] == "":
+            lines.insert(len(lines) - 1, f"{key}={quoted}")
+        else:
+            lines += [f"{key}={quoted}", ""]
+        _machine_env_store("\n".join(lines), "저장 실패", "저장한 키가 없어요.")
     print(f"{key} 를 기기 범위에 저장했어요 ({_env_shown_path(machine_env_file())}). 이 기기의 모든 프로젝트가 쓸 수 있어요.")
 
 
 def _env_unset(args_rest):
     if len(args_rest) != 1:
         _env_fail("지우기 실패: 키 이름 하나가 필요해요. 지운 키가 없어요.\n다음: prdt env unset <KEY> 로 실행하세요.", 2)
+    # same floor as set (T-1110): an agent with no terminal never deletes a user's credential
+    if not _env_is_terminal():
+        _env_fail(_ENV_UNSET_NO_TTY)
     key = args_rest[0]
-    values = _machine_env_values()
-    if not _ENV_MACHINE_KEY_RE.match(key) or key not in values:
-        shown = key if _ENV_MACHINE_KEY_RE.match(key) and len(key) <= 64 else "그 키"
-        _env_fail(f"지우기 실패: {shown} 가 기기 범위에 없어요. 지운 키가 없어요.\n다음: prdt env ls 로 키 이름을 확인하세요.")
-    del values[key]
-    _machine_env_store(values)
+    with _machine_env_locked("지우기 실패"):
+        text = _machine_env_text()
+        lines = text.split("\n")
+        mine = [s for s in _env_spans(lines) if s[0] == key] if _ENV_MACHINE_KEY_RE.match(key) else []
+        if not mine:
+            # never echoed: the token is not a stored key name, and may be a value (T-1110)
+            _env_fail("지우기 실패: 그 키가 기기 범위에 없어요. 지운 키가 없어요.\n다음: prdt env ls 로 키 이름을 확인하세요.")
+        for _, i0, i1 in reversed(mine):
+            del lines[i0:i1]
+        _machine_env_store("\n".join(lines), "지우기 실패", "지운 키가 없어요.")
     print(f"{key} 을 기기 범위에서 지웠어요")
 
 

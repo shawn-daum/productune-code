@@ -273,7 +273,7 @@ IFS= read -r -d '' EV 2>/dev/null
 # names) stays case-SENSITIVE as intended.
 shopt -s nocasematch
 case "$EV" in
-  *.env*|*.pem*|*.key*|*.p12*|*credentials.json*|*prdt*env*) _hit=1 ;; # T-1109: `prdt env set|unset` and ~/.prdt/env/ paths
+  *.env*|*.pem*|*.key*|*.p12*|*credentials.json*|*prdt*env*|*\$*env*) _hit=1 ;; # T-1109: `prdt env set|unset` and ~/.prdt/env/ paths · T-1110: `$x env unset`
   *) _hit=0 ;;
 esac
 shopt -u nocasematch
@@ -1144,6 +1144,72 @@ sub judge_command {
   }
 }
 
+# T-1110: `prdt env …` judged over the WHOLE command text with quoting
+# erased, before any tokenizer — quotes and backslashes are dropped and the
+# list punctuation of a wrapper (a pty.spawn([…]) list, a $(…) group) becomes
+# a space, so `prdt "env" "unset"`, `python3 <path>/prdt env set`, a string
+# piped into bash, an expect/pty.spawn script, `$x env unset` and an xargs
+# feed all reach this one check. Rule: after `prdt env` (or `<any $-word>
+# env`) the next word must be a plain literal other than set/unset — set,
+# unset, nothing (xargs), or a word the shell would still expand is a
+# write-deny. `env run` then judges its child: a printer, a shell, or an
+# interpreter given inline code / no script would put the injected values on
+# screen — a run-deny. A command QUOTING such text (a commit message) is
+# denied too: the price of judging quoted text that bash may still run.
+my %ENV_PRINTER = map { $_ => 1 } qw(env printenv set export declare typeset compgen alias cat head tail less more most bat strings xxd od hexdump awk gawk mawk nawk sed grep egrep fgrep rg ag ps echo printf tee script expect unbuffer sudo doas nohup time exec command builtin eval xargs nice timeout watch tmux screen strace dtruss ltrace gdb lldb dd jq yq sort uniq cut tr base64 openssl launchctl);
+my %ENV_SHELL = map { $_ => 1 } qw(sh bash zsh dash ksh mksh fish csh tcsh busybox);
+my %ENV_INTERP = map { $_ => 1 } qw(python pypy node nodejs deno bun ruby irb perl php lua luajit osascript rscript r tclsh wish jshell julia swift groovy elixir iex erl);
+my %ENV_RUNNER = map { $_ => 1 } qw(npx pnpm npm yarn bunx uv uvx poetry pipenv corepack dotenv);
+sub env_edge { my ($t) = @_; $t =~ s/\A[\[\{]+//; $t =~ s/[\]\}]+\z//; return $t }
+sub env_base { my ($t) = @_; $t = lc(env_edge($t)); $t =~ s{\A.*/}{}; return $t }
+sub env_inline {
+  for my $a (@_) {
+    return 1 if $a eq "-" || $a =~ /\A--(?:eval|print|interactive|command|exec)/ || $a =~ /\A-[A-Za-z]*[ceEpir]/;
+    next if $a =~ /\A-/;
+    return lc($a) =~ /\A(?:eval|repl)\z/ ? 1 : 0;
+  }
+  return 1;
+}
+sub env_child_bad {
+  my ($c, @rest) = @_;
+  return 1 if env_edge($c) !~ /\A[A-Za-z0-9_.\/+-]+\z/;
+  my $b = env_base($c);
+  (my $bi = $b) =~ s/[0-9.]+\z//;
+  return 1 if $ENV_PRINTER{$b} || $ENV_SHELL{$b};
+  return env_inline(@rest) if $ENV_INTERP{$bi};
+  if ($ENV_RUNNER{$b}) {
+    for my $k (0 .. $#rest) {
+      my $rb = env_base($rest[$k]);
+      (my $rbi = $rb) =~ s/[0-9.]+\z//;
+      return 1 if $ENV_PRINTER{$rb} || $ENV_SHELL{$rb};
+      return 1 if $ENV_INTERP{$rbi} && env_inline(@rest[$k + 1 .. $#rest]);
+    }
+  }
+  return 0;
+}
+sub env_cli_verdict {
+  my ($s) = @_;
+  $s =~ s/[\x27"\\`]//g;
+  $s =~ s/[,()]/ /g;
+  $s =~ s/([;&|\n])/ $1 /g;
+  my @t = grep { $_ ne "" } split /[ \t\r]+/, $s;
+  for my $i (0 .. $#t - 1) {
+    my $isprdt = env_base($t[$i]) eq "prdt";
+    next unless $isprdt || index($t[$i], "\$") >= 0;
+    next unless env_base($t[$i + 1]) eq "env";
+    my $sub = $i + 2 <= $#t ? env_edge($t[$i + 2]) : "";
+    $sub = "" if $sub =~ /\A[;&|\n]\z/;
+    next if $sub eq "" && !$isprdt;  # `echo $HOME env` names no subcommand; a bare `prdt env` is an xargs feed
+    return "deny-write" if $sub !~ /\A[A-Za-z0-9_.-]+\z/ || $sub =~ /\A(?:un)?set\z/i;
+    next unless lc($sub) eq "run";
+    my @a;
+    for my $j ($i + 3 .. $#t) { last if $t[$j] =~ /\A[;&|\n]\z/; push @a, $t[$j] }
+    shift @a if @a && $a[0] eq "--";
+    return "deny-run" if @a && env_child_bad(@a);
+  }
+  return "";
+}
+
 my $tool = defined $ARGV[0] ? $ARGV[0] : "";
 my $in;
 { local $/; $in = <STDIN>; }
@@ -1154,6 +1220,8 @@ if ($tool eq "Read") {
   exit 0;
 }
 if ($tool eq "Bash") {
+  my $ev = env_cli_verdict($in);
+  if ($ev ne "") { print $ev; exit 0 }
   my ($outer, @subs) = extract_substitutions(strip_heredocs($in));
   @SUBST = @subs;
   judge_command($outer);
@@ -1187,6 +1255,7 @@ if [ -z "$PERL" ]; then
 fi
 VERDICT="$(printf '%s' "$SUBJECT" | "$PERL" -C0 -e "$PRDT_JUDGE" -- "$TOOL_NAME" 2>/dev/null)"
 [ "$VERDICT" = "deny" ] && deny_and_exit
+[ "$VERDICT" = "deny-run" ] && { DENY_MSG='[prdt secret guard] Denied: `prdt env run --` hands the stored credential values to its child; a printer (env, printenv, set, export -p, cat …), a shell, or an interpreter given inline code (-c / -e) as that child would print them — values must not enter the transcript (T-1110). Run the real program directly, e.g. `prdt env run -- pnpm dev`; see what is stored with `prdt env ls`.'; deny_and_exit; }
 [ "$VERDICT" = "deny-write" ] && { DENY_MSG='[prdt secret guard] Denied: the machine env store (~/.prdt/env/.env) is written only by the user own `prdt env set <KEY>` / `prdt env unset <KEY>`, typed in a terminal at a hidden prompt — a credential value never enters agent context (T-1109). Ask the user to run it; check what is stored with `prdt env ls`.'; deny_and_exit; }
 
 exit 0
