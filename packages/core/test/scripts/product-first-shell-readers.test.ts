@@ -94,6 +94,8 @@ describe('every shell copy of the product derivation equals the CLI', () => {
     ['legacy', { slug: 'proj' }, false, ['tickets', 'prd']],
     ['one-product', { slug: 'proj' }, true, ['proj/prd', 'proj/tickets']],
     ['slug-first-then-products', { slug: 'beta', products: [{ name: 'alpha' }, { name: 'beta' }, { name: 'Bad Name' }, { name: 'v2' }, { name: 'backlog' }] }, true, ['alpha/prd', 'beta/tickets', 'gamma/tickets', 'zeta/prd']],
+    ['slug-needs-normalizing', { slug: 'Alpha-App', products: [{ name: 'beta' }] }, true, ['alpha-app/prd', 'beta/tickets']],
+    ['slug-illegal-folder-name', { slug: 'V2 Thing!' }, true, ['product/prd', 'zeta/tickets']],
     ['dir-discovery-only', {}, true, ['zeta/tickets', 'alpha/prd', '_hidden/prd', '.dot/tickets', 'Mixed/prd', 'plain']],
     ['no-config', null as any, true, ['solo/prd']],
   ]

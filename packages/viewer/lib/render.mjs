@@ -1926,6 +1926,16 @@ function prdStoreInner(prd, currentVersion, repoRootHref, tickets) {
   return groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups: prdGroups(prd, currentVersion, repoRootHref, tickets) })
 }
 
+/**
+ * A closed round's relative links were written while the section lived in PRD.md,
+ * i.e. against its `prd/` dir (`docs/prd` · `docs/<p>/prd`) — not against
+ * `prd/versions/[<line>/]` where the file sits now (T-1104 ③).
+ */
+function closedRoundBaseDir(rel) {
+  const i = rel.indexOf('/versions/')
+  return i === -1 ? path.dirname(rel) : rel.slice(0, i)
+}
+
 function prdGroups(prd, currentVersion, repoRootHref, tickets, line = null) {
   const closedRounds = [...prd.closed].sort((a, b) =>
     compareVersionIdsDesc(a.name.replace(/\.md$/, ''), b.name.replace(/\.md$/, '')),
@@ -1934,7 +1944,7 @@ function prdGroups(prd, currentVersion, repoRootHref, tickets, line = null) {
     { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix: line ? `prd-${line}` : 'prd', line }) },
     ...closedRounds.map((c) => {
       const id = c.name.replace(/\.md$/, '')
-      return { key: id, label: id, bodyHtml: `<div class="v-body">${md(c.body, path.dirname(c.rel), repoRootHref, { discipline: true })}</div>` }
+      return { key: id, label: id, bodyHtml: `<div class="v-body">${md(c.body, closedRoundBaseDir(c.rel), repoRootHref, { discipline: true })}</div>` }
     }),
   ]
   return groups

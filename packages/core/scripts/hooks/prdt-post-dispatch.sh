@@ -129,6 +129,14 @@ from datetime import datetime, timezone
 _PROD_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 
 
+def _product_dir_name(slug):
+    """config `slug` -> its `docs/<kebab>/` folder name (same rule as `product_dir_name` in scripts/prdt)."""
+    if not isinstance(slug, str) or not slug:
+        return None
+    k = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")
+    return k if _PROD_NAME_RE.match(k) else "product"
+
+
 def project_products(root):
     sh = os.path.join(root, "docs", "_shared")
     if not os.path.isdir(sh) or os.path.islink(sh):
@@ -144,7 +152,7 @@ def project_products(root):
     def add(n):
         if isinstance(n, str) and _PROD_NAME_RE.match(n) and n not in out:
             out.append(n)
-    add(cfg.get("slug"))
+    add(_product_dir_name(cfg.get("slug")))
     prods = cfg.get("products")
     for e in (prods if isinstance(prods, list) else []):
         add(e.get("name") if isinstance(e, dict) else None)

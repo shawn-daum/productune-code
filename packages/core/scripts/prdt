@@ -728,7 +728,9 @@ def project_products(root):
     def add(n):
         if isinstance(n, str) and LINE_NAME_RE.match(n) and n not in out:
             out.append(n)
-    add(cfg.get("slug") if isinstance(cfg, dict) else None)
+    slug0 = cfg.get("slug") if isinstance(cfg, dict) else None
+    # The first product is the folder init scaffolded: `product_dir_name(slug)`.
+    add(product_dir_name(slug0) if isinstance(slug0, str) and slug0 else None)
     prods = cfg.get("products") if isinstance(cfg, dict) else None
     for e in (prods if isinstance(prods, list) else []):
         add(e.get("name") if isinstance(e, dict) else None)
@@ -2829,7 +2831,7 @@ def init_is_legacy_docs(root):
     d = Path(root) / "docs"
     if (d / DOCS_SHARED).is_dir():
         return False
-    return any((d / k).exists() for k in ("prd", "tickets", "artifacts", "wiki"))
+    return any((d / k).exists() for k in ("prd", "tickets", "artifacts", "wiki", "features", "design.md"))
 
 
 def init_project(root, slug=None, version="v0.1", stage="define", interactive=True):
@@ -6695,8 +6697,12 @@ def cmd_tickets(args):
         # live in another product's v1.x dir and name <p> in `also:`.
         pref, bare = split_line_id(args.version)
         if pref:
-            conds.append("(version = ? OR (id IN (SELECT id FROM ticket_also WHERE also LIKE ?) AND (version = ? OR version LIKE ?)))")
-            params += [args.version, f'%"{pref}"%', bare, f"%/{bare}"]
+            # The first product's own rows carry the bare version (⑧ A: prefix only
+            # outside its own folder), so `<first>/vX` also matches `vX`.
+            prods = project_products(root)
+            own = bare if prods and pref == prods[0] else args.version
+            conds.append("(version = ? OR version = ? OR (id IN (SELECT id FROM ticket_also WHERE also LIKE ?) AND (version = ? OR version LIKE ?)))")
+            params += [args.version, own, f'%"{pref}"%', bare, f"%/{bare}"]
         else:
             conds.append("version = ?"); params.append(args.version)
     if args.feature:
@@ -16150,7 +16156,7 @@ def migrate_ticket(p, dry, root):
 
 
 def write_wiki_page(root, name, type_, title, body, version, dry):
-    p = root / "docs" / "wiki" / f"{name}.md"
+    p = docs_path(root, "wiki") / f"{name}.md"
     if os.path.lexists(p):
         return False
     fm = {"title": title, "type": type_, "status": "live", "version": version or ""}
@@ -16214,9 +16220,9 @@ def migrate_claude_md(root, dry, assume_yes, to_archive, version):
     # 실제 기록될 목적지를 collision-safe하게 미리 확정 → 계획 프린트가 실제 경로와 일치하고,
     # 기존 이관 산출물을 절대 덮어쓰지 않는다 (base 있으면 -2, -3 … 유니크 접미사).
     if dest_kind == "wiki":
-        dst = unique_dest(root / "docs" / "wiki", CLAUDE_MIGRATED_NAME)
+        dst = unique_dest(docs_path(root, "wiki"), CLAUDE_MIGRATED_NAME)
     else:
-        dst = unique_dest(root / "docs" / "archive", "migrated-from-claude-md")
+        dst = unique_dest(docs_path(root, "archive"), "migrated-from-claude-md")
     dest_rel = str(dst.relative_to(root))
     print(f"  · CLAUDE.md 이관 계획: CLAUDE.md → {dest_rel} ({dest_kind}), 원본은 루트에서 제거")
     if dry:
@@ -16324,7 +16330,7 @@ def cmd_migrate(args):
 
     # 2. tickets (full only)
     n_tickets, status_counts = 0, {}
-    tdir = root / "docs" / "tickets"
+    tdir = docs_path(root, "tickets")
     if kind == "full" and tdir.is_dir():
         for p in sorted(tdir.rglob("T-*.md")):
             s = migrate_ticket(p, dry, root)
@@ -16341,22 +16347,22 @@ def cmd_migrate(args):
                                              src.read_text(encoding="utf-8"), version, dry):
             n_pages += 1
     if kind == "full":
-        page(root / "docs" / "po" / "calibration-log.md", "learning--migrated-calibration-log", "learning")
+        page(docs_path(root, "po") / "calibration-log.md", "learning--migrated-calibration-log", "learning")
         for persona in ("designer", "developer", "qa"):
-            bdir = root / "docs" / persona / "bookshelf"
+            bdir = docs_path(root, persona) / "bookshelf"
             if bdir.is_dir():
                 for src in sorted(bdir.glob("*.md")):
                     t = "decision" if "decision" in src.stem else "learning"
                     page(src, f"{t}--migrated-{persona}-{src.stem}", t)
-        page(root / "docs" / "designer" / "feature-history.md", "fact--migrated-feature-history", "fact")
-        rdir = root / "docs" / "retrospectives"
+        page(docs_path(root, "designer") / "feature-history.md", "fact--migrated-feature-history", "fact")
+        rdir = docs_path(root, "retrospectives")
         if rdir.is_dir():
             for src in sorted(rdir.glob("*.md")):
                 page(src, f"retro--{src.stem}", "retro")
-        if (root / "docs" / "backlog.md").is_file():
+        if (docs_path(root, "backlog.md")).is_file():
             report.append("backlog.md: 자동 변환 안 함 — Define/Retro 진입 시 PO가 수동 triage (Q4 구조)")
     else:
-        mem = root / "docs" / "memory.md"
+        mem = docs_path(root, "memory.md")
         if mem.is_file():
             sections, cur = {}, None
             for line in mem.read_text(encoding="utf-8").splitlines():
@@ -16404,16 +16410,16 @@ def cmd_migrate(args):
         state_write(root, prdt / "po-state.json", json.dumps(
             {"schema_version": 1, "stage": stage, "version": version, "current_task": None},
             indent=2) + "\n")
-        for d in ("docs/prd", "docs/tickets", "docs/artifacts", "docs/wiki"):
-            (root / d).mkdir(parents=True, exist_ok=True)
+        for k in ("prd", "tickets", "artifacts", "wiki"):
+            docs_path(root, k).mkdir(parents=True, exist_ok=True)
         for f, head in (("inbox.md", "# Wiki inbox — 1-line memory_notes appends; curated at stage boundaries\n"),
                         ("log.md", "# Wiki log — append-only ritual/ingest/lint records\n")):
-            fp = root / "docs" / "wiki" / f
+            fp = docs_path(root, "wiki") / f
             if not os.path.lexists(fp):
                 state_write(root, fp, head)
-        state_append(root, root / "docs" / "wiki" / "log.md",
+        state_append(root, docs_path(root, "wiki") / "log.md",
                      f"- ({now_iso()[:10]}) migrated from {kind}: {n_tickets} tickets, {n_pages} wiki pages — curation due at next Retro\n")
-        note_docs_write(root / "docs" / "wiki" / "log.md")
+        note_docs_write(docs_path(root, "wiki") / "log.md")
         _con, v, _pages, _mpages = rebuild_index(root)
         if v:
             report.append(f"⚠ reindex: 티켓 위반 {len(v)}건 잔존 — `prdt doctor` 확인")

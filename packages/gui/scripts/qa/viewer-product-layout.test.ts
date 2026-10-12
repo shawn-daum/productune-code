@@ -20,7 +20,7 @@ function write(root: string, rel: string, text: string) {
 }
 const ticket = (id: string, status = 'open', extra = '') => `---\nid: ${id}\nslug: s-${id}\ntype: impl\nstatus: ${status}\nassignee: developer\n---\nbody of ${id} ${extra}\n`
 const PRD = `# PRD\n\nhead\n\n## v1.1 — round\n\n#### a — Item A\n\nsee docs/tickets/v1.1/T-1.md and \`docs/wiki/decision--a.md\` and docs/artifacts/v1.1/a.md\n`
-const CLOSED = `## v1.0 — closed\n\nlinks [design](../../design.md) · [wiki](../../wiki/decision--a.md) · [own](./x.md)\n\nand docs/tickets/v1.0/T-0.md\n`
+const CLOSED = `## v1.0 — closed\n\nlinks [design](../design.md) · [wiki](../wiki/decision--a.md) · [own](./x.md)\n\nand docs/tickets/v1.0/T-0.md\n`
 const WIKI = `---\ntype: decision\nversion: v1.1\ntitle: d\n---\nbody\n`
 const MANIFEST = JSON.stringify({ entries: [{ bucket: 'v1.1', path: 'a.md', ticket: 'T-1', kind: 'doc', status: 'draft', lang: 'ko', added_at: '2026-01-01' }] })
 
@@ -139,8 +139,31 @@ print(json.dumps([m.viewer_anchor(Path(sys.argv[2]), t) for t in json.loads(sys.
     const html = JSON.stringify(closedHtml) + phtml
     expect(html).toContain('docs/_shared/design.md')
     expect(html).toContain('docs/_shared/wiki/decision--a.md')
-    expect(html).toContain('docs/alpha/prd/versions/x.md')
+    expect(html).toContain('docs/alpha/prd/x.md')
     expect(html).not.toContain('docs/alpha/design.md')
+  })
+
+  it('closed-round links resolve against the prd dir, never prd/versions/ (both layouts)', () => {
+    const CL = '## v0.9 — closed\n\n[f](../features/x.md) · [a](../artifacts/v0.9/spec.md) · [d](../design.md)\n'
+    const mk = (layout: 'legacy' | 'product') => {
+      const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `viewer-cl-${layout}-`)))
+      const pre = layout === 'legacy' ? 'docs' : 'docs/alpha'
+      const sh = layout === 'legacy' ? 'docs' : 'docs/_shared'
+      write(root, '.prdt/config.json', JSON.stringify({ slug: 'alpha' }))
+      write(root, '.prdt/po-state.json', JSON.stringify({ schema_version: 1, stage: 'build', version: 'v1.1', current_task: null }))
+      write(root, `${pre}/prd/PRD.md`, PRD)
+      write(root, `${pre}/prd/versions/v0.9.md`, CL)
+      write(root, `${sh}/features/x.md`, '---\ntitle: X\nstatus: done\n---\nspec\n')
+      write(root, `${sh}/design.md`, '# design\n')
+      write(root, `${pre}/artifacts/v0.9/spec.md`, '# spec\n')
+      if (layout === 'product') fs.mkdirSync(path.join(root, 'docs/_shared/wiki'), { recursive: true })
+      return root
+    }
+    const hrefs = (html: string) => [...html.matchAll(/<a href="([^"]*(?:features\/x|spec|design)\.md)"/g)].map((m) => m[1].replace(/^(\.\.\/)+/, ''))
+    const lh = hrefs(render(gather(mk('legacy'))))
+    const ph = hrefs(render(gather(mk('product'))))
+    expect(lh.sort()).toEqual(['docs/artifacts/v0.9/spec.md', 'docs/design.md', 'docs/features/x.md'])
+    expect(ph.sort()).toEqual(['docs/_shared/design.md', 'docs/_shared/features/x.md', 'docs/alpha/artifacts/v0.9/spec.md'])
   })
 
   it('resolveDocLink with no layout (legacy) is unchanged', () => {
