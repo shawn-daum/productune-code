@@ -150,6 +150,10 @@ find_proj() {
   d="${phys:-$1}"
   while [ -n "$d" ] && [ "$d" != "/" ]; do
     [ -f "$d/.prdt/po-state.json" ] && hit="$d"
+    # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary — never walk out of it
+    if [ -f "$d/.git" ] && [ "$(basename "$(dirname "$d")")" = "tracks" ]; then
+      case "${d##*/}" in T-[0-9]|T-[0-9][0-9]|T-[0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9][0-9]) break ;; esac
+    fi
     up="$(dirname "$d")"
     [ "$up" = "$d" ] && break
     d="$up"

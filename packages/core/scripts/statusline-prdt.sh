@@ -72,6 +72,10 @@ PHYS="$(cd -P -- "$CWD" 2>/dev/null && pwd -P)"
 D="${PHYS:-$CWD}"; ROOT=""
 while [ -n "$D" ] && [ "$D" != "/" ]; do
   [ -f "$D/.prdt/po-state.json" ] && ROOT="$D"
+  # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary — never walk out of it
+  if [ -f "$D/.git" ] && [ "$(basename "$(dirname "$D")")" = "tracks" ]; then
+    case "${D##*/}" in T-[0-9]|T-[0-9][0-9]|T-[0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9][0-9]) break ;; esac
+  fi
   UP="$(dirname "$D")"
   [ "$UP" = "$D" ] && break
   D="$UP"
