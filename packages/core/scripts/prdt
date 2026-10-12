@@ -85,9 +85,10 @@ def norm_assignee(v):
 
 
 PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
-# Additive keys (release-lines.md §5, schema_version unchanged): `checks` = the
-# home line's stage-check record (T-954 = A), `lines` = per added line.
-PO_STATE_OPTIONAL_KEYS = {"checks", "lines"}
+# Additive keys (schema_version unchanged): `checks` = the first product's
+# stage-check record (T-954 = A), `products` = per added product (T-1108 ⑦; the
+# pre-v1.14 name `lines` is still read and migrated once).
+PO_STATE_OPTIONAL_KEYS = {"checks", "products", "lines"}
 # §11 token-budget caps (physical lines; playbook cap counts body after frontmatter).
 # `override` applies per persona PER LAYER (machine and project each) — a curation
 # budget for text injected once per session start and after a compaction (T-586
@@ -5654,8 +5655,9 @@ def current_version_id(root, line=None):
     st = read_json(root / ".prdt" / "po-state.json")
     src, field = (st if isinstance(st, dict) else None), "version"
     if line is not None:
-        ls = src.get("lines") if src is not None else None
-        src, field = (ls.get(line) if isinstance(ls, dict) else None), f"lines.{line}.version"
+        pk = _products_key(src) if src is not None else "products"
+        ls = src.get(pk) if src is not None else None
+        src, field = (ls.get(line) if isinstance(ls, dict) else None), f"{pk}.{line}.version"
     raw = src.get("version") if isinstance(src, dict) else None
     v = raw.strip() if isinstance(raw, str) else raw
     if v is None or v == "":
@@ -5708,8 +5710,8 @@ def cmd_tickets_new(args, root):
         if line == _resource_project_slug(root):
             line = None
         else:
-            sys.exit(f"prdt tickets new: --line {safe_label(line)} is not a line declared in "
-                     f".prdt/config.json `lines`")
+            sys.exit(f"prdt tickets new: --product {safe_label(line)} is not a product declared in "
+                     f".prdt/config.json `products`")
     try:
         version = current_version_id(root, line)
     except ValueError as e:
@@ -11623,12 +11625,42 @@ PRD_VERSION_FILE_RE = re.compile(r"^v\d+(?:\.\d+){0,2}\.md$", re.ASCII)
 LINE_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 
 
+def _products_key(d):
+    """The key a config / po-state dict keeps its per-product entries under:
+    `products`, else the pre-v1.14 `lines` (T-1108 ⑦, read once and migrated)."""
+    return "products" if "products" in d or "lines" not in d else "lines"
+
+
 def _line_config_entries(root):
     cfg = read_json(Path(root) / ".prdt" / "config.json") if root else None
     if not isinstance(cfg, dict):
         return None, None
-    raw = cfg.get("lines")
+    raw = cfg.get(_products_key(cfg))
     return cfg.get("slug"), (raw if isinstance(raw, list) else ([] if raw is None else raw))
+
+
+def migrate_lines_to_products(root):
+    """T-1108 ⑦: `.prdt/config.json` `lines` and `.prdt/po-state.json` `lines`
+    become `products`, once. A file that already has `products` is left alone
+    (readers prefer it); a file with neither is untouched. Returns the files
+    rewritten. Written through `atomic_write_text` (the one write path)."""
+    done = []
+    for name in ("config.json", "po-state.json"):
+        path = Path(root) / ".prdt" / name
+        try:
+            if path.is_symlink() or not path.is_file():
+                continue
+            d = read_json(path)
+            if not isinstance(d, dict) or "lines" not in d:
+                continue
+            if "products" in d:
+                continue
+            renamed = {("products" if k == "lines" else k): v for k, v in d.items()}
+            atomic_write_text(path, json.dumps(renamed, indent=2, ensure_ascii=False) + "\n")
+            done.append(name)
+        except OSError:
+            continue
+    return done
 
 
 def project_lines(root):
@@ -11654,7 +11686,7 @@ def project_declares_lines(root):
     for every line-only check, so a single-line project's doctor output keeps
     its check count."""
     cfg = read_json(Path(root) / ".prdt" / "config.json") if root else None
-    return isinstance(cfg, dict) and "lines" in cfg
+    return isinstance(cfg, dict) and ("products" in cfg or "lines" in cfg)
 
 
 def line_config_warnings(root):
@@ -11662,22 +11694,22 @@ def line_config_warnings(root):
     if raw is None:
         return []
     if not isinstance(raw, list):
-        return ["lines: `.prdt/config.json` `lines` is not a list — every added line is ignored"]
+        return ["products: `.prdt/config.json` `products` is not a list — every added product is ignored"]
     warns, seen = [], set()
     for i, e in enumerate(raw):
         name = e.get("name") if isinstance(e, dict) else None
         if not isinstance(name, str):
-            warns.append(f"lines: entry {i} in .prdt/config.json has no string `name` — ignored")
+            warns.append(f"products: entry {i} in .prdt/config.json has no string `name` — ignored")
             continue
         lab = safe_label(name)
         if not LINE_NAME_RE.match(name):
-            warns.append(f"lines: `{lab}` is not a legal line name — kebab-case, never `v<digit>…` "
+            warns.append(f"products: `{lab}` is not a legal product name — kebab-case, never `v<digit>…` "
                          f"or `backlog` (contracts/fixed-paths.md); ignored")
         elif name == slug:
-            warns.append(f"lines: `{lab}` is the project slug — the home line is never listed in "
-                         f"`lines`; ignored")
+            warns.append(f"products: `{lab}` is the project slug — the first product is never listed in "
+                         f"`products`; ignored")
         elif name in seen:
-            warns.append(f"lines: `{lab}` is declared twice — the second entry is ignored")
+            warns.append(f"products: `{lab}` is declared twice — the second entry is ignored")
         seen.add(name)
     return warns
 
@@ -11697,13 +11729,13 @@ def join_line_id(line, vid):
 
 def line_state(st, line=None):
     """(stage, version id, checks) of one line in po-state: the top-level fields
-    for the home line (`line` None), `lines.<line>` for an added line — whose
+    for the first product (`line` None), `products.<product>` for an added one — whose
     version comes back prefixed `<line>/`."""
     if not isinstance(st, dict):
         return None, None, None
     src = st
     if line is not None:
-        ls = st.get("lines")
+        ls = st.get(_products_key(st))
         src = ls.get(line) if isinstance(ls, dict) else None
         if not isinstance(src, dict):
             return None, None, None
@@ -11802,7 +11834,7 @@ def prd_line_layout_warnings(root, st):
             if open_key is None and len(mine) == 1:
                 continue
             warns.append(f"prd: closed section `## {lab} {v}` found in docs/prd/PRD.md:{ln} — the "
-                         f"working file is the standing head + the ONE open section per line, which "
+                         f"working file is the standing head + the ONE open section per product, which "
                          f"`.prdt/po-state.json` names as `{vid or '-'}`; its home is "
                          f"docs/prd/versions/{lab}/{v}.md, moved byte-identical")
         tdir = root / "docs" / "tickets" / ln_name
@@ -11826,26 +11858,45 @@ def prd_line_layout_warnings(root, st):
 
 
 def _resource_line(root):
-    """The release line a resource marker is held for (release-lines.md §6):
-    the folder of po-state's current ticket, else `current_task.line`, else the
-    home line. None in a single-line project — its marker keeps today's shape."""
+    """The product a resource marker is held for: the folder of po-state's
+    current ticket, else `current_task.product` (pre-v1.14 `line`), else the
+    first product (the slug). None in a single-product project — its marker
+    keeps today's shape."""
+    prods = project_products(root) if root else []
     names = project_line_names(root) if root else []
-    if not names:
+    if not names and len(prods) < 2:
         return None
     slug = _resource_project_slug(root)
+    known = set(names) | set(prods[1:])
     st = read_json(Path(root) / ".prdt" / "po-state.json") or {}
     ct = st.get("current_task") if isinstance(st, dict) else None
     if isinstance(ct, dict):
         tid = ct.get("ticket_id")
         if isinstance(tid, str) and re.match(r"^T-\d+$", tid):
-            for p in (Path(root) / "docs" / "tickets").glob(f"*/*/{tid}.md"):
-                if p.parent.parent.name in names:
-                    return p.parent.parent.name
-            if any((Path(root) / "docs" / "tickets").glob(f"*/{tid}.md")):
-                return slug
-        if ct.get("line") in names:
-            return ct["line"]
+            if prods:
+                for prod, tdir in product_docs_dirs(root, "tickets"):
+                    if prod is not None and (any(tdir.glob(f"*/{tid}.md")) or (tdir / f"{tid}.md").exists()):
+                        return slug if prod == prods[0] else prod
+            else:
+                for p in (Path(root) / "docs" / "tickets").glob(f"*/*/{tid}.md"):
+                    if p.parent.parent.name in names:
+                        return p.parent.parent.name
+                if any((Path(root) / "docs" / "tickets").glob(f"*/{tid}.md")):
+                    return slug
+        for key in ("product", "line"):
+            if ct.get(key) in known:
+                return ct[key]
     return slug
+
+
+def _resource_product(root):
+    """The `product=` a marker carries: `_resource_line` unless it is the first
+    product (T-955 rule — the first product's marker keeps today's shape)."""
+    p = _resource_line(root)
+    if p is None or p == _resource_project_slug(root):
+        return None
+    prods = project_products(root) if root else []
+    return None if prods and p == prods[0] else p
 
 
 def _version_id_canon(v):
@@ -12117,7 +12168,7 @@ def prd_layout_warnings(root, st):
     open_id = pv.strip() if isinstance(pv, str) and pv.strip() else None
     open_key = _version_id_canon(open_id) if open_id else None
 
-    one_open = " per line" if project_line_names(root) else ""
+    one_open = " per product" if project_line_names(root) else ""
     prd_section_ids = []
     text = read(prd_md) if prd_md.is_file() else None
     if text is not None:
@@ -12471,29 +12522,30 @@ def po_state_warnings(st, root=None):
         warns.append(f"state: version '{bad_v}' is not a version id (v<N>[.<m>[.<p>]] or backlog)")
     ct = st.get("current_task")
     multi = bool(root) and project_declares_lines(root)
-    if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee", "line"} >= set(ct)):
-        # Single-line projects keep the pre-T-960 text byte-for-byte.
-        warns.append("state: current_task must be null or {ticket_id, slug, assignee, line?}" if multi
+    if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee", "line", "product"} >= set(ct)):
+        # Single-product projects keep the pre-T-960 text byte-for-byte.
+        warns.append("state: current_task must be null or {ticket_id, slug, assignee, product?}" if multi
                      else "state: current_task must be null or {ticket_id, slug, assignee}")
     declared = set(project_line_names(root)) if root else None
-    lines = st.get("lines")
-    if "lines" in st and not isinstance(lines, dict):
-        warns.append("state: lines must be an object {<line>: {stage, version, checks?}}")
+    pk = _products_key(st)
+    lines = st.get(pk)
+    if pk in st and not isinstance(lines, dict):
+        warns.append("state: products must be an object {<product>: {stage, version, checks?}}")
     for name, ent in (lines.items() if isinstance(lines, dict) else []):
         lab = safe_label(str(name))
         if not isinstance(ent, dict):
-            warns.append(f"state: lines.{lab} must be {{stage, version, checks?}}")
+            warns.append(f"state: products.{lab} must be {{stage, version, checks?}}")
             continue
         if ent.get("stage") not in STAGES:
-            warns.append(f"state: lines.{lab}.stage '{safe_label(str(ent.get('stage')))}' not in {'/'.join(STAGES)}")
+            warns.append(f"state: products.{lab}.stage '{safe_label(str(ent.get('stage')))}' not in {'/'.join(STAGES)}")
         bad_v = _malformed_version_label(ent.get("version"))
         if bad_v is not None:
-            warns.append(f"state: lines.{lab}.version '{bad_v}' is not a version id "
+            warns.append(f"state: products.{lab}.version '{bad_v}' is not a version id "
                          f"(v<N>[.<m>[.<p>]] or backlog)")
         if declared is not None and name not in declared:
-            warns.append(f"state: lines.{lab} is not a line declared in .prdt/config.json `lines`")
+            warns.append(f"state: products.{lab} is not a product declared in .prdt/config.json `products`")
         if set(ent) - {"stage", "version", "checks"}:
-            warns.append(f"state: lines.{lab} has unexpected keys {sorted(set(ent) - {'stage', 'version', 'checks'})}")
+            warns.append(f"state: products.{lab} has unexpected keys {sorted(set(ent) - {'stage', 'version', 'checks'})}")
     return warns
 
 
@@ -14533,7 +14585,9 @@ def _resource_markers(name=None):
                 "dispatch": data.get("dispatch") or f.stem,
                 "project": data.get("project"),
                 "since": data.get("since"),
-                **({"line": data["line"]} if isinstance(data.get("line"), str) else {}),
+                # T-1108 ⑦: `product` (pre-v1.14 markers say `line`).
+                **({"product": data["product"] if isinstance(data.get("product"), str) else data["line"]}
+                   if isinstance(data.get("product"), str) or isinstance(data.get("line"), str) else {}),
             })
     return out
 
@@ -14783,7 +14837,7 @@ def compute_schedule(root, tickets=None, line=None):
     out = {"version": version, "cycle": None, "critical_path": [], "cp_length": 0,
            "rows": [], "missing_deps": []}
     if project_line_names(root):
-        out["line"] = line or _resource_project_slug(root)
+        out["product"] = line or _resource_project_slug(root)
 
     # node set: current version's open tickets, then open deps wherever they live
     nodes, stack = {}, [t for t, (r, _) in tickets.items()
@@ -14896,8 +14950,8 @@ def cmd_schedule(args):
         if sel == _resource_project_slug(root):
             sel = None
         elif sel not in names:
-            sys.exit(f"prdt schedule: --line {safe_label(sel)} is not a line declared in "
-                     f".prdt/config.json `lines`")
+            sys.exit(f"prdt schedule: --product {safe_label(sel)} is not a product declared in "
+                     f".prdt/config.json `products`")
     if args.json or sel is not None or not names:
         s = compute_schedule(root, line=sel)
         if args.json:
@@ -15412,8 +15466,10 @@ def cmd_resource(args):
             group = by_name.get(n, [])
             print(f"{safe_label(n)}: {len(group)} held")
             for m in group:
-                proj = safe_label(m.get("line") or m["project"]) if (m.get("line") or m["project"]) else "-"
-                print(f"  dispatch={safe_label(m['dispatch'])} project={proj} since={m['since'] or '-'}")
+                proj = safe_label(m["project"]) if m["project"] else "-"
+                # T-1108 ⑦: `product=` only for a product other than the first.
+                prod = f" product={safe_label(m['product'])}" if m.get("product") else ""
+                print(f"  dispatch={safe_label(m['dispatch'])} project={proj}{prod} since={m['since'] or '-'}")
             # S6/S7: the command `down` would actually run for this name right
             # now (resolved fresh, same function `down` itself calls — never a
             # marker's stale copy), with a visible `…` when it is cut.
@@ -15469,19 +15525,20 @@ def cmd_resource(args):
         # No `stop_cmd` on the marker (T-680 S5) — this dict is bookkeeping
         # only, never a value anything later trusts as an executable source.
         marker = {"resource": name, "dispatch": dispatch, "project": project, "since": since}
-        line = _resource_line(find_project_root())
+        line = _resource_product(find_project_root())
         if line:
-            marker["line"] = line
+            marker["product"] = line
         d = _resource_marker_dir(name)
         d.mkdir(parents=True, exist_ok=True)
         p = d / f"{dispatch}.json"
         atomic_write_text(p, json.dumps(marker, indent=2, sort_keys=True) + "\n")
         held = len(_resource_markers(name))
-        proj_out = safe_label(line or project) if (line or project) else "-"
+        proj_out = safe_label(project) if project else "-"
+        prod_out = f" product={safe_label(line)}" if line else ""
         # Purely informational — a fresh registry read at THIS moment, printed
         # and never persisted; `down` re-resolves independently at its own time.
         stop_out = "registered" if _resource_registered_stop_cmd(name) else "none"
-        print(f"up: {safe_label(name)} marker={safe_label(dispatch)} project={proj_out} since={since} "
+        print(f"up: {safe_label(name)} marker={safe_label(dispatch)} project={proj_out}{prod_out} since={since} "
               f"held={held} stop={stop_out}")
         return
 
@@ -15962,7 +16019,7 @@ def cmd_doctor(_args):
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
         ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root))),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
-        *([("release lines", FAMILY_DE,
+        *([("products", FAMILY_DE,
             lambda: line_config_warnings(root) + prd_line_layout_warnings(root, st))]
           if project_declares_lines(root) else []),
         # artifacts — version-bucket placement + manifest registration (T-512).
@@ -17576,9 +17633,10 @@ def main():
                         "worker's run never opens regardless")
     p.add_argument("--type", choices=TICKET_TYPES, help="new: the ticket's `type` (required)")
     p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
-    p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value ([<line>/]v<N>.<m>#<key>)")
-    p.add_argument("--line", help="new: an added release line (.prdt/config.json `lines`) — the ticket "
-                                  "lands in docs/tickets/<line>/<that line's version>/; default the home line")
+    p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value ([<product>/]v<N>.<m>#<key>)")
+    p.add_argument("--product", "--line", dest="line",
+                   help="new: an added product (.prdt/config.json `products`) — the ticket "
+                        "lands in that product's tickets/<its version>/; default the first product")
     p.add_argument("--deps", nargs="+", metavar="ID", help="new: `deps` ticket ids")
     p.add_argument("--check", action="store_true",
                    help="fmt: report violations and exit non-zero instead of writing")
@@ -17689,8 +17747,9 @@ def main():
                         "(PreToolUse event on stdin)")
     p.add_argument("--version", help="report: the version bucket (default: po-state.json version)")
     p.add_argument("--json", action="store_true", help="the same rows, machine-readable")
-    p.add_argument("--line", help="one release line (.prdt/config.json `lines`, or the project slug for "
-                                  "the home line); default every line, home first — `--json` the home line")
+    p.add_argument("--product", "--line", dest="line",
+                   help="one product (.prdt/config.json `products`, or the project slug for "
+                        "the first product); default every product, first one first — `--json` the first product")
     p.set_defaults(fn=cmd_schedule)
     p = sub.add_parser("track", help="parallel track worktree (T-775): open <T-NNN> [--base dev|main] · "
                                      "review <T-NNN> · land <T-NNN> [--base dev|main] [--test CMD] · "
@@ -17815,6 +17874,12 @@ def main():
                     or (args.cmd == "wiki" and getattr(args, "action", None) == "lint"):
                 sys.stdout = _DocsMsgStream(sys.stdout, r)
                 sys.stderr = _DocsMsgStream(sys.stderr, r)
+    if not hook_call:
+        # T-1108 ⑦: a pre-v1.14 `lines` config / po-state is read once, then
+        # becomes `products`.
+        _mr = find_project_root()
+        if _mr:
+            migrate_lines_to_products(_mr)
     try:
         args.fn(args)
     except SystemExit as e:

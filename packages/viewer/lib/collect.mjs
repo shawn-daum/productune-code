@@ -462,9 +462,18 @@ export function prdLineBody(body, line, lineNames) {
 }
 
 /**
- * T-961: the added release lines (`.prdt/config.json` `lines`), mirroring the
- * CLI's `project_lines`: entries whose `name` is a legal line name, unique and
- * not the slug, in declaration order. [] = a single-line project.
+ * The per-product entries of a config / po-state object: `products`, else the
+ * pre-v1.14 `lines` (T-1108 ⑦, the CLI's `_products_key`).
+ */
+export function productsOf(obj) {
+  if (!obj || typeof obj !== 'object') return undefined
+  return 'products' in obj || !('lines' in obj) ? obj.products : obj.lines
+}
+
+/**
+ * T-961 / T-1108: the added products (`.prdt/config.json` `products`), mirroring
+ * the CLI's `project_lines`: entries whose `name` is a legal product name,
+ * unique and not the slug, in declaration order. [] = a single-product project.
  */
 const LINE_NAME_RE = /^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$/
 export function collectLineNames(repoRoot) {
@@ -476,18 +485,20 @@ export function collectLineNames(repoRoot) {
   } catch {
     return []
   }
-  if (!cfg || !Array.isArray(cfg.lines)) return []
+  const raw = cfg ? productsOf(cfg) : null
+  if (!Array.isArray(raw)) return []
   const out = []
-  for (const e of cfg.lines) {
+  for (const e of raw) {
     const name = e && typeof e === 'object' ? e.name : undefined
     if (typeof name === 'string' && LINE_NAME_RE.test(name) && !out.includes(name) && name !== cfg.slug) out.push(name)
   }
   return out
 }
 
-/** T-961: `(stage, version)` of an added line from po-state `lines.<line>` (the CLI's `line_state`); version bare, '' when absent. */
+/** T-961 / T-1108: `(stage, version)` of an added product from po-state `products.<product>` (the CLI's `line_state`); version bare, '' when absent. */
 export function lineState(poState, line) {
-  const ls = poState && typeof poState.lines === 'object' && poState.lines ? poState.lines[line] : null
+  const all = productsOf(poState)
+  const ls = all && typeof all === 'object' ? all[line] : null
   if (!ls || typeof ls !== 'object') return { stage: '', version: '' }
   const v = typeof ls.version === 'string' ? ls.version.trim() : ''
   return { stage: typeof ls.stage === 'string' ? ls.stage : '', version: v }
