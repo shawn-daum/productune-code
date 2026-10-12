@@ -47,19 +47,44 @@ function project(key: 'lines' | 'products', task: string | null): string {
 }
 
 describe('T-1108 lines → products', () => {
-  test('a legacy `lines` config + po-state is read as products and rewritten once', () => {
+  test('a legacy `lines` config + po-state is read as products and NOT rewritten by any read-only command', () => {
     const root = project('lines', 'T-002')
     const home = tmp('prdt-products-home-')
+    const files = ['.prdt/config.json', '.prdt/po-state.json']
+    const snap = () => files.map((f) => fs.readFileSync(path.join(root, f), 'utf8'))
+    const before = snap()
     const r = cli(root, home, ['schedule', '--product', 'android', '--json'])
     expect(r.code).toBe(0)
     expect(JSON.parse(r.out).version).toBe('android/v2.1')
+    for (const args of [['tickets'], ['doctor'], ['resource', 'ls'], ['schedule', '--json']]) {
+      cli(root, home, args)
+      expect(snap(), `prdt ${args.join(' ')} wrote config/po-state`).toEqual(before)
+    }
+    expect(before[0]).toContain('"lines"')
+    expect(before[1]).toContain('"lines"')
+  }, T)
+
+  test('the named helper (the `layout migrate --apply` config step) renames both files once', () => {
+    const root = project('lines', null)
+    const code = [
+      'import sys, importlib.machinery, importlib.util',
+      `l = importlib.machinery.SourceFileLoader("prdt_cli", ${JSON.stringify(PRDT_CLI)})`,
+      'm = importlib.util.module_from_spec(importlib.util.spec_from_loader("prdt_cli", l)); l.exec_module(m)',
+      `print(",".join(m.migrate_lines_to_products(${JSON.stringify(root)})))`,
+    ].join('\n')
+    const r = spawnSync('python3', ['-c', code], { encoding: 'utf8', env: { ...process.env, PRDT_HOME: tmp('prdt-products-home-'), PRDT_META_BACKUP: '0' } })
+    expect(r.stdout.trim()).toBe('config.json,po-state.json')
     const cfg = JSON.parse(fs.readFileSync(path.join(root, '.prdt/config.json'), 'utf8'))
     const st = JSON.parse(fs.readFileSync(path.join(root, '.prdt/po-state.json'), 'utf8'))
-    expect(cfg.products).toEqual([{ name: 'android' }])
-    expect('lines' in cfg).toBe(false)
+    expect(Object.keys(cfg)).toEqual(['slug', 'surfaces', 'products'])
     expect(st.products.android.version).toBe('v2.1')
     expect('lines' in st).toBe(false)
-    expect(Object.keys(cfg)).toEqual(['slug', 'surfaces', 'products'])
+  }, T)
+
+  test('the rewrite lives in one named helper, never in main()', () => {
+    const src = fs.readFileSync(PRDT_CLI, 'utf8')
+    const calls = src.split('\n').filter((l) => /migrate_lines_to_products\(/.test(l) && !l.startsWith('def '))
+    expect(calls).toEqual([])
   }, T)
 
   test('a file that already has `products` is left alone', () => {
