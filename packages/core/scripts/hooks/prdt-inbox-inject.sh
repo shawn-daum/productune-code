@@ -41,6 +41,7 @@ while True:
     if (os.path.isfile(os.path.join(d, ".git")) and os.path.basename(os.path.dirname(d)) == "tracks"
             and os.path.basename(d)[:2] == "T-" and os.path.basename(d)[2:7].isascii()
             and os.path.basename(d)[2:].isdigit() and len(os.path.basename(d)) <= 7):
+        root = None
         break
     up = os.path.dirname(d)
     if up == d:
