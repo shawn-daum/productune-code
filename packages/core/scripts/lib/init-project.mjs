@@ -205,15 +205,68 @@ function ensureDir(absDir) {
 /** @type {RegExp} */
 const VERSION_ID_RE = /^v\d+(\.\d+)?$/
 
+// ── Docs layout (T-1104, T-1021 = E) ──────────────────────────────────────────
+// A new project gets the product-first shape — `docs/_shared/` + `docs/<product>/`
+// — even with one product. Product rows (prd · tickets · artifacts) live in
+// `docs/<product>/`; everything else (persona memory, backlog, wiki, features)
+// in `docs/_shared/`. A project that already holds As-Is docs and no
+// `docs/_shared/` stays legacy: a second shape beside them would be half-migrated.
+const AS_IS_DOC_DIRS = ['prd', 'tickets', 'artifacts', 'wiki']
+
+/**
+ * `docs/<kebab>/` folder name for a config slug (mirror of the CLI's
+ * `product_dir_name`): lower-case, runs of non-[a-z0-9] -> one hyphen; an
+ * illegal result (empty, `v<digit>...`, `backlog`) -> `product`.
+ * @param {string} slug
+ * @returns {string}
+ */
+export function productDirName(slug) {
+  const k = String(slug ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return /^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$/.test(k) ? k : 'product'
+}
+
+/**
+ * Where this project's docs rows live: `{ product: string | null }` — null =
+ * legacy (`docs/<kind>`), else `docs/<product>/<prd|tickets|artifacts>` and
+ * `docs/_shared/<rest>`.
+ * @param {string} projectDir
+ * @returns {{ product: string | null }}
+ */
+function docsHomes(projectDir) {
+  const docs = path.join(projectDir, 'docs')
+  const isDir = (/** @type {string} */ p) => { try { return fs.statSync(p).isDirectory() } catch { return false } }
+  const hasShared = isDir(path.join(docs, '_shared'))
+  if (!hasShared && AS_IS_DOC_DIRS.some((d) => fs.existsSync(path.join(docs, d)))) return { product: null }
+  let slug = path.basename(path.resolve(projectDir))
+  for (const dir of ['.prdt', '.productune']) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(path.join(projectDir, dir, 'config.json'), 'utf-8'))
+      if (typeof cfg?.slug === 'string' && cfg.slug) { slug = cfg.slug; break }
+    } catch { /* no config yet */ }
+  }
+  if (hasShared) {
+    // An existing product-layout project: the config slug when its folder is there, else the first product folder.
+    const named = productDirName(slug)
+    if (isDir(path.join(docs, named))) return { product: named }
+    for (const d of fs.readdirSync(docs).sort()) {
+      if (d.startsWith('_') || d.startsWith('.')) continue
+      if (isDir(path.join(docs, d, 'prd')) || isDir(path.join(docs, d, 'tickets'))) return { product: d }
+    }
+    return { product: named }
+  }
+  return { product: productDirName(slug) }
+}
+
 /**
  * Scaffold the doctrine-aligned project skeleton (idempotent, no-overwrite).
  *
  * Always written (only when absent):
  *   Tier-1 habit shells, persona bookshelf seeds, turns/ log dir, backlog.md,
- *   docs/prd/PRD.md, docs/prd/versions/, docs/designer/archive/, briefs/.
+ *   docs/<product>/prd/PRD.md, docs/<product>/prd/versions/, docs/_shared/designer/archive/,
+ *   briefs/ — in the product-first layout (see docsHomes; legacy projects: docs/prd/…).
  *
  * Conditionally written (only on valid initialVersionId):
- *   docs/artifacts/<v>/manifest.json, docs/tickets/<v>/.gitkeep.
+ *   docs/<product>/artifacts/<v>/manifest.json, docs/<product>/tickets/<v>/.gitkeep.
  *
  * Written (absent-only, T-PATCH-141): .productune/po-state.json — canonical empty v2 seed.
  * init is now the deterministic po-state generator; existing files are never clobbered.
@@ -222,34 +275,39 @@ const VERSION_ID_RE = /^v\d+(\.\d+)?$/
  * @param {string | undefined} [initialVersionId]
  */
 export function bootstrapPersonaMemory(projectDir, initialVersionId) {
+  const { product } = docsHomes(projectDir)
+  /** @param {string} rel path under docs/ in the As-Is tree */
+  const shared = (rel) => (product === null ? `docs/${rel}` : `docs/_shared/${rel}`)
+  /** @param {string} rel prd/tickets/artifacts path under docs/ in the As-Is tree */
+  const prod = (rel) => (product === null ? `docs/${rel}` : `docs/${product}/${rel}`)
   for (const dir of PERSONA_MEMORY_DIRS) {
-    const abs = path.join(projectDir, dir)
+    const abs = path.join(projectDir, shared(dir.slice('docs/'.length)))
     fs.mkdirSync(abs, { recursive: true })
     const persona = path.basename(dir)
     ensureFile(path.join(abs, 'habit.md'), habitShell(persona))
   }
 
   ensureFile(
-    path.join(projectDir, 'docs/qa/bookshelf/fail-patterns.md'),
+    path.join(projectDir, shared('qa/bookshelf/fail-patterns.md')),
     '# QA fail patterns\n\n' +
     'Per-Version log of QA fail loops. Read by Designer at Phase 1 PRD authoring.\n' +
     '`- (YYYY-MM-DD) <version> · <ticket-id> · <area-tag> · loops=<N> · final=<resolved|blocked|abandoned> · note: <one-line>`.\n' +
     'Appended mechanically by PO from QA `fail_event` output.\n\n## Entries\n',
   )
   ensureFile(
-    path.join(projectDir, 'docs/developer/bookshelf/project-notes.md'),
+    path.join(projectDir, shared('developer/bookshelf/project-notes.md')),
     '# Developer project notes\n\n' +
     'Non-obvious findings (build / IPC / OS quirks / tool footguns). Skim at fresh-ticket start.\n' +
     '`- (YYYY-MM-DD) [T-NNN] <area-tag> · <note>`. Route via promotion gate.\n\n## Entries\n',
   )
   ensureFile(
-    path.join(projectDir, 'docs/designer/bookshelf/decisions.md'),
+    path.join(projectDir, shared('designer/bookshelf/decisions.md')),
     '# Designer decisions\n\n' +
     'Non-trivial design choices. Skim before re-deciding the same topic.\n' +
     '`- (YYYY-MM-DD) [T-NNN] <area-tag> · <decision>`. Route via promotion gate.\n\n## Entries\n',
   )
   ensureFile(
-    path.join(projectDir, 'docs/designer/feature-history.md'),
+    path.join(projectDir, shared('designer/feature-history.md')),
     '# Feature history\n\n' +
     'Per-Version log of feature decisions / scope choices / deferrals.\n' +
     'Read at Phase 1 PRD authoring; appended by Designer at Phase 5 Version close.\n' +
@@ -282,28 +340,28 @@ export function bootstrapPersonaMemory(projectDir, initialVersionId) {
   )
 
   ensureFile(
-    path.join(projectDir, 'docs/backlog.md'),
+    path.join(projectDir, shared('backlog.md')),
     '# Backlog\n\n' +
     '다음 버전 후보. PO 가 P5 close 또는 사용자 요청 시 append.\n' +
     '`- (YYYY-MM-DD) <area-tag> · <one-line>`\n\n## Entries\n',
   )
   ensureFile(
-    path.join(projectDir, 'docs/prd/PRD.md'),
+    path.join(projectDir, prod('prd/PRD.md')),
     '# PRD\n\n' +
     '단일 SoT. P1 에서 Designer 가 clarity-loop 로 작성한다(`lifecycle/p1-prd.md`).\n' +
     'GUI 는 이 파일을 직접 렌더한다.\n',
   )
-  ensureDir(path.join(projectDir, 'docs/prd/versions'))
-  ensureDir(path.join(projectDir, 'docs/designer/archive'))
+  ensureDir(path.join(projectDir, prod('prd/versions')))
+  ensureDir(path.join(projectDir, shared('designer/archive')))
   ensureDir(path.join(projectDir, 'briefs'))
 
   if (initialVersionId && VERSION_ID_RE.test(initialVersionId)) {
     const v = initialVersionId
     ensureFile(
-      path.join(projectDir, 'docs/artifacts', v, 'manifest.json'),
+      path.join(projectDir, prod('artifacts'), v, 'manifest.json'),
       JSON.stringify({ schema_v: 1, version: v, entries: [] }, null, 2) + '\n',
     )
-    ensureDir(path.join(projectDir, 'docs/tickets', v))
+    ensureDir(path.join(projectDir, prod('tickets'), v))
   }
 }
 
