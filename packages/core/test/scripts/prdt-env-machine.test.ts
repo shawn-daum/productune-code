@@ -9,7 +9,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { spawnSync, execFileSync } from 'child_process'
+import { spawn, spawnSync, execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
@@ -51,19 +51,21 @@ function run(args: string[], opts: { cwd?: string; input?: string } = {}) {
   return { out: (r.stdout || '') + (r.stderr || ''), stdout: r.stdout || '', code: r.status ?? -1 }
 }
 
-/** Drive `prdt env set <key>` under a real pty (the user's terminal): type `typed` at the hidden prompt. */
+/** Drive the CLI under a real pty (the user's terminal). `mode`: `wait` types `typed` once the hidden
+ * prompt is fully shown; `eager` types it the instant the first prompt byte arrives (ECHO must
+ * already be off); `none` types nothing. */
 const PTY_DRIVER = `
-import os, pty, sys, select, time
-key, typed, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+import os, pty, sys, select, time, json
+args, typed, cwd, mode = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
 os.chdir(cwd)
 pid, fd = pty.fork()
 if pid == 0:
-    os.execvp("python3", ["python3", ${JSON.stringify(PRDT_CLI)}, "env", "set", key])
+    os.execvp("python3", ["python3", ${JSON.stringify(PRDT_CLI)}] + args)
 buf = b""
-sent = False
+sent = mode == "none"
 deadline = time.time() + 20
 while time.time() < deadline:
-    r, _, _ = select.select([fd], [], [], 0.2)
+    r, _, _ = select.select([fd], [], [], 0.05)
     if r:
         try:
             d = os.read(fd, 4096)
@@ -72,7 +74,10 @@ while time.time() < deadline:
         if not d:
             break
         buf += d
-        if not sent and "화면에 보이지".encode() in buf:
+        if not sent and mode == "eager" and args[-1].encode() in buf:
+            os.write(fd, (typed + "\\n").encode())
+            sent = True
+        if not sent and mode == "wait" and "화면에 보이지".encode() in buf:
             time.sleep(0.2)
             os.write(fd, (typed + "\\n").encode())
             sent = True
@@ -80,9 +85,20 @@ _, status = os.waitpid(pid, 0)
 sys.stdout.write(buf.decode("utf-8", "replace"))
 sys.exit(os.waitstatus_to_exitcode(status))
 `
-function typeSet(key: string, typed: string) {
-  const r = spawnSync('python3', ['-c', PTY_DRIVER, key, typed, sandbox], { env: env(), encoding: 'utf8', timeout: subprocessTimeout('cli') * 2 })
+const ptyArgs = (args: string[], typed: string, mode: string) => ['-c', PTY_DRIVER, JSON.stringify(args), typed, sandbox, mode]
+function typeSet(key: string, typed: string, mode = 'wait') {
+  const r = spawnSync('python3', ptyArgs(['env', 'set', key], typed, mode), { env: env(), encoding: 'utf8', timeout: subprocessTimeout('cli') * 2 })
   return { out: (r.stdout || '') + (r.stderr || ''), code: r.status ?? -1 }
+}
+function ttyUnset(key: string) {
+  const r = spawnSync('python3', ptyArgs(['env', 'unset', key], '', 'none'), { env: env(), encoding: 'utf8', timeout: subprocessTimeout('cli') * 2 })
+  return { out: (r.stdout || '') + (r.stderr || ''), code: r.status ?? -1 }
+}
+function typeSetAsync(key: string, typed: string): Promise<number> {
+  return new Promise((resolve) => {
+    const c = spawn('python3', ptyArgs(['env', 'set', key], typed, 'wait'), { env: env(), stdio: 'ignore' })
+    c.on('exit', (code) => resolve(code ?? -1))
+  })
 }
 
 function noLeak(out: string, win = 4, lengths = true) {
@@ -180,20 +196,40 @@ describe('env set — hidden prompt, terminal only', () => {
 describe('env unset · ls', () => {
   test('unset removes one key; removing the last removes the file', () => {
     seedStore(`SENTRY_DSN='${V_SECRET}'\nAPPLE_TEAM_ID='${V_TEAM}'\n`)
-    const r = run(['env', 'unset', 'SENTRY_DSN'])
+    const r = ttyUnset('SENTRY_DSN')
     expect(r.code).toBe(0)
     expect(r.out).toContain('SENTRY_DSN 을 기기 범위에서 지웠어요')
     noLeak(r.out)
     expect(fs.readFileSync(storePath(), 'utf8')).toBe(`APPLE_TEAM_ID='${V_TEAM}'\n`)
-    expect(run(['env', 'unset', 'APPLE_TEAM_ID']).code).toBe(0)
+    expect(ttyUnset('APPLE_TEAM_ID').code).toBe(0)
     expect(fs.existsSync(storePath())).toBe(false)
   })
 
-  test('unset of a missing key fails with the approved copy', () => {
-    const r = run(['env', 'unset', 'NO_SUCH_KEY'])
+  test('unset of a missing key fails without echoing the typed token', () => {
+    const r = ttyUnset('NO_SUCH_KEY')
     expect(r.code).toBe(1)
-    expect(r.out).toContain('지우기 실패: NO_SUCH_KEY 가 기기 범위에 없어요. 지운 키가 없어요.')
+    expect(r.out).toContain('지우기 실패: 그 키가 기기 범위에 없어요. 지운 키가 없어요.')
     expect(r.out).toContain('다음: prdt env ls 로 키 이름을 확인하세요.')
+    expect(r.out).not.toContain('NO_SUCH_KEY')
+  })
+
+  test('a key-shaped value typed where the key goes is never echoed (tty and no-tty)', () => {
+    seedStore(`APPLE_TEAM_ID='${V_TEAM}'\n`)
+    const shaped = 'FAKE_KEYSHAPED_TOKEN_Q7Z'
+    for (const r of [ttyUnset(shaped), run(['env', 'unset', shaped]), run(['env', 'set', shaped])]) {
+      expect(r.code).not.toBe(0)
+      expect(r.out).not.toContain(shaped)
+    }
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`APPLE_TEAM_ID='${V_TEAM}'\n`)
+  })
+
+  test('agent-initiated unset (no tty): refused, the stored key stays', () => {
+    seedStore(`APPLE_TEAM_ID='${V_TEAM}'\n`)
+    const r = run(['env', 'unset', 'APPLE_TEAM_ID'])
+    expect(r.code).toBe(1)
+    expect(r.out).toContain('지우기 실패: 터미널에서만 지울 수 있어요. 지운 키가 없어요.')
+    expect(r.out).toContain('다음: 터미널에서 직접 실행하세요.')
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`APPLE_TEAM_ID='${V_TEAM}'\n`)
   })
 
   test('ls none', () => {
@@ -227,6 +263,117 @@ describe('env unset · ls', () => {
     expect(r.out).toMatch(/POSTGRES_USER\s+—\s+비어 있음\s+값 없음/)
     expect(r.out).toContain('같은 이름 1개는 제품 코드 값을 써요. 기기 범위 값을 쓰려면 제품 코드 파일에서 그 키를 지우세요.')
     noLeak(r.out)
+  })
+})
+
+describe('T-1110: set/unset keep every untouched line byte-for-byte', () => {
+  // FAKE values a quote style cannot re-serialize: a PEM-like multi-line value and a tab value
+  const PEM = '"-----BEGIN FAKE KEY-----\nFAKEpemLineOne\nFAKEpemLineTwo\n-----END FAKE KEY-----"'
+  const head = Buffer.concat([
+    Buffer.from(`# machine keys — kept as written\nexport EXPORTED_KEY=FAKEexportVal\nPEM_KEY=${PEM}\nTAB_KEY='FAKE\ttabVal'\n`, 'utf8'),
+    Buffer.from([0x23, 0x20, 0xe9, 0x0a]), // a comment holding a byte that is not UTF-8
+  ])
+  const PROBE_PEM = ['python3', '-c', 'import os; print("PEM=" + str(os.environ.get("PEM_KEY") == "-----BEGIN FAKE KEY-----\\nFAKEpemLineOne\\nFAKEpemLineTwo\\n-----END FAKE KEY-----") + " TAB=" + str(os.environ.get("TAB_KEY") == "FAKE\\ttabVal"))']
+
+  test('set of a new key, set of an existing key and unset touch only that key', () => {
+    fs.mkdirSync(path.dirname(storePath()), { recursive: true })
+    fs.writeFileSync(storePath(), Buffer.concat([head, Buffer.from(`APPLE_TEAM_ID='old'\nSENTRY_DSN='${V_SECRET}'\n`)]), { mode: 0o600 })
+    expect(typeSet('NEW_KEY', V_CODE).code).toBe(0)
+    expect(typeSet('APPLE_TEAM_ID', V_TEAM).code).toBe(0)
+    expect(ttyUnset('SENTRY_DSN').code).toBe(0)
+    expect(fs.readFileSync(storePath())).toEqual(Buffer.concat([head, Buffer.from(`APPLE_TEAM_ID='${V_TEAM}'\nNEW_KEY='${V_CODE}'\n`)]))
+    const r = run(['env', 'run', '--', ...PROBE_PEM])
+    expect(r.out).toContain('PEM=True TAB=True')
+    expect(r.out).not.toContain('None')
+  })
+
+  test('set replacing a multi-line value keeps its export prefix and no stray continuation lines', () => {
+    seedStore(`A_KEY=FAKEa\nexport PEM_KEY=${PEM}\nZ_KEY=FAKEz\n`)
+    expect(typeSet('PEM_KEY', V_TEAM).code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`A_KEY=FAKEa\nexport PEM_KEY='${V_TEAM}'\nZ_KEY=FAKEz\n`)
+  })
+
+  test('unset of a multi-line key removes all its lines; a file with no final newline gains one only for an appended key', () => {
+    seedStore(`PEM_KEY=${PEM}\nKEEP_KEY=FAKEkeep`)
+    expect(ttyUnset('PEM_KEY').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe('KEEP_KEY=FAKEkeep')
+    expect(typeSet('NEW_KEY', V_CODE).code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`KEEP_KEY=FAKEkeep\nNEW_KEY='${V_CODE}'\n`)
+  })
+})
+
+describe('T-1110: hidden prompt, permissions, lock, write failure', () => {
+  test('ECHO is off before the prompt: a value typed the instant the prompt starts is never echoed', () => {
+    const r = typeSet('APPLE_TEAM_ID', V_TEAM, 'eager')
+    expect(r.code).toBe(0)
+    noLeak(r.out)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`APPLE_TEAM_ID='${V_TEAM}'\n`)
+  })
+
+  test('a pre-existing 0755 store directory is tightened to 0700 by set and by unset', () => {
+    fs.mkdirSync(path.dirname(storePath()), { recursive: true, mode: 0o755 })
+    fs.chmodSync(path.dirname(storePath()), 0o755)
+    expect(typeSet('APPLE_TEAM_ID', V_TEAM).code).toBe(0)
+    expect(fs.statSync(path.dirname(storePath())).mode & 0o777).toBe(0o700)
+    fs.chmodSync(path.dirname(storePath()), 0o755)
+    expect(ttyUnset('APPLE_TEAM_ID').code).toBe(0)
+    expect(fs.statSync(path.dirname(storePath())).mode & 0o777).toBe(0o700)
+  })
+
+  test('concurrent sets are serialized: every key lands', async () => {
+    seedStore(`# keep\n`)
+    const keys = ['K_ONE', 'K_TWO', 'K_THREE', 'K_FOUR', 'K_FIVE', 'K_SIX']
+    const codes = await Promise.all(keys.map((k, i) => typeSetAsync(k, `FAKEconc${i}`)))
+    expect(codes).toEqual(keys.map(() => 0))
+    const text = fs.readFileSync(storePath(), 'utf8')
+    expect(text.startsWith('# keep\n')).toBe(true)
+    keys.forEach((k, i) => expect(text).toContain(`${k}='FAKEconc${i}'\n`))
+  }, subprocessTimeout('cli') * 6)
+
+  test('a store write failure prints one line, no traceback, store unchanged', () => {
+    seedStore(`APPLE_TEAM_ID='${V_TEAM}'\n`)
+    fs.mkdirSync(storePath() + '.tmp') // the atomic temp name is taken by a directory → the write fails
+    const r = typeSet('NEW_KEY', V_CODE)
+    expect(r.code).toBe(3)
+    expect(r.out).toMatch(/저장 실패: 기기 범위 env 저장소에 쓸 수 없어요 \([^)]+\)\. 저장한 키가 없어요\./)
+    expect(r.out).not.toContain('Traceback')
+    noLeak(r.out)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`APPLE_TEAM_ID='${V_TEAM}'\n`)
+  })
+})
+
+describe('T-1110: secret guard — env run children and set/unset wrappers', () => {
+  function verdict(c: string) {
+    const r = spawnSync('bash', [HOOK], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: c } }), encoding: 'utf8', timeout: subprocessTimeout('hook') })
+    return r.stdout
+  }
+  test.each([
+    'prdt env run -- printenv', 'prdt env run -- env', 'prdt env run -- set', 'prdt env run -- export -p', 'prdt env run -- declare -p',
+    'prdt env run -- sh -c "echo $K"', 'prdt env run -- bash -c x', 'prdt env run -- zsh -c x', 'prdt env run -- bash',
+    'prdt env run -- python3 -c "import os"', 'prdt env run -- python -c x', 'prdt env run -- node -e 1', 'prdt env run -- node -p process.env',
+    'prdt env run -- ruby -e 1', 'prdt env run -- perl -e 1', 'prdt env run -- cat /proc/self/environ', 'prdt env run -- python3',
+    'prdt env run -- npm run env', 'prdt env run -- pnpm exec printenv', 'prdt env run -- /usr/bin/env', 'prdt env run printenv',
+    'prdt "env" "run" -- printenv', '~/.prdt/bin/prdt env run -- env | head',
+  ])('env run child denied, values-not-in-transcript message: %s', (c) => {
+    const out = verdict(c)
+    expect(out).toContain('"deny"')
+    expect(out).toContain('values must not enter the transcript')
+  })
+  test.each([
+    'prdt env run -- pnpm dev', 'prdt env run -- node server.js', 'prdt env run -- python3 -m http.server', 'prdt env run -- pnpm build',
+  ])('env run with a real program allowed: %s', (c) => { expect(verdict(c)).not.toContain('"deny"') })
+  test.each([
+    'prdt "env" "unset" APPLE_TEAM_ID', "prdt env 'unset' APPLE_TEAM_ID", 'prdt env un\\set X', 'prdt env "set" X',
+    'python3 /some/path/prdt env set X', 'python3 ~/.prdt/bin/prdt env unset X',
+    "echo 'prdt env unset X' | bash", 'printf "prdt env set X" | sh', 'x=prdt; $x env unset X', '$P env set X',
+    'echo unset X | xargs prdt env', 'xargs -I{} prdt env {} X < keys', 'prdt env $sub X',
+    `python3 -c "import pty; pty.spawn(['prdt','env','set','X'])"`, `python3 -c "import pty; pty.spawn(['/x/prdt', 'env', 'unset', 'X'])"`,
+    "expect -c 'spawn prdt env set X; interact'", 'script -q /dev/null prdt env unset X',
+  ])('set/unset wrapper denied with its own message: %s', (c) => {
+    expect(verdict(c)).toContain('written only by the user own')
+  })
+  test.each(['echo $HOME env', 'echo $PATH env FOO', 'prdt env ls', 'echo "prdt env settings"'])('no false deny: %s', (c) => {
+    expect(verdict(c)).not.toContain('"deny"')
   })
 })
 
