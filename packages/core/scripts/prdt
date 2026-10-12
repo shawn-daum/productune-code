@@ -14582,14 +14582,17 @@ def _resource_markers(name=None):
             data = read_json(f)
             if not isinstance(data, dict):
                 continue
+            # T-1108 ⑦: `product` (pre-v1.14 markers say `line`). A legacy `line`
+            # equal to the project slug named the first product — no product label.
+            prod = data["product"] if isinstance(data.get("product"), str) else None
+            if prod is None and isinstance(data.get("line"), str) and data["line"] != data.get("project"):
+                prod = data["line"]
             out.append({
                 "resource": data.get("resource") or n,
                 "dispatch": data.get("dispatch") or f.stem,
                 "project": data.get("project"),
                 "since": data.get("since"),
-                # T-1108 ⑦: `product` (pre-v1.14 markers say `line`).
-                **({"product": data["product"] if isinstance(data.get("product"), str) else data["line"]}
-                   if isinstance(data.get("product"), str) or isinstance(data.get("line"), str) else {}),
+                **({"product": prod} if prod is not None else {}),
             })
     return out
 
