@@ -107,7 +107,8 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH,
   // no `packages/gui/viewer/` to write into), so the relative hrefs are
   // computed from the real destination, never from this module's own folder.
   const repoRootHref = path.relative(path.dirname(outputPath), repoRoot).split(path.sep).join('/') || '.'
-  const artifactsBaseHref = `${repoRootHref}/docs/artifacts`
+  // T-1104: `docs/<product>/artifacts` in the product layout.
+  const artifactsBaseHref = `${repoRootHref}/${data.docsLayout.relDir('artifacts')}`
 
   const viewerAbsPath = path.resolve(outputPath)
   // T-885 (T-876 = D): past-version ticket bodies go to sibling data files;
@@ -116,9 +117,9 @@ export async function generate({ repoRoot = REPO_ROOT, outputPath = OUTPUT_PATH,
   // T-972: the paths a body may link, from the page's own anchor table.
   const docTargets = buildDocPathTargets(data)
   const pastFiles = [
-    ...pastTicketDataFiles(data.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline, docTargets }),
+    ...pastTicketDataFiles(data.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline, docTargets, docsLayout: data.docsLayout }),
     // T-961: an added release line's past-version bodies, file names carry the line.
-    ...(data.lines || []).flatMap((l) => pastTicketDataFiles(l.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline, line: l.name, docTargets })),
+    ...(data.lines || []).flatMap((l) => pastTicketDataFiles(l.tickets, { repoRootHref, viewerAbsPath, prefix, discipline: data.discipline, line: l.name, docTargets, docsLayout: data.docsLayout })),
   ]
   const pastTicketSrc = {}
   for (const f of pastFiles) pastTicketSrc[f.bucket] = encodeURIComponent(f.name)
