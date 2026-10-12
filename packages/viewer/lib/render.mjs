@@ -252,9 +252,10 @@ export function isHrefContained(href, { repoRootHref = DEFAULT_REPO_ROOT_HREF, r
  * @param {string} sourceDirRel
  * @param {string} repoRootHref
  * @param {string} [viewerAbsPath]
+ * @param {object|null} [docsLayout] `data.docsLayout` (lib/docs-layout.mjs `createDocsLayout`); null/legacy = as before
  * @returns {string|null}
  */
-export function resolveDocLink(href, sourceDirRel, repoRootHref, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH) {
+export function resolveDocLink(href, sourceDirRel, repoRootHref, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, docsLayout = null) {
   if (!href) return null
   if (/^(#|\/\/|\/)/.test(href)) return null
   if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return null
@@ -262,7 +263,10 @@ export function resolveDocLink(href, sourceDirRel, repoRootHref, viewerAbsPath =
   const pathPart = hashIdx === -1 ? href : href.slice(0, hashIdx)
   const hashPart = hashIdx === -1 ? '' : href.slice(hashIdx)
   if (!pathPart) return null
-  const resolved = path.posix.normalize(path.posix.join(sourceDirRel, pathPart))
+  let resolved = path.posix.normalize(path.posix.join(sourceDirRel, pathPart))
+  // T-1104 ③: a link written against the As-Is tree (a closed PRD) opens its To-Be file —
+  // product → _shared fallback, `docs/…` through the ref map (same rule as the CLI's resolve_docs_link).
+  if (docsLayout && docsLayout.layout === 'product' && !resolved.startsWith('..')) resolved = docsLayout.mapJoined(resolved)
   const candidate = safeEncodeURI(`${repoRootHref}/${resolved}${hashPart}`)
   return isHrefContained(candidate, { repoRootHref, viewerAbsPath }) ? candidate : null
 }
@@ -407,8 +411,21 @@ const defaultTextRender = Renderer.prototype.text
 // Never inside another link's text (`link` below switches it off), never in a
 // fenced block (not this renderer); an inline code span links only when the
 // whole span is one such path. A `[[wikilink]]` is left as it was.
-const DOC_PATH_RE = /(?<![\w./~-])(?<!\[\[)docs\/(?:artifacts|wiki|prd|tickets|features)\/[\w./-]*\w/g
+// T-1104: a To-Be path carries a `_shared/` or `<product>/` segment first.
+const DOC_PATH_RE = /(?<![\w./~-])(?<!\[\[)docs\/(?:_shared\/|[a-z0-9]+(?:-[a-z0-9]+)*\/)?(?:artifacts|wiki|prd|tickets|features)\/[\w./-]*\w/g
 let pageDocTargets = null
+// T-1104: the layout of the project being rendered (null = legacy / single-product, as before).
+let pageDocsLayout = null
+
+/** The anchor-table key a path written in a body names: itself, else (product layout) its To-Be form (③ As-Is paths in closed PRDs · tickets · wiki). */
+function docTargetKey(text) {
+  if (pageDocTargets.has(text)) return text
+  if (pageDocsLayout && pageDocsLayout.layout === 'product') {
+    const to = pageDocsLayout.resolveRef(text)
+    if (to !== text && pageDocTargets.has(to)) return to
+  }
+  return null
+}
 let pageTicketIds = null
 
 /**
@@ -434,7 +451,7 @@ export function buildDocPathTargets(data, anchors = buildAnchors(data)) {
 }
 
 function docPathAnchor(rel, textHtml) {
-  return `<a href="#${escapeHtml(pageDocTargets.get(rel))}">${textHtml}</a>`
+  return `<a href="#${escapeHtml(pageDocTargets.get(docTargetKey(rel)))}">${textHtml}</a>`
 }
 
 // T-1066: a ticket id (T-NNN · T-PATCH-NNN · T-P4-NNN) in running text links to
@@ -472,7 +489,7 @@ function linkDocPathText(text, plain) {
   let last = 0
   let found = false
   for (let m = DOC_PATH_RE.exec(text); m !== null; m = DOC_PATH_RE.exec(text)) {
-    if (!pageDocTargets.has(m[0])) continue
+    if (docTargetKey(m[0]) === null) continue
     found = true
     if (m.index > last) out += plain(text.slice(last, m.index))
     out += docPathAnchor(m[0], escapeHtml(m[0]))
@@ -517,7 +534,7 @@ hardenedRenderer.code = function (token) {
   return defaultCodeRender.call(this, token)
 }
 hardenedRenderer.codespan = function ({ text }) {
-  if (linkContext.docs && pageDocTargets.has(text)) return `<code>${docPathAnchor(text, escapeHtml(text))}</code>`
+  if (linkContext.docs && docTargetKey(text) !== null) return `<code>${docPathAnchor(text, escapeHtml(text))}</code>`
   const linked = linkContext.disc ? linkDisciplineCode(text, linkContext.disc) : null
   return linked ?? `<code>${escapeHtml(text)}</code>`
 }
@@ -533,7 +550,7 @@ hardenedRenderer.link = function ({ href, title, tokens }) {
   linkContext.disc = outerDisc
   linkContext.docs = outerDocs
   linkContext.ids = outerIds
-  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath)
+  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath, pageDocsLayout)
   if (rewritten !== null) {
     const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
     return `<a href="${escapeHtml(rewritten)}" target="_blank" rel="noopener"${titleAttr}>${text}</a>`
@@ -564,7 +581,7 @@ hardenedRenderer.link = function ({ href, title, tokens }) {
 hardenedRenderer.image = function ({ href, title, text, tokens }) {
   const altSource = tokens ? this.parser.parseInline(tokens, this.parser.textRenderer) : text
   const alt = escapeHtml(altSource)
-  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath)
+  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath, pageDocsLayout)
   if (rewritten === null) return alt
   const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
   return `<img src="${escapeHtml(rewritten)}" alt="${alt}"${titleAttr}>`
@@ -1046,8 +1063,9 @@ export const PAST_TICKET_GLOBAL = '__PRDT_VIEWER_DATA__'
  * loader takes a src from that map only.
  * @returns {Array<{ bucket: string, name: string, tickets: Record<string,{path:string,body:string}>, bodies: string[] }>}
  */
-export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [], line = null, docTargets = null } = {}) {
+export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [], line = null, docTargets = null, docsLayout = null } = {}) {
   pageViewerAbsPath = viewerAbsPath
+  pageDocsLayout = docsLayout
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   pageDocTargets = docTargets
   pageTicketIds = ticketIdsOf(pageDocTargets)
@@ -1878,7 +1896,8 @@ function featuresSection(data) {
 function prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix, line = null }) {
   // T-884: the open PRD is the reading screen (outline · folds · 「결정할 것」 box · What cards).
   // `idPrefix` keeps ids unique when the same body sits in two panes (PRD store and home).
-  const sourceDir = 'docs/prd'
+  // T-1104: the PRD's own dir — `docs/prd`, or `docs/<product>/prd` in the product layout.
+  const sourceDir = prd.current?.rel ? path.posix.dirname(prd.current.rel) : 'docs/prd'
   const inlineMd = (t) => md(t, sourceDir, repoRootHref, { discipline: true }).replace(/^<p>/, '').replace(/<\/p>\s*$/, '')
   return renderPrdReading({
     body: prd.current.body,
@@ -2049,7 +2068,8 @@ export function buildAnchors(data) {
     put(file.replace(/\.md$/, ''), entry)
     put(p.rel, entry)
   }
-  put('docs/prd/PRD.md', { s: 'home', g: 'prd' })
+  // T-1104: keyed by the real path (To-Be in the product layout) = the CLI's viewer_anchor.
+  put(data.prd?.current?.rel || 'docs/prd/PRD.md', { s: 'home', g: 'prd' })
   put('PRD', { s: 'home', g: 'prd' })
   for (const e of currentArtifactEntries(data.artifacts, data.currentVersion)) {
     const f = e.fields
@@ -2495,7 +2515,7 @@ function dependencyDiagram(graph, layout, DG_ID = 'home-dg') {
 
 function homeDependency(data, currentTickets) {
   const dgId = data.dgId || DG_ID
-  const graph = buildHomeGraph({ tickets: currentTickets, gatePath: data.prd.gatePath || '' })
+  const graph = buildHomeGraph({ tickets: currentTickets, gatePath: data.prd.gatePathAlt ? [data.prd.gatePath, data.prd.gatePathAlt] : data.prd.gatePath || '' })
   const drawable = graph.connected && graph.spine.size > 0
   const stage = data.poState?.stage
   const sub = !graph.connected && stage === 'define' && graph.nodes.length > 0 ? ` <span class="cp-sub">${HOME.beforeBuild}</span>` : ''
@@ -3159,8 +3179,10 @@ const INTERACTION_SCRIPT = `
   function own(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
   function pastTicketRef(fields) {
     var parts = String(fields.path || '').split('/');
-    if (parts[0] !== 'docs' || parts[1] !== 'tickets' || !own(PAST, parts[2])) return null;
-    return { key: parts[2], src: PAST[parts[2]] };
+    // T-1104: As-Is docs/tickets/<bucket>, or To-Be docs/<product or _shared>/tickets/<bucket>.
+    var i = parts[1] === 'tickets' ? 2 : parts[2] === 'tickets' ? 3 : -1;
+    if (parts[0] !== 'docs' || i < 0 || !own(PAST, parts[i])) return null;
+    return { key: parts[i], src: PAST[parts[i]] };
   }
   function pastSettled(ref) { return PAST_LOADS[ref.key] === 'done' || PAST_LOADS[ref.key] === 'failed'; }
   // The page's embedded font subset covers the page; a data file brings the
@@ -3912,6 +3934,7 @@ export function renderPage({
   const discipline = data.discipline || []
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   const anchors = buildAnchors(data)
+  pageDocsLayout = data.docsLayout ?? null
   pageDocTargets = buildDocPathTargets(data, anchors)
   pageTicketIds = ticketIdsOf(pageDocTargets)
   const views = lineViews(data)
