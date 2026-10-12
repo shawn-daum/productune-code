@@ -125,4 +125,46 @@ describe('T-1108 lines → products', () => {
     const r = cli(project('products', null), home, ['resource', 'ls'])
     expect(r.out).toContain('dispatch=d-9 project=shop product=android since=')
   }, T)
+
+  test('resource ls: a legacy marker `line` equal to the project never prints product=', () => {
+    const home = tmp('prdt-products-home-')
+    put(home, 'run/resources/old/d-8.json', JSON.stringify({ resource: 'old', dispatch: 'd-8', project: 'shop', line: 'shop', since: '2026-10-12T00:00Z' }))
+    const out = cli(project('products', null), home, ['resource', 'ls']).out
+    expect(out).toContain('dispatch=d-8 project=shop since=')
+    expect(out).not.toContain('product=')
+  }, T)
+
+  test('viewer: an added product in the product layout reads docs/<product>/tickets and prd (idle copy keeps its backlog and closed version)', () => {
+    const root = tmp('prdt-products-viewer-')
+    put(root, '.prdt/config.json', JSON.stringify({ slug: 'ntf-pm', surfaces: {}, products: [{ name: 'ntf-archive' }] }, null, 2) + '\n')
+    put(root, '.prdt/po-state.json', JSON.stringify({ schema_version: 1, stage: 'build', version: 'v2.2', current_task: null, products: { 'ntf-archive': { stage: 'idle' } } }, null, 2) + '\n')
+    put(root, 'docs/_shared/wiki/index.md', '# wiki\n')
+    const t = (dir: string, id: string) => put(root, `docs/${dir}/${id}.md`, ['---', `id: ${id}`, `slug: s-${id.toLowerCase()}`,
+      'type: impl', 'status: open', 'assignee: developer', 'created: 2026-10-12', '---', '', '## problem', '', '- x', '', '## acceptance', '', '- x', ''].join('\n'))
+    put(root, 'docs/ntf-pm/prd/PRD.md', '# PRD\n\n## v2.2 — round\n\n- w\n')
+    t('ntf-pm/tickets/v2.2', 'T-001')
+    put(root, 'docs/ntf-archive/prd/versions/v1.1.md', '## v1.1 — closed\n\nbody\n')
+    t('ntf-archive/tickets/backlog', 'T-008')
+    t('ntf-archive/tickets/backlog', 'T-009')
+    t('ntf-archive/tickets/v1.1', 'T-007')
+    const out = path.join(tmp('prdt-products-viewer-out-'), 'viewer.html')
+    const viewerDir = path.join(CORE_ROOT, '..', 'viewer')
+    const script = `import { collectAll } from ${JSON.stringify(path.join(viewerDir, 'lib', 'collect.mjs'))}
+import { generate } from ${JSON.stringify(path.join(viewerDir, 'generate.mjs'))}
+const d = collectAll(${JSON.stringify(root)})
+const l = d.lines[0]
+const g = await generate({ repoRoot: ${JSON.stringify(root)}, outputPath: ${JSON.stringify(out)} })
+import('node:fs').then((fs) => fs.writeFileSync(${JSON.stringify(out)}, g.html))
+console.log(JSON.stringify({ closed: l.prd.closed.map((c) => c.name), included: l.tickets.included.length, omitted: l.tickets.omitted.map((o) => [o.bucket, o.count]) }))`
+    const r = spawnSync('node', ['--input-type=module', '-e', script], { cwd: tmp('prdt-products-viewer-cwd-'), encoding: 'utf8', timeout: 90_000 })
+    expect(r.status, r.stderr).toBe(0)
+    const got = JSON.parse(r.stdout.trim().split('\n').pop() as string)
+    expect(got).toEqual({ closed: ['v1.1.md'], included: 2, omitted: [['v1.1', 1]] })
+    const html = fs.readFileSync(out, 'utf8')
+    expect(html).toContain('<b>ntf-archive v1.1</b><span class="ls-st">idle</span>')
+    expect(html).toContain('data-group-select="ntf-archive/ticket" data-crumb="ntf-archive v1.1 · 티켓"><span>티켓</span><span class="nav-item-count">3</span>')
+    expect(html).toContain('data-group-select="ntf-archive/prd" data-crumb="ntf-archive v1.1 · PRD"><span>PRD</span><span class="nav-item-count">v1.1</span>')
+    expect(html).toContain('<span>진행 중인 섹션 없음</span></button>')
+    expect(html).not.toContain('이 줄')
+  }, T)
 })

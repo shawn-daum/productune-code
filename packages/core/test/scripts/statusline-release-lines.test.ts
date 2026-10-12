@@ -213,7 +213,7 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     }
   })
 
-  test('never more than 17 rows: past the limit the last line rows fold into `+N lines`', () => {
+  test('never more than 17 rows: past the limit the last line rows fold into `+N products`', () => {
     const names = Array.from({ length: 20 }, (_, i) => `line-${i + 1}`)
     seed({ slug: 'big', products: names.map((name) => ({ name })) },
       { stage: 'build', version: 'v1.0', products: Object.fromEntries(names.map((n) => [n, { stage: 'build', version: 'v1.0' }])) })
@@ -221,7 +221,7 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     expect(r).toHaveLength(17)
     expect(r[0]).toBe('big v1.0 | stage: build 0/0 | working 0')
     expect(r[14]).toBe('line-14 v1.0 | stage: build 0/0 | working 0')
-    expect(r[15]).toBe('+6 lines')
+    expect(r[15]).toBe('+6 products')
     expect(r[16]).toBe('decision 0 | request 0')
   })
 

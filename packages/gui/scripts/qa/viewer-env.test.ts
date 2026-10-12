@@ -201,7 +201,7 @@ describe('env item + Home env block — several lines', () => {
 
   it('a line without env files: the empty state names the folder and names searched', () => {
     const none = envPane('')
-    expect(none).toContain('이 줄에는 env 파일이 없어요.')
+    expect(none).toContain('이 제품에는 env 파일이 없어요.')
     expect(none).toContain('찾은 폴더: code · 찾은 이름: .env · .env.*')
     expect(none).not.toContain('—')
   })
@@ -218,7 +218,7 @@ describe('env item + Home env block — several lines', () => {
     expect(archive).toContain('<p class="env-empty"><span>비어 있음</span>: <code>CRON_SECRET</code> · <code>PM_INGEST_SECRET</code></p>')
     expect(archive).not.toContain('.env.example')
     const homeLine = home().split('data-group="progress">')[1].split('<div class="view-pane')[0]
-    expect(homeLine).toContain('<p class="env-none">이 줄의 코드 폴더에 env 파일이 없어요.</p>')
+    expect(homeLine).toContain('<p class="env-none">이 제품의 코드 폴더에 env 파일이 없어요.</p>')
   })
 
   it('the page script opens the named sidebar item from Home', () => {

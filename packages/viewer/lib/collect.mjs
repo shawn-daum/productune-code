@@ -177,7 +177,8 @@ export function collectTickets(repoRoot, currentVersion, { line = null, exclude 
   /** @type {Map<string, string[]>} bucket → bucket dirs (product first) */
   const bucketDirsByName = new Map()
   for (const r of roots) {
-    const ticketsRoot = path.join(r, ...(line ? [line] : []))
+    // T-1108: a product layout holds an added product's tickets in `docs/<product>/tickets/` itself, no `<line>/` level.
+    const ticketsRoot = path.join(r, ...(line && layout.layout !== 'product' ? [line] : []))
     if (!containedDir(repoRoot, ticketsRoot)) continue
     for (const e of fs.readdirSync(ticketsRoot, { withFileTypes: true })) {
       if (!(e.isDirectory() || e.isSymbolicLink()) || exclude.includes(e.name)) continue
@@ -417,6 +418,11 @@ export function collectPrd(repoRoot, currentVersion, { line = null, lineNames = 
   // empty open section), never an ENOENT.
   // T-1104: the PRD dir is `docs/<product>/prd` in the product layout.
   const prdRelDir = layout.relDir('prd')
+  // T-1108: a product layout gives an added product its own PRD file — no `## <line> v…` sections, no `versions/<line>/`.
+  if (layout.layout === 'product' && line) {
+    line = null
+    lineNames = []
+  }
   const prdPath = path.join(repoRoot, prdRelDir, 'PRD.md')
   const doc = readDoc(repoRoot, prdPath) ?? { rel: `${prdRelDir}/PRD.md`, frontmatter: {}, body: '' }
   // T-961: with release lines declared, each line reads the shared head plus
@@ -803,12 +809,13 @@ export function collectAll(repoRoot, { disciplineRoot } = {}) {
   // field exactly as before.
   const lines = lineNames.map((name) => {
     const { stage, version } = lineState(poState, name)
+    const lineLayout = layout.layout === 'product' ? createDocsLayout(repoRoot, name) : layout
     return {
       name,
       stage,
       version,
-      prd: collectPrd(repoRoot, version, { line: name, lineNames, layout }),
-      tickets: collectTickets(repoRoot, version, { line: name, layout }),
+      prd: collectPrd(repoRoot, version, { line: name, lineNames, layout: lineLayout }),
+      tickets: collectTickets(repoRoot, version, { line: name, layout: lineLayout }),
       // T-958: key names + set/empty only (env-status.mjs).
       env: collectEnv(repoRoot, lineEnvDir(cfg, name)),
     }
