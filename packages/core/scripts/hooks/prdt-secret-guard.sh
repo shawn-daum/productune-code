@@ -273,7 +273,7 @@ IFS= read -r -d '' EV 2>/dev/null
 # names) stays case-SENSITIVE as intended.
 shopt -s nocasematch
 case "$EV" in
-  *.env*|*.pem*|*.key*|*.p12*|*credentials.json*) _hit=1 ;;
+  *.env*|*.pem*|*.key*|*.p12*|*credentials.json*|*prdt*env*) _hit=1 ;; # T-1109: `prdt env set|unset` and ~/.prdt/env/ paths
   *) _hit=0 ;;
 esac
 shopt -u nocasematch
@@ -380,7 +380,10 @@ sub is_target {
 
 # bash `${x##*/}`: drop the longest prefix ending in `/` — everything up to and
 # including the LAST slash, newlines included (bash glob `*` crosses them).
-sub basename { my $x = shift; $x =~ s{\A.*/}{}s; return $x }
+# T-1109: ANY file directly under a `.prdt/env/` directory is the machine-scope
+# credential store (`~/.prdt/env/.env`, or a backup / temp copy beside it) — it
+# judges as `.env` whatever its own name, so every call site below denies it.
+sub basename { my $x = shift; return ".env" if $x =~ m{(?:\A|/)\.prdt/env/[^/]+/?\z}is; $x =~ s{\A.*/}{}s; return $x }
 
 # A redirect-destination operator token as `tokenize` emits it: the NEXT token
 # is a destination (or fd), never an argument to judge.
@@ -977,6 +980,10 @@ sub judge_command {
     # explicit, matching the ticket design, and future-proof against either
     # set ever growing to include a colliding name.
     if ($cmdbase eq "prdt" && $idx + 2 < $ntok && $T[$idx + 1] eq "env" && $T[$idx + 2] eq "check") { next }
+    # T-1109: ~/.prdt/env/ is written only by the user own `prdt env set|unset`
+    # at a hidden prompt — an agent Bash call naming either is denied (the CLI
+    # itself also refuses without a terminal; this is the first layer).
+    if ($cmdbase eq "prdt" && $idx + 2 < $ntok && $T[$idx + 1] eq "env" && $T[$idx + 2] =~ /\A(?:set|unset)\z/) { print "deny-write"; exit 0 }
 
     # read/mapfile/readarray/done with `< target` (QA grill S2b MEDIUM): none
     # of these are printers, so a target fed to them via stdin redirection was
@@ -1180,5 +1187,6 @@ if [ -z "$PERL" ]; then
 fi
 VERDICT="$(printf '%s' "$SUBJECT" | "$PERL" -C0 -e "$PRDT_JUDGE" -- "$TOOL_NAME" 2>/dev/null)"
 [ "$VERDICT" = "deny" ] && deny_and_exit
+[ "$VERDICT" = "deny-write" ] && { DENY_MSG='[prdt secret guard] Denied: the machine env store (~/.prdt/env/.env) is written only by the user own `prdt env set <KEY>` / `prdt env unset <KEY>`, typed in a terminal at a hidden prompt — a credential value never enters agent context (T-1109). Ask the user to run it; check what is stored with `prdt env ls`.'; deny_and_exit; }
 
 exit 0
