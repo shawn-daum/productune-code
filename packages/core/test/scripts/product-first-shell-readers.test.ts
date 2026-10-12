@@ -132,10 +132,15 @@ describe('hooks read the product layout and the legacy one', () => {
     ticket(path.join(pdir, 'v0.1'), 'T-11')
     ticket(path.join(prod, 'docs', '_shared', 'tickets', 'backlog'), 'T-12')
     const reply = 'T-11 is done and T-12 is next.'
-    const lo = JSON.parse(stop('prdt-link-check.sh', legacy, reply))
-    const po = JSON.parse(stop('prdt-link-check.sh', prod, reply))
-    expect(lo.reason).toContain('unlinked first mention: T-11.')
-    expect(po.reason).toContain('unlinked first mention: T-11, T-12.')
+    const ctx = (out: string): string => {
+      const j = JSON.parse(out)
+      expect(j.decision).toBeUndefined()
+      return j.hookSpecificOutput.additionalContext as string
+    }
+    const lo = ctx(stop('prdt-link-check.sh', legacy, reply))
+    const po = ctx(stop('prdt-link-check.sh', prod, reply))
+    expect(lo).toContain('unlinked first mention: T-11.')
+    expect(po).toContain('unlinked first mention: T-11, T-12.')
   })
 
   test('link-check: a project with no ticket anywhere is silent in both layouts', () => {
