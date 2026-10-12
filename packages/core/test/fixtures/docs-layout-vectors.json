@@ -92,6 +92,12 @@
         "docs/zeta/prd/PRD.md",
         "docs/delta/tickets/v1.0/T-1.md"
       ]
+    },
+    "product-noproduct": {
+      "files": [
+        "docs/_shared/design.md",
+        "docs/_shared/wiki/x.md"
+      ]
     }
   },
   "cases": [
@@ -688,6 +694,75 @@
         "docs/tickets/v1.0/T-1.md"
       ],
       "expected": "docs/delta/tickets/v1.0/T-1.md"
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "projectProducts",
+      "args": [],
+      "expected": []
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "currentProduct",
+      "args": [],
+      "expected": null
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/tickets/v1.0/T-1.md"
+      ],
+      "expected": {
+        "error": "no-product"
+      }
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/prd/PRD.md"
+      ],
+      "expected": {
+        "error": "no-product"
+      }
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/wiki/retro--v1.0.md"
+      ],
+      "expected": {
+        "error": "no-product"
+      }
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/wiki/x.md"
+      ],
+      "expected": "docs/_shared/wiki/x.md"
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/design.md"
+      ],
+      "expected": "docs/_shared/design.md"
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/wiki",
+        "../prd/PRD.md"
+      ],
+      "expected": {
+        "error": "no-product"
+      }
     }
   ]
 }

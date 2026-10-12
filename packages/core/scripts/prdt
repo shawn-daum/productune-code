@@ -461,6 +461,10 @@ CREATE TABLE IF NOT EXISTS tickets (
   id TEXT PRIMARY KEY, slug TEXT, type TEXT CHECK(type IN ('design','impl','qa','ops','decision')),
   status TEXT CHECK(status IN ('open','done','dropped')), assignee TEXT, feature TEXT,
   deps TEXT, created TEXT, closed TEXT, version TEXT, path TEXT);
+-- T-1104: `also:` lives in its own table, never a `tickets` column — an older prdt
+-- binds 11 positional values into `tickets`, and a 12th column made every row of a
+-- shared index.db fail to insert (a newer run poisoned the older one's index).
+CREATE TABLE IF NOT EXISTS ticket_also (id TEXT PRIMARY KEY, also TEXT);
 CREATE TABLE IF NOT EXISTS wiki_pages (
   name TEXT PRIMARY KEY, title TEXT, type TEXT, status TEXT, version TEXT,
   links TEXT, path TEXT);
@@ -833,13 +837,29 @@ def docs_layer_chain(root, rel, product=None):
     return [p for p in cands if p.exists()]
 
 
+class DocsLayoutError(ValueError):
+    """A product-layout project that names no product, asked for a product path."""
+
+
+def _need_product(root, rel, product=None):
+    """The product a product-row path maps into; no product in a product layout
+    → DocsLayoutError (never a `docs/None/…` path)."""
+    p = product or current_product(root)
+    if not p:
+        raise DocsLayoutError(
+            f"cannot map {rel}: docs/_shared/ exists but the project names no product — "
+            f"set `slug` in .prdt/config.json, or create docs/<product>/prd or docs/<product>/tickets")
+    return p
+
+
 def resolve_docs_ref(root, rel, product=None):
     """③ A: an As-Is `docs/…` path (as written inside a closed PRD, a ticket, a
     wiki page) → its To-Be file. Files stay byte-identical; the READER maps.
     `docs/{prd,tickets,artifacts}/X` and `docs/DEPLOY.md` → `docs/<p>/…`;
     `docs/{wiki,features}/X` → product file when it exists, else `_shared`;
     any other `docs/X` → `docs/_shared/X`. A path already in the new layout,
-    a non-docs path, or the legacy layout → unchanged."""
+    a non-docs path, or the legacy layout → unchanged. A product-row path in a
+    product layout with no product → DocsLayoutError."""
     if not isinstance(rel, str) or docs_layout(root) != "product":
         return rel
     parts = rel.split("/")
@@ -849,13 +869,14 @@ def resolve_docs_ref(root, rel, product=None):
     prods = project_products(root)
     if head == DOCS_SHARED or head in prods:
         return rel
-    p = product or current_product(root)
     tail = "/".join(parts[1:])
     if head in PRODUCT_DOCS_KINDS or (head == "wiki" and len(parts) == 3
                                       and parts[2].startswith("retro--v")):
-        return f"docs/{p}/{tail}"
-    if head in ("wiki", "features") and (Path(root) / "docs" / p / tail).exists():
-        return f"docs/{p}/{tail}"
+        return f"docs/{_need_product(root, rel, product)}/{tail}"
+    if head in ("wiki", "features"):
+        p = product or current_product(root)
+        if p and (Path(root) / "docs" / p / tail).exists():
+            return f"docs/{p}/{tail}"
     return f"docs/{DOCS_SHARED}/{tail}"
 
 
@@ -888,6 +909,52 @@ def resolve_docs_link(root, base_dir, href, product=None):
                 return alt
         return joined
     return resolve_docs_ref(root, joined, product)
+
+
+# `docs/` entries that live in the CODE repository (T-453), outside the layout.
+DOCS_MSG_CODE_SIDE = ("RELEASES.md",)
+_DOCS_MSG_RE = re.compile(r"(?<![\w/.~<>-])docs/([A-Za-z0-9_.][A-Za-z0-9_.-]*)")
+
+
+def docs_msg(root, text):
+    """A message's As-Is `docs/…` paths → the real paths of the product layout
+    (T-1104: `docs/artifacts/manifest.json` → `docs/<p>/artifacts/manifest.json`,
+    `docs/wiki/` → `docs/_shared/wiki/`). Legacy layout, or a product layout that
+    names no product → the text unchanged. Messages only — never a file's own
+    text or a path used as data (those go through `resolve_docs_ref`)."""
+    if not isinstance(text, str) or "docs/" not in text or docs_layout(root) != "product":
+        return text
+    p = current_product(root)
+    if not p:
+        return text
+    prods = project_products(root)
+
+    def one(m):
+        head = m.group(1)
+        if head == DOCS_SHARED or head in prods or head in DOCS_MSG_CODE_SIDE:
+            return m.group(0)
+        if head in PRODUCT_DOCS_KINDS or (head == "wiki" and text.startswith("/retro--v", m.end())):
+            return f"docs/{p}/{head}"
+        return f"docs/{DOCS_SHARED}/{head}"
+    return _DOCS_MSG_RE.sub(one, text)
+
+
+class _DocsMsgStream:
+    """stdout/stderr wrapper that maps message paths through `docs_msg` (installed
+    by `main` only for the commands whose output is messages, in a product layout)."""
+
+    def __init__(self, inner, root):
+        self._inner, self._root = inner, root
+
+    def write(self, s):
+        return self._inner.write(docs_msg(self._root, s))
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+# Commands whose stdout is messages about the docs tree, not file content.
+DOCS_MSG_CMDS = ("doctor", "artifacts", "tickets")
 
 
 def docs_as_is_rel(root, rel):
@@ -951,9 +1018,16 @@ def _scan_ticket_dir(root, tdir, lines, prefix):
         # `id` keys the row, so it falls back to the filename the way it always has
         # — the dropped shape is already reported above, and a NULL primary key
         # would cost the row its identity on top of its value.
+        # T-1104 (T-1102 = A): a shared ticket lives in the shipping product's
+        # version dir and names the other product(s) in `also:`.
+        also, also_shape = index_list(fm.get("also"))
+        if also_shape:
+            problems.append(f"also: {also_shape} value is not a list or a product name — "
+                            f"dropped (write `also: [other-product]`)")
+        also = [str(a) for a in also if isinstance(a, str) and a]
         row = {"id": f["id"] or p.stem, "slug": f["slug"], "type": f["type"],
                "status": f["status"], "assignee": norm_assignee(f["assignee"]),
-               "feature": f["feature"], "deps": deps,
+               "feature": f["feature"], "deps": deps, "also": also,
                "created": f["created"], "closed": f["closed"],
                "version": version, "path": str(p.relative_to(root))}
         if row["type"] not in TICKET_TYPES:
@@ -967,6 +1041,7 @@ def _scan_ticket_dir(root, tdir, lines, prefix):
 
 def reindex_tickets(root, con):
     con.execute("DELETE FROM tickets")
+    con.execute("DELETE FROM ticket_also")
     violations = []
     for row, p, problems in scan_tickets(root) or []:
         violations += [f"{row['path']}: {x}" for x in problems]
@@ -975,6 +1050,9 @@ def reindex_tickets(root, con):
                         (row["id"], row["slug"], row["type"], row["status"], row["assignee"],
                          row["feature"], json.dumps(row["deps"]), row["created"], row["closed"],
                          row["version"], row["path"]))
+            if row["also"]:
+                con.execute("INSERT OR REPLACE INTO ticket_also VALUES (?,?)",
+                            (row["id"], json.dumps(row["also"])))
         except sqlite3.IntegrityError as e:
             violations.append(f"{row['path']}: CHECK reject ({e})")
         except sqlite3.Error as e:
@@ -2736,6 +2814,24 @@ def scaffold_releases(root):
         pass
 
 
+def product_dir_name(slug):
+    """A config `slug` as the `docs/<kebab>/` folder name (first product, T-1104):
+    lower-case, runs of non-[a-z0-9] → one hyphen; a result that is not a legal
+    product name (empty · `v<digit>…` · `backlog`) → `product`."""
+    k = re.sub(r"[^a-z0-9]+", "-", str(slug or "").lower()).strip("-")
+    return k if LINE_NAME_RE.match(k) else "product"
+
+
+def init_is_legacy_docs(root):
+    """True when `root` already holds As-Is docs (`docs/{prd,tickets,artifacts,wiki}`)
+    and no `docs/_shared/` — init then scaffolds the legacy shape instead of
+    starting a second one beside it."""
+    d = Path(root) / "docs"
+    if (d / DOCS_SHARED).is_dir():
+        return False
+    return any((d / k).exists() for k in ("prd", "tickets", "artifacts", "wiki"))
+
+
 def init_project(root, slug=None, version="v0.1", stage="define", interactive=True):
     """The one init module (§10) — GUI onboarding shares this via `prdt init --json`."""
     root = Path(root).resolve()
@@ -2783,11 +2879,23 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     state_write(root, prdt / "po-state.json", json.dumps(
         {"schema_version": 1, "stage": stage, "version": version, "current_task": None},
         indent=2) + "\n")
-    for d in ("docs/prd", "docs/tickets", "docs/artifacts", "docs/wiki"):
+    # T-1104 (T-1021 = E): a new project gets the product-first shape — `docs/_shared/`
+    # + `docs/<slug>/` — even with one product. A project that already holds As-Is
+    # docs (an unmigrated one being init'd) stays legacy: adding `_shared/` beside
+    # them would be the half-migrated layout (T-1103 owns migrating it).
+    if init_is_legacy_docs(root):
+        wiki_dir = root / "docs" / "wiki"
+        scaffold = ("docs/prd", "docs/tickets", "docs/artifacts", "docs/wiki")
+    else:
+        prod = product_dir_name(cfg["slug"])
+        wiki_dir = root / "docs" / DOCS_SHARED / "wiki"
+        scaffold = (f"docs/{prod}/prd", f"docs/{prod}/tickets", f"docs/{prod}/artifacts",
+                    f"docs/{DOCS_SHARED}/wiki")
+    for d in scaffold:
         (root / d).mkdir(parents=True, exist_ok=True)
     for f, head in (("inbox.md", "# Wiki inbox — 1-line memory_notes appends; curated at stage boundaries\n"),
                     ("log.md", "# Wiki log — append-only ritual/ingest/lint records\n")):
-        fp = root / "docs" / "wiki" / f
+        fp = wiki_dir / f
         if not os.path.lexists(fp):
             state_write(root, fp, head)
             note_docs_write(fp)
@@ -6577,12 +6685,20 @@ def cmd_tickets(args):
         for tid in args.link:
             print(links[tid] if tid in hit else f"{tid} (not found)")
         return
-    q, params = "SELECT id, slug, type, status, assignee, version, deps FROM tickets", []
+    q, params = ("SELECT id, slug, type, status, assignee, version, deps, "
+                 "(SELECT also FROM ticket_also WHERE ticket_also.id = tickets.id) AS also FROM tickets"), []
     conds = []
     if args.backlog:
         conds.append("(version = 'backlog' OR version LIKE '%/backlog')")
     if args.version:
-        conds.append("version = ?"); params.append(args.version)
+        # T-1104 (T-1102 = A): `<p>/v1.x` also lists the shared tickets that
+        # live in another product's v1.x dir and name <p> in `also:`.
+        pref, bare = split_line_id(args.version)
+        if pref:
+            conds.append("(version = ? OR (id IN (SELECT id FROM ticket_also WHERE also LIKE ?) AND (version = ? OR version LIKE ?)))")
+            params += [args.version, f'%"{pref}"%', bare, f"%/{bare}"]
+        else:
+            conds.append("version = ?"); params.append(args.version)
     if args.feature:
         conds.append("feature = ?"); params.append(args.feature)
     if args.status:
@@ -6602,6 +6718,9 @@ def cmd_tickets(args):
     for r in rows:
         deps = json.loads(r[6] or "[]")
         dep_s = f" deps={','.join(deps)}" if deps else ""
+        also = json.loads(r[7] or "[]")
+        if also:
+            dep_s += f" also={','.join(also)}"
         print(f"{r[0]} [{r[3]:>7}] {r[2]:<6} {r[5]:<8} {r[1] or ''} → {r[4] or '-'}{dep_s}")
     if not rows:
         print("(no tickets)")
@@ -12526,7 +12645,7 @@ def wiki_version_edge_warnings(root, st):
 # `parent_ticket` 20 · `related_tickets` 2 · `blocks` 1 · `revises` 1 ·
 # `related` 1) — `prd_item` is E4's reserved key name (T-663 gives it a value
 # check; this slice never flags it as an unknown relation key).
-_TICKET_KNOWN_KEYS = frozenset(TICKET_INDEX_FIELDS) | {"deps", "prd_item"}
+_TICKET_KNOWN_KEYS = frozenset(TICKET_INDEX_FIELDS) | {"deps", "prd_item", "also"}
 
 
 def _relation_shaped(value):
@@ -17644,8 +17763,22 @@ def main():
         # bare `prdt` = 구 productune UX 계승: init(필요 시 §10 3항목) → PO 대화 진입
         cmd_po(argparse.Namespace(rest=[]))
         return
+    msg_root = None
+    if not hook_call:
+        r = find_project_root()
+        if r and docs_layout(r) == "product":
+            msg_root = r
+            if (args.cmd in DOCS_MSG_CMDS and getattr(args, "action", None) != "fmt") \
+                    or (args.cmd == "wiki" and getattr(args, "action", None) == "lint"):
+                sys.stdout = _DocsMsgStream(sys.stdout, r)
+                sys.stderr = _DocsMsgStream(sys.stderr, r)
     try:
         args.fn(args)
+    except SystemExit as e:
+        # An exit message names real paths too (T-1104).
+        if msg_root is not None and isinstance(e.code, str):
+            e.code = docs_msg(msg_root, e.code)
+        raise
     finally:
         # T-838: a hook's own call (`schedule record`) regenerates nothing —
         # same boundary as the meta-backup tick above; a subcommand that wrote

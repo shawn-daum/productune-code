@@ -38,7 +38,12 @@ function runJs(root: string, c: any): unknown {
     case 'docsLayerChain':
       return L.docsLayerChain(root, args[0], args[1] ?? null).map(norm)
     default:
-      return (L as any)[c.fn](root, ...args)
+      try {
+        return (L as any)[c.fn](root, ...args)
+      } catch (e: any) {
+        if (e && e.name === 'DocsLayoutError') return { error: e.code }
+        throw e
+      }
   }
 }
 
@@ -54,7 +59,10 @@ names = {"docsLayout":"docs_layout","projectProducts":"project_products","curren
 out = []
 for c in cases:
     f = getattr(m, names[c["fn"]]); a = [x.replace("@ROOT", str(root)) if isinstance(x, str) else x for x in c["args"]]
-    r = f(root, *a)
+    try:
+        r = f(root, *a)
+    except m.DocsLayoutError:
+        out.append({"error": "no-product"}); continue
     if c["fn"] == "docsLayerChain": r = [Path(p).relative_to(root).as_posix() for p in r]
     out.append(r)
 print(json.dumps(out))

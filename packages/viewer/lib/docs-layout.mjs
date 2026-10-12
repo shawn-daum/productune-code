@@ -147,7 +147,27 @@ export function docsLayerChain(root, rel, product = null) {
   return [path.join(productDocsDir(root, product), rel), path.join(sharedDocsDir(root), rel)].filter(exists)
 }
 
-/** ③ An As-Is `docs/…` path → its To-Be path (project-relative posix). Unchanged for new-layout, non-docs, legacy. */
+/** A product-layout project that names no product, asked for a product path. */
+export class DocsLayoutError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'DocsLayoutError'
+    this.code = 'no-product'
+  }
+}
+
+/** The product a product-row path maps into; none → DocsLayoutError (never a `docs/undefined/…` path). */
+function needProduct(root, rel, product = null) {
+  const p = product || currentProduct(root)
+  if (!p) {
+    throw new DocsLayoutError(
+      `cannot map ${rel}: docs/_shared/ exists but the project names no product — set \`slug\` in .prdt/config.json, or create docs/<product>/prd or docs/<product>/tickets`,
+    )
+  }
+  return p
+}
+
+/** ③ An As-Is `docs/…` path → its To-Be path (project-relative posix). Unchanged for new-layout, non-docs, legacy. A product-row path with no product → DocsLayoutError. */
 export function resolveDocsRef(root, rel, product = null) {
   if (typeof rel !== 'string' || docsLayout(root) !== 'product') return rel
   const parts = rel.split('/')
@@ -155,10 +175,12 @@ export function resolveDocsRef(root, rel, product = null) {
   const head = parts[1]
   const prods = projectProducts(root)
   if (head === DOCS_SHARED || prods.includes(head)) return rel
-  const p = product || currentProduct(root)
   const tail = parts.slice(1).join('/')
-  if (PRODUCT_DOCS_KINDS.includes(head) || (head === 'wiki' && parts.length === 3 && parts[2].startsWith('retro--v'))) return `docs/${p}/${tail}`
-  if ((head === 'wiki' || head === 'features') && exists(path.join(root, 'docs', p, tail))) return `docs/${p}/${tail}`
+  if (PRODUCT_DOCS_KINDS.includes(head) || (head === 'wiki' && parts.length === 3 && parts[2].startsWith('retro--v'))) return `docs/${needProduct(root, rel, product)}/${tail}`
+  if (head === 'wiki' || head === 'features') {
+    const p = product || currentProduct(root)
+    if (p && exists(path.join(root, 'docs', p, tail))) return `docs/${p}/${tail}`
+  }
   return `docs/${DOCS_SHARED}/${tail}`
 }
 

@@ -291,7 +291,7 @@ export {
 } from './state/project-kind'
 export type { ProjectKind } from './state/project-kind'
 
-// T-656: the one symlink-safe tmp+rename primitive — see docs/wiki/fact--symlink-safe-writes.md
+// T-656: the one symlink-safe tmp+rename primitive — see docs/_shared/wiki/fact--symlink-safe-writes.md (legacy layout: docs/wiki/…)
 export { atomicWriteFileSync } from './fs/atomic-write'
 export { stateWriteFileSync, StateWriteRefused } from './fs/state-write'
 export type { StateWriteOpts } from './fs/state-write'
