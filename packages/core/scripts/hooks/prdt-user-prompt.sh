@@ -69,7 +69,7 @@ _PROD_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z"
 
 
 def _product_dir_name(slug):
-    """config `slug` -> its `docs/<kebab>/` folder name (same rule as `product_dir_name` in scripts/prdt)."""
+    """config `slug` -> its `docs/<kebab>` folder name (same rule as `product_dir_name` in scripts/prdt)."""
     if not isinstance(slug, str) or not slug:
         return None
     k = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")
