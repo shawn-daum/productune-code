@@ -115,6 +115,7 @@ const MACHINE_PROBE = 'sandbox isolation rule that belongs to this machine'
 
 function seedProject() {
   fs.mkdirSync(projectDir, { recursive: true })
+  fs.mkdirSync(`${projectDir}/docs/prd`, { recursive: true }) // T-1104: legacy fixture
   runPrdt(['init', '--json', '--slug', 'proj', '--yes'])
   const wiki = path.join(projectDir, 'docs', 'wiki')
   writePage(wiki, 'decision--isolation', { title: 'isolation decision', type: 'decision' }, PROJECT_PROBE)

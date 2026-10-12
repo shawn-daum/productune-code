@@ -91,6 +91,7 @@ function ticketFile(id: string, version: string): void {
 describe('T-512 artifacts live in version buckets', () => {
   beforeEach(() => {
     projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-artifacts-'))
+    fs.mkdirSync(`${projectDir}/docs/prd`, { recursive: true }) // T-1104: legacy fixture
     runPrdt(['init', '--json', '--slug', 'proj', '--yes'])
   })
   afterEach(() => fs.rmSync(projectDir, { recursive: true, force: true }))

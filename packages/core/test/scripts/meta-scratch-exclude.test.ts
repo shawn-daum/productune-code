@@ -51,6 +51,8 @@ function runPrdt(args: string[]): string {
 }
 
 function runInit(): void {
+  // T-1104: a fixture about legacy behavior starts As-Is (docs/prd before init), so init keeps the legacy shape.
+  fs.mkdirSync(`${projectDir}/docs/prd`, { recursive: true })
   runPrdt(['init', '--json', '--slug', 'proj', '--yes'])
 }
 

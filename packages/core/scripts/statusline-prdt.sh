@@ -579,7 +579,7 @@ def dependents(con, tid):
     ver = row_by_line[line]["version"]
     if con is None or not ver:
         return []
-    if ticket_prods:   # T-1104: index paths are `docs/<product>/tickets/<ver>/…`
+    if ticket_prods:   # T-1104: index paths look like docs/PRODUCT/tickets/VERSION/…
         prefix = f"docs/{line or ticket_prods[0]}/tickets/{ver}/%"
     else:
         prefix = f"docs/tickets/{line}/{ver}/%" if line else f"docs/tickets/{ver}/%"

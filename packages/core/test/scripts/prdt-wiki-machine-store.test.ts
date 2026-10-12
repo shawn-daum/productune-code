@@ -33,6 +33,7 @@ let machineHome: string
 function projectAt(name: string): string {
   const dir = path.join(sandbox, name)
   fs.mkdirSync(dir, { recursive: true })
+  fs.mkdirSync(path.join(dir, "docs", "prd"), { recursive: true }) // T-1104: legacy fixture (As-Is docs before init)
   execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', name, '--yes'], {
     cwd: dir, env: { ...process.env, PRDT_HOME: machineHome },
     encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),

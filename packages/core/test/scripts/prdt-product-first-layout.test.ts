@@ -93,16 +93,13 @@ beforeAll(() => {
   fs.mkdirSync(home)
   legacy = path.join(tmp, 'legacy')
   fs.mkdirSync(legacy)
+  // The legacy fixture is an unmigrated project: As-Is docs exist BEFORE init, so init keeps the shape.
+  fs.mkdirSync(path.join(legacy, 'docs', 'prd'), { recursive: true })
   run(legacy, ['init', '--json', '--slug', 'proj', '--yes'])
   product = path.join(tmp, 'product')
-  fs.cpSync(legacy, product, { recursive: true })
-  // The product fixture: init's As-Is dirs moved under docs/proj + docs/_shared.
-  for (const k of ['prd', 'tickets', 'artifacts']) {
-    fs.mkdirSync(path.join(product, 'docs', 'proj'), { recursive: true })
-    fs.renameSync(path.join(product, 'docs', k), path.join(product, 'docs', 'proj', k))
-  }
-  fs.mkdirSync(path.join(product, 'docs', '_shared'))
-  fs.renameSync(path.join(product, 'docs', 'wiki'), path.join(product, 'docs', '_shared', 'wiki'))
+  fs.mkdirSync(product)
+  // The product fixture is init's OWN output on an empty dir: docs/_shared + docs/proj.
+  run(product, ['init', '--json', '--slug', 'proj', '--yes'])
   seed(legacy, (r) => `docs/${r}`)
   seed(product, toBe)
   // The shared backlog (① A) holds the highest number — allocation must see it.
@@ -111,6 +108,21 @@ beforeAll(() => {
 }, 120_000)
 
 afterAll(() => { fs.rmSync(tmp, { recursive: true, force: true }) })
+
+describe('init scaffold (T-1104)', () => {
+  test('an empty dir gets docs/_shared + docs/<slug>/, no legacy docs/prd', () => {
+    for (const d of ['proj/prd', 'proj/tickets', 'proj/artifacts', '_shared/wiki', '_shared/wiki/inbox.md']) {
+      expect(fs.existsSync(path.join(product, 'docs', ...d.split('/'))), d).toBe(true)
+    }
+    for (const d of ['prd', 'tickets', 'artifacts', 'wiki']) {
+      expect(fs.existsSync(path.join(product, 'docs', d)), `docs/${d}`).toBe(false)
+    }
+  })
+  test('a project that already holds As-Is docs stays legacy — no _shared beside them', () => {
+    expect(fs.existsSync(path.join(legacy, 'docs', 'tickets'))).toBe(true)
+    expect(fs.existsSync(path.join(legacy, 'docs', '_shared'))).toBe(false)
+  })
+})
 
 describe('seam', () => {
   test('layout detection, products, and fixed-path homes', () => {

@@ -43,6 +43,7 @@ let machineHome: string
 beforeEach(() => {
   projectDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-ssg-proj-')))
   machineHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-ssg-home-')))
+  fs.mkdirSync(path.join(projectDir, "docs", "prd"), { recursive: true }) // T-1104: legacy fixture (As-Is docs before init)
   const r = spawnSync('python3', [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome },
