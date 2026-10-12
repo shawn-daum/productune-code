@@ -29,7 +29,7 @@
 #   prdt-user-prompt.sh on Stop (form=outline counter) — never blocks or prints
 #     on Stop, so it takes no part in the retry.
 #
-# ONE BLOCK, NEVER TWO. `stop_hook_active` true → silent.
+# ONE RETRY, NEVER TWO (output = additionalContext, T-1097). `stop_hook_active` true → silent.
 # WORDING: LINK_CHECK_REASON is the user-approved text (T-899 log, 2026-10-01
 # "ㅇㅇ"; T-1072, decision T-1073 = A, 2026-10-11 "a"), used verbatim.
 #
@@ -225,9 +225,14 @@ def main():
     bad = unlinked_first_mentions(reply, known)
     if not bad:
         return
+    # additionalContext, not decision:block (T-1097): `block` renders to the user as
+    # a red "Stop hook error"; additionalContext reaches the PO and continues the turn
+    # without a user-visible error line (verified on Claude Code 2.1.296).
     sys.stdout.write(json.dumps({
-        "decision": "block",
-        "reason": LINK_CHECK_REASON % (", ".join(bad), " ".join(bad)),
+        "hookSpecificOutput": {
+            "hookEventName": "Stop",
+            "additionalContext": LINK_CHECK_REASON % (", ".join(bad), " ".join(bad)),
+        },
     }))
 
 
