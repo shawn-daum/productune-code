@@ -63,6 +63,12 @@ function normpath(p) {
   return out.join('/') || '.'
 }
 
+/** A config `slug` as the `docs/<kebab>/` folder name — the CLI's `product_dir_name` (what `prdt init` scaffolds). */
+export function productDirName(slug) {
+  const k = String(slug ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return LINE_NAME_RE.test(k) ? k : 'product'
+}
+
 /** "product" when `docs/_shared/` is a real dir, else "legacy". */
 export function docsLayout(root) {
   if (!root) return 'legacy'
@@ -78,7 +84,7 @@ export function projectProducts(root) {
     if (typeof n === 'string' && LINE_NAME_RE.test(n) && !out.includes(n)) out.push(n)
   }
   const isObj = cfg && typeof cfg === 'object' && !Array.isArray(cfg)
-  add(isObj ? cfg.slug : null)
+  add(isObj && typeof cfg.slug === 'string' && cfg.slug ? productDirName(cfg.slug) : null)
   const prods = isObj && Array.isArray(cfg.products) ? cfg.products : []
   for (const e of prods) add(e && typeof e === 'object' && !Array.isArray(e) ? e.name : null)
   let names = []

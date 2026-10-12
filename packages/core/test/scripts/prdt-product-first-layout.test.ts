@@ -179,6 +179,49 @@ print(json.dumps([m.resolve_docs_link(root, base, h) for h in
   })
 })
 
+describe('T-1104 grill fixes', () => {
+  const fresh = (name: string) => {
+    const d = path.join(tmp, name)
+    fs.mkdirSync(d, { recursive: true })
+    return d
+  }
+  test('init over a dir holding only docs/design.md or docs/features/ stays legacy', () => {
+    for (const [name, seedFn] of [
+      ['only-design', (d: string) => write(path.join(d, 'docs', 'design.md'), '# d\n')],
+      ['only-features', (d: string) => write(path.join(d, 'docs', 'features', 'f.md'), '# f\n')],
+    ] as Array<[string, (d: string) => void]>) {
+      const d = fresh(name)
+      seedFn(d)
+      run(d, ['init', '--json', '--slug', 'proj', '--yes'])
+      expect(fs.existsSync(path.join(d, 'docs', '_shared')), name).toBe(false)
+      expect(fs.existsSync(path.join(d, 'docs', 'wiki', 'inbox.md')), name).toBe(true)
+    }
+  })
+
+  test('prdt migrate on a product-first project writes CLAUDE.md to docs/_shared/wiki, and wiki search finds it', () => {
+    const d = fresh('migrate-pf')
+    run(d, ['init', '--json', '--slug', 'proj', '--yes'])
+    write(path.join(d, 'CLAUDE.md'), '# notes\n\nzebracrossing marker\n')
+    run(d, ['migrate', '--yes'])
+    expect(fs.existsSync(path.join(d, 'docs', '_shared', 'wiki', 'fact--migrated-from-claude-md.md'))).toBe(true)
+    expect(fs.existsSync(path.join(d, 'docs', 'wiki'))).toBe(false)
+    expect(fs.existsSync(path.join(d, 'CLAUDE.md'))).toBe(false)
+    expect(run(d, ['wiki', 'search', 'zebracrossing'])).toContain('fact--migrated-from-claude-md')
+  })
+
+  test('init --slug Alpha-App keeps alpha-app the first product; tickets new and --version <first>/vX use it', () => {
+    const d = fresh('slug-norm')
+    run(d, ['init', '--json', '--slug', 'Alpha-App', '--yes'])
+    fs.mkdirSync(path.join(d, 'docs', 'beta', 'tickets'), { recursive: true })
+    expect(py(d, 'print(json.dumps(m.project_products(root)))')).toEqual(['alpha-app', 'beta'])
+    run(d, ['tickets', 'new', '--type', 'impl', '--slug', 'first-one'])
+    expect(fs.existsSync(path.join(d, 'docs', 'alpha-app', 'tickets', 'v0.1', 'T-001.md'))).toBe(true)
+    expect(fs.existsSync(path.join(d, 'docs', 'beta', 'tickets', 'v0.1'))).toBe(false)
+    expect(run(d, ['tickets', '--version', 'alpha-app/v0.1'])).toContain('T-001')
+    expect(run(d, ['tickets', '--version', 'beta/v0.1'])).not.toContain('T-001')
+  })
+})
+
 describe('CLI readers on both layouts', () => {
   test('tickets new writes the layout-local dir and numbers across the shared backlog', () => {
     run(legacy, ['tickets', 'new', '--type', 'impl', '--slug', 'next-one'])

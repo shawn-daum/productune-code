@@ -98,6 +98,16 @@
         "docs/_shared/design.md",
         "docs/_shared/wiki/x.md"
       ]
+    },
+    "product-slug-norm": {
+      "config": {
+        "slug": "Alpha-App"
+      },
+      "files": [
+        "docs/_shared/design.md",
+        "docs/alpha-app/prd/PRD.md",
+        "docs/alpha-app/tickets/v1.0/T-1.md"
+      ]
     }
   },
   "cases": [
@@ -763,6 +773,28 @@
       "expected": {
         "error": "no-product"
       }
+    },
+    {
+      "tree": "product-slug-norm",
+      "fn": "projectProducts",
+      "args": [],
+      "expected": [
+        "alpha-app"
+      ]
+    },
+    {
+      "tree": "product-slug-norm",
+      "fn": "currentProduct",
+      "args": [],
+      "expected": "alpha-app"
+    },
+    {
+      "tree": "product-slug-norm",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/tickets/v1.0/T-1.md"
+      ],
+      "expected": "docs/alpha-app/tickets/v1.0/T-1.md"
     }
   ]
 }
