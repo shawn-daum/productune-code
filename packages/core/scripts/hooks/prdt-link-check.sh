@@ -54,6 +54,56 @@ exit 0
 # ---- python ----
 import json, os, re, signal, sys
 
+# T-1104: product-first docs layout (docs/artifacts/v1.14/product-first-docs-layout.html).
+# KEEP `project_products` / `tickets_homes` in lockstep with `project_products` /
+# `product_docs_dirs(root, "tickets")` in scripts/prdt (parity test:
+# test/scripts/product-first-shell-readers.test.ts). Layout = `docs/_shared/` is a
+# real dir; first product = config `slug`, then `products[].name`, then any
+# `docs/<kebab>/` holding `prd/` or `tickets/`. [] = legacy (docs/tickets).
+_PROD_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+
+
+def project_products(root):
+    sh = os.path.join(root, "docs", "_shared")
+    if not os.path.isdir(sh) or os.path.islink(sh):
+        return []
+    try:
+        with open(os.path.join(root, ".prdt", "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    out = []
+
+    def add(n):
+        if isinstance(n, str) and _PROD_NAME_RE.match(n) and n not in out:
+            out.append(n)
+    add(cfg.get("slug"))
+    prods = cfg.get("products")
+    for e in (prods if isinstance(prods, list) else []):
+        add(e.get("name") if isinstance(e, dict) else None)
+    try:
+        names = sorted(os.listdir(os.path.join(root, "docs")))
+    except OSError:
+        names = []
+    for n in names:
+        d = os.path.join(root, "docs", n)
+        if os.path.isdir(d) and not os.path.islink(d) and not n.startswith(("_", ".")) \
+                and (os.path.isdir(os.path.join(d, "prd")) or os.path.isdir(os.path.join(d, "tickets"))):
+            add(n)
+    return out
+
+
+def tickets_homes(root):
+    """[(product|None, dir)] — every product's tickets dir, then the shared
+    backlog; legacy → [(None, docs/tickets)]."""
+    prods = project_products(root)
+    if not prods:
+        return [(None, os.path.join(root, "docs", "tickets"))]
+    return ([(p, os.path.join(root, "docs", p, "tickets")) for p in prods]
+            + [(None, os.path.join(root, "docs", "_shared", "tickets"))])
+
+
 # User-approved wording (T-899, 2026-10-01; T-1072 / T-1073 = A, 2026-10-11).
 # %s #1 joined ', ', #2 joined ' '.
 LINK_CHECK_REASON = (
@@ -62,7 +112,6 @@ LINK_CHECK_REASON = (
     "one id per line; no sentence."
 )
 RUN_BUDGET_S = 5
-TICKET_DIR = os.path.join("docs", "tickets")
 
 ID_RE = re.compile(r"(?<![A-Za-z0-9_.\\-])(T-(?:PATCH-)?\d{1,6})(?![\d_]|-\w|\.(?:md|html)\b|[A-Za-z])")
 # A whitespace-delimited token with a `/` is a path (blanked) unless it opens with
@@ -87,20 +136,22 @@ def project_root(cwd):
 
 
 def ticket_ids(root):
-    """Set of ticket ids with a file under docs/tickets; None = unreadable (fail open)."""
-    base = os.path.join(root, TICKET_DIR)
-    if not os.path.lexists(base):
-        return set()
-    if not os.path.isdir(base) or not os.access(base, os.R_OK | os.X_OK):
-        return None
+    """Set of ticket ids with a file under the tickets dirs (docs/tickets, or in
+    the product layout every docs/<p>/tickets plus docs/_shared/tickets/backlog);
+    None = unreadable (fail open)."""
     out, broken = set(), []
-    for d, dirs, files in os.walk(base, onerror=broken.append):
-        if d[len(base):].count(os.sep) >= 3:
-            dirs[:] = []
-        for fn in files:
-            m = re.match(r"^(T-(?:PATCH-)?\d{1,6})\.md$", fn)
-            if m:
-                out.add(m.group(1))
+    for _prod, base in tickets_homes(root):
+        if not os.path.lexists(base):
+            continue
+        if not os.path.isdir(base) or not os.access(base, os.R_OK | os.X_OK):
+            return None
+        for d, dirs, files in os.walk(base, onerror=broken.append):
+            if d[len(base):].count(os.sep) >= 3:
+                dirs[:] = []
+            for fn in files:
+                m = re.match(r"^(T-(?:PATCH-)?\d{1,6})\.md$", fn)
+                if m:
+                    out.add(m.group(1))
     return None if broken else out
 
 

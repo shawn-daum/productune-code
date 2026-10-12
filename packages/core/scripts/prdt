@@ -17150,7 +17150,8 @@ def _wordlist_hook(root_hint):
         if not root or not f.is_file():
             return
         rel = f.resolve().relative_to(root).as_posix()
-        if not any(rx.match(rel) for rx in WORDLIST_SURFACE_RES):
+        as_is = docs_as_is_rel(root, rel)   # T-1104: To-Be docs/<p>/X · docs/_shared/X match the As-Is surfaces
+        if not any(rx.match(as_is) for rx in WORDLIST_SURFACE_RES):
             return
         warns = []
         lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns)

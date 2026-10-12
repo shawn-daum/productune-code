@@ -486,6 +486,10 @@ if [ -z "$OPEN_MODE" ]; then
     */docs/prd/PRD.md|*/docs/features/*.md|*/docs/artifacts/*.md) VIEWER_DOC="yes" ;;
     */docs/wiki/*/*) ;;
     */docs/wiki/*.md) VIEWER_DOC="yes" ;;
+    # T-1104: product-first layout — `docs/<product>/{prd,artifacts,features,wiki}`
+    # and the shared `docs/_shared/{prd,features,wiki}` (same document set).
+    */docs/*/wiki/*/*) ;;
+    */docs/*/prd/PRD.md|*/docs/*/features/*.md|*/docs/*/artifacts/*.md|*/docs/*/wiki/*.md) VIEWER_DOC="yes" ;;
   esac
 fi
 if [ -n "$VIEWER_DOC" ]; then

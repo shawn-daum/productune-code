@@ -120,6 +120,56 @@ PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
 import contextlib, fcntl, hashlib, json, os, re, shlex, shutil, subprocess, sys
 from datetime import datetime, timezone
 
+# T-1104: product-first docs layout (docs/artifacts/v1.14/product-first-docs-layout.html).
+# KEEP `project_products` / `tickets_homes` in lockstep with `project_products` /
+# `product_docs_dirs(root, "tickets")` in scripts/prdt (parity test:
+# test/scripts/product-first-shell-readers.test.ts). Layout = `docs/_shared/` is a
+# real dir; first product = config `slug`, then `products[].name`, then any
+# `docs/<kebab>/` holding `prd/` or `tickets/`. [] = legacy (docs/tickets).
+_PROD_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+
+
+def project_products(root):
+    sh = os.path.join(root, "docs", "_shared")
+    if not os.path.isdir(sh) or os.path.islink(sh):
+        return []
+    try:
+        with open(os.path.join(root, ".prdt", "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    out = []
+
+    def add(n):
+        if isinstance(n, str) and _PROD_NAME_RE.match(n) and n not in out:
+            out.append(n)
+    add(cfg.get("slug"))
+    prods = cfg.get("products")
+    for e in (prods if isinstance(prods, list) else []):
+        add(e.get("name") if isinstance(e, dict) else None)
+    try:
+        names = sorted(os.listdir(os.path.join(root, "docs")))
+    except OSError:
+        names = []
+    for n in names:
+        d = os.path.join(root, "docs", n)
+        if os.path.isdir(d) and not os.path.islink(d) and not n.startswith(("_", ".")) \
+                and (os.path.isdir(os.path.join(d, "prd")) or os.path.isdir(os.path.join(d, "tickets"))):
+            add(n)
+    return out
+
+
+def tickets_homes(root):
+    """[(product|None, dir)] — every product's tickets dir, then the shared
+    backlog; legacy → [(None, docs/tickets)]."""
+    prods = project_products(root)
+    if not prods:
+        return [(None, os.path.join(root, "docs", "tickets"))]
+    return ([(p, os.path.join(root, "docs", p, "tickets")) for p in prods]
+            + [(None, os.path.join(root, "docs", "_shared", "tickets"))])
+
+
 try:
     ev = json.loads(os.environ.get("PRDT_EVENT_JSON", ""))
 except Exception:
@@ -431,15 +481,15 @@ def ticket_by_slug(slug):
     ticket slug, but carries no `T-NNN`, so every marker used to land with
     `ticket_id: null` and `prdt schedule` could not show in-flight rows. Same
     rule as `schedule_ticket_for_ctx` in scripts/prdt (the gate's schedule
-    record). A frontmatter-only line scan of docs/tickets/**/T-*.md, cached for
+    record). A frontmatter-only line scan of docs/tickets/**/T-*.md (product layout: every docs/<p>/tickets), cached for
     this one hook run; any read failure is just no match."""
     global _SLUG_TICKETS
     if not (isinstance(slug, str) and slug.strip()):
         return None
     if _SLUG_TICKETS is None:
         _SLUG_TICKETS = {}
-        tdir = os.path.join(root, "docs", "tickets")
-        for dp, _dn, fns in os.walk(tdir):
+        walks = [t for _p, t in tickets_homes(root)]   # T-1104: docs/tickets or every product's
+        for dp, _dn, fns in (x for tdir in walks for x in os.walk(tdir)):
             for fn in fns:
                 if not (fn.startswith("T-") and fn.endswith(".md")):
                     continue
