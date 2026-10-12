@@ -137,7 +137,7 @@ def project_root(cwd):
 
 def ticket_ids(root):
     """Set of ticket ids with a file under the tickets dirs (docs/tickets, or in
-    the product layout every docs/<p>/tickets plus docs/_shared/tickets/backlog);
+    the product layout every docs/PRODUCT/tickets plus docs/_shared/tickets/backlog);
     None = unreadable (fail open)."""
     out, broken = set(), []
     for _prod, base in tickets_homes(root):

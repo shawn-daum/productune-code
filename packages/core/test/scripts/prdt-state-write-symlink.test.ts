@@ -321,8 +321,9 @@ describe('new files follow the umask (0666 & ~umask)', () => {
     execFileSync('git', ['init', '-q'], { cwd: c })
     expect(prdt(['init', '--yes', '--slug', 'x'], c, '077').status).toBe(0)
     expect(mode(path.join(c, '.prdt', 'po-state.json'))).toBe(0o600)
-    expect(mode(path.join(c, 'docs', 'wiki', 'inbox.md'))).toBe(0o600)
-    expect(mode(path.join(c, 'docs', 'wiki', 'log.md'))).toBe(0o600)
+    // T-1104: a fresh init scaffolds the product-first shape — the wiki sits under docs/_shared
+    expect(mode(path.join(c, 'docs', '_shared', 'wiki', 'inbox.md'))).toBe(0o600)
+    expect(mode(path.join(c, 'docs', '_shared', 'wiki', 'log.md'))).toBe(0o600)
   })
   it('prdt migrate under umask 077: config.json, briefing flag, log.md are 0600', () => {
     const c = path.join(W, 'legacy2')

@@ -481,7 +481,7 @@ def ticket_by_slug(slug):
     ticket slug, but carries no `T-NNN`, so every marker used to land with
     `ticket_id: null` and `prdt schedule` could not show in-flight rows. Same
     rule as `schedule_ticket_for_ctx` in scripts/prdt (the gate's schedule
-    record). A frontmatter-only line scan of docs/tickets/**/T-*.md (product layout: every docs/<p>/tickets), cached for
+    record). A frontmatter-only line scan of docs/tickets/**/T-*.md (product layout: every docs/PRODUCT/tickets), cached for
     this one hook run; any read failure is just no match."""
     global _SLUG_TICKETS
     if not (isinstance(slug, str) and slug.strip()):
