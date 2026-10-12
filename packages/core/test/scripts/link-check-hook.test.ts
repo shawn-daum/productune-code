@@ -58,8 +58,9 @@ function stop(ids: string[], reply: string, extra: Record<string, unknown> = {},
 }
 const blocked = (out: string) => {
   const j = JSON.parse(out)
-  expect(j.decision).toBe('block')
-  return j.reason as string
+  expect(j.decision).toBeUndefined()
+  expect(j.hookSpecificOutput.hookEventName).toBe('Stop')
+  return j.hookSpecificOutput.additionalContext as string
 }
 
 describe('unlinked first mention → blocked once, verbatim wording', () => {
