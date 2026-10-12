@@ -593,6 +593,14 @@ describe('deny: `prd_path` shape', () => {
     ['docs/prd/PRD.md#android/v1.7.1', 'a patch version on an added line'],
     ['docs/prd/PRD.md#a/b/v1.7', 'two line prefixes'],
     ['docs/prd/prd.md#v1.7', 'wrong case'],
+    ['docs/proj/prd/PRD.md#v1.7.1', 'a patch version in the product layout'],
+    ['docs/proj/prd/PRD.md', 'the product layout with no version fragment'],
+    ['docs/proj/prd/PRD.md#line/v1.7', 'a line prefix in the product layout (the product folder is the line)'],
+    ['docs/_shared/prd/PRD.md#v1.7', 'the shared PRD is never a dispatch target'],
+    ['docs/Proj/prd/PRD.md#v1.7', 'an uppercase product name'],
+    ['docs/backlog/prd/PRD.md#v1.7', 'the reserved name `backlog` as a product'],
+    ['docs/v2/prd/PRD.md#v1.7', 'a product name shaped like a version'],
+    ['docs/a/b/prd/PRD.md#v1.7', 'two product segments'],
   ])('%s (%s) is denied', (prd_path) => {
     const reason = denyReason({ cwd: makeProject(), prompt: promptWith({ ...VALID_CTX, prd_path }) })
     expect(reason).toContain('`[ctx].prd_path` is malformed')
@@ -607,7 +615,7 @@ describe('deny: `prd_path` shape', () => {
     }
   })
 
-  test.each(['docs/prd/PRD.md#v1.7', 'docs/prd/PRD.md#v0.1', 'docs/prd/PRD.md#v12.34', 'docs/prd/PRD.md#ntf-archive/v1.2', 'docs/prd/PRD.md#android/v2.1'])(
+  test.each(['docs/prd/PRD.md#v1.7', 'docs/prd/PRD.md#v0.1', 'docs/prd/PRD.md#v12.34', 'docs/prd/PRD.md#ntf-archive/v1.2', 'docs/prd/PRD.md#android/v2.1', 'docs/proj/prd/PRD.md#v1.14', 'docs/ntf-archive/prd/PRD.md#v1.2'])(
     '%s passes', (prd_path) => {
       expect(run({ cwd: makeProject(), prompt: promptWith({ ...VALID_CTX, prd_path }) })).toBe('')
     })

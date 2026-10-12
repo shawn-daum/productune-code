@@ -59,6 +59,56 @@ exit 0
 # ---- python ----
 import hashlib, json, os, re, subprocess, sys, time
 
+# T-1104: product-first docs layout (docs/artifacts/v1.14/product-first-docs-layout.html).
+# KEEP `project_products` / `tickets_homes` in lockstep with `project_products` /
+# `product_docs_dirs(root, "tickets")` in scripts/prdt (parity test:
+# test/scripts/product-first-shell-readers.test.ts). Layout = `docs/_shared/` is a
+# real dir; first product = config `slug`, then `products[].name`, then any
+# `docs/<kebab>/` holding `prd/` or `tickets/`. [] = legacy (docs/tickets).
+_PROD_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+
+
+def project_products(root):
+    sh = os.path.join(root, "docs", "_shared")
+    if not os.path.isdir(sh) or os.path.islink(sh):
+        return []
+    try:
+        with open(os.path.join(root, ".prdt", "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    out = []
+
+    def add(n):
+        if isinstance(n, str) and _PROD_NAME_RE.match(n) and n not in out:
+            out.append(n)
+    add(cfg.get("slug"))
+    prods = cfg.get("products")
+    for e in (prods if isinstance(prods, list) else []):
+        add(e.get("name") if isinstance(e, dict) else None)
+    try:
+        names = sorted(os.listdir(os.path.join(root, "docs")))
+    except OSError:
+        names = []
+    for n in names:
+        d = os.path.join(root, "docs", n)
+        if os.path.isdir(d) and not os.path.islink(d) and not n.startswith(("_", ".")) \
+                and (os.path.isdir(os.path.join(d, "prd")) or os.path.isdir(os.path.join(d, "tickets"))):
+            add(n)
+    return out
+
+
+def tickets_homes(root):
+    """[(product|None, dir)] — every product's tickets dir, then the shared
+    backlog; legacy → [(None, docs/tickets)]."""
+    prods = project_products(root)
+    if not prods:
+        return [(None, os.path.join(root, "docs", "tickets"))]
+    return ([(p, os.path.join(root, "docs", p, "tickets")) for p in prods]
+            + [(None, os.path.join(root, "docs", "_shared", "tickets"))])
+
+
 try:
     ev = json.loads(sys.stdin.read())
 except Exception:
@@ -847,14 +897,14 @@ else:
 # failure. Source is the markdown files, not `.prdt/index.db` (derived, can be stale).
 def waiting_lists(root):
     dec, req = set(), set()
-    tickets_root = os.path.join(root, "docs", "tickets")
-    try:
-        vdirs = [d for d in os.listdir(tickets_root)
-                 if VERSION_RE.match(d) and os.path.isdir(os.path.join(tickets_root, d))]
-    except FileNotFoundError:
-        return [], []
-    for vd in vdirs:
-        dpath = os.path.join(tickets_root, vd)
+    dpaths = []
+    for _prod, tickets_root in tickets_homes(root):   # T-1104: docs/tickets or every product's
+        try:
+            dpaths += [os.path.join(tickets_root, d) for d in sorted(os.listdir(tickets_root))
+                       if VERSION_RE.match(d) and os.path.isdir(os.path.join(tickets_root, d))]
+        except FileNotFoundError:
+            continue
+    for dpath in dpaths:
         for fn in os.listdir(dpath):          # an unreadable version dir raises → `?`
             tid = fn[:-3]
             if not (fn.endswith(".md") and TICKET_RE.match(tid)):

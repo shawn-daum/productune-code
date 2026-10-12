@@ -403,7 +403,7 @@ else (.tool_input // {}) as $ti
           | if ($missing | length) > 0 then
               deny(head + "the `[ctx]` line is missing required key(s): " + ($missing | join(", ")) + ".\ncontracts.md §Dispatch, verbatim:\n" + $clause_ctx + "\nEvery key in that schema is required; extra keys of your own are fine." + tail)
             elif (($ctx.prd_path | type) != "string")
-                 or (($ctx.prd_path | test("^docs/prd/PRD\\.md#((?!backlog/)(?!v[0-9])[a-z0-9]+(-[a-z0-9]+)*/)?v[0-9]+\\.[0-9]+$")) | not) then
+                 or (($ctx.prd_path | test("^(docs/prd/PRD\\.md#((?!backlog/)(?!v[0-9])[a-z0-9]+(-[a-z0-9]+)*/)?|docs/(?!v[0-9])(?!backlog/)[a-z0-9]+(-[a-z0-9]+)*/prd/PRD\\.md#)v[0-9]+\\.[0-9]+$")) | not) then
               deny(head + "`[ctx].prd_path` is malformed.\ncontracts.md §Fixed paths, verbatim:\n" + $clause_prd + "\nSet it to exactly that shape — the fragment scopes the worker's read to ONE version section, so it has no tolerance." + tail)
             elif ($ti.subagent_type == "prdt-qa" or $ti.subagent_type == "prdt-developer")
                  and (($ctx.dispatch_id // "") == "") then

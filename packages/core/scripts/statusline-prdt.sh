@@ -84,6 +84,56 @@ import json, os, re, sqlite3, stat, subprocess, sys, unicodedata
 from datetime import datetime, timezone
 from urllib.parse import quote
 
+# T-1104: product-first docs layout (docs/artifacts/v1.14/product-first-docs-layout.html).
+# KEEP `project_products` / `tickets_homes` in lockstep with `project_products` /
+# `product_docs_dirs(root, "tickets")` in scripts/prdt (parity test:
+# test/scripts/product-first-shell-readers.test.ts). Layout = `docs/_shared/` is a
+# real dir; first product = config `slug`, then `products[].name`, then any
+# `docs/<kebab>/` holding `prd/` or `tickets/`. [] = legacy (docs/tickets).
+_PROD_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+
+
+def project_products(root):
+    sh = os.path.join(root, "docs", "_shared")
+    if not os.path.isdir(sh) or os.path.islink(sh):
+        return []
+    try:
+        with open(os.path.join(root, ".prdt", "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    out = []
+
+    def add(n):
+        if isinstance(n, str) and _PROD_NAME_RE.match(n) and n not in out:
+            out.append(n)
+    add(cfg.get("slug"))
+    prods = cfg.get("products")
+    for e in (prods if isinstance(prods, list) else []):
+        add(e.get("name") if isinstance(e, dict) else None)
+    try:
+        names = sorted(os.listdir(os.path.join(root, "docs")))
+    except OSError:
+        names = []
+    for n in names:
+        d = os.path.join(root, "docs", n)
+        if os.path.isdir(d) and not os.path.islink(d) and not n.startswith(("_", ".")) \
+                and (os.path.isdir(os.path.join(d, "prd")) or os.path.isdir(os.path.join(d, "tickets"))):
+            add(n)
+    return out
+
+
+def tickets_homes(root):
+    """[(product|None, dir)] — every product's tickets dir, then the shared
+    backlog; legacy → [(None, docs/tickets)]."""
+    prods = project_products(root)
+    if not prods:
+        return [(None, os.path.join(root, "docs", "tickets"))]
+    return ([(p, os.path.join(root, "docs", p, "tickets")) for p in prods]
+            + [(None, os.path.join(root, "docs", "_shared", "tickets"))])
+
+
 root = os.environ["ROOT"]
 try:  # T-906: the shared symlink-safe walk/writers, beside this script
     sys.path.append(os.environ.get("SCRIPT_DIR", ""))
@@ -337,6 +387,16 @@ req_deps = {}   # req candidate id -> its `deps` ids
 tid_status = {}  # every scanned ticket id -> status (any status)
 tid_line = {}  # ticket id -> the line whose folder holds it (None = home)
 tickets_root = os.path.join(root, "docs", "tickets")
+# T-1104: product layout — the home row (line None) reads the FIRST product's
+# `docs/<p>/tickets`, an added line `L` reads `docs/L/tickets`; legacy keeps
+# `docs/tickets[/<line>]` byte-for-byte. `ticket_prods[0]` = first product.
+ticket_prods = project_products(root)
+
+
+def tickets_base(line):
+    if not ticket_prods:
+        return tickets_root if line is None else os.path.join(tickets_root, line)
+    return os.path.join(root, "docs", ticket_prods[0] if line is None else line, "tickets")
 
 
 def _fm_deps(head):
@@ -398,7 +458,7 @@ def scan(base, row):
 
 
 for r in rows:
-    scan(tickets_root if r["line"] is None else os.path.join(tickets_root, r["line"]), r)
+    scan(tickets_base(r["line"]), r)
     r["stage"] = stage_seg(r["st"].get("stage"), r["sdone"], r["stotal"])
 
 
@@ -519,7 +579,10 @@ def dependents(con, tid):
     ver = row_by_line[line]["version"]
     if con is None or not ver:
         return []
-    prefix = f"docs/tickets/{line}/{ver}/%" if line else f"docs/tickets/{ver}/%"
+    if ticket_prods:   # T-1104: index paths are `docs/<product>/tickets/<ver>/…`
+        prefix = f"docs/{line or ticket_prods[0]}/tickets/{ver}/%"
+    else:
+        prefix = f"docs/tickets/{line}/{ver}/%" if line else f"docs/tickets/{ver}/%"
     try:
         rows_ = con.execute(
             "SELECT DISTINCT e.src FROM edges e JOIN tickets t ON t.id = e.src "
