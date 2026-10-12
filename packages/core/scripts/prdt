@@ -16596,8 +16596,9 @@ def layout_apply(root, plan):
                     for n in left:
                         fp = wiki / n
                         if fp.is_file() and not fp.is_symlink():
-                            skip_removed.append((fp, fp.read_bytes()))
-                            if f"docs/wiki/{n}" in tracked:
+                            was_tracked = f"docs/wiki/{n}" in tracked
+                            skip_removed.append((fp, f"docs/wiki/{n}", was_tracked, fp.read_bytes()))
+                            if was_tracked:
                                 tracked_old.append(f"docs/wiki/{n}")
                         os.unlink(fp)
                     os.rmdir(wiki)
@@ -16734,11 +16735,12 @@ def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, stag
             back_files += u["count"]
         except OSError as e:
             stuck.append((u, e))
-    for fp, data in skip_removed:
+    for fp, rel, was_tracked, data in skip_removed:
+        if was_tracked:      # tracked: `git checkout HEAD` below puts it back, index and bytes
+            continue
         try:
-            os.makedirs(fp.parent, exist_ok=True)
-            fp.write_bytes(data)
-        except OSError:
+            state_write(root, fp, data.decode("utf-8"))
+        except (OSError, UnicodeDecodeError):   # untracked Finder junk that is not text: regenerated, never a document
             pass
     try:
         if undo.get("config") is not None:
@@ -16778,6 +16780,7 @@ def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, stag
         if head0 and h.returncode == 0 and h.stdout.strip() != head0:
             _lay_git(root, ["reset", "-q", head0])
         _lay_pathspec(root, ["reset", "-q"], staged_paths)
+        _lay_pathspec(root, ["checkout", "HEAD"], [rel for _fp, rel, tr, _d in skip_removed if tr])
     except Exception:
         pass
     n_moved = sum(u["count"] for u in moved)
@@ -16814,6 +16817,95 @@ def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, stag
     sys.exit(2)
 
 
+def _lay_undo_refuse(why):
+    print(f"{_lay_er('되돌리지 않았어요')}: {why}")
+    sys.exit(1)
+
+
+def layout_undo(root, state):
+    """`migrate --undo`: put an UNCOMMITTED half-move (a killed `--apply`) back to
+    the old structure — the same inverse the rollback walks, driven from disk."""
+    root = Path(root)
+    if state == "old":
+        _lay_undo_refuse("docs 폴더가 예전 구조라 되돌릴 것이 없어요.")
+    if state == "new":
+        _lay_undo_refuse(f"docs 폴더가 이미 새 구조로 끝났어요 (docs/{DOCS_SHARED}).")
+    gone = _lay_uncommitted_old(root) if state == "partial" else []
+    if not gone:
+        _lay_undo_refuse("옮기다 멈춘 흔적(커밋되지 않은 이동)을 찾지 못했어요.")
+    prod = layout_product_name(root)
+    docs = root / "docs"
+    r = _lay_pathspec(root, ["reset", "-q", "HEAD"], ["docs", ".prdt/config.json"])
+    if r.returncode != 0:
+        _lay_undo_refuse(f"meta git 인덱스를 되돌릴 수 없어요 ({(r.stderr or 'git reset failed').strip().splitlines()[0]})")
+    moves = []      # (new path, old path)
+    pdir, sdir = docs / prod, docs / DOCS_SHARED
+    if pdir.is_dir() and not pdir.is_symlink():
+        for n in sorted(os.listdir(pdir)):
+            if n in LAYOUT_PRODUCT_TOPS or n == "DEPLOY.md":
+                moves.append((pdir / n, docs / n))
+            elif n == "wiki" and (pdir / n).is_dir():
+                moves += [(pdir / n / c, docs / "wiki" / c) for c in sorted(os.listdir(pdir / n))]
+    if sdir.is_dir() and not sdir.is_symlink():
+        for n in sorted(os.listdir(sdir)):
+            if n == "wiki" and (sdir / n).is_dir() and not (sdir / n).is_symlink():
+                moves += [(sdir / n / c, docs / "wiki" / c) for c in sorted(os.listdir(sdir / n))]
+            else:
+                moves.append((sdir / n, docs / n))
+    back, stuck = 0, []
+    for src, dst in moves:
+        try:
+            n = _lay_count_files(src)
+            os.makedirs(dst.parent, exist_ok=True)
+            _lay_rename(src, dst)
+            back += n
+        except OSError as e:
+            stuck.append((src, e))
+    if stuck:
+        print(f"{_lay_er('되돌리기 실패')}: {Path(stuck[0][0]).relative_to(root).as_posix()} 를 원래 자리로 "
+              f"돌리지 못했어요 ({_lay_err_text(stuck[0][1])})")
+        print()
+        print("다음: PO 에게 알리세요. docs 폴더는 아직 일부만 새 구조예요.")
+        sys.exit(2)
+    head_files = set(p for p in _lay_git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", "docs", ".prdt/config.json"]).stdout.split("\0") if p)
+    derived = ["docs/artifacts/manifest.json", "docs/wiki/index.md"]
+    for d in derived:      # a derived file the old tree never had: the rebuild made it
+        if d not in head_files and os.path.lexists(root / d):
+            try:
+                os.unlink(root / d)
+            except OSError:
+                pass
+    want = [g for g in gone if not os.path.lexists(root / g)] + [".prdt/config.json"] + derived
+    c = _lay_pathspec(root, ["checkout", "HEAD"], [w for w in dict.fromkeys(want) if w in head_files])
+    if c.returncode != 0:
+        _lay_undo_refuse(f"HEAD 의 파일을 되살릴 수 없어요 ({(c.stderr or 'git checkout failed').strip().splitlines()[0]})")
+    for top in (sdir, pdir):     # emptied new folders, deepest first
+        for dirpath, _dirs, _files in os.walk(top, topdown=False):
+            try:
+                os.rmdir(dirpath)
+            except OSError:
+                pass
+    widx = root / "docs" / "wiki" / "index.md"
+    keep = None
+    try:
+        keep = widx.read_text(encoding="utf-8") if widx.is_file() else None
+    except (OSError, UnicodeDecodeError):
+        pass
+    try:     # index.db follows the old layout again; the rebuild's own index.md rewrite is not ours to keep
+        con, *_ = rebuild_index(root)
+        con.close()
+    except Exception:
+        pass
+    try:
+        if keep is not None:
+            state_write(root, widx, keep)
+    except OSError:
+        pass
+    print(f"{_lay_wn('되돌렸어요')}: 옮기다 만 문서 {_lay_n(back)}개를 원래 자리로 돌렸어요. docs 폴더는 예전 구조 그대로예요.")
+    print()
+    print("다음: 원인을 확인한 뒤 prdt layout migrate --apply 로 다시 옮기세요.")
+
+
 def cmd_layout(args):
     root = require_root()
     state = layout_state(root, deep=True)
@@ -16833,6 +16925,8 @@ def cmd_layout(args):
             print("docs 폴더에 옮길 문서가 없어요.")
         sys.exit({"old": 1, "partial": 2}.get(state, 0))
     # migrate
+    if getattr(args, "undo", False):
+        return layout_undo(root, state)
     if state == "new":
         print(f"docs 폴더가 이미 새 구조예요 (docs/{DOCS_SHARED} · docs/{prod}). "
               f"옮길 문서가 없어서 아무것도 하지 않았어요.")
@@ -18355,6 +18449,7 @@ def main():
     p.add_argument("action", choices=("migrate", "check"))
     p.add_argument("--apply", action="store_true", help="migrate: do the move (the preview writes nothing)")
     p.add_argument("--json", action="store_true", help="check: machine mode")
+    p.add_argument("--undo", action="store_true", help="migrate: put an uncommitted half-move (killed --apply) back to the old structure")
     p.set_defaults(fn=cmd_layout)
     # T-319: `po` 서브커맨드 제거 — bare `prdt`가 유일한 PO 진입(init-if-needed→PO).
     p = sub.add_parser("update", help="prdt 업데이트: repo pull --ff-only + 재설치 (구 productune update 계승)")
@@ -18530,7 +18625,7 @@ def main():
     msg_root = None
     if not hook_call:
         r = find_project_root()
-        if r and docs_layout(r) == "product" and layout_state(r) != "partial":
+        if r and docs_layout(r) == "product" and layout_state(r, deep=True) != "partial":
             msg_root = r
             if (args.cmd in DOCS_MSG_CMDS and getattr(args, "action", None) != "fmt") \
                     or (args.cmd == "wiki" and getattr(args, "action", None) == "lint"):
