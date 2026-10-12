@@ -205,17 +205,25 @@ def find_project_root(start=None):
     d = Path(start or os.getcwd()).resolve()
     hit = None
     for p in [d, *d.parents]:
-        if (p / ".prdt" / "po-state.json").is_file():
-            hit = p
         if _is_track_worktree(p):
             # T-1112: a track worktree (`<project>/tracks/T-NNN`, a linked git
-            # worktree) is a project boundary — never walk out of it into the
-            # enclosing real project's `.prdt/` (index.db, po-state, config).
-            break
+            # worktree) is a project boundary: NO project from inside it — not
+            # the enclosing real one (its index.db / po-state / config), and
+            # not a `.prdt/` at or below the track either (a worker-planted
+            # marker there must never become a project root).
+            return None
+        if (p / ".prdt" / "po-state.json").is_file():
+            hit = p
     return hit
 
 
 _TRACK_DIR_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+
+
+def _inside_track_worktree(p):
+    """True when `p` or any ancestor is a track worktree (T-1112)."""
+    p = Path(p).resolve()
+    return any(_is_track_worktree(d) for d in (p, *p.parents))
 
 
 def _is_track_worktree(p):
@@ -1514,6 +1522,8 @@ def set_trust_accepted(d):
 def trust_accept_project(root):
     """Trust projectRoot AND codeRoot (deduped) — the GUI po-runner spawns the
     PO at codeRoot and exact-cwd keying means parent trust does not inherit."""
+    if _inside_track_worktree(Path(root).resolve()):
+        return   # T-1112: never a trust entry for a track worktree folder
     for p in {str(Path(root)), str(code_root(root))}:
         set_trust_accepted(p)
 
@@ -2856,6 +2866,12 @@ def init_is_legacy_docs(root):
 def init_project(root, slug=None, version="v0.1", stage="define", interactive=True):
     """The one init module (§10) — GUI onboarding shares this via `prdt init --json`."""
     root = Path(root).resolve()
+    if _inside_track_worktree(root):
+        # T-1112: a track worktree is never a project of its own — `prdt init`
+        # here (or bare `prdt`'s auto-init) would plant tracks/T-N/.prdt and a
+        # ~/.claude.json trust entry for a temporary folder.
+        sys.exit(f"prdt init: {root} is inside a track worktree (tracks/T-NNN) — a track is not a project. "
+                 "Run prdt from the project root instead.")
     prdt = root / ".prdt"
     if os.path.islink(prdt):
         # T-905: before any read, mkdir or write — a `.prdt` link (to a dir or dangling) is never followed.
@@ -17236,6 +17252,8 @@ def _wordlist_project_root(start):
     """Nearest ancestor holding `.prdt/` (the meta root in a split project)."""
     p = Path(start).resolve()
     for d in (p, *p.parents):
+        if _is_track_worktree(d):
+            return None   # T-1112: track worktree boundary
         if (d / ".prdt").is_dir():
             return d
     return None

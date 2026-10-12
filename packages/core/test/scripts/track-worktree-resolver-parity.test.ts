@@ -115,8 +115,15 @@ describe.skipIf(!READY)('track worktree is a project boundary for every resolver
   test('the real project itself still resolves to itself', () => {
     for (const [who, ans] of Object.entries(answers(f, f.proj))) expect(ans, who).toBe('REALPROJ')
   })
-  test('a worktree carrying its own marker resolves to the worktree', () => {
-    for (const [who, ans] of Object.entries(answers(f, path.join(f.wtOwn, 'sub')))) expect(ans, who).toBe('OWNPROJ')
+  test('a .prdt planted in the worktree is never a project: no resolver answers it (F1)', () => {
+    for (const [who, ans] of Object.entries(answers(f, path.join(f.wtOwn, 'sub')))) expect(ans, who).toBe('none')
+  })
+  test('a planted overrides file in the worktree is never injected as PROJECT overrides (F1)', () => {
+    for (const cwd of [f.wtOwn, path.join(f.wtOwn, 'sub')]) {
+      const out = ctxOf(run(OVERRIDES, { agent_type: 'prdt-developer', hook_event_name: 'SubagentStart', cwd }, { PRDT_HOME: f.home }))
+      expect(out).not.toContain('OWNPROJ-OVERRIDE-RULE')
+      expect(out).not.toContain('REALPROJ-OVERRIDE-RULE')
+    }
   })
   test('control: with the boundary neutralized every resolver reaches REALPROJ from the worktree', () => {
     for (const [who, ans] of Object.entries(answers(f, f.deep, true))) expect(ans, `${who} unpatched`).toBe('REALPROJ')
