@@ -393,6 +393,23 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
     expect(snapshot(root)).toEqual(before)
   }, 180_000)
 
+  test('rollback restores a tracked .DS_Store (index and bytes) and an untracked one', () => {
+    const root = legacy()
+    write(path.join(root, 'docs/wiki/.DS_Store'), 'junk')
+    git(root, ['add', '-f', 'docs/wiki/.DS_Store'])
+    git(root, ['commit', '-qm', 'ds'])
+    const before = snapshot(root)
+    const head = git(root, ['rev-parse', 'HEAD'])
+    const r = pyRun(root, `
+def boom(*a, **k): raise ValueError("forged")
+m.build_artifact_manifest = boom
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+    expect(r.code).toBe(1)
+    expect(snapshot(root)).toEqual(before)
+    expect(git(root, ['rev-parse', 'HEAD'])).toBe(head)
+    expect(git(root, ['status', '--short', '--', 'docs'])).toBe('')
+  }, 180_000)
+
   test('a killed --apply (staged renames, no commit) reads as partial in check, doctor and migrate', () => {
     const root = legacy()
     pyRun(root, `
@@ -430,4 +447,57 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
     expect(r.out).toContain('9/9 prdt doctor 경로 경고 0개')
     expect(prdt(root, ['doctor']).out).not.toContain('discipline-path:')
   }, 180_000)
+
+  test('doctor prints the same layout line as check in a killed state (old path, never docs/<product>/)', () => {
+    const root = legacy()
+    pyRun(root, `
+m.rebuild_index = lambda *a, **k: os._exit(137)
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+    const line = prdt(root, ['layout', 'check']).out.trim().replace(/^✗ /, '')
+    const doc = prdt(root, ['doctor']).out
+    expect(doc).toContain('✗ ' + line)
+    expect(line).not.toContain('docs/proj/')
+  }, 180_000)
+})
+
+describe('layout migrate --undo', () => {
+  test('restores a killed --apply (tree, HEAD, config bytes), then check says old', () => {
+    const root = legacy()
+    write(path.join(root, 'docs/wiki/.DS_Store'), 'junk')
+    git(root, ['add', '-f', 'docs/wiki/.DS_Store'])
+    git(root, ['commit', '-qm', 'ds'])
+    const before = snapshot(root)
+    const head = git(root, ['rev-parse', 'HEAD'])
+    const cfg = fs.readFileSync(path.join(root, '.prdt/config.json'))
+    pyRun(root, `
+m.rebuild_index = lambda *a, **k: os._exit(137)
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+    expect(prdt(root, ['layout', 'check']).code).toBe(2)
+    const r = prdt(root, ['layout', 'migrate', '--undo'])
+    expect(r.code).toBe(0)
+    expect(r.out).toContain('되돌렸어요')
+    expect(snapshot(root)).toEqual(before)
+    expect(git(root, ['rev-parse', 'HEAD'])).toBe(head)
+    expect(fs.readFileSync(path.join(root, '.prdt/config.json')).equals(cfg)).toBe(true)
+    expect(git(root, ['status', '--short', '--', 'docs', '.prdt/config.json'])).toBe('')
+    expect(prdt(root, ['layout', 'check']).code).toBe(1)
+    expect(prdt(root, ['layout', 'migrate', '--apply']).code).toBe(0)
+  }, 240_000)
+
+  test('refuses on an old project and on a finished new project', () => {
+    const root = legacy()
+    const before = snapshot(root)
+    const old = prdt(root, ['layout', 'migrate', '--undo'])
+    expect(old.code).toBe(1)
+    expect(old.out).toContain('되돌리지 않았어요')
+    expect(snapshot(root)).toEqual(before)
+    expect(prdt(root, ['layout', 'migrate', '--apply']).code).toBe(0)
+    const after = snapshot(root)
+    const head = git(root, ['rev-parse', 'HEAD'])
+    const done = prdt(root, ['layout', 'migrate', '--undo'])
+    expect(done.code).toBe(1)
+    expect(done.out).toContain('되돌리지 않았어요')
+    expect(snapshot(root)).toEqual(after)
+    expect(git(root, ['rev-parse', 'HEAD'])).toBe(head)
+  }, 240_000)
 })
