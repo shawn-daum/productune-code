@@ -16876,7 +16876,14 @@ def _env_parse_line(raw):
 
 
 def _env_parse_file(p):
-    """Path -> {KEY: length}. Last occurrence of a repeated key wins (matches
+    """Path -> {KEY: length} — the value-free view (`prdt env check`)."""
+    return {k: len(v) for k, v in _env_parse_values(p).items()}
+
+
+def _env_parse_values(p):
+    """Path -> {KEY: value}. Callers that must never show a value take the
+    length view above; only the machine store's `env run` hands these to a
+    child process, never to a print. Last occurrence of a repeated key wins (matches
     real dotenv loader behavior). Raises OSError on read failure — the caller
     turns that into exit 3, never a printed exception (an exception's default
     __str__ never carries file content here, only path/errno, but nothing
@@ -16899,7 +16906,7 @@ def _env_parse_file(p):
         text = text[1:]  # hide the first key from _ENV_KEY_RE.
     lines = text.split("\n")
     n = len(lines)
-    lengths = {}
+    values = {}
     i = 0
     while i < n:
         raw = lines[i]
@@ -16934,8 +16941,8 @@ def _env_parse_file(p):
                         break
                     parts.append(cont)
                 value = "\n".join(parts)
-        lengths[key] = len(value)
-    return lengths
+        values[key] = value
+    return values
 
 
 # ── T-977: UX-writing word list ───────────────────────────────────────────────
@@ -17389,7 +17396,243 @@ def cmd_wordlist(args):
     sys.exit(1 if total else 0)
 
 
+# ── T-1109: machine-scope env store (`~/.prdt/env/.env`) ─────────────────────
+# `prdt env set|unset|ls|run`. A credential VALUE is typed by the user at a
+# hidden prompt and read back only by `env run` into a child's environment —
+# never argv, never a stdin pipe, never a print (contracts §Secrets). `env set`
+# refuses when stdin/stdout are not a terminal that can hide the typing, which
+# is exactly what an agent's Bash tool is (no tty): an agent-initiated `set`
+# fails with nothing written. `unset|ls|run` never print a value or a length.
+# Precedence: a key the product code already sets (non-empty, in a real
+# `.env` / `.env.*` of the code folder) wins; an EMPTY product-code value does
+# not — the machine value fills it. `env run` therefore skips such keys, so a
+# dotenv loader that does not override the process env keeps the product value.
+_ENV_MACHINE_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+_ENV_LS_MAX_ROWS = 10
+
+
+def machine_env_file():
+    return prdt_home() / "env" / ".env"
+
+
+def _env_shown_path(p):
+    s = str(p)
+    h = str(Path.home())
+    return "~" + s[len(h):] if s == h or s.startswith(h + os.sep) else s
+
+
+def _env_fail(text, code=1):
+    print(text, file=sys.stderr)
+    sys.exit(code)
+
+
+def _machine_env_values():
+    """{KEY: value} of the machine store; {} when absent. A link at the store
+    directory or file is refused (T-905 spirit) — never followed."""
+    p = machine_env_file()
+    for q in (p.parent, p):
+        if q.is_symlink():
+            _env_fail("기기 범위 env 저장소가 링크라서 쓰지 않았어요. 저장소 경로를 확인하세요.")
+    try:
+        return _env_parse_values(p)
+    except FileNotFoundError:
+        return {}
+    except OSError as e:
+        _env_fail(f"기기 범위 env 저장소를 읽을 수 없어요: {e.strerror or 'read error'}", 3)
+
+
+def _env_quote(value):
+    """The stored form of a value, round-tripping through `_env_parse_values`
+    and `. file`; None when no quote style can hold it."""
+    if any(ord(c) < 32 or ord(c) == 127 for c in value):
+        return None
+    if "'" not in value:
+        return "'" + value + "'"
+    if not any(c in value for c in ('"', "$", "`", "\\")):
+        return '"' + value + '"'
+    return None
+
+
+def _machine_env_store(values):
+    """The one write of the machine store: dir 0700, file 0600, atomic. An
+    empty store removes the file."""
+    p = machine_env_file()
+    if not values:
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    p.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    atomic_write_text(p, "".join(f"{k}={_env_quote(v)}\n" for k, v in values.items()), mode=0o600)
+
+
+def _env_product_code_keys():
+    """(product name, {KEY: set?}) of the current project's code folder — real
+    `.env` / `.env.*` files at its top (samples excluded); (None, {}) outside a
+    project or with no real file. A key is set when any file gives it a
+    non-empty value."""
+    root = find_project_root()
+    if not root:
+        return None, {}
+    d = code_root(root)
+    keys = {}
+    found = False
+    try:
+        names = sorted(n for n in os.listdir(d) if (n == ".env" or n.startswith(".env.")) and not n.endswith(".example"))
+    except OSError:
+        return None, {}
+    for n in names:
+        f = d / n
+        if f.is_symlink() or not f.is_file():
+            continue
+        try:
+            vals = _env_parse_file(f)
+        except OSError:
+            continue
+        found = True
+        for k, ln in vals.items():
+            keys[k] = keys.get(k, False) or ln > 0
+    return (Path(root).name, keys) if found else (None, {})
+
+
+_ENV_NO_TTY = "저장 실패: 값을 숨겨서 받을 수 있는 터미널이 아니에요. 저장한 키가 없어요.\n다음: 터미널에서 직접 실행하세요."
+
+
+def _env_set(args_rest):
+    if len(args_rest) != 1:
+        _env_fail("저장 실패: 키 이름 하나가 필요해요. 저장한 키가 없어요.\n다음: prdt env set <KEY> 로 실행하세요.", 2)
+    key = args_rest[0]
+    if not _ENV_MACHINE_KEY_RE.match(key):
+        # never echoed: a mistaken argument may BE the value (T-677 precedent)
+        _env_fail("저장 실패: 키 이름이 맞지 않아요. 영문 대문자 · 숫자 · _ 만 쓸 수 있어요.\n다음: 키 이름을 고쳐 다시 실행하세요.")
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        _env_fail(_ENV_NO_TTY)
+    try:
+        import termios
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+    except Exception:
+        _env_fail(_ENV_NO_TTY)
+    hidden = old[:]
+    hidden[3] &= ~termios.ECHO
+    print(f"{key} 의 값을 입력하세요 (화면에 보이지 않아요)", flush=True)
+    try:
+        termios.tcsetattr(fd, termios.TCSADRAIN, hidden)
+        try:
+            line = sys.stdin.readline()
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            print()
+    except (KeyboardInterrupt, EOFError):
+        _env_fail("저장 실패: 입력이 끝났어요. 저장한 키가 없어요.", 130)
+    value = line.rstrip("\r\n")
+    if not value:
+        _env_fail("저장 실패: 값이 비어 있어요. 저장한 키가 없어요.")
+    if _env_quote(value) is None:
+        _env_fail("저장 실패: 값에 저장할 수 없는 문자가 있어요 (줄바꿈 · 제어 문자 · 작은따옴표와 큰따옴표를 함께 쓴 값). 저장한 키가 없어요.")
+    values = _machine_env_values()
+    values[key] = value
+    _machine_env_store(values)
+    print(f"{key} 를 기기 범위에 저장했어요 ({_env_shown_path(machine_env_file())}). 이 기기의 모든 프로젝트가 쓸 수 있어요.")
+
+
+def _env_unset(args_rest):
+    if len(args_rest) != 1:
+        _env_fail("지우기 실패: 키 이름 하나가 필요해요. 지운 키가 없어요.\n다음: prdt env unset <KEY> 로 실행하세요.", 2)
+    key = args_rest[0]
+    values = _machine_env_values()
+    if not _ENV_MACHINE_KEY_RE.match(key) or key not in values:
+        shown = key if _ENV_MACHINE_KEY_RE.match(key) and len(key) <= 64 else "그 키"
+        _env_fail(f"지우기 실패: {shown} 가 기기 범위에 없어요. 지운 키가 없어요.\n다음: prdt env ls 로 키 이름을 확인하세요.")
+    del values[key]
+    _machine_env_store(values)
+    print(f"{key} 을 기기 범위에서 지웠어요")
+
+
+def _env_ls():
+    values = _machine_env_values()
+    if not values:
+        print("기기 범위에 저장된 키가 없어요.\n\n다음: prdt env set <KEY> 로 저장하세요.")
+        return
+    pname, pkeys = _env_product_code_keys()
+    nset = sum(1 for v in values.values() if v)
+    empties = [k for k, v in values.items() if not v]
+    if not pkeys:
+        print(f"기기 범위 키 {len(values)}개 · 설정됨 {nset} · 비어 있음 {len(empties)} · {_env_shown_path(machine_env_file())}")
+        print()
+        w = max(_display_width(k) for k in list(values) + ["키"]) + 2
+        print(_pad("키", w) + _pad("상태", 10) + "적용 범위")
+        for k, v in values.items():
+            print(_pad(k, w) + _pad("설정됨" if v else "비어 있음", 10) + "기기 범위")
+        if empties:
+            print()
+            print(f"{', '.join(empties)} 는 값이 비어 있어요. 다음: prdt env set {empties[0]} 로 값을 저장하세요.")
+        return
+    same = [k for k, v in values.items() if v and pkeys.get(k)]
+    print(f"기기 범위 키 {len(values)}개 · {pname} 제품 코드 키 {len(pkeys)}개 · 같은 이름 {len(same)}개")
+    print()
+    union = list(values) + [k for k in pkeys if k not in values]
+    order = {k: (0 if k in same else 1 if k in values else 2) for k in union}
+    union.sort(key=lambda k: (order[k], k))
+
+    def cell(d, k):
+        return "—" if k not in d else ("설정됨" if d[k] else "비어 있음")
+
+    def used(k):
+        if pkeys.get(k):
+            return "제품 코드 값"
+        return "기기 범위 값" if values.get(k) else "값 없음"
+    head = ["키", "기기 범위", f"{pname} 제품 코드", "쓰이는 값"]
+    rows = [[k, cell(values, k), cell(pkeys, k), used(k)] for k in union[:_ENV_LS_MAX_ROWS]]
+    widths = [max(_display_width(r[i]) for r in rows + [head]) + 2 for i in range(3)]
+    print("".join(_pad(h, widths[i]) for i, h in enumerate(head[:3])) + head[3])
+    for r in rows:
+        print("".join(_pad(r[i], widths[i]) for i in range(3)) + r[3])
+    if len(union) > _ENV_LS_MAX_ROWS:
+        print(f"… 키 {len(union) - _ENV_LS_MAX_ROWS}개 더")
+    if same:
+        print()
+        print(f"같은 이름 {len(same)}개는 제품 코드 값을 써요. 기기 범위 값을 쓰려면 제품 코드 파일에서 그 키를 지우세요.")
+
+
+def _env_run(args_rest):
+    argv = list(args_rest)
+    if argv and argv[0] == "--":
+        argv = argv[1:]
+    if not argv:
+        _env_fail("실행 실패: 실행할 명령이 없어요. 키를 넣은 프로세스가 없어요.\n다음: prdt env run -- <명령> 으로 실행하세요.", 2)
+    values = _machine_env_values()
+    _, pkeys = _env_product_code_keys()
+    skipped = [k for k, v in values.items() if v and pkeys.get(k)]
+    inject = {k: v for k, v in values.items() if v and not pkeys.get(k)}
+    note = f" 같은 이름 {len(skipped)}개는 제품 코드 값을 써요." if skipped else ""
+    print(f"기기 범위 키 {len(inject)}개를 넣어 {' '.join(shlex.quote(a) for a in argv)} 를 실행해요.{note}", flush=True)
+    child_env = dict(os.environ)
+    child_env.update(inject)
+    try:
+        os.execvpe(argv[0], argv, child_env)
+    except OSError:
+        _env_fail(f"실행 실패: {shlex.quote(argv[0])} 를 실행할 수 없어요. 키를 넣은 프로세스가 없어요.", 127)
+
+
 def cmd_env(args):
+    action = args.action
+    rest = list(args.rest or [])
+    if action == "set":
+        return _env_set(rest)
+    if action == "unset":
+        return _env_unset(rest)
+    if action == "ls":
+        return _env_ls()
+    if action == "run":
+        return _env_run(rest)
+    if not rest:
+        _env_fail("prdt env check: a file is required", 2)
+    return _env_check(argparse.Namespace(file=rest[0], keys=rest[1:]))
+
+
+def _env_check(args):
     """`prdt env check <file> [KEY ...]` — see module header above. Every
     branch below prints only: a key name FROM THE FILE (never the caller's
     raw argument text — a KEY argument absent from the file is reported by
@@ -17738,14 +17981,15 @@ def main():
     p.add_argument("--latch-ttl", type=int, default=LATCH_TTL_MIN, metavar="MIN",
                    help=f"minutes a limit latch stays live (default {LATCH_TTL_MIN})")
     p.set_defaults(fn=cmd_preflight)
-    p = sub.add_parser("env", help="value-free credential presence probe (T-677): "
-                                   "check <file> [KEY ...] — presence + length only, never a value; "
+    p = sub.add_parser("env", help="credential env (T-677, T-1109), values never shown: "
+                                   "check <file> [KEY ...] — presence + length only; "
                                    "exit 0 all set, 1 a KEY is absent, 2 a KEY is present but empty, "
                                    "3 the file could not be read; several KEYs print one line each and "
-                                   "exit with the worst of their codes; no KEY lists every key in <file>")
-    p.add_argument("action", choices=("check",))
-    p.add_argument("file")
-    p.add_argument("keys", nargs="*", metavar="KEY")
+                                   "exit with the worst of their codes; no KEY lists every key in <file> · "
+                                   "set <KEY> (hidden prompt, terminal only) · unset <KEY> · ls · "
+                                   "run -- <cmd> — the machine-scope store ~/.prdt/env/.env")
+    p.add_argument("action", choices=("check", "set", "unset", "ls", "run"))
+    p.add_argument("rest", nargs=argparse.REMAINDER, metavar="ARG")
     p.set_defaults(fn=cmd_env)
     p = sub.add_parser("wordlist", help="UX-writing word list (T-977, read-only): check <file|-> ... "
                                         "[--lang L] [--json] — each hit as path:line:col: word → plain replacement, "
@@ -17795,6 +18039,8 @@ def main():
         # T-983: the hook-spawned ensure is a background call of this same
         # kind — it must never eat the user's daily nudge (update-state.json).
         or (args.cmd == "viewer" and getattr(args, "ensure", False))
+        # T-1109: nothing may print or read ahead of the hidden value prompt.
+        or (args.cmd == "env" and getattr(args, "action", None) in ("set", "run"))
     )
     if not skip_update_nudge:
         maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)

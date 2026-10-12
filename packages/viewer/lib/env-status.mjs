@@ -154,6 +154,27 @@ function readEnvKeys(file) {
   }
 }
 
+/**
+ * T-1109: the machine-scope store `<PRDT_HOME>/env/.env` — key names, one
+ * set/empty boolean per key, and whether a product-code file already sets the
+ * same key non-empty (it wins; an EMPTY product-code value does not). Never a
+ * value, never a length. A link at the directory or file reads as no store.
+ * @param {string} home the tool home (PRDT_HOME or ~/.prdt)
+ * @param {{ files: Array<{ sample: boolean, keys: Array<{ name: string, set: boolean }> }> } | null} productEnv collectEnv()'s result for the code folder
+ * @returns {{ dir: string, keys: Array<{ name: string, set: boolean, codeWins: boolean }> }}
+ */
+export function collectMachineEnv(home, productEnv) {
+  const dir = path.join(home, 'env')
+  const file = path.join(dir, '.env')
+  let keys = null
+  try {
+    if (!fs.lstatSync(dir).isSymbolicLink() && !fs.lstatSync(file).isSymbolicLink()) keys = readEnvKeys(file)
+  } catch {}
+  const code = new Set()
+  for (const f of (productEnv && productEnv.files) || []) if (!f.sample) for (const k of f.keys) if (k.set) code.add(k.name)
+  return { dir: '~/.prdt/env', keys: (keys || []).map((k) => ({ name: k.name, set: k.set, codeWins: k.set && code.has(k.name) })) }
+}
+
 /** The home line's code folder: config `code.dir` (relative, never climbing out), default `code`; the project root itself when that folder does not exist (a non-split project). */
 export function homeEnvDir(repoRoot, cfg) {
   const d = cfg && typeof cfg.code === 'object' && cfg.code ? cfg.code.dir : undefined
