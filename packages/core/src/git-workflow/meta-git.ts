@@ -518,10 +518,42 @@ function readConfig(projectDir: string): Record<string, any> {
 export function readMetaAllowlist(projectDir: string): string[] {
   const cfg = readConfig(projectDir)
   const list = cfg?.meta?.allowlist
+  const base = [...DEFAULT_META_ALLOWLIST, ...productLayoutAllowlist(projectDir)]
   if (Array.isArray(list) && list.every((e) => typeof e === 'string')) {
-    return [...new Set([...DEFAULT_META_ALLOWLIST, ...list])]
+    return [...new Set([...base, ...list])]
   }
-  return [...DEFAULT_META_ALLOWLIST]
+  return [...new Set(base)]
+}
+
+/**
+ * T-1104 — the product-first docs layout (`docs/_shared/` present) adds
+ * `docs/_shared` + `docs/<product>` per product to the defaults; the legacy
+ * layout adds nothing. Products: config `slug`, config `products[].name`, then
+ * any `docs/<kebab>/` holding `prd/` or `tickets/` — the same derivation as the
+ * CLI's `project_products` (scripts/prdt).
+ */
+export function productLayoutAllowlist(projectDir: string): string[] {
+  const docs = path.join(projectDir, 'docs')
+  const isDir = (p: string): boolean => {
+    try { return fs.lstatSync(p).isDirectory() } catch { return false }
+  }
+  if (!isDir(path.join(docs, '_shared'))) return []
+  const re = /^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$/
+  const names: string[] = []
+  const add = (n: unknown): void => {
+    if (typeof n === 'string' && re.test(n) && !names.includes(n)) names.push(n)
+  }
+  const cfg = readConfig(projectDir) as { slug?: unknown; products?: unknown } | null
+  add(cfg?.slug)
+  if (Array.isArray(cfg?.products)) for (const e of cfg.products) add((e as { name?: unknown })?.name)
+  let entries: string[] = []
+  try { entries = fs.readdirSync(docs).sort() } catch { entries = [] }
+  for (const d of entries) {
+    if (d.startsWith('_') || d.startsWith('.')) continue
+    const dp = path.join(docs, d)
+    if (isDir(dp) && (isDir(path.join(dp, 'prd')) || isDir(path.join(dp, 'tickets')))) add(d)
+  }
+  return ['docs/_shared', ...names.map((n) => `docs/${n}`)]
 }
 
 /**
