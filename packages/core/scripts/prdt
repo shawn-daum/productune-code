@@ -4102,6 +4102,11 @@ def dead_discipline_path_warnings(root, mirror=None):
                 continue
             if any((base / cand).exists() for base in bases):
                 continue
+            try:   # T-1103: an As-Is `docs/…` citation → its To-Be file (T-1104 seam)
+                if (root / resolve_docs_ref(root, cand)).exists():
+                    continue
+            except DocsLayoutError:
+                pass
             checked = "meta root, code root, code discipline tree, doc's own dir"
             if mirror is not None:
                 checked += f", and the installed discipline mirror ({mirror})"
@@ -16219,8 +16224,21 @@ def layout_plan(root):
             "shared_total": sum(u["count"] for u in units if u["side"] == "shared")}
 
 
-def layout_state(root):
-    """"old" | "new" | "partial" | "none" (see the block comment above)."""
+def _lay_uncommitted_old(root):
+    """Old-layout paths the meta HEAD still tracks but the work tree (or the index)
+    has dropped — a move that was never committed (a killed `--apply`)."""
+    if not meta_repo_present(root):
+        return []
+    r = _lay_git(root, ["diff", "HEAD", "--no-renames", "--name-only", "-z", "--diff-filter=D", "--", "docs"])
+    if r.returncode != 0:
+        return []
+    return [p for p in r.stdout.split("\0")
+            if p.count("/") >= 1 and p.split("/")[1] in LAYOUT_OWNED_TOPS]
+
+
+def layout_state(root, deep=False):
+    """"old" | "new" | "partial" | "none" (see the block comment above). `deep`
+    also asks meta git whether a half-done move is waiting there."""
     root = Path(root)
     docs = root / "docs"
     if not (root / ".prdt" / "config.json").is_file() or not docs.is_dir():
@@ -16228,7 +16246,9 @@ def layout_state(root):
     shared = docs / DOCS_SHARED
     owned = [n for n in LAYOUT_OWNED_TOPS if os.path.lexists(docs / n)]
     if shared.is_dir() and not shared.is_symlink():
-        return "partial" if owned else "new"
+        if owned or (deep and _lay_uncommitted_old(root)):
+            return "partial"
+        return "new"
     if (docs / "tickets").exists() or (docs / "prd" / "PRD.md").exists():
         return "old"
     return "none"
@@ -16330,6 +16350,9 @@ def _lay_leftover(root):
 
 def layout_partial_line(root):
     first, left = _lay_leftover(root)
+    if first is None:     # nothing old on disk: the move sits uncommitted in meta git
+        gone = _lay_uncommitted_old(root)
+        first, left = gone[0].split("/")[1], len(gone)
     shown = f"docs/{first}/" if first and os.path.isdir(Path(root) / "docs" / first) else f"docs/{first}"
     return (f"docs 폴더 일부만 새 구조예요: docs/{DOCS_SHARED}/ 는 새 구조, {shown} 는 예전 구조 "
             f"(남은 문서 {_lay_n(left)}개)")
@@ -16337,7 +16360,7 @@ def layout_partial_line(root):
 
 def layout_doctor_warnings(root):
     """The doctor error line of a half-moved layout (design: "제안 대신 doctor 오류")."""
-    if layout_state(root) != "partial":
+    if layout_state(root, deep=True) != "partial":
         return []
     return ["✗ " + layout_partial_line(root)]
 
@@ -16440,7 +16463,7 @@ def layout_precheck(root, plan):
     live = _lay_live_dispatches(root)
     if live:
         _lay_refuse(f"진행 중인 dispatch {_lay_n(live)}개가 있어요", [], "dispatch 가 끝난 뒤 다시 실행하세요.")
-    if layout_state(root) == "partial":
+    if layout_state(root, deep=True) == "partial":
         _lay_refuse_partial(root)
     prod = plan["product"]
     for clash in (prod, DOCS_SHARED):
@@ -16504,7 +16527,11 @@ def _lay_hash(root, rels):
     return out
 
 
+_LAY_CUR = [2]
+
+
 def _lay_step(i, text):
+    _LAY_CUR[0] = i
     print(f"{_lay_ok(f'{i}/{LAYOUT_STEPS}')} {text}")
     sys.stdout.flush()
 
@@ -16527,7 +16554,8 @@ def layout_apply(root, plan):
     n_total = plan["total"]
     _lay_step(2, f"옮길 문서 {_lay_n(n_total)}개의 목록을 만들었어요")
 
-    moved, created_dirs, generated = [], [], []
+    _LAY_CUR[0] = 2
+    moved, created_dirs, generated, skip_removed = [], [], [], []
     h = _lay_git(root, ["rev-parse", "HEAD"])
     head0 = h.stdout.strip() if h.returncode == 0 else None
     undo = {"config": None, "wiki_index": None, "manifest": None}
@@ -16562,8 +16590,17 @@ def layout_apply(root, plan):
                     staged.append(new)
             # an emptied docs/wiki is not a document
             wiki = root / "docs" / "wiki"
-            if wiki.is_dir() and not wiki.is_symlink() and not os.listdir(wiki):
-                os.rmdir(wiki)
+            if wiki.is_dir() and not wiki.is_symlink():
+                left = os.listdir(wiki)
+                if all(n in LAYOUT_SKIP for n in left):   # `.DS_Store` only: the old folder goes with it
+                    for n in left:
+                        fp = wiki / n
+                        if fp.is_file() and not fp.is_symlink():
+                            skip_removed.append((fp, fp.read_bytes()))
+                            if f"docs/wiki/{n}" in tracked:
+                                tracked_old.append(f"docs/wiki/{n}")
+                        os.unlink(fp)
+                    os.rmdir(wiki)
             g = _lay_pathspec(root, ["add", "-A", "-f"], tracked_old + staged)
             if g.returncode != 0:
                 raise OSError(0, (g.stderr or "git add failed").strip().splitlines()[0] if g.stderr else "git add failed")
@@ -16592,6 +16629,8 @@ def layout_apply(root, plan):
 
         # 6 — derived state: artifact manifest · index.db · wiki index.md
         try:
+            widx = shared_docs_dir(root) / "wiki" / "index.md"
+            undo["wiki_index"] = widx.read_bytes() if widx.is_file() else False
             man = artifact_manifest_path(root)
             if (root / "docs" / prod / "artifacts").is_dir():
                 undo["manifest"] = man.read_bytes() if man.is_file() else False
@@ -16604,8 +16643,6 @@ def layout_apply(root, plan):
                 write_artifact_manifest(root, data)
                 if undo["manifest"] is False:
                     generated.append(man)
-            widx = shared_docs_dir(root) / "wiki" / "index.md"
-            undo["wiki_index"] = widx.read_bytes() if widx.is_file() else False
             con, _v, _pages, _m = rebuild_index(root)
             con.close()
             if undo["wiki_index"] is False and widx.is_file():
@@ -16639,8 +16676,11 @@ def layout_apply(root, plan):
             raise _LayoutFail(8, f"meta 커밋을 만들 수 없어요 ({why})", "meta git 상태를 확인한 뒤 다시 실행하세요.")
         print(f"{_lay_ok('8/9')} meta 커밋 1개를 만들었어요: {_lay_dm(LAYOUT_COMMIT_MSG)}")
         sys.stdout.flush()
-    except _LayoutFail as f:
-        layout_rollback(root, plan, f, moved, created_dirs, generated, undo, tracked_old + staged, head0)
+    except (_LayoutFail, KeyboardInterrupt, Exception) as f:
+        if not isinstance(f, _LayoutFail):   # SIGINT or a bug: same road back, never a half-move left standing
+            what = "중단됐어요" if isinstance(f, KeyboardInterrupt) else f"예상하지 못한 오류예요 ({_lay_err_text(f)})"
+            f = _LayoutFail(_LAY_CUR[0] + 1, what, "원인을 확인한 뒤 다시 실행하세요.")
+        layout_rollback(root, plan, f, moved, created_dirs, generated, undo, tracked_old + staged, head0, skip_removed)
         return  # unreachable — rollback exits
 
     # 9 — doctor's path warnings
@@ -16666,7 +16706,8 @@ def layout_path_warnings(root):
     except Exception:
         tickets = {}
     for fn in (lambda: artifact_placement_warnings(root), lambda: prd_layout_warnings(root, st),
-               lambda: artifact_ticket_edge_warnings(root, tickets), lambda: meta_drift_warnings(root)):
+               lambda: artifact_ticket_edge_warnings(root, tickets), lambda: meta_drift_warnings(root),
+               lambda: dead_discipline_path_warnings(root)):
         try:
             out += list(fn())
         except Exception:
@@ -16674,7 +16715,7 @@ def layout_path_warnings(root):
     return out
 
 
-def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, staged_paths, head0=None):
+def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, staged_paths, head0=None, skip_removed=()):
     """Undo steps 4–8 in reverse; report what could not be undone (PARTIAL).
     Same shape as `prdt meta relocate`: rollback failing is reported, never hidden."""
     root = Path(root)
@@ -16693,6 +16734,12 @@ def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, stag
             back_files += u["count"]
         except OSError as e:
             stuck.append((u, e))
+    for fp, data in skip_removed:
+        try:
+            os.makedirs(fp.parent, exist_ok=True)
+            fp.write_bytes(data)
+        except OSError:
+            pass
     try:
         if undo.get("config") is not None:
             state_write(root, root / ".prdt" / "config.json", undo["config"].decode("utf-8"))
@@ -16769,7 +16816,7 @@ def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, stag
 
 def cmd_layout(args):
     root = require_root()
-    state = layout_state(root)
+    state = layout_state(root, deep=True)
     plan = layout_plan(root) if state in ("old", "partial") else None
     prod = layout_product_name(root)
     if args.action == "check":
