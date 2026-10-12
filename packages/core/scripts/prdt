@@ -15912,6 +15912,9 @@ def cmd_doctor(_args):
     # check must not leave out, and the one thing the verdict refuses to guess.
     roster = [
         ("po-state shape", FAMILY_DE, lambda: po_state_warnings(st, root)),
+        # T-1103: a half-moved docs layout (docs/_shared/ beside an old docs/tickets/) —
+        # the error line of the approved screen set (layout-start: half).
+        ("docs layout", FAMILY_DE, lambda: layout_doctor_warnings(root)),
         ("ticket index", FAMILY_PROJECT, lambda: [f"ticket: {v}" for v in tviol]),
         # Whether a duplicated id deserves its own warning was left open by T-549
         # and answered by T-551: it does, ONCE, from a dedicated check — never as
@@ -16090,13 +16093,714 @@ def cmd_doctor(_args):
     warns = [w for r in records for w in r["warnings"]]
 
     for w in warns:
-        print(f"⚠ {w}")
+        print(w if w.startswith("✗ ") else f"⚠ {w}")
     summary = discipline_delivery_summary(droot)
     if summary:
         print(summary)
     for line in doctor_verdict_lines(records):
         print(line)
     print(("doctor: clean" if not warns else f"doctor: {len(warns)} warning(s)") + " (non-blocking)")
+
+
+# ── T-1103: `prdt layout migrate` / `--apply` / `check` — As-Is → product-first docs ──
+# Design: docs/artifacts/v1.14/product-first-docs-layout.html (④ names · migrate fold:
+# detection rule · preview · 9 apply steps · failure rollback · ③ closed PRD files
+# byte-identical). Output strings: the approved screen set (define-screen-set.html,
+# layout-cli: preview · confirm · applied · already · refused · rolled back · partial;
+# user approved the copy 2026-10-12, T-1114) — change a string only with that screen.
+# State (`layout_state`): config.json present, then
+#   `docs/_shared/` absent + (`docs/tickets/` | `docs/prd/PRD.md`) → "old"
+#   `docs/_shared/` present + no migration-owned name left directly under docs/ → "new"
+#   `docs/_shared/` present + one left (the design's half-moved shape) → "partial"
+#   neither → "none" (nothing to move).
+LAYOUT_PRODUCT_TOPS = ("prd", "tickets", "artifacts")
+# Names directly under docs/ that the fixed-path table owns — one of them beside
+# `_shared/` is a half-moved layout.
+LAYOUT_OWNED_TOPS = ("tickets", "prd", "artifacts", "DEPLOY.md", "wiki", "features", "design.md",
+                     "po", "designer", "developer", "qa")
+# `docs/` entries that never move: `.DS_Store` noise, and RELEASES.md (CODE repo, T-453).
+LAYOUT_SKIP = (".DS_Store", "RELEASES.md")
+LAYOUT_PERSONAS = ("po", "designer", "developer", "qa")
+LAYOUT_COMMIT_MSG = "chore: product-first docs layout (prdt layout migrate)"
+LAYOUT_STEPS = 9
+
+
+def _lay_color(code, s):
+    if sys.stdout.isatty() and not os.environ.get("NO_COLOR"):
+        return f"\033[{code}m{s}\033[0m"
+    return s
+
+
+def _lay_ok(s): return _lay_color("32", s)
+def _lay_er(s): return _lay_color("31", s)
+def _lay_wn(s): return _lay_color("33", s)
+def _lay_dm(s): return _lay_color("2", s)
+def _lay_b(s): return _lay_color("1", s)
+
+
+def _lay_n(n):
+    return f"{n:,}"
+
+
+def _lay_count_files(path):
+    """Files under `path` (a symlink counts as one file and is never followed;
+    `.DS_Store` is not a document). A plain file counts 1."""
+    p = str(path)
+    if os.path.islink(p) or not os.path.isdir(p):
+        return 0 if os.path.basename(p) in LAYOUT_SKIP else 1
+    n = 0
+    for dirpath, dirs, files in os.walk(p, followlinks=False):
+        n += sum(1 for f in files if f not in LAYOUT_SKIP)
+        n += sum(1 for d in dirs if os.path.islink(os.path.join(dirpath, d)))
+    return n
+
+
+def _lay_list_files(path):
+    """Project-relative-ish file list under `path` (sorted, same rules as the count)."""
+    p = str(path)
+    if os.path.islink(p) or not os.path.isdir(p):
+        return [p] if os.path.basename(p) not in LAYOUT_SKIP else []
+    out = []
+    for dirpath, dirs, files in os.walk(p, followlinks=False):
+        out += [os.path.join(dirpath, f) for f in files if f not in LAYOUT_SKIP]
+        out += [os.path.join(dirpath, d) for d in dirs if os.path.islink(os.path.join(dirpath, d))]
+    return sorted(out)
+
+
+def layout_product_name(root):
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    return product_dir_name(cfg.get("slug") if isinstance(cfg, dict) else None)
+
+
+def _lay_top_entries(root):
+    d = Path(root) / "docs"
+    try:
+        prod = layout_product_name(root)
+        return sorted(e for e in os.listdir(d) if e not in LAYOUT_SKIP and e not in (DOCS_SHARED, prod))
+    except OSError:
+        return []
+
+
+def layout_plan(root):
+    """What `--apply` moves, as units (`src` → `dst`, project-relative posix paths):
+    one unit per top-level `docs/` entry; `wiki/` splits per child (`retro--v*.md`
+    → the product, the rest → `_shared`). Preview and apply read this one result."""
+    root = Path(root)
+    prod = layout_product_name(root)
+    units = []
+
+    def unit(src, dst, side, top):
+        units.append({"src": src, "dst": dst, "side": side, "top": top,
+                      "dir": os.path.isdir(root / src) and not os.path.islink(root / src),
+                      "count": _lay_count_files(root / src)})
+
+    for name in _lay_top_entries(root):
+        src = f"docs/{name}"
+        if name in LAYOUT_PRODUCT_TOPS or name == "DEPLOY.md":
+            unit(src, f"docs/{prod}/{name}", "product", name)
+        elif name == "wiki" and os.path.isdir(root / src) and not os.path.islink(root / src):
+            for child in sorted(os.listdir(root / src)):
+                if child in LAYOUT_SKIP:
+                    continue
+                retro = bool(re.match(r"^retro--v.*\.md$", child)) and os.path.isfile(root / src / child)
+                unit(f"{src}/{child}",
+                     f"docs/{prod}/wiki/{child}" if retro else f"docs/{DOCS_SHARED}/wiki/{child}",
+                     "product" if retro else "shared", "wiki-retro" if retro else "wiki")
+        else:
+            unit(src, f"docs/{DOCS_SHARED}/{name}", "shared", name)
+    closed = []
+    vdir = root / "docs" / "prd" / "versions"
+    if vdir.is_dir() and not vdir.is_symlink():
+        closed = [Path(f).relative_to(root).as_posix() for f in _lay_list_files(vdir)
+                  if f.endswith(".md")]
+    return {"product": prod, "units": units, "closed": closed,
+            "total": sum(u["count"] for u in units),
+            "product_total": sum(u["count"] for u in units if u["side"] == "product"),
+            "shared_total": sum(u["count"] for u in units if u["side"] == "shared")}
+
+
+def layout_state(root):
+    """"old" | "new" | "partial" | "none" (see the block comment above)."""
+    root = Path(root)
+    docs = root / "docs"
+    if not (root / ".prdt" / "config.json").is_file() or not docs.is_dir():
+        return "none"
+    shared = docs / DOCS_SHARED
+    owned = [n for n in LAYOUT_OWNED_TOPS if os.path.lexists(docs / n)]
+    if shared.is_dir() and not shared.is_symlink():
+        return "partial" if owned else "new"
+    if (docs / "tickets").exists() or (docs / "prd" / "PRD.md").exists():
+        return "old"
+    return "none"
+
+
+def _lay_tops(units, top):
+    return sum(u["count"] for u in units if u["top"] == top)
+
+
+def _lay_product_desc(units):
+    parts = []
+    for top in LAYOUT_PRODUCT_TOPS:
+        if any(u["top"] == top for u in units):
+            parts.append(f"{top}/ {_lay_n(_lay_tops(units, top))}")
+    if any(u["top"] == "wiki-retro" for u in units):
+        parts.append(f"wiki/retro--v*.md {_lay_n(_lay_tops(units, 'wiki-retro'))}")
+    if any(u["top"] == "DEPLOY.md" for u in units):
+        parts.append("DEPLOY.md")
+    return " · ".join(parts) or "—"
+
+
+def _lay_shared_desc(units):
+    shared = [u for u in units if u["side"] == "shared"]
+    tops = {}
+    for u in shared:
+        tops.setdefault(u["top"], []).append(u)
+    first = []
+    if "design.md" in tops:
+        first.append("design.md")
+    for t in ("features", "wiki"):
+        if t in tops:
+            first.append(f"{t}/ {_lay_n(_lay_tops(shared, t))}")
+    pers = [p for p in LAYOUT_PERSONAS if p in tops]
+    if pers:
+        first.append(" ".join(f"{p}/" for p in pers) + f" {_lay_n(sum(_lay_tops(shared, p) for p in pers))}")
+    taken = {"design.md", "features", "wiki", *LAYOUT_PERSONAS}
+    dirs, files, grouped = [], [], []
+    for t in sorted(tops, key=str.casefold):
+        if t in taken:
+            continue
+        if t.startswith("prdt-v1-") and t.endswith(".md") and not tops[t][0]["dir"]:
+            grouped.append(t)
+        elif tops[t][0]["dir"]:
+            dirs.append(t)
+        else:
+            files.append(t)
+    rest = [f"{t}/ {_lay_n(_lay_tops(shared, t))}" for t in dirs] + files
+    if len(grouped) >= 2:
+        rest.append(f"prdt-v1-*.md {_lay_n(len(grouped))}")
+    else:
+        rest += grouped
+    return " · ".join(first) or "—", " · ".join(rest)
+
+
+def _lay_allow_count(root):
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    meta = cfg.get("meta") if isinstance(cfg, dict) else None
+    lst = meta.get("allowlist") if isinstance(meta, dict) else None
+    return len(lst) if isinstance(lst, list) else 0
+
+
+def layout_print_preview(root, plan):
+    prod, units = plan["product"], plan["units"]
+    n_alias = _lay_allow_count(root)
+    print(f"{prod}: docs 폴더가 예전 구조예요. 문서 {_lay_n(plan['total'])}개를 새 구조로 옮길 목록이에요. "
+          f"아직 아무것도 옮기지 않았어요.")
+    print()
+    print(_lay_dm("옮길 곳              파일   내용"))
+
+    def row(dest, n, desc):
+        left = dest.ljust(20) if len(dest) < 20 else dest + " "
+        return f"{_lay_b(dest)}{left[len(dest):]}{_lay_n(n).rjust(5)}   {desc}"
+    print(row(f"docs/{prod}/", plan["product_total"], _lay_product_desc(units)))
+    d1, d2 = _lay_shared_desc(units)
+    print(row(f"docs/{DOCS_SHARED}/", plan["shared_total"], d1))
+    if d2:
+        print(" " * 28 + d2)
+    stay = [n for n in (".prdt", "code", "tracks", "briefs") if os.path.isdir(Path(root) / n)]
+    print("그대로                 —    " + " · ".join(f"{n}/" for n in stay))
+    print()
+    print(_lay_dm("함께 바뀌는 것"))
+    print(f"  .prdt/config.json         meta.allowlist {n_alias}줄을 옮긴 경로로 다시 써요")
+    if any(u["top"] == "artifacts" for u in units):
+        print("  artifacts/manifest.json   bucket 경로를 다시 써요")
+    print(f"  닫힌 PRD {len(plan['closed'])}개              바이트 그대로 두고 shasum 으로 비교해요")
+    print("  코드 저장소                건드리지 않아요")
+    print()
+    print("다음: 목록이 맞으면 prdt layout migrate --apply 로 옮기세요.")
+
+
+def _lay_leftover(root):
+    """(first old name directly under docs/, files still at the old top level) —
+    the numbers the half-moved lines name."""
+    plan = layout_plan(root)
+    docs = Path(root) / "docs"
+    first = next((n for n in LAYOUT_OWNED_TOPS if os.path.lexists(docs / n)), None)
+    return first, plan["total"]
+
+
+def layout_partial_line(root):
+    first, left = _lay_leftover(root)
+    shown = f"docs/{first}/" if first and os.path.isdir(Path(root) / "docs" / first) else f"docs/{first}"
+    return (f"docs 폴더 일부만 새 구조예요: docs/{DOCS_SHARED}/ 는 새 구조, {shown} 는 예전 구조 "
+            f"(남은 문서 {_lay_n(left)}개)")
+
+
+def layout_doctor_warnings(root):
+    """The doctor error line of a half-moved layout (design: "제안 대신 doctor 오류")."""
+    if layout_state(root) != "partial":
+        return []
+    return ["✗ " + layout_partial_line(root)]
+
+
+def _lay_git(root, args, stdin=None):
+    prob = meta_git_trust_problem(root)
+    if prob:
+        return subprocess.CompletedProcess(["git", *args], 128, "", meta_git_refusal(prob))
+    return subprocess.run(["git", *META_GIT_HARDEN, "--git-dir", str(meta_git_dir(root)),
+                           "--work-tree", str(root), *args], cwd=str(root), env=_scrubbed_git_env(),
+                          input=stdin, capture_output=True, text=True, timeout=300)
+
+
+def _lay_pathspec(root, verb_args, paths):
+    """`git <verb_args> --pathspec-from-file=-` over `paths` (NUL-separated: no
+    quoting, no ARG_MAX)."""
+    if not paths:
+        return subprocess.CompletedProcess(["git"], 0, "", "")
+    return _lay_git(root, [*verb_args, "--pathspec-from-file=-", "--pathspec-file-nul"],
+                    stdin="\0".join(paths) + "\0")
+
+
+def _lay_live_dispatches(root):
+    d = prdt_home() / "run" / "dispatches"
+    if not d.is_dir():
+        return 0
+    now = datetime.now(timezone.utc)
+    here = os.path.realpath(str(root))
+    n = 0
+    for f in sorted(d.glob("*.json")):
+        try:
+            with open(f, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict) or not isinstance(data.get("project_root"), str):
+                continue
+            if os.path.realpath(data["project_root"]) != here:
+                continue
+            if _dispatch_state(data, now).startswith("live"):
+                n += 1
+        except Exception:
+            continue
+    return n
+
+
+def _lay_dirty(root):
+    """Uncommitted meta changes under docs/ and .prdt/config.json (the files this
+    command moves or rewrites); `.prdt/po-state.json` and the rest of `.prdt/` move
+    on every turn and are not ours."""
+    allow = [e for e in read_meta_allowlist(root) if e == "docs" or e.startswith("docs/")]
+    r = _lay_git(root, ["status", "--porcelain", "-z", "--untracked-files=all", "--",
+                        *allow, ".prdt/config.json"])
+    if r.returncode != 0:
+        return None, (r.stderr or "git status failed").strip().splitlines()[0]
+    toks, out, i = r.stdout.split("\0"), [], 0
+    while i < len(toks):
+        e = toks[i]
+        i += 1
+        if len(e) < 4:
+            continue
+        if "R" in e[:2] or "C" in e[:2]:
+            i += 1
+        # `docs/wiki/index.md` is generated (every `prdt doctor` / `wiki reindex` rewrites it)
+        # and step 6 regenerates it: never a change worth refusing for.
+        if e[3:] != "docs/wiki/index.md":
+            out.append(e[3:])
+    return out, None
+
+
+def _lay_refuse(why, rest, nxt, tail="docs 폴더는 예전 구조 그대로예요."):
+    print(f"{_lay_er('옮기지 않았어요')}: {why}." + (f" {tail}" if tail else ""))
+    for line in rest:
+        print(f"  {line}")
+    print()
+    print(f"다음: {nxt}")
+    sys.exit(1)
+
+
+def layout_precheck(root, plan):
+    """The four checks before anything is written (a hit → refuse, nothing written).
+    Order is the screen's: meta git clean · no dispatch in flight · not half-moved ·
+    no `docs/<product>/` name clash. Returns nothing; exits 1 on a hit."""
+    docs = Path(root) / "docs"
+    if project_lines(root):
+        _lay_refuse(".prdt/config.json 에 lines 가 있어요", [],
+                    "lines 를 쓰는 프로젝트는 아직 옮길 수 없어요. PO 에게 알리세요.")
+    if os.path.islink(docs):
+        _lay_refuse("docs 가 폴더가 아니라 링크예요", [], "docs 를 실제 폴더로 바꾼 뒤 다시 실행하세요.")
+    if not meta_repo_present(root):
+        _lay_refuse("meta git (.prdt/meta.git) 이 없어요", [], "meta git 을 만든 뒤 다시 실행하세요.", tail="")
+    prob = meta_git_trust_problem(root)
+    if prob:
+        _lay_refuse(f"meta git 을 쓸 수 없어요 ({prob})", [], "prdt doctor 가 알려 주는 대로 고친 뒤 다시 실행하세요.", tail="")
+    dirty, err = _lay_dirty(root)
+    if dirty is None:
+        _lay_refuse(f"meta git 상태를 읽을 수 없어요 ({err})", [], "meta git 을 확인한 뒤 다시 실행하세요.")
+    if dirty:
+        shown = dirty[:10] + ([_lay_dm(f"… {_lay_n(len(dirty) - 10)}개 더")] if len(dirty) > 10 else [])
+        _lay_refuse(f"커밋하지 않은 변경 {_lay_n(len(dirty))}개가 meta git 에 있어요", shown,
+                    f"변경 {_lay_n(len(dirty))}개를 커밋한 뒤 다시 실행하세요.")
+    live = _lay_live_dispatches(root)
+    if live:
+        _lay_refuse(f"진행 중인 dispatch {_lay_n(live)}개가 있어요", [], "dispatch 가 끝난 뒤 다시 실행하세요.")
+    if layout_state(root) == "partial":
+        _lay_refuse_partial(root)
+    prod = plan["product"]
+    for clash in (prod, DOCS_SHARED):
+        if os.path.lexists(docs / clash):
+            _lay_refuse(f"docs/{clash}/ 가 이미 있어요", [],
+                        f"docs/{clash}/ 의 이름을 바꾸거나 옮긴 뒤 다시 실행하세요.")
+
+
+def _lay_refuse_partial(root):
+    print(f"{_lay_er('옮기지 않았어요')}: {layout_partial_line(root)}.")
+    print()
+    print("다음: PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요.")
+    sys.exit(1)
+
+
+def _lay_rename(src, dst):
+    """The one rename every move and every rollback goes through (a test seam).
+    Refuses to replace anything: both ends were checked, and `os.rename` would
+    silently overwrite a file."""
+    if os.path.lexists(dst):
+        raise FileExistsError(errno.EEXIST, "File exists", str(dst))
+    os.rename(src, dst)
+
+
+def _lay_map_allow(entry, prod):
+    """One `meta.allowlist` entry, As-Is → To-Be (a list: `docs/wiki` splits)."""
+    if entry == "docs":
+        return [f"docs/{DOCS_SHARED}", f"docs/{prod}"]
+    if not entry.startswith("docs/"):
+        return [entry]
+    parts = entry.split("/")
+    head, tail = parts[1], "/".join(parts[1:])
+    if head in LAYOUT_PRODUCT_TOPS or head == "DEPLOY.md":
+        return [f"docs/{prod}/{tail}"]
+    if head == "wiki":
+        if len(parts) == 2:
+            return [f"docs/{DOCS_SHARED}/wiki", f"docs/{prod}/wiki"]
+        return [f"docs/{prod}/{tail}" if re.match(r"^retro--v.*\.md$", parts[2]) and len(parts) == 3
+                else f"docs/{DOCS_SHARED}/{tail}"]
+    if head in (DOCS_SHARED, prod):
+        return [entry]
+    return [f"docs/{DOCS_SHARED}/{tail}"]
+
+
+def _lay_remap(path, units):
+    for u in units:
+        s = u["src"]
+        if path == s or path.startswith(s + "/"):
+            return u["dst"] + path[len(s):]
+    return None
+
+
+def _lay_hash(root, rels):
+    out = {}
+    for rel in rels:
+        h = hashlib.sha256()
+        with open(Path(root) / rel, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        out[rel] = h.hexdigest()
+    return out
+
+
+def _lay_step(i, text):
+    print(f"{_lay_ok(f'{i}/{LAYOUT_STEPS}')} {text}")
+    sys.stdout.flush()
+
+
+def _lay_err_text(e):
+    return getattr(e, "strerror", None) or str(e) or type(e).__name__
+
+
+class _LayoutFail(Exception):
+    def __init__(self, step, what, nxt):
+        super().__init__(what)
+        self.step, self.what, self.nxt = step, what, nxt
+
+
+def layout_apply(root, plan):
+    root = Path(root)
+    prod, units, closed = plan["product"], plan["units"], plan["closed"]
+    layout_precheck(root, plan)
+    _lay_step(1, "선행 검사 4개를 통과했어요")
+    n_total = plan["total"]
+    _lay_step(2, f"옮길 문서 {_lay_n(n_total)}개의 목록을 만들었어요")
+
+    moved, created_dirs, generated = [], [], []
+    h = _lay_git(root, ["rev-parse", "HEAD"])
+    head0 = h.stdout.strip() if h.returncode == 0 else None
+    undo = {"config": None, "wiki_index": None, "manifest": None}
+    tracked_old, staged = [], []
+    cfg_path = root / ".prdt" / "config.json"
+    try:
+        # 3 — closed PRD bytes
+        try:
+            before = _lay_hash(root, closed)
+        except OSError as e:
+            raise _LayoutFail(3, f"닫힌 PRD 를 읽을 수 없어요 ({_lay_err_text(e)})", "원인을 고친 뒤 다시 실행하세요.")
+        _lay_step(3, f"닫힌 PRD {len(closed)}개의 shasum 을 적었어요")
+
+        # 4 — move (git mv semantics: rename + stage; history follows the content)
+        r = _lay_git(root, ["ls-files", "-z", "--", "docs"])
+        tracked = [p for p in r.stdout.split("\0") if p] if r.returncode == 0 else []
+        try:
+            for u in units:
+                dst_parent = (root / u["dst"]).parent
+                chain, p = [], dst_parent
+                while not p.exists() and p != root:
+                    chain.append(p)
+                    p = p.parent
+                os.makedirs(dst_parent, exist_ok=True)
+                created_dirs += list(reversed(chain))   # shallow first; rollback walks it backwards
+                _lay_rename(root / u["src"], root / u["dst"])
+                moved.append(u)
+            for t in tracked:
+                new = _lay_remap(t, units)
+                if new:
+                    tracked_old.append(t)
+                    staged.append(new)
+            # an emptied docs/wiki is not a document
+            wiki = root / "docs" / "wiki"
+            if wiki.is_dir() and not wiki.is_symlink() and not os.listdir(wiki):
+                os.rmdir(wiki)
+            g = _lay_pathspec(root, ["add", "-A", "-f"], tracked_old + staged)
+            if g.returncode != 0:
+                raise OSError(0, (g.stderr or "git add failed").strip().splitlines()[0] if g.stderr else "git add failed")
+        except OSError as e:
+            raise _LayoutFail(4, f"문서를 옮길 수 없어요 ({_lay_err_text(e)})", "docs 폴더의 쓰기 권한을 확인한 뒤 다시 실행하세요.")
+        _lay_step(4, f"문서 {_lay_n(n_total)}개를 옮겼어요 (git mv, 이력 유지)")
+
+        # 5 — config
+        cfg = read_json(cfg_path)
+        allow = ((cfg or {}).get("meta") or {}).get("allowlist") if isinstance((cfg or {}).get("meta"), dict) else None
+        n_allow = len(allow) if isinstance(allow, list) else 0
+        try:
+            if isinstance(allow, list) and all(isinstance(x, str) for x in allow):
+                undo["config"] = cfg_path.read_bytes()
+                new_allow = []
+                for e in allow:
+                    for m in _lay_map_allow(e, prod):
+                        if m not in new_allow:
+                            new_allow.append(m)
+                cfg["meta"]["allowlist"] = new_allow
+                state_write(root, cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+        except OSError as e:   # StateLinkError is an OSError
+            raise _LayoutFail(5, f".prdt/config.json 을 쓸 수 없어요 ({_lay_err_text(e)})",
+                              ".prdt/config.json 의 쓰기 권한을 고친 뒤 다시 실행하세요.")
+        _lay_step(5, f".prdt/config.json 의 meta.allowlist {n_allow}줄을 다시 썼어요")
+
+        # 6 — derived state: artifact manifest · index.db · wiki index.md
+        try:
+            man = artifact_manifest_path(root)
+            if (root / "docs" / prod / "artifacts").is_dir():
+                undo["manifest"] = man.read_bytes() if man.is_file() else False
+                if legacy_bucket_manifests(root):
+                    raise OSError(0, "per-bucket manifest — run `prdt artifacts migrate` first")
+                prior, merr, malformed, _ = read_artifact_manifest(root)
+                if merr or malformed:
+                    raise OSError(0, f"artifacts manifest — {merr or malformed[0]}")
+                data, _dropped = build_artifact_manifest(root, prior=prior)
+                write_artifact_manifest(root, data)
+                if undo["manifest"] is False:
+                    generated.append(man)
+            widx = shared_docs_dir(root) / "wiki" / "index.md"
+            undo["wiki_index"] = widx.read_bytes() if widx.is_file() else False
+            con, _v, _pages, _m = rebuild_index(root)
+            con.close()
+            if undo["wiki_index"] is False and widx.is_file():
+                generated.append(widx)
+        except (OSError, sqlite3.Error) as e:
+            raise _LayoutFail(6, f"산출물 목록 · 인덱스 · 위키 index.md 를 다시 만들 수 없어요 ({_lay_err_text(e)})",
+                              "원인을 고친 뒤 다시 실행하세요.")
+        _lay_step(6, "산출물 목록 · 인덱스 · 위키 index.md 를 다시 만들었어요")
+
+        # 7 — closed PRD bytes unchanged
+        after_rel = {c: _lay_remap(c, units) for c in closed}
+        try:
+            after = _lay_hash(root, [v for v in after_rel.values() if v])
+        except OSError as e:
+            raise _LayoutFail(7, f"닫힌 PRD 를 읽을 수 없어요 ({_lay_err_text(e)})", "원인을 고친 뒤 다시 실행하세요.")
+        bad = [c for c, n in after_rel.items() if after.get(n) != before.get(c)]
+        if bad:
+            raise _LayoutFail(7, f"닫힌 PRD {len(bad)}개의 shasum 이 달라요 ({bad[0]})", "원인을 고친 뒤 다시 실행하세요.")
+        _lay_step(7, f"닫힌 PRD {len(closed)}개의 shasum 이 모두 같아요")
+
+        # 8 — one meta commit
+        extra = [".prdt/config.json"]
+        for cand in (artifact_manifest_path(root), shared_docs_dir(root) / "wiki" / "index.md"):
+            if cand.is_file():
+                extra.append(Path(cand).relative_to(root).as_posix())
+        # the old paths were staged as deleted at step 4 — only what exists now is added here
+        g = _lay_pathspec(root, ["add", "-A", "-f"], list(dict.fromkeys(staged + extra)))
+        c = _lay_git(root, ["commit", "-q", "-m", LAYOUT_COMMIT_MSG])
+        if g.returncode != 0 or c.returncode != 0:
+            why = ((c.stderr or g.stderr or "git commit failed").strip().splitlines() or ["git commit failed"])[0]
+            raise _LayoutFail(8, f"meta 커밋을 만들 수 없어요 ({why})", "meta git 상태를 확인한 뒤 다시 실행하세요.")
+        print(f"{_lay_ok('8/9')} meta 커밋 1개를 만들었어요: {_lay_dm(LAYOUT_COMMIT_MSG)}")
+        sys.stdout.flush()
+    except _LayoutFail as f:
+        layout_rollback(root, plan, f, moved, created_dirs, generated, undo, tracked_old + staged, head0)
+        return  # unreachable — rollback exits
+
+    # 9 — doctor's path warnings
+    warns = layout_path_warnings(root)
+    print(f"{_lay_ok('9/9')} prdt doctor 경로 경고 {_lay_b(_lay_n(len(warns)) + '개')}")
+    for w in warns[:5]:
+        print(f"  {_lay_dm(w)}")
+    print()
+    print(_lay_b(f"docs 폴더가 새 구조가 됐어요. 문서 {_lay_n(n_total)}개를 docs/{DOCS_SHARED} · docs/{prod} 로 옮겼어요."))
+    print()
+    print("다음: 평소대로 작업하세요.")
+
+
+def layout_path_warnings(root):
+    """The doctor findings about paths (design step 9, PRD measure 4): artifact
+    placement · PRD layout · artifact → ticket edges · meta drift."""
+    root = Path(root)
+    out = []
+    st = read_json(root / ".prdt" / "po-state.json")
+    try:
+        trows = [r for r, _, _ in (scan_tickets(root) or [])]
+        tickets = {r["id"]: r for r in trows}
+    except Exception:
+        tickets = {}
+    for fn in (lambda: artifact_placement_warnings(root), lambda: prd_layout_warnings(root, st),
+               lambda: artifact_ticket_edge_warnings(root, tickets), lambda: meta_drift_warnings(root)):
+        try:
+            out += list(fn())
+        except Exception:
+            pass
+    return out
+
+
+def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, staged_paths, head0=None):
+    """Undo steps 4–8 in reverse; report what could not be undone (PARTIAL).
+    Same shape as `prdt meta relocate`: rollback failing is reported, never hidden."""
+    root = Path(root)
+    print(f"{_lay_er(f'{fail.step}/{LAYOUT_STEPS}')} {_lay_er('옮기기 실패')}: {fail.what}")
+    # the derived files this run CREATED sit at their new paths: drop them before the move back
+    for p in generated:
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+    stuck, back_files = [], 0
+    for u in reversed(moved):
+        try:
+            os.makedirs((root / u["src"]).parent, exist_ok=True)
+            _lay_rename(root / u["dst"], root / u["src"])
+            back_files += u["count"]
+        except OSError as e:
+            stuck.append((u, e))
+    try:
+        if undo.get("config") is not None:
+            state_write(root, root / ".prdt" / "config.json", undo["config"].decode("utf-8"))
+    except (OSError, UnicodeDecodeError):
+        pass
+    if not stuck:
+        # folders this run made — `docs/_shared/` and `docs/<product>/` did not exist (precheck)
+        docs = root / "docs"
+        for d in [docs / DOCS_SHARED / "wiki", *reversed(created_dirs), docs / DOCS_SHARED, docs / plan["product"]]:
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
+        try:     # index.db follows the old layout again — before the old bytes go back
+            con, *_ = rebuild_index(root)
+            con.close()
+        except Exception:
+            pass
+        # the derived files this run REWROTE: the old bytes, now at their old paths
+        for kind, rel in (("manifest", ("docs", "artifacts", "manifest.json")),
+                          ("wiki_index", ("docs", "wiki", "index.md"))):
+            if isinstance(undo.get(kind), bytes):
+                try:
+                    state_write(root, root.joinpath(*rel), undo[kind].decode("utf-8"))
+                except (OSError, UnicodeDecodeError):
+                    pass
+        if undo.get("wiki_index") is False:       # the old tree had none — the rebuild made it
+            try:
+                os.unlink(root / "docs" / "wiki" / "index.md")
+            except OSError:
+                pass
+    # meta history and index back to where the run found them (a commit that was
+    # made is dropped — the work tree is already back, so `--mixed` leaves it alone)
+    try:
+        h = _lay_git(root, ["rev-parse", "HEAD"])
+        if head0 and h.returncode == 0 and h.stdout.strip() != head0:
+            _lay_git(root, ["reset", "-q", head0])
+        _lay_pathspec(root, ["reset", "-q"], staged_paths)
+    except Exception:
+        pass
+    n_moved = sum(u["count"] for u in moved)
+    if not stuck:
+        if moved:
+            print()
+            print(f"{_lay_wn('되돌렸어요')}: 옮긴 문서 {_lay_n(back_files)}개를 원래 자리로 돌렸어요. "
+                  f"docs 폴더는 예전 구조 그대로예요.")
+        else:
+            print()
+            print("docs 폴더는 예전 구조 그대로예요.")
+        print()
+        print(f"다음: {fail.nxt}")
+        sys.exit(1)
+    left_files = sum(u["count"] for u, _ in stuck)
+    first_err = _lay_err_text(stuck[0][1])
+    print()
+    print(f"{_lay_er('되돌리기 실패')}: 문서 {_lay_n(n_moved)}개 중 {_lay_n(left_files)}개를 원래 자리로 "
+          f"돌리지 못했어요 ({first_err})")
+    listing = []
+    for u, _ in stuck:
+        listing += [Path(f).relative_to(root).as_posix() for f in _lay_list_files(root / u["dst"])]
+    for p in listing[:3]:
+        print(f"  {p}")
+    if len(listing) > 3:
+        print(f"  {_lay_dm(f'… {_lay_n(len(listing) - 3)}개 더')}")
+    print()
+    homes = sorted({Path(u["dst"]).parts[1] for u, _ in stuck})
+    where = "docs/" + homes[0] + "/" if len(homes) == 1 else "docs/" + plan["product"] + "/"
+    print(f"{_lay_er(_lay_b('PARTIAL'))} docs 폴더 일부만 새 구조예요. 문서 {_lay_n(left_files)}개는 새 자리({where})에 "
+          f"남았고, 나머지 {_lay_n(max(n_moved - left_files, 0))}개는 예전 자리로 돌아왔어요.")
+    print()
+    print("다음: PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요.")
+    sys.exit(2)
+
+
+def cmd_layout(args):
+    root = require_root()
+    state = layout_state(root)
+    plan = layout_plan(root) if state in ("old", "partial") else None
+    prod = layout_product_name(root)
+    if args.action == "check":
+        if getattr(args, "json", False):
+            print(json.dumps({"state": state, "product": prod,
+                              "docs": plan["total"] if plan else 0}, ensure_ascii=False))
+        elif state == "old":
+            print(f"docs 폴더가 예전 구조예요. 문서 {_lay_n(plan['total'])}개가 제품 폴더 없이 docs/ 바로 아래에 있어요.")
+        elif state == "new":
+            print(f"docs 폴더가 이미 새 구조예요 (docs/{DOCS_SHARED} · docs/{prod}).")
+        elif state == "partial":
+            print(_lay_er("✗ ") + layout_partial_line(root))
+        else:
+            print("docs 폴더에 옮길 문서가 없어요.")
+        sys.exit({"old": 1, "partial": 2}.get(state, 0))
+    # migrate
+    if state == "new":
+        print(f"docs 폴더가 이미 새 구조예요 (docs/{DOCS_SHARED} · docs/{prod}). "
+              f"옮길 문서가 없어서 아무것도 하지 않았어요.")
+        return
+    if state == "none":
+        print("docs 폴더에 옮길 문서가 없어서 아무것도 하지 않았어요.")
+        return
+    if state == "partial":
+        _lay_refuse_partial(root)
+    if not args.apply:
+        if project_lines(root):
+            layout_precheck(root, plan)      # refuses: lines are not movable yet
+        layout_print_preview(root, plan)
+        return
+    layout_apply(root, plan)
 
 
 # ── migrate (§12.5 — opt-in full/lite → prdt) ─────────────────────────────────
@@ -17598,6 +18302,13 @@ def main():
     p.add_argument("--limit", type=int, default=20, help="log: max commits (default 20)")
     p.add_argument("--yes", action="store_true", help="split: 확인 프롬프트 생략 (T-366)")
     p.set_defaults(fn=cmd_meta)
+    p = sub.add_parser("layout", help="docs layout (T-1103): migrate — preview the move from docs/{prd,tickets,…} "
+                                      "to docs/_shared + docs/<product> (writes nothing) · migrate --apply — move it "
+                                      "(git mv, one meta commit, rollback on failure) · check — old / new / partial")
+    p.add_argument("action", choices=("migrate", "check"))
+    p.add_argument("--apply", action="store_true", help="migrate: do the move (the preview writes nothing)")
+    p.add_argument("--json", action="store_true", help="check: machine mode")
+    p.set_defaults(fn=cmd_layout)
     # T-319: `po` 서브커맨드 제거 — bare `prdt`가 유일한 PO 진입(init-if-needed→PO).
     p = sub.add_parser("update", help="prdt 업데이트: repo pull --ff-only + 재설치 (구 productune update 계승)")
     p.set_defaults(fn=cmd_update)
@@ -17772,7 +18483,7 @@ def main():
     msg_root = None
     if not hook_call:
         r = find_project_root()
-        if r and docs_layout(r) == "product":
+        if r and docs_layout(r) == "product" and layout_state(r) != "partial":
             msg_root = r
             if (args.cmd in DOCS_MSG_CMDS and getattr(args, "action", None) != "fmt") \
                     or (args.cmd == "wiki" and getattr(args, "action", None) == "lint"):
