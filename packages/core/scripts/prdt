@@ -207,7 +207,26 @@ def find_project_root(start=None):
     for p in [d, *d.parents]:
         if (p / ".prdt" / "po-state.json").is_file():
             hit = p
+        if _is_track_worktree(p):
+            # T-1112: a track worktree (`<project>/tracks/T-NNN`, a linked git
+            # worktree) is a project boundary — never walk out of it into the
+            # enclosing real project's `.prdt/` (index.db, po-state, config).
+            break
     return hit
+
+
+_TRACK_DIR_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+
+
+def _is_track_worktree(p):
+    """Shape of a `prdt track open` worktree: `…/tracks/T-NNN` whose `.git` is
+    a FILE (linked worktree pointer). Shape, not a registry, so tracks opened
+    before T-1112 are covered with no migration."""
+    try:
+        return (_TRACK_DIR_RE.match(p.name) is not None and p.parent.name == "tracks"
+                and (p / ".git").is_file())
+    except OSError:
+        return False
 
 
 def prdt_home():
