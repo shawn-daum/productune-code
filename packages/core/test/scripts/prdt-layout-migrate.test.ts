@@ -355,3 +355,79 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
     expect(again.out).toContain('다음: PO 에게 알리세요.')
   }, 180_000)
 })
+
+describe('QA grill fixes (T-1103)', () => {
+  test('an unexpected exception mid --apply rolls back like any failure', () => {
+    const root = legacy()
+    const before = snapshot(root)
+    const head = git(root, ['rev-parse', 'HEAD'])
+    const cfg = fs.readFileSync(path.join(root, '.prdt/config.json'), 'utf8')
+    const r = pyRun(root, `
+def boom(*a, **k): raise ValueError("forged")
+m.build_artifact_manifest = boom
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+    expect(r.code).toBe(1)
+    expect(r.out).toContain('6/9 옮기기 실패: 예상하지 못한 오류예요 (forged)')
+    expect(r.out).toContain('되돌렸어요')
+    expect(snapshot(root)).toEqual(before)
+    expect(git(root, ['rev-parse', 'HEAD'])).toBe(head)
+    expect(git(root, ['status', '--short', '--', 'docs'])).toBe('')
+    expect(fs.readFileSync(path.join(root, '.prdt/config.json'), 'utf8')).toBe(cfg)
+    expect(prdt(root, ['layout', 'check']).code).toBe(1)
+  }, 180_000)
+
+  test('KeyboardInterrupt mid --apply rolls back', () => {
+    const root = legacy()
+    const before = snapshot(root)
+    const r = pyRun(root, `
+real = m.rebuild_index
+calls = []
+def boom(*a, **k):
+    if not calls:
+        calls.append(1); raise KeyboardInterrupt()
+    return real(*a, **k)
+m.rebuild_index = boom
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+    expect(r.code).toBe(1)
+    expect(r.out).toContain('옮기기 실패: 중단됐어요')
+    expect(snapshot(root)).toEqual(before)
+  }, 180_000)
+
+  test('a killed --apply (staged renames, no commit) reads as partial in check, doctor and migrate', () => {
+    const root = legacy()
+    pyRun(root, `
+m.rebuild_index = lambda *a, **k: os._exit(137)
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+    expect(fs.existsSync(path.join(root, 'docs/_shared'))).toBe(true)
+    const chk = prdt(root, ['layout', 'check'])
+    expect(chk.code).toBe(2)
+    expect(chk.out).toMatch(/^✗ docs 폴더 일부만 새 구조예요/)
+    expect(prdt(root, ['doctor']).out).toMatch(/^✗ docs 폴더 일부만 새 구조예요/m)
+    const again = prdt(root, ['layout', 'migrate', '--apply'])
+    expect(again.code).toBe(1)
+    expect(again.out).toContain('옮기지 않았어요: docs 폴더 일부만 새 구조예요')
+  }, 180_000)
+
+  test('a committed .DS_Store left in docs/wiki goes with the old folder', () => {
+    const root = legacy()
+    write(path.join(root, 'docs/wiki/.DS_Store'), 'junk')
+    git(root, ['add', '-f', 'docs/wiki/.DS_Store'])
+    git(root, ['commit', '-qm', 'ds'])
+    const r = prdt(root, ['layout', 'migrate', '--apply'])
+    expect(r.code).toBe(0)
+    expect(fs.existsSync(path.join(root, 'docs/wiki'))).toBe(false)
+    expect(prdt(root, ['layout', 'check']).code).toBe(0)
+    expect(git(root, ['status', '--short', '--', 'docs'])).toBe('')
+  }, 180_000)
+
+  test('doctor discipline-path citations follow the move (As-Is docs/… → To-Be)', () => {
+    const root = legacy()
+    write(path.join(root, 'docs/design.md'), '# design\n\nsee `docs/po/habit.md` and `docs/po/bookshelf/x.md`\n')
+    write(path.join(root, 'docs/po/bookshelf/x.md'), '# x\n')
+    git(root, ['add', '-A', '-f', 'docs']); git(root, ['commit', '-qm', 'cite'])
+    expect(prdt(root, ['doctor']).out).not.toContain('discipline-path:')
+    const r = prdt(root, ['layout', 'migrate', '--apply'])
+    expect(r.out).toContain('9/9 prdt doctor 경로 경고 0개')
+    expect(prdt(root, ['doctor']).out).not.toContain('discipline-path:')
+  }, 180_000)
+})
