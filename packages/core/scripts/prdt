@@ -11641,9 +11641,11 @@ def _line_config_entries(root):
 
 def migrate_lines_to_products(root):
     """T-1108 ⑦: `.prdt/config.json` `lines` and `.prdt/po-state.json` `lines`
-    become `products`, once. A file that already has `products` is left alone
+    become `products`, once. NOT called from main() or any read: the rewrite runs
+    only as the config step of `prdt layout migrate --apply` (T-1103 wires it;
+    that code is not on this branch). Every reader accepts both keys meanwhile. A file that already has `products` is left alone
     (readers prefer it); a file with neither is untouched. Returns the files
-    rewritten. Written through `atomic_write_text` (the one write path)."""
+    rewritten. Written through `state_write` (the link-refusing writer for `.prdt/**`)."""
     done = []
     for name in ("config.json", "po-state.json"):
         path = Path(root) / ".prdt" / name
@@ -11656,9 +11658,9 @@ def migrate_lines_to_products(root):
             if "products" in d:
                 continue
             renamed = {("products" if k == "lines" else k): v for k, v in d.items()}
-            atomic_write_text(path, json.dumps(renamed, indent=2, ensure_ascii=False) + "\n")
+            state_write(root, path, json.dumps(renamed, indent=2, ensure_ascii=False) + "\n", create_dirs=False)
             done.append(name)
-        except OSError:
+        except (OSError, StateLinkError):
             continue
     return done
 
@@ -17874,12 +17876,6 @@ def main():
                     or (args.cmd == "wiki" and getattr(args, "action", None) == "lint"):
                 sys.stdout = _DocsMsgStream(sys.stdout, r)
                 sys.stderr = _DocsMsgStream(sys.stderr, r)
-    if not hook_call:
-        # T-1108 ⑦: a pre-v1.14 `lines` config / po-state is read once, then
-        # becomes `products`.
-        _mr = find_project_root()
-        if _mr:
-            migrate_lines_to_products(_mr)
     try:
         args.fn(args)
     except SystemExit as e:

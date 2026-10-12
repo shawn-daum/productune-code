@@ -339,6 +339,17 @@ export const PRD = {
   openLabelPrefix: '열린 섹션 · ',
 }
 
+// T-1108: a product with no open version / PRD section — strings verbatim from the approved
+// screen set (docs/artifacts/v1.14/define-screen-set.html #screen-home-products · #screen-side-products,
+// data-label home.idle.* · prd.idle.*). The product name, backlog count and last closed version fill the sample's slots.
+export const IDLE = {
+  homeHead: (name) => `${name} 는 지금 진행 중인 버전이 없어요.`,
+  homeDetail: (backlog) => `${backlog > 0 ? `backlog 티켓 ${backlog}건이 대기 중이에요. ` : ''}새 버전을 시작하면 이 화면에 진행 상황이 보여요.`,
+  prdHead: (name) => `${name} 는 진행 중인 PRD 섹션이 없어요.`,
+  prdDetail: (lastClosed) => `${lastClosed ? `완료한 ${lastClosed} 은 왼쪽 목록에서 볼 수 있어요. ` : ''}새 버전을 시작하면 진행 중인 섹션이 생겨요.`,
+  prdSideLabel: '진행 중인 섹션 없음',
+}
+
 // T-884 (T-860 / T-874): the open PRD's reading screen — outline, folds, 「결정할 것」 box,
 // What cards. Strings are the T-874-approved set (docs/artifacts/v1.12/prd-reading.html;
 // 「열린 질문」 → 「남은 질문」 and 「N줄」 kept per the T-874 log).
