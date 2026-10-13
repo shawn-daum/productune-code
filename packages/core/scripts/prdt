@@ -6168,7 +6168,7 @@ def _new_file_mode():
     return 0o666 & ~um
 
 
-def state_write(root, path, text, mode=None, create_dirs=True):
+def state_write(root, path, text, mode=None, create_dirs=True, sync=False):
     """T-905: the one Python writer for project-local state (`.prdt/**`, the
     docs the CLI scaffolds, `meta.git/info/exclude`). `path` must sit under
     `root`; every component below `root` is walked with O_NOFOLLOW from a
@@ -6178,7 +6178,9 @@ def state_write(root, path, text, mode=None, create_dirs=True):
     in that same directory and is renamed over the name by descriptor, so no
     string path is re-resolved after the check. `mode=None` keeps the existing
     file's permission bits (a new file gets 0o644); an explicit `mode` is
-    exact, regardless of umask. `root` itself is the caller's trust anchor."""
+    exact, regardless of umask. `sync=True` fsyncs the temp before the rename (and the
+    directory after), so a crash never leaves the name zero-length. `root` itself is the
+    caller's trust anchor."""
     rel = _state_rel(root, path)
     dfd = _state_dir_or_raise(root, rel, create_dirs)
     try:
@@ -6206,7 +6208,15 @@ def state_write(root, path, text, mode=None, create_dirs=True):
             os.fchmod(fd, mode)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(text)
+                if sync:
+                    f.flush()
+                    os.fsync(f.fileno())
             os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+            if sync:
+                try:
+                    os.fsync(dfd)
+                except OSError:
+                    pass
         except BaseException:
             try:
                 os.unlink(tmp, dir_fd=dfd)
@@ -16386,7 +16396,7 @@ def _lay_marker_write(root, head0, count, config=None):
     rec = {"head": head0, "count": count, "pid": os.getpid()}
     if config:
         rec["config"] = config
-    state_write(root, _lay_marker_path(root), json.dumps(rec) + "\n")
+    state_write(root, _lay_marker_path(root), json.dumps(rec) + "\n", sync=True)
 
 
 def _lay_marker_clear(root):
@@ -17083,9 +17093,14 @@ def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, stag
     # meta history and index back to where the run found them (a commit that was
     # made is dropped — the work tree is already back, so `--mixed` leaves it alone)
     try:
+        # the reset runs only when HEAD is THIS run's own layout commit (subject + parent);
+        # any other HEAD move is someone else's commit — refs stay, only tree/index are restored
         h = _lay_git(root, ["rev-parse", "HEAD"])
         if head0 and h.returncode == 0 and h.stdout.strip() != head0:
-            _lay_git(root, ["reset", "-q", head0])
+            lg = _lay_git(root, ["log", "-1", "--format=%P%x09%s", "HEAD"])
+            parents, _t, subj = lg.stdout.rstrip("\n").partition("\t")
+            if lg.returncode == 0 and parents.split() == [head0] and subj == LAYOUT_COMMIT_MSG:
+                _lay_git(root, ["reset", "-q", head0])
         _lay_pathspec(root, ["reset", "-q"], staged_paths)
         _lay_pathspec(root, ["checkout", "HEAD"], [rel for _fp, rel, tr, _d in skip_removed if tr])
     except Exception:
@@ -17148,8 +17163,11 @@ def layout_undo(root, state):
     # T-1125: a marker over a HEAD that is not the one `--apply` started from can only be a
     # moved history (a finished layout commit was already settled by `layout_state(deep)`):
     # never reset or rewrite it, never move docs back under it — refuse, nothing changes.
-    mh = marker.get("head") if marker else None
-    if (isinstance(mh, str) and mh and mh != _lay_head(root)) or (not gone and marker is None):
+    # A marker that stands but cannot be read as a record naming its HEAD ({} · garbled ·
+    # zero-length · not a regular file · oversize) proves nothing about the history: refuse too.
+    mh = marker.get("head") if marker is not None else None
+    unguarded = marker is not None and not (isinstance(mh, str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", mh))
+    if unguarded or (marker is not None and mh != _lay_head(root)) or (not gone and marker is None):
         _lay_undo_refuse("옮기다 멈춘 문서를 찾지 못했어요. docs 폴더는 그대로예요.",
                          "prdt layout check 로 상태를 확인하고, 일부만 새 구조라고 나오면 PO 에게 알리세요.")
     prod = layout_product_name(root)
