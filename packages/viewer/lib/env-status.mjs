@@ -105,6 +105,7 @@ function isMarker(buf, a, b) {
  *   asked for and the last occurrence carries the marker.
  */
 export function envKeyStatus(buf, opts = {}) {
+  // at most ONE leading BOM is stripped (the CLI's `_env_is_marker_line` does the same): a second one makes line 1 no marker
   const bom = buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf ? 3 : 0
   const lines = lineSpans(buf, bom)
   const status = new Map()

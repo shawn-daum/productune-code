@@ -1279,3 +1279,28 @@ describe('T-1109 r5: READS of the machine env store use the same store resolutio
     'cat $PRDT_HOME/envx/a', 'cat $PRDT_HOME/foo.env', 'cat .env.local.example',
   ])('Bash allowed: %s', (c) => { expect(run(bashEvent(c), env)).toBe('allow') })
 })
+
+describe('T-1109 r6: default-value expansion class, key=value arguments, ditto/gsed', () => {
+  const run = (c: string, env: NodeJS.ProcessEnv = process.env) => {
+    const res = spawnSync('bash', [HOOK], { input: JSON.stringify(bashEvent(c)), encoding: 'utf8', timeout: subprocessTimeout('hook'), env })
+    expect(res.status).toBe(0)
+    return res.stdout === '' ? 'allow' : 'deny'
+  }
+  const exp = ['${PRDT_HOME:-$HOME/.prdt}', '${PRDT_HOME-$HOME/.prdt}', '${PRDT_HOME:=$HOME/.prdt}', '${PRDT_HOME:-/anything/else}', '${PRDT_HOME:-${HOME}/.prdt}', '"${PRDT_HOME:-$HOME/.prdt}"']
+  test.each(exp)('write + read + source-dump through %s are denied', (e) => {
+    expect(run(`echo x > ${e}/env/.env`)).toBe('deny')
+    expect(run(`cp a ${e}/env/.env`)).toBe('deny')
+    expect(run(`cat ${e}/env/.env`)).toBe('deny')
+    expect(run(`source ${e}/env/.env; printenv`)).toBe('deny')
+    expect(run(`source ${e}/env/.env`)).toBe('allow')
+    expect(run(`ls ${e}/env`)).toBe('allow')
+  })
+  test.each([
+    'dd of=$PRDT_HOME/env/.env', 'dd if=/dev/zero of=~/.prdt/env/.env', 'dd of="$HOME/.prdt/env/.env" bs=1', 'dd if=x of=${PRDT_HOME:-$HOME/.prdt}/env/.env',
+    'ditto /tmp/x ~/.prdt/env/.env', 'gsed -i s/a/b/ ~/.prdt/env/.env', 'gsed -Ei s/a/b/ $PRDT_HOME/env/.env',
+    'dd if=~/.prdt/env/.env', 'dd if=${PRDT_HOME:-$HOME/.prdt}/env/.env of=/tmp/o', 'dd if=.env.local',
+  ])('denied: %s', (c) => { expect(run(c)).toBe('deny') })
+  test.each([
+    'dd if=/dev/zero of=/tmp/o bs=1 count=1', 'dd if=a.iso of=/dev/null', 'ditto a b', 'gsed -i s/a/b/ file.txt', 'gsed -i s/a/b/ .env.local', 'echo x > ${PRDT_HOME:-$HOME/.prdt}/other',
+  ])('allowed: %s', (c) => { expect(run(c)).toBe('allow') })
+})

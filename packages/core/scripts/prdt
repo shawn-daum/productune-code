@@ -17508,7 +17508,9 @@ def _env_is_marker_line(lines, j):
     (NBSP, \\x0b, \\x1c, U+2028 ...), the same rule the viewer reads
     (packages/viewer/lib/env-status.mjs). Anything else is not a marker, so the
     key below stays a secret."""
-    raw = lines[j].lstrip("\ufeff") if j == 0 else lines[j]
+    raw = lines[j]
+    if j == 0 and raw.startswith("\ufeff"):
+        raw = raw[1:]  # at most ONE leading BOM, as the viewer does
     return _env_strip_cr(raw).strip(" \t") == _ENV_PLAIN_MARK
 
 
@@ -17691,10 +17693,15 @@ def _env_set(args_rest):
             had_nl = lines[-1] == ""
             pos = len(lines) - 1 if had_nl else len(lines)
             covered = {x for _, a, b in all_spans for x in range(a, b)}
-            if pos > 0 and (pos - 1) not in covered and _env_is_marker_line(lines, pos - 1):
+            # ANY number of consecutive dangling markers goes, not just one.
+            bom = ""
+            while pos > 0 and (pos - 1) not in covered and _env_is_marker_line(lines, pos - 1):
+                if pos - 1 == 0 and lines[0].startswith("\ufeff"):
+                    bom = "\ufeff"  # the file's one BOM survives on its new first line
                 del lines[pos - 1]
                 pos -= 1
             add = ([_ENV_PLAIN_MARK] if plain else []) + [f"{key}={quoted}"]
+            add[0] = bom + add[0]
             lines[pos:pos] = add if had_nl else add + [""]
         _machine_env_store("\n".join(lines), "저장 실패", "저장한 키가 없어요.")
     print(f"{key} 를 기기 범위에 저장했어요 ({_env_shown_path(machine_env_file())}). 이 기기의 모든 프로젝트가 쓸 수 있어요.")

@@ -414,6 +414,11 @@ sub basename { my $x = shift; return ".env" if is_store_file($x); $x =~ s{\A.*/}
 # The directory itself counts (cp x ~/.prdt/env/, mv of the directory).
 sub store_norm {
   my $p = shift;
+  # T-1109 r6: the default-value expansion class `${PRDT_HOME:-w}` / `-w` /
+  # `:=w` / `=w` (also `:?` `?` `:+` `+`; w = any word, one nesting level of
+  # braces) resolves like `$PRDT_HOME` — the word may hold slashes, so it goes
+  # BEFORE the component split.
+  $p =~ s/\$\{PRDT_HOME:?[-=?+](?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}/\$PRDT_HOME/gi;
   my @out;
   for my $c (split m{/}, $p) {
     next if $c eq "" || $c eq ".";
@@ -817,11 +822,11 @@ sub deny_write { print "deny-write"; exit 0 }
 # resolved command word, `T` = the segment tokens, `idx` = the command word
 # position. A redirect destination is judged by the redirect scan in
 # judge_command, never here.
-my %STORE_WRITERS = map { $_ => 1 } qw(tee cp mv ln install dd rsync truncate);
+my %STORE_WRITERS = map { $_ => 1 } qw(tee cp mv ln install dd rsync truncate ditto);
 my %CODE_RUNNERS = map { $_ => 1 } qw(python python3 node nodejs ruby perl php deno bun);
 sub store_write_cmd {
   my ($cb, $T, $idx) = @_;
-  return unless $STORE_WRITERS{$cb} || $CODE_RUNNERS{$cb} || $cb eq "sed" || $cb =~ /\Apython[0-9.]+\z/;
+  return unless $STORE_WRITERS{$cb} || $CODE_RUNNERS{$cb} || $cb eq "sed" || $cb eq "gsed" || $cb =~ /\Apython[0-9.]+\z/;
   my $n = @$T;
   my @args;
   for (my $j = $idx + 1; $j < $n; $j++) {
@@ -831,10 +836,14 @@ sub store_write_cmd {
     push @args, strip_quotes($t);
   }
   if ($STORE_WRITERS{$cb}) {
-    for my $a (@args) { deny_write() if is_store_path($a) }
+    for my $a (@args) {
+      deny_write() if is_store_path($a);
+      # key=value argument class (`dd of=<store>`): the value after the first `=`
+      deny_write() if $a =~ /\A[A-Za-z_][A-Za-z0-9_]*=(.*)\z/s && is_store_path(strip_quotes($1));
+    }
     return;
   }
-  if ($cb eq "sed" || $cb eq "perl" || $cb eq "ruby") {
+  if ($cb eq "sed" || $cb eq "gsed" || $cb eq "perl" || $cb eq "ruby") {
     my $inplace = 0;
     for my $a (@args) { $inplace = 1 if $a eq "--in-place" || $a =~ /\A--in-place=/ || $a =~ /\A-[^-]*i/ }
     if ($inplace) { for my $a (@args) { deny_write() if is_store_path($a) } }
@@ -1010,6 +1019,13 @@ sub judge_command {
 
     my $cmdbase = basename(strip_quotes($T[$idx]));
     store_write_cmd($cmdbase, \@T, $idx);
+    # key=value argument class, read side: `dd if=<credential file or store>`
+    if ($cmdbase eq "dd") {
+      for my $j ($idx + 1 .. $ntok - 1) {
+        my $a = strip_quotes($T[$j]);
+        deny() if $a =~ /\Aif=(.*)\z/s && is_target(basename(strip_quotes($1)));
+      }
+    }
 
     # T-716: a leading `<` target (queued into @lead_in above, BEFORE the
     # command word this segment resolved to) reaches the resolved command
