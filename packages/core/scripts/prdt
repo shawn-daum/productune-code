@@ -16476,6 +16476,39 @@ def layout_partial_line(root):
     return f"docs 폴더 일부만 새 구조예요. 문서 {_lay_n(left)}개가 아직 예전 구조예요"
 
 
+def layout_session_start_block(root):
+    """T-1105: the block the PO session-start hook injects — "" when there is nothing
+    to say (new layout · no docs to move). SHALLOW state only (`layout_state(root)`,
+    filesystem-only): the hook pays no git process. Copy: the approved screen set,
+    `layout-start` (propose · none · half; user approved 2026-10-12, T-1114) — change
+    a string only with that screen. Machine-facing English wraps the one ko line the
+    PO says; the only interpolated values are a count and the sanitized product name."""
+    state = layout_state(root)
+    prod = layout_product_name(root)
+    if state == "old":
+        n = _lay_n(layout_plan(root)["total"])
+        return (
+            "[prdt layout: this project is on the pre-product docs layout]\n"
+            f"docs/ holds prd/ · tickets/ · wiki/ directly; the product-first layout puts them under docs/{DOCS_SHARED}/ and docs/{prod}/. "
+            "Tell the user in this one ko line, then ask with AskUserQuestion, options \"목록 보기\" and \"이번 세션은 넘기기\".\n"
+            f"「docs 폴더가 아직 예전 구조예요. 문서 {n}개가 제품 폴더 없이 `docs/` 바로 아래에 있어요. "
+            f"`docs/{DOCS_SHARED}` · `docs/{prod}` 두 폴더로 옮길 수 있어요. 옮길 목록부터 보여 드릴까요?」\n"
+            "On 목록 보기: run `prdt layout migrate` (writes nothing), show its list, and run `prdt layout migrate --apply` "
+            "only on the user's confirm of that list. On 넘기기: nothing this session. Nothing moves without the user's confirm.")
+    if state == "partial":
+        first, left = _lay_leftover(root)
+        if first is None:
+            return ""
+        slash = "/" if os.path.isdir(Path(root) / "docs" / first) else ""
+        return (
+            "[prdt layout: this project's docs layout is half-moved]\n"
+            "Do NOT propose `prdt layout migrate` here (it refuses this state). Tell the user this ko line, "
+            "then run `prdt doctor` and show its layout error line.\n"
+            f"「docs 폴더 일부만 새 구조로 옮겨졌어요. `docs/{DOCS_SHARED}/` 는 새 구조인데 `docs/{first}{slash}` 는 예전 구조 그대로예요. "
+            f"이 상태에서는 옮기기를 제안하지 않아요. `prdt doctor` 로 남은 문서 {_lay_n(left)}개를 확인하세요.」")
+    return ""
+
+
 def layout_doctor_warnings(root):
     """The doctor error line of a half-moved layout (design: "제안 대신 doctor 오류")."""
     if layout_state(root, deep=True) != "partial":
@@ -17045,6 +17078,14 @@ def layout_undo(root, state):
 
 def cmd_layout(args):
     root = require_root()
+    if args.action == "check" and getattr(args, "session_start", False):
+        try:
+            blk = layout_session_start_block(root)
+        except Exception:      # the session start never fails on this
+            blk = ""
+        if blk:
+            print(blk)
+        return
     state = layout_state(root, deep=True)
     plan = layout_plan(root) if state in ("old", "partial") else None
     prod = layout_product_name(root)
@@ -18597,6 +18638,8 @@ def main():
     p.add_argument("action", choices=("migrate", "check"))
     p.add_argument("--apply", action="store_true", help="migrate: 목록을 확인한 뒤 실제로 옮겨요 (이 옵션이 없으면 아무것도 쓰지 않아요)")
     p.add_argument("--json", action="store_true", help="check: machine mode")
+    p.add_argument("--session-start", action="store_true", dest="session_start",
+                   help="check: PO 세션 시작 hook 용 — 파일 시스템만 보고(git 없음) 제안 블록을 출력해요 (할 말이 없으면 빈 출력)")
     p.add_argument("--undo", action="store_true", help="migrate: 옮기다 멈춘 문서(커밋하지 않은 이동)를 예전 구조로 되돌려요")
     p.set_defaults(fn=cmd_layout)
     # T-319: `po` 서브커맨드 제거 — bare `prdt`가 유일한 PO 진입(init-if-needed→PO).
