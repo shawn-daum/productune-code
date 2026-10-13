@@ -167,7 +167,7 @@ export function homeEnvDir(repoRoot, cfg) {
 
 /** An added line's code folder: its config entry's `code.dir` (relative, may climb out — release-lines.md §1); null when absent or absolute. */
 export function lineEnvDir(cfg, line) {
-  const entry = cfg && Array.isArray(cfg.lines) ? cfg.lines.find((e) => e && typeof e === 'object' && e.name === line) : null
+  const entry = cfg && Array.isArray(cfg.products ?? cfg.lines) ? (cfg.products ?? cfg.lines).find((e) => e && typeof e === 'object' && e.name === line) : null
   const d = entry && typeof entry.code === 'object' && entry.code ? entry.code.dir : undefined
   return typeof d === 'string' && d.trim() && !path.isAbsolute(d.trim()) ? d.trim() : null
 }

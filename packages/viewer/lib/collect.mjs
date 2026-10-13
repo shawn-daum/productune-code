@@ -177,7 +177,8 @@ export function collectTickets(repoRoot, currentVersion, { line = null, exclude 
   /** @type {Map<string, string[]>} bucket → bucket dirs (product first) */
   const bucketDirsByName = new Map()
   for (const r of roots) {
-    const ticketsRoot = path.join(r, ...(line ? [line] : []))
+    // T-1108: a product layout holds an added product's tickets in `docs/<product>/tickets/` itself, no `<line>/` level.
+    const ticketsRoot = path.join(r, ...(line && layout.layout !== 'product' ? [line] : []))
     if (!containedDir(repoRoot, ticketsRoot)) continue
     for (const e of fs.readdirSync(ticketsRoot, { withFileTypes: true })) {
       if (!(e.isDirectory() || e.isSymbolicLink()) || exclude.includes(e.name)) continue
@@ -417,6 +418,11 @@ export function collectPrd(repoRoot, currentVersion, { line = null, lineNames = 
   // empty open section), never an ENOENT.
   // T-1104: the PRD dir is `docs/<product>/prd` in the product layout.
   const prdRelDir = layout.relDir('prd')
+  // T-1108: a product layout gives an added product its own PRD file — no `## <line> v…` sections, no `versions/<line>/`.
+  if (layout.layout === 'product' && line) {
+    line = null
+    lineNames = []
+  }
   const prdPath = path.join(repoRoot, prdRelDir, 'PRD.md')
   const doc = readDoc(repoRoot, prdPath) ?? { rel: `${prdRelDir}/PRD.md`, frontmatter: {}, body: '' }
   // T-961: with release lines declared, each line reads the shared head plus
@@ -462,9 +468,18 @@ export function prdLineBody(body, line, lineNames) {
 }
 
 /**
- * T-961: the added release lines (`.prdt/config.json` `lines`), mirroring the
- * CLI's `project_lines`: entries whose `name` is a legal line name, unique and
- * not the slug, in declaration order. [] = a single-line project.
+ * The per-product entries of a config / po-state object: `products`, else the
+ * pre-v1.14 `lines` (T-1108 ⑦, the CLI's `_products_key`).
+ */
+export function productsOf(obj) {
+  if (!obj || typeof obj !== 'object') return undefined
+  return 'products' in obj || !('lines' in obj) ? obj.products : obj.lines
+}
+
+/**
+ * T-961 / T-1108: the added products (`.prdt/config.json` `products`), mirroring
+ * the CLI's `project_lines`: entries whose `name` is a legal product name,
+ * unique and not the slug, in declaration order. [] = a single-product project.
  */
 const LINE_NAME_RE = /^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$/
 export function collectLineNames(repoRoot) {
@@ -476,18 +491,20 @@ export function collectLineNames(repoRoot) {
   } catch {
     return []
   }
-  if (!cfg || !Array.isArray(cfg.lines)) return []
+  const raw = cfg ? productsOf(cfg) : null
+  if (!Array.isArray(raw)) return []
   const out = []
-  for (const e of cfg.lines) {
+  for (const e of raw) {
     const name = e && typeof e === 'object' ? e.name : undefined
     if (typeof name === 'string' && LINE_NAME_RE.test(name) && !out.includes(name) && name !== cfg.slug) out.push(name)
   }
   return out
 }
 
-/** T-961: `(stage, version)` of an added line from po-state `lines.<line>` (the CLI's `line_state`); version bare, '' when absent. */
+/** T-961 / T-1108: `(stage, version)` of an added product from po-state `products.<product>` (the CLI's `line_state`); version bare, '' when absent. */
 export function lineState(poState, line) {
-  const ls = poState && typeof poState.lines === 'object' && poState.lines ? poState.lines[line] : null
+  const all = productsOf(poState)
+  const ls = all && typeof all === 'object' ? all[line] : null
   if (!ls || typeof ls !== 'object') return { stage: '', version: '' }
   const v = typeof ls.version === 'string' ? ls.version.trim() : ''
   return { stage: typeof ls.stage === 'string' ? ls.stage : '', version: v }
@@ -792,12 +809,13 @@ export function collectAll(repoRoot, { disciplineRoot } = {}) {
   // field exactly as before.
   const lines = lineNames.map((name) => {
     const { stage, version } = lineState(poState, name)
+    const lineLayout = layout.layout === 'product' ? createDocsLayout(repoRoot, name) : layout
     return {
       name,
       stage,
       version,
-      prd: collectPrd(repoRoot, version, { line: name, lineNames, layout }),
-      tickets: collectTickets(repoRoot, version, { line: name, layout }),
+      prd: collectPrd(repoRoot, version, { line: name, lineNames, layout: lineLayout }),
+      tickets: collectTickets(repoRoot, version, { line: name, layout: lineLayout }),
       // T-958: key names + set/empty only (env-status.mjs).
       env: collectEnv(repoRoot, lineEnvDir(cfg, name)),
     }

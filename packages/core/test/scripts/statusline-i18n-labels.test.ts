@@ -179,7 +179,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     expect(cols(en)).toBeLessThanOrEqual(200)
   })
 
-  test('folded rows: `+N 라인` (ko) / `+N lines` (en)', () => {
+  test('folded rows: `+N 제품` (ko) / `+N products` (en)', () => {
     const names = Array.from({ length: 20 }, (_, i) => `l${String(i).padStart(2, '0')}`)
     fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify({ slug: 'big', lines: names.map((name) => ({ name })) }))
     fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({
@@ -189,8 +189,8 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     const ko = run({ PRDT_LANG: 'ko' }).split('\n')
     const en = run({ PRDT_LANG: 'en' }).split('\n')
     expect(ko).toHaveLength(17)
-    expect(ko[15]).toBe('+6 라인')
-    expect(en[15]).toBe('+6 lines')
+    expect(ko[15]).toBe('+6 제품')
+    expect(en[15]).toBe('+6 products')
     expect(ko[16]).toBe('결정사항 0 | 요청사항 0')
   })
 
