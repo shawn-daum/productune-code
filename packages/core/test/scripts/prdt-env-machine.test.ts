@@ -611,6 +611,66 @@ describe('T-1121 B: a key is saved as a secret (default) or a plain value', () =
     expect(r.stdout.trim().split('\n').pop()).toBe('[가림] | [가림] | [가림] | [가림]')
   })
 
+  test.each([
+    ['last line, newline-terminated', `A_KEY='x'\n${MARK}\n`],
+    ['last line, no final newline', `A_KEY='x'\n${MARK}`],
+    ['the only line', `${MARK}\n`],
+    ['last line with trailing spaces/CR (CRLF store)', `A_KEY='x'\r\n${MARK} \r\n`],
+  ])('T-1110 r4: a dangling marker (%s) never attaches to the key set after it', (_n, seed) => {
+    seedStore(seed)
+    expect(typeSet('NEW_KEY', V_SECRET, 'wait', '').code).toBe(0) // Y = secret
+    const text = fs.readFileSync(storePath(), 'utf8')
+    expect(text).toContain(`NEW_KEY='${V_SECRET}'`)
+    expect(text).not.toContain(MARK) // the marker written for no key is dropped
+    const r = run(['env', 'run', '--', ...PRINT_ALL(['NEW_KEY'])])
+    expect(r.out).toContain('[가림]')
+    noLeak(r.out)
+    expect(run(['env', 'ls']).out).not.toMatch(/NEW_KEY.*보통 값/)
+  })
+
+  test('T-1110 r4: the suite MARK_ONLY seed — a key set Y after it is a secret; set n after it is plain with exactly one marker', () => {
+    seedStore(`MARK_ONLY=1\n${MARK}\n`)
+    expect(typeSet('AFTER_Y', V_SECRET, 'wait', 'y').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`MARK_ONLY=1\nAFTER_Y='${V_SECRET}'\n`)
+    seedStore(`MARK_ONLY=1\n${MARK}\n`)
+    expect(typeSet('AFTER_N', '3000', 'wait', 'n').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`MARK_ONLY=1\n${MARK}\nAFTER_N='3000'\n`)
+  })
+
+  test('T-1110 r4: a marker that sits above a key it was written for is untouched when another key is appended', () => {
+    seedStore(`${MARK}\nPORT='3000'\n`)
+    expect(typeSet('SECRET_K', V_SECRET, 'wait', '').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`${MARK}\nPORT='3000'\nSECRET_K='${V_SECRET}'\n`)
+  })
+
+  // exact bytes: only a space, a tab and one CR around the marker; every other character, whitespace-like or
+  // not, makes it a plain comment and the key below a secret (the viewer reads the same rule)
+  test.each([
+    ['NBSP', '\u00a0'], ['U+000B', '\u000b'], ['U+001C', '\u001c'], ['U+2028', '\u2028'], ['U+3000', '\u3000'], ['U+0085', '\u0085'],
+  ])('T-1110 r4: the marker followed or preceded by %s is not a marker — secret in env run, ls and the viewer', (_n, ch) => {
+    seedStore(`${MARK}${ch}\nTAIL_K='FAKEtail1'\n${ch}${MARK}\nHEAD_K='FAKEhead2'\n`)
+    const r = run(['env', 'run', '--', ...PRINT_ALL(['TAIL_K', 'HEAD_K'])])
+    expect(r.stdout.trim().split('\n').pop()).toBe('[가림] | [가림]')
+    expect(run(['env', 'ls']).out).not.toContain('보통 값')
+    const viewer = path.resolve(CORE_ROOT, '..', 'viewer')
+    const out = path.join(sandbox, 'out.html')
+    execFileSync('node', [path.join(viewer, 'cli.mjs'), '--repo-root', proj, '--out', out], { env: env(), cwd: sandbox, timeout: subprocessTimeout('cli') * 3, stdio: 'pipe' })
+    expect(fs.readFileSync(out, 'utf8')).not.toContain('class="tagw">보통 값')
+  })
+
+  test('T-1110 r4: space, tab and one CR around the marker still count — CLI and viewer agree', () => {
+    seedStore(`  \t${MARK}\t \r\nSP_KEY='3000'\r\n${MARK}\r\nCR_KEY='3001'\r\n`)
+    const r = run(['env', 'run', '--', ...PRINT_ALL(['SP_KEY', 'CR_KEY'])])
+    expect(r.stdout.trim().split('\n').pop()).toBe('3000 | 3001')
+    expect(run(['env', 'ls']).out).toMatch(/SP_KEY.*보통 값/)
+    const viewer = path.resolve(CORE_ROOT, '..', 'viewer')
+    const out = path.join(sandbox, 'out.html')
+    execFileSync('node', [path.join(viewer, 'cli.mjs'), '--repo-root', proj, '--out', out], { env: env(), cwd: sandbox, timeout: subprocessTimeout('cli') * 3, stdio: 'pipe' })
+    const html = fs.readFileSync(out, 'utf8')
+    expect(html).toContain('<code>SP_KEY</code><span class="tagw">보통 값</span>')
+    expect(html).toContain('<code>CR_KEY</code><span class="tagw">보통 값</span>')
+  })
+
   test('a marker-looking line inside a multi-line value is value text, not a marker', () => {
     seedStore(`PEM_KEY="-----BEGIN FAKE-----\n${MARK}\nFAKEpem\n-----END FAKE-----"\nNEXT_KEY='FAKEnext'\n`)
     const r = run(['env', 'run', '--', ...PRINT_ALL(['PEM_KEY', 'NEXT_KEY'])])

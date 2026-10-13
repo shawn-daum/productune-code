@@ -17502,6 +17502,16 @@ def _env_spans(lines):
 _ENV_PLAIN_MARK = "# prdt:plain"
 
 
+def _env_is_marker_line(lines, j):
+    """True when line j is exactly the plain marker. Exact bytes: only a space,
+    a tab and one CR around it are ignored — never str.strip()'s wider set
+    (NBSP, \\x0b, \\x1c, U+2028 ...), the same rule the viewer reads
+    (packages/viewer/lib/env-status.mjs). Anything else is not a marker, so the
+    key below stays a secret."""
+    raw = lines[j].lstrip("\ufeff") if j == 0 else lines[j]
+    return _env_strip_cr(raw).strip(" \t") == _ENV_PLAIN_MARK
+
+
 def _env_marker_idx(lines, spans):
     """{first_line: marker_line} — a span whose line right before it is the
     plain marker (T-1121 B). The marker is a comment line `# prdt:plain` stored
@@ -17516,8 +17526,7 @@ def _env_marker_idx(lines, spans):
         j = i0 - 1
         if j < 0 or j in covered:
             continue
-        raw = lines[j].lstrip("\ufeff") if j == 0 else lines[j]
-        if _env_strip_cr(raw).strip() == _ENV_PLAIN_MARK:
+        if _env_is_marker_line(lines, j):
             found[i0] = j
     return found
 
@@ -17674,10 +17683,19 @@ def _env_set(args_rest):
             new_lines = ([f"{_ENV_PLAIN_MARK}{cr}"] if plain else []) + [f"{head}{key}={quoted}{cr}"]
             new_lines[0] = bom + new_lines[0]
             lines[first:i1] = new_lines
-        elif lines[-1] == "":
-            lines[len(lines) - 1:len(lines) - 1] = ([_ENV_PLAIN_MARK] if plain else []) + [f"{key}={quoted}"]
         else:
-            lines += ([_ENV_PLAIN_MARK] if plain else []) + [f"{key}={quoted}", ""]
+            # a new key goes at the end. A marker already on the line right above that
+            # spot (a dangling one: the store's last line, nothing below it) was written
+            # for no key — it is dropped, so it can never turn this key plain; a plain
+            # answer writes its own marker (T-1110 r4).
+            had_nl = lines[-1] == ""
+            pos = len(lines) - 1 if had_nl else len(lines)
+            covered = {x for _, a, b in all_spans for x in range(a, b)}
+            if pos > 0 and (pos - 1) not in covered and _env_is_marker_line(lines, pos - 1):
+                del lines[pos - 1]
+                pos -= 1
+            add = ([_ENV_PLAIN_MARK] if plain else []) + [f"{key}={quoted}"]
+            lines[pos:pos] = add if had_nl else add + [""]
         _machine_env_store("\n".join(lines), "저장 실패", "저장한 키가 없어요.")
     print(f"{key} 를 기기 범위에 저장했어요 ({_env_shown_path(machine_env_file())}). 이 기기의 모든 프로젝트가 쓸 수 있어요.")
 

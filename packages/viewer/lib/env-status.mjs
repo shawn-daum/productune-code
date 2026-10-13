@@ -87,6 +87,15 @@ function find(buf, b, from, to) {
 
 const PLAIN_MARK = Buffer.from('# prdt:plain')
 
+/** The marker line, exact bytes: only a space and a tab around it are ignored (the CR is already
+ *  out of the span) — never the wider strip() set (NBSP, \x0b, \x1c, U+2028 ...). The CLI's
+ *  `_env_is_marker_line` reads the same rule; anything else leaves the key a secret. */
+function isMarker(buf, a, b) {
+  while (a < b && (buf[a] === 0x20 || buf[a] === 0x09)) a++
+  while (b > a && (buf[b - 1] === 0x20 || buf[b - 1] === 0x09)) b--
+  return buf.compare(PLAIN_MARK, 0, PLAIN_MARK.length, a, b) === 0
+}
+
 /**
  * @param {Buffer} buf raw env-file bytes
  * @param {{ plainMarker?: boolean }} [opts] T-1121 B: read the machine store's
@@ -102,9 +111,10 @@ export function envKeyStatus(buf, opts = {}) {
   let li = 0
   let marker = false // the line just read is the plain marker
   while (li < lines.length) {
-    let [a, b] = strip(buf, ...lines[li++])
+    const [ra, rb] = lines[li++]
+    let [a, b] = strip(buf, ra, rb)
     if (a === b || buf[a] === 0x23) {
-      marker = !!opts.plainMarker && a !== b && buf.compare(PLAIN_MARK, 0, PLAIN_MARK.length, a, b) === 0
+      marker = !!opts.plainMarker && a !== b && isMarker(buf, ra, rb)
       continue
     }
     const plain = marker
