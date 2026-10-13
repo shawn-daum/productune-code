@@ -16650,7 +16650,7 @@ def layout_session_start_block(root):
             head +
             "Do NOT propose `prdt layout migrate` here. In your first reply this session say this ko line as plain text, "
             "then run `prdt layout check`. " + undo.rstrip("\n") + "\n"
-            f"「docs 폴더 일부만 새 구조예요. 문서 {_lay_n(left)}개가 아직 예전 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.」")
+            "「docs 폴더 일부만 새 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.」")
     return ""
 
 

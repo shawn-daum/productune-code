@@ -192,7 +192,7 @@ describe.skipIf(!READY || !hasBin('git', ['--version']))('killed --apply and in-
     expect(ctx).toContain('Do NOT propose `prdt layout migrate`')
     expect(ctx).not.toContain('목록 보기')
     expect(ctx).toContain('then run `prdt layout check`. Offer `prdt layout migrate --undo` only when its `다음:` line names it')
-    expect(ctx).toContain('「docs 폴더 일부만 새 구조예요. 문서 2개가 아직 예전 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.」')
+    expect(ctx).toContain('「docs 폴더 일부만 새 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.」')
     expect(ctx).not.toContain('prdt doctor')
     const chk = spawnSync('python3', [PRDT_CLI, 'layout', 'check', '--json'], {
       cwd: root, encoding: 'utf8', env: { ...process.env, PRDT_HOME: realHome() },
@@ -252,7 +252,7 @@ describe.skipIf(!READY || !hasBin('git', ['--version']))('killed --apply: the in
     const ctx = runHook(root)
     expect(ctx).toContain(HALF)
     expect(ctx).toContain('Do NOT propose `prdt layout migrate`')
-    expect(ctx).toContain('「docs 폴더 일부만 새 구조예요. 문서 0개가 아직 예전 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.」')   // T-1125 F4: the disk's count (nothing old left), never the marker's recorded 7
+    expect(ctx).toContain('「docs 폴더 일부만 새 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.」')   // T-1125 U10: no count sentence
     expect(ctx).not.toContain('문서 7개')
     expect(ctx).not.toContain('목록 보기')
   })
@@ -284,7 +284,7 @@ describe.skipIf(!READY || !hasBin('git', ['--version']))('killed --apply: the in
     fs.symlinkSync(bait, path.join(root, MARKER_REL))
     const ctx = runHook(root)
     expect(ctx).toContain(HALF)
-    expect(ctx).toContain('문서 0개가')          // the link's target is not read
+    expect(ctx).not.toContain('99')          // the link's target is not read
     expect(fs.readFileSync(bait, 'utf8')).toBe('{"count": 99}')
   })
 
