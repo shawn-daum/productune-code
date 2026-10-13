@@ -18762,7 +18762,7 @@ def main():
     p.add_argument("--type", choices=TICKET_TYPES, help="new: the ticket's `type` (required)")
     p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
     p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value ([<product>/]v<N>.<m>#<key>)")
-    p.add_argument("--product", "--line", dest="line",
+    p.add_argument("--product", "--line", dest="line", metavar="PRODUCT",
                    help="new: an added product (.prdt/config.json `products`) — the ticket "
                         "lands in that product's tickets/<its version>/; default the first product")
     p.add_argument("--deps", nargs="+", metavar="ID", help="new: `deps` ticket ids")
@@ -18885,7 +18885,7 @@ def main():
                         "(PreToolUse event on stdin)")
     p.add_argument("--version", help="report: the version bucket (default: po-state.json version)")
     p.add_argument("--json", action="store_true", help="the same rows, machine-readable")
-    p.add_argument("--product", "--line", dest="line",
+    p.add_argument("--product", "--line", dest="line", metavar="PRODUCT",
                    help="one product (.prdt/config.json `products`, or the project slug for "
                         "the first product); default every product, first one first — `--json` the first product")
     p.set_defaults(fn=cmd_schedule)
