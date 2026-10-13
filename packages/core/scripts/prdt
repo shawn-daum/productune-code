@@ -16482,9 +16482,19 @@ def layout_session_start_block(root):
     filesystem-only): the hook pays no git process. Copy: the approved screen set,
     `layout-start` (propose · none · half; user approved 2026-10-12, T-1114) — change
     a string only with that screen. Machine-facing English wraps the one ko line the
-    PO says; the only interpolated values are a count and the sanitized product name."""
+    PO says; the only interpolated values are a count and the sanitized product name.
+    Two exceptions to "shallow": a live dispatch in this project silences the block
+    (design ④, markers read from the filesystem), and the one rare shape a killed
+    `--apply` leaves (`docs/<prod>/` present, `docs/_shared` absent) asks meta git, so
+    it reads as half-moved like `prdt layout check` — ordinary old/new stay git-free."""
+    if _lay_live_dispatches(root):
+        return ""
     state = layout_state(root)
     prod = layout_product_name(root)
+    if state in ("old", "none"):
+        pdir = Path(root) / "docs" / prod
+        if pdir.is_dir() and not pdir.is_symlink() and not os.path.lexists(Path(root) / "docs" / DOCS_SHARED):
+            state = layout_state(root, deep=True)
     if state == "old":
         n = _lay_n(layout_plan(root)["total"])
         return (
@@ -16497,8 +16507,11 @@ def layout_session_start_block(root):
             "only on the user's confirm of that list. On 넘기기: nothing this session. Nothing moves without the user's confirm.")
     if state == "partial":
         first, left = _lay_leftover(root)
-        if first is None:
-            return ""
+        if first is None:     # the whole old side already left the disk: the move waits in meta git
+            gone = _lay_uncommitted_old(root)
+            if not gone:
+                return ""
+            first, left = gone[0].split("/")[1], len(gone)
         slash = "/" if os.path.isdir(Path(root) / "docs" / first) else ""
         return (
             "[prdt layout: this project's docs layout is half-moved]\n"
