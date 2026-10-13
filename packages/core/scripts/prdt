@@ -16243,8 +16243,8 @@ LAYOUT_COMMIT_MSG = "chore: product-first docs layout (prdt layout migrate)"
 LAYOUT_STEPS = 9
 # The `다음:` line of every half-moved report (check · migrate refusal · PARTIAL):
 # the approved sentence, plus the one way back.
-LAYOUT_PARTIAL_NEXT = ("PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요. "
-                       "prdt layout migrate --undo 로 되돌릴 수 있어요.")
+LAYOUT_PARTIAL_NEXT = "PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요."
+LAYOUT_UNDO_HINT = "prdt layout migrate --undo 로 되돌릴 수 있어요."
 
 
 def _lay_color(code, s):
@@ -16468,6 +16468,14 @@ def _lay_leftover(root):
     return first, plan["total"]
 
 
+def layout_partial_next(root):
+    """The `다음:` text of a half-moved report: the `--undo` sentence only when
+    `--undo` can run (T-1123) — i.e. an uncommitted old-layout deletion exists."""
+    if _lay_uncommitted_old(root):
+        return f"{LAYOUT_PARTIAL_NEXT} {LAYOUT_UNDO_HINT}"
+    return LAYOUT_PARTIAL_NEXT
+
+
 def layout_partial_line(root):
     first, left = _lay_leftover(root)
     if first is None:     # nothing old on disk: the move sits uncommitted in meta git
@@ -16499,12 +16507,11 @@ def layout_session_start_block(root):
         n = _lay_n(layout_plan(root)["total"])
         return (
             "[prdt layout: this project is on the pre-product docs layout]\n"
-            f"docs/ holds prd/ · tickets/ · wiki/ directly; the product-first layout puts them under docs/{DOCS_SHARED}/ and docs/{prod}/. "
-            "Tell the user in this one ko line, then ask with AskUserQuestion, options \"목록 보기\" and \"이번 세션은 넘기기\".\n"
+            "End your first reply this session with this ko line as plain text, options \"목록 보기\" · \"이번 세션은 넘기기\".\n"
             f"「docs 폴더가 아직 예전 구조예요. 문서 {n}개가 제품 폴더 없이 `docs/` 바로 아래에 있어요. "
             f"`docs/{DOCS_SHARED}` · `docs/{prod}` 두 폴더로 옮길 수 있어요. 옮길 목록부터 보여 드릴까요?」\n"
-            "On 목록 보기: run `prdt layout migrate` (writes nothing), show its list, and run `prdt layout migrate --apply` "
-            "only on the user's confirm of that list. On 넘기기: nothing this session. Nothing moves without the user's confirm.")
+            "On \"목록 보기\" or a yes: run `prdt layout migrate` (writes nothing), show its list minus its `다음:` line, "
+            "and run `prdt layout migrate --apply` only on the user's confirm of that list. Otherwise nothing this session.")
     if state == "partial":
         first, left = _lay_leftover(root)
         if first is None:     # the whole old side already left the disk: the move waits in meta git
@@ -16512,13 +16519,23 @@ def layout_session_start_block(root):
             if not gone:
                 return ""
             first, left = gone[0].split("/")[1], len(gone)
-        slash = "/" if os.path.isdir(Path(root) / "docs" / first) else ""
+        h1 = first is not None and os.path.lexists(Path(root) / "docs" / first) and (Path(root) / "docs" / DOCS_SHARED).is_dir() \
+            and not (Path(root) / "docs" / DOCS_SHARED).is_symlink()
+        head = "[prdt layout: this project's docs layout is half-moved]\n"
+        undo = ("Offer `prdt layout migrate --undo` only when its `다음:` line names it; run it only on a yes.\n")
+        if h1:
+            slash = "/" if os.path.isdir(Path(root) / "docs" / first) else ""
+            return (
+                head +
+                "Do NOT propose `prdt layout migrate` here. In your first reply this session say this ko line as plain text, "
+                "then run `prdt layout check` and show its ✗ line. " + undo.rstrip("\n") + "\n"
+                f"「docs 폴더 일부만 새 구조로 옮겨졌어요. `docs/{DOCS_SHARED}/` 는 새 구조인데 `docs/{first}{slash}` 는 예전 구조 그대로예요. "
+                f"이 상태에서는 옮기기를 제안하지 않아요. `prdt doctor` 로 남은 문서 {_lay_n(left)}개를 확인하세요.」")
         return (
-            "[prdt layout: this project's docs layout is half-moved]\n"
-            "Do NOT propose `prdt layout migrate` here (it refuses this state). Tell the user this ko line, "
-            "then run `prdt doctor` and show its layout error line.\n"
-            f"「docs 폴더 일부만 새 구조로 옮겨졌어요. `docs/{DOCS_SHARED}/` 는 새 구조인데 `docs/{first}{slash}` 는 예전 구조 그대로예요. "
-            f"이 상태에서는 옮기기를 제안하지 않아요. `prdt doctor` 로 남은 문서 {_lay_n(left)}개를 확인하세요.」")
+            head +
+            "Do NOT propose `prdt layout migrate` here. In your first reply this session say this ko line as plain text, "
+            "then run `prdt layout check`. " + undo.rstrip("\n") + "\n"
+            f"「docs 폴더 일부만 새 구조예요. 문서 {_lay_n(left)}개가 아직 예전 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.」")
     return ""
 
 
@@ -16642,7 +16659,7 @@ def layout_precheck(root, plan):
 def _lay_refuse_partial(root):
     print(f"{_lay_er('옮기지 않았어요')}: {layout_partial_line(root)}.")
     print()
-    print(f"다음: {LAYOUT_PARTIAL_NEXT}")
+    print(f"다음: {layout_partial_next(root)}")
     sys.exit(1)
 
 
@@ -16990,7 +17007,7 @@ def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, stag
     print(f"{_lay_er(_lay_b('PARTIAL'))} docs 폴더 일부만 새 구조예요. 문서 {_lay_n(left_files)}개는 새 자리({where})에 "
           f"남았고, 나머지 {_lay_n(max(n_moved - left_files, 0))}개는 예전 자리로 돌아왔어요.")
     print()
-    print(f"다음: {LAYOUT_PARTIAL_NEXT}")
+    print(f"다음: {layout_partial_next(root)}")
     sys.exit(2)
 
 
@@ -17115,7 +17132,7 @@ def cmd_layout(args):
         elif state == "partial":
             print(_lay_er("✗ ") + layout_partial_line(root))
             print()
-            print(f"다음: {LAYOUT_PARTIAL_NEXT}")
+            print(f"다음: {layout_partial_next(root)}")
         else:
             print("docs 폴더에서 예전 구조를 찾지 못했어요.")
             print()

@@ -90,7 +90,8 @@ function legacy(): string {
 
 // The approved half-moved sentence (T-1117 · P1 / A3 / R8) and the `다음:` line, with the --undo way out.
 const PARTIAL_LINE = (n: number) => `docs 폴더 일부만 새 구조예요. 문서 ${n}개가 아직 예전 구조예요`
-const PARTIAL_NEXT = '다음: PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요. prdt layout migrate --undo 로 되돌릴 수 있어요.'
+const PARTIAL_NEXT_BASE = '다음: PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요.'
+const PARTIAL_NEXT = `${PARTIAL_NEXT_BASE} prdt layout migrate --undo 로 되돌릴 수 있어요.`
 
 const LOADER = `
 import importlib.machinery, importlib.util, sys, os, argparse
@@ -758,6 +759,14 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
     expect(prdt(done, ['layout', 'migrate', '--apply']).code).toBe(0)
     expect(prdt(done, ['layout', 'migrate', '--undo']).out).toBe(
       '되돌리지 않았어요: docs 폴더가 이미 새 구조로 끝나서 되돌릴 수 없어요.\n\n다음: 예전 구조로 돌아가려면 PO 에게 알리세요.\n')
+    // T-1123: `--undo` cannot run here (nothing uncommitted), so `다음:` must not offer it
+    const nothing = legacy()
+    fs.mkdirSync(path.join(nothing, 'docs/_shared'))
+    const chk = prdt(nothing, ['layout', 'check'])
+    expect(chk.code).toBe(2)
+    expect(chk.out).toContain(PARTIAL_NEXT_BASE)
+    expect(chk.out).not.toContain('--undo')
+    expect(prdt(nothing, ['layout', 'migrate', '--apply']).out).not.toContain('--undo')
   }, 240_000)
 
   test('a plain command in a new-layout project never asks meta git about layout (hot path stays git-free)', () => {
