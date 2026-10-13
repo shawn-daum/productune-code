@@ -982,8 +982,11 @@ describe('silence / fail-open', () => {
     expect(res.status).toBe(0)
   })
 
-  for (const toolName of ['Edit', 'Write', 'Grep']) {
-    test(`tool_name ${toolName} (outside the Read|Bash matcher, silent on a direct call)`, () => {
+  // T-1109 r4: Edit/Write/MultiEdit/NotebookEdit are registered now, but are judged on the machine
+  // env store only — any other file (a `.env.local` included) is never denied for a write; Grep is
+  // not registered at all.
+  for (const toolName of ['Edit', 'Write', 'MultiEdit', 'Grep']) {
+    test(`tool_name ${toolName} on a non-store path (silent: a write of .env.local is never denied)`, () => {
       expectAllow({ hook_event_name: 'PreToolUse', tool_name: toolName, tool_input: { file_path: '.env.local' } }, toolName)
     })
   }
@@ -1175,5 +1178,79 @@ describe('latency — every hit path stays linear, not only heredocs (S2b-fix HI
     // count (jq once, perl once) whatever the argument count.
     const r = hitRatio(bashEvent(command), 5)
     expect(r.ratio, r.note).toBeLessThan(LINEAR_CEILING)
+  })
+})
+
+
+// ── T-1109 r4: the machine env store is never written by an agent by habit ───
+// (accidental exposure blocked; a deliberate, obfuscated write stays a listed residual — see the
+// hook SCOPE entry). Deny text is the deny-write voice, still the `[prdt secret guard] Denied:` one.
+
+describe('T-1109 r4: writes to the machine env store (~/.prdt/env/) are denied', () => {
+  const WRITE_MSG = 'written only by the user own'
+  function verdictOf(payload: unknown, env: NodeJS.ProcessEnv = process.env): string {
+    const res = spawnSync('bash', [HOOK], { input: JSON.stringify(payload), encoding: 'utf8', timeout: subprocessTimeout('hook'), env })
+    expect(res.stderr).toBe('')
+    expect(res.status).toBe(0)
+    if (res.stdout === '') return 'allow'
+    const h = JSON.parse(res.stdout).hookSpecificOutput
+    expect(h.permissionDecision).toBe('deny')
+    expect(h.permissionDecisionReason).toMatch(/^\[prdt secret guard\] Denied: /)
+    return h.permissionDecisionReason.includes(WRITE_MSG) ? 'deny-write' : 'deny'
+  }
+  const bash = (c: string, env?: NodeJS.ProcessEnv) => verdictOf(bashEvent(c), env)
+
+  test.each([
+    'echo x > ~/.prdt/env/.env', 'echo x >> "$HOME/.prdt/env/.env"', 'printf a >$HOME/.prdt/env/.env', 'echo x 2> ~/.prdt/env/.env',
+    'true && cat foo >> ~/.prdt/env/.env', "cat > /Users/x/.prdt/env/.env <<'EOF'\nA=1\nEOF", 'echo x &> ~/.prdt/env/.env.bak',
+    'echo x | tee ~/.prdt/env/.env', 'echo x | tee -a ~/.prdt/env/.env', 'echo x | sudo tee ~/.prdt/env/.env',
+    'sed -i s/a/b/ ~/.prdt/env/.env', "sed -i '' 's/a/b/' ~/.prdt/env/.env", 'sed -Ei s/a/b/ $HOME/.prdt/env/.env', 'sed --in-place s/a/b/ ~/.prdt/env/.env',
+    'perl -pi -e s/a/b/ ~/.prdt/env/.env',
+    'cp /tmp/x ~/.prdt/env/.env', 'mv /tmp/x ~/.prdt/env/.env', 'ln -sf /tmp/x ~/.prdt/env/.env', 'install -m600 /tmp/x ~/.prdt/env/.env', 'cp x ~/.prdt/env/',
+    'cp x $PRDT_HOME/env/.env', 'cp x ${PRDT_HOME}/env/.env', 'cp x "$PRDT_HOME"/env/.env', 'cp x ~/.prdt/foo/../env/./.env',
+    "bash -c 'echo x > ~/.prdt/env/.env'", 'eval "echo x > ~/.prdt/env/.env"',
+    `python3 -c "open('/Users/x/.prdt/env/.env','w').write('A=1')"`, `python3 -c "open('/Users/x/.prdt/env/.env', mode='a')"`,
+    `python3 -c "from pathlib import Path; Path('~/.prdt/env/.env').write_text('x')"`,
+    `node -e "require('fs').writeFileSync(process.env.HOME+'/.prdt/env/.env','x')"`, `node -e "fs.appendFileSync('/Users/x/.prdt/env/.env','x')"`,
+  ])('Bash denied: %s', (c) => { expect(bash(c)).toBe('deny-write') })
+
+  test('the hook own PRDT_HOME (an absolute path elsewhere) is the store too — and a sibling name is not', () => {
+    const env = { ...process.env, PRDT_HOME: '/opt/prdt-x' }
+    expect(bash('echo x > /opt/prdt-x/env/.env', env)).toBe('deny-write')
+    expect(bash('cp a /opt/prdt-x/env/store', env)).toBe('deny-write')
+    expect(bash('echo x > /opt/prdt-x/envx/.env', env)).toBe('allow')
+    expect(bash('echo x > /opt/prdt-xy/env/.env', env)).toBe('allow')
+  })
+
+  test.each([
+    ['Write', 'file_path'], ['Edit', 'file_path'], ['MultiEdit', 'file_path'], ['NotebookEdit', 'notebook_path'],
+  ])('%s on the store path is denied (also .bak copies, `..` spellings, $PRDT_HOME)', (tool, field) => {
+    for (const p of ['/Users/x/.prdt/env/.env', '/Users/x/.prdt/env/.env.bak', '/Users/x/.prdt/env/store.txt', '/Users/x/.prdt/x/../env/.env', '/Users/x/.prdt//env/./.env']) {
+      expect(verdictOf({ tool_name: tool, tool_input: { [field]: p } }), `${tool} ${p}`).toBe('deny-write')
+    }
+  })
+  test.each([
+    ['Write', 'file_path'], ['Edit', 'file_path'], ['MultiEdit', 'file_path'], ['NotebookEdit', 'notebook_path'],
+  ])('%s on any other path is allowed — .env.local, the prdt.env mirror, docs', (tool, field) => {
+    for (const p of ['/Users/x/proj/.env.local', '/Users/x/proj/code/.env', '/Users/x/.prdt/prdt.env', '/Users/x/.prdt/environment/x', '/Users/x/proj/docs/a.md', '/Users/x/proj/.prdt/po-state.json']) {
+      expect(verdictOf({ tool_name: tool, tool_input: { [field]: p } }), `${tool} ${p}`).toBe('allow')
+    }
+  })
+
+  test.each([
+    // T-1119: ordinary commands that merely name `prdt env set` or load dotenv stay allowed
+    'git commit -m "fix: prdt env set keeps untouched lines (T-1109)"', "git commit -m 'feat: prdt env set|unset|ls|run'",
+    'grep -n "prdt env set" packages/core/scripts/prdt', 'grep -rn "prdt env unset" docs/',
+    "cat > /tmp/t.test.ts <<'EOF'\nrun(['env', 'set', 'K'])\n// prdt env set K\nEOF", 'node -r dotenv/config server.js',
+    'prdt env run -- node -r dotenv/config server.js', 'prdt env ls', 'prdt env run -- printenv',
+    // other files and non-writing uses of the store path
+    'echo x > .env.local', 'sed -i s/a/b/ .env.local', 'echo x | tee .env.local', 'cp a .env.local', 'echo x > ~/.prdt/prdt.env', 'cp a ~/.prdt/environment/x',
+    'ls ~/.prdt/env', 'test -f ~/.prdt/env/.env', 'grep -q A ~/.prdt/env/.env', 'prdt env check ~/.prdt/env/.env A', 'echo "prdt env settings" > /tmp/o',
+    `python3 -c "print(open('/Users/x/.prdt/env/.env').name)"`, `node -e "console.log(1)"`,
+  ])('Bash not a write-deny: %s', (c) => { expect(bash(c)).not.toBe('deny-write') })
+
+  test('the deny is the guard voice and a perl-judge apostrophe never slipped in (hook still parses)', () => {
+    expect(spawnSync('bash', ['-n', HOOK]).status).toBe(0)
+    expect(bash('echo x > ~/.prdt/env/.env')).toBe('deny-write')
   })
 })

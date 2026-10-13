@@ -1,6 +1,7 @@
 /**
- * install.sh registers prdt-secret-guard.sh on PreToolUse with the `Read|Bash`
- * matcher — T-677 slice S3.
+ * install.sh registers prdt-secret-guard.sh on PreToolUse with the
+ * `Read|Bash|Write|Edit|MultiEdit|NotebookEdit` matcher — T-677 slice S3
+ * (`Read|Bash`), widened by T-1109 r4.
  *
  * Same T-445 lesson install-dispatch-gate-hook.test.ts already documents: a
  * roster change is itself a defect source, so the SoT (hook-manifest.json),
@@ -20,9 +21,10 @@
  *                          a dispatch prompt to parse)
  *   prdt-secret-guard.sh   matcher `Read|Bash` (T-677 — the two tool shapes
  *                          that can print a credential file's bytes to the
- *                          screen and into the session record; `Edit`/`Write`/
- *                          `Grep` never reach it, so writing a target file is
- *                          never denied by matcher alone)
+ *                          screen and into the session record) plus, since
+ *                          T-1109 r4, the four write tools — judged ONLY
+ *                          against the machine env store; `Grep` never
+ *                          reaches it
  * so all three are asserted here, not only the new one.
  */
 
@@ -33,6 +35,7 @@ import { CORE_ROOT, installedMachine, freshInstall, hasJq } from '../helpers/ins
 
 const MANIFEST = path.join(CORE_ROOT, 'scripts', 'hook-manifest.json')
 const GUARD = 'prdt-secret-guard.sh'
+const GUARD_MATCHER = 'Read|Bash|Write|Edit|MultiEdit|NotebookEdit'
 const GATE = 'prdt-dispatch-gate.sh'
 const GOVERNOR = 'prdt-call-governor.sh'
 
@@ -47,9 +50,9 @@ test('the manifest — the SoT both derivations reduce over — carries the guar
   expect(manifest.basenames).toContain(GUARD)
   const reg = manifest.registrations.find(
     (r: any) => r.event === 'PreToolUse' && (r.hooks ?? []).includes(GUARD))
-  expect(reg, 'PreToolUse/Read|Bash registration missing from hook-manifest.json').toBeTruthy()
-  expect(reg.matcher, 'the guard must stay matched to Read|Bash — matcher-less would also gate Edit/Write/Grep')
-    .toBe('Read|Bash')
+  expect(reg, 'PreToolUse guard registration missing from hook-manifest.json').toBeTruthy()
+  expect(reg.matcher, 'the guard must stay matched (Read, Bash and the four write tools) — matcher-less would also gate Grep')
+    .toBe(GUARD_MATCHER)
 })
 
 test('the guard, the gate and the governor share PreToolUse as THREE separate, differently-matched entries', () => {
@@ -74,11 +77,11 @@ test.skipIf(!hasJq())('mirrors prdt-secret-guard.sh executable', () => {
   expect(fs.statSync(script).mode & 0o111).not.toBe(0)
 })
 
-test.skipIf(!hasJq())('registers the guard on PreToolUse with the Read|Bash matcher, at the mirrored path', () => {
+test.skipIf(!hasJq())('registers the guard on PreToolUse with the read + write tool matcher, at the mirrored path', () => {
   const { settings, prdtHome } = installedMachine()
   const entry = entryFor(settings, GUARD)
   expect(entry, 'guard not registered on PreToolUse').toBeTruthy()
-  expect(entry.matcher).toBe('Read|Bash')
+  expect(entry.matcher).toBe(GUARD_MATCHER)
   // the registered command must be the mirrored, executable file — never a path
   // that only exists in the repo checkout
   const registered = (entry.hooks[0].command as string).replace(/"/g, '')

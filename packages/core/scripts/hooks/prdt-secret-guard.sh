@@ -2,7 +2,9 @@
 # prdt — credential guard (T-677 slices S2a + S2a-fix + S2b + S2b-fix + S2b-perf
 # + script-fix; T-716 leading-redirect fix + printer set additions; T-716 s2
 # fd-dup/numbered-stdin operators + tee reclassified + printer set additions).
-# Registered (S3, hook-manifest.json) as PreToolUse, matcher `Read|Bash`;
+# Registered (S3, hook-manifest.json) as PreToolUse, matcher
+# `Read|Bash|Write|Edit|MultiEdit|NotebookEdit` (T-1109 r4 widened it: the write
+# tools reach this hook ONLY to be judged against the machine env store);
 # exercised directly by test/scripts/secret-guard-hook.test.ts spawning it.
 #
 # WHY (T-677): repeated real incidents — a worker cats/heads/seds a `.env*`
@@ -150,6 +152,24 @@
 #                joined %PRINTERS (same reasoning as the T-716 additions —
 #                each reencodes/reorders bytes without hiding any of them).
 #
+#   T-1109 r4 (QA security pass r4, PO call under the T-1119 B choice: an
+#             accidental exposure is blocked, a deliberate evasion stays a
+#             listed residual) the machine env store (anything under a
+#             `.prdt/env/` directory, or `$PRDT_HOME/env/`, or the hook
+#             process own PRDT_HOME) is never written by an agent by habit:
+#             a shell redirect (`>` `>>` `&>` `N>` `<>`), tee, `sed -i` (also
+#             `perl -i` / `ruby -i`), cp / mv / ln / install / dd / rsync /
+#             truncate with that path as any argument, and an interpreter
+#             one-liner (`python3 -c` / `node -e` ...) whose code spells the
+#             literal path together with a write call are denied with the
+#             deny-write message; the Write / Edit / MultiEdit / NotebookEdit
+#             tools are denied on that path only (any other file, `.env.local`
+#             included, is never judged for a write — the matcher widened, the
+#             judgment did not). RESIDUAL, by design, not chased: a path built
+#             at runtime (a variable, a `cd` then a relative name, a glob), a
+#             script file or a heredoc body that does the write, a symlink
+#             into the store, `>|`, and any obfuscated spelling.
+#
 # ACCEPTED LIMITATIONS (not fixed, by design — read before treating any of
 # these as an oversight):
 #   - DELIBERATE EVASION CLASS (QA grill S2b, named explicitly as a class the
@@ -288,7 +308,7 @@ shopt -u nocasematch
 # / `.command` a jq runtime error, which aborts the WHOLE `-j` expression before
 # it prints anything — $FIELDS stays empty, same fail-open exit below.
 FIELDS="$(printf '%s' "$EV" | jq -j \
-  '(.tool_name // "") + "\u001e" + ((.tool_input.file_path // "") | if type=="string" then . else "" end) + "\u001e" + ((.tool_input.command // "") | if type=="string" then . else "" end)' \
+  '(.tool_name // "") + "\u001e" + ((.tool_input.file_path // .tool_input.notebook_path // "") | if type=="string" then . else "" end) + "\u001e" + ((.tool_input.command // "") | if type=="string" then . else "" end)' \
   2>/dev/null)"
 [ -n "$FIELDS" ] || exit 0
 
@@ -297,11 +317,11 @@ _REST="${FIELDS#*$'\x1e'}"
 FILE_PATH="${_REST%%$'\x1e'*}"
 CMD="${_REST#*$'\x1e'}"
 
-# Registration is `Read|Bash`; a direct standalone invocation (as this hook's
+# Registration is `Read|Bash|Write|Edit|MultiEdit|NotebookEdit`; a direct standalone invocation (as this hook's
 # own test suite does, and as a mis-registration would) can hand this anything
 # — stay silent on everything else, per contracts §Secrets fail-open direction.
 case "$TOOL_NAME" in
-  Read) SUBJECT="$FILE_PATH" ;;
+  Read|Write|Edit|MultiEdit|NotebookEdit) SUBJECT="$FILE_PATH" ;;
   Bash) SUBJECT="$CMD" ;;
   *) exit 0 ;;
 esac
@@ -384,6 +404,35 @@ sub is_target {
 # credential store (`~/.prdt/env/.env`, or a backup / temp copy beside it) — it
 # judges as `.env` whatever its own name, so every call site below denies it.
 sub basename { my $x = shift; return ".env" if $x =~ m{(?:\A|/)\.prdt/env/[^/]+/?\z}is; $x =~ s{\A.*/}{}s; return $x }
+
+# T-1109 r4: is_store_path(p) — a path under the machine env store (judged for
+# WRITES; reads keep the basename rule above). Lexical only: `.` and empty
+# components are dropped and `..` pops one, so `~/.prdt/x/../env/./.env` is the
+# store; a symlink is not followed. Matches a `.prdt/env` component pair
+# (`~`, `$HOME`, an absolute home all spell it), a literal `$PRDT_HOME/env` /
+# `${PRDT_HOME}/env`, and the hook own PRDT_HOME when it is an absolute path.
+# The directory itself counts (cp x ~/.prdt/env/, mv of the directory).
+sub store_norm {
+  my $p = shift;
+  my @out;
+  for my $c (split m{/}, $p) {
+    next if $c eq "" || $c eq ".";
+    if ($c eq "..") { pop @out if @out && $out[-1] ne ".."; next }
+    push @out, $c;
+  }
+  return ($p =~ m{\A/} ? "/" : "") . join("/", @out);
+}
+sub is_store_path {
+  my $n = lc(store_norm(shift));
+  return 1 if $n =~ m{(?:\A|/)\.prdt/env(?:/|\z)};
+  return 1 if $n =~ m{\A\$\{?prdt_home\}?/env(?:/|\z)};
+  my $ph = defined $ENV{PRDT_HOME} ? $ENV{PRDT_HOME} : "";
+  if ($ph =~ m{\A/.}) {
+    my $b = lc(store_norm($ph)) . "/env";
+    return 1 if $n eq $b || index($n, "$b/") == 0;
+  }
+  return 0;
+}
 
 # A redirect-destination operator token as `tokenize` emits it: the NEXT token
 # is a destination (or fd), never an argument to judge.
@@ -746,6 +795,42 @@ my %WRAPPERS = map { $_ => 1 } qw(sudo command time nice env exec nohup timeout 
 
 my @SUBST;
 sub deny { print "deny"; exit 0 }
+sub deny_write { print "deny-write"; exit 0 }
+
+# T-1109 r4: the commands an agent habitually uses to edit a file, judged when
+# one of their arguments is a path under the machine env store. `cb` = the
+# resolved command word, `T` = the segment tokens, `idx` = the command word
+# position. A redirect destination is judged by the redirect scan in
+# judge_command, never here.
+my %STORE_WRITERS = map { $_ => 1 } qw(tee cp mv ln install dd rsync truncate);
+my %CODE_RUNNERS = map { $_ => 1 } qw(python python3 node nodejs ruby perl php deno bun);
+sub store_write_cmd {
+  my ($cb, $T, $idx) = @_;
+  return unless $STORE_WRITERS{$cb} || $CODE_RUNNERS{$cb} || $cb eq "sed" || $cb =~ /\Apython[0-9.]+\z/;
+  my $n = @$T;
+  my @args;
+  for (my $j = $idx + 1; $j < $n; $j++) {
+    my $t = $T->[$j];
+    if (is_fd_dup($t)) { next }
+    if (is_redir_out($t) || $t eq "<" || $t eq "<>") { $j++; next }
+    push @args, strip_quotes($t);
+  }
+  if ($STORE_WRITERS{$cb}) {
+    for my $a (@args) { deny_write() if is_store_path($a) }
+    return;
+  }
+  if ($cb eq "sed" || $cb eq "perl" || $cb eq "ruby") {
+    my $inplace = 0;
+    for my $a (@args) { $inplace = 1 if $a eq "--in-place" || $a =~ /\A--in-place=/ || $a =~ /\A-[^-]*i/ }
+    if ($inplace) { for my $a (@args) { deny_write() if is_store_path($a) } }
+  }
+  if ($CODE_RUNNERS{$cb} || $cb =~ /\Apython[0-9.]+\z/) {
+    for my $a (@args) {
+      next unless $a =~ m{(?:\.prdt|prdt_home\}?)/env(?![A-Za-z0-9_])}i;
+      deny_write() if $a =~ /write|append|copy|move|rename|replace|unlink|truncate|symlink|file_put_contents|\bopen\w*\s*\([^)]*,\s*(?:mode\s*=\s*)?["\x27][rb]*[wax+]/i;
+    }
+  }
+}
 
 # judge_command(s): the full Bash-argument pipeline over ONE command string —
 # called once for the (post-substitution-extraction) outer command, and once
@@ -759,6 +844,11 @@ sub judge_command {
     my @T = tokenize($seg);
     my $ntok = @T;
     my $idx = 0;
+    # T-1109 r4: a redirect whose destination is under the machine env store.
+    for my $k (0 .. $ntok - 2) {
+      my $rt = $T[$k];
+      deny_write() if (is_redir_out($rt) || $rt eq "<>" || $rt =~ /\A[0-9]<>\z/) && is_store_path(strip_quotes($T[$k + 1]));
+    }
     # Leading input-redirect targets (T-716): a segment whose FIRST token is
     # `<` (`< .env.local cat`, `<.env.local cat` — tokenize emits the same
     # three tokens either way, see the `tokenize` sub, arm for `<`) used to
@@ -904,6 +994,7 @@ sub judge_command {
     next if $idx >= $ntok;
 
     my $cmdbase = basename(strip_quotes($T[$idx]));
+    store_write_cmd($cmdbase, \@T, $idx);
 
     # T-716: a leading `<` target (queued into @lead_in above, BEFORE the
     # command word this segment resolved to) reaches the resolved command
@@ -1162,6 +1253,11 @@ if ($tool eq "Read") {
   deny() if is_target(basename($in));
   exit 0;
 }
+# T-1109 r4: the editor tools are judged on the machine env store only.
+if ($tool =~ /\A(?:Write|Edit|MultiEdit|NotebookEdit)\z/) {
+  deny_write() if is_store_path($in);
+  exit 0;
+}
 if ($tool eq "Bash") {
   my ($outer, @subs) = extract_substitutions(strip_heredocs($in));
   @SUBST = @subs;
@@ -1196,6 +1292,6 @@ if [ -z "$PERL" ]; then
 fi
 VERDICT="$(printf '%s' "$SUBJECT" | "$PERL" -C0 -e "$PRDT_JUDGE" -- "$TOOL_NAME" 2>/dev/null)"
 [ "$VERDICT" = "deny" ] && deny_and_exit
-[ "$VERDICT" = "deny-write" ] && { DENY_MSG='[prdt secret guard] Denied: the machine env store (~/.prdt/env/.env) is written only by the user own `prdt env set <KEY>` / `prdt env unset <KEY>`, typed in a terminal at a hidden prompt — a credential value never enters agent context (T-1109). Ask the user to run it; check what is stored with `prdt env ls`.'; deny_and_exit; }
+[ "$VERDICT" = "deny-write" ] && { DENY_MSG='[prdt secret guard] Denied: the machine env store (~/.prdt/env/.env) is written only by the user own `prdt env set <KEY>` / `prdt env unset <KEY>`, typed in a terminal at a hidden prompt — a redirect, tee, sed -i, cp/mv or an editor tool on that file is denied the same way, and a credential value never enters agent context (T-1109). Ask the user to run it; check what is stored with `prdt env ls`.'; deny_and_exit; }
 
 exit 0
