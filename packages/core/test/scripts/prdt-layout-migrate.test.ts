@@ -16,6 +16,7 @@ import crypto from 'crypto'
 import { spawnSync } from 'child_process'
 import { test, expect, describe, beforeAll, afterAll } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
+import { metaAutosaveTick, DEFAULT_META_EXCLUDE } from '../../src'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -947,6 +948,29 @@ except SystemExit:
     expect(git(root, ['status', '--short', '--', 'docs'])).toBe('')
     expectPartial(root)
     undoAndReapply(root)
+  }, 300_000)
+
+  test('T-1105: the marker is in BOTH meta exclude defaults and never tracked in the meta repo', () => {
+    expect(DEFAULT_META_EXCLUDE).toContain('layout-apply.inprogress')
+    const m = /META_EXCLUDE_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(fs.readFileSync(PRDT_CLI, 'utf-8'))
+    expect(m![1].split(',').map((x) => x.trim().replace(/^["']|["']$/g, ''))).toContain('layout-apply.inprogress')
+    expect(fs.readFileSync(path.join(bare(), '.prdt', 'meta.git', 'info', 'exclude'), 'utf8')).toContain('layout-apply.inprogress')
+  }, 300_000)
+
+  test('T-1105: a meta autosave tick after a kill never commits the marker; check stays partial; --undo restores byte-identical', async () => {
+    for (const [make, kill] of [[bare, KILL_FIRST_RENAME], [legacy, KILL_FIRST_RENAME], [bare, KILL_AT_COMMIT]] as const) {
+      const root = prepared(make)
+      expect(pyRun(root, kill).code).toBe(137)
+      expect(fs.existsSync(MARKER(root))).toBe(true)
+      const headBefore = git(root, ['rev-parse', 'HEAD'])
+      const tick = await metaAutosaveTick(root)
+      expect(git(root, ['ls-files']).split('\n')).not.toContain('.prdt/layout-apply.inprogress')
+      expect(git(root, ['log', '--all', '--name-only', '--format=']).split('\n')).not.toContain('.prdt/layout-apply.inprogress')
+      expect(fs.existsSync(MARKER(root))).toBe(true)
+      expectPartial(root)
+      if (tick.committed) throw new Error(`[${make === bare ? 'bare' : 'legacy'}/${kill === KILL_FIRST_RENAME ? 'first-rename' : 'at-commit'}] ${git(root, ['show', '--stat', '--format=%s', 'HEAD'])} autosave tick committed the half-move (HEAD ${headBefore} -> ${git(root, ['rev-parse', 'HEAD'])})`)
+      undoAndReapply(root)
+    }
   }, 300_000)
 
   test('shape (b) on a seeded project: the first rename kill reads partial and undoes', () => {

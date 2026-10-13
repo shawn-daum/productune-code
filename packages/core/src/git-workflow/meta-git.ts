@@ -98,6 +98,11 @@ export const DEFAULT_META_ALLOWLIST: string[] = [
  * appended per-project at init when the project is split (PRD history §v1.3 설계 결정 3)
  * so the code tree never shows up in the meta `git status`.
  *
+ * `layout-apply.inprogress` (T-1105): the half-move marker `prdt layout migrate
+ * --apply` plants for its own run; a beat after a kill must not commit it (commitMeta
+ * also skips while it stands). No inline comments inside the array below: the
+ * python parity lint reads it line by line.
+ *
  * `scratch/` (T-648): qa/habit.md directs verification screenshots and ad-hoc
  * harness files to `.prdt/scratch/`. `.prdt` is allowlisted wholesale above, so
  * without this entry every screenshot became a permanent meta commit — pushed
@@ -154,6 +159,7 @@ export const DEFAULT_META_EXCLUDE: string[] = [
   'po.lock',
   'gui-bootstrap.json',
   'update-state.json',
+  'layout-apply.inprogress',
 ]
 
 const META_GIT_IDENTITY = { name: 'prdt', email: 'prdt@localhost' }
@@ -703,6 +709,8 @@ export type MetaCommitSkipReason =
   | 'manager-error'
   /** T-848: `metaGitTrustProblem` refused the repo; `detail` is the refusal text. */
   | 'meta-untrusted'
+  /** T-1105: a killed/running `prdt layout migrate --apply` left its marker — a beat would commit the half-move and break --undo's HEAD guard. */
+  | 'layout-apply-in-progress'
 
 export interface MetaCommitResult {
   committed: boolean
@@ -807,6 +815,11 @@ export async function commitMeta(
   if (!metaRepoExists(projectDir)) {
     return { committed: false, skipReason: 'meta-repo-missing' }
   }
+  // T-1105: lstat, so a planted link counts as present too (same reading as the CLI).
+  try {
+    fs.lstatSync(path.join(projectDir, '.prdt', 'layout-apply.inprogress'))
+    return { committed: false, skipReason: 'layout-apply-in-progress' }
+  } catch { /* absent → proceed */ }
   const problem = metaGitTrustProblem(projectDir)
   if (problem) return { committed: false, skipReason: 'meta-untrusted', detail: metaGitRefusal(problem) }
 
