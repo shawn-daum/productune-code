@@ -88,6 +88,10 @@ function legacy(): string {
   return root
 }
 
+// The approved half-moved sentence (T-1117 · P1 / A3 / R8) and the `다음:` line, with the --undo way out.
+const PARTIAL_LINE = (n: number) => `docs 폴더 일부만 새 구조예요. 문서 ${n}개가 아직 예전 구조예요`
+const PARTIAL_NEXT = '다음: PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요. prdt layout migrate --undo 로 되돌릴 수 있어요.'
+
 const LOADER = `
 import importlib.machinery, importlib.util, sys, os, argparse
 from pathlib import Path
@@ -114,7 +118,7 @@ describe('layout check', () => {
     const root = legacy()
     const old = prdt(root, ['layout', 'check'])
     expect(old.code).toBe(1)
-    expect(old.out).toBe('docs 폴더가 예전 구조예요. 문서 20개가 제품 폴더 없이 docs/ 바로 아래에 있어요.\n')
+    expect(old.out).toBe('docs 폴더가 예전 구조예요. 문서 20개를 새 구조로 옮길 수 있어요.\n\n다음: prdt layout migrate 로 옮길 목록을 확인하세요.\n')
     expect(JSON.parse(prdt(root, ['layout', 'check', '--json']).out)).toMatchObject({ state: 'old', product: 'proj', docs: 20 })
     expect(prdt(root, ['layout', 'migrate', '--apply']).code).toBe(0)
     const now = prdt(root, ['layout', 'check'])
@@ -163,7 +167,7 @@ describe('--apply', () => {
     const r = prdt(root, ['layout', 'migrate', '--apply'])
     expect(r.code).toBe(0)
     expect(r.out).toBe([
-      '1/9 선행 검사 4개를 통과했어요',
+      '1/9 선행 검사를 통과했어요',
       '2/9 옮길 문서 20개의 목록을 만들었어요',
       '3/9 닫힌 PRD 1개의 shasum 을 적었어요',
       '4/9 문서 20개를 옮겼어요 (git mv, 이력 유지)',
@@ -247,13 +251,14 @@ describe('refused — nothing is written', () => {
     }))
     const r = prdt(root, ['layout', 'migrate', '--apply'])
     expect(r.code).toBe(1)
-    expect(r.out).toContain('옮기지 않았어요: 진행 중인 dispatch 1개가 있어요. docs 폴더는 예전 구조 그대로예요.')
-    expect(r.out).toContain('다음: dispatch 가 끝난 뒤 다시 실행하세요.')
+    expect(r.out).toContain('옮기지 않았어요: 이 프로젝트에서 진행 중인 dispatch 1개가 있어요. docs 폴더는 예전 구조 그대로예요.')
+    expect(r.out).toContain('다음: prdt dispatch ls 로 확인하고, 끝난 뒤 다시 실행하세요.')
     fs.rmSync(runDir, { recursive: true, force: true })
     write(path.join(root, 'docs/proj/note.md'), 'x\n')   // untracked, outside the allowlist: not dirty
     const c = prdt(root, ['layout', 'migrate', '--apply'])
     expect(c.code).toBe(1)
-    expect(c.out).toContain('옮기지 않았어요: docs/proj/ 가 이미 있어요. docs 폴더는 예전 구조 그대로예요.')
+    expect(c.out).toContain('옮기지 않았어요: 새 구조가 쓸 docs/proj/ 폴더가 이미 있어요. docs 폴더는 예전 구조 그대로예요.')
+    expect(c.out).toContain('다음: 그 폴더의 이름을 바꾸거나 다른 곳으로 옮긴 뒤 다시 실행하세요.')
     expect(fs.existsSync(path.join(root, 'docs/prd/PRD.md'))).toBe(true)
   }, 120_000)
 })
@@ -269,7 +274,7 @@ describe('failure rolls back (rolled back)', () => {
     try { r = prdt(root, ['layout', 'migrate', '--apply']) } finally { fs.chmodSync(path.join(root, '.prdt'), 0o755) }
     expect(r.code).toBe(1)
     expect(r.out).toBe([
-      '1/9 선행 검사 4개를 통과했어요',
+      '1/9 선행 검사를 통과했어요',
       '2/9 옮길 문서 20개의 목록을 만들었어요',
       '3/9 닫힌 PRD 1개의 shasum 을 적었어요',
       '4/9 문서 20개를 옮겼어요 (git mv, 이력 유지)',
@@ -303,7 +308,8 @@ m._lay_git = fake
 m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
     // the forged failure leaves the real commit in place only if rollback forgot it
     expect(r.code).toBe(1)
-    expect(r.out).toContain('8/9 옮기기 실패: meta 커밋을 만들 수 없어요 (forced after commit)')
+    expect(r.out).toContain('8/9 옮기기 실패: meta 커밋 1개를 만들 수 없어요 (forced after commit)')
+    expect(r.out).toContain('다음: 괄호 안 git 오류를 고친 뒤 다시 실행하세요.')
     expect(snapshot(root)).toEqual(before)
     expect(git(root, ['rev-parse', 'HEAD'])).toBe(head)
   }, 180_000)
@@ -328,7 +334,7 @@ m.state_write = sw
 m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
     expect(r.code).toBe(2)
     expect(r.out).toBe([
-      '1/9 선행 검사 4개를 통과했어요',
+      '1/9 선행 검사를 통과했어요',
       '2/9 옮길 문서 20개의 목록을 만들었어요',
       '3/9 닫힌 PRD 1개의 shasum 을 적었어요',
       '4/9 문서 20개를 옮겼어요 (git mv, 이력 유지)',
@@ -341,18 +347,17 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
       '',
       'PARTIAL docs 폴더 일부만 새 구조예요. 문서 3개는 새 자리(docs/proj/)에 남았고, 나머지 17개는 예전 자리로 돌아왔어요.',
       '',
-      '다음: PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요.',
+      PARTIAL_NEXT,
       '',
     ].join('\n'))
     // the leftover is what `check` and doctor see
     const chk = prdt(root, ['layout', 'check'])
     expect(chk.code).toBe(2)
-    expect(chk.out).toMatch(/^✗ docs 폴더 일부만 새 구조예요: docs\/_shared\/ 는 새 구조, docs\/\w+\/ 는 예전 구조 \(남은 문서 17개\)\n$/)
-    expect(prdt(root, ['doctor']).out).toMatch(/^✗ docs 폴더 일부만 새 구조예요: docs\/_shared\/ 는 새 구조, docs\/\w+\/ 는 예전 구조 \(남은 문서 17개\)$/m)
+    expect(chk.out).toBe(`✗ ${PARTIAL_LINE(17)}\n\n${PARTIAL_NEXT}\n`)
+    expect(prdt(root, ['doctor']).out).toContain(`✗ ${PARTIAL_LINE(17)}\n`)
     const again = prdt(root, ['layout', 'migrate', '--apply'])
     expect(again.code).toBe(1)
-    expect(again.out).toContain('옮기지 않았어요: docs 폴더 일부만 새 구조예요')
-    expect(again.out).toContain('다음: PO 에게 알리세요.')
+    expect(again.out).toBe(`옮기지 않았어요: ${PARTIAL_LINE(17)}.\n\n${PARTIAL_NEXT}\n`)
   }, 180_000)
 })
 
@@ -453,7 +458,7 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
     pyRun(root, `
 m.rebuild_index = lambda *a, **k: os._exit(137)
 m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
-    const line = prdt(root, ['layout', 'check']).out.trim().replace(/^✗ /, '')
+    const line = prdt(root, ['layout', 'check']).out.split('\n')[0].replace(/^✗ /, '')
     const doc = prdt(root, ['doctor']).out
     expect(doc).toContain('✗ ' + line)
     expect(line).not.toContain('docs/proj/')
@@ -500,4 +505,270 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
     expect(snapshot(root)).toEqual(after)
     expect(git(root, ['rev-parse', 'HEAD'])).toBe(head)
   }, 240_000)
+})
+
+// ── T-1117: the approved copy for every string outside the screen set ─────────────────────
+const REFUSED = (why: string, next: string, tail = ' docs 폴더는 예전 구조 그대로예요.') =>
+  `옮기지 않았어요: ${why}.${tail}\n\n다음: ${next}\n`
+
+describe('T-1117 copy — check / none / refusals', () => {
+  test('A4 · A5: no old structure to find', () => {
+    const root = legacy()
+    fs.rmSync(path.join(root, 'docs/prd'), { recursive: true })
+    fs.rmSync(path.join(root, 'docs/tickets'), { recursive: true })
+    git(root, ['add', '-A', '-f', '--', 'docs'])
+    git(root, ['commit', '-qm', 'drop'])
+    const c = prdt(root, ['layout', 'check'])
+    expect(c.code).toBe(0)
+    expect(c.out).toBe('docs 폴더에서 예전 구조를 찾지 못했어요.\n\n다음: 옮길 문서가 있다면 PO 에게 알리세요.\n')
+    const m = prdt(root, ['layout', 'migrate'])
+    expect(m.code).toBe(0)
+    expect(m.out).toBe('docs 폴더에서 예전 구조를 찾지 못해서 아무것도 옮기지 않았어요.\n\n다음: 옮길 문서가 있다면 PO 에게 알리세요.\n')
+  }, 120_000)
+
+  test('R1: several products (the PO wording: 제품 여럿), also in the preview', () => {
+    const root = legacy()
+    const cfgPath = path.join(root, '.prdt/config.json')
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
+    cfg.lines = [{ name: 'mobile' }]
+    fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n')
+    const expected = REFUSED('이 프로젝트는 제품 여럿을 써서 아직 옮길 수 없어요', 'PO 에게 알리세요. 옮기기를 지원할 때까지 예전 구조로 써도 돼요.')
+    for (const args of [['layout', 'migrate'], ['layout', 'migrate', '--apply']]) {
+      const r = prdt(root, args)
+      expect(r.code).toBe(1)
+      expect(r.out).toBe(expected)
+    }
+    expect(expected).not.toContain('릴리스 줄')
+  }, 120_000)
+
+  test('R2: docs is a link', () => {
+    const root = legacy()
+    fs.renameSync(path.join(root, 'docs'), path.join(root, 'docs-real'))
+    fs.symlinkSync('docs-real', path.join(root, 'docs'))
+    const r = prdt(root, ['layout', 'migrate', '--apply'])
+    expect(r.code).toBe(1)
+    expect(r.out).toBe(REFUSED('docs 가 실제 폴더가 아니라 링크예요', 'docs 링크를 실제 폴더로 바꾼 뒤 다시 실행하세요.', ' docs 안의 문서는 예전 구조 그대로예요.'))
+  }, 120_000)
+
+  test('R3 · R4 · R5: meta git missing / unusable / unreadable', () => {
+    const root = legacy()
+    const gd = path.join(root, '.prdt', 'meta.git')
+    const read = pyRun(root, `
+real = m._lay_git
+def fake(root, args, stdin=None):
+    if args[:1] == ["status"]:
+        import subprocess
+        return subprocess.CompletedProcess(args, 128, "", "fatal: bad index file sha1 signature\\nmore")
+    return real(root, args, stdin)
+m._lay_git = fake
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+    expect(read.code).toBe(1)
+    expect(read.out).toBe(REFUSED('meta git 의 변경 목록을 읽을 수 없어요 (fatal: bad index file sha1 signature)', '괄호 안 git 오류를 고친 뒤 다시 실행하세요.'))
+    fs.renameSync(path.join(gd, 'config'), path.join(tmp, `cfg-${seq}`))
+    fs.symlinkSync(path.join(tmp, `cfg-${seq}`), path.join(gd, 'config'))
+    const unusable = prdt(root, ['layout', 'migrate', '--apply'])
+    expect(unusable.code).toBe(1)
+    expect(unusable.out).toBe(REFUSED('meta git 을 쓸 수 없어요 (.prdt/meta.git/config is a symbolic link)', 'prdt doctor 가 알려 주는 대로 meta git 을 고친 뒤 다시 실행하세요.'))
+    fs.rmSync(gd, { recursive: true, force: true })
+    const missing = prdt(root, ['layout', 'migrate', '--apply'])
+    expect(missing.code).toBe(1)
+    expect(missing.out).toBe(REFUSED('meta git 이 없어요', 'PO 에게 meta git 만들기를 요청한 뒤 다시 실행하세요.'))
+  }, 120_000)
+})
+
+describe('T-1117 copy — apply failures', () => {
+  const FAIL_NEXT = '\n다음: 괄호 안 원인을 고친 뒤 다시 실행하세요.\n'
+  const apply = (root: string, patch: string) => pyRun(root, `${patch}
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+
+  test('F3: an unreadable closed PRD names the file; nothing moved', () => {
+    const root = legacy()
+    const before = snapshot(root)
+    const r = apply(root, `
+real = m._lay_hash
+def fake(root, rels):
+    return real(root, [rels[0] + ".nope"])
+m._lay_hash = fake`)
+    expect(r.code).toBe(1)
+    expect(r.out).toContain('3/9 옮기기 실패: 닫힌 PRD docs/prd/versions/v0.0.md.nope 를 읽을 수 없어요 (No such file or directory)\n\ndocs 폴더는 예전 구조 그대로예요.\n' + FAIL_NEXT)
+    const after = snapshot(root)   // (the derived wiki/index.md is regenerated by any rollback)
+    delete after['wiki/index.md']; delete before['wiki/index.md']
+    expect(after).toEqual(before)
+  }, 120_000)
+
+  test('F4: a move fails (count, cause pointer); the moved part is put back', () => {
+    const root = legacy()
+    const before = snapshot(root)
+    const r = apply(root, `
+real = m._lay_rename
+calls = []
+def fake(src, dst):
+    calls.append(1)
+    if len(calls) == 2:
+        raise OSError(17, "File exists", str(dst))
+    real(src, dst)
+m._lay_rename = fake`)
+    expect(r.code).toBe(1)
+    expect(r.out).toContain('4/9 옮기기 실패: 문서 20개를 옮길 수 없어요 (File exists)\n')
+    expect(r.out).toContain('되돌렸어요: 옮긴 문서')
+    expect(r.out.endsWith(FAIL_NEXT)).toBe(true)
+    // (the derived wiki/index.md is regenerated by a step-4 rollback; every document is back)
+    const after = snapshot(root)
+    delete after['wiki/index.md']; delete before['wiki/index.md']
+    expect(after).toEqual(before)
+  }, 120_000)
+
+  test('F6 · F6a · F6b: derived files cannot be rebuilt', () => {
+    const root = legacy()
+    write(path.join(root, 'docs/artifacts/v0.1/manifest.json'), '{}\n')
+    git(root, ['add', '-A', '-f', '--', 'docs']); git(root, ['commit', '-qm', 'bucket manifest'])
+    const a = prdt(root, ['layout', 'migrate', '--apply'])
+    expect(a.code).toBe(1)
+    expect(a.out).toContain('6/9 옮기기 실패: 산출물 목록 · 인덱스 · 위키 index.md 를 다시 만들 수 없어요 (artifacts 폴더에 버킷별 manifest 가 남아 있어요)\n')
+    expect(a.out.endsWith('\n다음: prdt artifacts migrate 를 먼저 실행한 뒤 다시 실행하세요.\n')).toBe(true)
+    fs.rmSync(path.join(root, 'docs/artifacts/v0.1/manifest.json'))
+    write(path.join(root, 'docs/artifacts/manifest.json'), 'not json\n')
+    git(root, ['add', '-A', '-f', '--', 'docs']); git(root, ['commit', '-qm', 'bad manifest'])
+    const b = prdt(root, ['layout', 'migrate', '--apply'])
+    expect(b.code).toBe(1)
+    expect(b.out).toMatch(/6\/9 옮기기 실패: 산출물 목록 · 인덱스 · 위키 index\.md 를 다시 만들 수 없어요 \(artifacts manifest 를 읽을 수 없어요: .+\)\n/)
+    expect(b.out.endsWith(FAIL_NEXT)).toBe(true)
+    // the F6 generic cause pointer
+    const c = apply(legacy(), `
+def boom(*a, **k): raise OSError(28, "No space left on device")
+m.rebuild_index = boom`)
+    expect(c.out).toContain('(No space left on device)\n')
+    expect(c.out.endsWith(FAIL_NEXT)).toBe(true)
+  }, 240_000)
+
+  test('F7a · F7b: closed PRD unreadable / changed after the move', () => {
+    const readFail = apply(legacy(), `
+real = m._lay_hash
+calls = []
+def fake(root, rels):
+    calls.append(1)
+    return real(root, [rels[0] + ".nope"]) if len(calls) == 2 else real(root, rels)
+m._lay_hash = fake`)
+    expect(readFail.code).toBe(1)
+    expect(readFail.out).toContain('7/9 옮기기 실패: 닫힌 PRD docs/proj/prd/versions/v0.0.md.nope 를 읽을 수 없어요 (No such file or directory)\n')
+    expect(readFail.out).toContain('되돌렸어요')
+    expect(readFail.out.endsWith(FAIL_NEXT)).toBe(true)
+    const changed = apply(legacy(), `
+real = m._lay_hash
+calls = []
+def fake(root, rels):
+    calls.append(1)
+    out = real(root, rels)
+    return {k: "0" * 64 for k in out} if len(calls) == 2 else out
+m._lay_hash = fake`)
+    expect(changed.code).toBe(1)
+    expect(changed.out).toContain('7/9 옮기기 실패: 닫힌 PRD 1개의 shasum 이 옮기기 전과 달라요 (docs/prd/versions/v0.0.md)\n')
+    expect(changed.out).toContain('되돌렸어요')
+    expect(changed.out.endsWith('\n다음: PO 에게 알리세요. 닫힌 PRD 는 그대로 돌려놨고, 도구를 고친 뒤 다시 옮길 수 있어요.\n')).toBe(true)
+  }, 240_000)
+
+  test('H1 · H2 · H3 help text is Korean and carries no ticket number', () => {
+    const flat = (s: string) => s.replace(/\s+/g, ' ')
+    const h = flat(prdt(tmp, ['layout', '--help']).out)
+    expect(h).toContain('migrate: 목록을 확인한 뒤 실제로 옮겨요 (이 옵션이 없으면 아무것도 쓰지 않아요)')
+    expect(h).toContain('check: machine mode')
+    const all = flat(prdt(tmp, ['--help']).out)
+    expect(all).toContain('docs 폴더 구조: migrate: 예전 구조에서 새 구조로 옮길 목록을 보여요 (아무것도 쓰지 않아요)')
+    expect(all).not.toContain('docs layout (T-1103)')
+  }, 60_000)
+})
+
+describe('T-1103 round 4 — SIGKILL after the first rename, --undo copy, hot-path cost', () => {
+  const killAfterFirstRename = (root: string) => pyRun(root, `
+real = m._lay_rename
+def fake(src, dst):
+    real(src, dst)
+    os._exit(137)
+m._lay_rename = fake
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+
+  test('killed right after the first rename: partial in check, doctor and migrate; --undo restores it', () => {
+    const root = legacy()
+    const before = snapshot(root)
+    const head = git(root, ['rev-parse', 'HEAD'])
+    const cfg = fs.readFileSync(path.join(root, '.prdt/config.json'))
+    expect(killAfterFirstRename(root).code).toBe(137)
+    // the shape: docs/<product>/ exists, docs/_shared not yet, the old path deleted but uncommitted
+    expect(fs.existsSync(path.join(root, 'docs/proj/DEPLOY.md'))).toBe(true)
+    expect(fs.existsSync(path.join(root, 'docs/_shared'))).toBe(false)
+    expect(fs.existsSync(path.join(root, 'docs/DEPLOY.md'))).toBe(false)
+    expect(git(root, ['status', '--short', '--', 'docs'])).toContain('DEPLOY.md')
+    const line = PARTIAL_LINE(19)
+    const chk = prdt(root, ['layout', 'check'])
+    expect(chk.code).toBe(2)
+    expect(chk.out).toBe(`✗ ${line}\n\n${PARTIAL_NEXT}\n`)
+    expect(prdt(root, ['doctor']).out).toContain(`✗ ${line}\n`)
+    const again = prdt(root, ['layout', 'migrate', '--apply'])
+    expect(again.code).toBe(1)
+    expect(again.out).toBe(`옮기지 않았어요: ${line}.\n\n${PARTIAL_NEXT}\n`)
+    const undo = prdt(root, ['layout', 'migrate', '--undo'])
+    expect(undo.code).toBe(0)
+    expect(undo.out).toBe('되돌렸어요: 옮기다 만 문서 1개를 원래 자리로 돌렸어요. docs 폴더는 예전 구조 그대로예요.\n\n다음: 다시 옮기려면 prdt layout migrate --apply 를 실행하세요.\n')
+    expect(snapshot(root)).toEqual(before)
+    expect(git(root, ['rev-parse', 'HEAD'])).toBe(head)
+    expect(fs.readFileSync(path.join(root, '.prdt/config.json')).equals(cfg)).toBe(true)
+    expect(git(root, ['status', '--short', '--', 'docs', '.prdt/config.json'])).toBe('')
+    expect(prdt(root, ['layout', 'check']).code).toBe(1)
+    expect(prdt(root, ['layout', 'migrate', '--apply']).code).toBe(0)
+  }, 300_000)
+
+  test('a docs/<product>/ folder with no deleted old path stays "old" (the name-clash refusal still applies)', () => {
+    const root = legacy()
+    write(path.join(root, 'docs/proj/note.md'), 'x\n')
+    expect(prdt(root, ['layout', 'check']).code).toBe(1)
+  }, 120_000)
+
+  test('a PARTIAL left by a rollback that failed is recoverable with --undo', () => {
+    const root = legacy()
+    const before = snapshot(root)
+    const head = git(root, ['rev-parse', 'HEAD'])
+    const r = pyRun(root, `
+real = m._lay_rename
+def fake(src, dst):
+    if str(src).endswith("docs/proj/tickets"):
+        raise PermissionError(13, "Permission denied", str(src))
+    real(src, dst)
+m._lay_rename = fake
+def boom(*a, **k): raise ValueError("forged")
+m.build_artifact_manifest = boom
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+    expect(r.code).toBe(2)
+    expect(r.out).toContain(PARTIAL_NEXT)
+    expect(prdt(root, ['layout', 'check']).code).toBe(2)
+    const undo = prdt(root, ['layout', 'migrate', '--undo'])
+    expect(undo.code).toBe(0)
+    expect(snapshot(root)).toEqual(before)
+    expect(git(root, ['rev-parse', 'HEAD'])).toBe(head)
+    expect(prdt(root, ['layout', 'check']).code).toBe(1)
+  }, 300_000)
+
+  test('--undo refusals: same voice, a 다음: action each', () => {
+    const root = legacy()
+    expect(prdt(root, ['layout', 'migrate', '--undo']).out).toBe(
+      '되돌리지 않았어요: docs 폴더가 예전 구조라 되돌릴 것이 없어요.\n\n다음: 옮기려면 prdt layout migrate 로 옮길 목록을 확인하세요.\n')
+    fs.mkdirSync(path.join(root, 'docs/_shared'))   // half-moved by shape, nothing deleted: no trace to undo
+    expect(prdt(root, ['layout', 'migrate', '--undo']).out).toBe(
+      '되돌리지 않았어요: 옮기다 멈춘 문서를 찾지 못했어요. docs 폴더는 그대로예요.\n\n다음: prdt layout check 로 상태를 확인하고, 일부만 새 구조라고 나오면 PO 에게 알리세요.\n')
+    const done = legacy()
+    expect(prdt(done, ['layout', 'migrate', '--apply']).code).toBe(0)
+    expect(prdt(done, ['layout', 'migrate', '--undo']).out).toBe(
+      '되돌리지 않았어요: docs 폴더가 이미 새 구조로 끝나서 되돌릴 수 없어요.\n\n다음: 예전 구조로 돌아가려면 PO 에게 알리세요.\n')
+  }, 240_000)
+
+  test('a plain command in a new-layout project never asks meta git about layout (hot path stays git-free)', () => {
+    const root = legacy()
+    expect(prdt(root, ['layout', 'migrate', '--apply']).code).toBe(0)
+    const r = pyRun(root, `
+def boom(*a, **k): raise AssertionError("layout probed meta git on the hot path")
+m._lay_git = boom
+sys.argv = ["prdt", "tickets"]
+m.main()`)
+    expect(r.err).not.toContain('layout probed meta git')
+    expect(r.code).toBe(0)
+  }, 180_000)
 })
