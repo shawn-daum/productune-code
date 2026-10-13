@@ -17693,6 +17693,259 @@ def _env_ls():
         print(f"같은 이름 {len(same)}개는 제품 코드 값을 써요. 기기 범위 값을 쓰려면 제품 코드 파일에서 그 키를 지우세요.")
 
 
+_ENV_MASK = "[가림]".encode("utf-8")
+
+
+class _EnvMasker:
+    """Stream filter: every occurrence of a stored machine value becomes
+    `[가림]` (T-1119 B). A tail that could still grow into a value is held
+    until more bytes arrive or the stream ends — a value split across two
+    writes is masked whole, never shown in halves. Leftmost match wins, the
+    longest value at that spot first; a short value that is also the start
+    of a longer one is held until the longer one is ruled out."""
+
+    def __init__(self, values):
+        vals = set()
+        for v in values:
+            b = v.encode("utf-8", "surrogateescape")
+            if b:
+                vals.add(b)
+                if b"\n" in b:  # a terminal (ONLCR) prints `\n` as `\r\n`
+                    vals.add(b.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+        self.vals = sorted(vals, key=len, reverse=True)
+        self.rx = re.compile(b"|".join(re.escape(v) for v in self.vals)) if self.vals else None
+        self.held = b""
+
+    def _hold_from(self, buf, pos):
+        n = len(buf)
+        best = n
+        for v in self.vals:
+            lo = max(pos, n - len(v) + 1)
+            first = v[:1]
+            p = buf.find(first, lo, best)
+            while p != -1:
+                if v.startswith(buf[p:]):
+                    best = p
+                    break
+                p = buf.find(first, p + 1, best)
+        return best
+
+    def feed(self, data, final=False):
+        buf = self.held + data
+        self.held = b""
+        if self.rx is None:
+            return buf
+        out = []
+        pos = 0
+        while True:
+            m = self.rx.search(buf, pos)
+            h = len(buf) if final else self._hold_from(buf, pos)
+            if m and m.start() < h:
+                out.append(buf[pos:m.start()])
+                out.append(_ENV_MASK)
+                pos = m.end()
+                continue
+            out.append(buf[pos:h])
+            self.held = buf[h:]
+            return b"".join(out)
+
+
+_ENV_FWD_SIGNALS = ("SIGINT", "SIGQUIT", "SIGTERM", "SIGHUP", "SIGUSR1", "SIGUSR2")
+
+
+def _env_write_all(fd, data):
+    import select
+    while data:
+        try:
+            n = os.write(fd, data)
+        except BlockingIOError:
+            select.select([], [fd], [])
+            continue
+        data = data[n:]
+
+
+def _env_run_masked(argv, child_env, secrets, intro):
+    """`env run` with every stored value masked in the child's output
+    (T-1119 B). Each of the child's stdout/stderr is a pty when ours is a
+    terminal (one pty for both, the child's controlling terminal, our stdin
+    relayed to it in raw mode when stdin is a terminal too), otherwise a
+    pipe; stdin that is not a terminal is inherited as is. Exit status and a
+    death by signal are passed on as ours; INT/QUIT/TERM/HUP/USR1/USR2 sent to
+    us reach the child, and a window resize reaches its pty."""
+    import select, signal, termios, tty
+    in_tty, out_tty, err_tty = (os.isatty(fd) for fd in (0, 1, 2))
+    use_pty = out_tty or err_tty
+    relay_in = use_pty and in_tty
+    ref_fd = 1 if out_tty else 2
+    master = slave = None
+    to_close = []
+    streams = {}  # read fd -> (write fd, masker)
+    if use_pty:
+        master, slave = os.openpty()
+        try:
+            termios.tcsetattr(slave, termios.TCSANOW, termios.tcgetattr(0 if in_tty else ref_fd))
+        except (termios.error, OSError):
+            pass
+        try:
+            fcntl.ioctl(master, termios.TIOCSWINSZ, fcntl.ioctl(ref_fd, termios.TIOCGWINSZ, b"\0" * 8))
+        except OSError:
+            pass
+        to_close.append(slave)
+        # one pty carries both terminal streams; it is echoed to our stdout when that is the terminal
+        streams[master] = (1 if out_tty else 2, _EnvMasker(secrets))
+    fds = []
+    for i, is_tty in ((1, out_tty), (2, err_tty)):
+        if is_tty:
+            fds.append(slave)
+        else:
+            r, w = os.pipe()
+            to_close.append(w)
+            streams[r] = (i, _EnvMasker(secrets))
+            fds.append(w)
+    stdin_fd = slave if relay_in else None
+    ctty = 0 if relay_in else (1 if out_tty else 2)
+
+    # signals, set before the spawn so none lands on prdt alone: a pty child is in its own
+    # session, so every forwarded signal goes to its group; a pipe child shares our group —
+    # a terminal Ctrl-C / Ctrl-\ already reached it, so INT/QUIT are forwarded only when we
+    # are not a terminal's foreground group
+    tty_fd = None
+    if not use_pty:
+        try:
+            tty_fd = os.open("/dev/tty", os.O_RDONLY | os.O_NOCTTY)
+        except OSError:
+            tty_fd = None
+
+    child = []  # the Popen once spawned; a signal that lands before that is held, then sent
+    early = []
+
+    def _forward(signum, _frame):
+        if not child:
+            early.append(signum)
+            return
+        if not use_pty and signum in (signal.SIGINT, signal.SIGQUIT) and tty_fd is not None:
+            try:
+                if os.tcgetpgrp(tty_fd) == os.getpgrp():
+                    return
+            except OSError:
+                pass
+        try:
+            if use_pty:
+                os.killpg(child[0].pid, signum)
+            else:
+                os.kill(child[0].pid, signum)
+        except OSError:
+            pass
+
+    old_handlers = {}
+    for name in _ENV_FWD_SIGNALS:
+        s = getattr(signal, name)
+        old_handlers[s] = signal.signal(s, _forward)
+    if use_pty:
+        def _winch(_signum, _frame):
+            try:
+                fcntl.ioctl(master, termios.TIOCSWINSZ, fcntl.ioctl(ref_fd, termios.TIOCGWINSZ, b"\0" * 8))
+            except OSError:
+                pass
+        old_handlers[signal.SIGWINCH] = signal.signal(signal.SIGWINCH, _winch)
+
+    def _restore_signals():
+        for s, h in old_handlers.items():
+            signal.signal(s, h)
+        if tty_fd is not None:
+            os.close(tty_fd)
+
+    _env_write_all(1, _EnvMasker(secrets).feed(intro.encode("utf-8", "surrogateescape"), final=True))
+
+    def _child_setup():
+        if use_pty:
+            try:
+                fcntl.ioctl(ctty, termios.TIOCSCTTY, 0)
+            except OSError:
+                pass
+
+    try:
+        proc = subprocess.Popen(argv, env=child_env, stdin=stdin_fd, stdout=fds[0], stderr=fds[1],
+                                close_fds=False, start_new_session=use_pty,
+                                preexec_fn=_child_setup if use_pty else None)
+    except OSError:
+        _restore_signals()
+        for fd in to_close + list(streams):
+            os.close(fd)
+        _env_fail(f"실행 실패: {shlex.quote(argv[0])} 를 실행할 수 없어요. 키를 넣은 프로세스가 없어요.", 127)
+    for fd in to_close:
+        os.close(fd)
+    child.append(proc)
+    for signum in early:
+        _forward(signum, None)
+
+    saved_tc = None
+    if relay_in:
+        try:
+            saved_tc = termios.tcgetattr(0)
+            tty.setraw(0, termios.TCSANOW)
+        except termios.error:
+            saved_tc = None
+    if master is not None:
+        fl = fcntl.fcntl(master, fcntl.F_GETFL)
+        fcntl.fcntl(master, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+    pending_in = b""
+    stdin_open = relay_in
+    # read until every output stream ends — a grandchild still holding one keeps it masked
+    # (as `cmd | cat` waits for it); the exit status is the child's own
+    try:
+        while streams:
+            rlist = list(streams)
+            if stdin_open and not pending_in:
+                rlist.append(0)
+            wlist = [master] if pending_in and master in streams else []
+            try:
+                r, w, _ = select.select(rlist, wlist, [])
+            except InterruptedError:
+                continue
+            if 0 in r:
+                d = os.read(0, 65536)
+                if d:
+                    pending_in += d
+                else:
+                    stdin_open = False
+            if w:
+                try:
+                    n = os.write(master, pending_in)
+                    pending_in = pending_in[n:]
+                except BlockingIOError:
+                    pass
+                except OSError:
+                    pending_in = b""
+                    stdin_open = False
+            for fd in [f for f in r if f in streams]:
+                out_fd, masker = streams[fd]
+                try:
+                    d = os.read(fd, 65536)
+                except BlockingIOError:
+                    continue
+                except OSError:  # EIO: the pty's last slave closed
+                    d = b""
+                try:
+                    _env_write_all(out_fd, masker.feed(d, final=not d))
+                except BrokenPipeError:
+                    d = b""  # nobody reads our side: close the child's, as a pipe would
+                if not d:
+                    del streams[fd]
+                    os.close(fd)
+        status = proc.wait()
+    finally:
+        if saved_tc is not None:
+            termios.tcsetattr(0, termios.TCSADRAIN, saved_tc)
+        _restore_signals()
+    if status < 0:
+        signal.signal(-status, signal.SIG_DFL)
+        os.kill(os.getpid(), -status)
+        sys.exit(128 - status)
+    sys.exit(status)
+
+
 def _env_run(args_rest):
     argv = list(args_rest)
     if argv and argv[0] == "--":
@@ -17704,9 +17957,15 @@ def _env_run(args_rest):
     skipped = [k for k, v in values.items() if v and pkeys.get(k)]
     inject = {k: v for k, v in values.items() if v and not pkeys.get(k)}
     note = f" 같은 이름 {len(skipped)}개는 제품 코드 값을 써요." if skipped else ""
-    print(f"기기 범위 키 {len(inject)}개를 넣어 {' '.join(shlex.quote(a) for a in argv)} 를 실행해요.{note}", flush=True)
+    intro = f"기기 범위 키 {len(inject)}개를 넣어 {' '.join(shlex.quote(a) for a in argv)} 를 실행해요.{note}\n"
     child_env = dict(os.environ)
     child_env.update(inject)
+    # every stored value is masked, the skipped ones too: a machine value is never shown
+    secrets = [v for v in values.values() if v]
+    if secrets:
+        sys.stdout.flush()
+        return _env_run_masked(argv, child_env, secrets, intro)
+    print(intro, end="", flush=True)
     try:
         os.execvpe(argv[0], argv, child_env)
     except OSError:
