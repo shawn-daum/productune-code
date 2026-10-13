@@ -1,7 +1,7 @@
 /**
  * prdt-release-lines.test.ts — T-960 (T-946 = B · T-951 = A): one project,
  * several release lines. The home line keeps today's ids and paths; an added
- * line (`.prdt/config.json` `lines`) prefixes `<line>/` to its version id.
+ * line (`.prdt/config.json` `products`, T-1108) prefixes `<line>/` to its version id.
  *
  * Two fixtures: a multi-line project (home `shop` + added `android`, plus the
  * illegal names `v2` / `backlog`) and a single-line one, which must show none
@@ -45,8 +45,8 @@ function makeProject(multi: boolean): string {
     current_task: { ticket_id: multi ? 'T-002' : 'T-001', slug: 's', assignee: 'developer' },
   }
   if (multi) {
-    cfg.lines = [{ name: 'android', code: { dir: '../android' } }, { name: 'v2' }, { name: 'backlog' }]
-    st.lines = { android: { stage: 'build', version: 'v2.1' } }
+    cfg.products = [{ name: 'android', code: { dir: '../android' } }, { name: 'v2' }, { name: 'backlog' }]
+    st.products = { android: { stage: 'build', version: 'v2.1' } }
   }
   put(root, '.prdt/config.json', JSON.stringify(cfg, null, 2) + '\n')
   put(root, '.prdt/po-state.json', JSON.stringify(st, null, 2) + '\n')
@@ -112,8 +112,8 @@ describe('multi-line project', () => {
 
   test('line_config_warnings names the illegal line names v2 and backlog', () => {
     expect(p.cfg).toHaveLength(2)
-    expect(p.cfg[0]).toContain('`v2` is not a legal line name')
-    expect(p.cfg[1]).toContain('`backlog` is not a legal line name')
+    expect(p.cfg[0]).toContain('`v2` is not a legal product name')
+    expect(p.cfg[1]).toContain('`backlog` is not a legal product name')
   })
 
   test('prd_line_layout_warnings: a closed added-line section in PRD.md and a ticket dir with no closed file', () => {
@@ -124,7 +124,7 @@ describe('multi-line project', () => {
     expect(p.layout).toHaveLength(2)
   })
 
-  test('po-state `lines` is an accepted additive key; a bad line stage is named', () => {
+  test('po-state `products` is an accepted additive key; a bad product stage is named', () => {
     expect(p.state).toEqual([])
     const r = spawnSync('python3', ['-c', `
 import importlib.util, importlib.machinery, sys, json
@@ -132,11 +132,11 @@ loader = importlib.machinery.SourceFileLoader("prdt_mod", sys.argv[1])
 spec = importlib.util.spec_from_loader("prdt_mod", loader)
 m = importlib.util.module_from_spec(spec); loader.exec_module(m)
 print(json.dumps(m.po_state_warnings({"schema_version":1,"stage":"build","version":"v1.0","current_task":None,
-  "lines":{"android":{"stage":"nope","version":"v2.1","x":1}}})))
+  "products":{"android":{"stage":"nope","version":"v2.1","x":1}}})))
 `, PRDT_CLI], { encoding: 'utf8', timeout: 60_000 })
     const w = JSON.parse(r.stdout)
-    expect(w.some((x: string) => x.includes("lines.android.stage 'nope'"))).toBe(true)
-    expect(w.some((x: string) => x.includes('lines.android has unexpected keys'))).toBe(true)
+    expect(w.some((x: string) => x.includes("products.android.stage 'nope'"))).toBe(true)
+    expect(w.some((x: string) => x.includes('products.android has unexpected keys'))).toBe(true)
   })
 
   test('artifact buckets: home `<version>`, added line `<line>/<version>`', () => {
@@ -153,10 +153,10 @@ print(json.dumps(m.po_state_warnings({"schema_version":1,"stage":"build","versio
     ])
     const home_ = JSON.parse(cli(root, home, ['schedule', '--json']).out)
     expect(home_.version).toBe('v1.0')
-    expect(home_.line).toBe('shop')
-    const and = JSON.parse(cli(root, home, ['schedule', '--line', 'android', '--json']).out)
+    expect(home_.product).toBe('shop')
+    const and = JSON.parse(cli(root, home, ['schedule', '--product', 'android', '--json']).out)
     expect(and.version).toBe('android/v2.1')
-    expect(and.line).toBe('android')
+    expect(and.product).toBe('android')
     expect(and.rows.map((r: any) => [r.id, r.prd_order])).toEqual([['T-002', 0]])
     expect(cli(root, home, ['schedule', '--line', 'ios']).code).not.toBe(0)
   }, T)
@@ -171,9 +171,9 @@ print(json.dumps(m.po_state_warnings({"schema_version":1,"stage":"build","versio
     const r = cli(root, home, ['resource', 'up', 'emu', '--dispatch', 'd-1'])
     expect(r.code).toBe(0)
     const marker = JSON.parse(fs.readFileSync(path.join(home, 'run/resources/emu/d-1.json'), 'utf8'))
-    expect(marker.line).toBe('android')
+    expect(marker.product).toBe('android')
     expect(marker.project).toBe('shop')
-    expect(cli(root, home, ['resource', 'ls']).out).toContain('project=android')
+    expect(cli(root, home, ['resource', 'ls']).out).toContain('project=shop product=android')
   }, T)
 })
 
@@ -230,10 +230,10 @@ print(json.dumps(m.po_state_warnings(json.loads(sys.argv[3]), Path(sys.argv[2]))
   }, T)
 
   test('multi-line: the text names line?; an undeclared po-state line is reported', () => {
-    const w = run(makeProject(true), { ...base, lines: { android: { stage: 'build', version: 'v2.1' }, ios: { stage: 'idle', version: 'v1' } } })
-    expect(w).toContain('state: current_task must be null or {ticket_id, slug, assignee, line?}')
-    expect(w).toContain('state: lines.ios is not a line declared in .prdt/config.json `lines`')
-    expect(w.some((x) => x.includes('lines.android is not'))).toBe(false)
+    const w = run(makeProject(true), { ...base, products: { android: { stage: 'build', version: 'v2.1' }, ios: { stage: 'idle', version: 'v1' } } })
+    expect(w).toContain('state: current_task must be null or {ticket_id, slug, assignee, product?}')
+    expect(w).toContain('state: products.ios is not a product declared in .prdt/config.json `products`')
+    expect(w.some((x) => x.includes('products.android is not'))).toBe(false)
   }, T)
 })
 

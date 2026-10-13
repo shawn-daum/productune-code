@@ -23,7 +23,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { marked, Renderer, Tokenizer } from 'marked'
-import {
+import { IDLE,
   STORE_LABEL,
   COMMON,
   PAGE,
@@ -1130,8 +1130,17 @@ export function lineViews(data) {
   ]
 }
 
+/** T-1108: an idle added product (no open version) — its last closed version, '' when none closed yet. */
+function lastClosedId(v) {
+  return [...v.prd.closed].map((c) => c.name.replace(/\.md$/, '')).sort(compareVersionIdsDesc)[0] || ''
+}
+
+function isIdleView(v) {
+  return !v.currentVersion && Boolean(v.name)
+}
+
 function lineHead(v) {
-  return `${v.name} ${v.currentVersion}`.trim()
+  return `${v.name} ${isIdleView(v) ? lastClosedId(v) : v.currentVersion}`.trim()
 }
 
 /** `data` with tickets · PRD · version · stage scoped to one line. */
@@ -1936,12 +1945,22 @@ function closedRoundBaseDir(rel) {
   return i === -1 ? path.dirname(rel) : rel.slice(0, i)
 }
 
-function prdGroups(prd, currentVersion, repoRootHref, tickets, line = null) {
+/** T-1108: the approved idle-product body — a head line and one detail line, no open version / PRD section to show. */
+function idleNotice(head, detail) {
+  // Inline style, not TEMPLATE_CSS: a single-product page stays byte-identical (the feature store's `.fd-empty` rule is scoped to it).
+  return `<div class="fd-empty" style="margin:0 0 var(--space-16);font-size:12.5px;line-height:1.65;color:var(--text-secondary);background:var(--bg-surface-on);padding:var(--space-8) var(--space-12);border-radius:var(--radius-4)"><b>${escapeHtml(head)}</b> <span>${escapeHtml(detail)}</span></div>`
+}
+
+function prdGroups(prd, currentVersion, repoRootHref, tickets, line = null, name = '') {
   const closedRounds = [...prd.closed].sort((a, b) =>
     compareVersionIdsDesc(a.name.replace(/\.md$/, ''), b.name.replace(/\.md$/, '')),
   )
+  const idle = !currentVersion && Boolean(name)
+  const openGroup = idle
+    ? { key: 'open', label: IDLE.prdSideLabel, bodyHtml: idleNotice(IDLE.prdHead(name), IDLE.prdDetail(closedRounds[0]?.name.replace(/\.md$/, ''))) }
+    : { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix: line ? `prd-${line}` : 'prd', line }) }
   const groups = [
-    { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix: line ? `prd-${line}` : 'prd', line }) },
+    openGroup,
     ...closedRounds.map((c) => {
       const id = c.name.replace(/\.md$/, '')
       return { key: id, label: id, bodyHtml: `<div class="v-body">${md(c.body, closedRoundBaseDir(c.rel), repoRootHref, { discipline: true })}</div>` }
@@ -1952,7 +1971,7 @@ function prdGroups(prd, currentVersion, repoRootHref, tickets, line = null) {
 
 function prdSection(prd, currentVersion, repoRootHref, tickets, views = []) {
   if (views.length > 0) {
-    const groups = lineSectioned(views, (v) => ({ groups: prdGroups(v.prd, v.currentVersion, repoRootHref, v.tickets, v.line) }))
+    const groups = lineSectioned(views, (v) => ({ groups: prdGroups(v.prd, v.currentVersion, repoRootHref, v.tickets, v.line, v.name) }))
     return storeSection('prd', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups }) })
   }
   return storeSection('prd', { innerHtml: prdStoreInner(prd, currentVersion, repoRootHref, tickets) })
@@ -2565,11 +2584,15 @@ function homeLineGroups(data, v, views, repoRootHref) {
   const cur = `${v.prefix}${v.currentVersion}`
   const currentArtifacts = lineArtifactEntries(data.artifacts, v, views).filter((e) => e.fields.bucket === cur)
   const currentDecisions = lineDecisionPages(data.wiki, v)
+  const idle = isIdleView(v)
+  const idleHomeHtml = idle ? idleNotice(IDLE.homeHead(v.name), IDLE.homeDetail(v.tickets.included.filter((t) => t.bucket === 'backlog').length)) : ''
+  // T-1108: an idle product has no open version, so its ticket pane lists every ticket it has (backlog + closed rounds).
+  const homeTickets = idle ? [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))] : currentTickets
   const groups = [
-    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(ld, homeEnvBlock(envOfView(data, v), v.prefix, ENV.homeNoneLine))}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: idle ? idleHomeHtml : `<div class="dash-grid">${homeProgressBody(ld, homeEnvBlock(envOfView(data, v), v.prefix, ENV.homeNoneLine))}</div>` },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
-    { key: 'prd', label: STORE_LABEL.prd, count: v.currentVersion, bodyHtml: prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
-    { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
+    { key: 'prd', label: STORE_LABEL.prd, count: idle ? lastClosedId(v) : v.currentVersion, bodyHtml: idle ? idleNotice(IDLE.prdHead(v.name), IDLE.prdDetail()) : prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
+    { key: 'ticket', label: STORE_LABEL.ticket, count: homeTickets.length, bodyHtml: ticketRowsTable(homeTickets) },
     { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
     envGroup(envOfView(data, v), ENV.emptyHead, v.line ? null : data.machineEnv),
   ]
