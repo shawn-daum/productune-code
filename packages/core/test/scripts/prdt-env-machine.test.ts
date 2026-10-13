@@ -413,6 +413,37 @@ describe('T-1119: env run masks every stored value in the child output', () => {
     leaks(r.out)
   })
 
+  test('an inherited extra fd (shell 3>&1 / os.write(3)) is not a way around the mask', () => {
+    // fd 3 is a pipe we own: whatever the child writes there must not be the raw value
+    for (const cmd of [['sh', '-c', 'printf "%s\\n" "$SENTRY_DSN" >&3'], ['python3', '-c', 'import os; os.write(3, os.environ["SENTRY_DSN"].encode())']]) {
+      const r = spawnSync('python3', [PRDT_CLI, 'env', 'run', '--', ...cmd], {
+        cwd: sandbox, env: env(), encoding: 'utf8', timeout: subprocessTimeout('cli'), stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+      })
+      const fd3 = String((r.output as unknown[])[3] ?? '')
+      expect(fd3).not.toContain(S.slice(0, 4))
+      expect(fd3).not.toContain(S.slice(-4))
+      expect(`${r.stdout}${r.stderr}`).not.toContain(S.slice(0, 4))
+    }
+  })
+
+  test('overlapping values are masked as a union: no 4+ char run of either outside [가림]', () => {
+    seedStore(`A='XyOverAB12'\nB='AB12cdTailW'\n`)
+    const r = run(['env', 'run', '--', 'python3', '-c', 'print("XyOverAB12cdTailW")'])
+    expect(r.code).toBe(0)
+    const body = r.stdout.split('\n').filter(l => !l.includes('를 실행해요'))[0]
+    expect(body).toBe('[가림]')
+    for (const v of ['XyOverAB12', 'AB12cdTailW']) {
+      for (let i = 0; i + 4 <= v.length; i++) expect(r.out).not.toContain(v.slice(i, i + 4))
+    }
+  })
+
+  test('overlapping values split across writes are still masked as a union', () => {
+    seedStore(`A='XyOverAB12'\nB='AB12cdTailW'\n`)
+    const code = 'import os,sys,time\nfor part in ["XyOverA","B12cd","TailW\\n"]:\n    os.write(1, part.encode()); time.sleep(0.15)'
+    const r = run(['env', 'run', '--', 'python3', '-c', code])
+    expect(r.stdout.trim().split('\n').pop()).toBe('[가림]')
+  })
+
   test('the intro line masks a value given in argv', () => {
     const r = run(['env', 'run', '--', 'echo', V_TEAM])
     expect(r.out).toContain('echo [가림] 를 실행해요.')

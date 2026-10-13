@@ -17700,9 +17700,10 @@ class _EnvMasker:
     """Stream filter: every occurrence of a stored machine value becomes
     `[가림]` (T-1119 B). A tail that could still grow into a value is held
     until more bytes arrive or the stream ends — a value split across two
-    writes is masked whole, never shown in halves. Leftmost match wins, the
-    longest value at that spot first; a short value that is also the start
-    of a longer one is held until the longer one is ruled out."""
+    writes is masked whole, never shown in halves. Overlapping or touching
+    matches of different values are masked as one union span; a short value
+    that is also the start of a longer one is held until the longer one is
+    ruled out."""
 
     def __init__(self, values):
         vals = set()
@@ -17713,7 +17714,6 @@ class _EnvMasker:
                 if b"\n" in b:  # a terminal (ONLCR) prints `\n` as `\r\n`
                     vals.add(b.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
         self.vals = sorted(vals, key=len, reverse=True)
-        self.rx = re.compile(b"|".join(re.escape(v) for v in self.vals)) if self.vals else None
         self.held = b""
 
     def _hold_from(self, buf, pos):
@@ -17730,24 +17730,46 @@ class _EnvMasker:
                 p = buf.find(first, p + 1, best)
         return best
 
+    def _spans(self, buf):
+        """Merged [start, end) spans of every occurrence of every value, overlapping
+        or touching ones united — no value is left half-shown at an overlap."""
+        raw = []
+        for v in self.vals:
+            p = buf.find(v)
+            while p != -1:
+                raw.append((p, p + len(v)))
+                p = buf.find(v, p + 1)
+        raw.sort()
+        merged = []
+        for s, e in raw:
+            if merged and s <= merged[-1][1]:
+                if e > merged[-1][1]:
+                    merged[-1] = (merged[-1][0], e)
+            else:
+                merged.append((s, e))
+        return merged
+
     def feed(self, data, final=False):
         buf = self.held + data
         self.held = b""
-        if self.rx is None:
+        if not self.vals:
             return buf
+        spans = self._spans(buf)
+        h = len(buf) if final else self._hold_from(buf, 0)
+        for s, e in spans:  # a hold point inside a span moves to its start: the span is judged whole next time
+            if s < h < e:
+                h = s
         out = []
         pos = 0
-        while True:
-            m = self.rx.search(buf, pos)
-            h = len(buf) if final else self._hold_from(buf, pos)
-            if m and m.start() < h:
-                out.append(buf[pos:m.start()])
-                out.append(_ENV_MASK)
-                pos = m.end()
-                continue
-            out.append(buf[pos:h])
-            self.held = buf[h:]
-            return b"".join(out)
+        for s, e in spans:
+            if s >= h:
+                break
+            out.append(buf[pos:s])
+            out.append(_ENV_MASK)
+            pos = e
+        out.append(buf[pos:h])
+        self.held = buf[h:]
+        return b"".join(out)
 
 
 _ENV_FWD_SIGNALS = ("SIGINT", "SIGQUIT", "SIGTERM", "SIGHUP", "SIGUSR1", "SIGUSR2")
@@ -17866,7 +17888,7 @@ def _env_run_masked(argv, child_env, secrets, intro):
 
     try:
         proc = subprocess.Popen(argv, env=child_env, stdin=stdin_fd, stdout=fds[0], stderr=fds[1],
-                                close_fds=False, start_new_session=use_pty,
+                                close_fds=True, start_new_session=use_pty,
                                 preexec_fn=_child_setup if use_pty else None)
     except OSError:
         _restore_signals()
