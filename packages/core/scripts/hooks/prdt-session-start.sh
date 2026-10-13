@@ -771,6 +771,9 @@ if [ "$PERSONA" = "po" ] && [ "$PART" = "1" ] && [ "$EVENT_NAME" = "SessionStart
         if [ -e "$LP_ROOT/docs/$LP_N" ] || [ -L "$LP_ROOT/docs/$LP_N" ]; then LP_ASK=1; break; fi
       done
     fi
+    # a killed `--apply` leaves its in-progress marker (T-1105): even a tree that looks
+    # fully moved is half-done — one more stat, still no process
+    if [ -e "$LP_ROOT/.prdt/layout-apply.inprogress" ] || [ -L "$LP_ROOT/.prdt/layout-apply.inprogress" ]; then LP_ASK=1; fi
   fi
   LP_CLI="${PRDT_BIN:-$PRDT_HOME/bin/prdt}"
   if [ -n "$LP_ASK" ] && [ -x "$LP_CLI" ]; then

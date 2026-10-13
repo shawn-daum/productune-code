@@ -235,3 +235,104 @@ describe.skipIf(!READY || !hasBin('git', ['--version']))('killed --apply and in-
     expect(runHook(old)).toContain('pre-product docs layout')
   })
 })
+
+// ── T-1105 round 3: the in-progress marker — a killed --apply of ANY shape reads as half-moved ──
+describe.skipIf(!READY || !hasBin('git', ['--version']))('killed --apply: the in-progress marker (T-1105 QA round 3)', () => {
+  const HALF = "[prdt layout: this project's docs layout is half-moved]"
+  const MARKER_REL = path.join('.prdt', 'layout-apply.inprogress')
+  const marker = (root: string, count: number) =>
+    fs.writeFileSync(path.join(root, MARKER_REL), JSON.stringify({ head: 'abc', count, pid: 1 }) + '\n')
+  const poison = (root: string) => fs.mkdirSync(path.join(root, '.prdt', 'meta.git'), { recursive: true })  // any git call errors
+
+  test('all moved, uncommitted (docs/_shared + docs/<prod>, nothing old left): the marker alone gives the half block — and no git runs', () => {
+    const root = project(['_shared/wiki/a.md', 'proj/tickets/v1/T-1.md'])
+    expect(runHook(root)).not.toContain('LAYOUT PROPOSAL')        // without the marker this is a finished new layout
+    marker(root, 7)
+    poison(root)
+    const ctx = runHook(root)
+    expect(ctx).toContain(HALF)
+    expect(ctx).toContain('Do NOT propose `prdt layout migrate`')
+    expect(ctx).toContain('「docs 폴더 일부만 새 구조예요. 문서 7개가 아직 예전 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.」')
+    expect(ctx).not.toContain('목록 보기')
+  })
+
+  test('first item moved was an EMPTY untracked folder (docs/<prod>/artifacts, no _shared): the half block, not the migrate proposal', () => {
+    const root = project(['tickets/v1/T-1.md', 'prd/PRD.md'])
+    fs.mkdirSync(path.join(root, 'docs', 'proj', 'artifacts'), { recursive: true })
+    marker(root, 2)
+    poison(root)
+    const ctx = runHook(root)
+    expect(ctx).toContain(HALF)
+    expect(ctx).not.toContain('목록 보기')
+    expect(ctx).not.toContain('pre-product docs layout')
+  })
+
+  test('plain old and new layouts stay git-free with the marker absent (poisoned meta.git changes nothing)', () => {
+    const fresh = project(['_shared/wiki/a.md', 'proj/tickets/v1/T-1.md'])
+    poison(fresh)
+    expect(runHook(fresh)).not.toContain('LAYOUT PROPOSAL')
+    const old = project(OLD)
+    poison(old)
+    expect(runHook(old)).toContain('pre-product docs layout')
+  })
+
+  test('a link planted at the marker path is read as the marker, never followed', () => {
+    const root = project(['_shared/wiki/a.md', 'proj/tickets/v1/T-1.md'])
+    const bait = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1105-bait-')), 'x')
+    fs.writeFileSync(bait, '{"count": 99}')
+    fs.symlinkSync(bait, path.join(root, MARKER_REL))
+    const ctx = runHook(root)
+    expect(ctx).toContain(HALF)
+    expect(ctx).toContain('문서 0개가')          // the link's target is not read
+    expect(fs.readFileSync(bait, 'utf8')).toBe('{"count": 99}')
+  })
+
+  /** A bare `prdt init` project, then a real --apply killed by the given hook. */
+  function killedFromBareInit(kill: string): string {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1105-khome-'))
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1105-bare-'))
+    fs.mkdirSync(path.join(root, 'docs', 'prd'), { recursive: true })
+    const env = { ...process.env, HOME: home, PRDT_HOME: path.join(home, '.prdt'), PRDT_LANG: 'en', NO_COLOR: '1' }
+    execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], { cwd: root, env, stdio: 'pipe' })
+    const loader = `
+import importlib.machinery, importlib.util, sys, os, argparse
+from pathlib import Path
+l = importlib.machinery.SourceFileLoader("m", sys.argv[1]); s = importlib.util.spec_from_loader("m", l)
+m = importlib.util.module_from_spec(s); l.exec_module(m)
+os.chdir(sys.argv[2])
+`
+    const r = spawnSync('python3', ['-c', loader + kill + '\nm.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))', PRDT_CLI, root], { encoding: 'utf8', env })
+    expect(r.status).toBe(137)
+    return root
+  }
+
+  test('real kill after the first rename (bare init: empty docs/artifacts/) → the hook shows the half block', () => {
+    const root = killedFromBareInit(`
+real = m._lay_rename
+def fake(src, dst):
+    real(src, dst)
+    os._exit(137)
+m._lay_rename = fake`)
+    const ctx = runHook(root)
+    expect(ctx).toContain(HALF)
+    expect(ctx).toContain('Offer `prdt layout migrate --undo` only when its `다음:` line names it')
+    expect(ctx).not.toContain('목록 보기')
+    const chk = spawnSync('python3', [PRDT_CLI, 'layout', 'check'], { cwd: root, encoding: 'utf8', env: { ...process.env, PRDT_HOME: realHome() } })
+    expect(chk.status).toBe(2)
+    expect(chk.stdout).toContain('prdt layout migrate --undo')
+  })
+
+  test('real kill at the meta commit (bare init, everything moved) → the hook shows the half block', () => {
+    const root = killedFromBareInit(`
+real = m._lay_git
+def fake(root, args, stdin=None):
+    if args and args[0] == "commit":
+        os._exit(137)
+    return real(root, args, stdin)
+m._lay_git = fake`)
+    expect(fs.existsSync(path.join(root, 'docs', '_shared'))).toBe(true)
+    const ctx = runHook(root)
+    expect(ctx).toContain(HALF)
+    expect(ctx).not.toContain('목록 보기')
+  })
+})
