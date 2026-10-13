@@ -11,7 +11,7 @@
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { execFileSync } from 'child_process'
+import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
@@ -150,7 +150,7 @@ describe.skipIf(!READY)('layout proposal on PO session start', () => {
 
 describe('shallow path: no git on the session start', () => {
   test.skipIf(!READY)('an uncommitted-move shape that only meta git can see is not probed (none, silent)', () => {
-    // docs/<product>/ present, old paths gone: the deep state would ask meta git; shallow says nothing to move.
+    // docs/<product>/ present, old paths gone, meta git unusable: the deep probe degrades to silence.
     const root = project(['proj/tickets/v1/T-1.md'])
     fs.mkdirSync(path.join(root, '.prdt', 'meta.git'), { recursive: true })   // a poisoned git dir: any git call would error/hang
     expect(runHook(root)).not.toContain('LAYOUT PROPOSAL')
@@ -166,5 +166,68 @@ describe('shallow path: no git on the session start', () => {
     const hook = fs.readFileSync(SESSION_HOOK, 'utf8')
     const sh = /for LP_N in ([^;]+); do/.exec(hook)![1].trim().split(/\s+/)
     expect([...sh].sort()).toEqual([...py].sort())
+  })
+})
+
+/** A real meta repo holding `files` committed, then the killed-`--apply` shape: the first
+ *  rename done (tickets/ -> docs/<prod>/tickets/), the deletions uncommitted. */
+function killedApply(): string {
+  const root = project(['tickets/v1/T-1.md', 'tickets/v1/T-2.md'], { slug: 'proj' })
+  const git = (...a: string[]) => execFileSync('git', ['--git-dir', path.join(root, '.prdt', 'meta.git'), '--work-tree', root, ...a],
+    { cwd: root, stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } })
+  execFileSync('git', ['init', '-q', '--bare', path.join(root, '.prdt', 'meta.git')])
+  git('add', 'docs', '.prdt/config.json')
+  git('commit', '-q', '-m', 'meta')
+  fs.mkdirSync(path.join(root, 'docs', 'proj'), { recursive: true })
+  fs.renameSync(path.join(root, 'docs', 'tickets'), path.join(root, 'docs', 'proj', 'tickets'))
+  return root
+}
+
+describe.skipIf(!READY || !hasBin('git', ['--version']))('killed --apply and in-flight dispatch (T-1105 QA)', () => {
+  test('first-rename kill: the half block, never the migrate proposal — same verdict as `layout check`', () => {
+    const root = killedApply()
+    const ctx = runHook(root)
+    expect(ctx).toContain("[prdt layout: this project's docs layout is half-moved]")
+    expect(ctx).toContain('Do NOT propose `prdt layout migrate`')
+    expect(ctx).not.toContain('목록 보기')
+    const chk = spawnSync('python3', [PRDT_CLI, 'layout', 'check', '--json'], {
+      cwd: root, encoding: 'utf8', env: { ...process.env, PRDT_HOME: realHome() },
+    })
+    expect(JSON.parse(chk.stdout).state).toBe('partial')
+  })
+
+  function liveMarker(home: string, root: string, name: string): void {
+    const dir = path.join(home, 'run', 'dispatches')
+    fs.mkdirSync(dir, { recursive: true })
+    const since = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
+    fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify({ agent_id: name, persona: 'developer', since, project_root: root }))
+  }
+
+  test('a live dispatch in this project silences the old-layout proposal and the half block', () => {
+    const home = realHome()
+    const old = project(OLD)
+    expect(runHook(old, { home })).toContain('pre-product docs layout')
+    liveMarker(home, old, 'a1')
+    expect(runHook(old, { home })).not.toContain('LAYOUT PROPOSAL')
+    const half = project(['_shared/wiki/a.md', 'tickets/v1/T-1.md'])
+    expect(runHook(half, { home })).toContain('half-moved')
+    liveMarker(home, half, 'a2')
+    expect(runHook(half, { home })).not.toContain('LAYOUT PROPOSAL')
+  })
+
+  test('a dispatch marker of ANOTHER project, or a stopped one, does not silence it', () => {
+    const home = realHome()
+    const old = project(OLD)
+    liveMarker(home, project(OLD), 'other')
+    expect(runHook(old, { home })).toContain('pre-product docs layout')
+    const dir = path.join(home, 'run', 'dispatches')
+    fs.writeFileSync(path.join(dir, 'done.json'), JSON.stringify({ agent_id: 'done', persona: 'developer', since: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'), stopped_at: 'x', project_root: old }))
+    expect(runHook(old, { home })).toContain('pre-product docs layout')
+  })
+
+  test('plain old and new layouts stay git-free (poisoned meta.git changes nothing)', () => {
+    const old = project(OLD)
+    fs.mkdirSync(path.join(old, '.prdt', 'meta.git'), { recursive: true })
+    expect(runHook(old)).toContain('pre-product docs layout')
   })
 })
