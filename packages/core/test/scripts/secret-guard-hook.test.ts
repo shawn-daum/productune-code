@@ -1254,3 +1254,28 @@ describe('T-1109 r4: writes to the machine env store (~/.prdt/env/) are denied',
     expect(bash('echo x > ~/.prdt/env/.env')).toBe('deny-write')
   })
 })
+
+describe('T-1109 r5: READS of the machine env store use the same store resolution as the write rule', () => {
+  const run = (payload: unknown, env: NodeJS.ProcessEnv = process.env) => {
+    const res = spawnSync('bash', [HOOK], { input: JSON.stringify(payload), encoding: 'utf8', timeout: subprocessTimeout('hook'), env })
+    expect(res.status).toBe(0)
+    return res.stdout === '' ? 'allow' : 'deny'
+  }
+  const spellings = ['$PRDT_HOME/env/.env', '${PRDT_HOME}/env/.env', '"$PRDT_HOME"/env/.env', '~/.prdt/foo/../env/.env', '/Users/x/.prdt/env/./.env', '/opt/prdt-x/env/.env', '/opt/prdt-x/a/../env/.env', '$PRDT_HOME/env/store.txt', '/opt/prdt-x/env/backup', '~/.prdt/foo/../env/store.bak2']
+  const env = { ...process.env, PRDT_HOME: '/opt/prdt-x' }
+  test.each(spellings.flatMap((p) => ['cat', 'head', 'tail', 'sed -n 1p', 'awk 1', 'grep A', 'less', 'base64', 'xxd'].map((c) => `${c} ${p}`).concat([`cat < ${p}`])))('Bash denied: %s', (c) => {
+    expect(run(bashEvent(c), env)).toBe('deny')
+  })
+  // `source <store>` alone stays allowed (the loader idiom, as today); the source-then-dump deny follows the same resolution
+  test.each(spellings)('source then printenv: %s denied, source alone allowed', (p) => {
+    expect(run(bashEvent(`source ${p}`), env)).toBe('allow')
+    expect(run(bashEvent(`source ${p}; printenv`), env)).toBe('deny')
+  })
+  test.each(spellings.map((p) => p.replace(/^\$\{?PRDT_HOME\}?|^"\$PRDT_HOME"/, '/opt/prdt-x')))('Read tool denied: %s', (p) => {
+    expect(run({ tool_name: 'Read', tool_input: { file_path: p } }, env)).toBe('deny')
+  })
+  test.each([
+    'prdt env ls', 'prdt env check ~/.prdt/env/.env A', 'prdt env run -- true', 'ls $PRDT_HOME/env', 'ls ~/.prdt/env', 'test -d $PRDT_HOME/env',
+    'cat $PRDT_HOME/envx/a', 'cat $PRDT_HOME/foo.env', 'cat .env.local.example',
+  ])('Bash allowed: %s', (c) => { expect(run(bashEvent(c), env)).toBe('allow') })
+})
