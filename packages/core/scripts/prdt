@@ -1414,6 +1414,11 @@ META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/design.md",
 # the HOME `.prdt` (never a project's), so excluding them here is pure
 # defense-in-depth for the degenerate case where a project root coincides
 # with home.
+# `layout-apply.inprogress` (T-1105): the half-move marker `prdt layout migrate
+# --apply` plants for its own run. A meta autosave tick after a kill must not
+# commit the half-move together with the marker — that would move HEAD off the
+# layout commit and break --undo's guard. Ephemeral by design (cleared on
+# success / --undo), so no history is lost by excluding it.
 # meta_exclude_parity_warning() below lints this against meta-git.ts's copy —
 # see META_EXCLUDE_KNOWN_DIVERGENCE for the two reviewed, intentional gaps
 # (`worktrees/` / `meta.git/`) that check must name rather than flag as drift.
@@ -1421,7 +1426,8 @@ META_EXCLUDE_DEFAULT = ["meta.git/", "index.db", "turns.jsonl", "sessions.json",
                         ".cost-*.json", ".subagent-gate.json", "worktrees/",
                         ".return-flags.json", ".return-gate-pending.json",
                         "scratch/", "po.lock",
-                        "gui-bootstrap.json", "update-state.json"]
+                        "gui-bootstrap.json", "update-state.json",
+                        "layout-apply.inprogress"]
 
 # ── code root resolution (PRD §v1.3 설계 결정 4 — mirrors core project-kind.ts) ──
 # code.dir absent → codeRoot IS projectRoot (legacy fallback). Best-effort: a
