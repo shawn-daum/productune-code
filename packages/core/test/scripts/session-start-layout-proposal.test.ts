@@ -252,7 +252,8 @@ describe.skipIf(!READY || !hasBin('git', ['--version']))('killed --apply: the in
     const ctx = runHook(root)
     expect(ctx).toContain(HALF)
     expect(ctx).toContain('Do NOT propose `prdt layout migrate`')
-    expect(ctx).toContain('「docs 폴더 일부만 새 구조예요. 문서 7개가 아직 예전 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.」')
+    expect(ctx).toContain('「docs 폴더 일부만 새 구조예요. 문서 0개가 아직 예전 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.」')   // T-1125 F4: the disk's count (nothing old left), never the marker's recorded 7
+    expect(ctx).not.toContain('문서 7개')
     expect(ctx).not.toContain('목록 보기')
   })
 
