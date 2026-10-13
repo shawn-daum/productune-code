@@ -342,38 +342,185 @@ describe('T-1110: hidden prompt, permissions, lock, write failure', () => {
   })
 })
 
-describe('T-1110: secret guard — env run children and set/unset wrappers', () => {
+describe('T-1119: secret guard keeps only the direct paths; ordinary commands pass', () => {
   function verdict(c: string) {
     const r = spawnSync('bash', [HOOK], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: c } }), encoding: 'utf8', timeout: subprocessTimeout('hook') })
     return r.stdout
   }
   test.each([
-    'prdt env run -- printenv', 'prdt env run -- env', 'prdt env run -- set', 'prdt env run -- export -p', 'prdt env run -- declare -p',
-    'prdt env run -- sh -c "echo $K"', 'prdt env run -- bash -c x', 'prdt env run -- zsh -c x', 'prdt env run -- bash',
-    'prdt env run -- python3 -c "import os"', 'prdt env run -- python -c x', 'prdt env run -- node -e 1', 'prdt env run -- node -p process.env',
-    'prdt env run -- ruby -e 1', 'prdt env run -- perl -e 1', 'prdt env run -- cat /proc/self/environ', 'prdt env run -- python3',
-    'prdt env run -- npm run env', 'prdt env run -- pnpm exec printenv', 'prdt env run -- /usr/bin/env', 'prdt env run printenv',
-    'prdt "env" "run" -- printenv', '~/.prdt/bin/prdt env run -- env | head',
-  ])('env run child denied, values-not-in-transcript message: %s', (c) => {
-    const out = verdict(c)
-    expect(out).toContain('"deny"')
-    expect(out).toContain('values must not enter the transcript')
-  })
+    'git commit -m "fix: prdt env unset keeps untouched lines (T-1109)"',
+    "git commit -m 'feat: prdt env set|unset|ls|run'",
+    'grep -n "prdt env set" packages/core/scripts/prdt',
+    'grep -rn "prdt env unset" docs/',
+    "cat > /tmp/t.test.ts <<'EOF'\nrun(['env', 'unset', 'K'])\n// prdt env set K, prdt env run -- printenv\nEOF",
+    'node -r dotenv/config server.js',
+    'prdt env run -- node -r dotenv/config server.js',
+    // the run child is no longer judged here: env run masks the stored values in its output
+    'prdt env run -- printenv', 'prdt env run -- python3 -c "import os; print(os.environ)"', 'prdt env run -- node -e 1',
+    'prdt env run -- sh ./scripts/dev.sh', 'echo $HOME env', 'prdt env ls',
+  ])('not denied: %s', (c) => { expect(verdict(c)).not.toContain('"deny"') })
   test.each([
-    'prdt env run -- pnpm dev', 'prdt env run -- node server.js', 'prdt env run -- python3 -m http.server', 'prdt env run -- pnpm build',
-  ])('env run with a real program allowed: %s', (c) => { expect(verdict(c)).not.toContain('"deny"') })
-  test.each([
-    'prdt "env" "unset" APPLE_TEAM_ID', "prdt env 'unset' APPLE_TEAM_ID", 'prdt env un\\set X', 'prdt env "set" X',
-    'python3 /some/path/prdt env set X', 'python3 ~/.prdt/bin/prdt env unset X',
-    "echo 'prdt env unset X' | bash", 'printf "prdt env set X" | sh', 'x=prdt; $x env unset X', '$P env set X',
-    'echo unset X | xargs prdt env', 'xargs -I{} prdt env {} X < keys', 'prdt env $sub X',
-    `python3 -c "import pty; pty.spawn(['prdt','env','set','X'])"`, `python3 -c "import pty; pty.spawn(['/x/prdt', 'env', 'unset', 'X'])"`,
-    "expect -c 'spawn prdt env set X; interact'", 'script -q /dev/null prdt env unset X',
-  ])('set/unset wrapper denied with its own message: %s', (c) => {
+    'prdt env set X', '~/.prdt/bin/prdt env unset X', 'echo hi; prdt env set X',
+  ])('a direct set/unset call is still denied with its own message: %s', (c) => {
     expect(verdict(c)).toContain('written only by the user own')
   })
-  test.each(['echo $HOME env', 'echo $PATH env FOO', 'prdt env ls', 'echo "prdt env settings"'])('no false deny: %s', (c) => {
-    expect(verdict(c)).not.toContain('"deny"')
+})
+
+describe('T-1119: env run masks every stored value in the child output', () => {
+  const S = 'FAKEsecretZq84xk'
+  const PEM = '-----BEGIN FAKE KEY-----\nFAKEpemLineOne\n-----END FAKE KEY-----'
+  beforeEach(() => { seedStore(`APPLE_TEAM_ID='${V_TEAM}'\nSENTRY_DSN='${S}'\nPEM_KEY="${PEM}"\nBLANK=\n`) })
+  const leaks = (out: string) => {
+    for (const v of [V_TEAM, S, 'FAKEpemLineOne']) expect(out).not.toContain(v.slice(0, 6))
+    for (const v of [V_TEAM, S]) expect(out).not.toContain(v.slice(-6))
+  }
+
+  test.each([
+    ['printenv', ['printenv', 'APPLE_TEAM_ID']],
+    ['python3 -c', ['python3', '-c', 'import os,sys; print(os.environ["APPLE_TEAM_ID"]); print(os.environ["SENTRY_DSN"], file=sys.stderr)']],
+    ['node -e', ['node', '-e', 'console.log(process.env.APPLE_TEAM_ID); console.error("e=" + process.env.SENTRY_DSN)']],
+    ['multi-line value', ['python3', '-c', 'import os; print(os.environ["PEM_KEY"])']],
+  ])('%s: stdout and stderr show [가림], never the value', (_n, cmd) => {
+    const r = run(['env', 'run', '--', ...(cmd as string[])])
+    expect(r.code).toBe(0)
+    expect(r.out).toContain('[가림]')
+    leaks(r.out)
+  })
+
+  test('a script file written to disk prints the values: masked on both streams', () => {
+    const f = path.join(sandbox, 'dump.sh')
+    fs.writeFileSync(f, 'printf "out=%s\\n" "$APPLE_TEAM_ID"\nprintf "err=%s\\n" "$SENTRY_DSN" >&2\nenv | grep -E "APPLE|SENTRY"\n')
+    const r = run(['env', 'run', '--', 'sh', f])
+    expect(r.code).toBe(0)
+    expect(r.out).toContain('out=[가림]')
+    expect(r.out).toContain('err=[가림]')
+    expect(r.out).toContain('APPLE_TEAM_ID=[가림]')
+    leaks(r.out)
+  })
+
+  test('a value split across writes (one byte per write, and across a 64KB read) is masked whole', () => {
+    const code = [
+      'import os, sys, time',
+      'v = os.environ["APPLE_TEAM_ID"]',
+      'for c in v:',
+      '    sys.stdout.write(c); sys.stdout.flush(); sys.stderr.write(c); sys.stderr.flush(); time.sleep(0.005)',
+      'print(); sys.stdout.write("x" * 65530 + v + "\\n"); sys.stdout.flush()',
+      'os.write(2, os.environ["SENTRY_DSN"][:5].encode()); time.sleep(0.2); os.write(2, (os.environ["SENTRY_DSN"][5:] + "\\n").encode())',
+    ].join('\n')
+    const r = run(['env', 'run', '--', 'python3', '-c', code])
+    expect(r.code).toBe(0)
+    expect(r.stdout.replace(/x+/g, '')).toContain('[가림]\n[가림]\n')
+    leaks(r.out)
+  })
+
+  test('the intro line masks a value given in argv', () => {
+    const r = run(['env', 'run', '--', 'echo', V_TEAM])
+    expect(r.out).toContain('echo [가림] 를 실행해요.')
+    expect(r.stdout.trim().endsWith('[가림]')).toBe(true)
+    leaks(r.out)
+  })
+
+  test('output with no value passes unchanged, and a value prefix at the end is flushed at exit', () => {
+    const r = run(['env', 'run', '--', 'python3', '-c', `import sys; sys.stdout.write("plain line\\n${V_TEAM.slice(0, 5)}")`])
+    expect(r.code).toBe(0)
+    expect(r.stdout.endsWith(`plain line\n${V_TEAM.slice(0, 5)}`)).toBe(true)
+  })
+
+  test('exit code and a death by signal are passed on', () => {
+    expect(run(['env', 'run', '--', 'python3', '-c', 'import sys; sys.exit(7)']).code).toBe(7)
+    const r = spawnSync('python3', [PRDT_CLI, 'env', 'run', '--', 'sh', '-c', 'kill -TERM $$'], { cwd: sandbox, env: env(), encoding: 'utf8', timeout: subprocessTimeout('cli') })
+    expect(r.signal).toBe('SIGTERM')
+  })
+
+  test('a SIGTERM sent to prdt reaches the child; its exit code comes back', async () => {
+    const c = spawn('python3', [PRDT_CLI, 'env', 'run', '--', 'python3', '-c',
+      'import signal, sys, time\nsignal.signal(signal.SIGTERM, lambda *a: (print("got TERM", flush=True), sys.exit(3)))\nprint("ready", flush=True)\ntime.sleep(30)'],
+    { cwd: sandbox, env: env() })
+    let out = ''
+    let sent = false
+    const code = await new Promise<number | null>((resolve) => {
+      c.stdout.on('data', (d) => { out += d; if (!sent && /^ready$/m.test(out)) { sent = true; c.kill('SIGTERM') } })
+      c.on('exit', (code) => resolve(code))
+    })
+    expect(out).toContain('got TERM')
+    expect(code).toBe(3)
+  }, subprocessTimeout('cli') * 2)
+
+  test('a SIGTERM that lands while the child is starting is still sent to it, never kills prdt alone', async () => {
+    const c = spawn('python3', [PRDT_CLI, 'env', 'run', '--', 'python3', '-c',
+      'import signal, sys, time\nsignal.signal(signal.SIGTERM, lambda *a: sys.exit(4))\ntime.sleep(30)'],
+    { cwd: sandbox, env: env() })
+    let out = ''
+    let sent = false
+    const code = await new Promise<number | null>((resolve) => {
+      c.stdout.on('data', (d) => { out += d; if (!sent && out.includes('실행해요')) { sent = true; c.kill('SIGTERM') } })
+      c.on('exit', (code, sig) => resolve(code ?? (sig ? -1 : null)))
+    })
+    // either the child got it (exit 4) or it died of it before its own handler was set (143 / signal)
+    expect([4, 143, -1]).toContain(code)
+  }, subprocessTimeout('cli') * 2)
+
+  test('no stored value: the child runs directly (exec), output untouched', () => {
+    seedStore('BLANK=\n')
+    const r = run(['env', 'run', '--', 'python3', '-c', 'print("[가림]" not in "x", "ok")'])
+    expect(r.code).toBe(0)
+    expect(r.stdout).toContain('True ok')
+  })
+})
+
+describe('T-1119: env run under a terminal keeps tty behaviour and masks', () => {
+  // drives `prdt env run -- <cmd>` on a real pty; `typed` is sent once `marker` shows, `ctrlc` sends ^C then
+  const DRIVER = `
+import os, pty, sys, select, time, json
+args, cwd, marker, typed = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], json.loads(sys.argv[4])
+os.chdir(cwd)
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp("python3", ["python3", ${JSON.stringify(PRDT_CLI)}, "env", "run", "--"] + args)
+buf, sent, deadline = b"", False, time.time() + 20
+while time.time() < deadline:
+    r, _, _ = select.select([fd], [], [], 0.05)
+    if r:
+        try:
+            d = os.read(fd, 4096)
+        except OSError:
+            break
+        if not d:
+            break
+        buf += d
+        if not sent and marker and marker.encode() in buf:
+            time.sleep(0.1)
+            os.write(fd, typed.encode())
+            sent = True
+_, status = os.waitpid(pid, 0)
+sys.stdout.write(buf.decode("utf-8", "replace"))
+sys.stdout.write("\\nSTATUS=" + str(os.waitstatus_to_exitcode(status)))
+`
+  function onPty(args: string[], marker = '', typed = '') {
+    const r = spawnSync('python3', ['-c', DRIVER, JSON.stringify(args), sandbox, marker, JSON.stringify(typed)], { env: env(), encoding: 'utf8', timeout: subprocessTimeout('cli') * 3 })
+    return r.stdout || ''
+  }
+  beforeEach(() => { seedStore(`APPLE_TEAM_ID='${V_TEAM}'\nPEM_KEY="-----BEGIN FAKE KEY-----\nFAKEpemLineOne\n-----END FAKE KEY-----"\n`) })
+
+  test('the child sees a terminal on 0/1/2 and a controlling tty; values (multi-line too) are masked', () => {
+    const out = onPty(['python3', '-c', 'import os; print("TTY", os.isatty(0), os.isatty(1), os.isatty(2)); os.close(os.open("/dev/tty", os.O_RDWR)); print("CTTY ok"); print(os.environ["APPLE_TEAM_ID"]); print(os.environ["PEM_KEY"])'])
+    expect(out).toContain('TTY True True True')
+    expect(out).toContain('CTTY ok')
+    expect(out).toContain('[가림]')
+    expect(out).not.toContain(V_TEAM.slice(0, 6))
+    expect(out).not.toContain('FAKEpemLineOne')
+    expect(out).toContain('STATUS=0')
+  })
+
+  test('interactive: typed input reaches the child, its reply comes back', () => {
+    const out = onPty(['python3', '-c', 'name = input("name? "); print("hello " + name)'], 'name? ', 'world\r')
+    expect(out).toContain('hello world')
+    expect(out).toContain('STATUS=0')
+  })
+
+  test('Ctrl-C typed at the terminal interrupts the child; prdt ends by the same signal', () => {
+    const out = onPty(['python3', '-c', 'import time; print("waiting", flush=True); time.sleep(20)'], 'waiting', '\x03')
+    expect(out).toContain('STATUS=-2')
   })
 })
 
