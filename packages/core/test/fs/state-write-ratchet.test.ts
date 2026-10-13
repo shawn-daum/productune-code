@@ -122,6 +122,8 @@ const ALLOW: Record<string, number> = {
   'core/scripts/prdt::cmd_resource': 2,
   'core/scripts/prdt::_lume_resident_resources': 1,
   'core/scripts/prdt::write_canary_latch': 1,
+  // a log file opened as the child's stdout fd (Popen), not a text write
+  'core/scripts/prdt::cmd_test_cloud': 1,
   // lock files / exclusive creates with dir_fd + O_NOFOLLOW by design (index.db create, track and resource locks) and /dev/null opens
   'core/scripts/prdt::_index_db_prepare': 1,
   'core/scripts/prdt::_track_lock': 2,
