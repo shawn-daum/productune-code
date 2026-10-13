@@ -962,11 +962,7 @@ function ticketStoreInner(tickets, currentVersion) {
 }
 
 function ticketGroups(tickets, currentVersion, idle = false) {
-  // T-1108: an idle product (po-state stage 'idle') has no open version — backlog only, no `· 현재` row.
-  if (idle) {
-    const backlog = tickets.included.filter((t) => t.bucket === 'backlog')
-    return { groups: [{ key: 'backlog', label: TICKET.backlogLabel, count: backlog.length, bodyHtml: countBadge(TICKET.backlogLabel, backlog.length, TICKET.countUnit) + ticketRowsTable(backlog) }], defaultKey: 'backlog' }
-  }
+  // T-1108: idle changes labels only — an idle product keeps backlog + every closed bucket; its retained version is a closed bucket (no `· 현재`), backlog leads and is the default.
   const currentTickets = currentVersionTickets(tickets, currentVersion)
   const backlogTickets = tickets.included.filter((t) => t.bucket === 'backlog')
   const currentBucketKey = currentTicketBucketKey(tickets, currentVersion)
@@ -977,14 +973,21 @@ function ticketGroups(tickets, currentVersion, idle = false) {
   // than the current version — T-709 결정 1), never pinned to array index 0
   // structurally. Only `backlog` (not a version at all) sits outside this
   // sort, pinned last.
-  const versionBuckets = [currentBucketKey, ...tickets.omitted.map((o) => o.bucket)].sort(compareVersionIdsDesc)
+  const versionBuckets = [...(idle && currentTickets.length === 0 ? [] : [currentBucketKey]), ...tickets.omitted.map((o) => o.bucket)].sort(compareVersionIdsDesc)
 
+  const backlogGroup = {
+    key: 'backlog',
+    label: TICKET.backlogLabel,
+    count: backlogTickets.length,
+    bodyHtml: countBadge(TICKET.backlogLabel, backlogTickets.length, TICKET.countUnit) + ticketRowsTable(backlogTickets),
+  }
   const groups = [
+    ...(idle ? [backlogGroup] : []),
     ...versionBuckets.map((bucket) => {
       if (bucket === currentBucketKey) {
         return {
           key: currentBucketKey,
-          label: `${currentVersion} · ${TICKET.currentTag}`,
+          label: idle ? currentVersion : `${currentVersion} · ${TICKET.currentTag}`,
           count: currentTickets.length,
           bodyHtml: countBadge(currentVersion, currentTickets.length, TICKET.countUnit) + ticketRowsTable(currentTickets),
         }
@@ -997,14 +1000,9 @@ function ticketGroups(tickets, currentVersion, idle = false) {
         bodyHtml: countBadge(o.bucket, o.tickets.length, TICKET.countUnit) + ticketRowsTable(o.tickets),
       }
     }),
-    {
-      key: 'backlog',
-      label: TICKET.backlogLabel,
-      count: backlogTickets.length,
-      bodyHtml: countBadge(TICKET.backlogLabel, backlogTickets.length, TICKET.countUnit) + ticketRowsTable(backlogTickets),
-    },
+    ...(idle ? [] : [backlogGroup]),
   ]
-  return { groups, defaultKey: currentBucketKey }
+  return { groups, defaultKey: idle ? 'backlog' : currentBucketKey }
 }
 
 /**
@@ -1138,6 +1136,11 @@ export function lineViews(data) {
 /** T-1108: an idle added product (no open version) — its last closed version, '' when none closed yet. */
 function lastClosedId(v) {
   return [...v.prd.closed].map((c) => c.name.replace(/\.md$/, '')).sort(compareVersionIdsDesc)[0] || ''
+}
+
+/** T-1108: the version whose artifacts · decisions an idle product still lists — the retained po-state version, else its last closed one. */
+function idleVersion(v) {
+  return v.currentVersion || lastClosedId(v)
 }
 
 function isIdleView(v) {
@@ -2575,7 +2578,7 @@ function homeLineGroups(data, v, views, repoRootHref) {
   const ld = lineData(data, v)
   const currentTickets = currentVersionTickets(v.tickets, v.currentVersion)
   const idle = isIdleView(v)
-  const cur = `${v.prefix}${idle ? '' : v.currentVersion}`
+  const cur = `${v.prefix}${idle ? idleVersion(v) : v.currentVersion}`
   const currentArtifacts = lineArtifactEntries(data.artifacts, v, views).filter((e) => e.fields.bucket === cur)
   const currentDecisions = lineDecisionPages(data.wiki, v)
   const idleHomeHtml = idle ? idleNotice(IDLE.homeHead(v.name), IDLE.homeDetail(v.tickets.included.filter((t) => t.bucket === 'backlog').length)) : ''
@@ -2594,13 +2597,13 @@ function homeLineGroups(data, v, views, repoRootHref) {
 
 /** A decision page's `version:` is `<line>/<v>` for an added line, bare for the home line (release-lines.md one-line rule). */
 function lineDecisionPages(pages, v) {
-  if (isIdleView(v)) return []
+  const version = isIdleView(v) ? idleVersion(v) : v.currentVersion
   return pages.filter((p) => {
     if (!p.rel.split('/').pop().startsWith('decision--') || !p.frontmatter.version) return false
     const raw = String(p.frontmatter.version)
     const slash = raw.indexOf('/')
     const line = slash === -1 ? null : raw.slice(0, slash)
-    return line === v.line && sameVersion(slash === -1 ? raw : raw.slice(slash + 1), v.currentVersion)
+    return line === v.line && sameVersion(slash === -1 ? raw : raw.slice(slash + 1), version)
   })
 }
 
