@@ -85,9 +85,10 @@ def norm_assignee(v):
 
 
 PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
-# Additive keys (release-lines.md §5, schema_version unchanged): `checks` = the
-# home line's stage-check record (T-954 = A), `lines` = per added line.
-PO_STATE_OPTIONAL_KEYS = {"checks", "lines"}
+# Additive keys (schema_version unchanged): `checks` = the first product's
+# stage-check record (T-954 = A), `products` = per added product (T-1108 ⑦; the
+# pre-v1.14 name `lines` is still read and migrated once).
+PO_STATE_OPTIONAL_KEYS = {"checks", "products", "lines"}
 # §11 token-budget caps (physical lines; playbook cap counts body after frontmatter).
 # `override` applies per persona PER LAYER (machine and project each) — a curation
 # budget for text injected once per session start and after a compaction (T-586
@@ -1413,6 +1414,11 @@ META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/design.md",
 # the HOME `.prdt` (never a project's), so excluding them here is pure
 # defense-in-depth for the degenerate case where a project root coincides
 # with home.
+# `layout-apply.inprogress` (T-1105): the half-move marker `prdt layout migrate
+# --apply` plants for its own run. A meta autosave tick after a kill must not
+# commit the half-move together with the marker — that would move HEAD off the
+# layout commit and break --undo's guard. Ephemeral by design (cleared on
+# success / --undo), so no history is lost by excluding it.
 # meta_exclude_parity_warning() below lints this against meta-git.ts's copy —
 # see META_EXCLUDE_KNOWN_DIVERGENCE for the two reviewed, intentional gaps
 # (`worktrees/` / `meta.git/`) that check must name rather than flag as drift.
@@ -1420,7 +1426,8 @@ META_EXCLUDE_DEFAULT = ["meta.git/", "index.db", "turns.jsonl", "sessions.json",
                         ".cost-*.json", ".subagent-gate.json", "worktrees/",
                         ".return-flags.json", ".return-gate-pending.json",
                         "scratch/", "po.lock",
-                        "gui-bootstrap.json", "update-state.json"]
+                        "gui-bootstrap.json", "update-state.json",
+                        "layout-apply.inprogress"]
 
 # ── code root resolution (PRD §v1.3 설계 결정 4 — mirrors core project-kind.ts) ──
 # code.dir absent → codeRoot IS projectRoot (legacy fallback). Best-effort: a
@@ -4137,6 +4144,11 @@ def dead_discipline_path_warnings(root, mirror=None):
                 continue
             if any((base / cand).exists() for base in bases):
                 continue
+            try:   # T-1103: an As-Is `docs/…` citation → its To-Be file (T-1104 seam)
+                if (root / resolve_docs_ref(root, cand)).exists():
+                    continue
+            except DocsLayoutError:
+                pass
             checked = "meta root, code root, code discipline tree, doc's own dir"
             if mirror is not None:
                 checked += f", and the installed discipline mirror ({mirror})"
@@ -5654,8 +5666,9 @@ def current_version_id(root, line=None):
     st = read_json(root / ".prdt" / "po-state.json")
     src, field = (st if isinstance(st, dict) else None), "version"
     if line is not None:
-        ls = src.get("lines") if src is not None else None
-        src, field = (ls.get(line) if isinstance(ls, dict) else None), f"lines.{line}.version"
+        pk = _products_key(src) if src is not None else "products"
+        ls = src.get(pk) if src is not None else None
+        src, field = (ls.get(line) if isinstance(ls, dict) else None), f"{pk}.{line}.version"
     raw = src.get("version") if isinstance(src, dict) else None
     v = raw.strip() if isinstance(raw, str) else raw
     if v is None or v == "":
@@ -5708,8 +5721,8 @@ def cmd_tickets_new(args, root):
         if line == _resource_project_slug(root):
             line = None
         else:
-            sys.exit(f"prdt tickets new: --line {safe_label(line)} is not a line declared in "
-                     f".prdt/config.json `lines`")
+            sys.exit(f"prdt tickets new: --product {safe_label(line)} is not a product declared in "
+                     f".prdt/config.json `products`")
     try:
         version = current_version_id(root, line)
     except ValueError as e:
@@ -6155,7 +6168,7 @@ def _new_file_mode():
     return 0o666 & ~um
 
 
-def state_write(root, path, text, mode=None, create_dirs=True):
+def state_write(root, path, text, mode=None, create_dirs=True, sync=False):
     """T-905: the one Python writer for project-local state (`.prdt/**`, the
     docs the CLI scaffolds, `meta.git/info/exclude`). `path` must sit under
     `root`; every component below `root` is walked with O_NOFOLLOW from a
@@ -6165,7 +6178,9 @@ def state_write(root, path, text, mode=None, create_dirs=True):
     in that same directory and is renamed over the name by descriptor, so no
     string path is re-resolved after the check. `mode=None` keeps the existing
     file's permission bits (a new file gets 0o644); an explicit `mode` is
-    exact, regardless of umask. `root` itself is the caller's trust anchor."""
+    exact, regardless of umask. `sync=True` fsyncs the temp before the rename (and the
+    directory after), so a crash never leaves the name zero-length. `root` itself is the
+    caller's trust anchor."""
     rel = _state_rel(root, path)
     dfd = _state_dir_or_raise(root, rel, create_dirs)
     try:
@@ -6193,7 +6208,15 @@ def state_write(root, path, text, mode=None, create_dirs=True):
             os.fchmod(fd, mode)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(text)
+                if sync:
+                    f.flush()
+                    os.fsync(f.fileno())
             os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+            if sync:
+                try:
+                    os.fsync(dfd)
+                except OSError:
+                    pass
         except BaseException:
             try:
                 os.unlink(tmp, dir_fd=dfd)
@@ -6860,7 +6883,20 @@ def discard_pending_tty_input(settle=0.08):
         pass
 
 
-def run_claude_then_restore(cmd):
+def claude_child_env():
+    """T-1095: environment for the Claude Code child. Under `tui: fullscreen`
+    Claude Code 2.1.296 turns on any-motion mouse reporting (`?1003h`); a
+    report split across reads lands in its input box as text (`^[[<35;5;7M`).
+    Measured with real claude (sandbox HOME, 2026-10-13):
+    `CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1` keeps only `?1000h`/`?1006h` (wheel
+    scroll) and never enables `?1002h`/`?1003h`. Decision T-1096 = B. A value
+    the user already exported (any value, empty included) is kept."""
+    env = dict(os.environ)
+    env.setdefault("CLAUDE_CODE_DISABLE_MOUSE_CLICKS", "1")
+    return env
+
+
+def run_claude_then_restore(cmd, env=None):
     """T-957: run Claude Code as a child (not `execvp`) so prdt outlives it and
     can put the terminal back. Claude Code turns on SGR any-motion mouse
     (1003/1006), focus reporting (1004) and the kitty keyboard protocol for
@@ -6879,7 +6915,7 @@ def run_claude_then_restore(cmd):
     import signal
     # close_fds=False: exec parity — fds above 2 inherited from the caller
     # (`prdt 3>file`) reach claude.
-    proc = subprocess.Popen(cmd, close_fds=False)
+    proc = subprocess.Popen(cmd, close_fds=False, env=env)
     old = {signal.SIGINT: signal.signal(signal.SIGINT, signal.SIG_IGN)}
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
         old[sig] = signal.signal(sig, lambda n, _f: proc.send_signal(n))
@@ -6959,7 +6995,7 @@ def cmd_po(args):
     reset_terminal_input_modes()
     cmd = ["claude", "--agent", "prdt-po"] + (getattr(args, "rest", None) or [])
     try:
-        run_claude_then_restore(cmd)
+        run_claude_then_restore(cmd, env=claude_child_env())
     except FileNotFoundError:
         sys.exit("prdt po: `claude` CLI를 찾을 수 없어요 — Claude Code 설치/PATH 확인")
 
@@ -11623,12 +11659,44 @@ PRD_VERSION_FILE_RE = re.compile(r"^v\d+(?:\.\d+){0,2}\.md$", re.ASCII)
 LINE_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 
 
+def _products_key(d):
+    """The key a config / po-state dict keeps its per-product entries under:
+    `products`, else the pre-v1.14 `lines` (T-1108 ⑦, read once and migrated)."""
+    return "products" if "products" in d or "lines" not in d else "lines"
+
+
 def _line_config_entries(root):
     cfg = read_json(Path(root) / ".prdt" / "config.json") if root else None
     if not isinstance(cfg, dict):
         return None, None
-    raw = cfg.get("lines")
+    raw = cfg.get(_products_key(cfg))
     return cfg.get("slug"), (raw if isinstance(raw, list) else ([] if raw is None else raw))
+
+
+def migrate_lines_to_products(root):
+    """T-1108 ⑦: `.prdt/config.json` `lines` and `.prdt/po-state.json` `lines`
+    become `products`, once. NOT called from main() or any read: the rewrite runs
+    only as the config step of `prdt layout migrate --apply` (T-1103 wires it;
+    that code is not on this branch). Every reader accepts both keys meanwhile. A file that already has `products` is left alone
+    (readers prefer it); a file with neither is untouched. Returns the files
+    rewritten. Written through `state_write` (the link-refusing writer for `.prdt/**`)."""
+    done = []
+    for name in ("config.json", "po-state.json"):
+        path = Path(root) / ".prdt" / name
+        try:
+            if path.is_symlink() or not path.is_file():
+                continue
+            d = read_json(path)
+            if not isinstance(d, dict) or "lines" not in d:
+                continue
+            if "products" in d:
+                continue
+            renamed = {("products" if k == "lines" else k): v for k, v in d.items()}
+            state_write(root, path, json.dumps(renamed, indent=2, ensure_ascii=False) + "\n", create_dirs=False)
+            done.append(name)
+        except (OSError, StateLinkError):
+            continue
+    return done
 
 
 def project_lines(root):
@@ -11654,7 +11722,7 @@ def project_declares_lines(root):
     for every line-only check, so a single-line project's doctor output keeps
     its check count."""
     cfg = read_json(Path(root) / ".prdt" / "config.json") if root else None
-    return isinstance(cfg, dict) and "lines" in cfg
+    return isinstance(cfg, dict) and ("products" in cfg or "lines" in cfg)
 
 
 def line_config_warnings(root):
@@ -11662,22 +11730,22 @@ def line_config_warnings(root):
     if raw is None:
         return []
     if not isinstance(raw, list):
-        return ["lines: `.prdt/config.json` `lines` is not a list — every added line is ignored"]
+        return ["products: `.prdt/config.json` `products` is not a list — every added product is ignored"]
     warns, seen = [], set()
     for i, e in enumerate(raw):
         name = e.get("name") if isinstance(e, dict) else None
         if not isinstance(name, str):
-            warns.append(f"lines: entry {i} in .prdt/config.json has no string `name` — ignored")
+            warns.append(f"products: entry {i} in .prdt/config.json has no string `name` — ignored")
             continue
         lab = safe_label(name)
         if not LINE_NAME_RE.match(name):
-            warns.append(f"lines: `{lab}` is not a legal line name — kebab-case, never `v<digit>…` "
+            warns.append(f"products: `{lab}` is not a legal product name — kebab-case, never `v<digit>…` "
                          f"or `backlog` (contracts/fixed-paths.md); ignored")
         elif name == slug:
-            warns.append(f"lines: `{lab}` is the project slug — the home line is never listed in "
-                         f"`lines`; ignored")
+            warns.append(f"products: `{lab}` is the project slug — the first product is never listed in "
+                         f"`products`; ignored")
         elif name in seen:
-            warns.append(f"lines: `{lab}` is declared twice — the second entry is ignored")
+            warns.append(f"products: `{lab}` is declared twice — the second entry is ignored")
         seen.add(name)
     return warns
 
@@ -11697,13 +11765,13 @@ def join_line_id(line, vid):
 
 def line_state(st, line=None):
     """(stage, version id, checks) of one line in po-state: the top-level fields
-    for the home line (`line` None), `lines.<line>` for an added line — whose
+    for the first product (`line` None), `products.<product>` for an added one — whose
     version comes back prefixed `<line>/`."""
     if not isinstance(st, dict):
         return None, None, None
     src = st
     if line is not None:
-        ls = st.get("lines")
+        ls = st.get(_products_key(st))
         src = ls.get(line) if isinstance(ls, dict) else None
         if not isinstance(src, dict):
             return None, None, None
@@ -11802,7 +11870,7 @@ def prd_line_layout_warnings(root, st):
             if open_key is None and len(mine) == 1:
                 continue
             warns.append(f"prd: closed section `## {lab} {v}` found in docs/prd/PRD.md:{ln} — the "
-                         f"working file is the standing head + the ONE open section per line, which "
+                         f"working file is the standing head + the ONE open section per product, which "
                          f"`.prdt/po-state.json` names as `{vid or '-'}`; its home is "
                          f"docs/prd/versions/{lab}/{v}.md, moved byte-identical")
         tdir = root / "docs" / "tickets" / ln_name
@@ -11826,26 +11894,45 @@ def prd_line_layout_warnings(root, st):
 
 
 def _resource_line(root):
-    """The release line a resource marker is held for (release-lines.md §6):
-    the folder of po-state's current ticket, else `current_task.line`, else the
-    home line. None in a single-line project — its marker keeps today's shape."""
+    """The product a resource marker is held for: the folder of po-state's
+    current ticket, else `current_task.product` (pre-v1.14 `line`), else the
+    first product (the slug). None in a single-product project — its marker
+    keeps today's shape."""
+    prods = project_products(root) if root else []
     names = project_line_names(root) if root else []
-    if not names:
+    if not names and len(prods) < 2:
         return None
     slug = _resource_project_slug(root)
+    known = set(names) | set(prods[1:])
     st = read_json(Path(root) / ".prdt" / "po-state.json") or {}
     ct = st.get("current_task") if isinstance(st, dict) else None
     if isinstance(ct, dict):
         tid = ct.get("ticket_id")
         if isinstance(tid, str) and re.match(r"^T-\d+$", tid):
-            for p in (Path(root) / "docs" / "tickets").glob(f"*/*/{tid}.md"):
-                if p.parent.parent.name in names:
-                    return p.parent.parent.name
-            if any((Path(root) / "docs" / "tickets").glob(f"*/{tid}.md")):
-                return slug
-        if ct.get("line") in names:
-            return ct["line"]
+            if prods:
+                for prod, tdir in product_docs_dirs(root, "tickets"):
+                    if prod is not None and (any(tdir.glob(f"*/{tid}.md")) or (tdir / f"{tid}.md").exists()):
+                        return slug if prod == prods[0] else prod
+            else:
+                for p in (Path(root) / "docs" / "tickets").glob(f"*/*/{tid}.md"):
+                    if p.parent.parent.name in names:
+                        return p.parent.parent.name
+                if any((Path(root) / "docs" / "tickets").glob(f"*/{tid}.md")):
+                    return slug
+        for key in ("product", "line"):
+            if ct.get(key) in known:
+                return ct[key]
     return slug
+
+
+def _resource_product(root):
+    """The `product=` a marker carries: `_resource_line` unless it is the first
+    product (T-955 rule — the first product's marker keeps today's shape)."""
+    p = _resource_line(root)
+    if p is None or p == _resource_project_slug(root):
+        return None
+    prods = project_products(root) if root else []
+    return None if prods and p == prods[0] else p
 
 
 def _version_id_canon(v):
@@ -12117,7 +12204,7 @@ def prd_layout_warnings(root, st):
     open_id = pv.strip() if isinstance(pv, str) and pv.strip() else None
     open_key = _version_id_canon(open_id) if open_id else None
 
-    one_open = " per line" if project_line_names(root) else ""
+    one_open = " per product" if project_line_names(root) else ""
     prd_section_ids = []
     text = read(prd_md) if prd_md.is_file() else None
     if text is not None:
@@ -12471,29 +12558,30 @@ def po_state_warnings(st, root=None):
         warns.append(f"state: version '{bad_v}' is not a version id (v<N>[.<m>[.<p>]] or backlog)")
     ct = st.get("current_task")
     multi = bool(root) and project_declares_lines(root)
-    if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee", "line"} >= set(ct)):
-        # Single-line projects keep the pre-T-960 text byte-for-byte.
-        warns.append("state: current_task must be null or {ticket_id, slug, assignee, line?}" if multi
+    if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee", "line", "product"} >= set(ct)):
+        # Single-product projects keep the pre-T-960 text byte-for-byte.
+        warns.append("state: current_task must be null or {ticket_id, slug, assignee, product?}" if multi
                      else "state: current_task must be null or {ticket_id, slug, assignee}")
     declared = set(project_line_names(root)) if root else None
-    lines = st.get("lines")
-    if "lines" in st and not isinstance(lines, dict):
-        warns.append("state: lines must be an object {<line>: {stage, version, checks?}}")
+    pk = _products_key(st)
+    lines = st.get(pk)
+    if pk in st and not isinstance(lines, dict):
+        warns.append("state: products must be an object {<product>: {stage, version, checks?}}")
     for name, ent in (lines.items() if isinstance(lines, dict) else []):
         lab = safe_label(str(name))
         if not isinstance(ent, dict):
-            warns.append(f"state: lines.{lab} must be {{stage, version, checks?}}")
+            warns.append(f"state: products.{lab} must be {{stage, version, checks?}}")
             continue
         if ent.get("stage") not in STAGES:
-            warns.append(f"state: lines.{lab}.stage '{safe_label(str(ent.get('stage')))}' not in {'/'.join(STAGES)}")
+            warns.append(f"state: products.{lab}.stage '{safe_label(str(ent.get('stage')))}' not in {'/'.join(STAGES)}")
         bad_v = _malformed_version_label(ent.get("version"))
         if bad_v is not None:
-            warns.append(f"state: lines.{lab}.version '{bad_v}' is not a version id "
+            warns.append(f"state: products.{lab}.version '{bad_v}' is not a version id "
                          f"(v<N>[.<m>[.<p>]] or backlog)")
         if declared is not None and name not in declared:
-            warns.append(f"state: lines.{lab} is not a line declared in .prdt/config.json `lines`")
+            warns.append(f"state: products.{lab} is not a product declared in .prdt/config.json `products`")
         if set(ent) - {"stage", "version", "checks"}:
-            warns.append(f"state: lines.{lab} has unexpected keys {sorted(set(ent) - {'stage', 'version', 'checks'})}")
+            warns.append(f"state: products.{lab} has unexpected keys {sorted(set(ent) - {'stage', 'version', 'checks'})}")
     return warns
 
 
@@ -14528,12 +14616,17 @@ def _resource_markers(name=None):
             data = read_json(f)
             if not isinstance(data, dict):
                 continue
+            # T-1108 ⑦: `product` (pre-v1.14 markers say `line`). A legacy `line`
+            # equal to the project slug named the first product — no product label.
+            prod = data["product"] if isinstance(data.get("product"), str) else None
+            if prod is None and isinstance(data.get("line"), str) and data["line"] != data.get("project"):
+                prod = data["line"]
             out.append({
                 "resource": data.get("resource") or n,
                 "dispatch": data.get("dispatch") or f.stem,
                 "project": data.get("project"),
                 "since": data.get("since"),
-                **({"line": data["line"]} if isinstance(data.get("line"), str) else {}),
+                **({"product": prod} if prod is not None else {}),
             })
     return out
 
@@ -14783,7 +14876,7 @@ def compute_schedule(root, tickets=None, line=None):
     out = {"version": version, "cycle": None, "critical_path": [], "cp_length": 0,
            "rows": [], "missing_deps": []}
     if project_line_names(root):
-        out["line"] = line or _resource_project_slug(root)
+        out["product"] = line or _resource_project_slug(root)
 
     # node set: current version's open tickets, then open deps wherever they live
     nodes, stack = {}, [t for t, (r, _) in tickets.items()
@@ -14896,8 +14989,8 @@ def cmd_schedule(args):
         if sel == _resource_project_slug(root):
             sel = None
         elif sel not in names:
-            sys.exit(f"prdt schedule: --line {safe_label(sel)} is not a line declared in "
-                     f".prdt/config.json `lines`")
+            sys.exit(f"prdt schedule: --product {safe_label(sel)} is not a product declared in "
+                     f".prdt/config.json `products`")
     if args.json or sel is not None or not names:
         s = compute_schedule(root, line=sel)
         if args.json:
@@ -15412,8 +15505,10 @@ def cmd_resource(args):
             group = by_name.get(n, [])
             print(f"{safe_label(n)}: {len(group)} held")
             for m in group:
-                proj = safe_label(m.get("line") or m["project"]) if (m.get("line") or m["project"]) else "-"
-                print(f"  dispatch={safe_label(m['dispatch'])} project={proj} since={m['since'] or '-'}")
+                proj = safe_label(m["project"]) if m["project"] else "-"
+                # T-1108 ⑦: `product=` only for a product other than the first.
+                prod = f" product={safe_label(m['product'])}" if m.get("product") else ""
+                print(f"  dispatch={safe_label(m['dispatch'])} project={proj}{prod} since={m['since'] or '-'}")
             # S6/S7: the command `down` would actually run for this name right
             # now (resolved fresh, same function `down` itself calls — never a
             # marker's stale copy), with a visible `…` when it is cut.
@@ -15469,19 +15564,20 @@ def cmd_resource(args):
         # No `stop_cmd` on the marker (T-680 S5) — this dict is bookkeeping
         # only, never a value anything later trusts as an executable source.
         marker = {"resource": name, "dispatch": dispatch, "project": project, "since": since}
-        line = _resource_line(find_project_root())
+        line = _resource_product(find_project_root())
         if line:
-            marker["line"] = line
+            marker["product"] = line
         d = _resource_marker_dir(name)
         d.mkdir(parents=True, exist_ok=True)
         p = d / f"{dispatch}.json"
         atomic_write_text(p, json.dumps(marker, indent=2, sort_keys=True) + "\n")
         held = len(_resource_markers(name))
-        proj_out = safe_label(line or project) if (line or project) else "-"
+        proj_out = safe_label(project) if project else "-"
+        prod_out = f" product={safe_label(line)}" if line else ""
         # Purely informational — a fresh registry read at THIS moment, printed
         # and never persisted; `down` re-resolves independently at its own time.
         stop_out = "registered" if _resource_registered_stop_cmd(name) else "none"
-        print(f"up: {safe_label(name)} marker={safe_label(dispatch)} project={proj_out} since={since} "
+        print(f"up: {safe_label(name)} marker={safe_label(dispatch)} project={proj_out}{prod_out} since={since} "
               f"held={held} stop={stop_out}")
         return
 
@@ -15947,6 +16043,9 @@ def cmd_doctor(_args):
     # check must not leave out, and the one thing the verdict refuses to guess.
     roster = [
         ("po-state shape", FAMILY_DE, lambda: po_state_warnings(st, root)),
+        # T-1103: a half-moved docs layout (docs/_shared/ beside an old docs/tickets/) —
+        # the error line of the approved screen set (layout-start: half).
+        ("docs layout", FAMILY_DE, lambda: layout_doctor_warnings(root)),
         ("ticket index", FAMILY_PROJECT, lambda: [f"ticket: {v}" for v in tviol]),
         # Whether a duplicated id deserves its own warning was left open by T-549
         # and answered by T-551: it does, ONCE, from a dedicated check — never as
@@ -15954,6 +16053,8 @@ def cmd_doctor(_args):
         # for the same reason: the id-keyed map is *defined* by collapsing an id,
         # so it is the one input in which this violation cannot be seen.
         ("duplicate ticket id", FAMILY_PROJECT, lambda: duplicate_ticket_id_warnings(trows)),
+        # T-1126: carve-out (2) switched off by a post-read check, or a result ref left undeleted.
+        ("cloud tests", FAMILY_PROJECT, lambda: cloud_test_doctor_warnings(root)),
         # T-685: same `fmt_ticket_body` transform `tickets fmt --check` reads —
         # advisory, never verdict-changing (a frame slip is a `tickets fmt`
         # away, not a discipline↔execution mismatch); silent on any ticket
@@ -15962,7 +16063,7 @@ def cmd_doctor(_args):
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
         ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root))),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
-        *([("release lines", FAMILY_DE,
+        *([("products", FAMILY_DE,
             lambda: line_config_warnings(root) + prd_line_layout_warnings(root, st))]
           if project_declares_lines(root) else []),
         # artifacts — version-bucket placement + manifest registration (T-512).
@@ -16125,13 +16226,1099 @@ def cmd_doctor(_args):
     warns = [w for r in records for w in r["warnings"]]
 
     for w in warns:
-        print(f"⚠ {w}")
+        print(w if w.startswith("✗ ") else f"⚠ {w}")
     summary = discipline_delivery_summary(droot)
     if summary:
         print(summary)
     for line in doctor_verdict_lines(records):
         print(line)
     print(("doctor: clean" if not warns else f"doctor: {len(warns)} warning(s)") + " (non-blocking)")
+
+
+# ── T-1103: `prdt layout migrate` / `--apply` / `check` — As-Is → product-first docs ──
+# Design: docs/artifacts/v1.14/product-first-docs-layout.html (④ names · migrate fold:
+# detection rule · preview · 9 apply steps · failure rollback · ③ closed PRD files
+# byte-identical). Output strings: the approved screen set (define-screen-set.html,
+# layout-cli: preview · confirm · applied · already · refused · rolled back · partial;
+# user approved the copy 2026-10-12, T-1114) — change a string only with that screen.
+# State (`layout_state`): config.json present, then
+#   the in-progress marker `.prdt/layout-apply.inprogress` exists → "partial" (any
+#     killed `--apply`, whatever it left on disk; filesystem only, no git) — except deep
+#     (T-1125): the marker over HEAD = the layout commit or a later one means the move is
+#     complete, only the marker unlink was missed; it is cleared and the tree classified.
+#     Nothing here (or in `--undo`) ever resets or rewrites a meta commit.
+#   `docs/_shared/` absent + (`docs/tickets/` | `docs/prd/PRD.md`) → "old"
+#   `docs/_shared/` present + no migration-owned name left directly under docs/ → "new"
+#   `docs/_shared/` present + one left (the design's half-moved shape) → "partial"
+#   `docs/_shared/` absent + `docs/<product>/` present + the old paths deleted but
+#     uncommitted in meta git (a run killed right after its FIRST rename) → "partial"
+#     (deep only — it asks meta git)
+#   neither → "none" (nothing to move).
+LAYOUT_PRODUCT_TOPS = ("prd", "tickets", "artifacts")
+# Names directly under docs/ that the fixed-path table owns — one of them beside
+# `_shared/` is a half-moved layout.
+LAYOUT_OWNED_TOPS = ("tickets", "prd", "artifacts", "DEPLOY.md", "wiki", "features", "design.md",
+                     "po", "designer", "developer", "qa")
+# `docs/` entries that never move: `.DS_Store` noise, and RELEASES.md (CODE repo, T-453).
+LAYOUT_SKIP = (".DS_Store", "RELEASES.md")
+LAYOUT_PERSONAS = ("po", "designer", "developer", "qa")
+LAYOUT_COMMIT_MSG = "chore: product-first docs layout (prdt layout migrate)"
+LAYOUT_STEPS = 9
+# Written by `--apply` before its first rename, removed after the meta commit (or once a
+# rollback / `--undo` has put the tree back): while it exists the layout is "partial".
+# A run killed at ANY point leaves it, so a half-move is detectable with no git — the two
+# shapes the disk alone cannot tell apart are an all-moved-uncommitted tree and a first
+# rename of an empty untracked folder. `.prdt/` rides the meta allowlist; the marker is
+# transient and never meant to be committed.
+LAYOUT_MARKER_REL = (".prdt", "layout-apply.inprogress")
+# The `다음:` line of every half-moved report (check · migrate refusal · PARTIAL):
+# the approved sentence, plus the one way back.
+LAYOUT_PARTIAL_NEXT = "PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요."
+LAYOUT_UNDO_HINT = "prdt layout migrate --undo 로 되돌릴 수 있어요."
+
+
+def _lay_color(code, s):
+    if sys.stdout.isatty() and not os.environ.get("NO_COLOR"):
+        return f"\033[{code}m{s}\033[0m"
+    return s
+
+
+def _lay_ok(s): return _lay_color("32", s)
+def _lay_er(s): return _lay_color("31", s)
+def _lay_wn(s): return _lay_color("33", s)
+def _lay_dm(s): return _lay_color("2", s)
+def _lay_b(s): return _lay_color("1", s)
+
+
+def _lay_n(n):
+    return f"{n:,}"
+
+
+def _lay_count_files(path):
+    """Files under `path` (a symlink counts as one file and is never followed;
+    `.DS_Store` is not a document). A plain file counts 1."""
+    p = str(path)
+    if os.path.islink(p) or not os.path.isdir(p):
+        return 0 if os.path.basename(p) in LAYOUT_SKIP else 1
+    n = 0
+    for dirpath, dirs, files in os.walk(p, followlinks=False):
+        n += sum(1 for f in files if f not in LAYOUT_SKIP)
+        n += sum(1 for d in dirs if os.path.islink(os.path.join(dirpath, d)))
+    return n
+
+
+def _lay_list_files(path):
+    """Project-relative-ish file list under `path` (sorted, same rules as the count)."""
+    p = str(path)
+    if os.path.islink(p) or not os.path.isdir(p):
+        return [p] if os.path.basename(p) not in LAYOUT_SKIP else []
+    out = []
+    for dirpath, dirs, files in os.walk(p, followlinks=False):
+        out += [os.path.join(dirpath, f) for f in files if f not in LAYOUT_SKIP]
+        out += [os.path.join(dirpath, d) for d in dirs if os.path.islink(os.path.join(dirpath, d))]
+    return sorted(out)
+
+
+def layout_product_name(root):
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    return product_dir_name(cfg.get("slug") if isinstance(cfg, dict) else None)
+
+
+def _lay_top_entries(root):
+    d = Path(root) / "docs"
+    try:
+        prod = layout_product_name(root)
+        return sorted(e for e in os.listdir(d) if e not in LAYOUT_SKIP and e not in (DOCS_SHARED, prod))
+    except OSError:
+        return []
+
+
+def layout_plan(root):
+    """What `--apply` moves, as units (`src` → `dst`, project-relative posix paths):
+    one unit per top-level `docs/` entry; `wiki/` splits per child (`retro--v*.md`
+    → the product, the rest → `_shared`). Preview and apply read this one result."""
+    root = Path(root)
+    prod = layout_product_name(root)
+    units = []
+
+    def unit(src, dst, side, top):
+        units.append({"src": src, "dst": dst, "side": side, "top": top,
+                      "dir": os.path.isdir(root / src) and not os.path.islink(root / src),
+                      "count": _lay_count_files(root / src)})
+
+    for name in _lay_top_entries(root):
+        src = f"docs/{name}"
+        if name in LAYOUT_PRODUCT_TOPS or name == "DEPLOY.md":
+            unit(src, f"docs/{prod}/{name}", "product", name)
+        elif name == "wiki" and os.path.isdir(root / src) and not os.path.islink(root / src):
+            for child in sorted(os.listdir(root / src)):
+                if child in LAYOUT_SKIP:
+                    continue
+                retro = bool(re.match(r"^retro--v.*\.md$", child)) and os.path.isfile(root / src / child)
+                unit(f"{src}/{child}",
+                     f"docs/{prod}/wiki/{child}" if retro else f"docs/{DOCS_SHARED}/wiki/{child}",
+                     "product" if retro else "shared", "wiki-retro" if retro else "wiki")
+        else:
+            unit(src, f"docs/{DOCS_SHARED}/{name}", "shared", name)
+    closed = []
+    vdir = root / "docs" / "prd" / "versions"
+    if vdir.is_dir() and not vdir.is_symlink():
+        closed = [Path(f).relative_to(root).as_posix() for f in _lay_list_files(vdir)
+                  if f.endswith(".md")]
+    return {"product": prod, "units": units, "closed": closed,
+            "total": sum(u["count"] for u in units),
+            "product_total": sum(u["count"] for u in units if u["side"] == "product"),
+            "shared_total": sum(u["count"] for u in units if u["side"] == "shared")}
+
+
+def _lay_marker_path(root):
+    return Path(root).joinpath(*LAYOUT_MARKER_REL)
+
+
+def _lay_marker(root):
+    """None when no in-progress marker stands at its path (`lexists`: a link counts, it is
+    never followed); else the record `--apply` wrote ({} when unreadable)."""
+    p = _lay_marker_path(root)
+    if not os.path.lexists(p):
+        return None
+    try:
+        st = os.lstat(p)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > 4096:
+            return {}
+        rec = json.loads(p.read_text(encoding="utf-8"))
+        return rec if isinstance(rec, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _lay_marker_write(root, head0, count, config=None):
+    """`config` (T-1125): the sha256 of the `.prdt/config.json` bytes `--apply` is about to
+    write — recorded BEFORE that write, so `--undo` restores the file only when it still
+    holds exactly what `--apply` put there (a user's later edit survives)."""
+    rec = {"head": head0, "count": count, "pid": os.getpid()}
+    if config:
+        rec["config"] = config
+    state_write(root, _lay_marker_path(root), json.dumps(rec) + "\n", sync=True)
+
+
+def _lay_marker_clear(root):
+    """Remove the marker (the link itself if it is one). Absent is fine; any other
+    failure is the caller's to judge."""
+    try:
+        os.unlink(_lay_marker_path(root))
+    except FileNotFoundError:
+        pass
+
+
+def _lay_head(root):
+    r = _lay_git(root, ["rev-parse", "HEAD"])
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def _lay_apply_committed(root, rec):
+    """T-1125: the marker stands but the layout commit exists — a run killed between its
+    meta commit and the marker's removal. True when `--apply`'s own commit (this subject,
+    parent = the HEAD the marker recorded) sits at or below HEAD: the move is complete, only
+    the marker unlink was missed. Nothing here ever moves a ref."""
+    head0 = rec.get("head") if isinstance(rec, dict) else None
+    if not isinstance(head0, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head0):
+        return False
+    cur = _lay_head(root)
+    if not cur or cur == head0:
+        return False
+    r = _lay_git(root, ["log", "--format=%H %P%x09%s", f"{head0}..{cur}"])
+    if r.returncode != 0:
+        return False
+    for line in r.stdout.splitlines():
+        left, _t, subj = line.partition("\t")
+        parts = left.split()
+        if len(parts) == 2 and parts[1] == head0 and subj == LAYOUT_COMMIT_MSG:
+            return True
+    return False
+
+
+def _lay_uncommitted_old(root):
+    """Old-layout paths the meta HEAD still tracks but the work tree (or the index)
+    has dropped — a move that was never committed (a killed `--apply`)."""
+    if not meta_repo_present(root):
+        return []
+    r = _lay_git(root, ["diff", "HEAD", "--no-renames", "--name-only", "-z", "--diff-filter=D", "--", "docs"])
+    if r.returncode != 0:
+        return []
+    return [p for p in r.stdout.split("\0")
+            if p.count("/") >= 1 and p.split("/")[1] in LAYOUT_OWNED_TOPS]
+
+
+def layout_state(root, deep=False):
+    """"old" | "new" | "partial" | "none" (see the block comment above). `deep`
+    also asks meta git whether a half-done move is waiting there."""
+    root = Path(root)
+    docs = root / "docs"
+    if not (root / ".prdt" / "config.json").is_file() or not docs.is_dir():
+        return "none"
+    rec = _lay_marker(root)
+    if rec is not None:
+        # T-1125: deep only (it asks meta git). The layout commit is already there: the move
+        # is complete and only the marker unlink was missed — clear it and classify the tree.
+        if not (deep and _lay_apply_committed(root, rec)):
+            return "partial"
+        try:
+            _lay_marker_clear(root)
+        except OSError:
+            return "partial"
+    shared = docs / DOCS_SHARED
+    owned = [n for n in LAYOUT_OWNED_TOPS if os.path.lexists(docs / n)]
+    if shared.is_dir() and not shared.is_symlink():
+        if owned or (deep and _lay_uncommitted_old(root)):
+            return "partial"
+        return "new"
+    pdir = docs / layout_product_name(root)
+    if deep and pdir.is_dir() and not pdir.is_symlink() and _lay_uncommitted_old(root):
+        return "partial"
+    if (docs / "tickets").exists() or (docs / "prd" / "PRD.md").exists():
+        return "old"
+    return "none"
+
+
+def _lay_tops(units, top):
+    return sum(u["count"] for u in units if u["top"] == top)
+
+
+def _lay_product_desc(units):
+    parts = []
+    for top in LAYOUT_PRODUCT_TOPS:
+        if any(u["top"] == top for u in units):
+            parts.append(f"{top}/ {_lay_n(_lay_tops(units, top))}")
+    if any(u["top"] == "wiki-retro" for u in units):
+        parts.append(f"wiki/retro--v*.md {_lay_n(_lay_tops(units, 'wiki-retro'))}")
+    if any(u["top"] == "DEPLOY.md" for u in units):
+        parts.append("DEPLOY.md")
+    return " · ".join(parts) or "—"
+
+
+def _lay_shared_desc(units):
+    shared = [u for u in units if u["side"] == "shared"]
+    tops = {}
+    for u in shared:
+        tops.setdefault(u["top"], []).append(u)
+    first = []
+    if "design.md" in tops:
+        first.append("design.md")
+    for t in ("features", "wiki"):
+        if t in tops:
+            first.append(f"{t}/ {_lay_n(_lay_tops(shared, t))}")
+    pers = [p for p in LAYOUT_PERSONAS if p in tops]
+    if pers:
+        first.append(" ".join(f"{p}/" for p in pers) + f" {_lay_n(sum(_lay_tops(shared, p) for p in pers))}")
+    taken = {"design.md", "features", "wiki", *LAYOUT_PERSONAS}
+    dirs, files, grouped = [], [], []
+    for t in sorted(tops, key=str.casefold):
+        if t in taken:
+            continue
+        if t.startswith("prdt-v1-") and t.endswith(".md") and not tops[t][0]["dir"]:
+            grouped.append(t)
+        elif tops[t][0]["dir"]:
+            dirs.append(t)
+        else:
+            files.append(t)
+    rest = [f"{t}/ {_lay_n(_lay_tops(shared, t))}" for t in dirs] + files
+    if len(grouped) >= 2:
+        rest.append(f"prdt-v1-*.md {_lay_n(len(grouped))}")
+    else:
+        rest += grouped
+    return " · ".join(first) or "—", " · ".join(rest)
+
+
+def _lay_allow_count(root):
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    meta = cfg.get("meta") if isinstance(cfg, dict) else None
+    lst = meta.get("allowlist") if isinstance(meta, dict) else None
+    return len(lst) if isinstance(lst, list) else 0
+
+
+def layout_print_preview(root, plan):
+    prod, units = plan["product"], plan["units"]
+    n_alias = _lay_allow_count(root)
+    print(f"{prod}: docs 폴더가 예전 구조예요. 문서 {_lay_n(plan['total'])}개를 새 구조로 옮길 목록이에요. "
+          f"아직 아무것도 옮기지 않았어요.")
+    print()
+    print(_lay_dm("옮길 곳              파일   내용"))
+
+    def row(dest, n, desc):
+        left = dest.ljust(20) if len(dest) < 20 else dest + " "
+        return f"{_lay_b(dest)}{left[len(dest):]}{_lay_n(n).rjust(5)}   {desc}"
+    print(row(f"docs/{prod}/", plan["product_total"], _lay_product_desc(units)))
+    d1, d2 = _lay_shared_desc(units)
+    print(row(f"docs/{DOCS_SHARED}/", plan["shared_total"], d1))
+    if d2:
+        print(" " * 28 + d2)
+    stay = [n for n in (".prdt", "code", "tracks", "briefs") if os.path.isdir(Path(root) / n)]
+    print("그대로                 —    " + " · ".join(f"{n}/" for n in stay))
+    print()
+    print(_lay_dm("함께 바뀌는 것"))
+    print(f"  .prdt/config.json         meta.allowlist {n_alias}줄을 옮긴 경로로 다시 써요")
+    if any(u["top"] == "artifacts" for u in units):
+        print("  artifacts/manifest.json   bucket 경로를 다시 써요")
+    print(f"  닫힌 PRD {len(plan['closed'])}개              바이트 그대로 두고 shasum 으로 비교해요")
+    print("  코드 저장소                건드리지 않아요")
+    print()
+    print("다음: 목록이 맞으면 prdt layout migrate --apply 로 옮기세요.")
+
+
+def _lay_leftover(root, ask_git=True):
+    """(first old name directly under docs/, files still at the old top level) —
+    the numbers the half-moved lines name, always what the disk shows (T-1125: never the
+    marker's recorded count). Nothing old left on disk (`first` None): the uncommitted old
+    paths in meta git; `ask_git=False` (the session-start block while the marker stands:
+    no git there) reads 0."""
+    plan = layout_plan(root)
+    docs = Path(root) / "docs"
+    first = next((n for n in LAYOUT_OWNED_TOPS if os.path.lexists(docs / n)), None)
+    if first is not None:
+        return first, plan["total"]
+    gone = _lay_uncommitted_old(root) if ask_git else []
+    if gone:
+        return gone[0].split("/")[1], len(gone)
+    return None, 0
+
+
+def layout_partial_next(root):
+    """The `다음:` text of a half-moved report: the `--undo` sentence only when
+    `--undo` can run (T-1123) — i.e. an uncommitted old-layout deletion exists, or the
+    marker stands over the HEAD it recorded (T-1125: a moved HEAD makes `--undo` refuse)."""
+    rec = _lay_marker(root)
+    if rec is not None:
+        mh = rec.get("head")
+        can = not (isinstance(mh, str) and mh and mh != _lay_head(root))
+    else:
+        can = bool(_lay_uncommitted_old(root))
+    if can:
+        return f"{LAYOUT_PARTIAL_NEXT} {LAYOUT_UNDO_HINT}"
+    return LAYOUT_PARTIAL_NEXT
+
+
+def layout_partial_line(root):
+    _first, left = _lay_leftover(root)
+    return f"docs 폴더 일부만 새 구조예요. 문서 {_lay_n(left)}개가 아직 예전 구조예요"
+
+
+def layout_session_start_block(root):
+    """T-1105: the block the PO session-start hook injects — "" when there is nothing
+    to say (new layout · no docs to move). SHALLOW state only (`layout_state(root)`,
+    filesystem-only): the hook pays no git process. Copy: the approved screen set,
+    `layout-start` (propose · none · half; user approved 2026-10-12, T-1114) — change
+    a string only with that screen. Machine-facing English wraps the one ko line the
+    PO says; the only interpolated values are a count and the sanitized product name.
+    Two exceptions to "shallow": a live dispatch in this project silences the block
+    (design ④, markers read from the filesystem), and the one rare shape a killed
+    `--apply` leaves (`docs/<prod>/` present, `docs/_shared` absent) asks meta git, so
+    it reads as half-moved like `prdt layout check` — ordinary old/new stay git-free.
+    The in-progress marker (T-1105) makes every other killed `--apply` shape partial in
+    the shallow state, and its count feeds the block: no git there either."""
+    if _lay_live_dispatches(root):
+        return ""
+    state = layout_state(root)
+    prod = layout_product_name(root)
+    if state in ("old", "none"):
+        pdir = Path(root) / "docs" / prod
+        if pdir.is_dir() and not pdir.is_symlink() and not os.path.lexists(Path(root) / "docs" / DOCS_SHARED):
+            state = layout_state(root, deep=True)
+    if state == "old":
+        n = _lay_n(layout_plan(root)["total"])
+        return (
+            "[prdt layout: this project is on the pre-product docs layout]\n"
+            "End your first reply this session with this ko line as plain text, options \"목록 보기\" · \"이번 세션은 넘기기\".\n"
+            f"「docs 폴더가 아직 예전 구조예요. 문서 {n}개가 제품 폴더 없이 `docs/` 바로 아래에 있어요. "
+            f"`docs/{DOCS_SHARED}` · `docs/{prod}` 두 폴더로 옮길 수 있어요. 옮길 목록부터 보여 드릴까요?」\n"
+            "On \"목록 보기\" or a yes: run `prdt layout migrate` (writes nothing), show its list minus its `다음:` line, "
+            "and run `prdt layout migrate --apply` only on the user's confirm of that list. Otherwise nothing this session.")
+    if state == "partial":
+        first, left = _lay_leftover(root, ask_git=_lay_marker(root) is None)
+        if first is None and _lay_marker(root) is None:    # no trace of a move at all
+            return ""
+        h1 = first is not None and os.path.lexists(Path(root) / "docs" / first) and (Path(root) / "docs" / DOCS_SHARED).is_dir() \
+            and not (Path(root) / "docs" / DOCS_SHARED).is_symlink()
+        head = "[prdt layout: this project's docs layout is half-moved]\n"
+        undo = ("Offer `prdt layout migrate --undo` only when its `다음:` line names it; run it only on a yes.\n")
+        if h1:
+            slash = "/" if os.path.isdir(Path(root) / "docs" / first) else ""
+            return (
+                head +
+                "Do NOT propose `prdt layout migrate` here. In your first reply this session say this ko line as plain text, "
+                "then run `prdt layout check` and show its ✗ line. " + undo.rstrip("\n") + "\n"
+                f"「docs 폴더 일부만 새 구조로 옮겨졌어요. `docs/{DOCS_SHARED}/` 는 새 구조인데 `docs/{first}{slash}` 는 예전 구조 그대로예요. "
+                f"이 상태에서는 옮기기를 제안하지 않아요. `prdt doctor` 로 남은 문서 {_lay_n(left)}개를 확인하세요.」")
+        return (
+            head +
+            "Do NOT propose `prdt layout migrate` here. In your first reply this session say this ko line as plain text, "
+            "then run `prdt layout check`. " + undo.rstrip("\n") + "\n"
+            "「docs 폴더 일부만 새 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.」")
+    return ""
+
+
+def layout_doctor_warnings(root):
+    """The doctor error line of a half-moved layout (design: "제안 대신 doctor 오류")."""
+    if layout_state(root, deep=True) != "partial":
+        return []
+    return ["✗ " + layout_partial_line(root)]
+
+
+def _lay_git(root, args, stdin=None):
+    prob = meta_git_trust_problem(root)
+    if prob:
+        return subprocess.CompletedProcess(["git", *args], 128, "", meta_git_refusal(prob))
+    return subprocess.run(["git", *META_GIT_HARDEN, "--git-dir", str(meta_git_dir(root)),
+                           "--work-tree", str(root), *args], cwd=str(root), env=_scrubbed_git_env(),
+                          input=stdin, capture_output=True, text=True, timeout=300)
+
+
+def _lay_pathspec(root, verb_args, paths):
+    """`git <verb_args> --pathspec-from-file=-` over `paths` (NUL-separated: no
+    quoting, no ARG_MAX)."""
+    if not paths:
+        return subprocess.CompletedProcess(["git"], 0, "", "")
+    return _lay_git(root, [*verb_args, "--pathspec-from-file=-", "--pathspec-file-nul"],
+                    stdin="\0".join(paths) + "\0")
+
+
+def _lay_live_dispatches(root):
+    d = prdt_home() / "run" / "dispatches"
+    if not d.is_dir():
+        return 0
+    now = datetime.now(timezone.utc)
+    here = os.path.realpath(str(root))
+    n = 0
+    for f in sorted(d.glob("*.json")):
+        try:
+            with open(f, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict) or not isinstance(data.get("project_root"), str):
+                continue
+            if os.path.realpath(data["project_root"]) != here:
+                continue
+            if _dispatch_state(data, now).startswith("live"):
+                n += 1
+        except Exception:
+            continue
+    return n
+
+
+def _lay_dirty(root):
+    """Uncommitted meta changes under docs/ and .prdt/config.json (the files this
+    command moves or rewrites); `.prdt/po-state.json` and the rest of `.prdt/` move
+    on every turn and are not ours."""
+    allow = [e for e in read_meta_allowlist(root) if e == "docs" or e.startswith("docs/")]
+    r = _lay_git(root, ["status", "--porcelain", "-z", "--untracked-files=all", "--",
+                        *allow, ".prdt/config.json"])
+    if r.returncode != 0:
+        return None, (r.stderr or "git status failed").strip().splitlines()[0]
+    toks, out, i = r.stdout.split("\0"), [], 0
+    while i < len(toks):
+        e = toks[i]
+        i += 1
+        if len(e) < 4:
+            continue
+        if "R" in e[:2] or "C" in e[:2]:
+            i += 1
+        # `docs/wiki/index.md` is generated (every `prdt doctor` / `wiki reindex` rewrites it)
+        # and step 6 regenerates it: never a change worth refusing for.
+        if e[3:] != "docs/wiki/index.md":
+            out.append(e[3:])
+    return out, None
+
+
+def _lay_refuse(why, rest, nxt, tail="docs 폴더는 예전 구조 그대로예요."):
+    print(f"{_lay_er('옮기지 않았어요')}: {why}." + (f" {tail}" if tail else ""))
+    for line in rest:
+        print(f"  {line}")
+    print()
+    print(f"다음: {nxt}")
+    sys.exit(1)
+
+
+def layout_precheck(root, plan):
+    """The four checks before anything is written (a hit → refuse, nothing written).
+    Order is the screen's: meta git clean · no dispatch in flight · not half-moved ·
+    no `docs/<product>/` name clash. Returns nothing; exits 1 on a hit."""
+    docs = Path(root) / "docs"
+    if project_lines(root):
+        _lay_refuse("이 프로젝트는 제품 여럿을 써서 아직 옮길 수 없어요", [],
+                    "PO 에게 알리세요. 옮기기를 지원할 때까지 예전 구조로 써도 돼요.")
+    if os.path.islink(docs):
+        _lay_refuse("docs 가 실제 폴더가 아니라 링크예요", [], "docs 링크를 실제 폴더로 바꾼 뒤 다시 실행하세요.",
+                    tail="docs 안의 문서는 예전 구조 그대로예요.")
+    if not meta_repo_present(root):
+        _lay_refuse("meta git 이 없어요", [], "PO 에게 meta git 만들기를 요청한 뒤 다시 실행하세요.")
+    prob = meta_git_trust_problem(root)
+    if prob:
+        _lay_refuse(f"meta git 을 쓸 수 없어요 ({prob})", [],
+                    "prdt doctor 가 알려 주는 대로 meta git 을 고친 뒤 다시 실행하세요.")
+    dirty, err = _lay_dirty(root)
+    if dirty is None:
+        _lay_refuse(f"meta git 의 변경 목록을 읽을 수 없어요 ({err})", [], "괄호 안 git 오류를 고친 뒤 다시 실행하세요.")
+    if dirty:
+        shown = dirty[:10] + ([_lay_dm(f"… {_lay_n(len(dirty) - 10)}개 더")] if len(dirty) > 10 else [])
+        _lay_refuse(f"커밋하지 않은 변경 {_lay_n(len(dirty))}개가 meta git 에 있어요", shown,
+                    f"변경 {_lay_n(len(dirty))}개를 커밋한 뒤 다시 실행하세요.")
+    live = _lay_live_dispatches(root)
+    if live:
+        _lay_refuse(f"이 프로젝트에서 진행 중인 dispatch {_lay_n(live)}개가 있어요", [],
+                    "prdt dispatch ls 로 확인하고, 끝난 뒤 다시 실행하세요.")
+    if layout_state(root, deep=True) == "partial":
+        _lay_refuse_partial(root)
+    prod = plan["product"]
+    for clash in (prod, DOCS_SHARED):
+        if os.path.lexists(docs / clash):
+            _lay_refuse(f"새 구조가 쓸 docs/{clash}/ 폴더가 이미 있어요", [],
+                        "그 폴더의 이름을 바꾸거나 다른 곳으로 옮긴 뒤 다시 실행하세요.")
+
+
+def _lay_refuse_partial(root):
+    print(f"{_lay_er('옮기지 않았어요')}: {layout_partial_line(root)}.")
+    print()
+    print(f"다음: {layout_partial_next(root)}")
+    sys.exit(1)
+
+
+def _lay_rename(src, dst):
+    """The one rename every move and every rollback goes through (a test seam).
+    Refuses to replace anything: both ends were checked, and `os.rename` would
+    silently overwrite a file."""
+    if os.path.lexists(dst):
+        raise FileExistsError(errno.EEXIST, "File exists", str(dst))
+    os.rename(src, dst)
+
+
+def _lay_map_allow(entry, prod):
+    """One `meta.allowlist` entry, As-Is → To-Be (a list: `docs/wiki` splits)."""
+    if entry == "docs":
+        return [f"docs/{DOCS_SHARED}", f"docs/{prod}"]
+    if not entry.startswith("docs/"):
+        return [entry]
+    parts = entry.split("/")
+    head, tail = parts[1], "/".join(parts[1:])
+    if head in LAYOUT_PRODUCT_TOPS or head == "DEPLOY.md":
+        return [f"docs/{prod}/{tail}"]
+    if head == "wiki":
+        if len(parts) == 2:
+            return [f"docs/{DOCS_SHARED}/wiki", f"docs/{prod}/wiki"]
+        return [f"docs/{prod}/{tail}" if re.match(r"^retro--v.*\.md$", parts[2]) and len(parts) == 3
+                else f"docs/{DOCS_SHARED}/{tail}"]
+    if head in (DOCS_SHARED, prod):
+        return [entry]
+    return [f"docs/{DOCS_SHARED}/{tail}"]
+
+
+def _lay_remap(path, units):
+    for u in units:
+        s = u["src"]
+        if path == s or path.startswith(s + "/"):
+            return u["dst"] + path[len(s):]
+    return None
+
+
+def _lay_hash(root, rels):
+    out = {}
+    for rel in rels:
+        h = hashlib.sha256()
+        try:
+            with open(Path(root) / rel, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+        except OSError as e:
+            e.filename = rel      # the failure line names the project-relative file
+            raise
+        out[rel] = h.hexdigest()
+    return out
+
+
+_LAY_CUR = [2]
+
+
+def _lay_step(i, text):
+    _LAY_CUR[0] = i
+    print(f"{_lay_ok(f'{i}/{LAYOUT_STEPS}')} {text}")
+    sys.stdout.flush()
+
+
+def _lay_err_text(e):
+    return getattr(e, "strerror", None) or str(e) or type(e).__name__
+
+
+class _LayoutFail(Exception):
+    def __init__(self, step, what, nxt):
+        super().__init__(what)
+        self.step, self.what, self.nxt = step, what, nxt
+
+
+def layout_apply(root, plan):
+    root = Path(root)
+    prod, units, closed = plan["product"], plan["units"], plan["closed"]
+    layout_precheck(root, plan)
+    _lay_step(1, "선행 검사를 통과했어요")
+    n_total = plan["total"]
+    _lay_step(2, f"옮길 문서 {_lay_n(n_total)}개의 목록을 만들었어요")
+
+    _LAY_CUR[0] = 2
+    moved, created_dirs, generated, skip_removed = [], [], [], []
+    h = _lay_git(root, ["rev-parse", "HEAD"])
+    head0 = h.stdout.strip() if h.returncode == 0 else None
+    undo = {"config": None, "wiki_index": None, "manifest": None}
+    tracked_old, staged = [], []
+    cfg_path = root / ".prdt" / "config.json"
+    try:
+        # 3 — closed PRD bytes
+        try:
+            before = _lay_hash(root, closed)
+        except OSError as e:
+            raise _LayoutFail(3, f"닫힌 PRD {e.filename} 를 읽을 수 없어요 ({_lay_err_text(e)})",
+                              "괄호 안 원인을 고친 뒤 다시 실행하세요.")
+        _lay_step(3, f"닫힌 PRD {len(closed)}개의 shasum 을 적었어요")
+
+        # 4 — move (git mv semantics: rename + stage; history follows the content)
+        r = _lay_git(root, ["ls-files", "-z", "--", "docs"])
+        tracked = [p for p in r.stdout.split("\0") if p] if r.returncode == 0 else []
+        try:
+            _lay_marker_write(root, head0, n_total)     # before the first rename: a kill from here on reads as partial
+            for u in units:
+                dst_parent = (root / u["dst"]).parent
+                chain, p = [], dst_parent
+                while not p.exists() and p != root:
+                    chain.append(p)
+                    p = p.parent
+                os.makedirs(dst_parent, exist_ok=True)
+                created_dirs += list(reversed(chain))   # shallow first; rollback walks it backwards
+                _lay_rename(root / u["src"], root / u["dst"])
+                moved.append(u)
+            for t in tracked:
+                new = _lay_remap(t, units)
+                if new:
+                    tracked_old.append(t)
+                    staged.append(new)
+            # an emptied docs/wiki is not a document
+            wiki = root / "docs" / "wiki"
+            if wiki.is_dir() and not wiki.is_symlink():
+                left = os.listdir(wiki)
+                if all(n in LAYOUT_SKIP for n in left):   # `.DS_Store` only: the old folder goes with it
+                    for n in left:
+                        fp = wiki / n
+                        if fp.is_file() and not fp.is_symlink():
+                            was_tracked = f"docs/wiki/{n}" in tracked
+                            skip_removed.append((fp, f"docs/wiki/{n}", was_tracked, fp.read_bytes()))
+                            if was_tracked:
+                                tracked_old.append(f"docs/wiki/{n}")
+                        os.unlink(fp)
+                    os.rmdir(wiki)
+            g = _lay_pathspec(root, ["add", "-A", "-f"], tracked_old + staged)
+            if g.returncode != 0:
+                raise OSError(0, (g.stderr or "git add failed").strip().splitlines()[0] if g.stderr else "git add failed")
+        except OSError as e:
+            raise _LayoutFail(4, f"문서 {_lay_n(n_total)}개를 옮길 수 없어요 ({_lay_err_text(e)})",
+                              "괄호 안 원인을 고친 뒤 다시 실행하세요.")
+        _lay_step(4, f"문서 {_lay_n(n_total)}개를 옮겼어요 (git mv, 이력 유지)")
+
+        # 5 — config
+        cfg = read_json(cfg_path)
+        allow = ((cfg or {}).get("meta") or {}).get("allowlist") if isinstance((cfg or {}).get("meta"), dict) else None
+        n_allow = len(allow) if isinstance(allow, list) else 0
+        try:
+            if isinstance(allow, list) and all(isinstance(x, str) for x in allow):
+                undo["config"] = cfg_path.read_bytes()
+                new_allow = []
+                for e in allow:
+                    for m in _lay_map_allow(e, prod):
+                        if m not in new_allow:
+                            new_allow.append(m)
+                cfg["meta"]["allowlist"] = new_allow
+                cfg_text = json.dumps(cfg, indent=2, ensure_ascii=False) + "\n"
+                # T-1125: the sha of what is about to be written goes into the marker FIRST
+                _lay_marker_write(root, head0, n_total, hashlib.sha256(cfg_text.encode("utf-8")).hexdigest())
+                state_write(root, cfg_path, cfg_text)
+        except OSError as e:   # StateLinkError is an OSError
+            raise _LayoutFail(5, f".prdt/config.json 을 쓸 수 없어요 ({_lay_err_text(e)})",
+                              ".prdt/config.json 의 쓰기 권한을 고친 뒤 다시 실행하세요.")
+        _lay_step(5, f".prdt/config.json 의 meta.allowlist {n_allow}줄을 다시 썼어요")
+
+        # 6 — derived state: artifact manifest · index.db · wiki index.md
+        try:
+            widx = shared_docs_dir(root) / "wiki" / "index.md"
+            undo["wiki_index"] = widx.read_bytes() if widx.is_file() else False
+            man = artifact_manifest_path(root)
+            if (root / "docs" / prod / "artifacts").is_dir():
+                undo["manifest"] = man.read_bytes() if man.is_file() else False
+                if legacy_bucket_manifests(root):
+                    raise _LayoutFail(6, "산출물 목록 · 인덱스 · 위키 index.md 를 다시 만들 수 없어요 "
+                                         "(artifacts 폴더에 버킷별 manifest 가 남아 있어요)",
+                                      "prdt artifacts migrate 를 먼저 실행한 뒤 다시 실행하세요.")
+                prior, merr, malformed, _ = read_artifact_manifest(root)
+                if merr or malformed:
+                    raise OSError(0, f"artifacts manifest 를 읽을 수 없어요: {merr or malformed[0]}")
+                data, _dropped = build_artifact_manifest(root, prior=prior)
+                write_artifact_manifest(root, data)
+                if undo["manifest"] is False:
+                    generated.append(man)
+            con, _v, _pages, _m = rebuild_index(root)
+            con.close()
+            if undo["wiki_index"] is False and widx.is_file():
+                generated.append(widx)
+        except (OSError, sqlite3.Error) as e:
+            raise _LayoutFail(6, f"산출물 목록 · 인덱스 · 위키 index.md 를 다시 만들 수 없어요 ({_lay_err_text(e)})",
+                              "괄호 안 원인을 고친 뒤 다시 실행하세요.")
+        _lay_step(6, "산출물 목록 · 인덱스 · 위키 index.md 를 다시 만들었어요")
+
+        # 7 — closed PRD bytes unchanged
+        after_rel = {c: _lay_remap(c, units) for c in closed}
+        try:
+            after = _lay_hash(root, [v for v in after_rel.values() if v])
+        except OSError as e:
+            raise _LayoutFail(7, f"닫힌 PRD {e.filename} 를 읽을 수 없어요 ({_lay_err_text(e)})",
+                              "괄호 안 원인을 고친 뒤 다시 실행하세요.")
+        bad = [c for c, n in after_rel.items() if after.get(n) != before.get(c)]
+        if bad:
+            raise _LayoutFail(7, f"닫힌 PRD {len(bad)}개의 shasum 이 옮기기 전과 달라요 ({bad[0]})",
+                              "PO 에게 알리세요. 닫힌 PRD 는 그대로 돌려놨고, 도구를 고친 뒤 다시 옮길 수 있어요.")
+        _lay_step(7, f"닫힌 PRD {len(closed)}개의 shasum 이 모두 같아요")
+
+        # 8 — one meta commit
+        extra = [".prdt/config.json"]
+        for cand in (artifact_manifest_path(root), shared_docs_dir(root) / "wiki" / "index.md"):
+            if cand.is_file():
+                extra.append(Path(cand).relative_to(root).as_posix())
+        # the old paths were staged as deleted at step 4 — only what exists now is added here
+        g = _lay_pathspec(root, ["add", "-A", "-f"], list(dict.fromkeys(staged + extra)))
+        c = _lay_git(root, ["commit", "-q", "-m", LAYOUT_COMMIT_MSG])
+        if g.returncode != 0 or c.returncode != 0:
+            why = ((c.stderr or g.stderr or "git commit failed").strip().splitlines() or ["git commit failed"])[0]
+            raise _LayoutFail(8, f"meta 커밋 1개를 만들 수 없어요 ({why})", "괄호 안 git 오류를 고친 뒤 다시 실행하세요.")
+        try:
+            _lay_marker_clear(root)       # only now: the move is committed
+        except OSError as e:
+            raise _LayoutFail(8, f"meta 커밋 1개를 만들 수 없어요 ({_lay_err_text(e)})", "괄호 안 원인을 고친 뒤 다시 실행하세요.")
+        print(f"{_lay_ok('8/9')} meta 커밋 1개를 만들었어요: {_lay_dm(LAYOUT_COMMIT_MSG)}")
+        sys.stdout.flush()
+    except (_LayoutFail, KeyboardInterrupt, Exception) as f:
+        if not isinstance(f, _LayoutFail):   # SIGINT or a bug: same road back, never a half-move left standing
+            what = "중단됐어요" if isinstance(f, KeyboardInterrupt) else f"예상하지 못한 오류예요 ({_lay_err_text(f)})"
+            f = _LayoutFail(_LAY_CUR[0] + 1, what, "원인을 확인한 뒤 다시 실행하세요.")
+        layout_rollback(root, plan, f, moved, created_dirs, generated, undo, tracked_old + staged, head0, skip_removed)
+        return  # unreachable — rollback exits
+
+    # 9 — doctor's path warnings
+    warns = layout_path_warnings(root)
+    print(f"{_lay_ok('9/9')} prdt doctor 경로 경고 {_lay_b(_lay_n(len(warns)) + '개')}")
+    for w in warns[:5]:
+        print(f"  {_lay_dm(w)}")
+    print()
+    print(_lay_b(f"docs 폴더가 새 구조가 됐어요. 문서 {_lay_n(n_total)}개를 docs/{DOCS_SHARED} · docs/{prod} 로 옮겼어요."))
+    print()
+    print("다음: 평소대로 작업하세요.")
+
+
+def layout_path_warnings(root):
+    """The doctor findings about paths (design step 9, PRD measure 4): artifact
+    placement · PRD layout · artifact → ticket edges · meta drift."""
+    root = Path(root)
+    out = []
+    st = read_json(root / ".prdt" / "po-state.json")
+    try:
+        trows = [r for r, _, _ in (scan_tickets(root) or [])]
+        tickets = {r["id"]: r for r in trows}
+    except Exception:
+        tickets = {}
+    for fn in (lambda: artifact_placement_warnings(root), lambda: prd_layout_warnings(root, st),
+               lambda: artifact_ticket_edge_warnings(root, tickets), lambda: meta_drift_warnings(root),
+               lambda: dead_discipline_path_warnings(root)):
+        try:
+            out += list(fn())
+        except Exception:
+            pass
+    return out
+
+
+def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, staged_paths, head0=None, skip_removed=()):
+    """Undo steps 4–8 in reverse; report what could not be undone (PARTIAL).
+    Same shape as `prdt meta relocate`: rollback failing is reported, never hidden."""
+    root = Path(root)
+    print(f"{_lay_er(f'{fail.step}/{LAYOUT_STEPS}')} {_lay_er('옮기기 실패')}: {fail.what}")
+    # the derived files this run CREATED sit at their new paths: drop them before the move back
+    for p in generated:
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+    stuck, back_files = [], 0
+    for u in reversed(moved):
+        try:
+            os.makedirs((root / u["src"]).parent, exist_ok=True)
+            _lay_rename(root / u["dst"], root / u["src"])
+            back_files += u["count"]
+        except OSError as e:
+            stuck.append((u, e))
+    for fp, rel, was_tracked, data in skip_removed:
+        if was_tracked:      # tracked: `git checkout HEAD` below puts it back, index and bytes
+            continue
+        try:
+            state_write(root, fp, data.decode("utf-8"))
+        except (OSError, UnicodeDecodeError):   # untracked Finder junk that is not text: regenerated, never a document
+            pass
+    try:
+        if undo.get("config") is not None:
+            state_write(root, root / ".prdt" / "config.json", undo["config"].decode("utf-8"))
+    except (OSError, UnicodeDecodeError):
+        pass
+    if not stuck:
+        # folders this run made — `docs/_shared/` and `docs/<product>/` did not exist (precheck)
+        docs = root / "docs"
+        for d in [docs / DOCS_SHARED / "wiki", *reversed(created_dirs), docs / DOCS_SHARED, docs / plan["product"]]:
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
+        try:     # index.db follows the old layout again — before the old bytes go back
+            con, *_ = rebuild_index(root)
+            con.close()
+        except Exception:
+            pass
+        # the derived files this run REWROTE: the old bytes, now at their old paths
+        for kind, rel in (("manifest", ("docs", "artifacts", "manifest.json")),
+                          ("wiki_index", ("docs", "wiki", "index.md"))):
+            if isinstance(undo.get(kind), bytes):
+                try:
+                    state_write(root, root.joinpath(*rel), undo[kind].decode("utf-8"))
+                except (OSError, UnicodeDecodeError):
+                    pass
+        if undo.get("wiki_index") is False:       # the old tree had none — the rebuild made it
+            try:
+                os.unlink(root / "docs" / "wiki" / "index.md")
+            except OSError:
+                pass
+    # meta history and index back to where the run found them (a commit that was
+    # made is dropped — the work tree is already back, so `--mixed` leaves it alone)
+    try:
+        # the reset runs only when HEAD is THIS run's own layout commit (subject + parent);
+        # any other HEAD move is someone else's commit — refs stay, only tree/index are restored
+        h = _lay_git(root, ["rev-parse", "HEAD"])
+        if head0 and h.returncode == 0 and h.stdout.strip() != head0:
+            lg = _lay_git(root, ["log", "-1", "--format=%P%x09%s", "HEAD"])
+            parents, _t, subj = lg.stdout.rstrip("\n").partition("\t")
+            if lg.returncode == 0 and parents.split() == [head0] and subj == LAYOUT_COMMIT_MSG:
+                _lay_git(root, ["reset", "-q", head0])
+        _lay_pathspec(root, ["reset", "-q"], staged_paths)
+        _lay_pathspec(root, ["checkout", "HEAD"], [rel for _fp, rel, tr, _d in skip_removed if tr])
+    except Exception:
+        pass
+    n_moved = sum(u["count"] for u in moved)
+    if not stuck:
+        try:     # the tree is back: no half-move left to mark
+            _lay_marker_clear(root)
+        except OSError:
+            pass
+        if moved:
+            print()
+            print(f"{_lay_wn('되돌렸어요')}: 옮긴 문서 {_lay_n(back_files)}개를 원래 자리로 돌렸어요. "
+                  f"docs 폴더는 예전 구조 그대로예요.")
+        else:
+            print()
+            print("docs 폴더는 예전 구조 그대로예요.")
+        print()
+        print(f"다음: {fail.nxt}")
+        sys.exit(1)
+    left_files = sum(u["count"] for u, _ in stuck)
+    first_err = _lay_err_text(stuck[0][1])
+    print()
+    print(f"{_lay_er('되돌리기 실패')}: 문서 {_lay_n(n_moved)}개 중 {_lay_n(left_files)}개를 원래 자리로 "
+          f"돌리지 못했어요 ({first_err})")
+    listing = []
+    for u, _ in stuck:
+        listing += [Path(f).relative_to(root).as_posix() for f in _lay_list_files(root / u["dst"])]
+    for p in listing[:3]:
+        print(f"  {p}")
+    if len(listing) > 3:
+        print(f"  {_lay_dm(f'… {_lay_n(len(listing) - 3)}개 더')}")
+    print()
+    homes = sorted({Path(u["dst"]).parts[1] for u, _ in stuck})
+    where = "docs/" + homes[0] + "/" if len(homes) == 1 else "docs/" + plan["product"] + "/"
+    print(f"{_lay_er(_lay_b('PARTIAL'))} docs 폴더 일부만 새 구조예요. 문서 {_lay_n(left_files)}개는 새 자리({where})에 "
+          f"남았고, 나머지 {_lay_n(max(n_moved - left_files, 0))}개는 예전 자리로 돌아왔어요.")
+    print()
+    print(f"다음: {layout_partial_next(root)}")
+    sys.exit(2)
+
+
+def _lay_undo_refuse(why, nxt, head="되돌리지 않았어요"):
+    print(f"{_lay_er(head)}: {why}")
+    print()
+    print(f"다음: {nxt}")
+    sys.exit(1)
+
+
+def layout_undo(root, state):
+    """`migrate --undo`: put an UNCOMMITTED half-move (a killed `--apply`) back to
+    the old structure — the same inverse the rollback walks, driven from disk."""
+    root = Path(root)
+    if state == "old":
+        _lay_undo_refuse("docs 폴더가 예전 구조라 되돌릴 것이 없어요.", "옮기려면 prdt layout migrate 로 옮길 목록을 확인하세요.")
+    if state == "new":
+        _lay_undo_refuse("docs 폴더가 이미 새 구조로 끝나서 되돌릴 수 없어요.", "예전 구조로 돌아가려면 PO 에게 알리세요.")
+    gone = _lay_uncommitted_old(root) if state == "partial" else []
+    marker = _lay_marker(root)
+    # T-1125: a marker over a HEAD that is not the one `--apply` started from can only be a
+    # moved history (a finished layout commit was already settled by `layout_state(deep)`):
+    # never reset or rewrite it, never move docs back under it — refuse, nothing changes.
+    # A marker that stands but cannot be read as a record naming its HEAD ({} · garbled ·
+    # zero-length · not a regular file · oversize) proves nothing about the history: refuse too.
+    mh = marker.get("head") if marker is not None else None
+    unguarded = marker is not None and not (isinstance(mh, str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", mh))
+    if unguarded or (marker is not None and mh != _lay_head(root)) or (not gone and marker is None):
+        _lay_undo_refuse("옮기다 멈춘 문서를 찾지 못했어요. docs 폴더는 그대로예요.",
+                         "prdt layout check 로 상태를 확인하고, 일부만 새 구조라고 나오면 PO 에게 알리세요.")
+    prod = layout_product_name(root)
+    docs = root / "docs"
+    tree = _lay_git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", "docs", ".prdt/config.json"])
+    if tree.returncode != 0:     # read before anything moves: a failed read is a refusal, never a silent skip
+        _lay_undo_refuse(f"meta git 의 변경 목록을 되돌릴 수 없어요 ({(tree.stderr or 'git ls-tree failed').strip().splitlines()[0]}). "
+                         f"docs 폴더는 그대로예요.", "괄호 안 git 오류를 고친 뒤 다시 실행하세요.")
+    head_files = set(p for p in tree.stdout.split("\0") if p)
+    # `.prdt/config.json` goes back only if `--apply` rewrote it and it still holds those bytes
+    cfg_p, rec_sha = root / ".prdt" / "config.json", marker.get("config") if marker else None
+    restore_cfg = False
+    if isinstance(rec_sha, str) and cfg_p.is_file() and not cfg_p.is_symlink():
+        try:
+            restore_cfg = hashlib.sha256(cfg_p.read_bytes()).hexdigest() == rec_sha
+        except OSError:
+            pass
+    r = _lay_pathspec(root, ["reset", "-q", "HEAD"], ["docs", ".prdt/config.json"])
+    if r.returncode != 0:
+        _lay_undo_refuse(f"meta git 의 변경 목록을 되돌릴 수 없어요 ({(r.stderr or 'git reset failed').strip().splitlines()[0]}). "
+                         f"docs 폴더는 그대로예요.", "괄호 안 git 오류를 고친 뒤 다시 실행하세요.")
+    moves = []      # (new path, old path)
+    pdir, sdir = docs / prod, docs / DOCS_SHARED
+    if pdir.is_dir() and not pdir.is_symlink():
+        for n in sorted(os.listdir(pdir)):
+            if n in LAYOUT_PRODUCT_TOPS or n == "DEPLOY.md":
+                moves.append((pdir / n, docs / n))
+            elif n == "wiki" and (pdir / n).is_dir():
+                moves += [(pdir / n / c, docs / "wiki" / c) for c in sorted(os.listdir(pdir / n))]
+    if sdir.is_dir() and not sdir.is_symlink():
+        for n in sorted(os.listdir(sdir)):
+            if n == "wiki" and (sdir / n).is_dir() and not (sdir / n).is_symlink():
+                moves += [(sdir / n / c, docs / "wiki" / c) for c in sorted(os.listdir(sdir / n))]
+            else:
+                moves.append((sdir / n, docs / n))
+    back, stuck = 0, []
+    for src, dst in moves:
+        try:
+            n = _lay_count_files(src)
+            os.makedirs(dst.parent, exist_ok=True)
+            _lay_rename(src, dst)
+            back += n
+        except OSError as e:
+            stuck.append((src, e))
+    if stuck:
+        print(f"{_lay_er('되돌리기 실패')}: {Path(stuck[0][0]).relative_to(root).as_posix()} 를 원래 자리로 "
+              f"돌리지 못했어요 ({_lay_err_text(stuck[0][1])}). docs 폴더는 아직 일부만 새 구조예요.")
+        print()
+        print("다음: 괄호 안 원인을 고친 뒤 prdt layout migrate --undo 를 다시 실행하세요. 안 되면 PO 에게 알리세요.")
+        sys.exit(2)
+    derived = ["docs/artifacts/manifest.json", "docs/wiki/index.md"]
+    for d in derived:      # a derived file the old tree never had: the rebuild made it
+        if d not in head_files and os.path.lexists(root / d):
+            try:
+                os.unlink(root / d)
+            except OSError:
+                pass
+    want = [g for g in gone if not os.path.lexists(root / g)] + ([".prdt/config.json"] if restore_cfg else []) + derived
+    c = _lay_pathspec(root, ["checkout", "HEAD"], [w for w in dict.fromkeys(want) if w in head_files])
+    if c.returncode != 0:
+        _lay_undo_refuse(f"meta git 에서 지워진 문서를 되살릴 수 없어요 ({(c.stderr or 'git checkout failed').strip().splitlines()[0]}). "
+                         f"docs 폴더는 아직 일부만 새 구조예요.",
+                         "괄호 안 git 오류를 고친 뒤 prdt layout migrate --undo 를 다시 실행하세요.", head="되돌리기 실패")
+    for top in (sdir, pdir):     # emptied new folders, deepest first
+        for dirpath, _dirs, _files in os.walk(top, topdown=False):
+            try:
+                os.rmdir(dirpath)
+            except OSError:
+                pass
+    try:     # the tree is back: no half-move left to mark
+        _lay_marker_clear(root)
+    except OSError:
+        pass
+    widx = root / "docs" / "wiki" / "index.md"
+    keep = None
+    try:
+        keep = widx.read_text(encoding="utf-8") if widx.is_file() else None
+    except (OSError, UnicodeDecodeError):
+        pass
+    try:     # index.db follows the old layout again; the rebuild's own index.md rewrite is not ours to keep
+        con, *_ = rebuild_index(root)
+        con.close()
+    except Exception:
+        pass
+    try:
+        if keep is not None:
+            state_write(root, widx, keep)
+    except OSError:
+        pass
+    if back:
+        print(f"{_lay_wn('되돌렸어요')}: 옮기다 만 문서 {_lay_n(back)}개를 원래 자리로 돌렸어요. docs 폴더는 예전 구조 그대로예요.")
+    else:
+        print("docs 폴더는 예전 구조 그대로예요.")
+    print()
+    print("다음: 다시 옮기려면 prdt layout migrate --apply 를 실행하세요.")
+
+
+def cmd_layout(args):
+    root = require_root()
+    if args.action == "check" and getattr(args, "session_start", False):
+        try:
+            blk = layout_session_start_block(root)
+        except Exception:      # the session start never fails on this
+            blk = ""
+        if blk:
+            print(blk)
+        return
+    state = layout_state(root, deep=True)
+    plan = layout_plan(root) if state in ("old", "partial") else None
+    prod = layout_product_name(root)
+    if args.action == "check":
+        if getattr(args, "json", False):
+            n_docs = _lay_leftover(root)[1] if state == "partial" else plan["total"] if plan else 0
+            print(json.dumps({"state": state, "product": prod, "docs": n_docs}, ensure_ascii=False))
+        elif state == "old":
+            print(f"docs 폴더가 예전 구조예요. 문서 {_lay_n(plan['total'])}개를 새 구조로 옮길 수 있어요.")
+            print()
+            print("다음: prdt layout migrate 로 옮길 목록을 확인하세요.")
+        elif state == "new":
+            print(f"docs 폴더가 이미 새 구조예요 (docs/{DOCS_SHARED} · docs/{prod}).")
+        elif state == "partial":
+            print(_lay_er("✗ ") + layout_partial_line(root))
+            print()
+            print(f"다음: {layout_partial_next(root)}")
+        else:
+            print("docs 폴더에서 예전 구조를 찾지 못했어요.")
+            print()
+            print("다음: 옮길 문서가 있다면 PO 에게 알리세요.")
+        sys.exit({"old": 1, "partial": 2}.get(state, 0))
+    # migrate
+    if getattr(args, "undo", False):
+        return layout_undo(root, state)
+    if state == "new":
+        print(f"docs 폴더가 이미 새 구조예요 (docs/{DOCS_SHARED} · docs/{prod}). "
+              f"옮길 문서가 없어서 아무것도 하지 않았어요.")
+        return
+    if state == "none":
+        print("docs 폴더에서 예전 구조를 찾지 못해서 아무것도 옮기지 않았어요.")
+        print()
+        print("다음: 옮길 문서가 있다면 PO 에게 알리세요.")
+        return
+    if state == "partial":
+        _lay_refuse_partial(root)
+    if not args.apply:
+        if project_lines(root):
+            layout_precheck(root, plan)      # refuses: lines are not movable yet
+        layout_print_preview(root, plan)
+        return
+    layout_apply(root, plan)
 
 
 # ── migrate (§12.5 — opt-in full/lite → prdt) ─────────────────────────────────
@@ -18186,6 +19373,562 @@ def installed_prdt_version():
     return None
 
 
+# ── prdt test cloud (T-1126) ────────────────────────────────────────────────
+# A track commit's core suite runs in a Claude Code cloud session; the mac-only
+# files run here at the same time; one merged verdict comes back as JSON. The
+# result route is contracts §Git carve-out (2) + contracts/git.md "Cloud
+# test-result push": the runner script (CLOUD_RUNNER_PATH) is the only pusher;
+# this side checks before (cloud_precheck), reads the one result ref, checks
+# after (cloud_postcheck), then deletes that ref by its recorded name.
+import time  # noqa: E402 — only `prdt test cloud` polls
+
+CLOUD_RUNNER_PATH = "packages/core/scripts/prdt-cloud-test.sh"
+CLOUD_CONDENSE_PATH = "packages/core/scripts/prdt-cloud-condense.mjs"
+CLOUD_SETUP_PATH = ".claude/cloud-setup.sh"
+CLOUD_TEST_ROOT = "packages/core"
+CLOUD_TEST_DIR = "packages/core/test/"
+# A test file is mac-only when it drives a macOS-only binary (spike: the 64
+# mac-only failures were `plutil`, 2 files). Derived from the file, never listed.
+CLOUD_MAC_ONLY_RE = re.compile(rb"\bplutil\b")
+CLOUD_SESSION_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+CLOUD_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+CLOUD_FILE_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._/-]*$")
+CLOUD_SESSION_URL_RE = re.compile(r"claude\.ai/code/((?:session|cse)_[A-Za-z0-9]+)")
+CLOUD_NOTICE_RE = re.compile(r"uncommitted|untracked|not (?:be )?included|exclud", re.I)
+CLOUD_GLOB_SPECIAL = "*?+[!"
+
+
+class CloudCheckError(Exception):
+    """GitHub unreachable or unreadable — every check that needs it fails closed."""
+
+
+def _cloud_die(text, code=1):
+    print(f"prdt test cloud: {text}", file=sys.stderr)
+    sys.exit(code)
+
+
+def _cloud_literal_prefix(pat):
+    """The literal head of a GitHub branch glob, minus a char that a following
+    `?`/`+` makes optional or repeatable."""
+    i = 0
+    while i < len(pat) and pat[i] not in CLOUD_GLOB_SPECIAL:
+        i += 1
+    lit = pat[:i]
+    if i < len(pat) and pat[i] in "?+" and lit:
+        lit = lit[:-1]
+    return lit, pat[i:]
+
+
+def cloud_branch_pattern_may_match_ci(pat):
+    """True unless the pattern's literal head already leaves the `ci/` namespace
+    — conservative: any wildcard that could reach `ci/…` counts as a match."""
+    lit, _rest = _cloud_literal_prefix(pat)
+    if len(lit) >= 3:
+        return lit[:3] == "ci/"
+    return "ci/".startswith(lit)
+
+
+def cloud_branch_pattern_covers_ci(pat):
+    """True only for a pattern that matches every `ci/…` ref: a literal head that
+    is a prefix of `ci/` followed by exactly `**` (`ci/**`, `c**`, `**`)."""
+    lit, rest = _cloud_literal_prefix(pat)
+    return rest == "**" and "ci/".startswith(lit) and len(lit) == len(pat) - 2
+
+
+def cloud_workflow_violations(text, label):
+    """contracts/git.md carve-out (2) precondition, one workflow file: no `on:`
+    names `create` or `delete`; every `push` trigger's branch filter excludes
+    `ci/**`; a `push` with no branch filter fails. Unreadable → a failing item."""
+    try:
+        import yaml
+    except ImportError:
+        return [f"{label}: PyYAML is not installed — the workflow triggers cannot be read"]
+    try:
+        docs = list(yaml.safe_load_all(text))
+    except Exception as e:  # noqa: BLE001 — any parse failure fails closed
+        return [f"{label}: unreadable YAML ({type(e).__name__})"]
+    if len(docs) != 1 or not isinstance(docs[0], dict):
+        return [f"{label}: not one YAML mapping"]
+    doc = docs[0]
+    on = doc["on"] if "on" in doc else doc.get(True)  # YAML 1.1 reads a bare `on` as true
+    if isinstance(on, str):
+        events = {on: None}
+    elif isinstance(on, list) and on and all(isinstance(e, str) for e in on):
+        events = {e: None for e in on}
+    elif isinstance(on, dict) and all(isinstance(k, str) for k in on):
+        events = on
+    else:
+        return [f"{label}: `on:` is missing or has an unreadable shape"]
+    bad = [f"{label}: `on:` names `{ev}`" for ev in ("create", "delete") if ev in events]
+    if "push" in events:
+        cfg = events["push"]
+        cfg = cfg if isinstance(cfg, dict) else {}
+
+        def pats(v):
+            if isinstance(v, str):
+                return [v]
+            if isinstance(v, list) and all(isinstance(p, str) for p in v):
+                return v
+            return None
+        br, ign = cfg.get("branches"), cfg.get("branches-ignore")
+        if br is None and ign is None:
+            bad.append(f"{label}: a `push` trigger with no branch filter")
+        elif br is not None and ign is not None:
+            bad.append(f"{label}: `push` has both `branches` and `branches-ignore`")
+        elif br is not None:
+            ps = pats(br)
+            if ps is None:
+                bad.append(f"{label}: `push.branches` is unreadable")
+            elif any(not p.startswith("!") and cloud_branch_pattern_may_match_ci(p) for p in ps):
+                bad.append(f"{label}: `push.branches` can match ci/**")
+        else:
+            ps = pats(ign)
+            if ps is None or any(p.startswith("!") for p in ps) \
+                    or not any(cloud_branch_pattern_covers_ci(p) for p in ps):
+                bad.append(f"{label}: `push.branches-ignore` does not exclude ci/**")
+    return bad
+
+
+def _cloud_gh(path, allow_404=False):
+    """`gh api` GET → parsed JSON; None on a 404 when allowed; anything else that
+    is not a 200 raises CloudCheckError (fail closed)."""
+    gh = shutil.which("gh")
+    if not gh:
+        raise CloudCheckError("the GitHub CLI `gh` is not installed")
+    try:
+        r = subprocess.run([gh, "api", "-X", "GET", path], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise CloudCheckError(f"GitHub API {path}: {type(e).__name__}")
+    if r.returncode != 0:
+        if allow_404 and "HTTP 404" in r.stderr:
+            return None
+        first = (r.stderr.strip().splitlines() or ["no output"])[0][:200]
+        raise CloudCheckError(f"GitHub API {path}: {first}")
+    try:
+        return json.loads(r.stdout or "null")
+    except ValueError:
+        raise CloudCheckError(f"GitHub API {path}: not JSON")
+
+
+def cloud_github_repo(code):
+    """owner/repo of the code repo's `origin`, or None when origin is not GitHub."""
+    r = _tgit(["remote", "get-url", "origin"], code)
+    m = re.search(r"github\.com[:/]([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$", r.stdout.strip())
+    return f"{m.group(1)}/{m.group(2)}" if r.returncode == 0 and m else None
+
+
+def _cloud_state_dir(code):
+    """Run records + the carve-out-off record live in the code repo's git dir
+    (never part of a tree, never in the meta backup); `prdt doctor` reads them."""
+    r = _tgit(["rev-parse", "--path-format=absolute", "--git-common-dir"], code)
+    return Path(r.stdout.strip()) / "prdt-cloud"
+
+
+def _cloud_off_record(code):
+    rec = read_json(_cloud_state_dir(code) / "carve-out-off.json")
+    return rec if isinstance(rec, dict) else None
+
+
+def cloud_test_doctor_warnings(root):
+    code = code_root(root)
+    if not (Path(code) / ".git").exists():
+        return []
+    out = []
+    off = _cloud_off_record(code)
+    if off:
+        out.append(f"cloud tests: carve-out (2) is off for this repo since {off.get('ts')} — "
+                   f"{off.get('reason')}; only the user's explicit instruction clears it "
+                   f"(`prdt test cloud --reenable`)")
+    runs = _cloud_state_dir(code) / "runs"
+    if runs.is_dir():
+        for f in sorted(runs.glob("*.json")):
+            rec = read_json(f)
+            if isinstance(rec, dict) and rec.get("ref") and rec.get("state") not in ("deleted", "absent"):
+                out.append(f"cloud tests: result ref {rec['ref']} (run {f.stem}) is not deleted yet — "
+                           f"the next `prdt test cloud` deletes it by that name")
+    return out
+
+
+def cloud_precheck(code, sha, repo):
+    """contracts/git.md carve-out (2) pre-run check, fail-closed. → failing items."""
+    import base64
+    bad = []
+    off = _cloud_off_record(code)
+    if off:
+        bad.append(f"carve-out (2) is off for this repo since {off.get('ts')}: {off.get('reason')}")
+    r = _tgit(["ls-tree", "--name-only", f"{sha}:.github/workflows"], code)
+    if r.returncode == 0:
+        for name in r.stdout.splitlines():
+            if name.endswith((".yml", ".yaml")):
+                t = _tgit(["show", f"{sha}:.github/workflows/{name}"], code)
+                bad += cloud_workflow_violations(t.stdout, f"{sha[:8]}:.github/workflows/{name}")
+    try:
+        info = _cloud_gh(f"repos/{repo}")
+        db = info.get("default_branch") if isinstance(info, dict) else None
+        if not db:
+            raise CloudCheckError(f"GitHub API repos/{repo}: no default branch")
+        lst = _cloud_gh(f"repos/{repo}/contents/.github/workflows?ref={db}", allow_404=True) or []
+        for ent in lst if isinstance(lst, list) else []:
+            if ent.get("type") == "file" and str(ent.get("name", "")).endswith((".yml", ".yaml")):
+                f = _cloud_gh(f"repos/{repo}/contents/{ent['path']}?ref={db}")
+                text = base64.b64decode(f.get("content", "")).decode("utf-8", "replace")
+                bad += cloud_workflow_violations(text, f"{db}:{ent['path']}")
+        if not isinstance(lst, list):
+            bad.append(f"{db}:.github/workflows is not a directory listing")
+        hooks = _cloud_gh(f"repos/{repo}/hooks?per_page=100")
+        if not isinstance(hooks, list) or hooks:
+            bad.append(f"GitHub reports {len(hooks) if isinstance(hooks, list) else '?'} webhook(s)")
+        envs = _cloud_gh(f"repos/{repo}/environments")
+        if not isinstance(envs, dict) or envs.get("total_count") != 0:
+            bad.append(f"GitHub reports {envs.get('total_count') if isinstance(envs, dict) else '?'} environment(s)")
+        deps = _cloud_gh(f"repos/{repo}/deployments?per_page=100")
+        if not isinstance(deps, list) or deps:
+            bad.append(f"GitHub reports {len(deps) if isinstance(deps, list) else '?'} deployment(s)")
+    except CloudCheckError as e:
+        bad.append(f"GitHub unreachable or unreadable — {e}")
+    tree = _tgit(["ls-tree", "-r", "--name-only", sha], code)
+    if tree.returncode != 0:
+        bad.append(f"could not list the tree of {sha[:8]}")
+    for p in tree.stdout.splitlines():
+        parts = p.split("/")
+        if ".vercel" in parts[:-1] or parts[-1] in ("vercel.json", "netlify.toml"):
+            bad.append(f"the code tree holds {p}")
+    return bad
+
+
+def cloud_postcheck(repo, commit):
+    """contracts/git.md carve-out (2) post-read check → (counts, failing items)."""
+    counts, bad = {}, []
+    try:
+        cr = _cloud_gh(f"repos/{repo}/commits/{commit}/check-runs")
+        counts["check_runs"] = cr.get("total_count") if isinstance(cr, dict) else None
+        st = _cloud_gh(f"repos/{repo}/commits/{commit}/statuses")
+        counts["statuses"] = len(st) if isinstance(st, list) else None
+        dp = _cloud_gh(f"repos/{repo}/deployments?sha={commit}")
+        counts["deployments"] = len(dp) if isinstance(dp, list) else None
+        wr = _cloud_gh(f"repos/{repo}/actions/runs?head_sha={commit}")
+        counts["workflow_runs"] = wr.get("total_count") if isinstance(wr, dict) else None
+    except CloudCheckError as e:
+        bad.append(f"post-read check could not read GitHub — {e}")
+    bad += [f"GitHub reports {v} {k.replace('_', ' ')} for the result commit"
+            for k, v in counts.items() if v != 0]
+    return counts, bad
+
+
+def _cloud_mark_off(code, reason):
+    d = _cloud_state_dir(code)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "carve-out-off.json").write_text(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                                      "reason": reason}) + "\n")
+
+
+def _cloud_record(path, rec, **kw):
+    rec.update(kw)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rec, indent=1) + "\n")
+    os.replace(tmp, path)
+
+
+def _cloud_ls_remote(code, ref):
+    r = _tgit(["ls-remote", "--end-of-options", "origin", ref], code, timeout=60)
+    if r.returncode != 0:
+        return None, f"git ls-remote failed: {(r.stderr.strip().splitlines() or [''])[0][:200]}"
+    for line in r.stdout.splitlines():
+        sha, _, name = line.partition("\t")
+        if name == ref:
+            return sha, None
+    return "", None
+
+
+def _cloud_delete_ref(code, ref):
+    r = _tgit(["push", "--delete", "--end-of-options", "origin", ref], code, timeout=120)
+    return r.returncode == 0, (r.stderr.strip().splitlines() or [""])[-1][:200]
+
+
+def _cloud_settle_and_delete(code, repo, rec_path, rec, ref, commit, seen_at):
+    """Post-read check (after a short settle, so a triggered run has time to
+    register), then the by-name delete. → (postcheck counts, failing items)."""
+    wait = 20 - (time.time() - seen_at)
+    if wait > 0:
+        time.sleep(wait)
+    counts, bad = cloud_postcheck(repo, commit)
+    if bad:
+        _cloud_mark_off(code, "; ".join(bad))
+    ok, err = _cloud_delete_ref(code, ref)
+    _cloud_record(rec_path, rec, postcheck=counts, postcheck_failed=bad,
+                  state="deleted" if ok else "delete-failed", delete_error=None if ok else err)
+    return counts, bad, ok, err
+
+
+def _cloud_clean_leftovers(code, repo):
+    """A ref a killed run left behind: deleted only by the name in its record."""
+    runs = _cloud_state_dir(code) / "runs"
+    notes = []
+    for f in sorted(runs.glob("*.json")) if runs.is_dir() else []:
+        rec = read_json(f)
+        if not (isinstance(rec, dict) and rec.get("ref") and rec.get("state") not in ("deleted", "absent")):
+            continue
+        sha, err = _cloud_ls_remote(code, rec["ref"])
+        if err:
+            notes.append(f"leftover {rec['ref']}: {err}")
+        elif sha == "":
+            _cloud_record(f, rec, state="absent")
+        else:
+            _c, bad, ok, derr = _cloud_settle_and_delete(code, repo, f, rec, rec["ref"], sha, 0)
+            notes.append(f"leftover {rec['ref']} of run {f.stem}: " + ("deleted" if ok else f"delete failed ({derr})")
+                         + (f"; post-read check: {'; '.join(bad)}" if bad else ""))
+    return notes
+
+
+def cloud_test_files(code, sha, only=None):
+    """(cloud files, mac-only files) — paths relative to packages/core, read from
+    the tested commit; `only` narrows to the given repo-relative paths."""
+    r = _tgit(["ls-tree", "-r", "--name-only", sha, "--", CLOUD_TEST_DIR], code)
+    allf = [p for p in r.stdout.splitlines() if p.endswith((".test.ts", ".test.tsx"))]
+    if only:
+        want = {p[len(CLOUD_TEST_ROOT) + 1:] if p.startswith(CLOUD_TEST_ROOT + "/") else p for p in only}
+        allf = [p for p in allf if p[len(CLOUD_TEST_ROOT) + 1:] in want]
+        missing = want - {p[len(CLOUD_TEST_ROOT) + 1:] for p in allf}
+        if missing:
+            _cloud_die(f"not a core test file at {sha[:8]}: {', '.join(sorted(missing))}", 2)
+    cloud, mac = [], []
+    for p in allf:
+        blob = subprocess.run(["git", "show", f"{sha}:{p}"], cwd=str(code), env=_scrubbed_git_env(),
+                              capture_output=True, timeout=60).stdout
+        (mac if CLOUD_MAC_ONLY_RE.search(blob) else cloud).append(p[len(CLOUD_TEST_ROOT) + 1:])
+    return cloud, mac
+
+
+def _cloud_condense(code, report, prefix, **meta):
+    r = subprocess.run(["node", str(Path(code) / CLOUD_CONDENSE_PATH), str(report), prefix,
+                        *[f"{k}={v}" for k, v in meta.items()]], capture_output=True, text=True, timeout=120)
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return {"status": "error", "reason": "the local report could not be condensed"}
+
+
+def _cloud_create_session(code, run_dir, description, timeout_s):
+    """`claude --cloud` creates a session only with a pty (spike): drive it in a
+    tmux server on a private socket, read the session id off the screen, then
+    stop that server by the pid it reports. → (session id, notices)."""
+    tmux, claude = shutil.which("tmux"), shutil.which("claude")
+    if not tmux or not claude:
+        _cloud_die("`tmux` and `claude` must be on PATH to create a cloud session", 4)
+    sock = f"prdt-cloud-{os.getpid()}-{int(time.time())}"
+    cmd = f"CCR_FORCE_BUNDLE=1 exec {shlex.quote(claude)} --cloud {shlex.quote(description)}"
+    r = subprocess.run([tmux, "-L", sock, "new-session", "-d", "-s", "prdt", "-x", "220", "-y", "50",
+                        "-c", str(code), cmd], capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        _cloud_die(f"tmux could not start: {r.stderr.strip()[:200]}", 4)
+    pid = subprocess.run([tmux, "-L", sock, "display-message", "-p", "#{pid}"],
+                         capture_output=True, text=True, timeout=30).stdout.strip()
+    session, pane, seen = None, "", []
+    try:
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            pane = subprocess.run([tmux, "-L", sock, "capture-pane", "-p", "-J", "-S", "-2000", "-t", "prdt"],
+                                  capture_output=True, text=True, timeout=30).stdout
+            for line in pane.splitlines():
+                if CLOUD_NOTICE_RE.search(line) and line.strip() not in seen:
+                    seen.append(line.strip())
+            m = CLOUD_SESSION_URL_RE.search(pane)
+            if m:
+                session = m.group(1)
+                break
+            if subprocess.run([tmux, "-L", sock, "has-session", "-t", "prdt"],
+                              capture_output=True, timeout=30).returncode != 0:
+                break
+            time.sleep(2)
+    finally:
+        (run_dir / "create-pane.txt").write_text(pane)
+        if pid.isdigit():
+            with contextlib.suppress(OSError):
+                os.kill(int(pid), 15)
+    return session, seen
+
+
+def _cloud_instruction(ticket, sha, session, runner_sha, files, excludes):
+    argv = ["bash", "/tmp/prdt-cloud-test.sh", "--ticket", ticket, "--sha", sha, "--session", session,
+            "--runner-sha", runner_sha]
+    for f in files:
+        argv += ["--file", f]
+    for e in excludes:
+        argv += ["--exclude", e]
+    command = (f"git show {runner_sha}:{CLOUD_RUNNER_PATH} > /tmp/prdt-cloud-test.sh && "
+               + " ".join(shlex.quote(a) for a in argv))
+    return ("prdt cloud test run. From the repository root, run the one shell command below exactly as "
+            "written. It takes up to about 20 minutes: start it in the background and wait until it "
+            "exits; never stop it early. Run nothing else — no other git command, no retry, no file "
+            "edit. When it exits, reply with its last output line only.\n\n" + command)
+
+
+def cmd_test_cloud(args):
+    t_start = time.time()
+    root = require_root()
+    code = code_root(root)
+    if args.reenable:
+        p = _cloud_state_dir(code) / "carve-out-off.json"
+        if p.exists():
+            p.unlink()
+            print("carve-out (2) re-enabled for this repo (the off record is removed)")
+        else:
+            print("carve-out (2) is not off for this repo")
+        return
+    tid = args.ticket
+    if not (isinstance(tid, str) and TRACK_ID_RE.match(tid)):
+        _cloud_die("the ticket id must look like T-NNN", 2)
+    repo = cloud_github_repo(code)
+    if not repo:
+        _cloud_die("the code repo's origin is not a GitHub repository", 2)
+    track = Path(root) / "tracks" / tid
+    checkout = Path(args.checkout) if args.checkout else (track if track.is_dir() else Path(code))
+    r = _tgit(["rev-parse", "--verify", "--quiet", f"{args.sha or 'HEAD'}^{{commit}}"], checkout)
+    sha = r.stdout.strip()
+    if r.returncode != 0 or not CLOUD_SHA_RE.match(sha):
+        _cloud_die(f"no commit {args.sha or 'HEAD'} in {checkout}", 2)
+    head = _tgit(["rev-parse", "HEAD"], checkout).stdout.strip()
+    runner_sha = _tgit(["rev-parse", "HEAD"], code).stdout.strip()
+    for p in (CLOUD_RUNNER_PATH, CLOUD_CONDENSE_PATH, CLOUD_SETUP_PATH):
+        if _tgit(["cat-file", "-e", f"{runner_sha}:{p}"], code).returncode != 0:
+            _cloud_die(f"{p} is not committed at {code} HEAD — the cloud session runs the committed runner", 2)
+    notices = []
+    if _tgit(["status", "--porcelain", "--untracked-files=normal"], code).stdout.strip():
+        notices.append(f"{code} has uncommitted files — the cloud bundle leaves them out")
+    cloud_files, mac_files = cloud_test_files(code, sha, args.files)
+    if mac_files and head != sha:
+        _cloud_die(f"the mac-only files run in {checkout}, which is at {head[:8]}, not {sha[:8]} — "
+                   f"check out the tested commit there or pass --checkout", 2)
+    state = _cloud_state_dir(code)
+    run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{tid}"
+    run_dir = state / "work" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    rec_path = state / "runs" / f"{run_id}.json"
+    rec = {"run_id": run_id, "ticket": tid, "sha": sha, "runner_sha": runner_sha, "state": "precheck"}
+    _cloud_record(rec_path, rec)
+    notices += _cloud_clean_leftovers(code, repo)
+    bad = cloud_precheck(code, sha, repo)
+    if bad:
+        _cloud_record(rec_path, rec, state="precheck-failed", precheck_failed=bad)
+        print(json.dumps({"status": "precheck-failed", "ticket": tid, "sha": sha, "failing": bad}, ensure_ascii=False))
+        for b in bad:
+            print(f"prdt test cloud: pre-run check failed — {b}", file=sys.stderr)
+        sys.exit(3)
+    # mac-only half starts first and runs while the cloud session is created and runs
+    local = None
+    if mac_files and cloud_files is not None:
+        mac_json = run_dir / "mac-vitest.json"
+        log = open(run_dir / "mac-test.log", "w")
+        local = (subprocess.Popen(["./node_modules/.bin/vitest", "run", "--reporter=default", "--reporter=json",
+                                   f"--outputFile.json={mac_json}", *mac_files],
+                                  cwd=str(checkout / CLOUD_TEST_ROOT), stdout=log, stderr=subprocess.STDOUT),
+                 time.time(), mac_json, log)
+    timing = {}
+    cloud = None
+    session = None
+    if cloud_files:
+        t0 = time.time()
+        session, seen = _cloud_create_session(code, run_dir, f"prdt cloud test {tid} {sha[:8]}", args.create_timeout)
+        notices += seen
+        timing["create_s"] = round(time.time() - t0, 1)
+        if not session or not CLOUD_SESSION_RE.match(session):
+            _cloud_record(rec_path, rec, state="create-failed")
+            cloud = {"status": "error", "reason": f"no cloud session id on the screen (see {run_dir / 'create-pane.txt'})"}
+        else:
+            ref = f"refs/heads/ci/{tid}/{session}"
+            if _tgit(["check-ref-format", ref], code).returncode != 0:
+                _cloud_die(f"{ref} fails git check-ref-format", 4)
+            _cloud_record(rec_path, rec, state="instructed", session=session, ref=ref)
+            excludes = [] if args.files else [f for f in mac_files]
+            instr = _cloud_instruction(tid, sha, session, runner_sha, cloud_files if args.files else [], excludes)
+            s = subprocess.run([shutil.which("claude"), "-p", "--cloud", session, instr], cwd=str(code),
+                               capture_output=True, text=True, timeout=180)
+            if s.returncode != 0:
+                cloud = {"status": "error", "reason": f"could not send the run instruction (exit {s.returncode})"}
+            else:
+                t1 = time.time()
+                deadline = t1 + args.timeout
+                found, err = "", None
+                while time.time() < deadline:
+                    found, err = _cloud_ls_remote(code, ref)
+                    if found:
+                        break
+                    time.sleep(15)
+                timing["cloud_wait_s"] = round(time.time() - t1, 1)
+                if not found:
+                    _cloud_record(rec_path, rec, state="timeout")
+                    cloud = {"status": "error", "reason": f"no result ref after {args.timeout}s"
+                                                          + (f" ({err})" if err else "")}
+                else:
+                    seen_at = time.time()
+                    _cloud_record(rec_path, rec, state="pushed", commit=found)
+                    f = _tgit(["fetch", "--no-tags", "--no-write-fetch-head", "origin", ref], code, timeout=120)
+                    shape = _tgit(["cat-file", "-p", found], code).stdout if f.returncode == 0 else ""
+                    entries = _tgit(["ls-tree", found], code).stdout.splitlines() if shape else []
+                    if not shape or "\nparent " in shape or len(entries) != 1 or not entries[0].endswith("\tresult.json"):
+                        cloud = {"status": "error", "reason": "the result ref is not one parentless result.json commit"}
+                    else:
+                        try:
+                            cloud = json.loads(_tgit(["show", f"{found}:result.json"], code).stdout)
+                        except ValueError:
+                            cloud = {"status": "error", "reason": "result.json is not JSON"}
+                    _cloud_record(rec_path, rec, state="read")
+                    counts, pbad, ok, derr = _cloud_settle_and_delete(code, repo, rec_path, rec, ref, found, seen_at)
+                    rec_post = {"postcheck": counts, "postcheck_failed": pbad, "ref_deleted": ok}
+                    if not ok:
+                        notices.append(f"could not delete {ref}: {derr}")
+                    if pbad:
+                        notices.append("carve-out (2) is now off for this repo: " + "; ".join(pbad))
+                    cloud = dict(cloud, **rec_post) if isinstance(cloud, dict) else {"status": "error"}
+    mac = None
+    if local:
+        proc, ts, mac_json, log = local
+        try:
+            proc.wait(timeout=max(60, args.timeout))
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        log.close()
+        timing["mac_s"] = round(time.time() - ts, 1)
+        mac = _cloud_condense(code, mac_json, str(checkout / CLOUD_TEST_ROOT) + "/")
+    timing["wall_s"] = round(time.time() - t_start, 1)
+    ct = _tgit(["show", "-s", "--format=%ct", sha], code).stdout.strip()
+    if ct.isdigit():
+        timing["commit_to_verdict_s"] = round(time.time() - int(ct), 1)
+    halves = {k: v for k, v in (("cloud", cloud), ("mac", mac)) if v is not None}
+    failures, counts = [], {"total": 0, "passed": 0, "failed": 0, "skipped": 0}
+    status = "pass"
+    for where, h in halves.items():
+        if h.get("status") != "ok":
+            status = "error"
+        for k in counts:
+            with contextlib.suppress(TypeError, ValueError):
+                counts[k] += int(h.get(k) or 0)
+        failures += [dict(x, where=where) for x in h.get("failures") or []]
+        if status == "pass" and (int(h.get("failed") or 0) or int(h.get("failed_files") or 0)):
+            status = "fail"
+    if not halves:
+        status = "error"
+    verdict = {"status": status, "ticket": tid, "sha": sha, "session": session,
+               "session_url": f"https://claude.ai/code/{session}" if session else None,
+               "counts": counts, "failures": failures, "timing": timing,
+               "mac_only_files": [f"{CLOUD_TEST_ROOT}/{p}" for p in mac_files],
+               "notices": notices, "halves": {k: {kk: vv for kk, vv in v.items() if kk != "failures"}
+                                                for k, v in halves.items()},
+               "run_record": str(rec_path)}
+    (run_dir / "verdict.json").write_text(json.dumps(verdict, indent=1, ensure_ascii=False) + "\n")
+    print(json.dumps(verdict, ensure_ascii=False))
+    print(f"prdt test cloud: {status} — {counts['passed']}/{counts['total']} passed, {counts['failed']} failed, "
+          f"wall {timing.get('wall_s')}s", file=sys.stderr)
+    sys.exit({"pass": 0, "fail": 1}.get(status, 4))
+
+
+def cmd_test(args):
+    if args.action == "cloud":
+        return cmd_test_cloud(args)
+    _cloud_die(f"unknown action {args.action}", 2)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="prdt", description=__doc__)
     ap.add_argument("--version", dest="show_version", action="store_true",
@@ -18287,9 +20030,10 @@ def main():
                         "worker's run never opens regardless")
     p.add_argument("--type", choices=TICKET_TYPES, help="new: the ticket's `type` (required)")
     p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
-    p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value ([<line>/]v<N>.<m>#<key>)")
-    p.add_argument("--line", help="new: an added release line (.prdt/config.json `lines`) — the ticket "
-                                  "lands in docs/tickets/<line>/<that line's version>/; default the home line")
+    p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value ([<product>/]v<N>.<m>#<key>)")
+    p.add_argument("--product", "--line", dest="line",
+                   help="new: an added product (.prdt/config.json `products`) — the ticket "
+                        "lands in that product's tickets/<its version>/; default the first product")
     p.add_argument("--deps", nargs="+", metavar="ID", help="new: `deps` ticket ids")
     p.add_argument("--check", action="store_true",
                    help="fmt: report violations and exit non-zero instead of writing")
@@ -18346,6 +20090,16 @@ def main():
     p.add_argument("--limit", type=int, default=20, help="log: max commits (default 20)")
     p.add_argument("--yes", action="store_true", help="split: 확인 프롬프트 생략 (T-366)")
     p.set_defaults(fn=cmd_meta)
+    p = sub.add_parser("layout", help="docs 폴더 구조: migrate: 예전 구조에서 새 구조로 옮길 목록을 보여요 (아무것도 쓰지 않아요) · "
+                                      "migrate --apply: 옮겨요 (git mv, meta 커밋 1개, 실패하면 되돌려요) · "
+                                      "check: 예전 / 새 / 일부만 새 구조 중 어느 쪽인지 알려요")
+    p.add_argument("action", choices=("migrate", "check"))
+    p.add_argument("--apply", action="store_true", help="migrate: 목록을 확인한 뒤 실제로 옮겨요 (이 옵션이 없으면 아무것도 쓰지 않아요)")
+    p.add_argument("--json", action="store_true", help="check: machine mode")
+    p.add_argument("--session-start", action="store_true", dest="session_start",
+                   help="check: PO 세션 시작 hook 용 — 파일 시스템만 보고(git 없음) 제안 블록을 출력해요 (할 말이 없으면 빈 출력)")
+    p.add_argument("--undo", action="store_true", help="migrate: 옮기다 멈춘 문서(커밋하지 않은 이동)를 예전 구조로 되돌려요")
+    p.set_defaults(fn=cmd_layout)
     # T-319: `po` 서브커맨드 제거 — bare `prdt`가 유일한 PO 진입(init-if-needed→PO).
     p = sub.add_parser("update", help="prdt 업데이트: repo pull --ff-only + 재설치 (구 productune update 계승)")
     p.set_defaults(fn=cmd_update)
@@ -18400,8 +20154,9 @@ def main():
                         "(PreToolUse event on stdin)")
     p.add_argument("--version", help="report: the version bucket (default: po-state.json version)")
     p.add_argument("--json", action="store_true", help="the same rows, machine-readable")
-    p.add_argument("--line", help="one release line (.prdt/config.json `lines`, or the project slug for "
-                                  "the home line); default every line, home first — `--json` the home line")
+    p.add_argument("--product", "--line", dest="line",
+                   help="one product (.prdt/config.json `products`, or the project slug for "
+                        "the first product); default every product, first one first — `--json` the first product")
     p.set_defaults(fn=cmd_schedule)
     p = sub.add_parser("track", help="parallel track worktree (T-775): open <T-NNN> [--base dev|main] · "
                                      "review <T-NNN> · land <T-NNN> [--base dev|main] [--test CMD] · "
@@ -18422,6 +20177,22 @@ def main():
     p.add_argument("--force", action="store_true",
                    help="drop: also discard a branch with uncommitted changes or commits not on dev or main")
     p.set_defaults(fn=cmd_track)
+    p = sub.add_parser("test", help="test cloud <T-NNN> [--sha SHA] [--checkout DIR] [--files F …] (T-1126): "
+                                    "run the core suite of a track commit in a Claude Code cloud session, the "
+                                    "mac-only files here in parallel, and print one merged JSON verdict; the "
+                                    "result comes back on ci/<T-NNN>/<session> (contracts §Git carve-out (2)) "
+                                    "and is deleted once read · cloud --reenable clears a carve-out-off record "
+                                    "(the user's explicit instruction only)")
+    p.add_argument("action", choices=("cloud",))
+    p.add_argument("ticket", nargs="?", help="T-NNN")
+    p.add_argument("--sha", help="the tested commit (default: HEAD of --checkout)")
+    p.add_argument("--checkout", help="where the mac-only files run (default <project>/tracks/<T-NNN>, else the code checkout)")
+    p.add_argument("--files", nargs="+", help="only these core test files (paths under packages/core)")
+    p.add_argument("--timeout", type=int, default=2400, help="seconds to wait for the result ref (default 2400)")
+    p.add_argument("--create-timeout", type=int, default=180, help="seconds to wait for the session id (default 180)")
+    p.add_argument("--reenable", action="store_true",
+                   help="remove the carve-out-off record — only on the user's explicit instruction")
+    p.set_defaults(fn=cmd_test)
     p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591/T-680): "
                                         "up <name> --dispatch <id> · down <name> --dispatch <id> · "
                                         "ls [--json] · register-stop <name> <command> — up/down record/report; "
@@ -18523,7 +20294,12 @@ def main():
     msg_root = None
     if not hook_call:
         r = find_project_root()
-        if r and docs_layout(r) == "product":
+        # Shallow state only: a leftover old name beside `_shared/` is the one partial
+        # whose paths this rewrite would get wrong. The deep (meta git) probe costs a
+        # git process (~20 ms) on every command; its extra case — everything already
+        # moved, nothing committed — has every doc at its new path, so the rewrite is
+        # right there, and the partial lines carry no `docs/` path to rewrite.
+        if r and docs_layout(r) == "product" and layout_state(r) != "partial":
             msg_root = r
             if (args.cmd in DOCS_MSG_CMDS and getattr(args, "action", None) != "fmt") \
                     or (args.cmd == "wiki" and getattr(args, "action", None) == "lint"):
