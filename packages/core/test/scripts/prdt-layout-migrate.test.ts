@@ -936,8 +936,8 @@ except SystemExit:
     expect(fs.readFileSync(bait, 'utf8')).toBe('keep')
     expect(snapshot(other)).toEqual(snap0.get(other)!.before)
     const undo = prdt(other, ['layout', 'migrate', '--undo'])
-    expect(undo.code).toBe(0)
-    expect(fs.lstatSync(MARKER(other), { throwIfNoEntry: false })).toBeUndefined()   // the link went, not what it pointed at
+    expect(undo.code).toBe(1)     // T-1125: a link is a non-regular marker — unreadable, so --undo refuses and changes nothing
+    expect(fs.lstatSync(MARKER(other))?.isSymbolicLink()).toBe(true)
     expect(fs.readFileSync(bait, 'utf8')).toBe('keep')
   }, 300_000)
 
@@ -1199,6 +1199,48 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`
     expect(undoBody).not.toMatch(/"reset",\s*"-q",\s*"--(mixed|hard|soft)"/)
     expect(undoBody).not.toMatch(/\["(commit|update-ref|branch|rebase)"/)
   })
+
+  test('an unreadable marker ({} · garbage · empty · oversize · a directory · no head): --undo refuses and changes nothing — half-moved and W9 (layout commit exists)', () => {
+    const REFUSAL = '옮기다 멈춘 문서를 찾지 못했어요. docs 폴더는 그대로예요.'
+    const shapes: Array<(m: string) => void> = [
+      (m) => fs.writeFileSync(m, '{}\n'),
+      (m) => fs.writeFileSync(m, '{garbage'),
+      (m) => fs.writeFileSync(m, ''),
+      (m) => fs.writeFileSync(m, JSON.stringify({ head: 'a'.repeat(40), pad: 'x'.repeat(5000) })),
+      (m) => { fs.rmSync(m); fs.mkdirSync(m) },
+      (m) => fs.writeFileSync(m, JSON.stringify({ count: 3, pid: 1 }) + '\n'),
+    ]
+    for (const kill of [KILL_FIRST_RENAME, KILL_AFTER_COMMIT]) {   // the second is W9: the layout commit exists
+      for (const corrupt of shapes) {
+        const root = prepared(bare)
+        expect(pyRun(root, kill).code).toBe(137)
+        expect(fs.existsSync(MARKER(root))).toBe(true)
+        corrupt(MARKER(root))
+        expect(prdt(root, ['layout', 'check']).code).toBe(2)   // check/doctor still read partial
+        expectUndoRefused(root, REFUSAL)
+        expect(fs.existsSync(MARKER(root))).toBe(true)
+      }
+    }
+  }, 300_000)
+
+  test('rollback never resets a foreign commit made mid-apply (forced step-7 failure)', () => {
+    const root = prepared(legacy)
+    const r = pyRun(root, `
+real = m._lay_hash
+calls = [0]
+def fake(root, rels):
+    calls[0] += 1
+    if calls[0] == 2:
+        m._lay_git(root, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "chore: foreign"])
+        raise OSError(5, "forced", "x")
+    return real(root, rels)
+m._lay_hash = fake
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+    expect(r.code).toBe(1)
+    expect(git(root, ['log', '-1', '--format=%s']).trim()).toBe('chore: foreign')
+    expect(fs.existsSync(MARKER(root))).toBe(false)
+    expect(snapshot(root)).toEqual(snap0.get(root)!.before)
+  }, 300_000)
 
   test('a failed --apply that rolls back removes the marker; a rollback that cannot finish keeps it, and --undo clears it', () => {
     const root = prepared(legacy)
