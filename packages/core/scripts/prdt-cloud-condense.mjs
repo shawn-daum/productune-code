@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // prdt cloud test result condenser (T-1126): one vitest JSON report → the
 // machine-readable verdict `prdt test cloud` reads (counts + failing
-// file / name / message). The cloud runner (prdt-cloud-test.sh) and the Mac's
-// mac-only run both pass through this one file, so both halves of a merged
-// verdict have the same shape.
+// file / name / message + per-file seconds `file_s`). The cloud runner
+// (prdt-cloud-test.sh) and the Mac's mac-only run both pass through this one
+// file, so every half of a merged verdict has the same shape.
 //
 // Usage: node prdt-cloud-condense.mjs <vitest.json> <path-prefix-to-strip> [key=value]…
 //   key=value pairs are copied into the output as strings (an empty value is dropped).
@@ -39,8 +39,12 @@ try {
 if (report) {
   const failures = []
   const failedFiles = []
+  const fileS = {}
   for (const tr of report.testResults || []) {
     const f = rel(tr.name)
+    // per-file wall seconds: the Mac balances the next run's shards by these
+    if (Number.isFinite(tr.startTime) && Number.isFinite(tr.endTime)) fileS[f] = Math.round((tr.endTime - tr.startTime) / 100) / 10
+    else fileS[f] = null
     const failedAsserts = (tr.assertionResults || []).filter((a) => a.status === 'failed')
     if (tr.status === 'failed') failedFiles.push(f)
     for (const a of failedAsserts) {
@@ -56,6 +60,7 @@ if (report) {
   out.skipped = (report.numPendingTests ?? 0) + (report.numTodoTests ?? 0)
   out.files = (report.testResults || []).length
   out.failed_files = failedFiles.length
+  out.file_s = fileS
   out.failures = failures.slice(0, MAX_FAILURES)
   if (failures.length > MAX_FAILURES) out.failures_dropped = failures.length - MAX_FAILURES
   if (!out.status) out.status = 'ok'
