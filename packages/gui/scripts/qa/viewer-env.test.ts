@@ -296,6 +296,42 @@ describe('machine-scope env (T-1109)', () => {
     expect(JSON.stringify(m)).not.toContain(SENTINEL)
   })
 
+  it('T-1121 B: `# prdt:plain` directly above a key marks it plain (last occurrence decides); no marker = secret; no value in the data', () => {
+    const home = fs.mkdtempSync(path.join(tmp, 'h-'))
+    write(home, 'env/.env', `# prdt:plain\nA='${SENTINEL}'\nB='${SENTINEL}'\n# prdt:plain\n\nC='${SENTINEL}'\n# prdt:plain\nD='${SENTINEL}'\nD='${SENTINEL}'\n# prdt:plain\nE=\n`)
+    const m = collectMachineEnv(home, null)
+    expect(m.keys).toEqual([
+      { name: 'A', set: true, codeWins: false, plain: true }, { name: 'B', set: true, codeWins: false },
+      { name: 'C', set: true, codeWins: false }, { name: 'D', set: true, codeWins: false },
+      { name: 'E', set: false, codeWins: false },
+    ])
+    expect(JSON.stringify(m)).not.toContain(SENTINEL)
+  })
+
+  it('T-1121 B: a product-code env file never reads the marker', () => {
+    expect(productEnv(`# prdt:plain\nA=${SENTINEL}\n`)).toEqual({ dir: '.', files: [{ name: '.env.local', sample: false, keys: [{ name: 'A', set: true }] }] })
+  })
+
+  it('page: a plain key carries the 보통 값 tag', () => {
+    const root = fs.mkdtempSync(path.join(tmp, 'plain-'))
+    write(root, '.prdt/config.json', JSON.stringify({ slug: 'shop' }))
+    write(root, '.prdt/po-state.json', PO_STATE())
+    write(root, 'docs/prd/PRD.md', '# PRD\n\n## v2.2 — round\n')
+    const home = fs.mkdtempSync(path.join(tmp, 'h-'))
+    write(home, 'env/.env', `# prdt:plain\nPORT='3000'\nAPPLE_TEAM_ID='${SENTINEL}'\n`)
+    const prev = process.env.PRDT_HOME
+    process.env.PRDT_HOME = home
+    try {
+      const html = render(collectAll(root, { disciplineRoot: root }))
+      expect(html).toContain('<code>PORT</code><span class="tagw">보통 값</span>')
+      expect(html).toContain('<code>APPLE_TEAM_ID</code><span class="est on">')
+      expect(html).not.toContain(SENTINEL)
+    } finally {
+      if (prev === undefined) delete process.env.PRDT_HOME
+      else process.env.PRDT_HOME = prev
+    }
+  })
+
   it('no store, or a link at the store directory → no keys', () => {
     const home = fs.mkdtempSync(path.join(tmp, 'h-'))
     expect(collectMachineEnv(home, null).keys).toEqual([])
