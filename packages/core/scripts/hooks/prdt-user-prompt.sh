@@ -551,6 +551,12 @@ while d and d != "/":
     p = os.path.join(d, ".prdt", "po-state.json")
     if os.path.isfile(p):
         state_path = p
+    # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary
+    if (os.path.isfile(os.path.join(d, ".git")) and os.path.basename(os.path.dirname(d)) == "tracks"
+            and os.path.basename(d)[:2] == "T-" and os.path.basename(d)[2:7].isascii()
+            and os.path.basename(d)[2:].isdigit() and len(os.path.basename(d)) <= 7):
+        state_path = None
+        break
     up = os.path.dirname(d)
     if up == d:
         break

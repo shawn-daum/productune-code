@@ -237,10 +237,11 @@ export function docsAsIsRel(root, rel) {
  * Bound view of one repo's layout for the collector and the renderer. Products
  * and the layout are fixed at creation (one generation = one disk snapshot).
  */
-export function createDocsLayout(root) {
+export function createDocsLayout(root, forProduct = null) {
   const layout = docsLayout(root)
   const products = projectProducts(root)
-  const product = layout === 'product' ? currentProduct(root) : null
+  // T-1108: `forProduct` binds the view to one added product (its own `docs/<product>/…`), never the first.
+  const product = layout === 'product' ? forProduct || currentProduct(root) : null
   const rel = (abs) => path.relative(root, abs).split(path.sep).join('/')
   return {
     root,
