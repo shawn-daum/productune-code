@@ -16117,6 +16117,9 @@ def cmd_doctor(_args):
 #   `docs/_shared/` absent + (`docs/tickets/` | `docs/prd/PRD.md`) → "old"
 #   `docs/_shared/` present + no migration-owned name left directly under docs/ → "new"
 #   `docs/_shared/` present + one left (the design's half-moved shape) → "partial"
+#   `docs/_shared/` absent + `docs/<product>/` present + the old paths deleted but
+#     uncommitted in meta git (a run killed right after its FIRST rename) → "partial"
+#     (deep only — it asks meta git)
 #   neither → "none" (nothing to move).
 LAYOUT_PRODUCT_TOPS = ("prd", "tickets", "artifacts")
 # Names directly under docs/ that the fixed-path table owns — one of them beside
@@ -16128,6 +16131,10 @@ LAYOUT_SKIP = (".DS_Store", "RELEASES.md")
 LAYOUT_PERSONAS = ("po", "designer", "developer", "qa")
 LAYOUT_COMMIT_MSG = "chore: product-first docs layout (prdt layout migrate)"
 LAYOUT_STEPS = 9
+# The `다음:` line of every half-moved report (check · migrate refusal · PARTIAL):
+# the approved sentence, plus the one way back.
+LAYOUT_PARTIAL_NEXT = ("PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요. "
+                       "prdt layout migrate --undo 로 되돌릴 수 있어요.")
 
 
 def _lay_color(code, s):
@@ -16249,6 +16256,9 @@ def layout_state(root, deep=False):
         if owned or (deep and _lay_uncommitted_old(root)):
             return "partial"
         return "new"
+    pdir = docs / layout_product_name(root)
+    if deep and pdir.is_dir() and not pdir.is_symlink() and _lay_uncommitted_old(root):
+        return "partial"
     if (docs / "tickets").exists() or (docs / "prd" / "PRD.md").exists():
         return "old"
     return "none"
@@ -16353,9 +16363,7 @@ def layout_partial_line(root):
     if first is None:     # nothing old on disk: the move sits uncommitted in meta git
         gone = _lay_uncommitted_old(root)
         first, left = gone[0].split("/")[1], len(gone)
-    shown = f"docs/{first}/" if first and os.path.isdir(Path(root) / "docs" / first) else f"docs/{first}"
-    return (f"docs 폴더 일부만 새 구조예요: docs/{DOCS_SHARED}/ 는 새 구조, {shown} 는 예전 구조 "
-            f"(남은 문서 {_lay_n(left)}개)")
+    return f"docs 폴더 일부만 새 구조예요. 문서 {_lay_n(left)}개가 아직 예전 구조예요"
 
 
 def layout_doctor_warnings(root):
@@ -16444,38 +16452,41 @@ def layout_precheck(root, plan):
     no `docs/<product>/` name clash. Returns nothing; exits 1 on a hit."""
     docs = Path(root) / "docs"
     if project_lines(root):
-        _lay_refuse(".prdt/config.json 에 lines 가 있어요", [],
-                    "lines 를 쓰는 프로젝트는 아직 옮길 수 없어요. PO 에게 알리세요.")
+        _lay_refuse("이 프로젝트는 제품 여럿을 써서 아직 옮길 수 없어요", [],
+                    "PO 에게 알리세요. 옮기기를 지원할 때까지 예전 구조로 써도 돼요.")
     if os.path.islink(docs):
-        _lay_refuse("docs 가 폴더가 아니라 링크예요", [], "docs 를 실제 폴더로 바꾼 뒤 다시 실행하세요.")
+        _lay_refuse("docs 가 실제 폴더가 아니라 링크예요", [], "docs 링크를 실제 폴더로 바꾼 뒤 다시 실행하세요.",
+                    tail="docs 안의 문서는 예전 구조 그대로예요.")
     if not meta_repo_present(root):
-        _lay_refuse("meta git (.prdt/meta.git) 이 없어요", [], "meta git 을 만든 뒤 다시 실행하세요.", tail="")
+        _lay_refuse("meta git 이 없어요", [], "PO 에게 meta git 만들기를 요청한 뒤 다시 실행하세요.")
     prob = meta_git_trust_problem(root)
     if prob:
-        _lay_refuse(f"meta git 을 쓸 수 없어요 ({prob})", [], "prdt doctor 가 알려 주는 대로 고친 뒤 다시 실행하세요.", tail="")
+        _lay_refuse(f"meta git 을 쓸 수 없어요 ({prob})", [],
+                    "prdt doctor 가 알려 주는 대로 meta git 을 고친 뒤 다시 실행하세요.")
     dirty, err = _lay_dirty(root)
     if dirty is None:
-        _lay_refuse(f"meta git 상태를 읽을 수 없어요 ({err})", [], "meta git 을 확인한 뒤 다시 실행하세요.")
+        _lay_refuse(f"meta git 의 변경 목록을 읽을 수 없어요 ({err})", [], "괄호 안 git 오류를 고친 뒤 다시 실행하세요.")
     if dirty:
         shown = dirty[:10] + ([_lay_dm(f"… {_lay_n(len(dirty) - 10)}개 더")] if len(dirty) > 10 else [])
         _lay_refuse(f"커밋하지 않은 변경 {_lay_n(len(dirty))}개가 meta git 에 있어요", shown,
                     f"변경 {_lay_n(len(dirty))}개를 커밋한 뒤 다시 실행하세요.")
     live = _lay_live_dispatches(root)
     if live:
-        _lay_refuse(f"진행 중인 dispatch {_lay_n(live)}개가 있어요", [], "dispatch 가 끝난 뒤 다시 실행하세요.")
+        _lay_refuse(f"이 프로젝트에서 진행 중인 dispatch {_lay_n(live)}개가 있어요", [],
+                    "prdt dispatch ls 로 확인하고, 끝난 뒤 다시 실행하세요.")
     if layout_state(root, deep=True) == "partial":
         _lay_refuse_partial(root)
     prod = plan["product"]
     for clash in (prod, DOCS_SHARED):
         if os.path.lexists(docs / clash):
-            _lay_refuse(f"docs/{clash}/ 가 이미 있어요", [],
-                        f"docs/{clash}/ 의 이름을 바꾸거나 옮긴 뒤 다시 실행하세요.")
+            _lay_refuse(f"새 구조가 쓸 docs/{clash}/ 폴더가 이미 있어요", [],
+                        "그 폴더의 이름을 바꾸거나 다른 곳으로 옮긴 뒤 다시 실행하세요.")
 
 
 def _lay_refuse_partial(root):
     print(f"{_lay_er('옮기지 않았어요')}: {layout_partial_line(root)}.")
     print()
-    print("다음: PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요.")
+    print(f"다음: {LAYOUT_PARTIAL_NEXT}")
     sys.exit(1)
 
 
@@ -16520,9 +16531,13 @@ def _lay_hash(root, rels):
     out = {}
     for rel in rels:
         h = hashlib.sha256()
-        with open(Path(root) / rel, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 20), b""):
-                h.update(chunk)
+        try:
+            with open(Path(root) / rel, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+        except OSError as e:
+            e.filename = rel      # the failure line names the project-relative file
+            raise
         out[rel] = h.hexdigest()
     return out
 
@@ -16550,7 +16565,7 @@ def layout_apply(root, plan):
     root = Path(root)
     prod, units, closed = plan["product"], plan["units"], plan["closed"]
     layout_precheck(root, plan)
-    _lay_step(1, "선행 검사 4개를 통과했어요")
+    _lay_step(1, "선행 검사를 통과했어요")
     n_total = plan["total"]
     _lay_step(2, f"옮길 문서 {_lay_n(n_total)}개의 목록을 만들었어요")
 
@@ -16566,7 +16581,8 @@ def layout_apply(root, plan):
         try:
             before = _lay_hash(root, closed)
         except OSError as e:
-            raise _LayoutFail(3, f"닫힌 PRD 를 읽을 수 없어요 ({_lay_err_text(e)})", "원인을 고친 뒤 다시 실행하세요.")
+            raise _LayoutFail(3, f"닫힌 PRD {e.filename} 를 읽을 수 없어요 ({_lay_err_text(e)})",
+                              "괄호 안 원인을 고친 뒤 다시 실행하세요.")
         _lay_step(3, f"닫힌 PRD {len(closed)}개의 shasum 을 적었어요")
 
         # 4 — move (git mv semantics: rename + stage; history follows the content)
@@ -16606,7 +16622,8 @@ def layout_apply(root, plan):
             if g.returncode != 0:
                 raise OSError(0, (g.stderr or "git add failed").strip().splitlines()[0] if g.stderr else "git add failed")
         except OSError as e:
-            raise _LayoutFail(4, f"문서를 옮길 수 없어요 ({_lay_err_text(e)})", "docs 폴더의 쓰기 권한을 확인한 뒤 다시 실행하세요.")
+            raise _LayoutFail(4, f"문서 {_lay_n(n_total)}개를 옮길 수 없어요 ({_lay_err_text(e)})",
+                              "괄호 안 원인을 고친 뒤 다시 실행하세요.")
         _lay_step(4, f"문서 {_lay_n(n_total)}개를 옮겼어요 (git mv, 이력 유지)")
 
         # 5 — config
@@ -16636,10 +16653,12 @@ def layout_apply(root, plan):
             if (root / "docs" / prod / "artifacts").is_dir():
                 undo["manifest"] = man.read_bytes() if man.is_file() else False
                 if legacy_bucket_manifests(root):
-                    raise OSError(0, "per-bucket manifest — run `prdt artifacts migrate` first")
+                    raise _LayoutFail(6, "산출물 목록 · 인덱스 · 위키 index.md 를 다시 만들 수 없어요 "
+                                         "(artifacts 폴더에 버킷별 manifest 가 남아 있어요)",
+                                      "prdt artifacts migrate 를 먼저 실행한 뒤 다시 실행하세요.")
                 prior, merr, malformed, _ = read_artifact_manifest(root)
                 if merr or malformed:
-                    raise OSError(0, f"artifacts manifest — {merr or malformed[0]}")
+                    raise OSError(0, f"artifacts manifest 를 읽을 수 없어요: {merr or malformed[0]}")
                 data, _dropped = build_artifact_manifest(root, prior=prior)
                 write_artifact_manifest(root, data)
                 if undo["manifest"] is False:
@@ -16650,7 +16669,7 @@ def layout_apply(root, plan):
                 generated.append(widx)
         except (OSError, sqlite3.Error) as e:
             raise _LayoutFail(6, f"산출물 목록 · 인덱스 · 위키 index.md 를 다시 만들 수 없어요 ({_lay_err_text(e)})",
-                              "원인을 고친 뒤 다시 실행하세요.")
+                              "괄호 안 원인을 고친 뒤 다시 실행하세요.")
         _lay_step(6, "산출물 목록 · 인덱스 · 위키 index.md 를 다시 만들었어요")
 
         # 7 — closed PRD bytes unchanged
@@ -16658,10 +16677,12 @@ def layout_apply(root, plan):
         try:
             after = _lay_hash(root, [v for v in after_rel.values() if v])
         except OSError as e:
-            raise _LayoutFail(7, f"닫힌 PRD 를 읽을 수 없어요 ({_lay_err_text(e)})", "원인을 고친 뒤 다시 실행하세요.")
+            raise _LayoutFail(7, f"닫힌 PRD {e.filename} 를 읽을 수 없어요 ({_lay_err_text(e)})",
+                              "괄호 안 원인을 고친 뒤 다시 실행하세요.")
         bad = [c for c, n in after_rel.items() if after.get(n) != before.get(c)]
         if bad:
-            raise _LayoutFail(7, f"닫힌 PRD {len(bad)}개의 shasum 이 달라요 ({bad[0]})", "원인을 고친 뒤 다시 실행하세요.")
+            raise _LayoutFail(7, f"닫힌 PRD {len(bad)}개의 shasum 이 옮기기 전과 달라요 ({bad[0]})",
+                              "PO 에게 알리세요. 닫힌 PRD 는 그대로 돌려놨고, 도구를 고친 뒤 다시 옮길 수 있어요.")
         _lay_step(7, f"닫힌 PRD {len(closed)}개의 shasum 이 모두 같아요")
 
         # 8 — one meta commit
@@ -16674,7 +16695,7 @@ def layout_apply(root, plan):
         c = _lay_git(root, ["commit", "-q", "-m", LAYOUT_COMMIT_MSG])
         if g.returncode != 0 or c.returncode != 0:
             why = ((c.stderr or g.stderr or "git commit failed").strip().splitlines() or ["git commit failed"])[0]
-            raise _LayoutFail(8, f"meta 커밋을 만들 수 없어요 ({why})", "meta git 상태를 확인한 뒤 다시 실행하세요.")
+            raise _LayoutFail(8, f"meta 커밋 1개를 만들 수 없어요 ({why})", "괄호 안 git 오류를 고친 뒤 다시 실행하세요.")
         print(f"{_lay_ok('8/9')} meta 커밋 1개를 만들었어요: {_lay_dm(LAYOUT_COMMIT_MSG)}")
         sys.stdout.flush()
     except (_LayoutFail, KeyboardInterrupt, Exception) as f:
@@ -16813,12 +16834,14 @@ def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, stag
     print(f"{_lay_er(_lay_b('PARTIAL'))} docs 폴더 일부만 새 구조예요. 문서 {_lay_n(left_files)}개는 새 자리({where})에 "
           f"남았고, 나머지 {_lay_n(max(n_moved - left_files, 0))}개는 예전 자리로 돌아왔어요.")
     print()
-    print("다음: PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요.")
+    print(f"다음: {LAYOUT_PARTIAL_NEXT}")
     sys.exit(2)
 
 
-def _lay_undo_refuse(why):
-    print(f"{_lay_er('되돌리지 않았어요')}: {why}")
+def _lay_undo_refuse(why, nxt, head="되돌리지 않았어요"):
+    print(f"{_lay_er(head)}: {why}")
+    print()
+    print(f"다음: {nxt}")
     sys.exit(1)
 
 
@@ -16827,17 +16850,19 @@ def layout_undo(root, state):
     the old structure — the same inverse the rollback walks, driven from disk."""
     root = Path(root)
     if state == "old":
-        _lay_undo_refuse("docs 폴더가 예전 구조라 되돌릴 것이 없어요.")
+        _lay_undo_refuse("docs 폴더가 예전 구조라 되돌릴 것이 없어요.", "옮기려면 prdt layout migrate 로 옮길 목록을 확인하세요.")
     if state == "new":
-        _lay_undo_refuse(f"docs 폴더가 이미 새 구조로 끝났어요 (docs/{DOCS_SHARED}).")
+        _lay_undo_refuse("docs 폴더가 이미 새 구조로 끝나서 되돌릴 수 없어요.", "예전 구조로 돌아가려면 PO 에게 알리세요.")
     gone = _lay_uncommitted_old(root) if state == "partial" else []
     if not gone:
-        _lay_undo_refuse("옮기다 멈춘 흔적(커밋되지 않은 이동)을 찾지 못했어요.")
+        _lay_undo_refuse("옮기다 멈춘 문서를 찾지 못했어요. docs 폴더는 그대로예요.",
+                         "prdt layout check 로 상태를 확인하고, 일부만 새 구조라고 나오면 PO 에게 알리세요.")
     prod = layout_product_name(root)
     docs = root / "docs"
     r = _lay_pathspec(root, ["reset", "-q", "HEAD"], ["docs", ".prdt/config.json"])
     if r.returncode != 0:
-        _lay_undo_refuse(f"meta git 인덱스를 되돌릴 수 없어요 ({(r.stderr or 'git reset failed').strip().splitlines()[0]})")
+        _lay_undo_refuse(f"meta git 의 변경 목록을 되돌릴 수 없어요 ({(r.stderr or 'git reset failed').strip().splitlines()[0]}). "
+                         f"docs 폴더는 그대로예요.", "괄호 안 git 오류를 고친 뒤 다시 실행하세요.")
     moves = []      # (new path, old path)
     pdir, sdir = docs / prod, docs / DOCS_SHARED
     if pdir.is_dir() and not pdir.is_symlink():
@@ -16863,9 +16888,9 @@ def layout_undo(root, state):
             stuck.append((src, e))
     if stuck:
         print(f"{_lay_er('되돌리기 실패')}: {Path(stuck[0][0]).relative_to(root).as_posix()} 를 원래 자리로 "
-              f"돌리지 못했어요 ({_lay_err_text(stuck[0][1])})")
+              f"돌리지 못했어요 ({_lay_err_text(stuck[0][1])}). docs 폴더는 아직 일부만 새 구조예요.")
         print()
-        print("다음: PO 에게 알리세요. docs 폴더는 아직 일부만 새 구조예요.")
+        print("다음: 괄호 안 원인을 고친 뒤 prdt layout migrate --undo 를 다시 실행하세요. 안 되면 PO 에게 알리세요.")
         sys.exit(2)
     head_files = set(p for p in _lay_git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", "docs", ".prdt/config.json"]).stdout.split("\0") if p)
     derived = ["docs/artifacts/manifest.json", "docs/wiki/index.md"]
@@ -16878,7 +16903,9 @@ def layout_undo(root, state):
     want = [g for g in gone if not os.path.lexists(root / g)] + [".prdt/config.json"] + derived
     c = _lay_pathspec(root, ["checkout", "HEAD"], [w for w in dict.fromkeys(want) if w in head_files])
     if c.returncode != 0:
-        _lay_undo_refuse(f"HEAD 의 파일을 되살릴 수 없어요 ({(c.stderr or 'git checkout failed').strip().splitlines()[0]})")
+        _lay_undo_refuse(f"meta git 에서 지워진 문서를 되살릴 수 없어요 ({(c.stderr or 'git checkout failed').strip().splitlines()[0]}). "
+                         f"docs 폴더는 아직 일부만 새 구조예요.",
+                         "괄호 안 git 오류를 고친 뒤 prdt layout migrate --undo 를 다시 실행하세요.", head="되돌리기 실패")
     for top in (sdir, pdir):     # emptied new folders, deepest first
         for dirpath, _dirs, _files in os.walk(top, topdown=False):
             try:
@@ -16903,7 +16930,7 @@ def layout_undo(root, state):
         pass
     print(f"{_lay_wn('되돌렸어요')}: 옮기다 만 문서 {_lay_n(back)}개를 원래 자리로 돌렸어요. docs 폴더는 예전 구조 그대로예요.")
     print()
-    print("다음: 원인을 확인한 뒤 prdt layout migrate --apply 로 다시 옮기세요.")
+    print("다음: 다시 옮기려면 prdt layout migrate --apply 를 실행하세요.")
 
 
 def cmd_layout(args):
@@ -16916,13 +16943,19 @@ def cmd_layout(args):
             print(json.dumps({"state": state, "product": prod,
                               "docs": plan["total"] if plan else 0}, ensure_ascii=False))
         elif state == "old":
-            print(f"docs 폴더가 예전 구조예요. 문서 {_lay_n(plan['total'])}개가 제품 폴더 없이 docs/ 바로 아래에 있어요.")
+            print(f"docs 폴더가 예전 구조예요. 문서 {_lay_n(plan['total'])}개를 새 구조로 옮길 수 있어요.")
+            print()
+            print("다음: prdt layout migrate 로 옮길 목록을 확인하세요.")
         elif state == "new":
             print(f"docs 폴더가 이미 새 구조예요 (docs/{DOCS_SHARED} · docs/{prod}).")
         elif state == "partial":
             print(_lay_er("✗ ") + layout_partial_line(root))
+            print()
+            print(f"다음: {LAYOUT_PARTIAL_NEXT}")
         else:
-            print("docs 폴더에 옮길 문서가 없어요.")
+            print("docs 폴더에서 예전 구조를 찾지 못했어요.")
+            print()
+            print("다음: 옮길 문서가 있다면 PO 에게 알리세요.")
         sys.exit({"old": 1, "partial": 2}.get(state, 0))
     # migrate
     if getattr(args, "undo", False):
@@ -16932,7 +16965,9 @@ def cmd_layout(args):
               f"옮길 문서가 없어서 아무것도 하지 않았어요.")
         return
     if state == "none":
-        print("docs 폴더에 옮길 문서가 없어서 아무것도 하지 않았어요.")
+        print("docs 폴더에서 예전 구조를 찾지 못해서 아무것도 옮기지 않았어요.")
+        print()
+        print("다음: 옮길 문서가 있다면 PO 에게 알리세요.")
         return
     if state == "partial":
         _lay_refuse_partial(root)
@@ -18443,13 +18478,13 @@ def main():
     p.add_argument("--limit", type=int, default=20, help="log: max commits (default 20)")
     p.add_argument("--yes", action="store_true", help="split: 확인 프롬프트 생략 (T-366)")
     p.set_defaults(fn=cmd_meta)
-    p = sub.add_parser("layout", help="docs layout (T-1103): migrate — preview the move from docs/{prd,tickets,…} "
-                                      "to docs/_shared + docs/<product> (writes nothing) · migrate --apply — move it "
-                                      "(git mv, one meta commit, rollback on failure) · check — old / new / partial")
+    p = sub.add_parser("layout", help="docs 폴더 구조: migrate: 예전 구조에서 새 구조로 옮길 목록을 보여요 (아무것도 쓰지 않아요) · "
+                                      "migrate --apply: 옮겨요 (git mv, meta 커밋 1개, 실패하면 되돌려요) · "
+                                      "check: 예전 / 새 / 일부만 새 구조 중 어느 쪽인지 알려요")
     p.add_argument("action", choices=("migrate", "check"))
-    p.add_argument("--apply", action="store_true", help="migrate: do the move (the preview writes nothing)")
+    p.add_argument("--apply", action="store_true", help="migrate: 목록을 확인한 뒤 실제로 옮겨요 (이 옵션이 없으면 아무것도 쓰지 않아요)")
     p.add_argument("--json", action="store_true", help="check: machine mode")
-    p.add_argument("--undo", action="store_true", help="migrate: put an uncommitted half-move (killed --apply) back to the old structure")
+    p.add_argument("--undo", action="store_true", help="migrate: 옮기다 멈춘 문서(커밋하지 않은 이동)를 예전 구조로 되돌려요")
     p.set_defaults(fn=cmd_layout)
     # T-319: `po` 서브커맨드 제거 — bare `prdt`가 유일한 PO 진입(init-if-needed→PO).
     p = sub.add_parser("update", help="prdt 업데이트: repo pull --ff-only + 재설치 (구 productune update 계승)")
@@ -18625,7 +18660,12 @@ def main():
     msg_root = None
     if not hook_call:
         r = find_project_root()
-        if r and docs_layout(r) == "product" and layout_state(r, deep=True) != "partial":
+        # Shallow state only: a leftover old name beside `_shared/` is the one partial
+        # whose paths this rewrite would get wrong. The deep (meta git) probe costs a
+        # git process (~20 ms) on every command; its extra case — everything already
+        # moved, nothing committed — has every doc at its new path, so the rewrite is
+        # right there, and the partial lines carry no `docs/` path to rewrite.
+        if r and docs_layout(r) == "product" and layout_state(r) != "partial":
             msg_root = r
             if (args.cmd in DOCS_MSG_CMDS and getattr(args, "action", None) != "fmt") \
                     or (args.cmd == "wiki" and getattr(args, "action", None) == "lint"):
