@@ -746,10 +746,53 @@ $(quote_body "$FLAG" "migration record")
   fi
 fi
 
+# T-1105: the docs-layout proposal, PO SessionStart part 1 only (never SubagentStart
+# — a sub-agent or an in-flight dispatch never sees it; design ④ ⑥). The block rides
+# the same reserve as the onboarding block above: it is an EXTRA inside a constant,
+# never an input to the split, so the plan stays identical across the slots. The
+# text comes from `prdt layout check --session-start` (shallow, filesystem-only
+# state; copy = the approved `layout-start` screens), so this file holds no copy.
+# Cost gate: a project that is already in the new layout is recognised in pure bash
+# (stat calls, no process) and spawns nothing; only a project that MAY be old or
+# half-moved pays the one CLI process. The owned-names list below mirrors
+# LAYOUT_OWNED_TOPS in scripts/prdt — a test pins the two together.
+# A block that does not fit the reserve beside the onboarding block is dropped
+# whole (the next session proposes again), never allowed to push part 1 over budget.
+LAYOUT_BLOCK=""
+if [ "$PERSONA" = "po" ] && [ "$PART" = "1" ] && [ "$EVENT_NAME" = "SessionStart" ] \
+   && [ -z "$SELF_LOAD" ] && [ "${PRDT_LAYOUT_PROPOSAL:-1}" != "0" ]; then
+  LP_ROOT="${PROJ_PO:-$(find_proj "$EVENT_CWD")}"
+  LP_ASK=""
+  if [ -n "$LP_ROOT" ] && [ -f "$LP_ROOT/.prdt/config.json" ] && [ -d "$LP_ROOT/docs" ]; then
+    LP_ASK=1
+    if [ -d "$LP_ROOT/docs/_shared" ] && [ ! -L "$LP_ROOT/docs/_shared" ]; then
+      LP_ASK=""
+      for LP_N in tickets prd artifacts DEPLOY.md wiki features design.md po designer developer qa; do
+        if [ -e "$LP_ROOT/docs/$LP_N" ] || [ -L "$LP_ROOT/docs/$LP_N" ]; then LP_ASK=1; break; fi
+      done
+    fi
+  fi
+  LP_CLI="${PRDT_BIN:-$PRDT_HOME/bin/prdt}"
+  if [ -n "$LP_ASK" ] && [ -x "$LP_CLI" ]; then
+    LP_OUT="$(cd "$LP_ROOT" 2>/dev/null && "$LP_CLI" layout check --session-start 2>/dev/null)"
+    if [ -n "$LP_OUT" ]; then
+      LAYOUT_BLOCK="----- BEGIN LAYOUT PROPOSAL (this session) -----
+$LP_OUT
+----- END LAYOUT PROPOSAL -----
+
+"
+      if [ "$(printf '%s%s' "$ONBOARD" "$LAYOUT_BLOCK" | wc -c | tr -d ' ')" -gt "$PRDT_ONBOARD_RESERVE_BYTES" ]; then
+        LAYOUT_BLOCK=""
+      fi
+    fi
+  fi
+fi
+
 PAYLOAD="$(python3 -c "$PRDT_PARTS_PY" render "$PERSONA" "$AGENT_TYPE" "$PART" "$SLOTS" \
   "$PRDT_INJECT_PART_BUDGET_BYTES" "$PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS" \
   "$DOCTRINE" "$CONTRACTS" "$DISC" "$PRDT_ONBOARD_RESERVE_BYTES")"
 [ -z "$PAYLOAD" ] && exit 0
+ONBOARD="${ONBOARD}${LAYOUT_BLOCK}"
 if [ -n "$ONBOARD" ]; then
   # The one-shot block sits between the documents and the closing instruction,
   # inside the reserve the plan kept for it. Anchored on the LAST occurrence of
