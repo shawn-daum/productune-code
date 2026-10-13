@@ -16053,6 +16053,8 @@ def cmd_doctor(_args):
         # for the same reason: the id-keyed map is *defined* by collapsing an id,
         # so it is the one input in which this violation cannot be seen.
         ("duplicate ticket id", FAMILY_PROJECT, lambda: duplicate_ticket_id_warnings(trows)),
+        # T-1126: carve-out (2) switched off by a post-read check, or a result ref left undeleted.
+        ("cloud tests", FAMILY_PROJECT, lambda: cloud_test_doctor_warnings(root)),
         # T-685: same `fmt_ticket_body` transform `tickets fmt --check` reads —
         # advisory, never verdict-changing (a frame slip is a `tickets fmt`
         # away, not a discipline↔execution mismatch); silent on any ticket
@@ -18660,6 +18662,562 @@ def installed_prdt_version():
     return None
 
 
+# ── prdt test cloud (T-1126) ────────────────────────────────────────────────
+# A track commit's core suite runs in a Claude Code cloud session; the mac-only
+# files run here at the same time; one merged verdict comes back as JSON. The
+# result route is contracts §Git carve-out (2) + contracts/git.md "Cloud
+# test-result push": the runner script (CLOUD_RUNNER_PATH) is the only pusher;
+# this side checks before (cloud_precheck), reads the one result ref, checks
+# after (cloud_postcheck), then deletes that ref by its recorded name.
+import time  # noqa: E402 — only `prdt test cloud` polls
+
+CLOUD_RUNNER_PATH = "packages/core/scripts/prdt-cloud-test.sh"
+CLOUD_CONDENSE_PATH = "packages/core/scripts/prdt-cloud-condense.mjs"
+CLOUD_SETUP_PATH = ".claude/cloud-setup.sh"
+CLOUD_TEST_ROOT = "packages/core"
+CLOUD_TEST_DIR = "packages/core/test/"
+# A test file is mac-only when it drives a macOS-only binary (spike: the 64
+# mac-only failures were `plutil`, 2 files). Derived from the file, never listed.
+CLOUD_MAC_ONLY_RE = re.compile(rb"\bplutil\b")
+CLOUD_SESSION_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+CLOUD_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+CLOUD_FILE_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._/-]*$")
+CLOUD_SESSION_URL_RE = re.compile(r"claude\.ai/code/((?:session|cse)_[A-Za-z0-9]+)")
+CLOUD_NOTICE_RE = re.compile(r"uncommitted|untracked|not (?:be )?included|exclud", re.I)
+CLOUD_GLOB_SPECIAL = "*?+[!"
+
+
+class CloudCheckError(Exception):
+    """GitHub unreachable or unreadable — every check that needs it fails closed."""
+
+
+def _cloud_die(text, code=1):
+    print(f"prdt test cloud: {text}", file=sys.stderr)
+    sys.exit(code)
+
+
+def _cloud_literal_prefix(pat):
+    """The literal head of a GitHub branch glob, minus a char that a following
+    `?`/`+` makes optional or repeatable."""
+    i = 0
+    while i < len(pat) and pat[i] not in CLOUD_GLOB_SPECIAL:
+        i += 1
+    lit = pat[:i]
+    if i < len(pat) and pat[i] in "?+" and lit:
+        lit = lit[:-1]
+    return lit, pat[i:]
+
+
+def cloud_branch_pattern_may_match_ci(pat):
+    """True unless the pattern's literal head already leaves the `ci/` namespace
+    — conservative: any wildcard that could reach `ci/…` counts as a match."""
+    lit, _rest = _cloud_literal_prefix(pat)
+    if len(lit) >= 3:
+        return lit[:3] == "ci/"
+    return "ci/".startswith(lit)
+
+
+def cloud_branch_pattern_covers_ci(pat):
+    """True only for a pattern that matches every `ci/…` ref: a literal head that
+    is a prefix of `ci/` followed by exactly `**` (`ci/**`, `c**`, `**`)."""
+    lit, rest = _cloud_literal_prefix(pat)
+    return rest == "**" and "ci/".startswith(lit) and len(lit) == len(pat) - 2
+
+
+def cloud_workflow_violations(text, label):
+    """contracts/git.md carve-out (2) precondition, one workflow file: no `on:`
+    names `create` or `delete`; every `push` trigger's branch filter excludes
+    `ci/**`; a `push` with no branch filter fails. Unreadable → a failing item."""
+    try:
+        import yaml
+    except ImportError:
+        return [f"{label}: PyYAML is not installed — the workflow triggers cannot be read"]
+    try:
+        docs = list(yaml.safe_load_all(text))
+    except Exception as e:  # noqa: BLE001 — any parse failure fails closed
+        return [f"{label}: unreadable YAML ({type(e).__name__})"]
+    if len(docs) != 1 or not isinstance(docs[0], dict):
+        return [f"{label}: not one YAML mapping"]
+    doc = docs[0]
+    on = doc["on"] if "on" in doc else doc.get(True)  # YAML 1.1 reads a bare `on` as true
+    if isinstance(on, str):
+        events = {on: None}
+    elif isinstance(on, list) and on and all(isinstance(e, str) for e in on):
+        events = {e: None for e in on}
+    elif isinstance(on, dict) and all(isinstance(k, str) for k in on):
+        events = on
+    else:
+        return [f"{label}: `on:` is missing or has an unreadable shape"]
+    bad = [f"{label}: `on:` names `{ev}`" for ev in ("create", "delete") if ev in events]
+    if "push" in events:
+        cfg = events["push"]
+        cfg = cfg if isinstance(cfg, dict) else {}
+
+        def pats(v):
+            if isinstance(v, str):
+                return [v]
+            if isinstance(v, list) and all(isinstance(p, str) for p in v):
+                return v
+            return None
+        br, ign = cfg.get("branches"), cfg.get("branches-ignore")
+        if br is None and ign is None:
+            bad.append(f"{label}: a `push` trigger with no branch filter")
+        elif br is not None and ign is not None:
+            bad.append(f"{label}: `push` has both `branches` and `branches-ignore`")
+        elif br is not None:
+            ps = pats(br)
+            if ps is None:
+                bad.append(f"{label}: `push.branches` is unreadable")
+            elif any(not p.startswith("!") and cloud_branch_pattern_may_match_ci(p) for p in ps):
+                bad.append(f"{label}: `push.branches` can match ci/**")
+        else:
+            ps = pats(ign)
+            if ps is None or any(p.startswith("!") for p in ps) \
+                    or not any(cloud_branch_pattern_covers_ci(p) for p in ps):
+                bad.append(f"{label}: `push.branches-ignore` does not exclude ci/**")
+    return bad
+
+
+def _cloud_gh(path, allow_404=False):
+    """`gh api` GET → parsed JSON; None on a 404 when allowed; anything else that
+    is not a 200 raises CloudCheckError (fail closed)."""
+    gh = shutil.which("gh")
+    if not gh:
+        raise CloudCheckError("the GitHub CLI `gh` is not installed")
+    try:
+        r = subprocess.run([gh, "api", "-X", "GET", path], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise CloudCheckError(f"GitHub API {path}: {type(e).__name__}")
+    if r.returncode != 0:
+        if allow_404 and "HTTP 404" in r.stderr:
+            return None
+        first = (r.stderr.strip().splitlines() or ["no output"])[0][:200]
+        raise CloudCheckError(f"GitHub API {path}: {first}")
+    try:
+        return json.loads(r.stdout or "null")
+    except ValueError:
+        raise CloudCheckError(f"GitHub API {path}: not JSON")
+
+
+def cloud_github_repo(code):
+    """owner/repo of the code repo's `origin`, or None when origin is not GitHub."""
+    r = _tgit(["remote", "get-url", "origin"], code)
+    m = re.search(r"github\.com[:/]([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$", r.stdout.strip())
+    return f"{m.group(1)}/{m.group(2)}" if r.returncode == 0 and m else None
+
+
+def _cloud_state_dir(code):
+    """Run records + the carve-out-off record live in the code repo's git dir
+    (never part of a tree, never in the meta backup); `prdt doctor` reads them."""
+    r = _tgit(["rev-parse", "--path-format=absolute", "--git-common-dir"], code)
+    return Path(r.stdout.strip()) / "prdt-cloud"
+
+
+def _cloud_off_record(code):
+    rec = read_json(_cloud_state_dir(code) / "carve-out-off.json")
+    return rec if isinstance(rec, dict) else None
+
+
+def cloud_test_doctor_warnings(root):
+    code = code_root(root)
+    if not (Path(code) / ".git").exists():
+        return []
+    out = []
+    off = _cloud_off_record(code)
+    if off:
+        out.append(f"cloud tests: carve-out (2) is off for this repo since {off.get('ts')} — "
+                   f"{off.get('reason')}; only the user's explicit instruction clears it "
+                   f"(`prdt test cloud --reenable`)")
+    runs = _cloud_state_dir(code) / "runs"
+    if runs.is_dir():
+        for f in sorted(runs.glob("*.json")):
+            rec = read_json(f)
+            if isinstance(rec, dict) and rec.get("ref") and rec.get("state") not in ("deleted", "absent"):
+                out.append(f"cloud tests: result ref {rec['ref']} (run {f.stem}) is not deleted yet — "
+                           f"the next `prdt test cloud` deletes it by that name")
+    return out
+
+
+def cloud_precheck(code, sha, repo):
+    """contracts/git.md carve-out (2) pre-run check, fail-closed. → failing items."""
+    import base64
+    bad = []
+    off = _cloud_off_record(code)
+    if off:
+        bad.append(f"carve-out (2) is off for this repo since {off.get('ts')}: {off.get('reason')}")
+    r = _tgit(["ls-tree", "--name-only", f"{sha}:.github/workflows"], code)
+    if r.returncode == 0:
+        for name in r.stdout.splitlines():
+            if name.endswith((".yml", ".yaml")):
+                t = _tgit(["show", f"{sha}:.github/workflows/{name}"], code)
+                bad += cloud_workflow_violations(t.stdout, f"{sha[:8]}:.github/workflows/{name}")
+    try:
+        info = _cloud_gh(f"repos/{repo}")
+        db = info.get("default_branch") if isinstance(info, dict) else None
+        if not db:
+            raise CloudCheckError(f"GitHub API repos/{repo}: no default branch")
+        lst = _cloud_gh(f"repos/{repo}/contents/.github/workflows?ref={db}", allow_404=True) or []
+        for ent in lst if isinstance(lst, list) else []:
+            if ent.get("type") == "file" and str(ent.get("name", "")).endswith((".yml", ".yaml")):
+                f = _cloud_gh(f"repos/{repo}/contents/{ent['path']}?ref={db}")
+                text = base64.b64decode(f.get("content", "")).decode("utf-8", "replace")
+                bad += cloud_workflow_violations(text, f"{db}:{ent['path']}")
+        if not isinstance(lst, list):
+            bad.append(f"{db}:.github/workflows is not a directory listing")
+        hooks = _cloud_gh(f"repos/{repo}/hooks?per_page=100")
+        if not isinstance(hooks, list) or hooks:
+            bad.append(f"GitHub reports {len(hooks) if isinstance(hooks, list) else '?'} webhook(s)")
+        envs = _cloud_gh(f"repos/{repo}/environments")
+        if not isinstance(envs, dict) or envs.get("total_count") != 0:
+            bad.append(f"GitHub reports {envs.get('total_count') if isinstance(envs, dict) else '?'} environment(s)")
+        deps = _cloud_gh(f"repos/{repo}/deployments?per_page=100")
+        if not isinstance(deps, list) or deps:
+            bad.append(f"GitHub reports {len(deps) if isinstance(deps, list) else '?'} deployment(s)")
+    except CloudCheckError as e:
+        bad.append(f"GitHub unreachable or unreadable — {e}")
+    tree = _tgit(["ls-tree", "-r", "--name-only", sha], code)
+    if tree.returncode != 0:
+        bad.append(f"could not list the tree of {sha[:8]}")
+    for p in tree.stdout.splitlines():
+        parts = p.split("/")
+        if ".vercel" in parts[:-1] or parts[-1] in ("vercel.json", "netlify.toml"):
+            bad.append(f"the code tree holds {p}")
+    return bad
+
+
+def cloud_postcheck(repo, commit):
+    """contracts/git.md carve-out (2) post-read check → (counts, failing items)."""
+    counts, bad = {}, []
+    try:
+        cr = _cloud_gh(f"repos/{repo}/commits/{commit}/check-runs")
+        counts["check_runs"] = cr.get("total_count") if isinstance(cr, dict) else None
+        st = _cloud_gh(f"repos/{repo}/commits/{commit}/statuses")
+        counts["statuses"] = len(st) if isinstance(st, list) else None
+        dp = _cloud_gh(f"repos/{repo}/deployments?sha={commit}")
+        counts["deployments"] = len(dp) if isinstance(dp, list) else None
+        wr = _cloud_gh(f"repos/{repo}/actions/runs?head_sha={commit}")
+        counts["workflow_runs"] = wr.get("total_count") if isinstance(wr, dict) else None
+    except CloudCheckError as e:
+        bad.append(f"post-read check could not read GitHub — {e}")
+    bad += [f"GitHub reports {v} {k.replace('_', ' ')} for the result commit"
+            for k, v in counts.items() if v != 0]
+    return counts, bad
+
+
+def _cloud_mark_off(code, reason):
+    d = _cloud_state_dir(code)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "carve-out-off.json").write_text(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                                      "reason": reason}) + "\n")
+
+
+def _cloud_record(path, rec, **kw):
+    rec.update(kw)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rec, indent=1) + "\n")
+    os.replace(tmp, path)
+
+
+def _cloud_ls_remote(code, ref):
+    r = _tgit(["ls-remote", "--end-of-options", "origin", ref], code, timeout=60)
+    if r.returncode != 0:
+        return None, f"git ls-remote failed: {(r.stderr.strip().splitlines() or [''])[0][:200]}"
+    for line in r.stdout.splitlines():
+        sha, _, name = line.partition("\t")
+        if name == ref:
+            return sha, None
+    return "", None
+
+
+def _cloud_delete_ref(code, ref):
+    r = _tgit(["push", "--delete", "--end-of-options", "origin", ref], code, timeout=120)
+    return r.returncode == 0, (r.stderr.strip().splitlines() or [""])[-1][:200]
+
+
+def _cloud_settle_and_delete(code, repo, rec_path, rec, ref, commit, seen_at):
+    """Post-read check (after a short settle, so a triggered run has time to
+    register), then the by-name delete. → (postcheck counts, failing items)."""
+    wait = 20 - (time.time() - seen_at)
+    if wait > 0:
+        time.sleep(wait)
+    counts, bad = cloud_postcheck(repo, commit)
+    if bad:
+        _cloud_mark_off(code, "; ".join(bad))
+    ok, err = _cloud_delete_ref(code, ref)
+    _cloud_record(rec_path, rec, postcheck=counts, postcheck_failed=bad,
+                  state="deleted" if ok else "delete-failed", delete_error=None if ok else err)
+    return counts, bad, ok, err
+
+
+def _cloud_clean_leftovers(code, repo):
+    """A ref a killed run left behind: deleted only by the name in its record."""
+    runs = _cloud_state_dir(code) / "runs"
+    notes = []
+    for f in sorted(runs.glob("*.json")) if runs.is_dir() else []:
+        rec = read_json(f)
+        if not (isinstance(rec, dict) and rec.get("ref") and rec.get("state") not in ("deleted", "absent")):
+            continue
+        sha, err = _cloud_ls_remote(code, rec["ref"])
+        if err:
+            notes.append(f"leftover {rec['ref']}: {err}")
+        elif sha == "":
+            _cloud_record(f, rec, state="absent")
+        else:
+            _c, bad, ok, derr = _cloud_settle_and_delete(code, repo, f, rec, rec["ref"], sha, 0)
+            notes.append(f"leftover {rec['ref']} of run {f.stem}: " + ("deleted" if ok else f"delete failed ({derr})")
+                         + (f"; post-read check: {'; '.join(bad)}" if bad else ""))
+    return notes
+
+
+def cloud_test_files(code, sha, only=None):
+    """(cloud files, mac-only files) — paths relative to packages/core, read from
+    the tested commit; `only` narrows to the given repo-relative paths."""
+    r = _tgit(["ls-tree", "-r", "--name-only", sha, "--", CLOUD_TEST_DIR], code)
+    allf = [p for p in r.stdout.splitlines() if p.endswith((".test.ts", ".test.tsx"))]
+    if only:
+        want = {p[len(CLOUD_TEST_ROOT) + 1:] if p.startswith(CLOUD_TEST_ROOT + "/") else p for p in only}
+        allf = [p for p in allf if p[len(CLOUD_TEST_ROOT) + 1:] in want]
+        missing = want - {p[len(CLOUD_TEST_ROOT) + 1:] for p in allf}
+        if missing:
+            _cloud_die(f"not a core test file at {sha[:8]}: {', '.join(sorted(missing))}", 2)
+    cloud, mac = [], []
+    for p in allf:
+        blob = subprocess.run(["git", "show", f"{sha}:{p}"], cwd=str(code), env=_scrubbed_git_env(),
+                              capture_output=True, timeout=60).stdout
+        (mac if CLOUD_MAC_ONLY_RE.search(blob) else cloud).append(p[len(CLOUD_TEST_ROOT) + 1:])
+    return cloud, mac
+
+
+def _cloud_condense(code, report, prefix, **meta):
+    r = subprocess.run(["node", str(Path(code) / CLOUD_CONDENSE_PATH), str(report), prefix,
+                        *[f"{k}={v}" for k, v in meta.items()]], capture_output=True, text=True, timeout=120)
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return {"status": "error", "reason": "the local report could not be condensed"}
+
+
+def _cloud_create_session(code, run_dir, description, timeout_s):
+    """`claude --cloud` creates a session only with a pty (spike): drive it in a
+    tmux server on a private socket, read the session id off the screen, then
+    stop that server by the pid it reports. → (session id, notices)."""
+    tmux, claude = shutil.which("tmux"), shutil.which("claude")
+    if not tmux or not claude:
+        _cloud_die("`tmux` and `claude` must be on PATH to create a cloud session", 4)
+    sock = f"prdt-cloud-{os.getpid()}-{int(time.time())}"
+    cmd = f"CCR_FORCE_BUNDLE=1 exec {shlex.quote(claude)} --cloud {shlex.quote(description)}"
+    r = subprocess.run([tmux, "-L", sock, "new-session", "-d", "-s", "prdt", "-x", "220", "-y", "50",
+                        "-c", str(code), cmd], capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        _cloud_die(f"tmux could not start: {r.stderr.strip()[:200]}", 4)
+    pid = subprocess.run([tmux, "-L", sock, "display-message", "-p", "#{pid}"],
+                         capture_output=True, text=True, timeout=30).stdout.strip()
+    session, pane, seen = None, "", []
+    try:
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            pane = subprocess.run([tmux, "-L", sock, "capture-pane", "-p", "-J", "-S", "-2000", "-t", "prdt"],
+                                  capture_output=True, text=True, timeout=30).stdout
+            for line in pane.splitlines():
+                if CLOUD_NOTICE_RE.search(line) and line.strip() not in seen:
+                    seen.append(line.strip())
+            m = CLOUD_SESSION_URL_RE.search(pane)
+            if m:
+                session = m.group(1)
+                break
+            if subprocess.run([tmux, "-L", sock, "has-session", "-t", "prdt"],
+                              capture_output=True, timeout=30).returncode != 0:
+                break
+            time.sleep(2)
+    finally:
+        (run_dir / "create-pane.txt").write_text(pane)
+        if pid.isdigit():
+            with contextlib.suppress(OSError):
+                os.kill(int(pid), 15)
+    return session, seen
+
+
+def _cloud_instruction(ticket, sha, session, runner_sha, files, excludes):
+    argv = ["bash", "/tmp/prdt-cloud-test.sh", "--ticket", ticket, "--sha", sha, "--session", session,
+            "--runner-sha", runner_sha]
+    for f in files:
+        argv += ["--file", f]
+    for e in excludes:
+        argv += ["--exclude", e]
+    command = (f"git show {runner_sha}:{CLOUD_RUNNER_PATH} > /tmp/prdt-cloud-test.sh && "
+               + " ".join(shlex.quote(a) for a in argv))
+    return ("prdt cloud test run. From the repository root, run the one shell command below exactly as "
+            "written. It takes up to about 20 minutes: start it in the background and wait until it "
+            "exits; never stop it early. Run nothing else — no other git command, no retry, no file "
+            "edit. When it exits, reply with its last output line only.\n\n" + command)
+
+
+def cmd_test_cloud(args):
+    t_start = time.time()
+    root = require_root()
+    code = code_root(root)
+    if args.reenable:
+        p = _cloud_state_dir(code) / "carve-out-off.json"
+        if p.exists():
+            p.unlink()
+            print("carve-out (2) re-enabled for this repo (the off record is removed)")
+        else:
+            print("carve-out (2) is not off for this repo")
+        return
+    tid = args.ticket
+    if not (isinstance(tid, str) and TRACK_ID_RE.match(tid)):
+        _cloud_die("the ticket id must look like T-NNN", 2)
+    repo = cloud_github_repo(code)
+    if not repo:
+        _cloud_die("the code repo's origin is not a GitHub repository", 2)
+    track = Path(root) / "tracks" / tid
+    checkout = Path(args.checkout) if args.checkout else (track if track.is_dir() else Path(code))
+    r = _tgit(["rev-parse", "--verify", "--quiet", f"{args.sha or 'HEAD'}^{{commit}}"], checkout)
+    sha = r.stdout.strip()
+    if r.returncode != 0 or not CLOUD_SHA_RE.match(sha):
+        _cloud_die(f"no commit {args.sha or 'HEAD'} in {checkout}", 2)
+    head = _tgit(["rev-parse", "HEAD"], checkout).stdout.strip()
+    runner_sha = _tgit(["rev-parse", "HEAD"], code).stdout.strip()
+    for p in (CLOUD_RUNNER_PATH, CLOUD_CONDENSE_PATH, CLOUD_SETUP_PATH):
+        if _tgit(["cat-file", "-e", f"{runner_sha}:{p}"], code).returncode != 0:
+            _cloud_die(f"{p} is not committed at {code} HEAD — the cloud session runs the committed runner", 2)
+    notices = []
+    if _tgit(["status", "--porcelain", "--untracked-files=normal"], code).stdout.strip():
+        notices.append(f"{code} has uncommitted files — the cloud bundle leaves them out")
+    cloud_files, mac_files = cloud_test_files(code, sha, args.files)
+    if mac_files and head != sha:
+        _cloud_die(f"the mac-only files run in {checkout}, which is at {head[:8]}, not {sha[:8]} — "
+                   f"check out the tested commit there or pass --checkout", 2)
+    state = _cloud_state_dir(code)
+    run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{tid}"
+    run_dir = state / "work" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    rec_path = state / "runs" / f"{run_id}.json"
+    rec = {"run_id": run_id, "ticket": tid, "sha": sha, "runner_sha": runner_sha, "state": "precheck"}
+    _cloud_record(rec_path, rec)
+    notices += _cloud_clean_leftovers(code, repo)
+    bad = cloud_precheck(code, sha, repo)
+    if bad:
+        _cloud_record(rec_path, rec, state="precheck-failed", precheck_failed=bad)
+        print(json.dumps({"status": "precheck-failed", "ticket": tid, "sha": sha, "failing": bad}, ensure_ascii=False))
+        for b in bad:
+            print(f"prdt test cloud: pre-run check failed — {b}", file=sys.stderr)
+        sys.exit(3)
+    # mac-only half starts first and runs while the cloud session is created and runs
+    local = None
+    if mac_files and cloud_files is not None:
+        mac_json = run_dir / "mac-vitest.json"
+        log = open(run_dir / "mac-test.log", "w")
+        local = (subprocess.Popen(["./node_modules/.bin/vitest", "run", "--reporter=default", "--reporter=json",
+                                   f"--outputFile.json={mac_json}", *mac_files],
+                                  cwd=str(checkout / CLOUD_TEST_ROOT), stdout=log, stderr=subprocess.STDOUT),
+                 time.time(), mac_json, log)
+    timing = {}
+    cloud = None
+    session = None
+    if cloud_files:
+        t0 = time.time()
+        session, seen = _cloud_create_session(code, run_dir, f"prdt cloud test {tid} {sha[:8]}", args.create_timeout)
+        notices += seen
+        timing["create_s"] = round(time.time() - t0, 1)
+        if not session or not CLOUD_SESSION_RE.match(session):
+            _cloud_record(rec_path, rec, state="create-failed")
+            cloud = {"status": "error", "reason": f"no cloud session id on the screen (see {run_dir / 'create-pane.txt'})"}
+        else:
+            ref = f"refs/heads/ci/{tid}/{session}"
+            if _tgit(["check-ref-format", ref], code).returncode != 0:
+                _cloud_die(f"{ref} fails git check-ref-format", 4)
+            _cloud_record(rec_path, rec, state="instructed", session=session, ref=ref)
+            excludes = [] if args.files else [f for f in mac_files]
+            instr = _cloud_instruction(tid, sha, session, runner_sha, cloud_files if args.files else [], excludes)
+            s = subprocess.run([shutil.which("claude"), "-p", "--cloud", session, instr], cwd=str(code),
+                               capture_output=True, text=True, timeout=180)
+            if s.returncode != 0:
+                cloud = {"status": "error", "reason": f"could not send the run instruction (exit {s.returncode})"}
+            else:
+                t1 = time.time()
+                deadline = t1 + args.timeout
+                found, err = "", None
+                while time.time() < deadline:
+                    found, err = _cloud_ls_remote(code, ref)
+                    if found:
+                        break
+                    time.sleep(15)
+                timing["cloud_wait_s"] = round(time.time() - t1, 1)
+                if not found:
+                    _cloud_record(rec_path, rec, state="timeout")
+                    cloud = {"status": "error", "reason": f"no result ref after {args.timeout}s"
+                                                          + (f" ({err})" if err else "")}
+                else:
+                    seen_at = time.time()
+                    _cloud_record(rec_path, rec, state="pushed", commit=found)
+                    f = _tgit(["fetch", "--no-tags", "--no-write-fetch-head", "origin", ref], code, timeout=120)
+                    shape = _tgit(["cat-file", "-p", found], code).stdout if f.returncode == 0 else ""
+                    entries = _tgit(["ls-tree", found], code).stdout.splitlines() if shape else []
+                    if not shape or "\nparent " in shape or len(entries) != 1 or not entries[0].endswith("\tresult.json"):
+                        cloud = {"status": "error", "reason": "the result ref is not one parentless result.json commit"}
+                    else:
+                        try:
+                            cloud = json.loads(_tgit(["show", f"{found}:result.json"], code).stdout)
+                        except ValueError:
+                            cloud = {"status": "error", "reason": "result.json is not JSON"}
+                    _cloud_record(rec_path, rec, state="read")
+                    counts, pbad, ok, derr = _cloud_settle_and_delete(code, repo, rec_path, rec, ref, found, seen_at)
+                    rec_post = {"postcheck": counts, "postcheck_failed": pbad, "ref_deleted": ok}
+                    if not ok:
+                        notices.append(f"could not delete {ref}: {derr}")
+                    if pbad:
+                        notices.append("carve-out (2) is now off for this repo: " + "; ".join(pbad))
+                    cloud = dict(cloud, **rec_post) if isinstance(cloud, dict) else {"status": "error"}
+    mac = None
+    if local:
+        proc, ts, mac_json, log = local
+        try:
+            proc.wait(timeout=max(60, args.timeout))
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        log.close()
+        timing["mac_s"] = round(time.time() - ts, 1)
+        mac = _cloud_condense(code, mac_json, str(checkout / CLOUD_TEST_ROOT) + "/")
+    timing["wall_s"] = round(time.time() - t_start, 1)
+    ct = _tgit(["show", "-s", "--format=%ct", sha], code).stdout.strip()
+    if ct.isdigit():
+        timing["commit_to_verdict_s"] = round(time.time() - int(ct), 1)
+    halves = {k: v for k, v in (("cloud", cloud), ("mac", mac)) if v is not None}
+    failures, counts = [], {"total": 0, "passed": 0, "failed": 0, "skipped": 0}
+    status = "pass"
+    for where, h in halves.items():
+        if h.get("status") != "ok":
+            status = "error"
+        for k in counts:
+            with contextlib.suppress(TypeError, ValueError):
+                counts[k] += int(h.get(k) or 0)
+        failures += [dict(x, where=where) for x in h.get("failures") or []]
+        if status == "pass" and (int(h.get("failed") or 0) or int(h.get("failed_files") or 0)):
+            status = "fail"
+    if not halves:
+        status = "error"
+    verdict = {"status": status, "ticket": tid, "sha": sha, "session": session,
+               "session_url": f"https://claude.ai/code/{session}" if session else None,
+               "counts": counts, "failures": failures, "timing": timing,
+               "mac_only_files": [f"{CLOUD_TEST_ROOT}/{p}" for p in mac_files],
+               "notices": notices, "halves": {k: {kk: vv for kk, vv in v.items() if kk != "failures"}
+                                                for k, v in halves.items()},
+               "run_record": str(rec_path)}
+    (run_dir / "verdict.json").write_text(json.dumps(verdict, indent=1, ensure_ascii=False) + "\n")
+    print(json.dumps(verdict, ensure_ascii=False))
+    print(f"prdt test cloud: {status} — {counts['passed']}/{counts['total']} passed, {counts['failed']} failed, "
+          f"wall {timing.get('wall_s')}s", file=sys.stderr)
+    sys.exit({"pass": 0, "fail": 1}.get(status, 4))
+
+
+def cmd_test(args):
+    if args.action == "cloud":
+        return cmd_test_cloud(args)
+    _cloud_die(f"unknown action {args.action}", 2)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="prdt", description=__doc__)
     ap.add_argument("--version", dest="show_version", action="store_true",
@@ -18908,6 +19466,22 @@ def main():
     p.add_argument("--force", action="store_true",
                    help="drop: also discard a branch with uncommitted changes or commits not on dev or main")
     p.set_defaults(fn=cmd_track)
+    p = sub.add_parser("test", help="test cloud <T-NNN> [--sha SHA] [--checkout DIR] [--files F …] (T-1126): "
+                                    "run the core suite of a track commit in a Claude Code cloud session, the "
+                                    "mac-only files here in parallel, and print one merged JSON verdict; the "
+                                    "result comes back on ci/<T-NNN>/<session> (contracts §Git carve-out (2)) "
+                                    "and is deleted once read · cloud --reenable clears a carve-out-off record "
+                                    "(the user's explicit instruction only)")
+    p.add_argument("action", choices=("cloud",))
+    p.add_argument("ticket", nargs="?", help="T-NNN")
+    p.add_argument("--sha", help="the tested commit (default: HEAD of --checkout)")
+    p.add_argument("--checkout", help="where the mac-only files run (default <project>/tracks/<T-NNN>, else the code checkout)")
+    p.add_argument("--files", nargs="+", help="only these core test files (paths under packages/core)")
+    p.add_argument("--timeout", type=int, default=2400, help="seconds to wait for the result ref (default 2400)")
+    p.add_argument("--create-timeout", type=int, default=180, help="seconds to wait for the session id (default 180)")
+    p.add_argument("--reenable", action="store_true",
+                   help="remove the carve-out-off record — only on the user's explicit instruction")
+    p.set_defaults(fn=cmd_test)
     p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591/T-680): "
                                         "up <name> --dispatch <id> · down <name> --dispatch <id> · "
                                         "ls [--json] · register-stop <name> <command> — up/down record/report; "
