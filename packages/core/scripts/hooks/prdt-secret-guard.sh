@@ -403,7 +403,7 @@ sub is_target {
 # T-1109: ANY file directly under a `.prdt/env/` directory is the machine-scope
 # credential store (`~/.prdt/env/.env`, or a backup / temp copy beside it) — it
 # judges as `.env` whatever its own name, so every call site below denies it.
-sub basename { my $x = shift; return ".env" if $x =~ m{(?:\A|/)\.prdt/env/[^/]+/?\z}is; $x =~ s{\A.*/}{}s; return $x }
+sub basename { my $x = shift; return ".env" if is_store_file($x); $x =~ s{\A.*/}{}s; return $x }
 
 # T-1109 r4: is_store_path(p) — a path under the machine env store (judged for
 # WRITES; reads keep the basename rule above). Lexical only: `.` and empty
@@ -431,6 +431,21 @@ sub is_store_path {
     my $b = lc(store_norm($ph)) . "/env";
     return 1 if $n eq $b || index($n, "$b/") == 0;
   }
+  return 0;
+}
+
+# T-1109 r5: is_store_file(p) — is_store_path minus the bare directory: a
+# path STRICTLY under the store. Reads use it (via `basename`), so the same
+# resolution as the write rule applies (`$PRDT_HOME/env/.env`, `..` spellings,
+# the hook absolute PRDT_HOME) while `ls ~/.prdt/env` / `test -d` stay allowed.
+sub is_store_file {
+  my $p = shift;
+  return 0 unless is_store_path($p);
+  my $n = lc(store_norm($p));
+  return 1 if $n =~ m{(?:\A|/)\.prdt/env/[^/]};
+  return 1 if $n =~ m{\A\$\{?prdt_home\}?/env/[^/]};
+  my $ph = defined $ENV{PRDT_HOME} ? $ENV{PRDT_HOME} : "";
+  if ($ph =~ m{\A/.}) { my $b = lc(store_norm($ph)) . "/env/"; return 1 if index($n, $b) == 0 && length($n) > length($b) }
   return 0;
 }
 
