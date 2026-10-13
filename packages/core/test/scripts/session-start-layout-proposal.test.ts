@@ -67,7 +67,7 @@ describe.skipIf(!READY)('layout proposal on PO session start', () => {
     expect(ctx).toContain('"목록 보기"')
     expect(ctx).toContain('"이번 세션은 넘기기"')
     expect(ctx).toMatch(/`prdt layout migrate --apply` only on the user's confirm/)
-    expect(ctx).toContain('Nothing moves without the user\'s confirm.')
+    expect(ctx).toContain('Otherwise nothing this session.')
   })
 
   test('old layout: proposed again on every session start (no state file)', () => {
@@ -95,6 +95,7 @@ describe.skipIf(!READY)('layout proposal on PO session start', () => {
     expect(ctx).toContain('docs 폴더 일부만 새 구조로 옮겨졌어요. `docs/_shared/` 는 새 구조인데 `docs/tickets/` 는 예전 구조 그대로예요.')
     expect(ctx).toContain('이 상태에서는 옮기기를 제안하지 않아요. `prdt doctor` 로 남은 문서 2개를 확인하세요.')
     expect(ctx).toContain('Do NOT propose `prdt layout migrate`')
+    expect(ctx).toContain('then run `prdt layout check` and show its ✗ line.')
     expect(ctx).not.toContain('목록 보기')
   })
 
@@ -190,6 +191,9 @@ describe.skipIf(!READY || !hasBin('git', ['--version']))('killed --apply and in-
     expect(ctx).toContain("[prdt layout: this project's docs layout is half-moved]")
     expect(ctx).toContain('Do NOT propose `prdt layout migrate`')
     expect(ctx).not.toContain('목록 보기')
+    expect(ctx).toContain('then run `prdt layout check`. Offer `prdt layout migrate --undo` only when its `다음:` line names it')
+    expect(ctx).toContain('「docs 폴더 일부만 새 구조예요. 문서 2개가 아직 예전 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.」')
+    expect(ctx).not.toContain('prdt doctor')
     const chk = spawnSync('python3', [PRDT_CLI, 'layout', 'check', '--json'], {
       cwd: root, encoding: 'utf8', env: { ...process.env, PRDT_HOME: realHome() },
     })
