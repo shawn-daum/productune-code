@@ -17,6 +17,8 @@ import { spawnSync } from 'child_process'
 import { test, expect, describe, beforeAll, afterAll } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
 import { metaAutosaveTick, DEFAULT_META_EXCLUDE } from '../../src'
+import { metaBackupTick } from '../../src/git-workflow/meta-backup'
+import { networkAlias } from '../helpers/network-remote'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -891,7 +893,8 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`
     const { before, head, cfg } = snap0.get(root)!
     const undo = prdt(root, ['layout', 'migrate', '--undo'])
     expect(undo.code).toBe(0)
-    expect(undo.out).toContain('되돌렸어요')
+    expect(undo.out).toMatch(/^(되돌렸어요: 옮기다 만 문서 [1-9]\d*개를 원래 자리로|docs 폴더는 예전 구조 그대로예요\.)/)   // nothing but empty folders moved → the plain line, never "0개"
+    expect(undo.out).not.toContain('문서 0개')
     expectRestored(root, before, head, cfg)
     expect(prdt(root, ['layout', 'migrate', '--apply']).code).toBe(0)
     expect(fs.existsSync(MARKER(root))).toBe(false)
@@ -1012,18 +1015,190 @@ print(m.layout_session_start_block(Path(".")))`)
     expect(r.out).toMatch(/문서 \d+개가 아직 예전 구조예요/)
   }, 300_000)
 
-  test('killed between the meta commit and the marker removal: partial, --undo drops that one commit and restores', () => {
+  // ── T-1125: --undo never resets or rewrites a meta commit (QA grill r4 F1–F4) ──
+  const KILL_AT_CONFIG = `
+real = m.state_write
+def fake(root, path, text, *a, **k):
+    if str(path).endswith("config.json"):
+        os._exit(137)
+    return real(root, path, text, *a, **k)
+m.state_write = fake
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`
+  const gitId = ['-c', 'user.name=t', '-c', 'user.email=t@t']
+  const mk = (name: string) => (name === 'bare' ? bare : legacy)
+  const FIXTURES = ['bare', 'seeded'] as const
+  /** `--undo` refused: exit 1, the given refusal, and NOTHING changed (tree · HEAD · config · index). */
+  function expectUndoRefused(root: string, line: string) {
+    const treeBefore = snapshot(root)
+    const headBefore = git(root, ['rev-parse', 'HEAD'])
+    const cfgBefore = fs.readFileSync(path.join(root, '.prdt/config.json'))
+    const statusBefore = git(root, ['status', '--short', '--', 'docs', '.prdt/config.json'])
+    const undo = prdt(root, ['layout', 'migrate', '--undo'])
+    expect(undo.code).toBe(1)
+    expect(undo.out).toContain(line)
+    expect(undo.out).not.toContain('되돌렸어요')
+    expect(snapshot(root)).toEqual(treeBefore)
+    expect(git(root, ['rev-parse', 'HEAD'])).toBe(headBefore)
+    expect(fs.readFileSync(path.join(root, '.prdt/config.json')).equals(cfgBefore)).toBe(true)
+    expect(git(root, ['status', '--short', '--', 'docs', '.prdt/config.json'])).toBe(statusBefore)
+  }
+  const FINISHED = 'docs 폴더가 이미 새 구조로 끝나서 되돌릴 수 없어요.'
+
+  test('F1: killed after the meta commit, the backup tick pushes it, then --undo: the commit is never reset, the layout reads finished, the backup keeps fast-forwarding', async () => {
+    for (const name of FIXTURES) {
+      const root = prepared(mk(name))
+      expect(pyRun(root, KILL_AFTER_COMMIT).code).toBe(137)
+      const layoutCommit = git(root, ['rev-parse', 'HEAD']).trim()
+      expect(git(root, ['log', '-1', '--format=%s'])).toContain('product-first docs layout')
+      expect(fs.existsSync(MARKER(root))).toBe(true)
+      // the real backup tick (marker standing) pushes the layout commit to a bare remote
+      const bareRemote = fs.mkdtempSync(path.join(tmp, `bk${++seq}-`))
+      spawnSync('git', ['init', '--bare', '-q', bareRemote])
+      const prevHome = process.env.HOME
+      process.env.HOME = home
+      try {
+        git(root, ['remote', 'add', 'backup', networkAlias(bareRemote, home)])
+        const tick = await metaBackupTick(root, { now: new Date('2026-10-13T02:00:00Z') })
+        expect(tick.pushed, `${name}: ${JSON.stringify(tick)}`).toBe(true)
+        const pushed = spawnSync('git', ['-C', bareRemote, 'for-each-ref', '--format=%(objectname)', 'refs/heads'], { encoding: 'utf8' }).stdout
+        expect(pushed.split('\n')).toContain(layoutCommit)
+        const treeAfterKill = snapshot(root)
+        const cfgAfterKill = fs.readFileSync(path.join(root, '.prdt/config.json'))
+        expectUndoRefused(root, FINISHED)
+        expect(git(root, ['rev-parse', 'HEAD']).trim()).toBe(layoutCommit)
+        expect(snapshot(root)).toEqual(treeAfterKill)
+        expect(fs.readFileSync(path.join(root, '.prdt/config.json')).equals(cfgAfterKill)).toBe(true)
+        expect(fs.existsSync(MARKER(root))).toBe(false)         // settled: the missed unlink
+        expect(fs.existsSync(path.join(root, 'docs/_shared'))).toBe(true)
+        expect(prdt(root, ['layout', 'check']).code).toBe(0)
+        // the backup never sees a rewritten history: the next commit fast-forwards
+        write(path.join(root, 'docs/proj/after.md'), '# after\n')
+        git(root, ['add', '-f', 'docs/proj/after.md'])
+        git(root, [...gitId, 'commit', '-qm', 'docs: after'])
+        const tick2 = await metaBackupTick(root, { now: new Date('2026-10-14T02:00:00Z') })
+        expect(tick2.pushed, `${name}: ${JSON.stringify(tick2)}`).toBe(true)
+      } finally {
+        process.env.HOME = prevHome
+      }
+    }
+  }, 300_000)
+
+  test('F1/F2: the marker over the layout commit settles to "new" for check, --apply and --undo alike (never moves docs back)', () => {
+    for (const name of FIXTURES) {
+      const root = prepared(mk(name))
+      expect(pyRun(root, KILL_AFTER_COMMIT).code).toBe(137)
+      const j = JSON.parse(prdt(root, ['layout', 'check', '--json']).out)
+      expect(j).toMatchObject({ state: 'new', docs: 0 })
+      expect(fs.existsSync(MARKER(root))).toBe(false)
+      const done = prdt(root, ['layout', 'check'])
+      expect(done.code).toBe(0)
+      expect(done.out).toBe('docs 폴더가 이미 새 구조예요 (docs/_shared · docs/proj).\n')
+
+      const again = prepared(mk(name))
+      expect(pyRun(again, KILL_AFTER_COMMIT).code).toBe(137)
+      const apply = prdt(again, ['layout', 'migrate', '--apply'])
+      expect(apply.code).toBe(0)
+      expect(apply.out).toBe('docs 폴더가 이미 새 구조예요 (docs/_shared · docs/proj). 옮길 문서가 없어서 아무것도 하지 않았어요.\n')
+      expect(fs.existsSync(MARKER(again))).toBe(false)
+    }
+  }, 300_000)
+
+  test('F2: killed after the commit AND another commit on top: --undo refuses, nothing moves back, config keeps the new layout', () => {
+    for (const name of FIXTURES) {
+      const root = prepared(mk(name))
+      expect(pyRun(root, KILL_AFTER_COMMIT).code).toBe(137)
+      write(path.join(root, 'docs/proj/extra.md'), '# extra\n')
+      git(root, ['add', '-f', 'docs/proj/extra.md'])
+      git(root, [...gitId, 'commit', '-qm', 'docs: extra'])
+      const top = git(root, ['rev-parse', 'HEAD']).trim()
+      const cfg = fs.readFileSync(path.join(root, '.prdt/config.json'))
+      expectUndoRefused(root, FINISHED)
+      expect(git(root, ['rev-parse', 'HEAD']).trim()).toBe(top)
+      expect(fs.readFileSync(path.join(root, '.prdt/config.json')).equals(cfg)).toBe(true)
+      expect(fs.existsSync(path.join(root, 'docs/proj/extra.md'))).toBe(true)
+      expect(fs.existsSync(path.join(root, 'docs/tickets'))).toBe(false)
+      expect(fs.existsSync(MARKER(root))).toBe(false)
+      expect(prdt(root, ['layout', 'check']).code).toBe(0)
+    }
+  }, 300_000)
+
+  test('guard declined (a foreign HEAD over a half-move, never the layout commit): --undo refuses and changes nothing — no fall-through', () => {
+    for (const name of FIXTURES) {
+      const root = prepared(mk(name))
+      expect(pyRun(root, KILL_FIRST_RENAME).code).toBe(137)
+      git(root, [...gitId, 'commit', '-q', '--allow-empty', '-m', 'chore: foreign']) // HEAD moves, the marker still names the old one
+      expect(fs.existsSync(MARKER(root))).toBe(true)
+      const chk = prdt(root, ['layout', 'check'])
+      expect(chk.code).toBe(2)
+      expect(chk.out).not.toContain('--undo')                  // the hint only where --undo can run
+      expectUndoRefused(root, '옮기다 멈춘 문서를 찾지 못했어요. docs 폴더는 그대로예요.')
+      expect(fs.existsSync(MARKER(root))).toBe(true)
+    }
+  }, 300_000)
+
+  test('F3: a config edit after the kill survives --undo; the docs still come back; an untouched config is restored byte-identical', () => {
+    for (const name of FIXTURES) {
+      for (const kill of [KILL_AT_COMMIT, KILL_AT_CONFIG]) {
+        const root = prepared(mk(name))
+        expect(pyRun(root, kill).code).toBe(137)
+        const rec = JSON.parse(fs.readFileSync(MARKER(root), 'utf8'))
+        expect(typeof rec.config).toBe('string')                // recorded BEFORE the config write
+        const cfgPath = path.join(root, '.prdt/config.json')
+        if (kill === KILL_AT_COMMIT) expect(sha(cfgPath)).toBe(rec.config)
+        else expect(sha(cfgPath)).not.toBe(rec.config)           // killed before the write: config is as found
+        const { before } = snap0.get(root)!
+        if (kill === KILL_AT_COMMIT) {
+          const edited = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
+          edited.userNote = 'edited after the kill'
+          fs.writeFileSync(cfgPath, JSON.stringify(edited, null, 2) + '\n')
+          const editedBytes = fs.readFileSync(cfgPath)
+          const undo = prdt(root, ['layout', 'migrate', '--undo'])
+          expect(undo.code).toBe(0)
+          expect(fs.readFileSync(cfgPath).equals(editedBytes)).toBe(true)   // the user's edit survives
+          expect(snapshot(root)).toEqual(before)                           // docs are back
+          expect(fs.existsSync(MARKER(root))).toBe(false)
+        } else {
+          undoAndReapply(root)                                              // config never changed: nothing to restore, reapply works
+        }
+      }
+    }
+  }, 300_000)
+
+  test('F4: partial-line count and check --json agree with the disk; a settled commit reads 0, not the marker count', () => {
+    const num = (out: string) => Number(/문서 (\d+)개가 아직 예전 구조예요/.exec(out)![1])
+    for (const name of FIXTURES) {
+      for (const kill of [KILL_FIRST_RENAME, KILL_AT_COMMIT]) {
+        const root = prepared(mk(name))
+        expect(pyRun(root, kill).code).toBe(137)
+        const chk = prdt(root, ['layout', 'check'])
+        const json = JSON.parse(prdt(root, ['layout', 'check', '--json']).out)
+        expect(json.state).toBe('partial')
+        expect(num(chk.out)).toBe(json.docs)
+        const old = ['tickets', 'prd', 'artifacts', 'wiki', 'features', 'po', 'archive']
+          .reduce((n, d) => n + walk(path.join(root, 'docs', d)).filter((f) => !f.endsWith('/')).length, 0)
+        if (kill === KILL_FIRST_RENAME) expect(json.docs).toBeGreaterThanOrEqual(1)
+        else expect(old).toBe(0)
+      }
+    }
+    // the marker's own count is never the number shown: the move is committed, the disk holds nothing old
     const root = prepared(legacy)
     expect(pyRun(root, KILL_AFTER_COMMIT).code).toBe(137)
-    expect(git(root, ['log', '-1', '--format=%s'])).toContain('product-first docs layout')
-    expect(fs.existsSync(MARKER(root))).toBe(true)
-    expect(prdt(root, ['layout', 'check']).code).toBe(2)
-    const { before, head, cfg } = snap0.get(root) ?? snap(root)
-    const undo = prdt(root, ['layout', 'migrate', '--undo'])
-    expect(undo.code).toBe(0)
-    expectRestored(root, before, head, cfg)
-    expect(prdt(root, ['layout', 'migrate', '--apply']).code).toBe(0)
+    const recCount = JSON.parse(fs.readFileSync(MARKER(root), 'utf8')).count
+    expect(recCount).toBeGreaterThan(0)
+    const blk = prdt(root, ['layout', 'check', '--session-start']).out
+    expect(blk).toContain('문서 0개가 아직 예전 구조예요')
+    expect(blk).not.toContain(`문서 ${recCount}개`)
+    expect(JSON.parse(prdt(root, ['layout', 'check', '--json']).out)).toMatchObject({ state: 'new', docs: 0 })
+    expect(prdt(root, ['layout', 'check', '--session-start']).out).toBe('')
   }, 300_000)
+
+  test('--undo never runs a meta reset of a commit (the source has no commit-moving git call in the undo path)', () => {
+    const src = fs.readFileSync(PRDT_CLI, 'utf8')
+    expect(src).not.toContain('_lay_undo_own_commit')
+    const undoBody = src.slice(src.indexOf('def layout_undo('), src.indexOf('def cmd_layout('))
+    expect(undoBody).not.toMatch(/"reset",\s*"-q",\s*"--(mixed|hard|soft)"/)
+    expect(undoBody).not.toMatch(/\["(commit|update-ref|branch|rebase)"/)
+  })
 
   test('a failed --apply that rolls back removes the marker; a rollback that cannot finish keeps it, and --undo clears it', () => {
     const root = prepared(legacy)
@@ -1057,7 +1232,9 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
     const root = prepared(bare)
     fs.writeFileSync(MARKER(root), JSON.stringify({ head: git(root, ['rev-parse', 'HEAD']).trim(), count: 3, pid: 1 }) + '\n')
     expect(prdt(root, ['layout', 'check']).code).toBe(2)
-    expect(prdt(root, ['layout', 'migrate', '--undo']).code).toBe(0)
+    const undo = prdt(root, ['layout', 'migrate', '--undo'])
+    expect(undo.code).toBe(0)
+    expect(undo.out).toBe('docs 폴더는 예전 구조 그대로예요.\n\n다음: 다시 옮기려면 prdt layout migrate --apply 를 실행하세요.\n')   // an approved line, never "0개를 원래 자리로 돌렸어요"
     const { before, head, cfg } = snap0.get(root)!
     expectRestored(root, before, head, cfg)
   }, 300_000)

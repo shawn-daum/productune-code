@@ -16231,7 +16231,10 @@ def cmd_doctor(_args):
 # user approved the copy 2026-10-12, T-1114) — change a string only with that screen.
 # State (`layout_state`): config.json present, then
 #   the in-progress marker `.prdt/layout-apply.inprogress` exists → "partial" (any
-#     killed `--apply`, whatever it left on disk; filesystem only, no git)
+#     killed `--apply`, whatever it left on disk; filesystem only, no git) — except deep
+#     (T-1125): the marker over HEAD = the layout commit or a later one means the move is
+#     complete, only the marker unlink was missed; it is cleared and the tree classified.
+#     Nothing here (or in `--undo`) ever resets or rewrites a meta commit.
 #   `docs/_shared/` absent + (`docs/tickets/` | `docs/prd/PRD.md`) → "old"
 #   `docs/_shared/` present + no migration-owned name left directly under docs/ → "new"
 #   `docs/_shared/` present + one left (the design's half-moved shape) → "partial"
@@ -16376,9 +16379,14 @@ def _lay_marker(root):
         return {}
 
 
-def _lay_marker_write(root, head0, count):
-    state_write(root, _lay_marker_path(root),
-                json.dumps({"head": head0, "count": count, "pid": os.getpid()}) + "\n")
+def _lay_marker_write(root, head0, count, config=None):
+    """`config` (T-1125): the sha256 of the `.prdt/config.json` bytes `--apply` is about to
+    write — recorded BEFORE that write, so `--undo` restores the file only when it still
+    holds exactly what `--apply` put there (a user's later edit survives)."""
+    rec = {"head": head0, "count": count, "pid": os.getpid()}
+    if config:
+        rec["config"] = config
+    state_write(root, _lay_marker_path(root), json.dumps(rec) + "\n")
 
 
 def _lay_marker_clear(root):
@@ -16388,6 +16396,33 @@ def _lay_marker_clear(root):
         os.unlink(_lay_marker_path(root))
     except FileNotFoundError:
         pass
+
+
+def _lay_head(root):
+    r = _lay_git(root, ["rev-parse", "HEAD"])
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def _lay_apply_committed(root, rec):
+    """T-1125: the marker stands but the layout commit exists — a run killed between its
+    meta commit and the marker's removal. True when `--apply`'s own commit (this subject,
+    parent = the HEAD the marker recorded) sits at or below HEAD: the move is complete, only
+    the marker unlink was missed. Nothing here ever moves a ref."""
+    head0 = rec.get("head") if isinstance(rec, dict) else None
+    if not isinstance(head0, str) or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head0):
+        return False
+    cur = _lay_head(root)
+    if not cur or cur == head0:
+        return False
+    r = _lay_git(root, ["log", "--format=%H %P%x09%s", f"{head0}..{cur}"])
+    if r.returncode != 0:
+        return False
+    for line in r.stdout.splitlines():
+        left, _t, subj = line.partition("\t")
+        parts = left.split()
+        if len(parts) == 2 and parts[1] == head0 and subj == LAYOUT_COMMIT_MSG:
+            return True
+    return False
 
 
 def _lay_uncommitted_old(root):
@@ -16409,8 +16444,16 @@ def layout_state(root, deep=False):
     docs = root / "docs"
     if not (root / ".prdt" / "config.json").is_file() or not docs.is_dir():
         return "none"
-    if _lay_marker(root) is not None:
-        return "partial"
+    rec = _lay_marker(root)
+    if rec is not None:
+        # T-1125: deep only (it asks meta git). The layout commit is already there: the move
+        # is complete and only the marker unlink was missed — clear it and classify the tree.
+        if not (deep and _lay_apply_committed(root, rec)):
+            return "partial"
+        try:
+            _lay_marker_clear(root)
+        except OSError:
+            return "partial"
     shared = docs / DOCS_SHARED
     owned = [n for n in LAYOUT_OWNED_TOPS if os.path.lexists(docs / n)]
     if shared.is_dir() and not shared.is_symlink():
@@ -16510,21 +16553,18 @@ def layout_print_preview(root, plan):
     print("다음: 목록이 맞으면 prdt layout migrate --apply 로 옮기세요.")
 
 
-def _lay_leftover(root):
+def _lay_leftover(root, ask_git=True):
     """(first old name directly under docs/, files still at the old top level) —
-    the numbers the half-moved lines name. Nothing old left on disk (`first` None): the
-    in-progress marker's count (no git), else the uncommitted old paths in meta git
-    (a run killed before the marker existed)."""
+    the numbers the half-moved lines name, always what the disk shows (T-1125: never the
+    marker's recorded count). Nothing old left on disk (`first` None): the uncommitted old
+    paths in meta git; `ask_git=False` (the session-start block while the marker stands:
+    no git there) reads 0."""
     plan = layout_plan(root)
     docs = Path(root) / "docs"
     first = next((n for n in LAYOUT_OWNED_TOPS if os.path.lexists(docs / n)), None)
     if first is not None:
         return first, plan["total"]
-    rec = _lay_marker(root)
-    if rec is not None:
-        n = rec.get("count")
-        return None, n if isinstance(n, int) and n >= 0 else 0
-    gone = _lay_uncommitted_old(root)
+    gone = _lay_uncommitted_old(root) if ask_git else []
     if gone:
         return gone[0].split("/")[1], len(gone)
     return None, 0
@@ -16532,8 +16572,15 @@ def _lay_leftover(root):
 
 def layout_partial_next(root):
     """The `다음:` text of a half-moved report: the `--undo` sentence only when
-    `--undo` can run (T-1123) — i.e. an uncommitted old-layout deletion exists."""
-    if _lay_marker(root) is not None or _lay_uncommitted_old(root):
+    `--undo` can run (T-1123) — i.e. an uncommitted old-layout deletion exists, or the
+    marker stands over the HEAD it recorded (T-1125: a moved HEAD makes `--undo` refuse)."""
+    rec = _lay_marker(root)
+    if rec is not None:
+        mh = rec.get("head")
+        can = not (isinstance(mh, str) and mh and mh != _lay_head(root))
+    else:
+        can = bool(_lay_uncommitted_old(root))
+    if can:
         return f"{LAYOUT_PARTIAL_NEXT} {LAYOUT_UNDO_HINT}"
     return LAYOUT_PARTIAL_NEXT
 
@@ -16574,7 +16621,7 @@ def layout_session_start_block(root):
             "On \"목록 보기\" or a yes: run `prdt layout migrate` (writes nothing), show its list minus its `다음:` line, "
             "and run `prdt layout migrate --apply` only on the user's confirm of that list. Otherwise nothing this session.")
     if state == "partial":
-        first, left = _lay_leftover(root)
+        first, left = _lay_leftover(root, ask_git=_lay_marker(root) is None)
         if first is None and _lay_marker(root) is None:    # no trace of a move at all
             return ""
         h1 = first is not None and os.path.lexists(Path(root) / "docs" / first) and (Path(root) / "docs" / DOCS_SHARED).is_dir() \
@@ -16871,7 +16918,10 @@ def layout_apply(root, plan):
                         if m not in new_allow:
                             new_allow.append(m)
                 cfg["meta"]["allowlist"] = new_allow
-                state_write(root, cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+                cfg_text = json.dumps(cfg, indent=2, ensure_ascii=False) + "\n"
+                # T-1125: the sha of what is about to be written goes into the marker FIRST
+                _lay_marker_write(root, head0, n_total, hashlib.sha256(cfg_text.encode("utf-8")).hexdigest())
+                state_write(root, cfg_path, cfg_text)
         except OSError as e:   # StateLinkError is an OSError
             raise _LayoutFail(5, f".prdt/config.json 을 쓸 수 없어요 ({_lay_err_text(e)})",
                               ".prdt/config.json 의 쓰기 권한을 고친 뒤 다시 실행하세요.")
@@ -17085,22 +17135,6 @@ def _lay_undo_refuse(why, nxt, head="되돌리지 않았어요"):
     sys.exit(1)
 
 
-def _lay_undo_own_commit(root, head0):
-    """A run killed between its meta commit and the marker's removal: the whole move is
-    committed. Drop that one commit (the same `reset` the rollback runs, work tree
-    untouched) so the tree reads as an uncommitted move again; any other HEAD is not ours
-    to move. Returns the uncommitted old paths."""
-    if not isinstance(head0, str) or not head0:
-        return []
-    cur = _lay_git(root, ["rev-parse", "HEAD", "HEAD^"])
-    ids = cur.stdout.split() if cur.returncode == 0 else []
-    subj = _lay_git(root, ["log", "-1", "--format=%s"]).stdout.strip()
-    if len(ids) == 2 and ids[1] == head0 and ids[0] != head0 and subj == LAYOUT_COMMIT_MSG:
-        if _lay_git(root, ["reset", "-q", "--mixed", head0]).returncode != 0:
-            return []
-    return _lay_uncommitted_old(root)
-
-
 def layout_undo(root, state):
     """`migrate --undo`: put an UNCOMMITTED half-move (a killed `--apply`) back to
     the old structure — the same inverse the rollback walks, driven from disk."""
@@ -17111,13 +17145,28 @@ def layout_undo(root, state):
         _lay_undo_refuse("docs 폴더가 이미 새 구조로 끝나서 되돌릴 수 없어요.", "예전 구조로 돌아가려면 PO 에게 알리세요.")
     gone = _lay_uncommitted_old(root) if state == "partial" else []
     marker = _lay_marker(root)
-    if marker and not gone:
-        gone = _lay_undo_own_commit(root, marker.get("head"))
-    if not gone and marker is None:
+    # T-1125: a marker over a HEAD that is not the one `--apply` started from can only be a
+    # moved history (a finished layout commit was already settled by `layout_state(deep)`):
+    # never reset or rewrite it, never move docs back under it — refuse, nothing changes.
+    mh = marker.get("head") if marker else None
+    if (isinstance(mh, str) and mh and mh != _lay_head(root)) or (not gone and marker is None):
         _lay_undo_refuse("옮기다 멈춘 문서를 찾지 못했어요. docs 폴더는 그대로예요.",
                          "prdt layout check 로 상태를 확인하고, 일부만 새 구조라고 나오면 PO 에게 알리세요.")
     prod = layout_product_name(root)
     docs = root / "docs"
+    tree = _lay_git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", "docs", ".prdt/config.json"])
+    if tree.returncode != 0:     # read before anything moves: a failed read is a refusal, never a silent skip
+        _lay_undo_refuse(f"meta git 의 변경 목록을 되돌릴 수 없어요 ({(tree.stderr or 'git ls-tree failed').strip().splitlines()[0]}). "
+                         f"docs 폴더는 그대로예요.", "괄호 안 git 오류를 고친 뒤 다시 실행하세요.")
+    head_files = set(p for p in tree.stdout.split("\0") if p)
+    # `.prdt/config.json` goes back only if `--apply` rewrote it and it still holds those bytes
+    cfg_p, rec_sha = root / ".prdt" / "config.json", marker.get("config") if marker else None
+    restore_cfg = False
+    if isinstance(rec_sha, str) and cfg_p.is_file() and not cfg_p.is_symlink():
+        try:
+            restore_cfg = hashlib.sha256(cfg_p.read_bytes()).hexdigest() == rec_sha
+        except OSError:
+            pass
     r = _lay_pathspec(root, ["reset", "-q", "HEAD"], ["docs", ".prdt/config.json"])
     if r.returncode != 0:
         _lay_undo_refuse(f"meta git 의 변경 목록을 되돌릴 수 없어요 ({(r.stderr or 'git reset failed').strip().splitlines()[0]}). "
@@ -17151,7 +17200,6 @@ def layout_undo(root, state):
         print()
         print("다음: 괄호 안 원인을 고친 뒤 prdt layout migrate --undo 를 다시 실행하세요. 안 되면 PO 에게 알리세요.")
         sys.exit(2)
-    head_files = set(p for p in _lay_git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", "docs", ".prdt/config.json"]).stdout.split("\0") if p)
     derived = ["docs/artifacts/manifest.json", "docs/wiki/index.md"]
     for d in derived:      # a derived file the old tree never had: the rebuild made it
         if d not in head_files and os.path.lexists(root / d):
@@ -17159,7 +17207,7 @@ def layout_undo(root, state):
                 os.unlink(root / d)
             except OSError:
                 pass
-    want = [g for g in gone if not os.path.lexists(root / g)] + [".prdt/config.json"] + derived
+    want = [g for g in gone if not os.path.lexists(root / g)] + ([".prdt/config.json"] if restore_cfg else []) + derived
     c = _lay_pathspec(root, ["checkout", "HEAD"], [w for w in dict.fromkeys(want) if w in head_files])
     if c.returncode != 0:
         _lay_undo_refuse(f"meta git 에서 지워진 문서를 되살릴 수 없어요 ({(c.stderr or 'git checkout failed').strip().splitlines()[0]}). "
@@ -17191,7 +17239,10 @@ def layout_undo(root, state):
             state_write(root, widx, keep)
     except OSError:
         pass
-    print(f"{_lay_wn('되돌렸어요')}: 옮기다 만 문서 {_lay_n(back)}개를 원래 자리로 돌렸어요. docs 폴더는 예전 구조 그대로예요.")
+    if back:
+        print(f"{_lay_wn('되돌렸어요')}: 옮기다 만 문서 {_lay_n(back)}개를 원래 자리로 돌렸어요. docs 폴더는 예전 구조 그대로예요.")
+    else:
+        print("docs 폴더는 예전 구조 그대로예요.")
     print()
     print("다음: 다시 옮기려면 prdt layout migrate --apply 를 실행하세요.")
 
@@ -17211,8 +17262,8 @@ def cmd_layout(args):
     prod = layout_product_name(root)
     if args.action == "check":
         if getattr(args, "json", False):
-            print(json.dumps({"state": state, "product": prod,
-                              "docs": plan["total"] if plan else 0}, ensure_ascii=False))
+            n_docs = _lay_leftover(root)[1] if state == "partial" else plan["total"] if plan else 0
+            print(json.dumps({"state": state, "product": prod, "docs": n_docs}, ensure_ascii=False))
         elif state == "old":
             print(f"docs 폴더가 예전 구조예요. 문서 {_lay_n(plan['total'])}개를 새 구조로 옮길 수 있어요.")
             print()
