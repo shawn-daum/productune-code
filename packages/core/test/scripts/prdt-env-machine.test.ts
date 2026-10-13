@@ -628,6 +628,33 @@ describe('T-1121 B: a key is saved as a secret (default) or a plain value', () =
     expect(run(['env', 'ls']).out).not.toMatch(/NEW_KEY.*보통 값/)
   })
 
+  test.each([1, 2, 5].flatMap((n) => [[n, true], [n, false]] as const))('T-1110 r6: %i consecutive dangling markers (final LF: %s) are all dropped; a secret stays secret', (n, lf) => {
+    seedStore(`A_KEY='x'\n${(MARK + '\n').repeat(n)}`.replace(/\n$/, lf ? '\n' : ''))
+    expect(typeSet('NEW_KEY', V_SECRET, 'wait', '').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`A_KEY='x'\nNEW_KEY='${V_SECRET}'\n`)
+    expect(run(['env', 'ls']).out).not.toMatch(/NEW_KEY.*보통 값/)
+  })
+
+  test('T-1110 r6: consecutive dangling markers, answered plain, leave exactly one marker', () => {
+    seedStore(`A_KEY='x'\n${MARK}\n${MARK}\n${MARK}`)
+    expect(typeSet('P_KEY', '3000', 'wait', 'n').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`A_KEY='x'\n${MARK}\nP_KEY='3000'\n`)
+  })
+
+  test('T-1110 r6: a double BOM before the marker is not a marker in the CLI nor in the viewer (at most one BOM is stripped)', () => {
+    seedStore(`\ufeff\ufeff${MARK}\nDB_KEY='FAKEdbl1'\n`)
+    const r = run(['env', 'run', '--', ...PRINT_ALL(['DB_KEY'])])
+    expect(r.stdout.trim().split('\n').pop()).toBe('[가림]')
+    expect(run(['env', 'ls']).out).not.toContain('보통 값')
+    const viewer = path.resolve(CORE_ROOT, '..', 'viewer')
+    const out = path.join(sandbox, 'out.html')
+    execFileSync('node', [path.join(viewer, 'cli.mjs'), '--repo-root', proj, '--out', out], { env: env(), cwd: sandbox, timeout: subprocessTimeout('cli') * 3, stdio: 'pipe' })
+    expect(fs.readFileSync(out, 'utf8')).not.toContain('class="tagw">보통 값')
+    // one BOM is still a marker in both
+    seedStore(`\ufeff${MARK}\nDB_KEY='3000'\n`)
+    expect(run(['env', 'ls']).out).toContain('보통 값')
+  })
+
   test('T-1110 r4: the suite MARK_ONLY seed — a key set Y after it is a secret; set n after it is plain with exactly one marker', () => {
     seedStore(`MARK_ONLY=1\n${MARK}\n`)
     expect(typeSet('AFTER_Y', V_SECRET, 'wait', 'y').code).toBe(0)
