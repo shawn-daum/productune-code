@@ -1012,7 +1012,7 @@ m._lay_git = boom
 print(m.layout_session_start_block(Path(".")))`)
     expect(r.err).not.toContain('asked meta git')
     expect(r.out).toContain("half-moved")
-    expect(r.out).toMatch(/문서 \d+개가 아직 예전 구조예요/)
+    expect(r.out).toContain('docs 폴더 일부만 새 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.')
   }, 300_000)
 
   // ── T-1125: --undo never resets or rewrites a meta commit (QA grill r4 F1–F4) ──
@@ -1186,7 +1186,8 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`
     const recCount = JSON.parse(fs.readFileSync(MARKER(root), 'utf8')).count
     expect(recCount).toBeGreaterThan(0)
     const blk = prdt(root, ['layout', 'check', '--session-start']).out
-    expect(blk).toContain('문서 0개가 아직 예전 구조예요')
+    expect(blk).toContain('docs 폴더 일부만 새 구조예요. 이 상태에서는 옮기기를 제안하지 않아요.')
+    expect(blk).not.toMatch(/문서 \d+개가 아직 예전 구조예요/)
     expect(blk).not.toContain(`문서 ${recCount}개`)
     expect(JSON.parse(prdt(root, ['layout', 'check', '--json']).out)).toMatchObject({ state: 'new', docs: 0 })
     expect(prdt(root, ['layout', 'check', '--session-start']).out).toBe('')
