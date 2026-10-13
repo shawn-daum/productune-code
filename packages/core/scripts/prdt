@@ -18907,16 +18907,14 @@ def cloud_postcheck(repo, commit):
 def _cloud_mark_off(code, reason):
     d = _cloud_state_dir(code)
     d.mkdir(parents=True, exist_ok=True)
-    (d / "carve-out-off.json").write_text(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                                                      "reason": reason}) + "\n")
+    state_write(d, d / "carve-out-off.json", json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                                         "reason": reason}) + "\n")   # T-1128: link-refusing
 
 
 def _cloud_record(path, rec, **kw):
     rec.update(kw)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(rec, indent=1) + "\n")
-    os.replace(tmp, path)
+    state_write(path.parent, path, json.dumps(rec, indent=1) + "\n")   # T-1128: O_EXCL temp + rename, link-refusing
 
 
 def _cloud_ls_remote(code, ref):
@@ -19031,7 +19029,7 @@ def _cloud_create_session(code, run_dir, description, timeout_s):
                 break
             time.sleep(2)
     finally:
-        (run_dir / "create-pane.txt").write_text(pane)
+        state_write(run_dir, run_dir / "create-pane.txt", pane)   # T-1128
         if pid.isdigit():
             with contextlib.suppress(OSError):
                 os.kill(int(pid), 15)
@@ -19205,7 +19203,7 @@ def cmd_test_cloud(args):
                "notices": notices, "halves": {k: {kk: vv for kk, vv in v.items() if kk != "failures"}
                                                 for k, v in halves.items()},
                "run_record": str(rec_path)}
-    (run_dir / "verdict.json").write_text(json.dumps(verdict, indent=1, ensure_ascii=False) + "\n")
+    state_write(run_dir, run_dir / "verdict.json", json.dumps(verdict, indent=1, ensure_ascii=False) + "\n")   # T-1128
     print(json.dumps(verdict, ensure_ascii=False))
     print(f"prdt test cloud: {status} — {counts['passed']}/{counts['total']} passed, {counts['failed']} failed, "
           f"wall {timing.get('wall_s')}s", file=sys.stderr)
