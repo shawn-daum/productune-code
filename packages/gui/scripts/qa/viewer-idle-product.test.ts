@@ -82,10 +82,12 @@ describe('T-1108 idle keyed on stage, version retained — one po-state, three s
     expect(statusline(root)).toContain('ntf-archive v1.1 | stage: idle')
   })
 
-  it('ticket store of the idle product: no 현재 row, backlog only', () => {
+  it('ticket store of the idle product: backlog AND the closed v1.1 bucket, no 현재 label, its past body opens', () => {
     const h = page(mk({ stage: 'build', version: 'v2.2', products: { 'ntf-archive': { stage: 'idle', version: 'v1.1' } } }))
     expect(h).not.toContain('v1.1 · 현재')
     expect(h).toContain('ntf-archive/backlog')
+    expect(h).toContain('ntf-archive/v1.1')
+    expect(h).toContain('"path":"docs/tickets/ntf-archive/v1.1/T-7.md","body":"\\u003cp>body')
   })
 
   it('the first product idle at a closed version shows idle, not 열린 섹션', () => {
@@ -94,5 +96,23 @@ describe('T-1108 idle keyed on stage, version retained — one po-state, three s
     expect(h).not.toContain('열린 섹션 · v2.1')
     expect(h).toContain('열린 섹션 · v1.2')
     expect(h).toContain('ntf-pm 는 지금 진행 중인 버전이 없어요.')
+  })
+
+  it('idle product Home still lists the closed version decisions', () => {
+    const root = mk({ stage: 'build', version: 'v2.2', products: { 'ntf-archive': { stage: 'idle', version: 'v1.1' } } })
+    write(root, 'docs/wiki/decision--keep-me.md', '---\ntype: decision\nversion: ntf-archive/v1.1\ntitle: keep me\n---\nd\n')
+    expect(page(root)).toContain('decision--keep-me.md')
+  })
+
+  it('idle first product in a multi-product project keeps every past bucket and opens a past body', () => {
+    const root = mk({ stage: 'idle', version: 'v2.1', products: { 'ntf-archive': { stage: 'build', version: 'v1.2' } } })
+    write(root, 'docs/tickets/v2.1/T-103.md', ticket('T-103'))
+    write(root, 'docs/tickets/v2.0/T-90.md', ticket('T-90'))
+    write(root, 'docs/tickets/backlog/T-50.md', ticket('T-50'))
+    const h = page(root)
+    expect(h).not.toContain('v2.1 · 현재')
+    for (const b of ['v2.1', 'v2.0', 'backlog']) expect(h).toContain(`data-group="${b}"`)
+    expect(h).toContain('"path":"docs/tickets/v2.1/T-103.md","body":"\\u003cp>body')
+    expect(h).toContain('data-detail-id="T-90"')
   })
 })
