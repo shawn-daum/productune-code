@@ -18920,7 +18920,10 @@ def _cloud_record(path, rec, **kw):
 
 
 def _cloud_ls_remote(code, ref):
-    r = _tgit(["ls-remote", "--end-of-options", "origin", ref], code, timeout=60)
+    try:
+        r = _tgit(["ls-remote", "--end-of-options", "origin", ref], code, timeout=60)
+    except subprocess.TimeoutExpired:  # one slow poll is not the shard's end (round 2026-10-13)
+        return None, "git ls-remote timed out after 60s"
     if r.returncode != 0:
         return None, f"git ls-remote failed: {(r.stderr.strip().splitlines() or [''])[0][:200]}"
     for line in r.stdout.splitlines():
