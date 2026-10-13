@@ -17499,6 +17499,41 @@ def _env_spans(lines):
     return spans
 
 
+_ENV_PLAIN_MARK = "# prdt:plain"
+
+
+def _env_marker_idx(lines, spans):
+    """{first_line: marker_line} — a span whose line right before it is the
+    plain marker (T-1121 B). The marker is a comment line `# prdt:plain` stored
+    directly above its key; a line that belongs to some key's span (an
+    open-quote continuation that reads the same) is a value, never a marker.
+    Anything that does not match exactly leaves the key a secret."""
+    covered = set()
+    for _, i0, i1 in spans:
+        covered.update(range(i0, i1))
+    found = {}
+    for _, i0, _i1 in spans:
+        j = i0 - 1
+        if j < 0 or j in covered:
+            continue
+        raw = lines[j].lstrip("\ufeff") if j == 0 else lines[j]
+        if _env_strip_cr(raw).strip() == _ENV_PLAIN_MARK:
+            found[i0] = j
+    return found
+
+
+def _machine_env_plain_keys():
+    """Keys whose live (last) occurrence in the machine store carries the plain
+    marker. A key without it — every key saved before T-1121 — is a secret."""
+    lines = _machine_env_text().split("\n")
+    spans = _env_spans(lines)
+    marks = _env_marker_idx(lines, spans)
+    live = {}
+    for key, i0, _i1 in spans:
+        live[key] = i0 in marks
+    return {k for k, v in live.items() if v}
+
+
 @contextlib.contextmanager
 def _machine_env_locked(fail_head):
     """Serialize set/unset (flock on the store directory) and hold the
@@ -17609,20 +17644,40 @@ def _env_set(args_rest):
     quoted = _env_quote(value)
     if quoted is None:
         _env_fail("저장 실패: 값에 저장할 수 없는 문자가 있어요 (줄바꿈 · 제어 문자 · 작은따옴표와 큰따옴표를 함께 쓴 값). 저장한 키가 없어요.")
+    # T-1121 B: secret or plain, asked with the echo back on (the answer is not a credential).
+    # Enter, y, or anything that is not n/no is a secret — the safe side.
+    try:
+        print("비밀값인가요? (Y/n) ", end="", flush=True)
+        answer = sys.stdin.readline()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        _env_fail("저장 실패: 입력이 끝났어요. 저장한 키가 없어요.", 130)
+    if not answer:
+        print()
+        _env_fail("저장 실패: 입력이 끝났어요. 저장한 키가 없어요.", 130)
+    plain = answer.strip().lower() in ("n", "no")
     with _machine_env_locked("저장 실패"):
         text = _machine_env_text()
         lines = text.split("\n")
-        mine = [s for s in _env_spans(lines) if s[0] == key]
+        all_spans = _env_spans(lines)
+        mine = [s for s in all_spans if s[0] == key]
         if mine:
-            # the last occurrence is the live one (dotenv: last wins); only its lines change
+            # the last occurrence is the live one (dotenv: last wins); only its lines
+            # (and the marker line right above them) change
             _, i0, i1 = mine[-1]
             head = re.match(r"﻿?[ \t]*(?:export[ \t]+)?", lines[i0]).group(0)
             cr = "\r" if lines[i1 - 1].endswith("\r") else ""
-            lines[i0:i1] = [f"{head}{key}={quoted}{cr}"]
+            mark_at = _env_marker_idx(lines, all_spans).get(i0)
+            first = i0 if mark_at is None else mark_at
+            bom = "﻿" if first == 0 and lines[0].startswith("﻿") else ""
+            head = head.lstrip("﻿")
+            new_lines = ([f"{_ENV_PLAIN_MARK}{cr}"] if plain else []) + [f"{head}{key}={quoted}{cr}"]
+            new_lines[0] = bom + new_lines[0]
+            lines[first:i1] = new_lines
         elif lines[-1] == "":
-            lines.insert(len(lines) - 1, f"{key}={quoted}")
+            lines[len(lines) - 1:len(lines) - 1] = ([_ENV_PLAIN_MARK] if plain else []) + [f"{key}={quoted}"]
         else:
-            lines += [f"{key}={quoted}", ""]
+            lines += ([_ENV_PLAIN_MARK] if plain else []) + [f"{key}={quoted}", ""]
         _machine_env_store("\n".join(lines), "저장 실패", "저장한 키가 없어요.")
     print(f"{key} 를 기기 범위에 저장했어요 ({_env_shown_path(machine_env_file())}). 이 기기의 모든 프로젝트가 쓸 수 있어요.")
 
@@ -17641,8 +17696,9 @@ def _env_unset(args_rest):
         if not mine:
             # never echoed: the token is not a stored key name, and may be a value (T-1110)
             _env_fail("지우기 실패: 그 키가 기기 범위에 없어요. 지운 키가 없어요.\n다음: prdt env ls 로 키 이름을 확인하세요.")
+        marks = _env_marker_idx(lines, _env_spans(lines))
         for _, i0, i1 in reversed(mine):
-            del lines[i0:i1]
+            del lines[(marks.get(i0, i0)):i1]
         _machine_env_store("\n".join(lines), "지우기 실패", "지운 키가 없어요.")
     print(f"{key} 을 기기 범위에서 지웠어요")
 
@@ -17653,15 +17709,18 @@ def _env_ls():
         print("기기 범위에 저장된 키가 없어요.\n\n다음: prdt env set <KEY> 로 저장하세요.")
         return
     pname, pkeys = _env_product_code_keys()
+    plain = {k for k in _machine_env_plain_keys() if values.get(k)}
     nset = sum(1 for v in values.values() if v)
     empties = [k for k, v in values.items() if not v]
     if not pkeys:
         print(f"기기 범위 키 {len(values)}개 · 설정됨 {nset} · 비어 있음 {len(empties)} · {_env_shown_path(machine_env_file())}")
         print()
         w = max(_display_width(k) for k in list(values) + ["키"]) + 2
-        print(_pad("키", w) + _pad("상태", 10) + "적용 범위")
+        w3 = len("적용 범위") + 2 if plain else 0
+        print(_pad("키", w) + _pad("상태", 10) + (_pad("적용 범위", w3) if plain else "적용 범위"))
         for k, v in values.items():
-            print(_pad(k, w) + _pad("설정됨" if v else "비어 있음", 10) + "기기 범위")
+            line = _pad(k, w) + _pad("설정됨" if v else "비어 있음", 10)
+            print(line + (_pad("기기 범위", w3) + "보통 값" if k in plain else "기기 범위"))
         if empties:
             print()
             print(f"{', '.join(empties)} 는 값이 비어 있어요. 다음: prdt env set {empties[0]} 로 값을 저장하세요.")
@@ -17674,7 +17733,11 @@ def _env_ls():
     union.sort(key=lambda k: (order[k], k))
 
     def cell(d, k):
-        return "—" if k not in d else ("설정됨" if d[k] else "비어 있음")
+        if k not in d:
+            return "—"
+        if not d[k]:
+            return "비어 있음"
+        return "설정됨 · 보통 값" if d is values and k in plain else "설정됨"
 
     def used(k):
         if pkeys.get(k):
@@ -17975,6 +18038,7 @@ def _env_run(args_rest):
     if not argv:
         _env_fail("실행 실패: 실행할 명령이 없어요. 키를 넣은 프로세스가 없어요.\n다음: prdt env run -- <명령> 으로 실행하세요.", 2)
     values = _machine_env_values()
+    plain = _machine_env_plain_keys()
     _, pkeys = _env_product_code_keys()
     skipped = [k for k, v in values.items() if v and pkeys.get(k)]
     inject = {k: v for k, v in values.items() if v and not pkeys.get(k)}
@@ -17982,8 +18046,9 @@ def _env_run(args_rest):
     intro = f"기기 범위 키 {len(inject)}개를 넣어 {' '.join(shlex.quote(a) for a in argv)} 를 실행해요.{note}\n"
     child_env = dict(os.environ)
     child_env.update(inject)
-    # every stored value is masked, the skipped ones too: a machine value is never shown
-    secrets = [v for v in values.values() if v]
+    # every secret key's value is masked, the skipped ones too: a secret machine value is never
+    # shown. A key saved as plain (T-1121 B) passes through; a key with no flag is a secret.
+    secrets = [v for k, v in values.items() if v and k not in plain]
     if secrets:
         sys.stdout.flush()
         return _env_run_masked(argv, child_env, secrets, intro)

@@ -2224,7 +2224,8 @@ function envSetCount(f) {
 function envFileBody(f, dir) {
   const set = envSetCount(f)
   // A sample file counts no set / empty (every key reads empty by design): names only.
-  const rows = f.keys.map((k) => `<div class="erow">${k.codeWins ? `<span><code>${escapeHtml(k.name)}</code><span class="tagw">${ENV.codeWins}</span></span>` : `<code>${escapeHtml(k.name)}</code>`}${f.sample ? '' : envPill(k.set)}</div>`).join('')
+  const tags = (k) => (k.codeWins ? `<span class="tagw">${ENV.codeWins}</span>` : '') + (k.plain ? `<span class="tagw">${ENV.plainValue}</span>` : '')
+  const rows = f.keys.map((k) => `<div class="erow">${tags(k) ? `<span><code>${escapeHtml(k.name)}</code>${tags(k)}</span>` : `<code>${escapeHtml(k.name)}</code>`}${f.sample ? '' : envPill(k.set)}</div>`).join('')
   const where = f.sample ? ENV.sampleKeys(f.keys.length) : dir || ''
   const counts = f.sample ? '' : `<span class="env-c">${envPill(true)} ${set} ${envPill(false)} ${f.keys.length - set}</span>`
   // T-1047: the key list is collapsed until the eye button reveals it (state per file card).

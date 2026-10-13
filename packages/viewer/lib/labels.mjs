@@ -52,6 +52,7 @@ export const ENV = {
   homeNone: '코드 폴더에 env 파일이 없어요.',
   machineScope: '기기 범위',
   codeWins: '제품 코드 값이 우선',
+  plainValue: '보통 값',
   machineEmptyHead: '기기 범위에 저장된 키가 없어요.',
   machineEmptyDetail: '터미널에서 prdt env set <KEY> 로 저장하면 키 이름이 여기에 보여요.',
   homeNoneLine: '이 줄의 코드 폴더에 env 파일이 없어요.',

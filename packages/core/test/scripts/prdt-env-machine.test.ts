@@ -53,16 +53,18 @@ function run(args: string[], opts: { cwd?: string; input?: string } = {}) {
 
 /** Drive the CLI under a real pty (the user's terminal). `mode`: `wait` types `typed` once the hidden
  * prompt is fully shown; `eager` types it the instant the first prompt byte arrives (ECHO must
- * already be off); `none` types nothing. */
+ * already be off); `none` types nothing. `answer` (T-1121 B) is typed at the 「비밀값인가요? (Y/n)」
+ * prompt; "" = Enter, "-" = Ctrl-D (input ends). */
 const PTY_DRIVER = `
 import os, pty, sys, select, time, json
-args, typed, cwd, mode = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+args, typed, cwd, mode, answer = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 os.chdir(cwd)
 pid, fd = pty.fork()
 if pid == 0:
     os.execvp("python3", ["python3", ${JSON.stringify(PRDT_CLI)}] + args)
 buf = b""
 sent = mode == "none"
+answered = mode == "none"
 deadline = time.time() + 20
 while time.time() < deadline:
     r, _, _ = select.select([fd], [], [], 0.05)
@@ -81,13 +83,17 @@ while time.time() < deadline:
             time.sleep(0.2)
             os.write(fd, (typed + "\\n").encode())
             sent = True
+        if sent and not answered and "비밀값인가요".encode() in buf:
+            time.sleep(0.2)
+            os.write(fd, b"\\x04" if answer == "-" else (answer + "\\n").encode())
+            answered = True
 _, status = os.waitpid(pid, 0)
 sys.stdout.write(buf.decode("utf-8", "replace"))
 sys.exit(os.waitstatus_to_exitcode(status))
 `
-const ptyArgs = (args: string[], typed: string, mode: string) => ['-c', PTY_DRIVER, JSON.stringify(args), typed, sandbox, mode]
-function typeSet(key: string, typed: string, mode = 'wait') {
-  const r = spawnSync('python3', ptyArgs(['env', 'set', key], typed, mode), { env: env(), encoding: 'utf8', timeout: subprocessTimeout('cli') * 2 })
+const ptyArgs = (args: string[], typed: string, mode: string, answer = '') => ['-c', PTY_DRIVER, JSON.stringify(args), typed, sandbox, mode, answer]
+function typeSet(key: string, typed: string, mode = 'wait', answer = '') {
+  const r = spawnSync('python3', ptyArgs(['env', 'set', key], typed, mode, answer), { env: env(), encoding: 'utf8', timeout: subprocessTimeout('cli') * 2 })
   return { out: (r.stdout || '') + (r.stderr || ''), code: r.status ?? -1 }
 }
 function ttyUnset(key: string) {
@@ -496,6 +502,159 @@ describe('T-1119: env run masks every stored value in the child output', () => {
     const r = run(['env', 'run', '--', 'python3', '-c', 'print("[가림]" not in "x", "ok")'])
     expect(r.code).toBe(0)
     expect(r.stdout).toContain('True ok')
+  })
+})
+
+describe('T-1121 B: a key is saved as a secret (default) or a plain value', () => {
+  const MARK = '# prdt:plain'
+  const PRINT_ALL = (names: string[]) => ['python3', '-c', `import os; print(" | ".join(os.environ.get(k, "-") for k in ${JSON.stringify(names)}))`]
+
+  test('env set asks 「비밀값인가요? (Y/n)」 after the value; n stores the key plain, never the value in output', () => {
+    const r = typeSet('PORT', '3000', 'wait', 'n')
+    expect(r.code).toBe(0)
+    expect(r.out).toContain('PORT 의 값을 입력하세요 (화면에 보이지 않아요)')
+    expect(r.out).toContain('비밀값인가요? (Y/n)')
+    expect(r.out).toContain('PORT 를 기기 범위에 저장했어요')
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`${MARK}\nPORT='3000'\n`)
+    expect(fs.statSync(storePath()).mode & 0o777).toBe(0o600)
+  })
+
+  test.each([['Enter', ''], ['y', 'y'], ['Y', 'Y'], ['yes', 'yes'], ['not n/no (typo)', 'nope?']])('answer %s = secret: no marker, value masked by env run', (_n, ans) => {
+    expect(typeSet('API_TOKEN', V_SECRET, 'wait', ans).code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`API_TOKEN='${V_SECRET}'\n`)
+    const r = run(['env', 'run', '--', ...PRINT_ALL(['API_TOKEN'])])
+    expect(r.out).toContain('[가림]')
+    noLeak(r.out)
+  })
+
+  test('answer n / N / no = plain', () => {
+    for (const [k, a] of [['K_A', 'n'], ['K_B', 'N'], ['K_C', 'no']]) expect(typeSet(k, 'FAKEplainV', 'wait', a).code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`${MARK}\nK_A='FAKEplainV'\n${MARK}\nK_B='FAKEplainV'\n${MARK}\nK_C='FAKEplainV'\n`)
+  })
+
+  test('input ends at the answer prompt: nothing is stored', () => {
+    const r = typeSet('PORT', '3000', 'wait', '-')
+    expect(r.out).toContain('비밀값인가요? (Y/n)')
+    expect(fs.existsSync(storePath())).toBe(false)
+  })
+
+  test('changing a key between secret and plain = set it again; only that key and its marker move', () => {
+    seedStore(`A_KEY='keepA'\nPORT='3000'\nZ_KEY='keepZ'\n`)
+    expect(typeSet('PORT', '3001', 'wait', 'n').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`A_KEY='keepA'\n${MARK}\nPORT='3001'\nZ_KEY='keepZ'\n`)
+    expect(typeSet('PORT', '3002', 'wait', 'n').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`A_KEY='keepA'\n${MARK}\nPORT='3002'\nZ_KEY='keepZ'\n`)
+    expect(typeSet('PORT', '3003', 'wait', '').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`A_KEY='keepA'\nPORT='3003'\nZ_KEY='keepZ'\n`)
+  })
+
+  test('a CRLF store keeps CRLF on the marker line; a BOM on the first line stays first', () => {
+    seedStore(`PORT='1'\r\nZ='z'\r\n`)
+    expect(typeSet('PORT', '3000', 'wait', 'n').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`${MARK}\r\nPORT='3000'\r\nZ='z'\r\n`)
+    seedStore(`﻿PORT='1'\nZ='z'\n`)
+    expect(typeSet('PORT', '3000', 'wait', 'n').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`﻿${MARK}\nPORT='3000'\nZ='z'\n`)
+    expect(typeSet('PORT', '3000', 'wait', 'y').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`﻿PORT='3000'\nZ='z'\n`)
+  })
+
+  test('unset removes the key together with its marker', () => {
+    seedStore(`${MARK}\nPORT='3000'\nKEEP_KEY='keep'\n`)
+    expect(ttyUnset('PORT').code).toBe(0)
+    expect(fs.readFileSync(storePath(), 'utf8')).toBe(`KEEP_KEY='keep'\n`)
+    seedStore(`${MARK}\nPORT='3000'\n`)
+    expect(ttyUnset('PORT').code).toBe(0)
+    expect(fs.existsSync(storePath())).toBe(false)
+  })
+
+  test('env run: plain passes through, secret is masked, a key with no flag (saved before) is a secret', () => {
+    seedStore(`${MARK}\nPORT='3000'\n${MARK}\nLOG_LEVEL='info'\nAPPLE_TEAM_ID='${V_TEAM}'\n`)
+    const r = run(['env', 'run', '--', 'sh', '-c', 'echo "http://localhost:$PORT level=$LOG_LEVEL apple=$APPLE_TEAM_ID"'])
+    expect(r.code).toBe(0)
+    expect(r.stdout).toContain('http://localhost:3000 level=info apple=[가림]')
+    noLeak(r.out)
+  })
+
+  test('env run with only plain keys runs the child directly and nothing is masked', () => {
+    seedStore(`${MARK}\nPORT='3000'\n`)
+    const r = run(['env', 'run', '--', 'sh', '-c', 'echo "p=$PORT"'])
+    expect(r.code).toBe(0)
+    expect(r.stdout).toContain('p=3000')
+    expect(r.stdout).not.toContain('[가림]')
+  })
+
+  test('overlapping secret and plain values: the secret never leaks, whole or in part', () => {
+    // plain value is the prefix of the secret, and another plain value is its tail
+    seedStore(`${MARK}\nPLAIN_HEAD='FAKEsecret'\n${MARK}\nPLAIN_TAIL='Zq84xk'\nSECRET_KEY='${V_SECRET}'\n`)
+    const r = run(['env', 'run', '--', 'sh', '-c', 'echo "$PLAIN_HEAD $PLAIN_TAIL $SECRET_KEY"; echo "$PLAIN_HEAD$PLAIN_TAIL"; printf "%s" "$SECRET_KEY" >&2; echo; echo "[$PLAIN_HEAD]"'])
+    expect(r.code).toBe(0)
+    expect(r.out).not.toContain(V_SECRET)
+    expect(r.out).not.toContain('retZq')
+    expect(r.stdout).toContain('FAKEsecret Zq84xk [가림]\n')
+    expect(r.stdout).toContain('[FAKEsecret]')
+    // the plain pieces joined back into the secret are the secret: masked
+    expect(r.stdout).toContain('[가림]\n')
+  })
+
+  test('a plain value equal to a secret value is masked (the secret wins)', () => {
+    seedStore(`${MARK}\nPLAIN_K='FAKEsame123'\nSECRET_K='FAKEsame123'\n`)
+    const r = run(['env', 'run', '--', 'sh', '-c', 'echo "$PLAIN_K"'])
+    expect(r.stdout).toContain('[가림]')
+    expect(r.out).not.toContain('FAKEsame123')
+  })
+
+  test('the marker counts only directly above the key; a duplicate key is judged by its last line', () => {
+    seedStore(`${MARK}\n\nBLANK_BETWEEN='FAKEv1'\n${MARK}\n# note\nCOMMENT_BETWEEN='FAKEv2'\n${MARK}\nDUP_KEY='FAKEv3'\nDUP_KEY='FAKEv4'\nMARK_ONLY=1\n${MARK}\n`)
+    const r = run(['env', 'run', '--', ...PRINT_ALL(['BLANK_BETWEEN', 'COMMENT_BETWEEN', 'DUP_KEY', 'MARK_ONLY'])])
+    // no marker directly above any of them (the last marker has no key below it): all four are secrets
+    expect(r.stdout.trim().split('\n').pop()).toBe('[가림] | [가림] | [가림] | [가림]')
+  })
+
+  test('a marker-looking line inside a multi-line value is value text, not a marker', () => {
+    seedStore(`PEM_KEY="-----BEGIN FAKE-----\n${MARK}\nFAKEpem\n-----END FAKE-----"\nNEXT_KEY='FAKEnext'\n`)
+    const r = run(['env', 'run', '--', ...PRINT_ALL(['PEM_KEY', 'NEXT_KEY'])])
+    expect(r.out).not.toContain('FAKEnext')
+    expect(r.out).not.toContain('FAKEpem')
+  })
+
+  test('env ls: 보통 값 for plain keys, secret rows as before, no value or length', () => {
+    seedStore(`${MARK}\nPORT='3000'\nAPPLE_TEAM_ID='${V_TEAM}'\n${MARK}\nLOG_LEVEL=\n`)
+    const r = run(['env', 'ls'])
+    expect(r.code).toBe(0)
+    expect(r.out).toMatch(/PORT\s+설정됨\s+기기 범위\s+보통 값/)
+    expect(r.out).toMatch(/APPLE_TEAM_ID\s+설정됨\s+기기 범위\s*$/m)
+    expect(r.out).not.toMatch(/APPLE_TEAM_ID.*보통 값/)
+    expect(r.out).not.toMatch(/LOG_LEVEL.*보통 값/)
+    noLeak(r.out)
+    expect(r.out).not.toMatch(/3000|len=|길이/)
+  })
+
+  test('env ls with a product code folder: 보통 값 in the machine cell of a plain key only', () => {
+    seedStore(`${MARK}\nPORT='3000'\nAPPLE_TEAM_ID='${V_TEAM}'\n`)
+    seedProduct(`GOOGLE_OIDC_CLIENT_SECRET=${V_CODE}\n`)
+    const r = run(['env', 'ls'], { cwd: proj })
+    expect(r.out).toMatch(/PORT\s+설정됨 · 보통 값\s+—\s+기기 범위 값/)
+    expect(r.out).toMatch(/APPLE_TEAM_ID\s+설정됨\s+—\s+기기 범위 값/)
+    noLeak(r.out)
+  })
+
+  test('env check still prints presence + length for every key, plain or not', () => {
+    seedStore(`${MARK}\nPORT='3000'\nAPPLE_TEAM_ID='${V_TEAM}'\n`)
+    const r = run(['env', 'check', storePath()])
+    expect(r.out).toContain('PORT  set  len=4')
+    expect(r.out).toContain(`APPLE_TEAM_ID  set  len=${V_TEAM.length}`)
+  })
+
+  test('the viewer card tags a plain key 보통 값 and leaves a secret key as before', () => {
+    seedStore(`${MARK}\nPORT='3000'\nAPPLE_TEAM_ID='${V_TEAM}'\n`)
+    const viewer = path.resolve(CORE_ROOT, '..', 'viewer')
+    const out = path.join(sandbox, 'out.html')
+    execFileSync('node', [path.join(viewer, 'cli.mjs'), '--repo-root', proj, '--out', out], { env: env(), cwd: sandbox, timeout: subprocessTimeout('cli') * 3, stdio: 'pipe' })
+    const html = fs.readFileSync(out, 'utf8')
+    expect(html).toContain('<code>PORT</code><span class="tagw">보통 값</span>')
+    expect(html).toContain('<code>APPLE_TEAM_ID</code><span class="est on">')
+    noLeak(html, 8, false)
   })
 })
 
