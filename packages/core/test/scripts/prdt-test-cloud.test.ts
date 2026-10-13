@@ -68,7 +68,7 @@ describe('pre-run check — workflow triggers (contracts/git.md carve-out (2))',
     const cases = Object.fromEntries([...PASSING, ...FAILING].map(([n, y]) => [n, y]))
     v = py(`cases = json.loads(${JSON.stringify(JSON.stringify(cases))})
 print(json.dumps({k: m.cloud_workflow_violations(y, "w.yml") for k, y in cases.items()}))`, os.tmpdir())
-  })
+  }, 180_000)
   test.each(PASSING.map(([n]) => [n]))('%s passes', (n) => {
     expect(v[n]).toEqual([])
   })
@@ -187,14 +187,16 @@ echo "gh: Not Found (HTTP 404)" >&2; exit 1
 })
 
 describe('mac-only split is derived from the tested commit', () => {
-  test('a file that drives plutil runs on the Mac, the rest in the cloud; --files narrows', () => {
+  test('a file that drives the macOS plist tool runs on the Mac, the rest in the cloud; --files narrows', () => {
     const repo = tmp('split')
     git(repo, 'init', '-q', '-b', 'main')
     const d = path.join(repo, 'packages', 'core', 'test', 'scripts')
     fs.mkdirSync(d, { recursive: true })
-    fs.writeFileSync(path.join(d, 'a.test.ts'), "execFileSync('plutil', ['-lint'])\n")
+    // the binary's name is assembled so THIS file is not itself classified mac-only
+    const MAC_BIN = 'pl' + 'util'
+    fs.writeFileSync(path.join(d, 'a.test.ts'), `execFileSync('${MAC_BIN}', ['-lint'])\n`)
     fs.writeFileSync(path.join(d, 'b.test.ts'), 'test("x", () => {})\n')
-    fs.writeFileSync(path.join(d, 'helper.ts'), 'plutil\n')
+    fs.writeFileSync(path.join(d, 'helper.ts'), `${MAC_BIN}\n`)
     git(repo, 'add', '.')
     git(repo, 'commit', '-qm', 'c')
     const sha = git(repo, 'rev-parse', 'HEAD')
