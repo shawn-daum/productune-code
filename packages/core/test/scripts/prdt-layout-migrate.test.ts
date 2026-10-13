@@ -265,7 +265,10 @@ describe('refused — nothing is written', () => {
 })
 
 describe('failure rolls back (rolled back)', () => {
-  test.skipIf(process.getuid?.() === 0)('config cannot be written → every move undone, meta history untouched', () => {
+  // T-1105: the in-progress marker is written under `.prdt/` before the first rename, so an
+  // unwritable `.prdt/` now stops the run at step 4 with nothing moved (it used to fail at the
+  // config rewrite, step 5, after the move). Same approved F4 lines; the cause is in the parentheses.
+  test.skipIf(process.getuid?.() === 0)('.prdt not writable (no marker, no config) → nothing moved, meta history untouched', () => {
     const root = legacy()
     const before = snapshot(root)
     const head = git(root, ['rev-parse', 'HEAD'])
@@ -273,6 +276,39 @@ describe('failure rolls back (rolled back)', () => {
     fs.chmodSync(path.join(root, '.prdt'), 0o555)
     let r
     try { r = prdt(root, ['layout', 'migrate', '--apply']) } finally { fs.chmodSync(path.join(root, '.prdt'), 0o755) }
+    expect(r.code).toBe(1)
+    expect(r.out).toBe([
+      '1/9 선행 검사를 통과했어요',
+      '2/9 옮길 문서 20개의 목록을 만들었어요',
+      '3/9 닫힌 PRD 1개의 shasum 을 적었어요',
+      '4/9 옮기기 실패: 문서 20개를 옮길 수 없어요 (Permission denied)',
+      '',
+      'docs 폴더는 예전 구조 그대로예요.',
+      '',
+      '다음: 괄호 안 원인을 고친 뒤 다시 실행하세요.',
+      '',
+    ].join('\n'))
+    expect(snapshot(root)).toEqual(before)
+    expect(git(root, ['rev-parse', 'HEAD'])).toBe(head)
+    expect(git(root, ['status', '--short', '--', 'docs'])).toBe('')
+    expect(fs.readFileSync(path.join(root, '.prdt/config.json'), 'utf8')).toBe(cfg)
+    expect(fs.existsSync(path.join(root, '.prdt/layout-apply.inprogress'))).toBe(false)
+    expect(prdt(root, ['layout', 'check']).code).toBe(1)   // still the old layout, retry allowed
+  }, 180_000)
+
+  test('config cannot be written (marker already stands) → every move undone, marker gone, meta history untouched', () => {
+    const root = legacy()
+    const before = snapshot(root)
+    const head = git(root, ['rev-parse', 'HEAD'])
+    const cfg = fs.readFileSync(path.join(root, '.prdt/config.json'), 'utf8')
+    const r = pyRun(root, `
+real = m.state_write
+def fake(root, path, text, *a, **k):
+    if str(path).endswith("config.json"):
+        raise PermissionError(13, "Permission denied", str(path))
+    return real(root, path, text, *a, **k)
+m.state_write = fake
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
     expect(r.code).toBe(1)
     expect(r.out).toBe([
       '1/9 선행 검사를 통과했어요',
@@ -286,11 +322,15 @@ describe('failure rolls back (rolled back)', () => {
       '다음: .prdt/config.json 의 쓰기 권한을 고친 뒤 다시 실행하세요.',
       '',
     ].join('\n'))
-    expect(snapshot(root)).toEqual(before)
+    // the rollback's index rebuild may regenerate the derived wiki/index.md (with a writable .prdt); it is not a document
+    const { 'wiki/index.md': _a, ...afterDocs } = snapshot(root)
+    const { 'wiki/index.md': _b, ...beforeDocs } = before
+    expect(afterDocs).toEqual(beforeDocs)
     expect(git(root, ['rev-parse', 'HEAD'])).toBe(head)
-    expect(git(root, ['status', '--short', '--', 'docs'])).toBe('')
+    expect(git(root, ['status', '--short', '--', 'docs', ':!docs/wiki/index.md'])).toBe('')
     expect(fs.readFileSync(path.join(root, '.prdt/config.json'), 'utf8')).toBe(cfg)
-    expect(prdt(root, ['layout', 'check']).code).toBe(1)   // still the old layout, retry allowed
+    expect(fs.existsSync(path.join(root, '.prdt/layout-apply.inprogress'))).toBe(false)
+    expect(prdt(root, ['layout', 'check']).code).toBe(1)
   }, 180_000)
 
   test('a failure after the meta commit (step 8) drops the commit too', () => {
@@ -780,4 +820,221 @@ m.main()`)
     expect(r.err).not.toContain('layout probed meta git')
     expect(r.code).toBe(0)
   }, 180_000)
+})
+
+// ── T-1105 round 3: the in-progress marker — every killed --apply is partial, undoable ──────
+describe('T-1105 in-progress marker — kill windows (bare `prdt init` and seeded projects)', () => {
+  const MARKER = (root: string) => path.join(root, '.prdt', 'layout-apply.inprogress')
+  const PARTIAL_HEAD = /^✗ docs 폴더 일부만 새 구조예요\. 문서 \d+개가 아직 예전 구조예요/
+
+  /** A project exactly as a bare `prdt init` leaves it: empty untracked docs/artifacts · prd · tickets, tracked wiki. */
+  function bare(): string {
+    const root = path.join(tmp, `b${++seq}`)
+    fs.mkdirSync(path.join(root, 'docs', 'prd'), { recursive: true })
+    expect(prdt(root, ['init', '--json', '--slug', 'proj', '--yes']).code).toBe(0)
+    expect(git(root, ['status', '--short', '--', 'docs'])).toBe('')
+    return root
+  }
+  const KILL_FIRST_RENAME = `
+real = m._lay_rename
+def fake(src, dst):
+    real(src, dst)
+    os._exit(137)
+m._lay_rename = fake
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`
+  const KILL_AT_COMMIT = `
+real = m._lay_git
+def fake(root, args, stdin=None):
+    if args and args[0] == "commit":
+        os._exit(137)
+    return real(root, args, stdin)
+m._lay_git = fake
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`
+  const KILL_AFTER_COMMIT = `
+def fake(root):
+    os._exit(137)
+m._lay_marker_clear = fake
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`
+
+  /** check · json · doctor · session-start block · migrate all agree on "partial"; the marker stands. */
+  function expectPartial(root: string) {
+    expect(fs.existsSync(MARKER(root))).toBe(true)
+    const chk = prdt(root, ['layout', 'check'])
+    expect(chk.code).toBe(2)
+    expect(chk.out).toMatch(PARTIAL_HEAD)
+    expect(chk.out).toContain('prdt layout migrate --undo 로 되돌릴 수 있어요.')
+    expect(JSON.parse(prdt(root, ['layout', 'check', '--json']).out).state).toBe('partial')
+    expect(prdt(root, ['doctor']).out).toContain(chk.out.split('\n')[0])
+    const blk = prdt(root, ['layout', 'check', '--session-start']).out
+    expect(blk).toContain("[prdt layout: this project's docs layout is half-moved]")
+    expect(blk).toContain('Do NOT propose `prdt layout migrate`')
+    expect(blk).not.toContain('목록 보기')
+    const again = prdt(root, ['layout', 'migrate', '--apply'])
+    expect(again.code).toBe(1)
+    expect(again.out).toContain('옮기지 않았어요: docs 폴더 일부만 새 구조예요')
+  }
+  function expectRestored(root: string, before: Record<string, string>, head: string, cfg: Buffer) {
+    expect(snapshot(root)).toEqual(before)
+    expect(git(root, ['rev-parse', 'HEAD'])).toBe(head)
+    expect(fs.readFileSync(path.join(root, '.prdt/config.json')).equals(cfg)).toBe(true)
+    expect(git(root, ['status', '--short', '--', 'docs', '.prdt/config.json'])).toBe('')
+    expect(fs.existsSync(MARKER(root))).toBe(false)
+    expect(fs.existsSync(path.join(root, 'docs/_shared'))).toBe(false)
+    expect(fs.existsSync(path.join(root, 'docs/proj'))).toBe(false)
+    expect(prdt(root, ['layout', 'check']).code).toBe(1)
+  }
+  function snap(root: string) {
+    return { before: snapshot(root), head: git(root, ['rev-parse', 'HEAD']), cfg: fs.readFileSync(path.join(root, '.prdt/config.json')) }
+  }
+  function undoAndReapply(root: string) {
+    const { before, head, cfg } = snap0.get(root)!
+    const undo = prdt(root, ['layout', 'migrate', '--undo'])
+    expect(undo.code).toBe(0)
+    expect(undo.out).toContain('되돌렸어요')
+    expectRestored(root, before, head, cfg)
+    expect(prdt(root, ['layout', 'migrate', '--apply']).code).toBe(0)
+    expect(fs.existsSync(MARKER(root))).toBe(false)
+    expect(prdt(root, ['layout', 'check']).code).toBe(0)
+    expect(git(root, ['status', '--short', '--', 'docs', '.prdt/config.json'])).toBe('')
+  }
+  const snap0 = new Map<string, ReturnType<typeof snap>>()
+  const prepared = (make: () => string) => { const r = make(); snap0.set(r, snap(r)); return r }
+
+  test('a finished --apply leaves no marker (bare and seeded)', () => {
+    for (const make of [bare, legacy]) {
+      const root = make()
+      expect(prdt(root, ['layout', 'migrate', '--apply']).code).toBe(0)
+      expect(fs.existsSync(MARKER(root))).toBe(false)
+      expect(prdt(root, ['layout', 'check']).code).toBe(0)
+    }
+  }, 300_000)
+
+  test('the marker stands before the first rename and is written symlink-safe (a planted link is refused, its target untouched)', () => {
+    const root = prepared(bare)
+    const r = pyRun(root, `
+real = m._lay_rename
+def fake(src, dst):
+    print("MARKER", os.path.isfile(".prdt/layout-apply.inprogress"), m.layout_state(Path(".")))
+    return real(src, dst)
+m._lay_rename = fake
+try:
+    m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))
+except SystemExit:
+    pass`)
+    expect(r.out).toContain('MARKER True partial')
+    expect(fs.existsSync(MARKER(root))).toBe(false)     // and gone again after the commit
+    // a link planted at the marker path: the layout reads partial, --apply refuses, the target is never written
+    const bait = path.join(tmp, `bait${++seq}`)
+    fs.writeFileSync(bait, 'keep')
+    const other = prepared(bare)
+    fs.symlinkSync(bait, MARKER(other))
+    expect(prdt(other, ['layout', 'migrate', '--apply']).code).toBe(1)
+    expect(fs.readFileSync(bait, 'utf8')).toBe('keep')
+    expect(snapshot(other)).toEqual(snap0.get(other)!.before)
+    const undo = prdt(other, ['layout', 'migrate', '--undo'])
+    expect(undo.code).toBe(0)
+    expect(fs.lstatSync(MARKER(other), { throwIfNoEntry: false })).toBeUndefined()   // the link went, not what it pointed at
+    expect(fs.readFileSync(bait, 'utf8')).toBe('keep')
+  }, 300_000)
+
+  test('shape (b): killed after the first rename of the EMPTY untracked docs/artifacts/ of a bare init → partial, --undo, re-apply', () => {
+    const root = prepared(bare)
+    expect(pyRun(root, KILL_FIRST_RENAME).code).toBe(137)
+    // the shape the disk alone cannot explain: an empty folder moved, nothing tracked deleted, no docs/_shared
+    expect(fs.existsSync(path.join(root, 'docs/proj/artifacts'))).toBe(true)
+    expect(fs.existsSync(path.join(root, 'docs/artifacts'))).toBe(false)
+    expect(fs.existsSync(path.join(root, 'docs/_shared'))).toBe(false)
+    expect(git(root, ['status', '--short', '--', 'docs'])).toBe('')
+    expectPartial(root)
+    undoAndReapply(root)
+  }, 300_000)
+
+  test('shape (b) on a seeded project: the first rename kill reads partial and undoes', () => {
+    const root = prepared(legacy)
+    expect(pyRun(root, KILL_FIRST_RENAME).code).toBe(137)
+    expectPartial(root)
+    undoAndReapply(root)
+  }, 300_000)
+
+  test('shape (a): killed at the meta commit (all moved, renames staged) → partial, --undo, re-apply — bare', () => {
+    const root = prepared(bare)
+    expect(pyRun(root, KILL_AT_COMMIT).code).toBe(137)
+    expect(fs.existsSync(path.join(root, 'docs/_shared'))).toBe(true)
+    expect(fs.existsSync(path.join(root, 'docs/proj'))).toBe(true)
+    expect(fs.existsSync(path.join(root, 'docs/tickets'))).toBe(false)
+    expect(git(root, ['diff', '--cached', '--name-only'])).toContain('docs/_shared/wiki/')
+    expectPartial(root)
+    undoAndReapply(root)
+  }, 300_000)
+
+  test('shape (a): killed at the meta commit — seeded', () => {
+    const root = prepared(legacy)
+    expect(pyRun(root, KILL_AT_COMMIT).code).toBe(137)
+    expect(fs.existsSync(path.join(root, 'docs/_shared'))).toBe(true)
+    expect(fs.existsSync(path.join(root, 'docs/proj'))).toBe(true)
+    expectPartial(root)
+    undoAndReapply(root)
+  }, 300_000)
+
+  test('shape (a) with the marker as the only evidence: nothing tracked, nothing old on disk → partial, no git for the block', () => {
+    const root = prepared(legacy)
+    expect(pyRun(root, KILL_AT_COMMIT).code).toBe(137)
+    const r = pyRun(root, `
+def boom(*a, **k): raise AssertionError("session-start block asked meta git")
+m._lay_git = boom
+print(m.layout_session_start_block(Path(".")))`)
+    expect(r.err).not.toContain('asked meta git')
+    expect(r.out).toContain("half-moved")
+    expect(r.out).toMatch(/문서 \d+개가 아직 예전 구조예요/)
+  }, 300_000)
+
+  test('killed between the meta commit and the marker removal: partial, --undo drops that one commit and restores', () => {
+    const root = prepared(legacy)
+    expect(pyRun(root, KILL_AFTER_COMMIT).code).toBe(137)
+    expect(git(root, ['log', '-1', '--format=%s'])).toContain('product-first docs layout')
+    expect(fs.existsSync(MARKER(root))).toBe(true)
+    expect(prdt(root, ['layout', 'check']).code).toBe(2)
+    const { before, head, cfg } = snap0.get(root) ?? snap(root)
+    const undo = prdt(root, ['layout', 'migrate', '--undo'])
+    expect(undo.code).toBe(0)
+    expectRestored(root, before, head, cfg)
+    expect(prdt(root, ['layout', 'migrate', '--apply']).code).toBe(0)
+  }, 300_000)
+
+  test('a failed --apply that rolls back removes the marker; a rollback that cannot finish keeps it, and --undo clears it', () => {
+    const root = prepared(legacy)
+    const ok = pyRun(root, `
+def boom(*a, **k): raise ValueError("forged")
+m.build_artifact_manifest = boom
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+    expect(ok.code).toBe(1)
+    expect(fs.existsSync(MARKER(root))).toBe(false)
+    expect(snapshot(root)).toEqual(snap0.get(root)!.before)
+
+    const stuck = prepared(legacy)
+    const r = pyRun(stuck, `
+real = m._lay_rename
+def fake(src, dst):
+    if str(src).endswith("docs/proj/tickets"):
+        raise PermissionError(13, "Permission denied", str(src))
+    real(src, dst)
+m._lay_rename = fake
+def boom(*a, **k): raise ValueError("forged")
+m.build_artifact_manifest = boom
+m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
+    expect(r.code).toBe(2)
+    expect(fs.existsSync(MARKER(stuck))).toBe(true)
+    const { before, head, cfg } = snap0.get(stuck)!
+    expect(prdt(stuck, ['layout', 'migrate', '--undo']).code).toBe(0)
+    expectRestored(stuck, before, head, cfg)
+  }, 300_000)
+
+  test('--undo with the marker and nothing moved yet (killed before the first rename): clears it, the tree is as found', () => {
+    const root = prepared(bare)
+    fs.writeFileSync(MARKER(root), JSON.stringify({ head: git(root, ['rev-parse', 'HEAD']).trim(), count: 3, pid: 1 }) + '\n')
+    expect(prdt(root, ['layout', 'check']).code).toBe(2)
+    expect(prdt(root, ['layout', 'migrate', '--undo']).code).toBe(0)
+    const { before, head, cfg } = snap0.get(root)!
+    expectRestored(root, before, head, cfg)
+  }, 300_000)
 })

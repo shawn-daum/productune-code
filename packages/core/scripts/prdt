@@ -16224,6 +16224,8 @@ def cmd_doctor(_args):
 # layout-cli: preview · confirm · applied · already · refused · rolled back · partial;
 # user approved the copy 2026-10-12, T-1114) — change a string only with that screen.
 # State (`layout_state`): config.json present, then
+#   the in-progress marker `.prdt/layout-apply.inprogress` exists → "partial" (any
+#     killed `--apply`, whatever it left on disk; filesystem only, no git)
 #   `docs/_shared/` absent + (`docs/tickets/` | `docs/prd/PRD.md`) → "old"
 #   `docs/_shared/` present + no migration-owned name left directly under docs/ → "new"
 #   `docs/_shared/` present + one left (the design's half-moved shape) → "partial"
@@ -16241,6 +16243,13 @@ LAYOUT_SKIP = (".DS_Store", "RELEASES.md")
 LAYOUT_PERSONAS = ("po", "designer", "developer", "qa")
 LAYOUT_COMMIT_MSG = "chore: product-first docs layout (prdt layout migrate)"
 LAYOUT_STEPS = 9
+# Written by `--apply` before its first rename, removed after the meta commit (or once a
+# rollback / `--undo` has put the tree back): while it exists the layout is "partial".
+# A run killed at ANY point leaves it, so a half-move is detectable with no git — the two
+# shapes the disk alone cannot tell apart are an all-moved-uncommitted tree and a first
+# rename of an empty untracked folder. `.prdt/` rides the meta allowlist; the marker is
+# transient and never meant to be committed.
+LAYOUT_MARKER_REL = (".prdt", "layout-apply.inprogress")
 # The `다음:` line of every half-moved report (check · migrate refusal · PARTIAL):
 # the approved sentence, plus the one way back.
 LAYOUT_PARTIAL_NEXT = "PO 에게 알리세요. 이 상태에서는 다시 옮기기가 거부되고, prdt doctor 가 같은 오류를 보여요."
@@ -16341,6 +16350,40 @@ def layout_plan(root):
             "shared_total": sum(u["count"] for u in units if u["side"] == "shared")}
 
 
+def _lay_marker_path(root):
+    return Path(root).joinpath(*LAYOUT_MARKER_REL)
+
+
+def _lay_marker(root):
+    """None when no in-progress marker stands at its path (`lexists`: a link counts, it is
+    never followed); else the record `--apply` wrote ({} when unreadable)."""
+    p = _lay_marker_path(root)
+    if not os.path.lexists(p):
+        return None
+    try:
+        st = os.lstat(p)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > 4096:
+            return {}
+        rec = json.loads(p.read_text(encoding="utf-8"))
+        return rec if isinstance(rec, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _lay_marker_write(root, head0, count):
+    state_write(root, _lay_marker_path(root),
+                json.dumps({"head": head0, "count": count, "pid": os.getpid()}) + "\n")
+
+
+def _lay_marker_clear(root):
+    """Remove the marker (the link itself if it is one). Absent is fine; any other
+    failure is the caller's to judge."""
+    try:
+        os.unlink(_lay_marker_path(root))
+    except FileNotFoundError:
+        pass
+
+
 def _lay_uncommitted_old(root):
     """Old-layout paths the meta HEAD still tracks but the work tree (or the index)
     has dropped — a move that was never committed (a killed `--apply`)."""
@@ -16360,6 +16403,8 @@ def layout_state(root, deep=False):
     docs = root / "docs"
     if not (root / ".prdt" / "config.json").is_file() or not docs.is_dir():
         return "none"
+    if _lay_marker(root) is not None:
+        return "partial"
     shared = docs / DOCS_SHARED
     owned = [n for n in LAYOUT_OWNED_TOPS if os.path.lexists(docs / n)]
     if shared.is_dir() and not shared.is_symlink():
@@ -16461,26 +16506,34 @@ def layout_print_preview(root, plan):
 
 def _lay_leftover(root):
     """(first old name directly under docs/, files still at the old top level) —
-    the numbers the half-moved lines name."""
+    the numbers the half-moved lines name. Nothing old left on disk (`first` None): the
+    in-progress marker's count (no git), else the uncommitted old paths in meta git
+    (a run killed before the marker existed)."""
     plan = layout_plan(root)
     docs = Path(root) / "docs"
     first = next((n for n in LAYOUT_OWNED_TOPS if os.path.lexists(docs / n)), None)
-    return first, plan["total"]
+    if first is not None:
+        return first, plan["total"]
+    rec = _lay_marker(root)
+    if rec is not None:
+        n = rec.get("count")
+        return None, n if isinstance(n, int) and n >= 0 else 0
+    gone = _lay_uncommitted_old(root)
+    if gone:
+        return gone[0].split("/")[1], len(gone)
+    return None, 0
 
 
 def layout_partial_next(root):
     """The `다음:` text of a half-moved report: the `--undo` sentence only when
     `--undo` can run (T-1123) — i.e. an uncommitted old-layout deletion exists."""
-    if _lay_uncommitted_old(root):
+    if _lay_marker(root) is not None or _lay_uncommitted_old(root):
         return f"{LAYOUT_PARTIAL_NEXT} {LAYOUT_UNDO_HINT}"
     return LAYOUT_PARTIAL_NEXT
 
 
 def layout_partial_line(root):
-    first, left = _lay_leftover(root)
-    if first is None:     # nothing old on disk: the move sits uncommitted in meta git
-        gone = _lay_uncommitted_old(root)
-        first, left = gone[0].split("/")[1], len(gone)
+    _first, left = _lay_leftover(root)
     return f"docs 폴더 일부만 새 구조예요. 문서 {_lay_n(left)}개가 아직 예전 구조예요"
 
 
@@ -16494,7 +16547,9 @@ def layout_session_start_block(root):
     Two exceptions to "shallow": a live dispatch in this project silences the block
     (design ④, markers read from the filesystem), and the one rare shape a killed
     `--apply` leaves (`docs/<prod>/` present, `docs/_shared` absent) asks meta git, so
-    it reads as half-moved like `prdt layout check` — ordinary old/new stay git-free."""
+    it reads as half-moved like `prdt layout check` — ordinary old/new stay git-free.
+    The in-progress marker (T-1105) makes every other killed `--apply` shape partial in
+    the shallow state, and its count feeds the block: no git there either."""
     if _lay_live_dispatches(root):
         return ""
     state = layout_state(root)
@@ -16514,11 +16569,8 @@ def layout_session_start_block(root):
             "and run `prdt layout migrate --apply` only on the user's confirm of that list. Otherwise nothing this session.")
     if state == "partial":
         first, left = _lay_leftover(root)
-        if first is None:     # the whole old side already left the disk: the move waits in meta git
-            gone = _lay_uncommitted_old(root)
-            if not gone:
-                return ""
-            first, left = gone[0].split("/")[1], len(gone)
+        if first is None and _lay_marker(root) is None:    # no trace of a move at all
+            return ""
         h1 = first is not None and os.path.lexists(Path(root) / "docs" / first) and (Path(root) / "docs" / DOCS_SHARED).is_dir() \
             and not (Path(root) / "docs" / DOCS_SHARED).is_symlink()
         head = "[prdt layout: this project's docs layout is half-moved]\n"
@@ -16762,6 +16814,7 @@ def layout_apply(root, plan):
         r = _lay_git(root, ["ls-files", "-z", "--", "docs"])
         tracked = [p for p in r.stdout.split("\0") if p] if r.returncode == 0 else []
         try:
+            _lay_marker_write(root, head0, n_total)     # before the first rename: a kill from here on reads as partial
             for u in units:
                 dst_parent = (root / u["dst"]).parent
                 chain, p = [], dst_parent
@@ -16869,6 +16922,10 @@ def layout_apply(root, plan):
         if g.returncode != 0 or c.returncode != 0:
             why = ((c.stderr or g.stderr or "git commit failed").strip().splitlines() or ["git commit failed"])[0]
             raise _LayoutFail(8, f"meta 커밋 1개를 만들 수 없어요 ({why})", "괄호 안 git 오류를 고친 뒤 다시 실행하세요.")
+        try:
+            _lay_marker_clear(root)       # only now: the move is committed
+        except OSError as e:
+            raise _LayoutFail(8, f"meta 커밋 1개를 만들 수 없어요 ({_lay_err_text(e)})", "괄호 안 원인을 고친 뒤 다시 실행하세요.")
         print(f"{_lay_ok('8/9')} meta 커밋 1개를 만들었어요: {_lay_dm(LAYOUT_COMMIT_MSG)}")
         sys.stdout.flush()
     except (_LayoutFail, KeyboardInterrupt, Exception) as f:
@@ -16979,6 +17036,10 @@ def layout_rollback(root, plan, fail, moved, created_dirs, generated, undo, stag
         pass
     n_moved = sum(u["count"] for u in moved)
     if not stuck:
+        try:     # the tree is back: no half-move left to mark
+            _lay_marker_clear(root)
+        except OSError:
+            pass
         if moved:
             print()
             print(f"{_lay_wn('되돌렸어요')}: 옮긴 문서 {_lay_n(back_files)}개를 원래 자리로 돌렸어요. "
@@ -17018,6 +17079,22 @@ def _lay_undo_refuse(why, nxt, head="되돌리지 않았어요"):
     sys.exit(1)
 
 
+def _lay_undo_own_commit(root, head0):
+    """A run killed between its meta commit and the marker's removal: the whole move is
+    committed. Drop that one commit (the same `reset` the rollback runs, work tree
+    untouched) so the tree reads as an uncommitted move again; any other HEAD is not ours
+    to move. Returns the uncommitted old paths."""
+    if not isinstance(head0, str) or not head0:
+        return []
+    cur = _lay_git(root, ["rev-parse", "HEAD", "HEAD^"])
+    ids = cur.stdout.split() if cur.returncode == 0 else []
+    subj = _lay_git(root, ["log", "-1", "--format=%s"]).stdout.strip()
+    if len(ids) == 2 and ids[1] == head0 and ids[0] != head0 and subj == LAYOUT_COMMIT_MSG:
+        if _lay_git(root, ["reset", "-q", "--mixed", head0]).returncode != 0:
+            return []
+    return _lay_uncommitted_old(root)
+
+
 def layout_undo(root, state):
     """`migrate --undo`: put an UNCOMMITTED half-move (a killed `--apply`) back to
     the old structure — the same inverse the rollback walks, driven from disk."""
@@ -17027,7 +17104,10 @@ def layout_undo(root, state):
     if state == "new":
         _lay_undo_refuse("docs 폴더가 이미 새 구조로 끝나서 되돌릴 수 없어요.", "예전 구조로 돌아가려면 PO 에게 알리세요.")
     gone = _lay_uncommitted_old(root) if state == "partial" else []
-    if not gone:
+    marker = _lay_marker(root)
+    if marker and not gone:
+        gone = _lay_undo_own_commit(root, marker.get("head"))
+    if not gone and marker is None:
         _lay_undo_refuse("옮기다 멈춘 문서를 찾지 못했어요. docs 폴더는 그대로예요.",
                          "prdt layout check 로 상태를 확인하고, 일부만 새 구조라고 나오면 PO 에게 알리세요.")
     prod = layout_product_name(root)
@@ -17085,6 +17165,10 @@ def layout_undo(root, state):
                 os.rmdir(dirpath)
             except OSError:
                 pass
+    try:     # the tree is back: no half-move left to mark
+        _lay_marker_clear(root)
+    except OSError:
+        pass
     widx = root / "docs" / "wiki" / "index.md"
     keep = None
     try:
