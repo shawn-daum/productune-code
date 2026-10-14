@@ -3,7 +3,7 @@
 #
 # FILENAME NOTE (T-586): this file is named for the key it started with —
 # `audience-mode`, T-326, one token in ~/.prdt/audience-mode. It is now the
-# resolver for the whole register OBJECT: `$PRDT_HOME/register`, four keys. The
+# resolver for the whole register OBJECT: `$PRDT_HOME/register`, five keys. The
 # name stays because renaming a hook moves the manifest, install.sh's mirror
 # copy, the GUI's hasPrdtHooksRegistered roster and every installed
 # ~/.claude/settings.json on every machine — a cost larger than the name. There
@@ -30,6 +30,9 @@
 #   audience   planner | developer        default planner   (T-326 absorbed)
 #   form       prose | outline            default prose
 #   structure  default | planner-tables   default default
+#   visual     judge | always-html | table-only   default judge (T-1136; no
+#              body file — the first-mention medium rule it selects lives in
+#              contracts/tickets.md §type: decision; binding line only)
 #   address    free text — ONE line · 1–32 bytes · no control or line-break
 #              characters · none of `"`, `·`, `[prdt` (those forge the binding
 #              line's own grammar — see address_ok) · valid UTF-8; default none
@@ -44,7 +47,7 @@
 # GOVERNS VOCABULARY — a body's `governs:` frontmatter may only name a surface
 # from the closed vocabulary contracts.md §Language enumerates (twelve names).
 # This resolver owns the one copy (GOVERNS_VOCAB below): it is already the
-# domain's single source of truth for the four register keys, and a `governs:`
+# domain's single source of truth for the five register keys, and a `governs:`
 # value is body-authored data of the same trust class, so it is judged here
 # rather than by a second hardcoded copy in the CLI/doctor — `prdt doctor` asks
 # via `--resolve`'s `body_warnings` instead of re-parsing frontmatter itself. An
@@ -104,9 +107,9 @@ else
 fi
 
 # ── domain (the ONE place it is written) ──────────────────────────────────────
-KEYS="audience form structure address"
-domain_of()  { case "$1" in audience) echo "planner developer" ;; form) echo "prose outline" ;; structure) echo "default planner-tables" ;; esac; }
-default_of() { case "$1" in audience) echo planner ;; form) echo prose ;; structure) echo default ;; address) echo "" ;; esac; }
+KEYS="audience form structure visual address"
+domain_of()  { case "$1" in audience) echo "planner developer" ;; form) echo "prose outline" ;; structure) echo "default planner-tables" ;; visual) echo "judge always-html table-only" ;; esac; }
+default_of() { case "$1" in audience) echo planner ;; form) echo prose ;; structure) echo default ;; visual) echo judge ;; address) echo "" ;; esac; }
 ADDRESS_MAX_BYTES=32
 ADDRESS_SHAPE="one line · 1–32 bytes · no control or line-break characters · none of \`\"\`, \`·\`, \`[prdt\` · valid UTF-8"
 
@@ -128,7 +131,7 @@ trap 'rm -f "$BODY_WARN_FILE"' EXIT
 body_warn() { printf '%s\n' "$1" >> "$BODY_WARN_FILE" 2>/dev/null; }
 
 # ── resolution ────────────────────────────────────────────────────────────────
-R_audience="$(default_of audience)"; R_form="$(default_of form)"; R_structure="$(default_of structure)"; R_address=""
+R_audience="$(default_of audience)"; R_form="$(default_of form)"; R_structure="$(default_of structure)"; R_visual="$(default_of visual)"; R_address=""
 WARNS=""; IGNORED=0; REG_PRESENT=0
 
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"; printf '%s' "$s"; }
@@ -182,7 +185,7 @@ parse_register() {
     case "$line" in *=*) ;; *) warn "L$n: not a key=value line — ignored"; continue ;; esac
     key="$(trim "${line%%=*}")"; val="$(trim "${line#*=}")"
     case "$key" in
-      audience|form|structure)
+      audience|form|structure|visual)
         if in_domain "$val" "$key"; then eval "R_$key=\"\$val\""
         else warn "L$n: $key= is outside its domain ($(domain_of "$key" | tr ' ' '|')) — resolved to the default \`$(default_of "$key")\`"; fi ;;
       address)
@@ -235,7 +238,7 @@ body_governs() {
 # Keys in force with a body file present → "key value path" per line.
 active_bodies() {
   local k v p
-  for k in audience form structure; do
+  for k in audience form structure visual; do
     eval "v=\"\$R_$k\""
     p="$(body_path "$k" "$v")"
     [ -s "$p" ] && printf '%s %s %s\n' "$k" "$v" "$p"
@@ -253,7 +256,7 @@ EOF
 }
 non_default_pairs() {
   local k v out=""
-  for k in audience form structure; do
+  for k in audience form structure visual; do
     eval "v=\"\$R_$k\""
     [ "$v" != "$(default_of "$k")" ] && out="${out}${out:+ · }$k=$v"
   done
@@ -261,7 +264,11 @@ non_default_pairs() {
   printf '%s' "$out"
 }
 all_pairs() {
-  printf 'audience=%s · form=%s · structure=%s · address=%s' "$R_audience" "$R_form" "$R_structure" \
+  # visual (T-1136) appears only off its default — "absent → judge" is the rule
+  # text's own reading, so the default costs the block nothing.
+  local vis=""
+  [ "$R_visual" != "$(default_of visual)" ] && vis=" · visual=$R_visual"
+  printf 'audience=%s · form=%s · structure=%s%s · address=%s' "$R_audience" "$R_form" "$R_structure" "$vis" \
     "$([ -n "$R_address" ] && printf '"%s"' "$R_address" || printf 'none')"
 }
 
@@ -269,7 +276,7 @@ all_pairs() {
 if [ "${1:-}" = "--list" ]; then
   command -v jq >/dev/null 2>&1 || exit 0
   rows=""
-  for k in audience form structure; do
+  for k in audience form structure visual; do
     bodies=""
     for v in $(domain_of "$k"); do
       if [ -s "$(body_path "$k" "$v")" ]; then present=true; else present=false; fi
@@ -292,12 +299,12 @@ if [ "${1:-}" = "--resolve" ]; then
   GOVERNS="$(governs_union)"
   BODY_WARNS="$(cat "$BODY_WARN_FILE" 2>/dev/null)"
   jq -n --arg file "$REG_FILE" --argjson present "$([ "$REG_PRESENT" = 1 ] && echo true || echo false)" \
-     --arg a "$R_audience" --arg f "$R_form" --arg s "$R_structure" --arg ad "$R_address" \
+     --arg a "$R_audience" --arg f "$R_form" --arg s "$R_structure" --arg v "$R_visual" --arg ad "$R_address" \
      --arg warns "$WARNS" --arg governs "$GOVERNS" --arg binding "$(non_default_pairs)" \
      --arg bwarns "$BODY_WARNS" \
      '{file:$file, present:$present,
-       values:{audience:$a, form:$f, structure:$s, address:(if $ad == "" then null else $ad end)},
-       defaults:{audience:"planner", form:"prose", structure:"default", address:null},
+       values:{audience:$a, form:$f, structure:$s, visual:$v, address:(if $ad == "" then null else $ad end)},
+       defaults:{audience:"planner", form:"prose", structure:"default", visual:"judge", address:null},
        governs:$governs, binding:(if $binding == "" then null else $binding end),
        warnings:($warns | split("\n") | map(select(length > 0))),
        body_warnings:($bwarns | split("\n") | map(select(length > 0)))}'

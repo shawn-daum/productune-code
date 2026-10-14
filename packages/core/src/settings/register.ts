@@ -5,7 +5,7 @@ import { atomicWriteFileSync } from '../fs/atomic-write'
 
 /**
  * The register (T-586) — how the PO speaks to the operator, as a named OBJECT
- * with four keys instead of free prose in an override file. Per USER (the
+ * with five keys instead of free prose in an override file. Per USER (the
  * operator reading the PO), never per project: a cloned repository must not be
  * able to change how the product addresses its owner, so there is no project
  * layer.
@@ -26,6 +26,8 @@ import { atomicWriteFileSync } from '../fs/atomic-write'
  * - `audience`  planner | developer  (absorbs T-326 audience-mode; default planner)
  * - `form`      prose | outline       (default prose)
  * - `structure` default | planner-tables (default default)
+ * - `visual`    judge | always-html | table-only (default judge, T-1136) — the
+ *               first-mention medium of a decision's options; no body file
  * - `address`   free text — one line, 1–32 BYTES, no control / line-break
  *               characters, valid UTF-8; default none (`null`). A value, not a
  *               rule: the hook emits it only inside a fixed sentence of its own.
@@ -36,16 +38,18 @@ import { atomicWriteFileSync } from '../fs/atomic-write'
 export type RegisterAudience = 'planner' | 'developer'
 export type RegisterForm = 'prose' | 'outline'
 export type RegisterStructure = 'default' | 'planner-tables'
+export type RegisterVisual = 'judge' | 'always-html' | 'table-only'
 
 export interface Register {
   audience: RegisterAudience
   form: RegisterForm
   structure: RegisterStructure
+  visual: RegisterVisual
   /** `null` = the user is not addressed by a name or title. */
   address: string | null
 }
 
-export type RegisterEnumKey = 'audience' | 'form' | 'structure'
+export type RegisterEnumKey = 'audience' | 'form' | 'structure' | 'visual'
 export type RegisterKey = RegisterEnumKey | 'address'
 
 /** Enum domains — a test-pinned copy of prdt-audience-inject.sh `--list`. */
@@ -53,16 +57,18 @@ export const REGISTER_DOMAIN: { readonly [K in RegisterEnumKey]: readonly Regist
   audience: ['planner', 'developer'],
   form: ['prose', 'outline'],
   structure: ['default', 'planner-tables'],
+  visual: ['judge', 'always-html', 'table-only'],
 }
 
 export const REGISTER_DEFAULTS: Readonly<Register> = {
   audience: 'planner',
   form: 'prose',
   structure: 'default',
+  visual: 'judge',
   address: null,
 }
 
-export const REGISTER_KEYS: readonly RegisterKey[] = ['audience', 'form', 'structure', 'address']
+export const REGISTER_KEYS: readonly RegisterKey[] = ['audience', 'form', 'structure', 'visual', 'address']
 
 export const ADDRESS_MAX_BYTES = 32
 
@@ -124,7 +130,7 @@ export function parseRegister(text: string): { values: Register; warnings: strin
     if (eq < 0) { warnings.push(`L${n}: not a key=value line — ignored`); return }
     const key = asciiTrim(line.slice(0, eq))
     const val = asciiTrim(line.slice(eq + 1))
-    if (key === 'audience' || key === 'form' || key === 'structure') {
+    if (key === 'audience' || key === 'form' || key === 'structure' || key === 'visual') {
       if (isLegalEnumValue(key, val)) (values as unknown as Record<string, string>)[key] = val
       else warnings.push(`L${n}: ${key}= is outside its domain (${REGISTER_DOMAIN[key].join('|')}) — resolved to the default \`${REGISTER_DEFAULTS[key]}\``)
     } else if (key === 'address') {
