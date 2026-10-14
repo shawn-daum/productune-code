@@ -18663,8 +18663,10 @@ def installed_prdt_version():
 
 
 # ── prdt test cloud (T-1126) ────────────────────────────────────────────────
-# A track commit's core suite runs in a Claude Code cloud session; the mac-only
-# files run here at the same time; one merged verdict comes back as JSON. The
+# A track commit's core suite runs in Claude Code cloud sessions — one per shard,
+# in parallel, so each runner ends well inside the cloud agent's 40-min
+# background-command limit; the mac-only files run here at the same time; one
+# merged verdict comes back as JSON. The
 # result route is contracts §Git carve-out (2) + contracts/git.md "Cloud
 # test-result push": the runner script (CLOUD_RUNNER_PATH) is the only pusher;
 # this side checks before (cloud_precheck), reads the one result ref, checks
@@ -18683,6 +18685,7 @@ CLOUD_SESSION_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 CLOUD_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 CLOUD_FILE_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._/-]*$")
 CLOUD_SESSION_URL_RE = re.compile(r"claude\.ai/code/((?:session|cse)_[A-Za-z0-9]+)")
+CLOUD_CREATE_EXIT_MARK = "PRDT_CLOUD_CREATE_EXIT="
 CLOUD_NOTICE_RE = re.compile(r"uncommitted|untracked|not (?:be )?included|exclud", re.I)
 CLOUD_GLOB_SPECIAL = "*?+[!"
 
@@ -18918,7 +18921,10 @@ def _cloud_record(path, rec, **kw):
 
 
 def _cloud_ls_remote(code, ref):
-    r = _tgit(["ls-remote", "--end-of-options", "origin", ref], code, timeout=60)
+    try:
+        r = _tgit(["ls-remote", "--end-of-options", "origin", ref], code, timeout=60)
+    except subprocess.TimeoutExpired:  # one slow poll is not the shard's end (round 2026-10-13)
+        return None, "git ls-remote timed out after 60s"
     if r.returncode != 0:
         return None, f"git ls-remote failed: {(r.stderr.strip().splitlines() or [''])[0][:200]}"
     for line in r.stdout.splitlines():
@@ -18948,8 +18954,29 @@ def _cloud_settle_and_delete(code, repo, rec_path, rec, ref, commit, seen_at):
     return counts, bad, ok, err
 
 
+def _cloud_read_result(code, ref, commit):
+    """Fetch the one result ref and read its result.json → dict (an error dict
+    when the commit is not one parentless result.json commit)."""
+    f = _tgit(["fetch", "--no-tags", "--no-write-fetch-head", "origin", ref], code, timeout=120)
+    shape = _tgit(["cat-file", "-p", commit], code).stdout if f.returncode == 0 else ""
+    entries = _tgit(["ls-tree", commit], code).stdout.splitlines() if shape else []
+    if not shape or "\nparent " in shape or len(entries) != 1 or not entries[0].endswith("\tresult.json"):
+        return {"status": "error", "reason": "the result ref is not one parentless result.json commit"}
+    try:
+        res = json.loads(_tgit(["show", f"{commit}:result.json"], code).stdout)
+    except ValueError:
+        return {"status": "error", "reason": "result.json is not JSON"}
+    return res if isinstance(res, dict) else {"status": "error", "reason": "result.json is not an object"}
+
+
+def _cloud_result_line(res):
+    keys = ("status", "phase", "reason", "total", "passed", "failed", "files")
+    return ", ".join(f"{k}={res[k]}" for k in keys if res.get(k) not in (None, ""))
+
+
 def _cloud_clean_leftovers(code, repo):
-    """A ref a killed run left behind: deleted only by the name in its record."""
+    """A ref a killed run left behind: fetched and read, then deleted only by the
+    name in its record."""
     runs = _cloud_state_dir(code) / "runs"
     notes = []
     for f in sorted(runs.glob("*.json")) if runs.is_dir() else []:
@@ -18962,8 +18989,12 @@ def _cloud_clean_leftovers(code, repo):
         elif sha == "":
             _cloud_record(f, rec, state="absent")
         else:
+            res = _cloud_read_result(code, rec["ref"], sha)
+            _cloud_record(f, rec, state="read", commit=sha,
+                          result={k: v for k, v in res.items() if k not in ("failures", "file_s")})
             _c, bad, ok, derr = _cloud_settle_and_delete(code, repo, f, rec, rec["ref"], sha, 0)
-            notes.append(f"leftover {rec['ref']} of run {f.stem}: " + ("deleted" if ok else f"delete failed ({derr})")
+            notes.append(f"leftover {rec['ref']} of run {f.stem}: read ({_cloud_result_line(res)}); "
+                         + ("deleted" if ok else f"delete failed ({derr})")
                          + (f"; post-read check: {'; '.join(bad)}" if bad else ""))
     return notes
 
@@ -18987,6 +19018,53 @@ def cloud_test_files(code, sha, only=None):
     return cloud, mac
 
 
+def cloud_test_sizes(code, sha):
+    """{path relative to packages/core: bytes} of the tested commit's test files."""
+    r = _tgit(["ls-tree", "-r", "-l", sha, "--", CLOUD_TEST_DIR], code)
+    out = {}
+    for line in r.stdout.splitlines():
+        meta, _, path = line.partition("\t")
+        parts = meta.split()
+        if len(parts) == 4 and parts[3].isdigit():
+            out[path[len(CLOUD_TEST_ROOT) + 1:]] = int(parts[3])
+    return out
+
+
+def cloud_shard_files(files, n, durations=None, sizes=None):
+    """Split the cloud files into at most n shards of near-equal expected time
+    (longest first onto the lightest shard). A file's weight is its last seen
+    seconds; a file never timed weighs the mean of the timed ones, and with none
+    timed every file weighs its byte size."""
+    durations, sizes = durations or {}, sizes or {}
+    timed = [durations[f] for f in files if isinstance(durations.get(f), (int, float)) and durations[f] >= 0]
+    if timed:
+        mean = sum(timed) / len(timed)
+        w = {f: durations[f] if isinstance(durations.get(f), (int, float)) and durations[f] >= 0 else mean
+             for f in files}
+    else:
+        w = {f: float(sizes.get(f, 1)) for f in files}
+    n = max(1, min(int(n), len(files))) if files else 0
+    bins = [[0.0, i, []] for i in range(n)]
+    for f in sorted(files, key=lambda f: (-w[f], f)):
+        b = min(bins, key=lambda b: (b[0], b[1]))
+        b[0] += w[f]
+        b[2].append(f)
+    return [sorted(b[2]) for b in bins]
+
+
+def _cloud_save_durations(state, halves):
+    """Merge every half's per-file seconds into <state>/durations.json (the next
+    run's shard weights)."""
+    p = state / "durations.json"
+    cur = read_json(p)
+    cur = cur if isinstance(cur, dict) else {}
+    for h in halves.values():
+        for f, s in (h.get("file_s") or {}).items() if isinstance(h.get("file_s"), dict) else []:
+            if isinstance(s, (int, float)) and CLOUD_FILE_RE.match(str(f)):
+                cur[f] = s
+    _cloud_record(p, cur)
+
+
 def _cloud_condense(code, report, prefix, **meta):
     r = subprocess.run(["node", str(Path(code) / CLOUD_CONDENSE_PATH), str(report), prefix,
                         *[f"{k}={v}" for k, v in meta.items()]], capture_output=True, text=True, timeout=120)
@@ -18996,19 +19074,20 @@ def _cloud_condense(code, report, prefix, **meta):
         return {"status": "error", "reason": "the local report could not be condensed"}
 
 
-def _cloud_create_session(code, run_dir, description, timeout_s):
+def _cloud_create_session(code, run_dir, description, timeout_s, tag="s1"):
     """`claude --cloud` creates a session only with a pty (spike): drive it in a
     tmux server on a private socket, read the session id off the screen, then
     stop that server by the pid it reports. → (session id, notices)."""
     tmux, claude = shutil.which("tmux"), shutil.which("claude")
-    if not tmux or not claude:
-        _cloud_die("`tmux` and `claude` must be on PATH to create a cloud session", 4)
-    sock = f"prdt-cloud-{os.getpid()}-{int(time.time())}"
-    cmd = f"CCR_FORCE_BUNDLE=1 exec {shlex.quote(claude)} --cloud {shlex.quote(description)}"
+    sock = f"prdt-cloud-{os.getpid()}-{int(time.time())}-{tag}"
+    # claude 2.1.299 prints the session URL and exits at once (observed 2026-10-14):
+    # the shell outlives it so the pane stays readable, and the exit marker ends the wait
+    cmd = (f"CCR_FORCE_BUNDLE=1 {shlex.quote(claude)} --cloud {shlex.quote(description)}; "
+           f"echo {CLOUD_CREATE_EXIT_MARK}$?; exec sleep {int(timeout_s) + 60}")
     r = subprocess.run([tmux, "-L", sock, "new-session", "-d", "-s", "prdt", "-x", "220", "-y", "50",
                         "-c", str(code), cmd], capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
-        _cloud_die(f"tmux could not start: {r.stderr.strip()[:200]}", 4)
+        return None, [f"tmux could not start: {r.stderr.strip()[:200]}"]
     pid = subprocess.run([tmux, "-L", sock, "display-message", "-p", "#{pid}"],
                          capture_output=True, text=True, timeout=30).stdout.strip()
     session, pane, seen = None, "", []
@@ -19024,21 +19103,23 @@ def _cloud_create_session(code, run_dir, description, timeout_s):
             if m:
                 session = m.group(1)
                 break
-            if subprocess.run([tmux, "-L", sock, "has-session", "-t", "prdt"],
+            if CLOUD_CREATE_EXIT_MARK in pane or subprocess.run([tmux, "-L", sock, "has-session", "-t", "prdt"],
                               capture_output=True, timeout=30).returncode != 0:
                 break
             time.sleep(2)
     finally:
-        state_write(run_dir, run_dir / "create-pane.txt", pane)   # T-1128
+        state_write(run_dir, run_dir / f"create-pane-{tag}.txt", pane)   # T-1128
         if pid.isdigit():
             with contextlib.suppress(OSError):
                 os.kill(int(pid), 15)
     return session, seen
 
 
-def _cloud_instruction(ticket, sha, session, runner_sha, files, excludes):
+def _cloud_instruction(ticket, sha, session, runner_sha, files, excludes, shard=None):
     argv = ["bash", "/tmp/prdt-cloud-test.sh", "--ticket", ticket, "--sha", sha, "--session", session,
             "--runner-sha", runner_sha]
+    if shard:
+        argv += ["--shard", shard]
     for f in files:
         argv += ["--file", f]
     for e in excludes:
@@ -19046,12 +19127,84 @@ def _cloud_instruction(ticket, sha, session, runner_sha, files, excludes):
     command = (f"git show {runner_sha}:{CLOUD_RUNNER_PATH} > /tmp/prdt-cloud-test.sh && "
                + " ".join(shlex.quote(a) for a in argv))
     return ("prdt cloud test run. From the repository root, run the one shell command below exactly as "
-            "written. It takes up to about 20 minutes: start it in the background and wait until it "
-            "exits; never stop it early. Run nothing else — no other git command, no retry, no file "
-            "edit. When it exits, reply with its last output line only.\n\n" + command)
+            "written. Start it in the background and wait until it exits; never stop it early. It stops "
+            "itself within 35 minutes (usually far sooner) and always pushes its result before it exits. "
+            "While it runs, read its output every 2 to 3 minutes and repeat its new `PRDT_PHASE` lines "
+            "here, so this page shows its progress. Run nothing else — no other git command, no retry, "
+            "no file edit. When it exits, reply with its `PRDT_PHASE` lines you have not yet repeated (the "
+            "`push-diag` and `log|` lines included), then its last output line.\n\n" + command)
+
+
+def _cloud_run_shard(ctx, i, n, files):
+    """One cloud shard end to end: create the session, send the run instruction,
+    wait for its result ref, read it, post-read check, by-name delete.
+    → {shard, session, result, timing, notices}."""
+    code, tid, sha, runner_sha, args = ctx["code"], ctx["tid"], ctx["sha"], ctx["runner_sha"], ctx["args"]
+    tag, shard = f"s{i}", f"{i}/{n}"
+    out = {"shard": shard, "session": None, "files": files, "timing": {}, "notices": []}
+    rec_path = ctx["state"] / "runs" / f"{ctx['run_id']}-{tag}.json"
+    rec = {"run_id": ctx["run_id"], "ticket": tid, "sha": sha, "runner_sha": runner_sha, "shard": shard,
+           "state": "creating"}
+    _cloud_record(rec_path, rec)
+    t0 = time.time()
+    session, seen = _cloud_create_session(code, ctx["run_dir"], f"prdt cloud test {tid} {sha[:8]} {shard}",
+                                          args.create_timeout, tag)
+    out["notices"] += seen
+    out["timing"]["create_s"] = round(time.time() - t0, 1)
+    if not session or not CLOUD_SESSION_RE.match(session):
+        _cloud_record(rec_path, rec, state="create-failed")
+        out["result"] = {"status": "error", "reason": f"no cloud session id on the screen "
+                                                      f"(see {ctx['run_dir'] / f'create-pane-{tag}.txt'})"}
+        return out
+    out["session"] = session
+    ref = f"refs/heads/ci/{tid}/{session}"
+    if _tgit(["check-ref-format", ref], code).returncode != 0:
+        _cloud_record(rec_path, rec, state="create-failed", session=session)
+        out["result"] = {"status": "error", "reason": f"{ref} fails git check-ref-format"}
+        return out
+    _cloud_record(rec_path, rec, state="instructed", session=session, ref=ref)
+    instr = _cloud_instruction(tid, sha, session, runner_sha, files, [], shard)
+    s = subprocess.run([shutil.which("claude"), "-p", "--cloud", session, instr], cwd=str(code),
+                       capture_output=True, text=True, timeout=180)
+    if s.returncode != 0:
+        out["result"] = {"status": "error", "reason": f"could not send the run instruction (exit {s.returncode})"}
+        return out
+    t1 = time.time()
+    deadline = t1 + args.timeout
+    found, err = "", None
+    while time.time() < deadline:
+        found, err = _cloud_ls_remote(code, ref)
+        if found:
+            break
+        time.sleep(15)
+    out["timing"]["wait_s"] = round(time.time() - t1, 1)
+    if not found:
+        _cloud_record(rec_path, rec, state="timeout")
+        out["result"] = {"status": "error", "reason": f"no result ref after {args.timeout}s" + (f" ({err})" if err else "")}
+        return out
+    seen_at = time.time()
+    out["timing"]["result_at_s"] = round(seen_at - ctx["t_start"], 1)
+    _cloud_record(rec_path, rec, state="pushed", commit=found)
+    res = _cloud_read_result(code, ref, found)
+    _cloud_record(rec_path, rec, state="read")
+    counts, pbad, ok, derr = _cloud_settle_and_delete(code, ctx["repo"], rec_path, rec, ref, found, seen_at)
+    if not ok:
+        out["notices"].append(f"could not delete {ref}: {derr}")
+    if pbad:
+        out["notices"].append("carve-out (2) is now off for this repo: " + "; ".join(pbad))
+    # the shard ran exactly its own files: a mistyped instruction surfaces here
+    ran = res.get("file_s")
+    if res.get("status") == "ok" and isinstance(ran, dict):
+        missing = sorted(set(files) - set(ran))
+        if missing:
+            res = dict(res, status="error", reason=f"{len(missing)} of the shard's files did not run: "
+                                                   + ", ".join(missing[:10]))
+    out["result"] = dict(res, postcheck=counts, postcheck_failed=pbad, ref_deleted=ok)
+    return out
 
 
 def cmd_test_cloud(args):
+    import threading
     t_start = time.time()
     root = require_root()
     code = code_root(root)
@@ -19066,6 +19219,8 @@ def cmd_test_cloud(args):
     tid = args.ticket
     if not (isinstance(tid, str) and TRACK_ID_RE.match(tid)):
         _cloud_die("the ticket id must look like T-NNN", 2)
+    if args.shards < 1:
+        _cloud_die("--shards must be 1 or more", 2)
     repo = cloud_github_repo(code)
     if not repo:
         _cloud_die("the code repo's origin is not a GitHub repository", 2)
@@ -19087,6 +19242,8 @@ def cmd_test_cloud(args):
     if mac_files and head != sha:
         _cloud_die(f"the mac-only files run in {checkout}, which is at {head[:8]}, not {sha[:8]} — "
                    f"check out the tested commit there or pass --checkout", 2)
+    if cloud_files and not (shutil.which("tmux") and shutil.which("claude")):
+        _cloud_die("`tmux` and `claude` must be on PATH to create a cloud session", 4)
     state = _cloud_state_dir(code)
     run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{tid}"
     run_dir = state / "work" / run_id
@@ -19102,87 +19259,72 @@ def cmd_test_cloud(args):
         for b in bad:
             print(f"prdt test cloud: pre-run check failed — {b}", file=sys.stderr)
         sys.exit(3)
-    # mac-only half starts first and runs while the cloud session is created and runs
-    local = None
-    if mac_files and cloud_files is not None:
+    durations = read_json(state / "durations.json")
+    shards = cloud_shard_files(cloud_files, args.shards, durations if isinstance(durations, dict) else {},
+                               cloud_test_sizes(code, sha))
+    _cloud_record(rec_path, rec, state="started", shards=len(shards))
+    # the mac-only half starts first and runs while the cloud sessions are created and run;
+    # a waiter thread notes when it really ends (mac_s is that half's own duration)
+    local, mac_end = None, {}
+    if mac_files:
         mac_json = run_dir / "mac-vitest.json"
         log = open(run_dir / "mac-test.log", "w")
-        local = (subprocess.Popen(["./node_modules/.bin/vitest", "run", "--reporter=default", "--reporter=json",
-                                   f"--outputFile.json={mac_json}", *mac_files],
-                                  cwd=str(checkout / CLOUD_TEST_ROOT), stdout=log, stderr=subprocess.STDOUT),
-                 time.time(), mac_json, log)
+        proc = subprocess.Popen(["./node_modules/.bin/vitest", "run", "--reporter=default", "--reporter=json",
+                                 f"--outputFile.json={mac_json}", *mac_files],
+                                cwd=str(checkout / CLOUD_TEST_ROOT), stdout=log, stderr=subprocess.STDOUT)
+        mac_t0 = time.time()
+
+        def _mac_wait():
+            proc.wait()
+            mac_end["t"] = time.time()
+        waiter = threading.Thread(target=_mac_wait, daemon=True)
+        waiter.start()
+        local = (proc, mac_t0, mac_json, log, waiter)
+    ctx = {"code": code, "repo": repo, "tid": tid, "sha": sha, "runner_sha": runner_sha, "args": args,
+           "state": state, "run_id": run_id, "run_dir": run_dir, "t_start": t_start}
+    shard_out = [None] * len(shards)
+
+    def _shard(k):
+        try:
+            shard_out[k] = _cloud_run_shard(ctx, k + 1, len(shards), shards[k])
+        except Exception as e:  # noqa: BLE001 — one shard's crash is that shard's error result
+            shard_out[k] = {"shard": f"{k + 1}/{len(shards)}", "session": None, "files": shards[k],
+                            "timing": {}, "notices": [],
+                            "result": {"status": "error", "reason": f"{type(e).__name__}: {e}"[:300]}}
+    threads = [threading.Thread(target=_shard, args=(k,), daemon=True) for k in range(len(shards))]
+    for t in threads:
+        t.start()
+        time.sleep(1)  # staggered: each `claude --cloud` bundles the repo
+    for t in threads:
+        t.join()
     timing = {}
-    cloud = None
-    session = None
-    if cloud_files:
-        t0 = time.time()
-        session, seen = _cloud_create_session(code, run_dir, f"prdt cloud test {tid} {sha[:8]}", args.create_timeout)
-        notices += seen
-        timing["create_s"] = round(time.time() - t0, 1)
-        if not session or not CLOUD_SESSION_RE.match(session):
-            _cloud_record(rec_path, rec, state="create-failed")
-            cloud = {"status": "error", "reason": f"no cloud session id on the screen (see {run_dir / 'create-pane.txt'})"}
-        else:
-            ref = f"refs/heads/ci/{tid}/{session}"
-            if _tgit(["check-ref-format", ref], code).returncode != 0:
-                _cloud_die(f"{ref} fails git check-ref-format", 4)
-            _cloud_record(rec_path, rec, state="instructed", session=session, ref=ref)
-            excludes = [] if args.files else [f for f in mac_files]
-            instr = _cloud_instruction(tid, sha, session, runner_sha, cloud_files if args.files else [], excludes)
-            s = subprocess.run([shutil.which("claude"), "-p", "--cloud", session, instr], cwd=str(code),
-                               capture_output=True, text=True, timeout=180)
-            if s.returncode != 0:
-                cloud = {"status": "error", "reason": f"could not send the run instruction (exit {s.returncode})"}
-            else:
-                t1 = time.time()
-                deadline = t1 + args.timeout
-                found, err = "", None
-                while time.time() < deadline:
-                    found, err = _cloud_ls_remote(code, ref)
-                    if found:
-                        break
-                    time.sleep(15)
-                timing["cloud_wait_s"] = round(time.time() - t1, 1)
-                if not found:
-                    _cloud_record(rec_path, rec, state="timeout")
-                    cloud = {"status": "error", "reason": f"no result ref after {args.timeout}s"
-                                                          + (f" ({err})" if err else "")}
-                else:
-                    seen_at = time.time()
-                    _cloud_record(rec_path, rec, state="pushed", commit=found)
-                    f = _tgit(["fetch", "--no-tags", "--no-write-fetch-head", "origin", ref], code, timeout=120)
-                    shape = _tgit(["cat-file", "-p", found], code).stdout if f.returncode == 0 else ""
-                    entries = _tgit(["ls-tree", found], code).stdout.splitlines() if shape else []
-                    if not shape or "\nparent " in shape or len(entries) != 1 or not entries[0].endswith("\tresult.json"):
-                        cloud = {"status": "error", "reason": "the result ref is not one parentless result.json commit"}
-                    else:
-                        try:
-                            cloud = json.loads(_tgit(["show", f"{found}:result.json"], code).stdout)
-                        except ValueError:
-                            cloud = {"status": "error", "reason": "result.json is not JSON"}
-                    _cloud_record(rec_path, rec, state="read")
-                    counts, pbad, ok, derr = _cloud_settle_and_delete(code, repo, rec_path, rec, ref, found, seen_at)
-                    rec_post = {"postcheck": counts, "postcheck_failed": pbad, "ref_deleted": ok}
-                    if not ok:
-                        notices.append(f"could not delete {ref}: {derr}")
-                    if pbad:
-                        notices.append("carve-out (2) is now off for this repo: " + "; ".join(pbad))
-                    cloud = dict(cloud, **rec_post) if isinstance(cloud, dict) else {"status": "error"}
     mac = None
     if local:
-        proc, ts, mac_json, log = local
-        try:
-            proc.wait(timeout=max(60, args.timeout))
-        except subprocess.TimeoutExpired:
+        proc, mac_t0, mac_json, log, waiter = local
+        waiter.join(timeout=max(60, args.timeout))
+        if waiter.is_alive():
             proc.kill()
+            waiter.join(timeout=30)
         log.close()
-        timing["mac_s"] = round(time.time() - ts, 1)
+        timing["mac_s"] = round(mac_end.get("t", time.time()) - mac_t0, 1)
         mac = _cloud_condense(code, mac_json, str(checkout / CLOUD_TEST_ROOT) + "/")
-    timing["wall_s"] = round(time.time() - t_start, 1)
-    ct = _tgit(["show", "-s", "--format=%ct", sha], code).stdout.strip()
-    if ct.isdigit():
-        timing["commit_to_verdict_s"] = round(time.time() - int(ct), 1)
-    halves = {k: v for k, v in (("cloud", cloud), ("mac", mac)) if v is not None}
+    halves = {}
+    shard_rows = []
+    for so in shard_out:
+        tag = "cloud/s" + so["shard"].split("/")[0]
+        halves[tag] = so["result"]
+        notices += so["notices"]
+        res = so["result"]
+        shard_rows.append({"shard": so["shard"], "session": so["session"],
+                           "session_url": f"https://claude.ai/code/{so['session']}" if so["session"] else None,
+                           "files": len(so["files"]), "status": res.get("status"), "phase": res.get("phase"),
+                           "timing": dict(so["timing"], **{k: res.get(k) for k in
+                                                           ("setup_s", "install_s", "test_s", "total_s")
+                                                           if res.get(k) not in (None, "")}),
+                           "cpus": res.get("cpus")})
+    if mac is not None:
+        halves["mac"] = mac
+    _cloud_save_durations(state, halves)
     failures, counts = [], {"total": 0, "passed": 0, "failed": 0, "skipped": 0}
     status = "pass"
     for where, h in halves.items():
@@ -19196,17 +19338,24 @@ def cmd_test_cloud(args):
             status = "fail"
     if not halves:
         status = "error"
-    verdict = {"status": status, "ticket": tid, "sha": sha, "session": session,
-               "session_url": f"https://claude.ai/code/{session}" if session else None,
-               "counts": counts, "failures": failures, "timing": timing,
+    now = time.time()
+    timing["run_s"] = round(now - t_start, 1)
+    ct = _tgit(["show", "-s", "--format=%ct", sha], code).stdout.strip()
+    if ct.isdigit():
+        timing["wall_s"] = round(now - int(ct), 1)  # metric 9: tested commit → merged verdict
+    sessions = [s["session"] for s in shard_rows if s["session"]]
+    _cloud_record(rec_path, rec, state="done", status=status, sessions=sessions)
+    verdict = {"status": status, "ticket": tid, "sha": sha, "sessions": sessions,
+               "counts": counts, "failures": failures, "timing": timing, "shards": shard_rows,
                "mac_only_files": [f"{CLOUD_TEST_ROOT}/{p}" for p in mac_files],
-               "notices": notices, "halves": {k: {kk: vv for kk, vv in v.items() if kk != "failures"}
+               "notices": notices, "halves": {k: {kk: vv for kk, vv in v.items() if kk not in ("failures", "file_s")}
                                                 for k, v in halves.items()},
                "run_record": str(rec_path)}
     state_write(run_dir, run_dir / "verdict.json", json.dumps(verdict, indent=1, ensure_ascii=False) + "\n")   # T-1128
     print(json.dumps(verdict, ensure_ascii=False))
     print(f"prdt test cloud: {status} — {counts['passed']}/{counts['total']} passed, {counts['failed']} failed, "
-          f"wall {timing.get('wall_s')}s", file=sys.stderr)
+          f"{len(shards)} cloud shard(s), wall (commit → verdict) {timing.get('wall_s')}s, "
+          f"run {timing['run_s']}s", file=sys.stderr)
     sys.exit({"pass": 0, "fail": 1}.get(status, 4))
 
 
@@ -19465,9 +19614,10 @@ def main():
                    help="drop: also discard a branch with uncommitted changes or commits not on dev or main")
     p.set_defaults(fn=cmd_track)
     p = sub.add_parser("test", help="test cloud <T-NNN> [--sha SHA] [--checkout DIR] [--files F …] (T-1126): "
-                                    "run the core suite of a track commit in a Claude Code cloud session, the "
-                                    "mac-only files here in parallel, and print one merged JSON verdict; the "
-                                    "result comes back on ci/<T-NNN>/<session> (contracts §Git carve-out (2)) "
+                                    "run the core suite of a track commit in Claude Code cloud sessions (--shards, "
+                                    "in parallel), the mac-only files here at the same time, and print one merged "
+                                    "JSON verdict; each shard's result comes back on ci/<T-NNN>/<session> "
+                                    "(contracts §Git carve-out (2)) "
                                     "and is deleted once read · cloud --reenable clears a carve-out-off record "
                                     "(the user's explicit instruction only)")
     p.add_argument("action", choices=("cloud",))
@@ -19475,7 +19625,10 @@ def main():
     p.add_argument("--sha", help="the tested commit (default: HEAD of --checkout)")
     p.add_argument("--checkout", help="where the mac-only files run (default <project>/tracks/<T-NNN>, else the code checkout)")
     p.add_argument("--files", nargs="+", help="only these core test files (paths under packages/core)")
-    p.add_argument("--timeout", type=int, default=2400, help="seconds to wait for the result ref (default 2400)")
+    p.add_argument("--shards", type=int, default=4,
+                   help="cloud sessions run in parallel, each on its share of the files (default 4); "
+                        "each session's runner stays under the cloud agent's 40-min background limit")
+    p.add_argument("--timeout", type=int, default=2400, help="seconds to wait for each shard's result ref (default 2400)")
     p.add_argument("--create-timeout", type=int, default=180, help="seconds to wait for the session id (default 180)")
     p.add_argument("--reenable", action="store_true",
                    help="remove the carve-out-off record — only on the user's explicit instruction")
