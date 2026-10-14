@@ -22,7 +22,7 @@
 // of those and is correctly left alone.
 import { describe, it, expect, beforeAll } from 'vitest'
 import { generate } from '@productune/viewer/generate.mjs'
-import { META_ROOT, META_SKIP_REASON } from './meta-root'
+import { META_ROOT, META_SKIP_REASON, META_GENERATE_TIMEOUT_MS } from './meta-root'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
 
 // T-718: the real generated page is now built HERE, in-process (`generate()`
@@ -47,7 +47,7 @@ let realHtml: string
 beforeAll(async () => {
   if (metaMissingReason) return
   ;({ html: realHtml } = await generate({ repoRoot: META_ROOT! }))
-}, 30000)
+}, META_GENERATE_TIMEOUT_MS)
 
 /**
  * Every load-time external-resource reference in `html`: a `src`/`href`
