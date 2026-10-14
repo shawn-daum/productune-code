@@ -626,9 +626,15 @@ function decisionChosen(body) {
 const inlineMd = (text) => marked.parseInline(text, { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
 
 function renderOptionCards(token, parser) {
-  const cols = token.header.map((h) => OPTION_CARD.headers[h.text.replace(/\s*\(.*$/, '').trim().toLowerCase()] || null)
+  // unmapped columns keep their index as `extra` and render under their own header (T-1132)
+  // (a second column of an already-mapped kind too)
+  const cols = token.header.map((h) => OPTION_CARD.headers[h.text.replace(/\s*\(.*$/, '').trim().toLowerCase()] || 'extra')
+    .map((kind, i, all) => (all.indexOf(kind) === i ? kind : 'extra'))
   if (!cols.includes('name')) return null
-  const cards = token.rows.map((row) => {
+  // a row with every cell empty (the `tickets new` scaffold's blank rows) draws no card
+  const rows = token.rows.filter((row) => row.some((c) => c.text.trim() !== ''))
+  if (rows.length === 0) return ''
+  const cards = rows.map((row) => {
     const cell = (kind) => { const i = cols.indexOf(kind); return i < 0 ? null : row[i] }
     const nameCell = cell('name')
     const nameText = nameCell ? nameCell.text.trim() : ''
@@ -653,10 +659,11 @@ function renderOptionCards(token, parser) {
       html += `<div class="opt-ex"><div class="opt-lab">${OPTION_CARD.example}</div>${body}</div>`
     }
     let facts = ''
-    for (const kind of ['result', 'pros', 'cons', 'tradeoff']) {
-      const c = cell(kind)
+    const factCols = cols.map((kind, i) => [kind, i]).filter(([kind]) => kind === 'extra' || kind in OPTION_CARD.facts)
+    for (const [kind, i] of factCols) {
+      const c = row[i]
       if (!c || !c.text.trim()) continue
-      const [label, cls] = OPTION_CARD.facts[kind]
+      const [label, cls] = kind === 'extra' ? [parser.parseInline(token.header[i].tokens), 'x'] : OPTION_CARD.facts[kind]
       facts += `<dt${cls ? ` class="${cls}"` : ''}>${label}</dt><dd>${parser.parseInline(c.tokens)}</dd>`
     }
     if (facts) html += `<dl class="opt-facts">${facts}</dl>`
@@ -2949,10 +2956,11 @@ table.v-omitted th, table.v-artifacts th { color: var(--text-secondary); border-
 .opt-lab { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; color: var(--text-tertiary); margin-bottom: var(--space-4); }
 pre.opt-sk { margin: 0; padding: var(--space-10) var(--space-12); background: var(--bg-base); border-radius: var(--radius-4); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-primary); }
 .opt-ex-text { font-size: 13px; }
-.opt-facts { display: grid; grid-template-columns: 40px 1fr; gap: var(--space-6) var(--space-12); margin: var(--space-12) 0 0; font-size: 13px; }
+.opt-facts { display: grid; grid-template-columns: minmax(40px, max-content) 1fr; gap: var(--space-6) var(--space-12); margin: var(--space-12) 0 0; font-size: 13px; }
 .opt-facts dt { font-weight: 700; color: var(--text-tertiary); font-size: 12px; padding-top: 1px; }
 .opt-facts dt.p { color: var(--status-done); }
 .opt-facts dt.c { color: var(--status-review); }
+.opt-facts dt.x { max-width: 10em; overflow-wrap: anywhere; }
 .opt-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .opt-why { margin-top: var(--space-10); padding-top: var(--space-8); border-top: 1px dashed var(--border-inline); font-size: 12.5px; color: var(--text-secondary); }
 .opt-why b { color: var(--accent); margin-right: var(--space-6); }
