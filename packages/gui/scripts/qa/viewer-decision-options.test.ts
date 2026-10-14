@@ -82,3 +82,57 @@ describe('T-998 — decision options as cards', () => {
     expect(/\.opt-card[^{]*\{[^}]*border-left/.test(TEMPLATE_CSS)).toBe(false)
   })
 })
+
+// T-1132 — daum-ax T-093 shape: authored headers outside OPTION_CARD.headers, a 권장 column,
+// and the `tickets new` scaffold table left below with two blank rows.
+const T093 = `## options
+
+| 선택지 | 하는 일 | 예시 결과 | 얻는 것 | 비용 | 권장 |
+|---|---|---|---|---|---|
+| A 요청자에게만 | 4줄 · 버튼 켬 | 자리 기록은 요청자만 봄 | 자리가 안 퍼짐 | 문구 확정 한 번 | ✅ 자리는 개인 정보에 가까움 |
+| B 공개 | 4줄 | 모두 봄 | 그대로 | 자리가 보임 | |
+| C 문구 고침 | 고친 문구로 | | | | |
+
+| 선택지 | pros | cons | trade-off | recommend |
+|---|---|---|---|---|
+| | | | | |
+| | | | | |
+`
+
+describe('T-1132 — option cards keep authored columns, drop scaffold rows', () => {
+  it('unknown headers render every non-empty cell under the column\'s own header, in column order', () => {
+    const out = renderTicketBody(T093 + '\n## outcome\n\n')
+    const [, a, , c] = out.split('<article')
+    for (const [h, v] of [['하는 일', '4줄 · 버튼 켬'], ['예시 결과', '자리 기록은 요청자만 봄'], ['얻는 것', '자리가 안 퍼짐'], ['비용', '문구 확정 한 번']]) {
+      expect(a).toContain(`<dt class="x">${h}</dt><dd>${v}</dd>`)
+    }
+    expect(a.indexOf('하는 일')).toBeLessThan(a.indexOf('비용'))
+    expect(c).toContain('<dt class="x">하는 일</dt><dd>고친 문구로</dd>')
+    expect(c).not.toContain('예시 결과')
+  })
+
+  it('a Korean 권장 header marks the recommended card with its why, ✅ dropped', () => {
+    const out = renderTicketBody(T093 + '\n## outcome\n\n')
+    const [, a, b] = out.split('<article')
+    expect(a).toContain('opt-mk-rec')
+    expect(a).toContain('<div class="opt-why"><b>권고 이유</b>자리는 개인 정보에 가까움</div>')
+    expect(b).not.toContain('opt-mk-rec')
+    for (const h of ['추천', '권장 (이유)']) {
+      const t = `## options\n\n| 선택지 | 결과 | ${h} |\n|---|---|---|\n| A x | r | 이유 |\n`
+      expect(renderTicketBody(t)).toContain('<b>권고 이유</b>이유')
+    }
+  })
+
+  it('empty scaffold rows draw no card; an all-empty table draws nothing', () => {
+    const out = renderTicketBody(T093 + '\n## outcome\n\n')
+    expect(out.match(/<article class="opt-card/g)).toHaveLength(3)
+    expect(out).not.toContain('<h4></h4>')
+    expect(out).not.toContain('<table')
+  })
+
+  it('a To-Be 예시 column (contract shape) renders as the card\'s example', () => {
+    const t = '## options\n\n| 선택지 | To-Be 예시 | pros | cons | trade-off | recommend |\n|---|---|---|---|---|---|\n| A x | `$ prdt go` | p | c | t | |\n'
+    const out = renderTicketBody(t)
+    expect(out).toContain('<div class="opt-lab">예시</div><pre class="opt-sk">$ prdt go</pre>')
+  })
+})
