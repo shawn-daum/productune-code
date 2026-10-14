@@ -17,7 +17,15 @@
 # stopped (its whole process group) and the run pushes an error result naming
 # that phase with the last lines of its log — the one push, never a hang.
 # Defaults 180 + 600 + 1200 s keep the worst case near 33 min.
-# Progress: `PRDT_PHASE <phase> start|running|end …` lines on stdout.
+# Progress: `PRDT_PHASE <phase> start|running|end …` lines on stdout; a failed
+# phase also prints its log tail (`PRDT_PHASE <phase> log| …`), redacted.
+# stdin: every phase reads /dev/null and corepack never prompts — under `set -m`
+# a background job keeps the agent shell's open stdin, so a download prompt
+# (corepack fetching pnpm for the fresh test user) waited until the setup limit
+# (inferred from round 2, 2026-10-14: setup rc=124 at 183s; not measured).
+# A failed push prints git's own stderr, `git remote -v`, the origin host and
+# the names of credential/url/http git config keys (`PRDT_PHASE push-diag …`),
+# every line through redact() — a credential value never reaches the output.
 #
 # Usage: prdt-cloud-test.sh --ticket T-NNN --sha <40-hex> --session <id>
 #          --runner-sha <40-hex> [--shard i/N] [--file <path>]… [--exclude <path>]…
@@ -30,6 +38,14 @@ set -m  # every background phase job gets its own process group (stopped as a wh
 
 TICKET=""; SHA=""; SESSION=""; RUNNER_SHA=""; SHARD=""; FILES=(); EXCLUDES=()
 SETUP_TO=180; INSTALL_TO=600; TEST_TO=1200
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+# redact: user:token@ in URLs, GitHub/GitLab token literals, auth header values
+redact() {
+  sed -E -e 's#(://)[^/@[:space:]]*@#\1***@#g' \
+    -e 's#(gh[opusr]_|github_pat_|glpat-)[A-Za-z0-9_]+#\1***#g' \
+    -e 's#([Aa]uthorization|AUTHORIZATION)([:=][[:space:]]*).*#\1\2***#' \
+    -e 's#([Bb]earer|[Bb]asic)[[:space:]]+[A-Za-z0-9._~+/=-]+#\1 ***#g'
+}
 refuse() { echo "prdt-cloud-test: $1 — nothing pushed" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || refuse "$1 needs a value"
@@ -74,7 +90,7 @@ fail() { STATUS=error; REASON=$1; LOG=${2-}; }
 say() { echo "PRDT_PHASE $* (t=$(( $(date +%s) - T0 ))s)"; }
 as_user() {
   if [ "$(id -u)" = 0 ]; then
-    su -s /bin/bash "$TEST_USER" -c "export PATH='$PATH' HOME=\"\$(getent passwd $TEST_USER | cut -d: -f6)\"; $1"
+    su -s /bin/bash "$TEST_USER" -c "export PATH='$PATH' COREPACK_ENABLE_DOWNLOAD_PROMPT=0 HOME=\"\$(getent passwd $TEST_USER | cut -d: -f6)\"; $1"
   else
     bash -c "$1"
   fi
@@ -98,9 +114,9 @@ run_phase() {
   rm -f "$WORK/phase.pgid"
   say "$name start limit=${limit}s"
   if [ "$how" = as_user ]; then
-    as_user "echo \$\$ > '$WORK/phase.pgid'; $cmd" > "$log" 2>&1 &
+    as_user "echo \$\$ > '$WORK/phase.pgid'; $cmd" < /dev/null > "$log" 2>&1 &
   else
-    bash -c "$cmd" > "$log" 2>&1 &
+    bash -c "$cmd" < /dev/null > "$log" 2>&1 &
   fi
   pid=$!
   PHASE_RC=""
@@ -178,7 +194,10 @@ else
 fi
 
 TAIL=""
-[ -n "$LOG" ] && [ -f "$LOG" ] && TAIL=$(tail -c 1500 "$LOG")
+if [ -n "$LOG" ] && [ -f "$LOG" ]; then
+  TAIL=$(tail -c 1500 "$LOG")
+  tail -n 20 "$LOG" | redact | while IFS= read -r l; do echo "PRDT_PHASE $PHASE log| $l"; done
+fi
 [ "$STATUS" = ok ] && PHASE=""
 META=(status="$STATUS" reason="$REASON" phase="$PHASE" ticket="$TICKET" sha="$SHA" session="$SESSION"
       shard="$SHARD" runner_sha="$RUNNER_SHA" session_env="${CLAUDE_CODE_REMOTE_SESSION_ID:-}"
@@ -198,11 +217,28 @@ BLOB=$(git -C "$REPO" hash-object -w "$WORK/result.json") \
   && TREE_ID=$(printf '100644 blob %s\tresult.json\n' "$BLOB" | git -C "$REPO" mktree) \
   && COMMIT=$(git -C "$REPO" -c commit.gpgsign=false commit-tree "$TREE_ID" -m "prdt cloud test result $TICKET $SESSION") \
   || { echo "prdt-cloud-test: could not build the result commit — nothing pushed" >&2; exit 3; }
-git -C "$REPO" push --no-follow-tags --end-of-options origin "$COMMIT:$REF"
+GIT_TERMINAL_PROMPT=0 git -C "$REPO" push --no-follow-tags --end-of-options origin "$COMMIT:$REF" \
+  < /dev/null 2> "$WORK/push.err"
 RC=$?
 if [ $RC = 0 ]; then
   echo "PRDT_CLOUD_RESULT pushed $REF status=$STATUS"
 else
-  echo "PRDT_CLOUD_RESULT push-failed rc=$RC $REF status=$STATUS"
+  URL=$(git -C "$REPO" remote get-url origin 2>/dev/null)
+  if [ -z "$URL" ]; then HOST=none
+  elif [[ $URL == *://* ]]; then HOST=${URL#*://}; HOST=${HOST%%/*}; HOST=${HOST##*@}; HOST=${HOST%%:*}
+  elif [[ $URL =~ ^([^@/]+@)?([^:/]+): ]]; then HOST=${BASH_REMATCH[2]}
+  else HOST=local-path
+  fi
+  HOST=$(printf '%s' "$HOST" | redact)
+  echo "PRDT_PHASE push-diag origin_host=${HOST:-?}"
+  REMOTES=$(git -C "$REPO" remote -v 2>/dev/null | redact)
+  [ -n "$REMOTES" ] || REMOTES="(none)"
+  printf '%s\n' "$REMOTES" | while IFS= read -r l; do echo "PRDT_PHASE push-diag remote $l"; done
+  KEYS=$(git -C "$REPO" config --name-only --get-regexp '^(credential|url|http|remote\.origin)\.' 2>/dev/null \
+    | redact | sort -u | tr '\n' ' ')
+  echo "PRDT_PHASE push-diag git_config_keys=${KEYS:-(none)}"
+  redact < "$WORK/push.err" | tail -n 15 | while IFS= read -r l; do echo "PRDT_PHASE push-diag git| $l"; done
+  FIRST=$(redact < "$WORK/push.err" | grep -m1 -E '^(fatal|error|remote):' || redact < "$WORK/push.err" | head -n 1)
+  echo "PRDT_CLOUD_RESULT push-failed rc=$RC $REF status=$STATUS origin_host=${HOST:-?} git=${FIRST:-(no stderr)}"
 fi
 exit $RC
