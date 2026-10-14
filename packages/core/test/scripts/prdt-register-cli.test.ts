@@ -62,18 +62,18 @@ function prdt(...args: string[]) {
 const regFile = () => path.join(prdtHome, 'register')
 
 describe.skipIf(!READY)('prdt register --list — the domain comes from the resolver', () => {
-  test('four keys, domains, defaults, body presence (json)', () => {
+  test('five keys, domains, defaults, body presence (json)', () => {
     const r = prdt('register', '--list', '--json')
     expect(r.status, r.err).toBe(0)
     const dom = JSON.parse(r.out)
     expect(dom.file).toBe(regFile())
-    expect(dom.keys.map((k: any) => k.key)).toEqual(['audience', 'form', 'structure', 'address'])
+    expect(dom.keys.map((k: any) => k.key)).toEqual(['audience', 'form', 'structure', 'visual', 'address'])
     expect(dom.keys[1]).toMatchObject({ domain: ['prose', 'outline'], default: 'prose', bodies: { outline: true, prose: false } })
   })
   test('human table names every key', () => {
     const r = prdt('register', '--list')
     expect(r.status).toBe(0)
-    for (const k of ['audience', 'form', 'structure', 'address']) expect(r.out).toMatch(new RegExp(`^${k}\\b`, 'm'))
+    for (const k of ['audience', 'form', 'structure', 'visual', 'address']) expect(r.out).toMatch(new RegExp(`^${k}\\b`, 'm'))
   })
 })
 
@@ -83,7 +83,7 @@ describe.skipIf(!READY)('prdt register set / unset / show', () => {
     expect(prdt('register', 'set', 'address', '션님').status).toBe(0)
     expect(fs.readFileSync(regFile(), 'utf8')).toBe('form=outline\naddress=션님\n')
     const show = JSON.parse(prdt('register', 'show', '--json').out)
-    expect(show.values).toEqual({ audience: 'planner', form: 'outline', structure: 'default', address: '션님' })
+    expect(show.values).toEqual({ audience: 'planner', form: 'outline', structure: 'default', visual: 'judge', address: '션님' })
     expect(show.binding).toBe('form=outline · address="션님"')
     expect(show.warnings).toEqual([])
   })

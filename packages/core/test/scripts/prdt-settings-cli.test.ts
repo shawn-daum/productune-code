@@ -47,7 +47,7 @@ function prdt(lang: 'ko' | 'en', ...args: string[]) {
 const file = (name: string) => path.join(prdtHome, name)
 const read = (name: string) => (fs.existsSync(file(name)) ? fs.readFileSync(file(name), 'utf8') : null)
 const CAP_KEYS = ['load_ratio', 'mem_free_pct_min', 'inflight_max', 'suites_max', 'vms_max', 'inflight_sonnet_max', 'inflight_opus_max', 'inflight_haiku_max', 'inflight_fable_max', 'inflight_default_max'].map((k) => `dispatch.${k}`)
-const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang', ...CAP_KEYS]
+const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.visual', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang', ...CAP_KEYS]
 
 describe('message catalog', () => {
   test('ko and en carry the same keys, none empty', () => {
@@ -140,6 +140,25 @@ describe.skipIf(!READY)('prdt settings — set / unset', () => {
     expect(read('register')).toBe('# mine\naudience=developer\nform=outline\n')
     expect(prdt('en', 'settings', 'unset', 'register.audience').status).toBe(0)
     expect(read('register')).toBe('# mine\nform=outline\n')
+  })
+  test('register.visual (T-1136): default judge shown; set → visual=<value>; unset → judge; bad value refused', () => {
+    const val = () => JSON.parse(prdt('en', 'settings', '--json').out).find((e: any) => e.key === 'register.visual').value
+    expect(val()).toBe('judge')
+    expect(prdt('ko', 'settings').out).toMatch(/^register\.visual\s+judge\s+선택지 첫 제시 형식$/m)
+    const r = prdt('en', 'settings', 'set', 'register.visual', 'always-html')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out.trim()).toBe('register.visual is now always-html.')
+    expect(read('register')).toBe('visual=always-html\n')
+    expect(prdt('en', 'settings', 'set', 'register.visual', 'table-only').status).toBe(0)
+    expect(read('register')).toBe('visual=table-only\n')
+    expect(val()).toBe('table-only')
+    const bad = prdt('en', 'settings', 'set', 'register.visual', 'html')
+    expect(bad.status).toBe(1)
+    expect(bad.err).toContain('judge, always-html or table-only')
+    expect(read('register')).toBe('visual=table-only\n')
+    expect(prdt('en', 'settings', 'unset', 'register.visual').status).toBe(0)
+    expect(read('register')).toBe('')
+    expect(val()).toBe('judge')
   })
   test('bad value: refused with the allowed set, file untouched (ko screen line)', () => {
     fs.writeFileSync(file('auto-open'), 'off\n')
