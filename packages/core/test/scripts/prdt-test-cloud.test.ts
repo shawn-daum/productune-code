@@ -258,6 +258,31 @@ describe('shards: near-equal expected time per cloud session', () => {
   })
 })
 
+describe('session creation reads the id even when `claude --cloud` exits right after printing it', () => {
+  // claude 2.1.299 (observed 2026-10-14): `claude --cloud <desc>` prints the
+  // session URL and exits 0 at once; the pane must outlive the process.
+  const hasTmux = spawnSync('sh', ['-c', 'command -v tmux']).status === 0
+  const create = (body: string) => {
+    const dir = tmp('create')
+    const bin = path.join(dir, 'bin')
+    fs.mkdirSync(bin)
+    fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
+    fs.mkdirSync(path.join(dir, 'run'))
+    const t0 = Date.now()
+    const v = py(`print(json.dumps(m._cloud_create_session(m.Path(${JSON.stringify(dir)}), m.Path(${JSON.stringify(path.join(dir, 'run'))}), "d", 20, "s1")))`,
+      dir, { PATH: `${bin}:${process.env.PATH}` })
+    return { v, s: (Date.now() - t0) / 1000, pane: fs.readFileSync(path.join(dir, 'run', 'create-pane-s1.txt'), 'utf-8') }
+  }
+  test.skipIf(!hasTmux)('exits at once after printing → id read; exits without one → returns before the deadline', () => {
+    const a = create('echo "Created cloud session: d"; echo "View: https://claude.ai/code/session_01AbCdEf?from=cli&m=0"; exit 0')
+    expect(a.v[0]).toBe('session_01AbCdEf')
+    const b = create('echo "boom: not logged in" >&2; exit 3')
+    expect(b.v[0]).toBeNull()
+    expect(b.pane).toMatch(/boom: not logged in/)
+    expect(b.s).toBeLessThan(15)
+  }, 60_000)
+})
+
 const VITEST_FIXTURE = {
   numTotalTests: 4, numPassedTests: 2, numFailedTests: 1, numPendingTests: 1, numTodoTests: 0,
   testResults: [
@@ -353,6 +378,36 @@ describe('runner push — one parentless result.json commit to ci/<T-NNN>/<sessi
     expect(refs()).toBe(before)
   })
 
+  test('a failed push prints git\'s own stderr, the remote and the origin host — credentials redacted', () => {
+    const real = git(session, 'remote', 'get-url', 'origin')
+    try {
+      // a credential-bearing URL that cannot be reached: git fails the push with rc 128
+      git(session, 'remote', 'set-url', 'origin', 'https://x-access-token:ghs_SeCrEt123@127.0.0.1:9/o/r.git')
+      git(session, 'config', 'url.https://u:glpat-SeCrEt456@127.0.0.1:9/.insteadOf', 'https://mirror.invalid/')
+      const r = run('cse_push_diag')
+      expect(r.status).toBe(128)
+      const out = r.stdout + r.stderr
+      expect(out).not.toMatch(/SeCrEt/)
+      expect(r.stdout).toMatch(/^PRDT_PHASE push-diag origin_host=127\.0\.0\.1$/m)
+      expect(r.stdout).toMatch(/^PRDT_PHASE push-diag remote origin\thttps:\/\/\*\*\*@127\.0\.0\.1:9\/o\/r\.git \(push\)$/m)
+      expect(r.stdout).toMatch(/^PRDT_PHASE push-diag git\| fatal: .*127\.0\.0\.1/m)
+      expect(r.stdout).toMatch(/^PRDT_PHASE push-diag git_config_keys=.*url\.https:\/\/\*\*\*@127\.0\.0\.1:9\/\.insteadof/m)
+      const last = r.stdout.trim().split('\n').pop()!
+      expect(last).toMatch(/^PRDT_CLOUD_RESULT push-failed rc=128 refs\/heads\/ci\/T-1126\/cse_push_diag status=ok origin_host=127\.0\.0\.1 git=fatal: /)
+      // no origin at all (a bundle session may carry none) → named, not a bare rc
+      git(session, 'remote', 'remove', 'origin')
+      const n = run('cse_push_noorigin')
+      expect(n.status).not.toBe(0)
+      expect(n.stdout).toMatch(/^PRDT_PHASE push-diag origin_host=none$/m)
+      expect(n.stdout).toMatch(/^PRDT_PHASE push-diag remote \(none\)$/m)
+      expect(n.stdout.trim().split('\n').pop()).toMatch(/origin_host=none git=fatal: .*origin/)
+    } finally {
+      spawnSync('git', ['-C', session, 'remote', 'remove', 'origin'])
+      spawnSync('git', ['-C', session, 'config', '--remove-section', 'url.https://u:glpat-SeCrEt456@127.0.0.1:9/'])
+      git(session, 'remote', 'add', 'origin', real)
+    }
+  })
+
   test('a tested commit missing in the session repo still reports, as an error result', () => {
     const before = refs()
     const r = spawnSync('bash', [path.join(session, 'packages/core/scripts/prdt-cloud-test.sh'), '--ticket', 'T-1126',
@@ -400,7 +455,10 @@ printf '{"numTotalTests":1,"numPassedTests":1,"numFailedTests":0,"testResults":[
     put('packages/core/scripts/prdt-cloud-test.sh', fs.readFileSync(RUNNER, 'utf-8'))
     put('packages/core/scripts/prdt-cloud-condense.mjs', fs.readFileSync(CONDENSE, 'utf-8'))
     // a stand-in setup: the real one writes the user's global git config
-    put('.claude/cloud-setup.sh', 'echo "setup for $1"\n[ -n "${FAKE_SETUP_HANG-}" ] && sleep 120\nexit 0\n')
+    // FAKE_SETUP_STDIN: a step that reads stdin (a corepack download prompt) must see EOF at once
+    put('.claude/cloud-setup.sh', 'echo "setup for $1"\n[ -n "${FAKE_SETUP_HANG-}" ] && sleep 120\n'
+      + 'if [ -n "${FAKE_SETUP_STDIN-}" ]; then read -r -t 4 x; rc=$?; echo "stdin_rc=$rc corepack_prompt=${COREPACK_ENABLE_DOWNLOAD_PROMPT-unset}"; [ $rc -gt 128 ] && exit 7; [ "${COREPACK_ENABLE_DOWNLOAD_PROMPT-}" = 0 ] || exit 8; fi\n'
+      + 'exit 0\n')
     put('packages/core/node_modules/.bin/vitest', FAKE_VITEST, 0o755)
     put('packages/core/test/a.test.ts', 'test("a", () => {})\n')
     git(session, 'add', '-f', '.')
@@ -448,7 +506,20 @@ printf '{"numTotalTests":1,"numPassedTests":1,"numFailedTests":0,"testResults":[
     expect(r.status, r.stderr).toBe(0)
     expect(r.stdout).not.toContain('PRDT_PHASE install start')
     expect(result('cse_setup_hang')).toMatchObject({ status: 'error', phase: 'setup' })
+    // the page shows the setup log, not only rc=124
+    expect(r.stdout).toMatch(/^PRDT_PHASE setup log\| setup for prdt-test$/m)
   })
+
+  test('a phase never waits on an inherited stdin, and corepack never prompts', () => {
+    // the runner's own stdin is a pipe held open (as in the cloud agent's shell); no input arrives
+    const argv = [path.join(session, 'packages/core/scripts/prdt-cloud-test.sh'), '--ticket', 'T-1126', '--sha', sha,
+      '--session', 'cse_stdin', '--runner-sha', sha, '--shard', '2/3', '--file', 'test/a.test.ts', '--setup-timeout', '30']
+    const r = spawnSync('bash', ['-c', `sleep 8 | bash ${argv.map((a) => `'${a}'`).join(' ')}`],
+      { cwd: session, env: { ...GIT_ENV, PATH: `${bin}:${process.env.PATH}`, FAKE_SETUP_STDIN: '1' }, encoding: 'utf-8' })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.stdout).toMatch(/^PRDT_PHASE setup end rc=0 [0-3]s/m)
+    expect(result('cse_stdin')).toMatchObject({ status: 'ok' })
+  }, 30_000)
 
   test.each([['0'], ['12x'], ['999999']])('phase limit %j pushes nothing', (bad) => {
     const before = git(origin, 'for-each-ref', '--format=%(refname)')
