@@ -4,7 +4,7 @@
 // detail entry" (the shell's list → detail proof, ticket store).
 import { describe, it, expect, beforeAll } from 'vitest'
 import { generate } from '@productune/viewer/generate.mjs'
-import { META_ROOT, META_SKIP_REASON } from './meta-root'
+import { META_ROOT, META_SKIP_REASON, META_GENERATE_TIMEOUT_MS } from './meta-root'
 import { renderPage, resolveDocLink } from '@productune/viewer/lib/render.mjs'
 import { collectPrdOpenItems } from '@productune/viewer/lib/collect.mjs'
 
@@ -22,7 +22,7 @@ let realHtml: string
 beforeAll(async () => {
   if (metaMissingReason) return
   ;({ html: realHtml } = await generate({ repoRoot: META_ROOT! }))
-}, 30000)
+}, META_GENERATE_TIMEOUT_MS)
 
 // T-795: real `#### <key> — <label>` headings, matching a fixture ticket's
 // own `prd_item: v1.10#viewer` — proves row labels come from THIS prose,
