@@ -143,7 +143,7 @@ const ALLOW: Record<string, number> = {
   'core/scripts/hooks/prdt-post-dispatch.sh': 8,
   'core/scripts/hooks/prdt-question-check.sh': 2,
   'core/scripts/hooks/prdt-return-check.sh': 7,
-  'core/scripts/hooks/prdt-secret-guard.sh': 2,
+  'core/scripts/hooks/prdt-secret-guard.sh': 3, // T-1109: +1 = embedded Perl `length($n) > length($b)` in is_store_path — a comparison the SH_REDIR scan reads as a redirect, no write
   'core/scripts/hooks/prdt-session-start.sh': 4,
   'core/scripts/hooks/prdt-user-prompt.sh': 7, // T-1081: +1 = cap_jsonl's trim of $PRDT_HOME/run/form-outline-counts.jsonl (home, never .prdt/)
   'core/scripts/hooks/prdt-worktree-guard.sh': 1,
