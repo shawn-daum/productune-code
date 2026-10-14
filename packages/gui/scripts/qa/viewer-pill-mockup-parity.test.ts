@@ -20,13 +20,20 @@
 // per `:root` theme, so both sides are reduced to the EFFECTIVE declarations per
 // theme (base, then the theme's own overrides) and compared for light and dark.
 // Meta root: META_ROOT (tracks/T-NNN worktrees resolve to their parent).
+// T-1128: the As-Is path goes through the viewer's docs-layout seam
+// (resolveDocsRef) — docs/<product>/artifacts/… in the product-first layout,
+// unchanged docs/artifacts/… in the legacy one.
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { TEMPLATE_CSS } from '@productune/viewer/lib/render.mjs'
+import { resolveDocsRef } from '@productune/viewer/lib/docs-layout.mjs'
 import { META_ROOT, META_SKIP_REASON } from './meta-root'
 
-const MOCKUP_PATH = META_ROOT ? path.join(META_ROOT, 'docs/artifacts/v1.12/define-screen-set.html') : ''
+const MOCKUP_REL = 'docs/artifacts/v1.12/define-screen-set.html'
+const mockupPath = (root: string): string => path.join(root, resolveDocsRef(root, MOCKUP_REL))
+const MOCKUP_PATH = META_ROOT ? mockupPath(META_ROOT) : ''
 const metaMissingReason = META_SKIP_REASON
 
 // The pill classes the ticket names explicitly.
@@ -122,4 +129,33 @@ describe('viewer pills — render.mjs TEMPLATE_CSS matches the approved v1.12 sc
       }
     },
   )
+})
+
+// T-1128: the mockup path follows the meta root's docs layout — product-first
+// (docs/_shared/ present) and legacy — without a second hard-coded path.
+describe('viewer pills — mockup path follows the docs layout (T-1128)', () => {
+  const mkRoot = (product: boolean): string => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pill-mockup-layout-'))
+    const rel = product ? 'docs/demo/artifacts/v1.12' : 'docs/artifacts/v1.12'
+    fs.mkdirSync(path.join(root, rel), { recursive: true })
+    if (product) {
+      fs.mkdirSync(path.join(root, 'docs/_shared'), { recursive: true })
+      fs.mkdirSync(path.join(root, 'docs/demo/prd'), { recursive: true })
+    }
+    fs.writeFileSync(path.join(root, rel, 'define-screen-set.html'), '<style>.pill-x{}</style>')
+    return root
+  }
+
+  it.each([
+    ['product-first', 'docs/demo/artifacts/v1.12/define-screen-set.html', true],
+    ['legacy', 'docs/artifacts/v1.12/define-screen-set.html', false],
+  ] as const)('%s layout → %s', (_name, expected, product) => {
+    const root = mkRoot(product)
+    try {
+      expect(mockupPath(root)).toBe(path.join(root, expected))
+      expect(fs.existsSync(mockupPath(root))).toBe(true)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
 })

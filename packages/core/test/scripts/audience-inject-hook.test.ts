@@ -97,6 +97,7 @@ describe('default machine — no register file — behaves as before T-586', () 
     const ctx = additionalContextOf(runHook(AUDIENCE_HOOK, makePrdtHome(), 'prdt-po'))
     expect(ctx).toContain('[prdt register — PO conversational register]')
     expect(ctx).toContain('audience=planner · form=prose · structure=default · address=none')
+    expect(ctx).not.toContain('visual=')
     expect(ctx).toContain(PLANNER_MARKER)
     expect(ctx).not.toContain(OUTLINE_MARKER)
     expect(ctx).not.toContain(TABLES_MARKER)
@@ -130,17 +131,18 @@ describe('the resolver is the single source of truth for what is legal', () => {
   test.skipIf(!hasJq())('--list prints the four keys, their domains, defaults and body presence', () => {
     const list = JSON.parse(mode(makePrdtHome(), '--list'))
     const byKey = Object.fromEntries(list.keys.map((k: any) => [k.key, k]))
-    expect(Object.keys(byKey)).toEqual(['audience', 'form', 'structure', 'address'])
+    expect(Object.keys(byKey)).toEqual(['audience', 'form', 'structure', 'visual', 'address'])
     expect(byKey.audience).toMatchObject({ domain: ['planner', 'developer'], default: 'planner', bodies: { planner: true, developer: false } })
     expect(byKey.form).toMatchObject({ domain: ['prose', 'outline'], default: 'prose', bodies: { prose: false, outline: true } })
     expect(byKey.structure).toMatchObject({ domain: ['default', 'planner-tables'], default: 'default', bodies: { default: false, 'planner-tables': true } })
+    expect(byKey.visual).toMatchObject({ domain: ['judge', 'always-html', 'table-only'], default: 'judge', bodies: { judge: false, 'always-html': false, 'table-only': false } })
     expect(byKey.address).toMatchObject({ kind: 'text', max_bytes: 32, default: null })
   })
 
   test.skipIf(!hasJq())('an out-of-domain value resolves to the default and is named in --resolve, never in the block', () => {
     const home = makePrdtHome({ register: 'form=fancy\naudience=expert\n' })
     const r = JSON.parse(mode(home, '--resolve'))
-    expect(r.values).toEqual({ audience: 'planner', form: 'prose', structure: 'default', address: null })
+    expect(r.values).toEqual({ audience: 'planner', form: 'prose', structure: 'default', visual: 'judge', address: null })
     expect(r.warnings).toHaveLength(2)
     expect(r.warnings[0]).toContain('L1: form= is outside its domain (prose|outline)')
     const ctx = additionalContextOf(runHook(AUDIENCE_HOOK, home, 'prdt-po'))
@@ -249,6 +251,40 @@ describe('the operator register — every key in force (this machine after migra
     const ctx = additionalContextOf(runHook(AUDIENCE_HOOK, home, 'prdt-po'))
     expect(ctx).toContain(PLANNER_MARKER)
     expect(ctx).not.toContain(OUTLINE_MARKER)
+  })
+})
+
+describe('visual (T-1136) — judge | always-html | table-only, default judge, no body file', () => {
+  test.skipIf(!hasJq())('absent → judge: resolved, but absent from the block and from --binding', () => {
+    const home = makePrdtHome()
+    expect(JSON.parse(mode(home, '--resolve')).values.visual).toBe('judge')
+    expect(JSON.parse(mode(home, '--resolve')).defaults.visual).toBe('judge')
+    const ctx = additionalContextOf(runHook(AUDIENCE_HOOK, home, 'prdt-po'))
+    expect(ctx).toContain('structure=default · address=none')
+    expect(ctx).not.toContain('visual=')
+    expect(mode(home, '--binding')).toBe('')
+  })
+  for (const v of ['always-html', 'table-only'] as const) {
+    test.skipIf(!hasJq())(`visual=${v} → resolved, rendered in the block, bound per turn`, () => {
+      const home = makePrdtHome({ register: `visual=${v}\n` })
+      expect(JSON.parse(mode(home, '--resolve')).values.visual).toBe(v)
+      expect(additionalContextOf(runHook(AUDIENCE_HOOK, home, 'prdt-po'))).toContain(`structure=default · visual=${v} · address=none`)
+      // the planner body (audience default) is in force, so the line ends at governs
+      assertBindingLineShape(mode(home, '--binding').trimEnd(), { keys: `visual=${v}`, governs: 'user-chat', bodyArrived: true })
+    })
+  }
+  test.skipIf(!hasJq())('out-of-domain → judge, warned in --resolve, never in the block or the binding line', () => {
+    const home = makePrdtHome({ register: 'visual=html\n' })
+    const r = JSON.parse(mode(home, '--resolve'))
+    expect(r.values.visual).toBe('judge')
+    expect(r.warnings).toEqual(['L1: visual= is outside its domain (judge|always-html|table-only) — resolved to the default `judge`'])
+    const ctx = additionalContextOf(runHook(AUDIENCE_HOOK, home, 'prdt-po'))
+    expect(ctx).not.toContain('visual=')
+    expect(ctx).toContain('1 line(s) of the register file were ignored')
+    expect(mode(home, '--binding')).toBe('')
+  })
+  test('no register body file exists for visual', () => {
+    expect(fs.readdirSync(REGISTER_DIR).filter((f) => f.startsWith('visual-'))).toEqual([])
   })
 })
 

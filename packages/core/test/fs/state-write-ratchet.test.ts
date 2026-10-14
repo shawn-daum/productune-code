@@ -125,6 +125,8 @@ const ALLOW: Record<string, number> = {
   'core/scripts/prdt::_machine_env_store': 1, // T-1109: ~/.prdt/env/.env (machine scope, 0600) — outside any project's .prdt/
   'core/scripts/prdt::_env_write_all': 1, // T-1119: os.write of masked child output to our stdout/stderr fd — no file
   'core/scripts/prdt::_env_run_masked': 1, // T-1119: os.write of relayed terminal input to the child's pty master — no file
+  // a log file opened as the child's stdout fd (Popen), not a text write
+  'core/scripts/prdt::cmd_test_cloud': 1,
   // lock files / exclusive creates with dir_fd + O_NOFOLLOW by design (index.db create, track and resource locks) and /dev/null opens
   'core/scripts/prdt::_index_db_prepare': 1,
   'core/scripts/prdt::_track_lock': 2,
