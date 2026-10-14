@@ -18685,6 +18685,7 @@ CLOUD_SESSION_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 CLOUD_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 CLOUD_FILE_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._/-]*$")
 CLOUD_SESSION_URL_RE = re.compile(r"claude\.ai/code/((?:session|cse)_[A-Za-z0-9]+)")
+CLOUD_CREATE_EXIT_MARK = "PRDT_CLOUD_CREATE_EXIT="
 CLOUD_NOTICE_RE = re.compile(r"uncommitted|untracked|not (?:be )?included|exclud", re.I)
 CLOUD_GLOB_SPECIAL = "*?+[!"
 
@@ -18909,14 +18910,14 @@ def cloud_postcheck(repo, commit):
 def _cloud_mark_off(code, reason):
     d = _cloud_state_dir(code)
     d.mkdir(parents=True, exist_ok=True)
-    (d / "carve-out-off.json").write_text(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                                                      "reason": reason}) + "\n")
+    state_write(d, d / "carve-out-off.json", json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                                         "reason": reason}) + "\n")   # T-1128: link-refusing
 
 
 def _cloud_record(path, rec, **kw):
     rec.update(kw)
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, json.dumps(rec, indent=1) + "\n")
+    state_write(path.parent, path, json.dumps(rec, indent=1) + "\n")   # T-1128: O_EXCL temp + rename, link-refusing
 
 
 def _cloud_ls_remote(code, ref):
@@ -19079,7 +19080,10 @@ def _cloud_create_session(code, run_dir, description, timeout_s, tag="s1"):
     stop that server by the pid it reports. → (session id, notices)."""
     tmux, claude = shutil.which("tmux"), shutil.which("claude")
     sock = f"prdt-cloud-{os.getpid()}-{int(time.time())}-{tag}"
-    cmd = f"CCR_FORCE_BUNDLE=1 exec {shlex.quote(claude)} --cloud {shlex.quote(description)}"
+    # claude 2.1.299 prints the session URL and exits at once (observed 2026-10-14):
+    # the shell outlives it so the pane stays readable, and the exit marker ends the wait
+    cmd = (f"CCR_FORCE_BUNDLE=1 {shlex.quote(claude)} --cloud {shlex.quote(description)}; "
+           f"echo {CLOUD_CREATE_EXIT_MARK}$?; exec sleep {int(timeout_s) + 60}")
     r = subprocess.run([tmux, "-L", sock, "new-session", "-d", "-s", "prdt", "-x", "220", "-y", "50",
                         "-c", str(code), cmd], capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
@@ -19099,12 +19103,12 @@ def _cloud_create_session(code, run_dir, description, timeout_s, tag="s1"):
             if m:
                 session = m.group(1)
                 break
-            if subprocess.run([tmux, "-L", sock, "has-session", "-t", "prdt"],
+            if CLOUD_CREATE_EXIT_MARK in pane or subprocess.run([tmux, "-L", sock, "has-session", "-t", "prdt"],
                               capture_output=True, timeout=30).returncode != 0:
                 break
             time.sleep(2)
     finally:
-        (run_dir / f"create-pane-{tag}.txt").write_text(pane)
+        state_write(run_dir, run_dir / f"create-pane-{tag}.txt", pane)   # T-1128
         if pid.isdigit():
             with contextlib.suppress(OSError):
                 os.kill(int(pid), 15)
@@ -19127,7 +19131,8 @@ def _cloud_instruction(ticket, sha, session, runner_sha, files, excludes, shard=
             "itself within 35 minutes (usually far sooner) and always pushes its result before it exits. "
             "While it runs, read its output every 2 to 3 minutes and repeat its new `PRDT_PHASE` lines "
             "here, so this page shows its progress. Run nothing else — no other git command, no retry, "
-            "no file edit. When it exits, reply with its last output line only.\n\n" + command)
+            "no file edit. When it exits, reply with its `PRDT_PHASE` lines you have not yet repeated (the "
+            "`push-diag` and `log|` lines included), then its last output line.\n\n" + command)
 
 
 def _cloud_run_shard(ctx, i, n, files):
@@ -19346,7 +19351,7 @@ def cmd_test_cloud(args):
                "notices": notices, "halves": {k: {kk: vv for kk, vv in v.items() if kk not in ("failures", "file_s")}
                                                 for k, v in halves.items()},
                "run_record": str(rec_path)}
-    (run_dir / "verdict.json").write_text(json.dumps(verdict, indent=1, ensure_ascii=False) + "\n")
+    state_write(run_dir, run_dir / "verdict.json", json.dumps(verdict, indent=1, ensure_ascii=False) + "\n")   # T-1128
     print(json.dumps(verdict, ensure_ascii=False))
     print(f"prdt test cloud: {status} — {counts['passed']}/{counts['total']} passed, {counts['failed']} failed, "
           f"{len(shards)} cloud shard(s), wall (commit → verdict) {timing.get('wall_s')}s, "
