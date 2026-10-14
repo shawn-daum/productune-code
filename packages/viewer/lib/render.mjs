@@ -961,7 +961,8 @@ function ticketStoreInner(tickets, currentVersion) {
   })
 }
 
-function ticketGroups(tickets, currentVersion) {
+function ticketGroups(tickets, currentVersion, idle = false) {
+  // T-1108: idle changes labels only — an idle product keeps backlog + every closed bucket; its retained version is a closed bucket (no `· 현재`), backlog leads and is the default.
   const currentTickets = currentVersionTickets(tickets, currentVersion)
   const backlogTickets = tickets.included.filter((t) => t.bucket === 'backlog')
   const currentBucketKey = currentTicketBucketKey(tickets, currentVersion)
@@ -972,14 +973,21 @@ function ticketGroups(tickets, currentVersion) {
   // than the current version — T-709 결정 1), never pinned to array index 0
   // structurally. Only `backlog` (not a version at all) sits outside this
   // sort, pinned last.
-  const versionBuckets = [currentBucketKey, ...tickets.omitted.map((o) => o.bucket)].sort(compareVersionIdsDesc)
+  const versionBuckets = [...(idle && currentTickets.length === 0 ? [] : [currentBucketKey]), ...tickets.omitted.map((o) => o.bucket)].sort(compareVersionIdsDesc)
 
+  const backlogGroup = {
+    key: 'backlog',
+    label: TICKET.backlogLabel,
+    count: backlogTickets.length,
+    bodyHtml: countBadge(TICKET.backlogLabel, backlogTickets.length, TICKET.countUnit) + ticketRowsTable(backlogTickets),
+  }
   const groups = [
+    ...(idle ? [backlogGroup] : []),
     ...versionBuckets.map((bucket) => {
       if (bucket === currentBucketKey) {
         return {
           key: currentBucketKey,
-          label: `${currentVersion} · ${TICKET.currentTag}`,
+          label: idle ? currentVersion : `${currentVersion} · ${TICKET.currentTag}`,
           count: currentTickets.length,
           bodyHtml: countBadge(currentVersion, currentTickets.length, TICKET.countUnit) + ticketRowsTable(currentTickets),
         }
@@ -992,14 +1000,9 @@ function ticketGroups(tickets, currentVersion) {
         bodyHtml: countBadge(o.bucket, o.tickets.length, TICKET.countUnit) + ticketRowsTable(o.tickets),
       }
     }),
-    {
-      key: 'backlog',
-      label: TICKET.backlogLabel,
-      count: backlogTickets.length,
-      bodyHtml: countBadge(TICKET.backlogLabel, backlogTickets.length, TICKET.countUnit) + ticketRowsTable(backlogTickets),
-    },
+    ...(idle ? [] : [backlogGroup]),
   ]
-  return { groups, defaultKey: currentBucketKey }
+  return { groups, defaultKey: idle ? 'backlog' : currentBucketKey }
 }
 
 /**
@@ -1104,7 +1107,7 @@ export function pastTicketDataContent(bucket, payload) {
 
 function ticketSection(tickets, currentVersion, views = []) {
   if (views.length > 0) {
-    const groups = lineSectioned(views, (v) => ticketGroups(v.tickets, v.currentVersion))
+    const groups = lineSectioned(views, (v) => ticketGroups(v.tickets, v.currentVersion, isIdleView(v)))
     return storeSection('ticket', { innerHtml: groupedStore({ sidebarSubLabel: TICKET.sidebarLabel, crumbLabel: TICKET.sidebarLabel, groups, noGroupUnit: TICKET.countUnit, defaultKey: groups.defaultKey }) })
   }
   return storeSection('ticket', { innerHtml: ticketStoreInner(tickets, currentVersion) })
@@ -1135,8 +1138,14 @@ function lastClosedId(v) {
   return [...v.prd.closed].map((c) => c.name.replace(/\.md$/, '')).sort(compareVersionIdsDesc)[0] || ''
 }
 
+/** T-1108: the version whose artifacts · decisions an idle product still lists — the retained po-state version, else its last closed one. */
+function idleVersion(v) {
+  return v.currentVersion || lastClosedId(v)
+}
+
 function isIdleView(v) {
-  return !v.currentVersion && Boolean(v.name)
+  // T-1108: idle = the product's po-state stage, not a missing version (prdt keeps the version after close).
+  return v.stage === 'idle' && Boolean(v.name)
 }
 
 function lineHead(v) {
@@ -1951,11 +1960,10 @@ function idleNotice(head, detail) {
   return `<div class="fd-empty" style="margin:0 0 var(--space-16);font-size:12.5px;line-height:1.65;color:var(--text-secondary);background:var(--bg-surface-on);padding:var(--space-8) var(--space-12);border-radius:var(--radius-4)"><b>${escapeHtml(head)}</b> <span>${escapeHtml(detail)}</span></div>`
 }
 
-function prdGroups(prd, currentVersion, repoRootHref, tickets, line = null, name = '') {
+function prdGroups(prd, currentVersion, repoRootHref, tickets, line = null, name = '', idle = false) {
   const closedRounds = [...prd.closed].sort((a, b) =>
     compareVersionIdsDesc(a.name.replace(/\.md$/, ''), b.name.replace(/\.md$/, '')),
   )
-  const idle = !currentVersion && Boolean(name)
   const openGroup = idle
     ? { key: 'open', label: IDLE.prdSideLabel, bodyHtml: idleNotice(IDLE.prdHead(name), IDLE.prdDetail(closedRounds[0]?.name.replace(/\.md$/, ''))) }
     : { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix: line ? `prd-${line}` : 'prd', line }) }
@@ -1971,7 +1979,7 @@ function prdGroups(prd, currentVersion, repoRootHref, tickets, line = null, name
 
 function prdSection(prd, currentVersion, repoRootHref, tickets, views = []) {
   if (views.length > 0) {
-    const groups = lineSectioned(views, (v) => ({ groups: prdGroups(v.prd, v.currentVersion, repoRootHref, v.tickets, v.line, v.name) }))
+    const groups = lineSectioned(views, (v) => ({ groups: prdGroups(v.prd, v.currentVersion, repoRootHref, v.tickets, v.line, v.name, isIdleView(v)) }))
     return storeSection('prd', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups }) })
   }
   return storeSection('prd', { innerHtml: prdStoreInner(prd, currentVersion, repoRootHref, tickets) })
@@ -2581,10 +2589,10 @@ ${envHtml}${homeDependency(data, currentTickets)}
 function homeLineGroups(data, v, views, repoRootHref) {
   const ld = lineData(data, v)
   const currentTickets = currentVersionTickets(v.tickets, v.currentVersion)
-  const cur = `${v.prefix}${v.currentVersion}`
+  const idle = isIdleView(v)
+  const cur = `${v.prefix}${idle ? idleVersion(v) : v.currentVersion}`
   const currentArtifacts = lineArtifactEntries(data.artifacts, v, views).filter((e) => e.fields.bucket === cur)
   const currentDecisions = lineDecisionPages(data.wiki, v)
-  const idle = isIdleView(v)
   const idleHomeHtml = idle ? idleNotice(IDLE.homeHead(v.name), IDLE.homeDetail(v.tickets.included.filter((t) => t.bucket === 'backlog').length)) : ''
   // T-1108: an idle product has no open version, so its ticket pane lists every ticket it has (backlog + closed rounds).
   const homeTickets = idle ? [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))] : currentTickets
@@ -2601,12 +2609,13 @@ function homeLineGroups(data, v, views, repoRootHref) {
 
 /** A decision page's `version:` is `<line>/<v>` for an added line, bare for the home line (release-lines.md one-line rule). */
 function lineDecisionPages(pages, v) {
+  const version = isIdleView(v) ? idleVersion(v) : v.currentVersion
   return pages.filter((p) => {
     if (!p.rel.split('/').pop().startsWith('decision--') || !p.frontmatter.version) return false
     const raw = String(p.frontmatter.version)
     const slash = raw.indexOf('/')
     const line = slash === -1 ? null : raw.slice(0, slash)
-    return line === v.line && sameVersion(slash === -1 ? raw : raw.slice(slash + 1), v.currentVersion)
+    return line === v.line && sameVersion(slash === -1 ? raw : raw.slice(slash + 1), version)
   })
 }
 

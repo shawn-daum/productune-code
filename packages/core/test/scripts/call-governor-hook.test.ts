@@ -37,6 +37,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { spawnSync } from 'child_process'
+import { createRequire } from 'node:module'
 import { test, expect, describe } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
@@ -710,6 +711,22 @@ describe('identity past the old 8KB cliff is still read (T-518)', () => {
 
 // ── latency budget ───────────────────────────────────────────────────────────
 
+/**
+ * T-1108: the 60 ms median is a BASE, multiplied by the run's T-649 scale
+ * (scripts/vitest-timeouts.cjs — PRDT_TEST_TIMEOUT_SCALE when set, else the
+ * load-derived factor the vitest config pins for every worker). Each sample is
+ * a full Node spawn of bash, so its wall clock grows with machine load exactly
+ * like the subprocess budgets do: at load ~14 the unscaled bound failed a
+ * healthy hook at 66.59 ms. Scale is clamped to [1, 6], so the ceiling never
+ * exceeds 360 ms — a regression that makes the hot path walk the payload or
+ * fork per call costs far more than that and still fails.
+ */
+const LATENCY_BASE_MS = 60
+const latencyScale = (
+  createRequire(import.meta.url)('../../../../scripts/vitest-timeouts.cjs') as { scale(): { value: number } }
+).scale().value
+const LATENCY_BUDGET_MS = Math.round(LATENCY_BASE_MS * latencyScale)
+
 describe('latency', () => {
   test('the hot path stays under the T-491 budget', () => {
     const home = tmp('prdt-t491-home-')
@@ -723,10 +740,10 @@ describe('latency', () => {
       samples.push(Number(process.hrtime.bigint() - t0) / 1e6)
     }
     samples.sort((a, b) => a - b)
-    // Measured through Node's spawn, so this asserts a CEILING generous enough
-    // not to flake on a loaded CI box; the real numbers are in the ticket
-    // Outcome (hyperfine-style loop, reported per T-491).
-    expect(samples[Math.floor(samples.length / 2)]).toBeLessThan(60)
+    // Measured through Node's spawn, so this asserts a load-scaled CEILING
+    // (LATENCY_BUDGET_MS above); the real numbers are in the ticket Outcome
+    // (hyperfine-style loop, reported per T-491).
+    expect(samples[Math.floor(samples.length / 2)]).toBeLessThan(LATENCY_BUDGET_MS)
   })
 
   test('a 20KB tool_input is not walked — the scan stops at the tool payload', () => {
@@ -745,7 +762,7 @@ describe('latency', () => {
       samples.push(Number(process.hrtime.bigint() - t0) / 1e6)
     }
     samples.sort((a, b) => a - b)
-    expect(samples[Math.floor(samples.length / 2)]).toBeLessThan(60)
+    expect(samples[Math.floor(samples.length / 2)]).toBeLessThan(LATENCY_BUDGET_MS)
   })
 })
 
