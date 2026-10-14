@@ -19549,7 +19549,7 @@ def main():
     p.add_argument("--archive", action="store_true", help="CLAUDE.md를 wiki 대신 docs/archive로 이관 (죽은 내용)")
     p.set_defaults(fn=cmd_migrate)
     p = sub.add_parser("register", help="the PO's conversational register (~/.prdt/register: audience · form · "
-                                        "structure · address): show | set <key> <value> | unset <key> | --list (the domain, "
+                                        "structure · visual · address): show | set <key> <value> | unset <key> | --list (the domain, "
                                         "from the resolver hook — the one authority on legal values); set refuses an "
                                         "empty/whitespace value — use unset <key> to remove a key")
     p.add_argument("action", nargs="?", choices=("show", "set", "unset"))
@@ -19559,7 +19559,7 @@ def main():
     p.set_defaults(fn=cmd_register)
     p = sub.add_parser("settings", help="every machine setting in one place (T-750): list (no action) · "
                                         "set <key> <value> · unset <key> — keys register.audience · register.form · "
-                                        "register.structure · register.address · viewer.auto-open · plan.tier · "
+                                        "register.structure · register.visual · register.address · viewer.auto-open · plan.tier · "
                                         "dispatch.<cap key> (T-896); "
                                         "lines from prdt-messages.json, language PRDT_LANG=ko|en (default ko)")
     # No `choices=` here (unlike the subparsers around it): an out-of-domain
