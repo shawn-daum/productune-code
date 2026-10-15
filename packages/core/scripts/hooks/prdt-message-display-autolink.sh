@@ -273,7 +273,13 @@ def main():
     if not isinstance(ev, dict) or ev.get("hook_event_name") != "MessageDisplay":
         return
     delta = ev.get("delta")
-    if not isinstance(delta, str) or not delta:
+    if not isinstance(delta, str):
+        return
+    if not delta:
+        # final batch with nothing to show (message ended on a newline): the
+        # fence state still goes; save_fence deletes it on final.
+        if ev.get("final") is True:
+            save_fence(ev, None)
         return
     fence = load_fence(ev)
     root = project_root(ev.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR"))
