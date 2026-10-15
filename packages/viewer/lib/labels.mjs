@@ -72,6 +72,9 @@ export const HOME = {
   working: '진행 상황',
   // T-792: 홈의 이번 버전 결정 묶음 — 사용자 표현 "결정은 홈에 신설하자" 그대로.
   decision: '결정',
+  // T-1138: the 결정 bucket lists decision tickets (질문) and decision pages (기록) in one table.
+  decisionHeaders: ['구분', 'ID', '제목', '상태', '버전'],
+  decisionKind: { ticketOpen: '질문 · 열림', ticketDone: '질문 · 완료', page: '기록' },
   // T-881: the approved screen set's 「현재 버전」 screen (docs/artifacts/v1.12/
   // define-screen-set.html, home-progress · home-cases; T-796 outcome). The
   // matrix labels (담당 · 검수 · 전체) went with the matrix.
