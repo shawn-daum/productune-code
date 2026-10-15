@@ -122,6 +122,9 @@ const ALLOW: Record<string, number> = {
   'core/scripts/prdt::cmd_resource': 2,
   'core/scripts/prdt::_lume_resident_resources': 1,
   'core/scripts/prdt::write_canary_latch': 1,
+  'core/scripts/prdt::_machine_env_store': 1, // T-1109: ~/.prdt/env/.env (machine scope, 0600) — outside any project's .prdt/
+  'core/scripts/prdt::_env_write_all': 1, // T-1119: os.write of masked child output to our stdout/stderr fd — no file
+  'core/scripts/prdt::_env_run_masked': 1, // T-1119: os.write of relayed terminal input to the child's pty master — no file
   // a log file opened as the child's stdout fd (Popen), not a text write
   'core/scripts/prdt::cmd_test_cloud': 1,
   // lock files / exclusive creates with dir_fd + O_NOFOLLOW by design (index.db create, track and resource locks) and /dev/null opens
@@ -140,7 +143,7 @@ const ALLOW: Record<string, number> = {
   'core/scripts/hooks/prdt-post-dispatch.sh': 8,
   'core/scripts/hooks/prdt-question-check.sh': 2,
   'core/scripts/hooks/prdt-return-check.sh': 7,
-  'core/scripts/hooks/prdt-secret-guard.sh': 2,
+  'core/scripts/hooks/prdt-secret-guard.sh': 3, // T-1109: +1 = embedded Perl `length($n) > length($b)` in is_store_path — a comparison the SH_REDIR scan reads as a redirect, no write
   'core/scripts/hooks/prdt-session-start.sh': 4,
   'core/scripts/hooks/prdt-user-prompt.sh': 7, // T-1081: +1 = cap_jsonl's trim of $PRDT_HOME/run/form-outline-counts.jsonl (home, never .prdt/)
   'core/scripts/hooks/prdt-worktree-guard.sh': 1,

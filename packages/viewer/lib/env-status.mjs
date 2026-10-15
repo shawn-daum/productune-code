@@ -85,19 +85,41 @@ function find(buf, b, from, to) {
   return i !== -1 && i < to ? i : -1
 }
 
+const PLAIN_MARK = Buffer.from('# prdt:plain')
+
+/** The marker line, exact bytes: only a space and a tab around it are ignored (the CR is already
+ *  out of the span) — never the wider strip() set (NBSP, \x0b, \x1c, U+2028 ...). The CLI's
+ *  `_env_is_marker_line` reads the same rule; anything else leaves the key a secret. */
+function isMarker(buf, a, b) {
+  while (a < b && (buf[a] === 0x20 || buf[a] === 0x09)) a++
+  while (b > a && (buf[b - 1] === 0x20 || buf[b - 1] === 0x09)) b--
+  return buf.compare(PLAIN_MARK, 0, PLAIN_MARK.length, a, b) === 0
+}
+
 /**
  * @param {Buffer} buf raw env-file bytes
- * @returns {Array<{ name: string, set: boolean }>} key names in first-seen
- *   order; `set` = the last occurrence's value is non-empty.
+ * @param {{ plainMarker?: boolean }} [opts] T-1121 B: read the machine store's
+ *   `# prdt:plain` marker line (the line right above a key) as `plain: true`.
+ * @returns {Array<{ name: string, set: boolean, plain?: boolean }>} key names in first-seen
+ *   order; `set` = the last occurrence's value is non-empty; `plain` only when
+ *   asked for and the last occurrence carries the marker.
  */
-export function envKeyStatus(buf) {
+export function envKeyStatus(buf, opts = {}) {
+  // at most ONE leading BOM is stripped (the CLI's `_env_is_marker_line` does the same): a second one makes line 1 no marker
   const bom = buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf ? 3 : 0
   const lines = lineSpans(buf, bom)
   const status = new Map()
   let li = 0
+  let marker = false // the line just read is the plain marker
   while (li < lines.length) {
-    let [a, b] = strip(buf, ...lines[li++])
-    if (a === b || buf[a] === 0x23) continue
+    const [ra, rb] = lines[li++]
+    let [a, b] = strip(buf, ra, rb)
+    if (a === b || buf[a] === 0x23) {
+      marker = !!opts.plainMarker && a !== b && isMarker(buf, ra, rb)
+      continue
+    }
+    const plain = marker
+    marker = false
     if (b - a > EXPORT.length && EXPORT.every((c, k) => buf[a + k] === c) && (buf[a + 6] === 0x20 || buf[a + 6] === 0x09)) {
       a += EXPORT.length
       for (let n; (n = wsAt(buf, a, b)); ) a += n
@@ -134,13 +156,13 @@ export function envKeyStatus(buf) {
     } else {
       set = v < b
     }
-    status.set(key, set)
+    status.set(key, { set, plain })
   }
-  return [...status].map(([name, set]) => ({ name, set }))
+  return [...status].map(([name, v]) => (opts.plainMarker && v.plain ? { name, set: v.set, plain: true } : { name, set: v.set }))
 }
 
 /** One env file's key list, or null when it cannot be read. The bytes are zero-filled before returning. */
-function readEnvKeys(file) {
+function readEnvKeys(file, opts) {
   let buf
   try {
     buf = fs.readFileSync(file)
@@ -148,10 +170,32 @@ function readEnvKeys(file) {
     return null
   }
   try {
-    return envKeyStatus(buf)
+    return envKeyStatus(buf, opts)
   } finally {
     buf.fill(0)
   }
+}
+
+/**
+ * T-1109: the machine-scope store `<PRDT_HOME>/env/.env` — key names, one
+ * set/empty boolean per key, whether it was saved as a plain value (T-1121 B:
+ * `plain: true` only then), and whether a product-code file already sets the
+ * same key non-empty (it wins; an EMPTY product-code value does not). Never a
+ * value, never a length. A link at the directory or file reads as no store.
+ * @param {string} home the tool home (PRDT_HOME or ~/.prdt)
+ * @param {{ files: Array<{ sample: boolean, keys: Array<{ name: string, set: boolean }> }> } | null} productEnv collectEnv()'s result for the code folder
+ * @returns {{ dir: string, keys: Array<{ name: string, set: boolean, codeWins: boolean, plain?: boolean }> }}
+ */
+export function collectMachineEnv(home, productEnv) {
+  const dir = path.join(home, 'env')
+  const file = path.join(dir, '.env')
+  let keys = null
+  try {
+    if (!fs.lstatSync(dir).isSymbolicLink() && !fs.lstatSync(file).isSymbolicLink()) keys = readEnvKeys(file, { plainMarker: true })
+  } catch {}
+  const code = new Set()
+  for (const f of (productEnv && productEnv.files) || []) if (!f.sample) for (const k of f.keys) if (k.set) code.add(k.name)
+  return { dir: '~/.prdt/env', keys: (keys || []).map((k) => ({ name: k.name, set: k.set, codeWins: k.set && code.has(k.name), ...(k.plain && k.set ? { plain: true } : {}) })) }
 }
 
 /** The home line's code folder: config `code.dir` (relative, never climbing out), default `code`; the project root itself when that folder does not exist (a non-split project). */

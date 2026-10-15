@@ -315,7 +315,7 @@ def read_json(path):
         return None
 
 
-def atomic_write_text(path, text, mode=0o644):
+def atomic_write_text(path, text, mode=0o644, errors="strict"):
     """Symlink-proof atomic write (T-656) — the CLI-side counterpart of
     `atomic_write` in prdt-post-dispatch.sh (T-647 precedent, same primitive).
     A fixed `<path>.tmp` name is project-local and clone-carried, so a cloned
@@ -347,7 +347,7 @@ def atomic_write_text(path, text, mode=0o644):
                 raise
             os.unlink(tmp)  # our own leftover from a killed run, or a planted link — gone unopened either way
     os.fchmod(fd, mode)  # os.open()'s mode is masked by umask — force the exact bits requested
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
+    with os.fdopen(fd, "w", encoding="utf-8", errors=errors) as f:
         f.write(text)
     os.replace(tmp, path)
     note_docs_write(path, before, text)
@@ -18063,7 +18063,14 @@ def _env_parse_line(raw):
 
 
 def _env_parse_file(p):
-    """Path -> {KEY: length}. Last occurrence of a repeated key wins (matches
+    """Path -> {KEY: length} — the value-free view (`prdt env check`)."""
+    return {k: len(v) for k, v in _env_parse_values(p).items()}
+
+
+def _env_parse_values(p):
+    """Path -> {KEY: value}. Callers that must never show a value take the
+    length view above; only the machine store's `env run` hands these to a
+    child process, never to a print. Last occurrence of a repeated key wins (matches
     real dotenv loader behavior). Raises OSError on read failure — the caller
     turns that into exit 3, never a printed exception (an exception's default
     __str__ never carries file content here, only path/errno, but nothing
@@ -18086,7 +18093,7 @@ def _env_parse_file(p):
         text = text[1:]  # hide the first key from _ENV_KEY_RE.
     lines = text.split("\n")
     n = len(lines)
-    lengths = {}
+    values = {}
     i = 0
     while i < n:
         raw = lines[i]
@@ -18121,8 +18128,8 @@ def _env_parse_file(p):
                         break
                     parts.append(cont)
                 value = "\n".join(parts)
-        lengths[key] = len(value)
-    return lengths
+        values[key] = value
+    return values
 
 
 # ── T-977: UX-writing word list ───────────────────────────────────────────────
@@ -18576,7 +18583,711 @@ def cmd_wordlist(args):
     sys.exit(1 if total else 0)
 
 
+# ── T-1109: machine-scope env store (`~/.prdt/env/.env`) ─────────────────────
+# `prdt env set|unset|ls|run`. A credential VALUE is typed by the user at a
+# hidden prompt and read back only by `env run` into a child's environment —
+# never argv, never a stdin pipe, never a print (contracts §Secrets). `env set`
+# refuses when stdin/stdout are not a terminal that can hide the typing, which
+# is exactly what an agent's Bash tool is (no tty): an agent-initiated `set`
+# fails with nothing written. `unset|ls|run` never print a value or a length.
+# Precedence: a key the product code already sets (non-empty, in a real
+# `.env` / `.env.*` of the code folder) wins; an EMPTY product-code value does
+# not — the machine value fills it. `env run` therefore skips such keys, so a
+# dotenv loader that does not override the process env keeps the product value.
+_ENV_MACHINE_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+_ENV_LS_MAX_ROWS = 10
+
+
+def machine_env_file():
+    return prdt_home() / "env" / ".env"
+
+
+def _env_shown_path(p):
+    s = str(p)
+    h = str(Path.home())
+    return "~" + s[len(h):] if s == h or s.startswith(h + os.sep) else s
+
+
+def _env_fail(text, code=1):
+    print(text, file=sys.stderr)
+    sys.exit(code)
+
+
+def _machine_env_values():
+    """{KEY: value} of the machine store; {} when absent. A link at the store
+    directory or file is refused (T-905 spirit) — never followed."""
+    p = machine_env_file()
+    for q in (p.parent, p):
+        if q.is_symlink():
+            _env_fail("기기 범위 env 저장소가 링크라서 쓰지 않았어요. 저장소 경로를 확인하세요.")
+    try:
+        return _env_parse_values(p)
+    except FileNotFoundError:
+        return {}
+    except OSError as e:
+        _env_fail(f"기기 범위 env 저장소를 읽을 수 없어요: {e.strerror or 'read error'}", 3)
+
+
+def _env_quote(value):
+    """The stored form of a value, round-tripping through `_env_parse_values`
+    and `. file`; None when no quote style can hold it."""
+    if any(ord(c) < 32 or ord(c) == 127 for c in value):
+        return None
+    if "'" not in value:
+        return "'" + value + "'"
+    if not any(c in value for c in ('"', "$", "`", "\\")):
+        return '"' + value + '"'
+    return None
+
+
+def _machine_env_text():
+    """Raw text of the machine store ("" when absent), decoded so that every
+    byte round-trips (surrogateescape) — set/unset rewrite only the lines of
+    the key they touch and write every other byte back as read (T-1110 S1:
+    re-serializing every key turned a value no quote style holds into the
+    literal `None`). A link at the store directory or file is refused."""
+    p = machine_env_file()
+    for q in (p.parent, p):
+        if q.is_symlink():
+            _env_fail("기기 범위 env 저장소가 링크라서 쓰지 않았어요. 저장소 경로를 확인하세요.")
+    try:
+        with p.open("r", encoding="utf-8", errors="surrogateescape", newline="") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+    except OSError as e:
+        _env_fail(f"기기 범위 env 저장소를 읽을 수 없어요: {e.strerror or 'read error'}", 3)
+
+
+def _env_spans(lines):
+    """[(key, first_line, end_line_exclusive)] over `text.split("\\n")` — the
+    same line grammar as `_env_parse_values` (open-quote continuation lines
+    belong to their key), so a span covers exactly the lines one key owns."""
+    spans = []
+    n = len(lines)
+    i = 0
+    while i < n:
+        i0 = i
+        raw = lines[i]
+        i += 1
+        if i0 == 0 and raw.startswith("﻿"):
+            raw = raw[1:]
+        parsed = _env_parse_line(raw)
+        if parsed is None:
+            continue
+        key, value = parsed
+        if value and value[0] in ("'", '"') and value.find(value[0], 1) == -1:
+            while i < n:
+                cont = _env_strip_cr(lines[i])
+                i += 1
+                if cont.find(value[0]) != -1:
+                    break
+        spans.append((key, i0, i))
+    return spans
+
+
+_ENV_PLAIN_MARK = "# prdt:plain"
+
+
+def _env_is_marker_line(lines, j):
+    """True when line j is exactly the plain marker. Exact bytes: only a space,
+    a tab and one CR around it are ignored — never str.strip()'s wider set
+    (NBSP, \\x0b, \\x1c, U+2028 ...), the same rule the viewer reads
+    (packages/viewer/lib/env-status.mjs). Anything else is not a marker, so the
+    key below stays a secret."""
+    raw = lines[j]
+    if j == 0 and raw.startswith("\ufeff"):
+        raw = raw[1:]  # at most ONE leading BOM, as the viewer does
+    return _env_strip_cr(raw).strip(" \t") == _ENV_PLAIN_MARK
+
+
+def _env_marker_idx(lines, spans):
+    """{first_line: marker_line} — a span whose line right before it is the
+    plain marker (T-1121 B). The marker is a comment line `# prdt:plain` stored
+    directly above its key; a line that belongs to some key's span (an
+    open-quote continuation that reads the same) is a value, never a marker.
+    Anything that does not match exactly leaves the key a secret."""
+    covered = set()
+    for _, i0, i1 in spans:
+        covered.update(range(i0, i1))
+    found = {}
+    for _, i0, _i1 in spans:
+        j = i0 - 1
+        if j < 0 or j in covered:
+            continue
+        if _env_is_marker_line(lines, j):
+            found[i0] = j
+    return found
+
+
+def _machine_env_plain_keys():
+    """Keys whose live (last) occurrence in the machine store carries the plain
+    marker. A key without it — every key saved before T-1121 — is a secret."""
+    lines = _machine_env_text().split("\n")
+    spans = _env_spans(lines)
+    marks = _env_marker_idx(lines, spans)
+    live = {}
+    for key, i0, _i1 in spans:
+        live[key] = i0 in marks
+    return {k for k, v in live.items() if v}
+
+
+@contextlib.contextmanager
+def _machine_env_locked(fail_head):
+    """Serialize set/unset (flock on the store directory) and hold the
+    directory at 0700 — a directory that already existed wider is tightened."""
+    d = machine_env_file().parent
+    for q in (d, machine_env_file()):
+        if q.is_symlink():
+            _env_fail("기기 범위 env 저장소가 링크라서 쓰지 않았어요. 저장소 경로를 확인하세요.")
+    try:
+        d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(d, 0o700)
+        fd = os.open(d, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as e:
+        _env_fail(f"{fail_head}: 기기 범위 env 저장소를 열 수 없어요 ({e.strerror or 'error'}).", 3)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def _machine_env_store(text, fail_head, fail_tail):
+    """The one write of the machine store: file 0600, atomic, bytes of every
+    line not being changed kept as read. A store with nothing but blank lines
+    left is removed. A write failure is one line, never a traceback."""
+    p = machine_env_file()
+    try:
+        if not text.strip():
+            try:
+                p.unlink()
+            except FileNotFoundError:
+                pass
+            return
+        atomic_write_text(p, text, mode=0o600, errors="surrogateescape")
+    except OSError as e:
+        _env_fail(f"{fail_head}: 기기 범위 env 저장소에 쓸 수 없어요 ({e.strerror or 'write error'}). {fail_tail}", 3)
+
+
+def _env_product_code_keys():
+    """(product name, {KEY: set?}) of the current project's code folder — real
+    `.env` / `.env.*` files at its top (samples excluded); (None, {}) outside a
+    project or with no real file. A key is set when any file gives it a
+    non-empty value."""
+    root = find_project_root()
+    if not root:
+        return None, {}
+    d = code_root(root)
+    keys = {}
+    found = False
+    try:
+        names = sorted(n for n in os.listdir(d) if (n == ".env" or n.startswith(".env.")) and not n.endswith(".example"))
+    except OSError:
+        return None, {}
+    for n in names:
+        f = d / n
+        if f.is_symlink() or not f.is_file():
+            continue
+        try:
+            vals = _env_parse_file(f)
+        except OSError:
+            continue
+        found = True
+        for k, ln in vals.items():
+            keys[k] = keys.get(k, False) or ln > 0
+    return (Path(root).name, keys) if found else (None, {})
+
+
+_ENV_NO_TTY = "저장 실패: 값을 숨겨서 받을 수 있는 터미널이 아니에요. 저장한 키가 없어요.\n다음: 터미널에서 직접 실행하세요."
+_ENV_UNSET_NO_TTY = "지우기 실패: 터미널에서만 지울 수 있어요. 지운 키가 없어요.\n다음: 터미널에서 직접 실행하세요."
+
+
+def _env_is_terminal():
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _env_set(args_rest):
+    if len(args_rest) != 1:
+        _env_fail("저장 실패: 키 이름 하나가 필요해요. 저장한 키가 없어요.\n다음: prdt env set <KEY> 로 실행하세요.", 2)
+    key = args_rest[0]
+    if not _ENV_MACHINE_KEY_RE.match(key):
+        # never echoed: a mistaken argument may BE the value (T-677 precedent)
+        _env_fail("저장 실패: 키 이름이 맞지 않아요. 영문 대문자 · 숫자 · _ 만 쓸 수 있어요.\n다음: 키 이름을 고쳐 다시 실행하세요.")
+    if not _env_is_terminal():
+        _env_fail(_ENV_NO_TTY)
+    try:
+        import termios
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+    except Exception:
+        _env_fail(_ENV_NO_TTY)
+    hidden = old[:]
+    hidden[3] &= ~termios.ECHO
+    try:
+        # ECHO goes off BEFORE the prompt is printed (T-1110): a value typed
+        # ahead of the prompt is never echoed by the terminal.
+        termios.tcsetattr(fd, termios.TCSANOW, hidden)
+        try:
+            print(f"{key} 의 값을 입력하세요 (화면에 보이지 않아요)", flush=True)
+            line = sys.stdin.readline()
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            print()
+    except (KeyboardInterrupt, EOFError):
+        _env_fail("저장 실패: 입력이 끝났어요. 저장한 키가 없어요.", 130)
+    value = line.rstrip("\r\n")
+    if not value:
+        _env_fail("저장 실패: 값이 비어 있어요. 저장한 키가 없어요.")
+    quoted = _env_quote(value)
+    if quoted is None:
+        _env_fail("저장 실패: 값에 저장할 수 없는 문자가 있어요 (줄바꿈 · 제어 문자 · 작은따옴표와 큰따옴표를 함께 쓴 값). 저장한 키가 없어요.")
+    # T-1121 B: secret or plain, asked with the echo back on (the answer is not a credential).
+    # Enter, y, or anything that is not n/no is a secret — the safe side.
+    try:
+        print("비밀값인가요? (Y/n) ", end="", flush=True)
+        answer = sys.stdin.readline()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        _env_fail("저장 실패: 입력이 끝났어요. 저장한 키가 없어요.", 130)
+    if not answer:
+        print()
+        _env_fail("저장 실패: 입력이 끝났어요. 저장한 키가 없어요.", 130)
+    plain = answer.strip().lower() in ("n", "no")
+    with _machine_env_locked("저장 실패"):
+        text = _machine_env_text()
+        lines = text.split("\n")
+        all_spans = _env_spans(lines)
+        mine = [s for s in all_spans if s[0] == key]
+        if mine:
+            # the last occurrence is the live one (dotenv: last wins); only its lines
+            # (and the marker line right above them) change
+            _, i0, i1 = mine[-1]
+            head = re.match(r"﻿?[ \t]*(?:export[ \t]+)?", lines[i0]).group(0)
+            cr = "\r" if lines[i1 - 1].endswith("\r") else ""
+            mark_at = _env_marker_idx(lines, all_spans).get(i0)
+            first = i0 if mark_at is None else mark_at
+            bom = "﻿" if first == 0 and lines[0].startswith("﻿") else ""
+            head = head.lstrip("﻿")
+            new_lines = ([f"{_ENV_PLAIN_MARK}{cr}"] if plain else []) + [f"{head}{key}={quoted}{cr}"]
+            new_lines[0] = bom + new_lines[0]
+            lines[first:i1] = new_lines
+        else:
+            # a new key goes at the end. A marker already on the line right above that
+            # spot (a dangling one: the store's last line, nothing below it) was written
+            # for no key — it is dropped, so it can never turn this key plain; a plain
+            # answer writes its own marker (T-1110 r4).
+            had_nl = lines[-1] == ""
+            pos = len(lines) - 1 if had_nl else len(lines)
+            covered = {x for _, a, b in all_spans for x in range(a, b)}
+            # ANY number of consecutive dangling markers goes, not just one.
+            bom = ""
+            while pos > 0 and (pos - 1) not in covered and _env_is_marker_line(lines, pos - 1):
+                if pos - 1 == 0 and lines[0].startswith("\ufeff"):
+                    bom = "\ufeff"  # the file's one BOM survives on its new first line
+                del lines[pos - 1]
+                pos -= 1
+            add = ([_ENV_PLAIN_MARK] if plain else []) + [f"{key}={quoted}"]
+            add[0] = bom + add[0]
+            lines[pos:pos] = add if had_nl else add + [""]
+        _machine_env_store("\n".join(lines), "저장 실패", "저장한 키가 없어요.")
+    print(f"{key} 를 기기 범위에 저장했어요 ({_env_shown_path(machine_env_file())}). 이 기기의 모든 프로젝트가 쓸 수 있어요.")
+
+
+def _env_unset(args_rest):
+    if len(args_rest) != 1:
+        _env_fail("지우기 실패: 키 이름 하나가 필요해요. 지운 키가 없어요.\n다음: prdt env unset <KEY> 로 실행하세요.", 2)
+    # same floor as set (T-1110): an agent with no terminal never deletes a user's credential
+    if not _env_is_terminal():
+        _env_fail(_ENV_UNSET_NO_TTY)
+    key = args_rest[0]
+    with _machine_env_locked("지우기 실패"):
+        text = _machine_env_text()
+        lines = text.split("\n")
+        mine = [s for s in _env_spans(lines) if s[0] == key] if _ENV_MACHINE_KEY_RE.match(key) else []
+        if not mine:
+            # never echoed: the token is not a stored key name, and may be a value (T-1110)
+            _env_fail("지우기 실패: 그 키가 기기 범위에 없어요. 지운 키가 없어요.\n다음: prdt env ls 로 키 이름을 확인하세요.")
+        marks = _env_marker_idx(lines, _env_spans(lines))
+        for _, i0, i1 in reversed(mine):
+            del lines[(marks.get(i0, i0)):i1]
+        _machine_env_store("\n".join(lines), "지우기 실패", "지운 키가 없어요.")
+    print(f"{key} 을 기기 범위에서 지웠어요")
+
+
+def _env_ls():
+    values = _machine_env_values()
+    if not values:
+        print("기기 범위에 저장된 키가 없어요.\n\n다음: prdt env set <KEY> 로 저장하세요.")
+        return
+    pname, pkeys = _env_product_code_keys()
+    plain = {k for k in _machine_env_plain_keys() if values.get(k)}
+    nset = sum(1 for v in values.values() if v)
+    empties = [k for k, v in values.items() if not v]
+    if not pkeys:
+        print(f"기기 범위 키 {len(values)}개 · 설정됨 {nset} · 비어 있음 {len(empties)} · {_env_shown_path(machine_env_file())}")
+        print()
+        w = max(_display_width(k) for k in list(values) + ["키"]) + 2
+        w3 = len("적용 범위") + 2 if plain else 0
+        print(_pad("키", w) + _pad("상태", 10) + (_pad("적용 범위", w3) if plain else "적용 범위"))
+        for k, v in values.items():
+            line = _pad(k, w) + _pad("설정됨" if v else "비어 있음", 10)
+            print(line + (_pad("기기 범위", w3) + "보통 값" if k in plain else "기기 범위"))
+        if empties:
+            print()
+            print(f"{', '.join(empties)} 는 값이 비어 있어요. 다음: prdt env set {empties[0]} 로 값을 저장하세요.")
+        return
+    same = [k for k, v in values.items() if v and pkeys.get(k)]
+    print(f"기기 범위 키 {len(values)}개 · {pname} 제품 코드 키 {len(pkeys)}개 · 같은 이름 {len(same)}개")
+    print()
+    union = list(values) + [k for k in pkeys if k not in values]
+    order = {k: (0 if k in same else 1 if k in values else 2) for k in union}
+    union.sort(key=lambda k: (order[k], k))
+
+    def cell(d, k):
+        if k not in d:
+            return "—"
+        if not d[k]:
+            return "비어 있음"
+        return "설정됨 · 보통 값" if d is values and k in plain else "설정됨"
+
+    def used(k):
+        if pkeys.get(k):
+            return "제품 코드 값"
+        return "기기 범위 값" if values.get(k) else "값 없음"
+    head = ["키", "기기 범위", f"{pname} 제품 코드", "쓰이는 값"]
+    rows = [[k, cell(values, k), cell(pkeys, k), used(k)] for k in union[:_ENV_LS_MAX_ROWS]]
+    widths = [max(_display_width(r[i]) for r in rows + [head]) + 2 for i in range(3)]
+    print("".join(_pad(h, widths[i]) for i, h in enumerate(head[:3])) + head[3])
+    for r in rows:
+        print("".join(_pad(r[i], widths[i]) for i in range(3)) + r[3])
+    if len(union) > _ENV_LS_MAX_ROWS:
+        print(f"… 키 {len(union) - _ENV_LS_MAX_ROWS}개 더")
+    if same:
+        print()
+        print(f"같은 이름 {len(same)}개는 제품 코드 값을 써요. 기기 범위 값을 쓰려면 제품 코드 파일에서 그 키를 지우세요.")
+
+
+_ENV_MASK = "[가림]".encode("utf-8")
+
+
+class _EnvMasker:
+    """Stream filter: every occurrence of a stored machine value becomes
+    `[가림]` (T-1119 B). A tail that could still grow into a value is held
+    until more bytes arrive or the stream ends — a value split across two
+    writes is masked whole, never shown in halves. Overlapping or touching
+    matches of different values are masked as one union span; a short value
+    that is also the start of a longer one is held until the longer one is
+    ruled out."""
+
+    def __init__(self, values):
+        vals = set()
+        for v in values:
+            b = v.encode("utf-8", "surrogateescape")
+            if b:
+                vals.add(b)
+                if b"\n" in b:  # a terminal (ONLCR) prints `\n` as `\r\n`
+                    vals.add(b.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+        self.vals = sorted(vals, key=len, reverse=True)
+        self.held = b""
+
+    def _hold_from(self, buf, pos):
+        n = len(buf)
+        best = n
+        for v in self.vals:
+            lo = max(pos, n - len(v) + 1)
+            first = v[:1]
+            p = buf.find(first, lo, best)
+            while p != -1:
+                if v.startswith(buf[p:]):
+                    best = p
+                    break
+                p = buf.find(first, p + 1, best)
+        return best
+
+    def _spans(self, buf):
+        """Merged [start, end) spans of every occurrence of every value, overlapping
+        or touching ones united — no value is left half-shown at an overlap."""
+        raw = []
+        for v in self.vals:
+            p = buf.find(v)
+            while p != -1:
+                raw.append((p, p + len(v)))
+                p = buf.find(v, p + 1)
+        raw.sort()
+        merged = []
+        for s, e in raw:
+            if merged and s <= merged[-1][1]:
+                if e > merged[-1][1]:
+                    merged[-1] = (merged[-1][0], e)
+            else:
+                merged.append((s, e))
+        return merged
+
+    def feed(self, data, final=False):
+        buf = self.held + data
+        self.held = b""
+        if not self.vals:
+            return buf
+        spans = self._spans(buf)
+        h = len(buf) if final else self._hold_from(buf, 0)
+        for s, e in spans:  # a hold point inside a span moves to its start: the span is judged whole next time
+            if s < h < e:
+                h = s
+        out = []
+        pos = 0
+        for s, e in spans:
+            if s >= h:
+                break
+            out.append(buf[pos:s])
+            out.append(_ENV_MASK)
+            pos = e
+        out.append(buf[pos:h])
+        self.held = buf[h:]
+        return b"".join(out)
+
+
+_ENV_FWD_SIGNALS = ("SIGINT", "SIGQUIT", "SIGTERM", "SIGHUP", "SIGUSR1", "SIGUSR2")
+
+
+def _env_write_all(fd, data):
+    import select
+    while data:
+        try:
+            n = os.write(fd, data)
+        except BlockingIOError:
+            select.select([], [fd], [])
+            continue
+        data = data[n:]
+
+
+def _env_run_masked(argv, child_env, secrets, intro):
+    """`env run` with every stored value masked in the child's output
+    (T-1119 B). Each of the child's stdout/stderr is a pty when ours is a
+    terminal (one pty for both, the child's controlling terminal, our stdin
+    relayed to it in raw mode when stdin is a terminal too), otherwise a
+    pipe; stdin that is not a terminal is inherited as is. Exit status and a
+    death by signal are passed on as ours; INT/QUIT/TERM/HUP/USR1/USR2 sent to
+    us reach the child, and a window resize reaches its pty."""
+    import select, signal, termios, tty
+    in_tty, out_tty, err_tty = (os.isatty(fd) for fd in (0, 1, 2))
+    use_pty = out_tty or err_tty
+    relay_in = use_pty and in_tty
+    ref_fd = 1 if out_tty else 2
+    master = slave = None
+    to_close = []
+    streams = {}  # read fd -> (write fd, masker)
+    if use_pty:
+        master, slave = os.openpty()
+        try:
+            termios.tcsetattr(slave, termios.TCSANOW, termios.tcgetattr(0 if in_tty else ref_fd))
+        except (termios.error, OSError):
+            pass
+        try:
+            fcntl.ioctl(master, termios.TIOCSWINSZ, fcntl.ioctl(ref_fd, termios.TIOCGWINSZ, b"\0" * 8))
+        except OSError:
+            pass
+        to_close.append(slave)
+        # one pty carries both terminal streams; it is echoed to our stdout when that is the terminal
+        streams[master] = (1 if out_tty else 2, _EnvMasker(secrets))
+    fds = []
+    for i, is_tty in ((1, out_tty), (2, err_tty)):
+        if is_tty:
+            fds.append(slave)
+        else:
+            r, w = os.pipe()
+            to_close.append(w)
+            streams[r] = (i, _EnvMasker(secrets))
+            fds.append(w)
+    stdin_fd = slave if relay_in else None
+    ctty = 0 if relay_in else (1 if out_tty else 2)
+
+    # signals, set before the spawn so none lands on prdt alone: a pty child is in its own
+    # session, so every forwarded signal goes to its group; a pipe child shares our group —
+    # a terminal Ctrl-C / Ctrl-\ already reached it, so INT/QUIT are forwarded only when we
+    # are not a terminal's foreground group
+    tty_fd = None
+    if not use_pty:
+        try:
+            tty_fd = os.open("/dev/tty", os.O_RDONLY | os.O_NOCTTY)
+        except OSError:
+            tty_fd = None
+
+    child = []  # the Popen once spawned; a signal that lands before that is held, then sent
+    early = []
+
+    def _forward(signum, _frame):
+        if not child:
+            early.append(signum)
+            return
+        if not use_pty and signum in (signal.SIGINT, signal.SIGQUIT) and tty_fd is not None:
+            try:
+                if os.tcgetpgrp(tty_fd) == os.getpgrp():
+                    return
+            except OSError:
+                pass
+        try:
+            if use_pty:
+                os.killpg(child[0].pid, signum)
+            else:
+                os.kill(child[0].pid, signum)
+        except OSError:
+            pass
+
+    old_handlers = {}
+    for name in _ENV_FWD_SIGNALS:
+        s = getattr(signal, name)
+        old_handlers[s] = signal.signal(s, _forward)
+    if use_pty:
+        def _winch(_signum, _frame):
+            try:
+                fcntl.ioctl(master, termios.TIOCSWINSZ, fcntl.ioctl(ref_fd, termios.TIOCGWINSZ, b"\0" * 8))
+            except OSError:
+                pass
+        old_handlers[signal.SIGWINCH] = signal.signal(signal.SIGWINCH, _winch)
+
+    def _restore_signals():
+        for s, h in old_handlers.items():
+            signal.signal(s, h)
+        if tty_fd is not None:
+            os.close(tty_fd)
+
+    _env_write_all(1, _EnvMasker(secrets).feed(intro.encode("utf-8", "surrogateescape"), final=True))
+
+    def _child_setup():
+        if use_pty:
+            try:
+                fcntl.ioctl(ctty, termios.TIOCSCTTY, 0)
+            except OSError:
+                pass
+
+    try:
+        proc = subprocess.Popen(argv, env=child_env, stdin=stdin_fd, stdout=fds[0], stderr=fds[1],
+                                close_fds=True, start_new_session=use_pty,
+                                preexec_fn=_child_setup if use_pty else None)
+    except OSError:
+        _restore_signals()
+        for fd in to_close + list(streams):
+            os.close(fd)
+        _env_fail(f"실행 실패: {shlex.quote(argv[0])} 를 실행할 수 없어요. 키를 넣은 프로세스가 없어요.", 127)
+    for fd in to_close:
+        os.close(fd)
+    child.append(proc)
+    for signum in early:
+        _forward(signum, None)
+
+    saved_tc = None
+    if relay_in:
+        try:
+            saved_tc = termios.tcgetattr(0)
+            tty.setraw(0, termios.TCSANOW)
+        except termios.error:
+            saved_tc = None
+    if master is not None:
+        fl = fcntl.fcntl(master, fcntl.F_GETFL)
+        fcntl.fcntl(master, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+    pending_in = b""
+    stdin_open = relay_in
+    # read until every output stream ends — a grandchild still holding one keeps it masked
+    # (as `cmd | cat` waits for it); the exit status is the child's own
+    try:
+        while streams:
+            rlist = list(streams)
+            if stdin_open and not pending_in:
+                rlist.append(0)
+            wlist = [master] if pending_in and master in streams else []
+            try:
+                r, w, _ = select.select(rlist, wlist, [])
+            except InterruptedError:
+                continue
+            if 0 in r:
+                d = os.read(0, 65536)
+                if d:
+                    pending_in += d
+                else:
+                    stdin_open = False
+            if w:
+                try:
+                    n = os.write(master, pending_in)
+                    pending_in = pending_in[n:]
+                except BlockingIOError:
+                    pass
+                except OSError:
+                    pending_in = b""
+                    stdin_open = False
+            for fd in [f for f in r if f in streams]:
+                out_fd, masker = streams[fd]
+                try:
+                    d = os.read(fd, 65536)
+                except BlockingIOError:
+                    continue
+                except OSError:  # EIO: the pty's last slave closed
+                    d = b""
+                try:
+                    _env_write_all(out_fd, masker.feed(d, final=not d))
+                except BrokenPipeError:
+                    d = b""  # nobody reads our side: close the child's, as a pipe would
+                if not d:
+                    del streams[fd]
+                    os.close(fd)
+        status = proc.wait()
+    finally:
+        if saved_tc is not None:
+            termios.tcsetattr(0, termios.TCSADRAIN, saved_tc)
+        _restore_signals()
+    if status < 0:
+        signal.signal(-status, signal.SIG_DFL)
+        os.kill(os.getpid(), -status)
+        sys.exit(128 - status)
+    sys.exit(status)
+
+
+def _env_run(args_rest):
+    argv = list(args_rest)
+    if argv and argv[0] == "--":
+        argv = argv[1:]
+    if not argv:
+        _env_fail("실행 실패: 실행할 명령이 없어요. 키를 넣은 프로세스가 없어요.\n다음: prdt env run -- <명령> 으로 실행하세요.", 2)
+    values = _machine_env_values()
+    plain = _machine_env_plain_keys()
+    _, pkeys = _env_product_code_keys()
+    skipped = [k for k, v in values.items() if v and pkeys.get(k)]
+    inject = {k: v for k, v in values.items() if v and not pkeys.get(k)}
+    note = f" 같은 이름 {len(skipped)}개는 제품 코드 값을 써요." if skipped else ""
+    intro = f"기기 범위 키 {len(inject)}개를 넣어 {' '.join(shlex.quote(a) for a in argv)} 를 실행해요.{note}\n"
+    child_env = dict(os.environ)
+    child_env.update(inject)
+    # every secret key's value is masked, the skipped ones too: a secret machine value is never
+    # shown. A key saved as plain (T-1121 B) passes through; a key with no flag is a secret.
+    secrets = [v for k, v in values.items() if v and k not in plain]
+    if secrets:
+        sys.stdout.flush()
+        return _env_run_masked(argv, child_env, secrets, intro)
+    print(intro, end="", flush=True)
+    try:
+        os.execvpe(argv[0], argv, child_env)
+    except OSError:
+        _env_fail(f"실행 실패: {shlex.quote(argv[0])} 를 실행할 수 없어요. 키를 넣은 프로세스가 없어요.", 127)
+
+
 def cmd_env(args):
+    action = args.action
+    rest = list(args.rest or [])
+    if action == "set":
+        return _env_set(rest)
+    if action == "unset":
+        return _env_unset(rest)
+    if action == "ls":
+        return _env_ls()
+    if action == "run":
+        return _env_run(rest)
+    if not rest:
+        _env_fail("prdt env check: a file is required", 2)
+    return _env_check(argparse.Namespace(file=rest[0], keys=rest[1:]))
+
+
+def _env_check(args):
     """`prdt env check <file> [KEY ...]` — see module header above. Every
     branch below prints only: a key name FROM THE FILE (never the caller's
     raw argument text — a KEY argument absent from the file is reported by
@@ -19660,14 +20371,15 @@ def main():
     p.add_argument("--latch-ttl", type=int, default=LATCH_TTL_MIN, metavar="MIN",
                    help=f"minutes a limit latch stays live (default {LATCH_TTL_MIN})")
     p.set_defaults(fn=cmd_preflight)
-    p = sub.add_parser("env", help="value-free credential presence probe (T-677): "
-                                   "check <file> [KEY ...] — presence + length only, never a value; "
+    p = sub.add_parser("env", help="credential env (T-677, T-1109), values never shown: "
+                                   "check <file> [KEY ...] — presence + length only; "
                                    "exit 0 all set, 1 a KEY is absent, 2 a KEY is present but empty, "
                                    "3 the file could not be read; several KEYs print one line each and "
-                                   "exit with the worst of their codes; no KEY lists every key in <file>")
-    p.add_argument("action", choices=("check",))
-    p.add_argument("file")
-    p.add_argument("keys", nargs="*", metavar="KEY")
+                                   "exit with the worst of their codes; no KEY lists every key in <file> · "
+                                   "set <KEY> (hidden prompt, terminal only) · unset <KEY> · ls · "
+                                   "run -- <cmd> — the machine-scope store ~/.prdt/env/.env")
+    p.add_argument("action", choices=("check", "set", "unset", "ls", "run"))
+    p.add_argument("rest", nargs=argparse.REMAINDER, metavar="ARG")
     p.set_defaults(fn=cmd_env)
     p = sub.add_parser("wordlist", help="UX-writing word list (T-977, read-only): check <file|-> ... "
                                         "[--lang L] [--json] — each hit as path:line:col: word → plain replacement, "
@@ -19717,6 +20429,8 @@ def main():
         # T-983: the hook-spawned ensure is a background call of this same
         # kind — it must never eat the user's daily nudge (update-state.json).
         or (args.cmd == "viewer" and getattr(args, "ensure", False))
+        # T-1109: nothing may print or read ahead of the hidden value prompt.
+        or (args.cmd == "env" and getattr(args, "action", None) in ("set", "run"))
     )
     if not skip_update_nudge:
         maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
