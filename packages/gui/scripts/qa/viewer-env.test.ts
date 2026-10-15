@@ -8,7 +8,7 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { collectAll } from '@productune/viewer/lib/collect.mjs'
-import { envKeyStatus, collectEnv } from '@productune/viewer/lib/env-status.mjs'
+import { envKeyStatus, collectEnv, collectMachineEnv } from '@productune/viewer/lib/env-status.mjs'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
 import { generate } from '@productune/viewer/generate.mjs'
 
@@ -271,4 +271,100 @@ describe('env item — single-line project', () => {
     expect(html).not.toContain('J_LEAK_')
     for (const text of [html, buildFile.content, ...dataFiles.map((f: { content: string }) => f.content)]) expect(text).not.toContain(SENTINEL)
   }, 60_000)
+})
+
+// T-1109 (screens env-viewer): the machine-scope section — names, set/empty,
+// 「제품 코드 값이 우선」; never a value or length.
+describe('machine-scope env (T-1109)', () => {
+  let tmp: string
+  beforeAll(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1109-viewer-')) })
+  afterAll(() => { fs.rmSync(tmp, { recursive: true, force: true }) })
+  const productEnv = (text: string) => {
+    const root = fs.mkdtempSync(path.join(tmp, 'p-'))
+    write(root, '.env.local', text)
+    return collectEnv(root, '.')
+  }
+
+  it('names + set/empty; a non-empty product-code value wins, an empty one does not; no value in the data', () => {
+    const home = fs.mkdtempSync(path.join(tmp, 'h-'))
+    write(home, 'env/.env', `A='${SENTINEL}'\nB='${SENTINEL}'\nC=\nD='${SENTINEL}'\n`)
+    const m = collectMachineEnv(home, productEnv(`A=${SENTINEL}\nB=\nC=x\n`))
+    expect(m).toEqual({ dir: '~/.prdt/env', keys: [
+      { name: 'A', set: true, codeWins: true }, { name: 'B', set: true, codeWins: false },
+      { name: 'C', set: false, codeWins: false }, { name: 'D', set: true, codeWins: false },
+    ] })
+    expect(JSON.stringify(m)).not.toContain(SENTINEL)
+  })
+
+  it('T-1121 B: `# prdt:plain` directly above a key marks it plain (last occurrence decides); no marker = secret; no value in the data', () => {
+    const home = fs.mkdtempSync(path.join(tmp, 'h-'))
+    write(home, 'env/.env', `# prdt:plain\nA='${SENTINEL}'\nB='${SENTINEL}'\n# prdt:plain\n\nC='${SENTINEL}'\n# prdt:plain\nD='${SENTINEL}'\nD='${SENTINEL}'\n# prdt:plain\nE=\n`)
+    const m = collectMachineEnv(home, null)
+    expect(m.keys).toEqual([
+      { name: 'A', set: true, codeWins: false, plain: true }, { name: 'B', set: true, codeWins: false },
+      { name: 'C', set: true, codeWins: false }, { name: 'D', set: true, codeWins: false },
+      { name: 'E', set: false, codeWins: false },
+    ])
+    expect(JSON.stringify(m)).not.toContain(SENTINEL)
+  })
+
+  it('T-1121 B: a product-code env file never reads the marker', () => {
+    expect(productEnv(`# prdt:plain\nA=${SENTINEL}\n`)).toEqual({ dir: '.', files: [{ name: '.env.local', sample: false, keys: [{ name: 'A', set: true }] }] })
+  })
+
+  it('page: a plain key carries the 보통 값 tag', () => {
+    const root = fs.mkdtempSync(path.join(tmp, 'plain-'))
+    write(root, '.prdt/config.json', JSON.stringify({ slug: 'shop' }))
+    write(root, '.prdt/po-state.json', PO_STATE())
+    write(root, 'docs/prd/PRD.md', '# PRD\n\n## v2.2 — round\n')
+    const home = fs.mkdtempSync(path.join(tmp, 'h-'))
+    write(home, 'env/.env', `# prdt:plain\nPORT='3000'\nAPPLE_TEAM_ID='${SENTINEL}'\n`)
+    const prev = process.env.PRDT_HOME
+    process.env.PRDT_HOME = home
+    try {
+      const html = render(collectAll(root, { disciplineRoot: root }))
+      expect(html).toContain('<code>PORT</code><span class="tagw">보통 값</span>')
+      expect(html).toContain('<code>APPLE_TEAM_ID</code><span class="est on">')
+      expect(html).not.toContain(SENTINEL)
+    } finally {
+      if (prev === undefined) delete process.env.PRDT_HOME
+      else process.env.PRDT_HOME = prev
+    }
+  })
+
+  it('no store, or a link at the store directory → no keys', () => {
+    const home = fs.mkdtempSync(path.join(tmp, 'h-'))
+    expect(collectMachineEnv(home, null).keys).toEqual([])
+    const real = fs.mkdtempSync(path.join(tmp, 'real-'))
+    write(real, '.env', `A='${SENTINEL}'\n`)
+    fs.symlinkSync(real, path.join(home, 'env'))
+    expect(collectMachineEnv(home, null).keys).toEqual([])
+  })
+
+  it('page: 기기 범위 card with the approved copy, none-stored empty card, no sentinel', () => {
+    const root = fs.mkdtempSync(path.join(tmp, 'single-'))
+    write(root, '.prdt/config.json', JSON.stringify({ slug: 'shop' }))
+    write(root, '.prdt/po-state.json', PO_STATE())
+    write(root, 'docs/prd/PRD.md', '# PRD\n\n## v2.2 — round\n')
+    write(root, 'code/.env.local', `GOOGLE_OIDC_CLIENT_ID=${SENTINEL}\n`)
+    const home = fs.mkdtempSync(path.join(tmp, 'h-'))
+    const prev = process.env.PRDT_HOME
+    process.env.PRDT_HOME = home
+    try {
+      const none = render(collectAll(root, { disciplineRoot: root }))
+      expect(none).toContain('기기 범위에 저장된 키가 없어요.')
+      expect(none).toContain('터미널에서 prdt env set &lt;KEY&gt; 로 저장하면 키 이름이 여기에 보여요.')
+      write(home, 'env/.env', `APPLE_TEAM_ID='${SENTINEL}'\nGOOGLE_OIDC_CLIENT_ID='${SENTINEL}'\nPUSH_CERT_PASSWORD=\n`)
+      const withKeys = render(collectAll(root, { disciplineRoot: root }))
+      expect(withKeys).toContain('<b>.env</b><span class="env-dir">~/.prdt/env</span>')
+      expect(withKeys).toContain('기기 범위')
+      expect(withKeys).toContain('<code>APPLE_TEAM_ID</code>')
+      expect(withKeys).toContain('<code>GOOGLE_OIDC_CLIENT_ID</code><span class="tagw">제품 코드 값이 우선</span>')
+      expect(withKeys).toContain('<code>PUSH_CERT_PASSWORD</code><span class="est off">비어 있음</span>')
+      expect(withKeys + none).not.toContain(SENTINEL)
+    } finally {
+      if (prev === undefined) delete process.env.PRDT_HOME
+      else process.env.PRDT_HOME = prev
+    }
+  })
 })

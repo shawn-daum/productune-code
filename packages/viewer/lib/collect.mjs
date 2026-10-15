@@ -45,7 +45,7 @@ import { collectDisciplineLoad } from './discipline-load.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { collectEnv, homeEnvDir, lineEnvDir } from './env-status.mjs'
+import { collectEnv, collectMachineEnv, homeEnvDir, lineEnvDir } from './env-status.mjs'
 import { parseFrontmatter } from './frontmatter.mjs'
 // T-1104: the product-first docs layout (JS port of the CLI seam) — where each row is read from.
 import { createDocsLayout } from './docs-layout.mjs'
@@ -807,6 +807,7 @@ export function collectAll(repoRoot, { disciplineRoot } = {}) {
   const layout = createDocsLayout(repoRoot)
   // T-961: one entry per added release line; [] = single-line, every other
   // field exactly as before.
+  const homeEnv = collectEnv(repoRoot, homeEnvDir(repoRoot, cfg))
   const lines = lineNames.map((name) => {
     const { stage, version } = lineState(poState, name)
     const lineLayout = layout.layout === 'product' ? createDocsLayout(repoRoot, name) : layout
@@ -837,7 +838,9 @@ export function collectAll(repoRoot, { disciplineRoot } = {}) {
     discipline: collectDiscipline(repoRoot, disciplineRoot === undefined ? undefined : { disciplineRoot }),
     // T-1050: the load diagram's facts (plan · annex when · menus · hook roster).
     disciplineLoad: collectDisciplineLoad(repoRoot, { disciplineRoot: disciplineRoot === undefined ? defaultDisciplineRoot() : disciplineRoot }),
-    env: collectEnv(repoRoot, homeEnvDir(repoRoot, cfg)),
+    env: homeEnv,
+    // T-1109: machine scope (~/.prdt/env/.env) — names and set/empty only.
+    machineEnv: collectMachineEnv(process.env.PRDT_HOME || path.join(os.homedir(), '.prdt'), homeEnv),
   }
 }
 

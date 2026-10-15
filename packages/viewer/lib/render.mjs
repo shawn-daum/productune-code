@@ -2258,7 +2258,8 @@ function envSetCount(f) {
 function envFileBody(f, dir) {
   const set = envSetCount(f)
   // A sample file counts no set / empty (every key reads empty by design): names only.
-  const rows = f.keys.map((k) => `<div class="erow"><code>${escapeHtml(k.name)}</code>${f.sample ? '' : envPill(k.set)}</div>`).join('')
+  const tags = (k) => (k.codeWins ? `<span class="tagw">${ENV.codeWins}</span>` : '') + (k.plain ? `<span class="tagw">${ENV.plainValue}</span>` : '')
+  const rows = f.keys.map((k) => `<div class="erow">${tags(k) ? `<span><code>${escapeHtml(k.name)}</code>${tags(k)}</span>` : `<code>${escapeHtml(k.name)}</code>`}${f.sample ? '' : envPill(k.set)}</div>`).join('')
   const where = f.sample ? ENV.sampleKeys(f.keys.length) : dir || ''
   const counts = f.sample ? '' : `<span class="env-c">${envPill(true)} ${set} ${envPill(false)} ${f.keys.length - set}</span>`
   // T-1047: the key list is collapsed until the eye button reveals it (state per file card).
@@ -2270,12 +2271,23 @@ function envFileBody(f, dir) {
 }
 
 /** One current-version sidebar group per view: env = the last item (after 결정), its count = env file count (samples included). */
-function envGroup(env, emptyHead) {
+function envGroup(env, emptyHead, machine) {
+  const machineHtml = machineEnvBody(machine)
   if (!env || env.files.length === 0) {
     const body = `<div class="env-nofile"><b>${escapeHtml(emptyHead)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
-    return { key: 'env', label: STORE_LABEL.env, count: 0, bodyHtml: body }
+    return { key: 'env', label: STORE_LABEL.env, count: 0, bodyHtml: body + machineHtml }
   }
-  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir)).join('\n') }
+  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir)).join('\n') + machineHtml }
+}
+
+/** T-1109: the machine-scope section (~/.prdt/env/.env) — names, 설정됨 / 비어 있음, 제품 코드 값이 우선; none stored → the empty card. Absent `machine` (a single-file render) → nothing. */
+function machineEnvBody(machine) {
+  if (!machine) return ''
+  const head = `<div class="env-scope">${ENV.machineScope}</div>`
+  if (machine.keys.length === 0) {
+    return `${head}<div class="env-nofile"><b>${ENV.machineEmptyHead}</b><span>${escapeHtml(ENV.machineEmptyDetail)}</span></div>`
+  }
+  return head + envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir)
 }
 
 /** Home's env block: per real env file (samples only when there is no real one) 설정됨 n · 비어 있음 m, the empty keys named, a link to the env item of the same version; no env file → one line. */
@@ -2597,7 +2609,7 @@ function homeLineGroups(data, v, views, repoRootHref) {
     { key: 'prd', label: STORE_LABEL.prd, count: idle ? lastClosedId(v) : v.currentVersion, bodyHtml: idle ? idleNotice(IDLE.prdHead(v.name), IDLE.prdDetail()) : prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: homeTickets.length, bodyHtml: ticketRowsTable(homeTickets) },
     { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
-    envGroup(envOfView(data, v), ENV.emptyHead),
+    envGroup(envOfView(data, v), ENV.emptyHead, v.line ? null : data.machineEnv),
   ]
   return { groups, defaultKey: 'progress' }
 }
@@ -2632,7 +2644,7 @@ function homeSection(data, repoRootHref) {
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
-    envGroup(data.env, ENV.homeNone),
+    envGroup(data.env, ENV.homeNone, data.machineEnv),
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
   const heading = `${STORE_LABEL.home} · ${data.currentVersion}`
@@ -3128,6 +3140,8 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .est.off { color: var(--text-tertiary); border-style: dashed; }
 .env-nofile { display: flex; flex-direction: column; gap: 4px; padding: 18px; border: 1px dashed var(--border-inline); border-radius: 10px; color: var(--text-tertiary); font-size: 12.5px; }
 .env-nofile b { color: var(--text-primary); font-size: 13px; }
+.env-scope { margin: 18px 0 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.tagw { font-family: var(--font-family); font-size: 10.5px; color: var(--text-tertiary); border: 1px solid var(--border-inline); border-radius: 100px; padding: 0 7px; margin-left: 8px; white-space: nowrap; }
 .env-file { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
 .env-file + .env-file, .env-empty + .env-file { margin-top: 8px; }
 .env-file code { font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); }
