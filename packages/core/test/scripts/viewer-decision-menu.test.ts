@@ -33,21 +33,32 @@ function gen(root: string): string {
   execFileSync('node', [VIEWER_CLI, '--repo-root', root, '--out', out], { stdio: 'pipe', timeout: subprocessTimeout('cli') })
   return fs.readFileSync(out, 'utf8')
 }
-const rowIds = (html: string, kinds: string[]) => [...html.matchAll(/<tr class="detail-row" data-detail-kind="(ticket|wiki)" data-detail-id="([^"]+)"><td><span class="pill pill-type">(질문 · 열림|질문 · 완료|기록)<\/span>/g)].filter((m) => kinds.includes(m[3])).map((m) => `${m[3]}:${m[2]}`)
+const rowIds = (html: string, kinds: string[]) => [...html.matchAll(/<tr class="detail-row" data-detail-kind="(ticket|wiki)" data-detail-id="([^"]+)"><td><span class="pill pill-type">(질문 · 열림|질문 · 완료|질문 · 중단|기록)<\/span>/g)].filter((m) => kinds.includes(m[3])).map((m) => `${m[3]}:${m[2]}`)
 
 describe.skipIf(!RUN)('T-1138 decision bucket', () => {
   test('tickets only: open questions first, then done', () => {
     const html = gen(project({ tickets: [['T-002', 'done', '2026-09-29'], ['T-003', 'open', '2026-09-27']], pages: [] }))
-    expect(rowIds(html, ['질문 · 열림', '질문 · 완료', '기록'])).toEqual(['질문 · 열림:T-003', '질문 · 완료:T-002'])
+    expect(rowIds(html, ['질문 · 열림', '질문 · 완료', '질문 · 중단', '기록'])).toEqual(['질문 · 열림:T-003', '질문 · 완료:T-002'])
   })
   test('both: 질문 rows before 기록 rows', () => {
     const html = gen(project({ tickets: [['T-002', 'open', '2026-09-29']], pages: ['decision--a'] }))
-    expect(rowIds(html, ['질문 · 열림', '질문 · 완료', '기록'])).toEqual(['질문 · 열림:T-002', '기록:decision--a.md'])
+    expect(rowIds(html, ['질문 · 열림', '질문 · 완료', '질문 · 중단', '기록'])).toEqual(['질문 · 열림:T-002', '기록:decision--a.md'])
   })
   test('pages only / none: no 구분 column, as before', () => {
     const html = gen(project({ tickets: [], pages: ['decision--a'] }))
-    expect(rowIds(html, ['질문 · 열림', '질문 · 완료', '기록'])).toEqual([])
+    expect(rowIds(html, ['질문 · 열림', '질문 · 완료', '질문 · 중단', '기록'])).toEqual([])
     expect(html).not.toContain('<th>구분</th>')
     expect(html).toContain('data-detail-id="decision--a.md"')
+  })
+  test('질문 row: 버전 column is the ticket version dir, dropped is 질문 · 중단 (open first)', () => {
+    const html = gen(project({ tickets: [['T-002', 'dropped', '2026-09-29'], ['T-003', 'open', '2026-09-27']], pages: [] }))
+    expect(rowIds(html, ['질문 · 열림', '질문 · 완료', '질문 · 중단', '기록'])).toEqual(['질문 · 열림:T-003', '질문 · 중단:T-002'])
+    expect(html).toMatch(/data-detail-id="T-003"><td>.*?<td class="num-col">v1\.0<\/td><\/tr>/)
+    expect(html).toMatch(/data-detail-id="T-002"><td>.*?<td class="num-col">v1\.0<\/td><\/tr>/)
+  })
+  test('none: no decision tickets and no pages — no 구분 column, no decision rows', () => {
+    const html = gen(project({ tickets: [], pages: [] }))
+    expect(rowIds(html, ['질문 · 열림', '질문 · 완료', '질문 · 중단', '기록'])).toEqual([])
+    expect(html).not.toContain('<th>구분</th>')
   })
 })

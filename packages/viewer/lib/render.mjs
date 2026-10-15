@@ -836,11 +836,11 @@ function decisionRowsTable(tickets, pages) {
     const fm = t.frontmatter
     const id = fm.id || t.rel
     html += `<tr class="detail-row" data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}">`
-    html += `<td><span class="pill pill-type">${escapeHtml(isOpen(t) ? K.ticketOpen : K.ticketDone)}</span></td>`
+    html += `<td><span class="pill pill-type">${escapeHtml(isOpen(t) ? K.ticketOpen : fm.status === 'dropped' ? K.ticketDropped : K.ticketDone)}</span></td>`
     html += `<td class="id-col">${escapeHtml(id)}</td>`
     html += `<td>${escapeHtml(fm.slug || id)}</td>`
     html += `<td><span class="pill pill-status-${statusPillClass(fm.status)}">${escapeHtml(ticketStatusText(fm.status))}</span></td>`
-    html += `<td class="num-col">${escapeHtml(fm.created || '—')}</td></tr>\n`
+    html += `<td class="num-col">${escapeHtml(t.bucket || '—')}</td></tr>\n`
   }
   for (const p of pages) {
     const fm = p.frontmatter
