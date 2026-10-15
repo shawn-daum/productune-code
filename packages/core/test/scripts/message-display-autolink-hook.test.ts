@@ -127,6 +127,15 @@ describe('batches', () => {
     expect(display(p, 'T-1111\n', { index: 0, message_id: 'm-2' }).changed).toBe(true)
   })
 
+  test('an empty-delta final batch still removes the message state', () => {
+    const p = makeProject(['T-1111'])
+    display(p, '```\ncode\n', { index: 0 })
+    const dir = path.join(p.root, 'prdt-home', 'run', 'message-display')
+    expect(fs.readdirSync(dir)).toEqual(['m-1'])
+    expect(display(p, '', { index: 1, final: true }).changed).toBe(false)
+    expect(fs.existsSync(path.join(dir, 'm-1'))).toBe(false)
+  })
+
   test('the final batch removes the message state', () => {
     const p = makeProject(['T-1111'])
     display(p, '```\n', { index: 0 })
