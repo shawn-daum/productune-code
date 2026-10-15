@@ -820,6 +820,41 @@ function currentDecisionPages(pages, currentVersion) {
   return pages.filter((p) => p.rel.split('/').pop().startsWith('decision--') && p.frontmatter.version && sameVersion(String(p.frontmatter.version), currentVersion))
 }
 
+/** T-1138: the current version's `type: decision` tickets — the 질문 rows of Home's decision group. */
+function decisionTicketsOf(tickets) {
+  return tickets.filter((t) => t.frontmatter.type === 'decision')
+}
+
+/** T-1138: Home's decision group body — 질문 (decision tickets, open first) then 기록 (decision pages). No decision ticket → the pages-only table, unchanged. */
+function decisionRowsTable(tickets, pages) {
+  if (tickets.length === 0) return wikiRowsTable(pages)
+  const isOpen = (t) => t.frontmatter.status === 'open'
+  const ordered = [...sortNewestFirst(tickets.filter(isOpen), (x) => x.frontmatter.created, (x) => x.frontmatter.id || x.rel), ...sortNewestFirst(tickets.filter((t) => !isOpen(t)), (x) => x.frontmatter.created, (x) => x.frontmatter.id || x.rel)]
+  const K = HOME.decisionKind
+  let html = `<div class="table-wrap"><table><thead><tr>${HOME.decisionHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
+  for (const t of ordered) {
+    const fm = t.frontmatter
+    const id = fm.id || t.rel
+    html += `<tr class="detail-row" data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}">`
+    html += `<td><span class="pill pill-type">${escapeHtml(isOpen(t) ? K.ticketOpen : K.ticketDone)}</span></td>`
+    html += `<td class="id-col">${escapeHtml(id)}</td>`
+    html += `<td>${escapeHtml(fm.slug || id)}</td>`
+    html += `<td><span class="pill pill-status-${statusPillClass(fm.status)}">${escapeHtml(ticketStatusText(fm.status))}</span></td>`
+    html += `<td class="num-col">${escapeHtml(fm.created || '—')}</td></tr>\n`
+  }
+  for (const p of pages) {
+    const fm = p.frontmatter
+    const id = p.rel.split('/').pop()
+    html += `<tr class="detail-row" data-detail-kind="wiki" data-detail-id="${escapeHtml(id)}">`
+    html += `<td><span class="pill pill-type">${escapeHtml(K.page)}</span></td>`
+    html += `<td class="id-col">${escapeHtml(id)}</td>`
+    html += `<td>${escapeHtml(fm.title || id)}</td>`
+    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(wikiFeatureStatusText(fm.status))}</span></td>`
+    html += `<td class="num-col">${escapeHtml(fm.version || '—')}</td></tr>\n`
+  }
+  return html + '</tbody></table></div>\n'
+}
+
 /** Home's artifact group — the literal bucket match home has always used (T-713 scope note in `homeSection`); shared with the anchor table (T-792). */
 function currentArtifactEntries(artifacts, currentVersion) {
   return artifacts.entries.filter((e) => e.fields.bucket === currentVersion)
@@ -2600,6 +2635,7 @@ function homeLineGroups(data, v, views, repoRootHref) {
   const cur = `${v.prefix}${idle ? idleVersion(v) : v.currentVersion}`
   const currentArtifacts = lineArtifactEntries(data.artifacts, v, views).filter((e) => e.fields.bucket === cur)
   const currentDecisions = lineDecisionPages(data.wiki, v)
+  const decisionTickets = decisionTicketsOf(idle ? homeTickets_(v) : currentTickets)
   const idleHomeHtml = idle ? idleNotice(IDLE.homeHead(v.name), IDLE.homeDetail(v.tickets.included.filter((t) => t.bucket === 'backlog').length)) : ''
   // T-1108: an idle product has no open version, so its ticket pane lists every ticket it has (backlog + closed rounds).
   const homeTickets = idle ? [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))] : currentTickets
@@ -2608,10 +2644,16 @@ function homeLineGroups(data, v, views, repoRootHref) {
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: idle ? lastClosedId(v) : v.currentVersion, bodyHtml: idle ? idleNotice(IDLE.prdHead(v.name), IDLE.prdDetail()) : prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: homeTickets.length, bodyHtml: ticketRowsTable(homeTickets) },
-    { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
+    { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
     envGroup(envOfView(data, v), ENV.emptyHead, v.line ? null : data.machineEnv),
   ]
   return { groups, defaultKey: 'progress' }
+}
+
+/** T-1138: an idle product's decision tickets = those of the version its decision pages use (`idleVersion`). */
+function homeTickets_(v) {
+  const version = idleVersion(v)
+  return [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))].filter((t) => t.bucket !== 'backlog' && sameVersion(t.bucket, version))
 }
 
 /** A decision page's `version:` is `<line>/<v>` for an added line, bare for the home line (release-lines.md one-line rule). */
@@ -2638,12 +2680,13 @@ function homeSection(data, repoRootHref) {
   // po-state's version string is a latent bug class out of this scope.
   const currentArtifacts = currentArtifactEntries(data.artifacts, data.currentVersion)
   const currentDecisions = currentDecisionPages(data.wiki, data.currentVersion)
+  const decisionTickets = decisionTicketsOf(currentTickets)
   const groups = [
     { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data, homeEnvBlock(data.env, '', ENV.homeNone))}</div>` },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
-    { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
+    { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
     envGroup(data.env, ENV.homeNone, data.machineEnv),
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
