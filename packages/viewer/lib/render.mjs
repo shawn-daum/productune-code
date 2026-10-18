@@ -46,6 +46,7 @@ import { IDLE,
   noGroupLabel,
   OPTION_CARD,
   ENV,
+  IDENTITY,
 } from './labels.mjs'
 import { mermaidBlock, hasMermaid, mermaidScript, MERMAID_CSS } from './mermaid.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
@@ -416,6 +417,8 @@ const DOC_PATH_RE = /(?<![\w./~-])(?<!\[\[)docs\/(?:_shared\/|[a-z0-9]+(?:-[a-z0
 let pageDocTargets = null
 // T-1104: the layout of the project being rendered (null = legacy / single-product, as before).
 let pageDocsLayout = null
+// T-1165: the sidebar identity line · tool version · progress card, derived once per renderPage from `data` (see `pageIdentityOf`).
+let pageIdentity = null
 
 /** The anchor-table key a path written in a body names: itself, else (product layout) its To-Be form (③ As-Is paths in closed PRDs · tickets · wiki). */
 function docTargetKey(text) {
@@ -760,6 +763,47 @@ function svgIcon(pathMarkup, size = 20) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${pathMarkup}</svg>`
 }
 
+/**
+ * T-1165: what the sidebar's three identity parts show, all from data the page already has — the
+ * statusline's own sources: project = config slug, version · stage = po-state, stage done/total =
+ * `stageSegments` (the viewer's `stageOfTicketType` rule, statusline-stage-parity), ticket done/total
+ * = `versionProgressCounts`, dec · req = `waitLists`, tool version = the newest RELEASES.md `##` line.
+ * An idle product (stage idle, or no version) shows 「쉬는 중」 and no card.
+ */
+export function pageIdentityOf(data) {
+  const stage = data.poState?.stage || ''
+  const version = data.currentVersion || ''
+  const project = data.project || IDENTITY.tool
+  const toolVersion = (data.releases || [])[0]?.version || ''
+  const idle = stage === 'idle' || !version
+  if (idle) return { project, version, stage, idle, toolVersion, card: null }
+  const currentTickets = currentVersionTickets(data.tickets, version)
+  const seg = stageSegments(currentTickets).find((x) => x.stage === stage)
+  const stageDone = seg ? seg.tickets.filter((t) => t.done).length : 0
+  const stageTotal = seg ? seg.tickets.length : 0
+  const { done, total } = versionProgressCounts(currentTickets)
+  const { dec, req } = homeWaitLists(data)
+  return { project, version, stage, idle, toolVersion, card: { stage, stageDone, stageTotal, done, total, dec: dec.length, req: req.length } }
+}
+
+function sidebarIdentityHtml(id) {
+  const run = id.idle
+    ? `<span class="sid-sep">·</span> <span class="sid-st">${escapeHtml(IDENTITY.idle)}</span>`
+    : `<span class="sid-sep">·</span> <span class="sid-v">${escapeHtml(id.version)}</span> <span class="sid-st">${escapeHtml(id.stage)}</span>`
+  return `<div class="sidebar-id"><b>${escapeHtml(id.project)}</b> ${run}</div>`
+}
+
+function sidebarCardHtml(c) {
+  if (!c) return ''
+  const pct = c.total > 0 ? Math.round((c.done / c.total) * 1000) / 10 : 0
+  const stageName = IDENTITY.stage[c.stage] || c.stage
+  return `<div class="sp" role="group" aria-label="${IDENTITY.cardLabel}"><div class="sp-top"><span class="sp-stage">${escapeHtml(stageName)}</span><span>${c.stageDone}/${c.stageTotal}</span></div><div class="sp-count"><small>${IDENTITY.ticket}</small> <b>${c.done}</b><span class="sp-of">/${c.total}</span></div><div class="sp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.done}" aria-label="${IDENTITY.ticketBar(c.done, c.total)}"><i style="width:${pct}%"></i></div><div class="sp-wait"><span>dec <b>${c.dec}</b></span><span>·</span><span>req <b>${c.req}</b></span></div></div>`
+}
+
+function toolVersionText(id) {
+  return id.toolVersion ? `${IDENTITY.tool} ${id.toolVersion}` : ''
+}
+
 function activityBar(activeStore) {
   const buttons = STORE_ORDER.map((key) => {
     const active = key === activeStore ? ' active' : ''
@@ -768,7 +812,8 @@ function activityBar(activeStore) {
   // T-806: the toggle sits at the rail's bottom, below every store button —
   // the rail is the one element unchanged across Home, every store tab, and
   // any item open (see the .activity-theme-toggle CSS comment).
-  return `<nav class="activity">\n${buttons}\n${themeToggleButton()}\n</nav>`
+  const tool = pageIdentity ? toolVersionText(pageIdentity) : ''
+  return `<nav class="activity">\n${buttons}\n${themeToggleButton()}\n${tool ? `<span class="rail-tool">${escapeHtml(tool)}</span>` : ''}\n</nav>`
 }
 
 /** Wraps `innerHtml` (a frame-main-col's full content, sidebar included) into one activity-bar-addressable store section. */
@@ -1255,6 +1300,8 @@ function allLineTickets(data) {
 function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey, topHtml = '', alwaysButtons = false }) {
   const singleGroup = groups.length === 1 && !alwaysButtons
   const defaultIndex = defaultKey === undefined ? 0 : Math.max(0, groups.findIndex((g) => g.key === defaultKey))
+  const identity = pageIdentity
+  let cardPlaced = false
   const sidebarButtons = singleGroup
     ? `<div class="nav-item" style="color:var(--text-tertiary); font-style:italic;">${escapeHtml(noGroupLabel(groups[0].count ?? 0, noGroupUnit))}</div>`
     : groups
@@ -1273,13 +1320,19 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', d
           const head = g.head ? `<div class="ls-h"><b>${escapeHtml(g.head.label)}</b><span class="ls-st">${escapeHtml(g.head.stage || '')}</span></div>\n` : ''
           const crumbAttr = g.crumb ? ` data-crumb="${escapeHtml(g.crumb)}"` : ''
           const dim = g.dim ? ' nav-dim' : ''
-          return `${head}<button type="button" class="nav-item nav-item-clickable${dim}${active}" data-group-select="${escapeHtml(g.key)}"${crumbAttr}><span>${escapeHtml(g.label)}</span>${countHtml}</button>`
+          // T-1165: the progress card sits right under the home store's 진행 상황 item.
+          const card = g.key === 'progress' && !cardPlaced ? ((cardPlaced = true), sidebarCardHtml(identity?.card)) : ''
+          return `${head}<button type="button" class="nav-item nav-item-clickable${dim}${active}" data-group-select="${escapeHtml(g.key)}"${crumbAttr}><span>${escapeHtml(g.label)}</span>${countHtml}</button>${card}`
         })
         .join('\n')
+  // T-1165: a store without a 진행 상황 item (every store but home) puts the card under its title.
+  const tool = identity ? toolVersionText(identity) : ''
   const sidebar = `<nav class="sidebar">
-<div class="sidebar-title">productune</div>
+${identity ? sidebarIdentityHtml(identity) : '<div class="sidebar-title">productune</div>'}
 <div class="sidebar-sub">${escapeHtml(sidebarSubLabel)}</div>
+${!cardPlaced && !groups.some((g) => g.key === 'progress') ? sidebarCardHtml(identity?.card) : ''}
 ${sidebarButtons}
+${tool ? `<div class="sidebar-foot"><span class="foot-tool">${escapeHtml(tool)}</span></div>` : ''}
 </nav>`
 
   const panes = groups
@@ -2463,10 +2516,15 @@ function homeScope(data, currentTickets) {
   return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div>${rows.join('')}<div class="sc-outside">${outRow}${defHtml}${noteHtml}</div></div>`
 }
 
-function homeWaits(data) {
+/** dec · req wait lists of `data.tickets`; the sidebar card (T-1165) and Home's wait block share this one call. */
+function homeWaitLists(data) {
   // T-961: a blocking dep may be an open ticket in another line's folder — blockers are read across every line.
-  const all = (data.allLineTickets || [data.tickets]).flatMap(allTicketRows)
-  const { dec, req } = waitLists(allTicketRows(data.tickets), all)
+  const all = (data.allLineTickets || allLineTickets(data)).flatMap(allTicketRows)
+  return waitLists(allTicketRows(data.tickets), all)
+}
+
+function homeWaits(data) {
+  const { dec, req } = homeWaitLists(data)
   const block = (label, list, empty) =>
     `<div><div class="cp-h">${label} <span class="mono cp-n">${list.length}</span></div>` +
     (list.length === 0
@@ -2730,6 +2788,27 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   padding: var(--space-16) var(--space-12); overflow-y: auto;
 }
 .sidebar-title { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-quaternary); margin: 0 0 var(--space-4); }
+/* T-1165 (mock viewer-identity-progress.html, existing tokens only): identity line top-left, progress card, tool version bottom-left. */
+.sidebar { display: flex; flex-direction: column; padding-bottom: 0; }
+.sidebar > * { flex-shrink: 0; }
+.sidebar-id { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-6); margin: 0 0 var(--space-4); }
+.sidebar-id b { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
+.sidebar-id .sid-sep, .sidebar-id .sid-v { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.sidebar-id .sid-st { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--text-primary); }
+.sidebar-foot { display: flex; align-items: flex-end; position: sticky; bottom: 0; margin: auto calc(-1 * var(--space-12)) 0; padding: var(--space-8) var(--space-12) var(--space-16); background: var(--bg-surface-on); border-top: 1px solid var(--border-item); }
+.foot-tool { height: 28px; display: flex; align-items: center; font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.rail-tool { display: none; }
+.sp { display: grid; gap: var(--space-6); margin: var(--space-8) 0 var(--space-12); padding: var(--space-10) var(--space-12); border: 1px solid var(--border-item); border-radius: var(--radius-8); background: var(--bg-surface-base); }
+.sp-top { display: flex; align-items: baseline; gap: var(--space-8); font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.sp-stage { font-family: var(--font-family); font-size: 10.5px; font-weight: 600; color: var(--text-info); background: var(--health-info-subtle); border: 1px solid var(--health-info); border-radius: var(--radius-4); padding: 1px 6px; }
+.sp-count { display: flex; align-items: baseline; gap: var(--space-6); font-family: var(--font-mono); color: var(--text-primary); }
+.sp-count small { font-family: var(--font-family); font-size: 11px; color: var(--text-secondary); }
+.sp-count b { font-size: 17px; font-weight: 600; }
+.sp-of { font-size: 12px; color: var(--text-tertiary); }
+.sp-bar { height: 5px; border-radius: var(--radius-100); background: var(--bg-interaction-neutral); overflow: hidden; }
+.sp-bar i { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-100); }
+.sp-wait { display: flex; gap: var(--space-6); font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.sp-wait b { font-weight: 600; color: var(--text-secondary); }
 .sidebar-sub { font-size: 15px; font-weight: 600; color: var(--text-primary); margin: 0 0 var(--space-16); }
 .nav-item {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-8);
@@ -3237,6 +3316,29 @@ a.dl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; bord
 .store-section[data-store="disc"] .sidebar .nav-item:not(.nav-item-clickable) { cursor: default; }
 ${PRD_READING_CSS}
 ${DISCIPLINE_LOAD_CSS}
+/* phone width: the viewer has no phone layout today — minimum stacking so the three new parts fit (mock ① 폭 · 폰 390) */
+@media (max-width: 700px) {
+  .app-shell { flex-direction: column; overflow: auto; }
+  .store-section.active { flex-direction: column; flex: 0 0 auto; }
+  .activity { flex-direction: row; flex-wrap: wrap; width: auto; flex: 0 0 auto; padding: var(--space-6) var(--space-8); gap: var(--space-4); border-right: none; border-bottom: 1px solid var(--border-item); align-items: center; }
+  .activity-theme-toggle { margin: 0; }
+  .rail-tool { display: flex; align-items: center; flex: 0 0 auto; padding-left: var(--space-6); font-family: var(--font-mono); font-size: 10.5px; color: var(--text-tertiary); white-space: nowrap; }
+  .sidebar { width: auto; flex: 0 0 auto; max-height: 360px; border-right: none; border-bottom: 1px solid var(--border-item); }
+  .sidebar-foot { display: none; }
+  .frame-main-col { flex: 0 0 auto; min-height: 420px; overflow: visible; width: 100%; }
+  .main-inner { min-width: 0; }
+  .table-wrap { overflow-x: auto; }
+  .frame-body { padding: var(--space-16) var(--space-12); overflow: visible; }
+  .dash-card { padding: var(--space-12); }
+  .sc-grid { grid-template-columns: 1fr; }
+  .sc-waits { border-right: none; padding-right: 0; }
+  .sc-row { grid-template-columns: 96px minmax(0, 1fr) auto; }
+  .sb { flex-wrap: wrap; row-gap: var(--space-8); }
+  .sp { grid-template-columns: auto 1fr; align-items: center; column-gap: var(--space-12); margin: var(--space-6) 0 var(--space-8); }
+  .sp-count, .sp-top { grid-column: 1; }
+  .sp-wait, .sp-bar { grid-column: 2; }
+  .sp-wait { justify-content: flex-end; }
+}
 `
 
 /**
@@ -4042,6 +4144,7 @@ export function renderPage({
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   const anchors = buildAnchors(data)
   pageDocsLayout = data.docsLayout ?? null
+  pageIdentity = pageIdentityOf(data)
   pageDocTargets = buildDocPathTargets(data, anchors)
   pageTicketIds = ticketIdsOf(pageDocTargets)
   const views = lineViews(data)
