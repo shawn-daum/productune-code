@@ -13,7 +13,7 @@
                     → evidence, each block a closed <details class="spec-fold spec-ev"> (the set block wrapped in
                       one, id="ev-set", when screens exist; tables / measurements / source wording / diffs otherwise)
   A link (href="#…" or data-go) whose target sits in a closed <details> opens it first — valid in both shapes.
-  Copy to docs/artifacts/<version>/<slug>.html; fill in the playbook's order: criteria → this shell → screens.
+  Copy to docs/<product>/artifacts/<version>/<slug>.html; fill in the playbook's order: criteria → this shell → screens.
 
   SCROLL: no fixed-height pane, no overflow:hidden on anything that can overflow. List and description stick
   to the viewport (max-height + overflow-y:auto), the frame runs at its own height, the page scrolls.
@@ -29,7 +29,7 @@
 
   TWO LAYERS, one file:
     spec layer   = everything outside .frame — the skeleton's own --spec-* palette, no product component, no product token.
-    product layer = everything inside .frame — the product DS only (tokens from docs/design.md).
+    product layer = everything inside .frame — the product DS only (tokens from design.md).
   Spec vocabulary (screen names in .r-name, condition labels in .cond-name, facts marked data-spec-fact)
   never renders inside .frame — layer-leak-sweep.py checks it.
 
@@ -67,7 +67,7 @@
     --spec-text:#EDEBE4; --spec-muted:#9C9A92; --spec-current:#EDEBE4; --spec-current-text:#1C1B18;
     --edit-label:#63B3FF; --edit-label-bg:rgba(99,179,255,.16); --edit-value:#B7A4FF; --edit-value-bg:rgba(183,164,255,.18); }
 }
-/* ---------- product DS tokens — paste from docs/design.md; scope them to .frame ---------- */
+/* ---------- product DS tokens — paste from design.md; scope them to .frame ---------- */
 .frame{
   /* --bg:…; --text:…; --accent:…; --font:…; */
   font-family:var(--font, var(--spec-font));

@@ -22,11 +22,11 @@ Scope that arrives as a finished ticket bundle leaves the user nothing to choose
 
 ## Input — facts only
 - Read the arrived tickets, the PRD's version scope, measured numbers (usage, cost, time), and how many versions each item has been carried across.
-- Do NOT read the justification prose on `docs/wiki/decision--*` pages. The reasoning that got an item approved is the sunk-cost pull this run has to be free of — you need the fact that it was decided, not the case that was made for it.
+- Do NOT read the justification prose on `decision--*` wiki pages. The reasoning that got an item approved is the sunk-cost pull this run has to be free of — you need the fact that it was decided, not the case that was made for it.
 - A number you cannot source is not evidence: name it unknown inside the fork rather than estimating it.
 
 ## Output — the fork table, and nothing else
-- Write `docs/artifacts/<version>/scope-challenge.md` (`v1.8/scope-challenge.md`): at most 3 forks, each one a table of its named options with what that option gains, what it loses, and which one you recommend.
-- **Never touch `docs/prd/PRD.md`.** This run leaves the PRD byte-identical — no scope edit, no version section, not a note. The PRD is `prd-clarity`'s to write, after the user has answered.
+- Write `docs/<product>/artifacts/<version>/scope-challenge.md` (`v1.8/scope-challenge.md`): at most 3 forks, each one a table of its named options with what that option gains, what it loses, and which one you recommend.
+- **Never touch `docs/<product>/prd/PRD.md`.** This run leaves the PRD byte-identical — no scope edit, no version section, not a note. The PRD is `prd-clarity`'s to write, after the user has answered.
 - Print the absolute artifact path on its own line. `summary`: fork count · the cut you recommend hardest · anything you could not source.
 - Reasoning the user should keep past this round → `memory_notes[]`; out-of-scope finds → `unresolved[]`.

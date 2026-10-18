@@ -247,8 +247,8 @@ function denyReason(o: EventOpts, r: RunEnv = {}): string {
 const CLAUSE_CTX =
   'One inline `[ctx]` JSON line opens every dispatch:\n' +
   '  `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},' +
-  '"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#[<line>/]v<N>.<m>"}`'
-const CLAUSE_PRD = '`[ctx].prd_path` = `docs/prd/PRD.md#[<line>/]v<N>.<m>`'
+  '"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/<product>/prd/PRD.md#v<N>.<m>"}`'
+const CLAUSE_PRD = '`[ctx].prd_path` = `docs/<product>/prd/PRD.md#v<N>.<m>`'
 const CLAUSE_LANG =
   'Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · ' +
   '`dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.'

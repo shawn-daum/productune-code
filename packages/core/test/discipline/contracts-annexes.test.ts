@@ -90,7 +90,7 @@ describe('contracts annexes — every pointer resolves, every annex is pointed a
 // a copy left behind is the dual text this split exists to prevent.
 const MOVED: ReadonlyArray<readonly [(typeof ANNEXES)[number], string]> = [
   ['return-envelope', '`variant_matrix[]{variant,verdict}` — the last returned whenever the verified change renders conditional variants'],
-  ['fixed-paths', 'Never `[[…]]` here — `prdt wiki lint` covers `docs/wiki/` alone, so a wikilink out of that store is an unchecked dead link.'],
+  ['fixed-paths', 'Never `[[…]]` here — `prdt wiki lint` covers the wiki stores alone, so a wikilink out of that store is an unchecked dead link.'],
   ['fixed-paths', '`prdt doctor` watches the seam: orphan spec files · promotion candidates (done tickets in ≥2 version dirs, unjudged)'],
   ['fixed-paths', 'A design/token contract or build pipeline the code imports or builds from (e.g. `tokens.json` → a token build script) is code no matter the subject matter'],
   ['tickets', "Redeploys append to the version's single `ops` ticket, not new tickets."],
@@ -260,7 +260,7 @@ describe('po habit — Define entry and dispatch failure live in playbooks the h
   })
 
   test('the release-notes rule moved to the retro playbook; patch-cycle points there, not at the habit', () => {
-    const rule = 'Release notes on any version tag cut (`v*` or `<line>/v*`; version close OR patch close): in the SAME change that cuts the tag, add a `## <version>` section, the tag string verbatim, to the line\'s `<codeRoot>/docs/RELEASES.md`'
+    const rule = 'Release notes on any version tag cut (`v*` or `<product>/v*`; version close OR patch close): in the SAME change that cuts the tag, add a `## <version>` section, the tag string verbatim, to the product\'s `<codeRoot>/docs/RELEASES.md`'
     expect(pb('retro')).toContain(rule)
     expect(HABITS.po).not.toContain(rule)
     expect(pb('patch-cycle')).toContain('the release-notes rule applies — `retro` playbook, Rules:')
@@ -301,7 +301,7 @@ describe('worker habits point at the annex where their own act needs it', () => 
         })
     // T-770 hot→cold split: the whole Fixed-paths table, this row included,
     // moved off contracts.md into the fixed-paths annex.
-    const row = annex('fixed-paths').split('\n').find((l) => l.startsWith('|') && l.includes('`docs/features/<feature>.md`'))!
+    const row = annex('fixed-paths').split('\n').find((l) => l.startsWith('|') && l.includes('`docs/_shared/features/<feature>.md`'))!
     pinAbsent(row, '`(vX~', { file: 'discipline/contracts/fixed-paths.md (the Fixed paths feature-spec row)', protects: 'no dual text — authoring vocabulary lives at the authoring site only' })
   })
   test('po habit: isolation triggers pointer', () => {

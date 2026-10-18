@@ -31,6 +31,7 @@
  */
 
 import path from 'path'
+import { copyPrdtCli } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -87,7 +88,7 @@ function doctor(env: Record<string, string> = {}): string[] {
 function scaffold(root: string) {
   const scriptsDir = path.join(root, 'repo', 'packages', 'core', 'scripts')
   fs.mkdirSync(path.join(scriptsDir, 'hooks'), { recursive: true })
-  fs.copyFileSync(REAL_PRDT_CLI, path.join(scriptsDir, 'prdt'))
+  copyPrdtCli(REAL_PRDT_CLI, path.join(scriptsDir, 'prdt'))
   fs.chmodSync(path.join(scriptsDir, 'prdt'), 0o755)
   execFileSync('git', ['init', '-q'], { cwd: path.join(root, 'repo') })
   fs.mkdirSync(path.join(root, 'prdt-home', 'wiki'), { recursive: true })
@@ -584,7 +585,7 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — installed copy finds the repo
     const scriptsDir = path.join(repo, 'packages', 'core', 'scripts')
     fs.mkdirSync(path.join(scriptsDir, 'hooks'), { recursive: true })
     fs.mkdirSync(path.join(repo, 'packages', 'core', 'discipline', 'developer'), { recursive: true })
-    fs.copyFileSync(REAL_PRDT_CLI, path.join(scriptsDir, 'prdt'))
+    copyPrdtCli(REAL_PRDT_CLI, path.join(scriptsDir, 'prdt'))
     fs.chmodSync(path.join(scriptsDir, 'prdt'), 0o755)
     fs.writeFileSync(path.join(scriptsDir, 'hooks', 'prdt-hook-a.sh'), '#!/usr/bin/env bash\necho v2\n')
     fs.writeFileSync(path.join(repo, 'packages', 'core', 'discipline', 'developer', 'habit.md'),
@@ -626,7 +627,7 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — installed copy finds the repo
     fs.mkdirSync(path.join(installedHome, 'discipline', 'developer'), { recursive: true })
     fs.mkdirSync(path.join(installedHome, 'hooks'), { recursive: true })
     installedCli = path.join(installedHome, 'bin', 'prdt')
-    fs.copyFileSync(REAL_PRDT_CLI, installedCli)
+    copyPrdtCli(REAL_PRDT_CLI, installedCli)
     fs.appendFileSync(installedCli, '\n# T-576 test drift marker — never committed anywhere\n')
     fs.chmodSync(installedCli, 0o755)
     fs.writeFileSync(path.join(installedHome, 'prdt.env'),

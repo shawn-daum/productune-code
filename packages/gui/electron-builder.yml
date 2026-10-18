@@ -82,6 +82,7 @@ extraResources:
       - "scripts/prdt-messages.json"
       - "scripts/statusline-prdt.sh"
       - "scripts/prdt_safe_fs.py"
+      - "scripts/prdt_lanes.py"
       - "scripts/hook-manifest.json"
       - "scripts/install.sh"
       - "scripts/hooks/prdt-*.sh"

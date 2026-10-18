@@ -9,6 +9,7 @@
  * without it the files are written through their path strings.
  */
 import fs from 'fs'
+import { copyPrdtCli } from '../helpers/copy-prdt'
 import os from 'os'
 import path from 'path'
 import { spawnSync } from 'child_process'
@@ -50,7 +51,7 @@ beforeEach(() => {
   const code = path.join(sb, 'code')
   const v = path.join(code, 'packages', 'viewer')
   fs.mkdirSync(path.join(code, 'packages', 'core', 'scripts'), { recursive: true })
-  fs.copyFileSync(REAL_PRDT, path.join(code, 'packages', 'core', 'scripts', 'prdt'))
+  copyPrdtCli(REAL_PRDT, path.join(code, 'packages', 'core', 'scripts', 'prdt'))
   fs.chmodSync(path.join(code, 'packages', 'core', 'scripts', 'prdt'), 0o755)
   fs.mkdirSync(v, { recursive: true })
   fs.writeFileSync(path.join(v, 'cli.mjs'), STUB)

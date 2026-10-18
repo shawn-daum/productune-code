@@ -20,6 +20,7 @@
  */
 
 import path from 'path'
+import { copyPrdtCli } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -185,7 +186,7 @@ describe.skipIf(!CAN_RUN)('doctor: ticket frame (advisory)', () => {
     // named as PRDT_REPO — the candidate the bridge check judges first.
     const repo = path.join(sandbox, 'stale-repo')
     fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true })
-    fs.copyFileSync(PRDT_CLI, path.join(repo, 'scripts', 'prdt'))
+    copyPrdtCli(PRDT_CLI, path.join(repo, 'scripts', 'prdt'))
     fs.mkdirSync(path.join(repo, 'src', 'bin'), { recursive: true })
     fs.writeFileSync(path.join(repo, 'src', 'bin', 'meta-cli.ts'), '// fixture\n')
     fs.mkdirSync(path.join(repo, 'dist', 'bin'), { recursive: true })
