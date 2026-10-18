@@ -427,6 +427,18 @@ export const HASH_NOTICE = {
   stale: '뷰어를 만든 뒤 옮겨지거나 지워졌어요. 홈으로 돌아왔어요.',
 }
 
+// T-1165 (mock docs/artifacts/v1.14/viewer-identity-progress.html, T-1129 · T-1161 = B): the sidebar's
+// identity line (top-left), the tool version (bottom-left) and the progress card. `stage` names are the
+// statusline's own Korean words (prdt-messages.json `statusline.stage.*`; pinned by viewer-identity-progress.test.ts).
+export const IDENTITY = {
+  idle: '쉬는 중',
+  tool: 'productune',
+  ticket: '티켓',
+  cardLabel: '버전 진행 요약',
+  ticketBar: (done, total) => `티켓 완료 ${done}/${total}`,
+  stage: { define: '기획', build: '개발', ship: '배포', retro: '회고', idle: '유휴' },
+}
+
 // T-797 개정: the topstrip's light/dark toggle — its accessible name says
 // what pressing it does next (the page opens light by default).
 export const THEME_TOGGLE = {
