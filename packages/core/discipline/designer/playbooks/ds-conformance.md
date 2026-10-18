@@ -7,10 +7,10 @@ effort: medium
 ---
 # DS conformance — does the build honor the settled system?
 
-Producer-side checklist: read `docs/design.md`, scan the BUILT product (rendered, not source-only), mark each ✓ / N/A / ✗. Soft ritual — you report; the PO judges what to fix or forgive. (The independent anti-slop review rubric is QA's `ds-conformance` — don't duplicate its scoring here.)
+Producer-side checklist: read the DS (`design.md`, both scopes), scan the BUILT product (rendered, not source-only), mark each ✓ / N/A / ✗. Soft ritual — you report; the PO judges what to fix or forgive. (The independent anti-slop review rubric is QA's `ds-conformance` — don't duplicate its scoring here.)
 
 ## Items
-1. **Tokens** — color / spacing / typography values in the build match `docs/design.md`; no off-spec magic numbers in critical layout.
+1. **Tokens** — color / spacing / typography values in the build match the DS; no off-spec magic numbers in critical layout.
 2. **Typography** — the specified family + scale actually load and render; no silent system-default fallback (check the rendered font, not the CSS declaration).
 3. **Color** — brand palette holds in critical UI; no framework-default colors leaking in.
 4. **Components** — core components match the DS recipes (shape, radius, states); one-off variants flagged.
@@ -21,7 +21,7 @@ Producer-side checklist: read `docs/design.md`, scan the BUILT product (rendered
 ## Rules
 - Judge on rendered output (screenshots) with source as supporting evidence.
 - ✗ rows: one line each — item · where · expected vs observed. No waiver field: the PO decides what slides and logs it.
-- Drift traced to a DS gap (the DS never specified it) → that's YOUR fix: update `docs/design.md`, note it in `summary`.
+- Drift traced to a DS gap (the DS never specified it) → that's YOUR fix: update the DS `design.md` (the scope the gap belongs to), note it in `summary`.
 
 ## Return
 - Table item → ✓/N/A/✗ + ✗ detail lines. The PO slices patches → developer → re-check ✗ items only. Item 5 ✗ on an asset that does not exist (missing — not present-but-unplaced or unreferenced, those stay developer) → `escalate_to{model:"sonnet",effort:"medium",playbooks:["brand-assets"],why}` in the same return; the developer places what it lands, then re-check.
