@@ -47,7 +47,7 @@ test('the count comes from the manifest roster', () => {
   expect(src).toContain('${HOOK_COUNT}종')
 })
 
-test('the roster is 31 hooks today — a canary on the number the user reads', () => {
+test('the roster is 30 hooks today — a canary on the number the user reads', () => {
   // Not the assertion that matters (the two above are), but the one that makes a
   // roster change visible in this file's diff as well as in the manifest's.
   // T-577: 12 + the eleven discipline part slots prdt-session-start-p2..p12.sh.
@@ -57,9 +57,9 @@ test('the roster is 31 hooks today — a canary on the number the user reads', (
   // T-985: +1, prdt-question-check.sh (Stop, matcher-less, PO only).
   // T-976: +1, prdt-identity-guard.sh (PreToolUse, matcher Bash|WebFetch|WebSearch|Write|Edit|MultiEdit|NotebookEdit).
   // T-977: +1, prdt-wordlist-check.sh (PostToolUse, matcher Write|Edit|MultiEdit, its own entry).
-  // T-899: +1, prdt-link-check.sh (Stop, matcher-less, its own entry, PO only).
+  // T-899: +1, prdt-link-check.sh; T-1156: -1, retired again (T-1143 links ids on screen).
   // T-1143: +1, prdt-message-display-autolink.sh (MessageDisplay, matcher-less, its own entry).
-  expect(rosterSize()).toBe(31)
+  expect(rosterSize()).toBe(30)
 })
 
 test.skipIf(!hasJq())('a real install prints the manifest count', () => {
