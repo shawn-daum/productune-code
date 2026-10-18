@@ -22,6 +22,7 @@
  */
 
 import path from 'path'
+import { copyPrdtCli } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -74,7 +75,7 @@ function buildTemplate(root: string) {
   const core = path.join(root, 'repo', 'packages', 'core')
   fs.mkdirSync(path.join(core, 'scripts'), { recursive: true })
   fs.mkdirSync(path.join(core, 'agents'), { recursive: true })
-  fs.copyFileSync(REAL_PRDT_CLI, path.join(core, 'scripts', 'prdt'))
+  copyPrdtCli(REAL_PRDT_CLI, path.join(core, 'scripts', 'prdt'))
   fs.chmodSync(path.join(core, 'scripts', 'prdt'), 0o755)
   const repo = path.join(root, 'repo')
   git(['init', '-q'], repo)

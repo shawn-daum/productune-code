@@ -1,7 +1,7 @@
 # UX principles (reference — generic UX/UI craft)
 
 Portable, project-agnostic UX/UI craft — the single generic home for design
-principles; applies across every project. Each project's `docs/design.md` APPLIES
+principles; applies across every project. Each project's `docs/_shared/design.md` (a product's own: `docs/<product>/design.md`) APPLIES
 these + holds project-specific tokens / recipes / deltas, not re-authoring them. Apply
 when designing any flow / mockup / spec.
 

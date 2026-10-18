@@ -1130,7 +1130,7 @@ if (stage in ("define", "build") and isinstance(prompt, str)
         "fired this version (11/11, T-530 owns the match fix) — read the turn yourself and "
         "confirm it actually asks for a deploy before treating it as one. If it does, do "
         "ship entry first: readiness pass (readiness-dispatch playbook) + po-state stage "
-        "write, or an explicit N/A-skip line in docs/wiki/log.md, before the deploy work "
+        "write, or an explicit N/A-skip line in docs/_shared/wiki/log.md, before the deploy work "
         "(PO habit — Lifecycle judgment)."
     )
 
