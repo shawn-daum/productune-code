@@ -53,7 +53,7 @@ function stop(sb: ReturnType<typeof sandbox>, reply: unknown, extra: Record<stri
 const HOT = '[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 each point its own paragraph opened by a `**label:**`, never a `-` item; `\u00b7` sub-lines right under its first line only when needed; never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; one blank line after each point\'s block, none inside it.'
 
 // T-1072: the reply hot line, every PO PostToolUse / UserPromptSubmit whatever the register.
-const REPLY = "[prdt reply] Final user-chat reply only \u2192 each ticket id's first mention = its `prdt tickets --link` output line, in this reply itself; over one line \u2192 `prdt wordlist check --lang <user_lang> -` on the draft first, each hit (`\u2014` \u00b7 합치기 \u00b7 모름) \u2192 a listed replacement."
+const REPLY = "[prdt reply] Final user-chat reply only, over one line \u2192 `prdt wordlist check --lang <user_lang> -` on the draft first, each hit (`\u2014` \u00b7 합치기 \u00b7 모름) \u2192 a listed replacement."
 
 function post(sb: ReturnType<typeof sandbox>, extra: Record<string, unknown> = {}) {
   const ev = { session_id: 's', hook_event_name: 'PostToolUse', agent_type: 'prdt-po', cwd: sb.proj, tool_name: 'Bash', ...extra }
@@ -73,7 +73,7 @@ test('PostToolUse for the PO while form=outline is bound returns the reply line 
 test('PostToolUse for the PO under prose returns the reply line alone (T-1072)', () => {
   const r = JSON.parse(post(sandbox(PROSE)))
   expect(r.hookSpecificOutput.additionalContext).toBe(REPLY)
-  expect(Buffer.byteLength(REPLY, 'utf8')).toBe(284)
+  expect(Buffer.byteLength(REPLY, 'utf8')).toBe(187)
 })
 
 test('PostToolUse: nothing for a worker or outside a project', () => {
@@ -124,8 +124,6 @@ test('the manifest registers prdt-user-prompt.sh on Stop beside the question che
   const stops = m.registrations.filter((r: any) => r.event === 'Stop')
   expect(stops).toEqual([
     { event: 'Stop', hooks: ['prdt-question-check.sh'] },
-    // T-899: prdt-link-check.sh, its own Stop entry between the two.
-    { event: 'Stop', hooks: ['prdt-link-check.sh'] },
     { event: 'Stop', hooks: ['prdt-user-prompt.sh'] },
   ])
   const post = m.registrations.filter((r: any) => r.event === 'PostToolUse' && r.hooks.includes('prdt-user-prompt.sh'))

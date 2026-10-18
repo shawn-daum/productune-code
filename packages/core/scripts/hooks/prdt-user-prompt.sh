@@ -147,15 +147,13 @@ FORM_OUTLINE_HOT_LINE = (
     "never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; "
     "one blank line after each point's block, none inside it."
 )
-# T-1072: the reply hot line — the two user-chat rules the PO breaks most (ticket
-# link at first mention, wordlist check on the draft), at the moment it writes its
-# final reply. PO only, every PostToolUse and UserPromptSubmit, whatever the register
-# (the link check at Stop runs regardless of register too). User-approved wording
-# (T-1073 = A, 2026-10-11; docs/artifacts/v1.13/hot-line-links-and-voice-draft.md,
-# draft 1). po/habit.md lines 51/54 point here.
+# T-1072: the reply hot line — the wordlist check on the draft, at the moment the PO
+# writes its final reply. PO only, every PostToolUse and UserPromptSubmit, whatever
+# the register. T-1156: the ticket-link clause is gone (the MessageDisplay hook links
+# ticket ids on screen, T-1143); wording user-approved in T-1155.
+# po/habit.md lines 51/54 point here.
 REPLY_HOT_LINE = (
-    "[prdt reply] Final user-chat reply only \u2192 each ticket id's first mention = "
-    "its `prdt tickets --link` output line, in this reply itself; over one line \u2192 "
+    "[prdt reply] Final user-chat reply only, over one line \u2192 "
     "`prdt wordlist check --lang <user_lang> -` on the draft first, "
     "each hit (`\u2014` \u00b7 합치기 \u00b7 모름) \u2192 a listed replacement."
 )
@@ -198,8 +196,7 @@ FORM_OUTLINE_LIST_CAP = 5
 #   bold    — the WHOLE line is one bold span (`**...**`) — a sub-heading —
 #             or a line opening with one (`**label:**`, T-1070: a point is a
 #             paragraph opened by a bold label, so its sentences are marked)
-#   link-only: a `[링크]` line or a line made only of markdown links (T-1072
-#             follow-up shape)
+#   link-only: a line made only of markdown links (viewer-link lines)
 #   indent  — 2+ leading spaces/tabs and none of the above — a wrapped
 #             continuation
 # Anything left is a CANDIDATE line ("표식 없는 줄"). A candidate is a
@@ -222,9 +219,8 @@ FORM_OUTLINE_MARKER_RE = re.compile(
 FORM_OUTLINE_HR_RE = re.compile(r"^-{3,}$")  # thematic break: "---", "- - -"
 FORM_OUTLINE_BOLD_RE = re.compile(r"^\*\*.+\*\*$")
 FORM_OUTLINE_LABEL_RE = re.compile(r"^\*\*[^*]+\*\*")
-# T-1072: link-only line — a `[링크]` line, or a line made only of markdown links
-# (the missed-link follow-up shape the link check asks for).
-FORM_OUTLINE_LINK_ONLY_RE = re.compile(r"^(?:\[링크\]|(?:\[[^\]\n]+\]\([^)\s]+\)[ \t]*)+)$")
+# T-1072: link-only line — a line made only of markdown links (viewer links).
+FORM_OUTLINE_LINK_ONLY_RE = re.compile(r"^(?:\[[^\]\n]+\]\([^)\s]+\)[ \t]*)+$")
 # Self-labelled item (T-768, form-outline.md line 10): a bare single Latin
 # letter (A, a — either case, any letter) or a lowercase roman numeral up to
 # xx, optionally closed with `.`/`)`, then whitespace or end-of-line. Plain

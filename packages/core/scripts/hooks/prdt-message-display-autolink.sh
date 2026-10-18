@@ -2,8 +2,8 @@
 # prdt — ticket-id autolink on screen (T-1143; decision T-1140 = script, not an LLM
 # instruction). Registered on MessageDisplay (matcher-less: the event takes none).
 #
-# WHY. The Stop link check (prdt-link-check.sh) appends a separate `[링크]` block
-# after the reply. This rewrites the bare `T-NNN` inside the reply itself, on
+# WHY. A Stop link check (prdt-link-check.sh, retired in T-1156) used to append a
+# separate `[링크]` block after the reply. This rewrites the bare `T-NNN` inside the reply itself, on
 # screen only: `displayContent` replaces the delta; the transcript and what the
 # model sees keep the original text (MessageDisplay is display-only).
 #

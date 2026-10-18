@@ -10,7 +10,7 @@
  * one to answer "REALPROJ is not mine". A control copy of each script with the
  * boundary neutralized (the "tracks" literal renamed) shows the same cwd DID reach
  * REALPROJ before the fix. Remaining python twins (auto-open, inbox-inject,
- * link-check, return-check, question-check) are checked for the identical block.
+ * return-check, question-check) are checked for the identical block.
  * Everything runs on temp fixtures, nothing touches a real project.
  */
 import fs from 'fs'
@@ -27,7 +27,7 @@ const OVERRIDES = path.join(HOOKS, 'prdt-project-overrides-inject.sh')
 const USER_PROMPT = path.join(HOOKS, 'prdt-user-prompt.sh')
 const POST_DISPATCH = path.join(HOOKS, 'prdt-post-dispatch.sh')
 const STATUSLINE = path.join(CORE_ROOT, 'scripts', 'statusline-prdt.sh')
-const OTHER_TWINS = ['prdt-auto-open.sh', 'prdt-inbox-inject.sh', 'prdt-link-check.sh',
+const OTHER_TWINS = ['prdt-auto-open.sh', 'prdt-inbox-inject.sh',
   'prdt-return-check.sh', 'prdt-question-check.sh'].map((n) => path.join(HOOKS, n))
 
 const hasBin = (bin: string) => { try { execFileSync('command', ['-v', bin], { stdio: 'ignore', shell: '/bin/bash' }); return true } catch { return false } }
