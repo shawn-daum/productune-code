@@ -196,8 +196,7 @@ FORM_OUTLINE_LIST_CAP = 5
 #   bold    — the WHOLE line is one bold span (`**...**`) — a sub-heading —
 #             or a line opening with one (`**label:**`, T-1070: a point is a
 #             paragraph opened by a bold label, so its sentences are marked)
-#   link-only: a `[링크]` line or a line made only of markdown links (T-1072
-#             follow-up shape)
+#   link-only: a line made only of markdown links (viewer-link lines)
 #   indent  — 2+ leading spaces/tabs and none of the above — a wrapped
 #             continuation
 # Anything left is a CANDIDATE line ("표식 없는 줄"). A candidate is a
@@ -220,9 +219,8 @@ FORM_OUTLINE_MARKER_RE = re.compile(
 FORM_OUTLINE_HR_RE = re.compile(r"^-{3,}$")  # thematic break: "---", "- - -"
 FORM_OUTLINE_BOLD_RE = re.compile(r"^\*\*.+\*\*$")
 FORM_OUTLINE_LABEL_RE = re.compile(r"^\*\*[^*]+\*\*")
-# T-1072: link-only line — a `[링크]` line, or a line made only of markdown links
-# (the missed-link follow-up shape the link check asks for).
-FORM_OUTLINE_LINK_ONLY_RE = re.compile(r"^(?:\[링크\]|(?:\[[^\]\n]+\]\([^)\s]+\)[ \t]*)+)$")
+# T-1072: link-only line — a line made only of markdown links (viewer links).
+FORM_OUTLINE_LINK_ONLY_RE = re.compile(r"^(?:\[[^\]\n]+\]\([^)\s]+\)[ \t]*)+$")
 # Self-labelled item (T-768, form-outline.md line 10): a bare single Latin
 # letter (A, a — either case, any letter) or a lowercase roman numeral up to
 # xx, optionally closed with `.`/`)`, then whitespace or end-of-line. Plain

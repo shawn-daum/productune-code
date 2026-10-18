@@ -7,7 +7,7 @@
  * `project_products` / `tickets_homes`. This file pins:
  *   - every copy answers exactly what the CLI's `project_products` /
  *     `product_docs_dirs(root, "tickets")` answer, over a spread of layouts;
- *   - link-check · question-check · user-prompt read product tickets (and the
+ *   - question-check · user-prompt read product tickets (and the
  *     shared backlog), and still read the legacy tree unchanged;
  *   - single-product statusline output is byte-identical before / after the
  *     migration (the PRD's necessary condition).
