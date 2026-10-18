@@ -10,7 +10,7 @@
  * one to answer "REALPROJ is not mine". A control copy of each script with the
  * boundary neutralized (the "tracks" literal renamed) shows the same cwd DID reach
  * REALPROJ before the fix. Remaining python twins (auto-open, inbox-inject,
- * link-check, return-check, question-check) are checked for the identical block.
+ * return-check, question-check) are checked for the identical block.
  * Everything runs on temp fixtures, nothing touches a real project.
  */
 import fs from 'fs'

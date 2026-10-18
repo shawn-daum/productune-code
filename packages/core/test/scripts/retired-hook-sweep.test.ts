@@ -21,6 +21,14 @@ function cmds(settings: any): string[] {
   return out
 }
 
+// Near-miss foreign commands: a roster/retired basename appears as prefix-, suffix- or
+// argument text but the command's last path segment is not exactly that basename.
+const NEAR_MISS = [
+  '/opt/other/run.sh --skip prdt-link-check.sh',
+  '/Users/me/my-prdt-link-check.sh',
+  '/Users/me/prdt-link-check.sh.bak',
+]
+
 function seed(sb: ReturnType<typeof makeSandbox>) {
   const hooksDir = path.join(sb.prdtHome, 'hooks')
   fs.mkdirSync(hooksDir, { recursive: true })
@@ -31,6 +39,7 @@ function seed(sb: ReturnType<typeof makeSandbox>) {
       Stop: [
         { hooks: [{ type: 'command', command: `"${hooksDir}/prdt-link-check.sh"` }] },
         { hooks: [{ type: 'command', command: '/Users/me/own-stop.sh' }] },
+        ...NEAR_MISS.map((command) => ({ hooks: [{ type: 'command', command }] })),
       ],
     },
   }))
@@ -47,8 +56,9 @@ describe.skipIf(!hasJq())('retired hook sweep', () => {
     seed(sb)
     runInstall(sb)
     const s = JSON.parse(fs.readFileSync(path.join(sb.claudeDir, 'settings.json'), 'utf8'))
-    expect(cmds(s).some((c) => c.includes('prdt-link-check.sh'))).toBe(false)
+    expect(cmds(s).some((c) => c.includes('prdt-link-check.sh') && !NEAR_MISS.includes(c))).toBe(false)
     expect(cmds(s)).toContain('/Users/me/own-stop.sh')
+    for (const c of NEAR_MISS) expect(cmds(s)).toContain(c)
     expect(fs.existsSync(path.join(sb.prdtHome, 'hooks', 'prdt-link-check.sh'))).toBe(false)
   }, 60_000)
 
@@ -58,8 +68,11 @@ describe.skipIf(!hasJq())('retired hook sweep', () => {
     const p = path.join(sb.claudeDir, 'settings.json')
     const s = JSON.parse(fs.readFileSync(p, 'utf8'))
     s.hooks.Stop.push({ hooks: [{ type: 'command', command: `"${sb.prdtHome}/hooks/prdt-link-check.sh"` }] })
+    for (const command of NEAR_MISS) s.hooks.Stop.push({ hooks: [{ type: 'command', command }] })
     fs.writeFileSync(p, JSON.stringify(s))
     execFileSync('bash', [UNINSTALL_SH], { env: sb.env, stdio: 'ignore' })
-    expect(cmds(JSON.parse(fs.readFileSync(p, 'utf8'))).some((c) => c.includes('prdt-link-check.sh'))).toBe(false)
+    const after = cmds(JSON.parse(fs.readFileSync(p, 'utf8')))
+    expect(after.some((c) => c.includes('prdt-link-check.sh') && !NEAR_MISS.includes(c))).toBe(false)
+    for (const c of NEAR_MISS) expect(after).toContain(c)
   }, 60_000)
 })
