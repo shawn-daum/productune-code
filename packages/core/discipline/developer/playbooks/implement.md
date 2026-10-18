@@ -10,7 +10,7 @@ effort: medium
 ## Before
 - Read every file you'll touch. Understand the local idiom (naming, error handling, comment density) — your code should read like the surrounding code.
 - Logic / regression-prone area → write the failing test first (doctrine #3). UI glue → judgment.
-- UI work → open `docs/design.md` first; tokens/components are master. Missing token you need → `unresolved[]` for the Designer, don't invent one.
+- UI work → open the DS (`design.md`, both scopes) first; tokens/components are master. Missing token you need → `unresolved[]` for the Designer, don't invent one.
 
 ## During
 - Smallest change that meets acceptance (doctrine #1). No drive-by fixes — out-of-scope finds go to `unresolved[]`.
