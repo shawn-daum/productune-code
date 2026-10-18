@@ -8988,7 +8988,7 @@ def prdt_script_drift_warnings():
 # the regen worker and the statusline ticket links stop silently, so doctor
 # names the file. Keep this list = every `import <module>` those scripts do from
 # their sibling directory.
-BIN_HELPER_MODULES = ("prdt_safe_fs.py",)
+BIN_HELPER_MODULES = ("prdt_safe_fs.py", "prdt_lanes.py")
 
 
 def bin_helper_warnings():

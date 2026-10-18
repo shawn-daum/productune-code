@@ -774,7 +774,8 @@ def _prd_has_gate_table():
     cands += [os.path.join(root, "docs", p, "prd", "PRD.md") for p in ticket_prods]
     for c in cands:
         try:
-            if "### 합격선" in open(c, encoding="utf-8", errors="replace").read():
+            # same heading test as prdt_lanes.LANE_HEADING_RE (T-1147 QA: the two must agree)
+            if any(re.match(r"^###\s+합격선(\s|$)", ln) for ln in open(c, encoding="utf-8", errors="replace").read().splitlines()):
                 return True
         except OSError:
             continue
@@ -809,8 +810,6 @@ def _ids(v):
     return [t for t in (v if isinstance(v, list) else []) if isinstance(t, str) and TICKET_RE.match(t)]
 
 
-# ids of every lane's tickets of a product: they show on the lane row, not in the product row's `working`
-lane_ticket_ids = {ln: {t for x in lanes for t in _ids(x.get("tickets"))} for ln, lanes in lane_data.items()}
 
 running = running_dispatches()
 idx = open_index_ro() if (running or dec or req or lane_data) else None
@@ -961,26 +960,18 @@ def lane_cap():
 line_budget = MAX_ROWS - 1
 shown = rows if len(rows) <= line_budget else rows[:line_budget - 1]
 out_rows = []
-lane_rows = []   # T-1147: parallel to `shown` — [(lane, text)] under each product row
-for r in shown:
-    head = [r["slug_ver"], r["stage"]]
-    if r["vtotal"]:
-        head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
-    in_lane = lane_ticket_ids.get(r["line"], ())
-    ids = [tid for tid, _ in running if line_of(tid) == r["line"] and tid not in in_lane]
-    branch = L("branch", name=r["branch"]) if r["branch"] else ""
-    out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
-                                        " | ".join(head + [working_seg(ids, lim)]), branch)))
-    lane_rows.append([(x, lane_text(x, lane_cap())) for x in lane_data.get(r["line"], [])])
-if len(shown) < len(rows):
-    out_rows.append((None, L("lines", n=len(rows) - len(shown))))
-out_rows.append((None, action_row()))
+# T-1147: parallel to `shown` — [(lane, text)] under each product row. Any lane
+# failure (stale module, odd data) = no lane rows at all; the rest stays intact.
+try:
+    lane_rows = [[(x, lane_text(x, lane_cap())) for x in lane_data.get(r["line"], [])] for r in shown]
+except Exception:
+    lane_rows = [[] for _ in shown]
+fixed = len(shown) + (1 if len(shown) < len(rows) else 0) + 1
 
 # T-1147 R5: lane rows go right under their product row. Over MAX_ROWS: finished
 # lane rows leave first (bottom product up), then each product's remaining lanes
 # fold into one `lanes +N` row, then those fold rows (bottom up) — product rows,
 # the `+N products` row and the last row never leave for a lane.
-fixed = len(out_rows)
 if any(lane_rows):
     def total():
         return fixed + sum(len(x) for x in lane_rows)
@@ -993,12 +984,23 @@ if any(lane_rows):
         for i in range(len(lane_rows) - 1, -1, -1):
             if MAX_ROWS < total():
                 lane_rows[i] = []
-    merged = []
-    for k, item in enumerate(out_rows):
-        merged.append(item)
-        if k < len(lane_rows):
-            merged.extend((None, t) for _, t in lane_rows[k])
-    out_rows = merged
+
+# product rows — a running dispatch stays on `working` unless a surviving lane row
+# of its product prints that id (the user must always see what is running)
+for k, r in enumerate(shown):
+    head = [r["slug_ver"], r["stage"]]
+    if r["vtotal"]:
+        head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
+    lane_txt = " ".join(t for _, t in lane_rows[k])
+    ids = [tid for tid, _ in running if line_of(tid) == r["line"]
+           and not re.search(r"(?<![\w-])" + re.escape(tid) + r"(?!\d)", lane_txt)]
+    branch = L("branch", name=r["branch"]) if r["branch"] else ""
+    out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
+                                        " | ".join(head + [working_seg(ids, lim)]), branch)))
+    out_rows.extend((None, t) for _, t in lane_rows[k])
+if len(shown) < len(rows):
+    out_rows.append((None, L("lines", n=len(rows) - len(shown))))
+out_rows.append((None, action_row()))
 
 
 def wrap_links(text, link_map):
