@@ -761,14 +761,12 @@ links = {}  # ticket_id -> resolved viewer link target (T-805), filled in as seg
             # strips any other Cc/Cf/Zl/Zp — see the wrap step's own note).
 
 # ── T-1147 (v1.14 `lanes`): lane rows under a build-stage product row ─────────
-# The lane computation is `prdt schedule --json` `lanes` (T-1145, design R6) —
-# read here, never re-implemented. Read-only: PRDT_META_BACKUP=0 keeps the CLI's
-# own detached backup tick out of a pure-display render; `--json` already mutes
-# the update nudge. A missing/failed/slow CLI = no lane rows (degrade silently).
-# Cost control (render time stays at today's level for lane-less projects): the
-# CLI is spawned only for a product in stage build while the project's PRD.md
-# carries a `합격선` heading, and all products' spawns run concurrently.
-LANE_TIMEOUT = 5
+# The lane computation is `prdt_lanes.lanes_for` — the module `prdt schedule` itself
+# imports (T-1145, design R6), imported here, never re-implemented. A module import
+# keeps python's bytecode cache (spawning the 20k-line `prdt` recompiled it on every
+# render). Read-only: nothing is written. A missing/stale module or any failure = no
+# lane rows (degrade silently). Cost control: the read happens only for a product in
+# stage build while the project's PRD.md carries a `합격선` heading.
 
 
 def _prd_has_gate_table():
@@ -785,30 +783,19 @@ def _prd_has_gate_table():
 
 def read_lanes():
     """{line (None = home): [lane dict]} for each build-stage product; absent = no lane rows."""
-    prdt = os.path.join(os.environ.get("SCRIPT_DIR", ""), "prdt")
     want = [r["line"] for r in rows if token(r["st"].get("stage"), lambda v: v in STAGES) == "build"]
-    if not want or not os.path.isfile(prdt) or not _prd_has_gate_table():
+    if not want or not _prd_has_gate_table():
         return {}
-    env = dict(os.environ, PRDT_META_BACKUP="0")
-    procs = {}
-    for ln in want:
-        cmd = [sys.executable or "python3", prdt, "schedule", "--json"] + (["--product", ln] if ln else [])
-        try:
-            procs[ln] = subprocess.Popen(cmd, cwd=root, env=env, stdin=subprocess.DEVNULL,
-                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        except Exception:
-            continue
+    try:
+        import prdt_lanes
+    except Exception:
+        return {}
     out = {}
-    for ln, pr in procs.items():
+    for ln in want:
         try:
-            data = json.loads(pr.communicate(timeout=LANE_TIMEOUT)[0])
+            lanes = prdt_lanes.lanes_for(root, ln)
         except Exception:
-            try:
-                pr.kill()
-            except Exception:
-                pass
             continue
-        lanes = data.get("lanes") if isinstance(data, dict) else None
         lanes = [x for x in (lanes if isinstance(lanes, list) else []) if isinstance(x, dict)]
         if lanes:
             out[ln] = lanes
