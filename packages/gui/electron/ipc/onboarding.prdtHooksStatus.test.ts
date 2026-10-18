@@ -154,6 +154,8 @@ export const CASES: readonly Case[] = [
           // T-985: prdt-question-check.sh, matcher-less on Stop (PO only).
           // T-899: prdt-link-check.sh, its own matcher-less Stop entry (PO only).
           Stop: [{ hooks: [h('prdt-question-check.sh')] }, { hooks: [h('prdt-link-check.sh')] }],
+          // T-1143: prdt-message-display-autolink.sh, the only MessageDisplay entry (matcher-less).
+          MessageDisplay: [{ hooks: [h('prdt-message-display-autolink.sh')] }],
         },
       }))
       const status = checkPrdtHooksStatus(home)

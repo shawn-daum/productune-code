@@ -139,6 +139,7 @@ const ALLOW: Record<string, number> = {
   'core/scripts/hooks/prdt-dispatch-gate.sh': 13,
   'core/scripts/hooks/prdt-identity-guard.sh': 3,
   'core/scripts/hooks/prdt-inbox-inject.sh': 1,
+  'core/scripts/hooks/prdt-message-display-autolink.sh': 2, // T-1143: embedded Python — the per-message fence stamp under $PRDT_HOME/run/message-display/ (home, never .prdt/): one `open(..., "w")` + the `os.unlink`-guarded save
   'core/scripts/hooks/prdt-overrides-inject.sh': 1,
   'core/scripts/hooks/prdt-post-dispatch.sh': 8,
   'core/scripts/hooks/prdt-question-check.sh': 2,
