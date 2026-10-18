@@ -888,7 +888,7 @@ def fit(build, tail=""):
 
 def lane_text(lane, cap):
     """R3 cells + R5 folding of ONE lane row (plain text; links wrap later).
-    `lane: <name>  d/t` is never cut; the rest folds 3 → 2 → 1 ids + `+N` →
+    `lane: NAME  d/t` is never cut; the rest folds 3 → 2 → 1 ids + `+N` →
     persona off → ids as `+N` → one blocker id + `+N` (kind kept) → `…` cut."""
     name = clean(lane.get("name"), cap=12) or "?"
     head = L("lane", name=name) + "  "
@@ -986,12 +986,12 @@ if any(lane_rows):
         return fixed + sum(len(x) for x in lane_rows)
     for i in range(len(lane_rows) - 1, -1, -1):
         for j in range(len(lane_rows[i]) - 1, -1, -1):
-            if total() > MAX_ROWS and lane_rows[i][j][0].get("finished"):
+            if MAX_ROWS < total() and lane_rows[i][j][0].get("finished"):
                 del lane_rows[i][j]
-    if total() > MAX_ROWS:
+    if MAX_ROWS < total():
         lane_rows = [[({}, L("lane.more", n=len(x)))] if x else x for x in lane_rows]
         for i in range(len(lane_rows) - 1, -1, -1):
-            if total() > MAX_ROWS:
+            if MAX_ROWS < total():
                 lane_rows[i] = []
     merged = []
     for k, item in enumerate(out_rows):
