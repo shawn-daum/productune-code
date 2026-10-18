@@ -138,6 +138,7 @@ function mirrorComplete(homeDir: string): boolean {
     path.join(prdt, 'bin', 'prdt'),
     path.join(prdt, 'bin', 'statusline-prdt.sh'),
     path.join(prdt, 'bin', 'prdt_safe_fs.py'),
+    path.join(prdt, 'bin', 'prdt_lanes.py'),
     path.join(prdt, 'doctrine.md'),
     path.join(prdt, 'discipline'),
     ...HOOK_BASENAMES.map((b) => path.join(prdt, 'hooks', b)),
@@ -171,7 +172,7 @@ export function decideBootstrap(paths: BootstrapPaths): BootstrapDecision {
 // ── Provision ─────────────────────────────────────────────────────────────────
 
 function payloadValid(payloadRoot: string): boolean {
-  return ['scripts/prdt', 'scripts/prdt-messages.json', 'scripts/statusline-prdt.sh', 'scripts/prdt_safe_fs.py', 'doctrine.md', 'discipline']
+  return ['scripts/prdt', 'scripts/prdt-messages.json', 'scripts/statusline-prdt.sh', 'scripts/prdt_safe_fs.py', 'scripts/prdt_lanes.py', 'doctrine.md', 'discipline']
     .every((rel) => {
       try { return fs.existsSync(path.join(payloadRoot, rel)) } catch { return false }
     })
@@ -220,8 +221,11 @@ export function runBootstrap(paths: BootstrapPaths): BootstrapResult {
     const statusline = path.join(prdtHome, 'bin', 'statusline-prdt.sh')
     fs.copyFileSync(path.join(payloadRoot, 'scripts', 'statusline-prdt.sh'), statusline)
     fs.chmodSync(statusline, 0o755)
-    // T-906: the shared symlink-safe walk the statusline + hooks import (install.sh parity)
-    fs.copyFileSync(path.join(payloadRoot, 'scripts', 'prdt_safe_fs.py'), path.join(prdtHome, 'bin', 'prdt_safe_fs.py'))
+    // T-906: the shared symlink-safe walk the statusline + hooks import; T-1147: the lane computation
+    // `prdt` + the statusline import (install.sh parity)
+    for (const m of ['prdt_safe_fs.py', 'prdt_lanes.py']) {
+      fs.copyFileSync(path.join(payloadRoot, 'scripts', m), path.join(prdtHome, 'bin', m))
+    }
 
     // menus are derived — regenerate against the installed mirror (install.sh §1)
     execFileSync(binPrdt, ['menus'], {
