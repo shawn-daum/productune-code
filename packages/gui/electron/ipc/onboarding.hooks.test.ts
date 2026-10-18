@@ -171,6 +171,8 @@ function cliHooksBlock(home: string): any {
     // T-1022: prdt-user-prompt.sh's own second Stop entry (the PO form=outline reply check).
     // T-899: prdt-link-check.sh, its own Stop entry between the two.
     Stop: [{ hooks: [h('prdt-question-check.sh')] }, { hooks: [h('prdt-link-check.sh')] }, { hooks: [h('prdt-user-prompt.sh')] }],
+    // T-1143: prdt-message-display-autolink.sh, the only MessageDisplay entry — matcher-less (the event takes none).
+    MessageDisplay: [{ hooks: [h('prdt-message-display-autolink.sh')] }],
   }
 }
 
