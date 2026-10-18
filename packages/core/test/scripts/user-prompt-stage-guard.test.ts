@@ -79,7 +79,7 @@ function assertRegisterBindingLineShape(line: string, opts: { keys: string; gove
 // T-1025: while form=outline is bound the per-turn assembly appends the hot line as
 // the line right AFTER the `[prdt register]` line (same assembly point, same order).
 // T-1072: the reply hot line closes the register section of every prompt, whatever the register.
-const REPLY_HOT_LINE = "[prdt reply] Final user-chat reply only \u2192 each ticket id's first mention = its `prdt tickets --link` output line, in this reply itself; over one line \u2192 `prdt wordlist check --lang <user_lang> -` on the draft first, each hit (`\u2014` \u00b7 합치기 \u00b7 모름) \u2192 a listed replacement."
+const REPLY_HOT_LINE = "[prdt reply] Final user-chat reply only, over one line \u2192 `prdt wordlist check --lang <user_lang> -` on the draft first, each hit (`\u2014` \u00b7 합치기 \u00b7 모름) \u2192 a listed replacement."
 const FORM_OUTLINE_HOT_LINE = "[prdt form=outline] Next act a tool call \u2192 ignore this. Next act the final user-chat reply \u2192 each point its own paragraph opened by a `**label:**`, never a `-` item; `\u00b7` sub-lines right under its first line only when needed; never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; one blank line after each point's block, none inside it."
 
 describe('state line (turn-open refresher)', () => {

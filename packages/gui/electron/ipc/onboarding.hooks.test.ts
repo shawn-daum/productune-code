@@ -169,8 +169,7 @@ function cliHooksBlock(home: string): any {
       .map(r => ({ ...(r.matcher !== undefined ? { matcher: r.matcher } : {}), hooks: r.hooks.map(h) })),
     // T-985: the PO's unticketed-question check — matcher-less, Stop takes none.
     // T-1022: prdt-user-prompt.sh's own second Stop entry (the PO form=outline reply check).
-    // T-899: prdt-link-check.sh, its own Stop entry between the two.
-    Stop: [{ hooks: [h('prdt-question-check.sh')] }, { hooks: [h('prdt-link-check.sh')] }, { hooks: [h('prdt-user-prompt.sh')] }],
+    Stop: [{ hooks: [h('prdt-question-check.sh')] }, { hooks: [h('prdt-user-prompt.sh')] }],
     // T-1143: prdt-message-display-autolink.sh, the only MessageDisplay entry — matcher-less (the event takes none).
     MessageDisplay: [{ hooks: [h('prdt-message-display-autolink.sh')] }],
   }
@@ -233,6 +232,48 @@ export const A6_CASES: readonly Case[] = [
       fs.writeFileSync(settingsPath(home), preexisting)
       installClaudeHooks(proj, home)
       if (fs.readFileSync(settingsPath(home), 'utf8') !== preexisting) return fail('legacy no-op mutated an existing settings.json')
+      return ok
+    },
+  },
+  {
+    label: 'retired hook (manifest `retired`) → its settings.json entry and mirror file are removed, foreign hooks kept (T-1156)',
+    run: () => {
+      const home = makeHome()
+      const proj = makeProject('.prdt')
+      const retired = (hookManifest as any).retired as string[]
+      if (!retired?.includes('prdt-link-check.sh')) return fail('manifest.retired lacks prdt-link-check.sh')
+      const hooksDir = path.join(home, '.prdt', 'hooks')
+      const nearMiss = [
+        '/opt/other/run.sh --skip prdt-link-check.sh',
+        '/Users/me/my-prdt-link-check.sh',
+        '/Users/me/prdt-link-check.sh.bak',
+      ]
+      for (const b of retired) fs.writeFileSync(path.join(hooksDir, b), '#!/bin/bash\n')
+      fs.mkdirSync(path.dirname(settingsPath(home)), { recursive: true })
+      fs.writeFileSync(settingsPath(home), JSON.stringify({ hooks: { Stop: [
+        { hooks: [{ type: 'command', command: `"${path.join(hooksDir, 'prdt-link-check.sh')}"` }] },
+        { hooks: [{ type: 'command', command: '/Users/me/own-stop.sh' }] },
+        ...nearMiss.map(command => ({ hooks: [{ type: 'command', command }] })),
+      ] } }))
+      installClaudeHooks(proj, home)
+      const cmds = allCommands(readSettings(home))
+      if (cmds.some(c => c.includes('prdt-link-check.sh') && !nearMiss.includes(c))) return fail('retired registration survived')
+      if (!cmds.includes('/Users/me/own-stop.sh')) return fail('foreign hook dropped')
+      for (const c of nearMiss) if (!cmds.includes(c)) return fail(`near-miss foreign command stripped: ${c}`)
+      if (fs.existsSync(path.join(hooksDir, 'prdt-link-check.sh'))) return fail('retired mirror file survived')
+      return ok
+    },
+  },
+  {
+    label: 'retired mirror file removed even when the mirror is incomplete (install.sh parity, T-1156)',
+    run: () => {
+      const home = makeHome(false)
+      const proj = makeProject('.prdt')
+      const hooksDir = path.join(home, '.prdt', 'hooks')
+      fs.mkdirSync(hooksDir, { recursive: true })
+      fs.writeFileSync(path.join(hooksDir, 'prdt-link-check.sh'), '#!/bin/bash\n')
+      installClaudeHooks(proj, home)
+      if (fs.existsSync(path.join(hooksDir, 'prdt-link-check.sh'))) return fail('retired mirror file survived the incomplete-mirror gate')
       return ok
     },
   },
