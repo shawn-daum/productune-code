@@ -45,6 +45,7 @@ import { collectDisciplineLoad } from './discipline-load.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { collectEnv, collectMachineEnv, homeEnvDir, lineEnvDir } from './env-status.mjs'
 import { parseFrontmatter } from './frontmatter.mjs'
 // T-1104: the product-first docs layout (JS port of the CLI seam) — where each row is read from.
@@ -664,6 +665,21 @@ export function collectReleases(repoRoot) {
   }
 }
 
+// T-1165: the TOOL's version (sidebar bottom-left) — the installed package's own
+// docs/RELEASES.md, its first `## ` line's first token: the same source `prdt --version`
+// reads (installed_prdt_version). Never the project's `code/docs/RELEASES.md`, so a
+// project without a code/ folder shows it too. '' when unreadable.
+export const INSTALL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+
+export function collectToolVersion(installRoot = INSTALL_ROOT) {
+  try {
+    const line = fs.readFileSync(path.join(installRoot, 'docs', 'RELEASES.md'), 'utf8').split('\n').find((l) => l.startsWith('## '))
+    return line ? line.slice(3).trim().split(/\s+/)[0] : ''
+  } catch {
+    return ''
+  }
+}
+
 // T-886 (T-832 / T-877): the discipline documents — the copy applied on THIS
 // machine (`~/.prdt/discipline`), because that is what the agents read here
 // (T-877 D2). Which files count: `contracts.md`, `contracts/*.md`, and for each
@@ -799,7 +815,7 @@ export function collectProjectSlug(repoRoot) {
 }
 
 /** Everything the generator needs, gathered once. */
-export function collectAll(repoRoot, { disciplineRoot } = {}) {
+export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
   const poState = readPoState(repoRoot)
   const currentVersion = poState.version
   const lineNames = collectLineNames(repoRoot)
@@ -835,6 +851,7 @@ export function collectAll(repoRoot, { disciplineRoot } = {}) {
     featureTaxonomy: collectFeatureTaxonomy(repoRoot),
     artifacts: collectArtifacts(repoRoot, layout),
     releases: collectReleases(repoRoot),
+    toolVersion: collectToolVersion(toolRoot),
     discipline: collectDiscipline(repoRoot, disciplineRoot === undefined ? undefined : { disciplineRoot }),
     // T-1050: the load diagram's facts (plan · annex when · menus · hook roster).
     disciplineLoad: collectDisciplineLoad(repoRoot, { disciplineRoot: disciplineRoot === undefined ? defaultDisciplineRoot() : disciplineRoot }),

@@ -164,7 +164,7 @@ describe('env item + Home env block — several lines', () => {
 
   it('current-version sidebar: env is the last item of each line, counted by env files (samples included)', () => {
     const side = home().split('<nav class="sidebar">')[1].split('</nav>')[0]
-    expect(side).toMatch(/data-group-select="ntf-archive\/decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="ntf-archive\/env"[^>]*><span>env<\/span><span class="nav-item-count">2<\/span><\/button>\s*$/)
+    expect(side).toMatch(/data-group-select="ntf-archive\/decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="ntf-archive\/env"[^>]*><span>env<\/span><span class="nav-item-count">2<\/span><\/button>\s*(?:<div class="sidebar-foot">[\s\S]*?<\/div>\s*)?$/)
     expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*><span>env<\/span><span class="nav-item-count">0<\/span><\/button>\s*<div class="ls-h"><b>ntf-archive/)
   })
 
@@ -248,7 +248,7 @@ describe('env item — single-line project', () => {
     const home = html.split('id="store-home"')[1].split('</section>')[0]
     const side = home.split('<nav class="sidebar">')[1].split('</nav>')[0]
     expect(side).not.toContain('ls-h')
-    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*><span>env<\/span><span class="nav-item-count">1<\/span><\/button>\s*$/)
+    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*><span>env<\/span><span class="nav-item-count">1<\/span><\/button>\s*(?:<div class="sidebar-foot">[\s\S]*?<\/div>\s*)?$/)
     expect(home).toContain('data-open-store="home" data-open-group="env"')
     expect(home).toContain('<p class="env-empty"><span>비어 있음</span>: <code>PUSH_CERT_PASSWORD</code></p>')
     expect(html).not.toContain(SENTINEL)

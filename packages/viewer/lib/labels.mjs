@@ -437,6 +437,14 @@ export const IDENTITY = {
   cardLabel: '버전 진행 요약',
   ticketBar: (done, total) => `티켓 완료 ${done}/${total}`,
   stage: { define: '기획', build: '개발', ship: '배포', retro: '회고', idle: '유휴' },
+  // hover tooltips, worded as the approved mock (T-1165)
+  idTitle: (project, version, stage) => `${project} = .prdt/config.json slug · ${version} = po-state.version · ${stage} = po-state.stage`,
+  idIdleTitle: (project) => `${project} = .prdt/config.json slug · 쉬는 중 = po-state.stage 가 idle 이거나 버전이 없을 때`,
+  cardTopTitle: (stageName, stage) => `${stageName} = po-state.stage(${stage})의 상태줄 표기 · 현재 단계 n/m = 이 버전 티켓 중 현재 단계에 속하는 티켓의 done / 전체 (상태줄 「단계: ${stageName} n/m」, stageOfTicketType 규칙)`,
+  countTitle: '티켓 = 이 버전 폴더의 open + done 티켓 중 done / 전체 (dropped 제외, type 무관)',
+  decTitle: 'dec = open 이고 type: decision 인 티켓 수 (상태줄 결정사항)',
+  reqTitle: 'req = open · assignee: user · decision 아님 · 선행 티켓이 모두 닫힌 티켓 수 (상태줄 요청사항)',
+  toolTitle: '도구 이름 · 도구 버전 = 설치된 패키지 docs/RELEASES.md 맨 위 ## 줄 (prdt --version)',
 }
 
 // T-797 개정: the topstrip's light/dark toggle — its accessible name says
