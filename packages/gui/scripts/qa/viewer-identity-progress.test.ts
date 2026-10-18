@@ -7,7 +7,7 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { describe, it, expect } from 'vitest'
 import { GUI_ROOT } from '@productune/viewer/generate.mjs'
-import { collectAll } from '@productune/viewer/lib/collect.mjs'
+import { collectAll, collectToolVersion, INSTALL_ROOT } from '@productune/viewer/lib/collect.mjs'
 import { renderPage, pageIdentityOf } from '@productune/viewer/lib/render.mjs'
 import { IDENTITY } from '@productune/viewer/lib/labels.mjs'
 
@@ -26,7 +26,7 @@ const TICKETS: Array<[string, string, string, string, string]> = [
   ['T-8', 'impl', 'dropped', 'developer', ''],
 ]
 
-function project(stage: string): string {
+function project(stage: string, withCode = true): string {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1165-')))
   fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
   fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify({ slug: 'demo' }))
@@ -36,8 +36,11 @@ function project(stage: string): string {
   for (const [id, type, status, assignee, extra] of TICKETS) {
     fs.writeFileSync(path.join(dir, `${id}.md`), `---\nid: ${id}\nslug: s-${id.toLowerCase()}\ntype: ${type}\nstatus: ${status}\nassignee: ${assignee}\ncreated: 2026-01-01\n${extra}---\n\nbody\n`)
   }
-  fs.mkdirSync(path.join(root, 'code', 'docs'), { recursive: true })
-  fs.writeFileSync(path.join(root, 'code', 'docs', 'RELEASES.md'), '# Releases\n\n## v1.13 — newest (2026-10-01)\n\nx\n\n## v1.12 — older\n')
+  if (withCode) {
+    fs.mkdirSync(path.join(root, 'code', 'docs'), { recursive: true })
+    // a DIFFERENT version than the tool's: the project's own file must never be the source (T-1165 QA)
+    fs.writeFileSync(path.join(root, 'code', 'docs', 'RELEASES.md'), '# Releases\n\n## v0.0-project — not the tool\n')
+  }
   return root
 }
 
@@ -76,8 +79,8 @@ describe('T-1165: progress card numbers = statusline numbers', () => {
 })
 
 describe('T-1165: rendered sidebar', () => {
-  const render = (stage: string) => {
-    const root = project(stage)
+  const render = (stage: string, withCode = true) => {
+    const root = project(stage, withCode)
     try {
       return renderPage({ data: collectAll(root), dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
     } finally {
@@ -87,11 +90,33 @@ describe('T-1165: rendered sidebar', () => {
 
   it('running: identity line, card (stage first line, no ordinal), tool version', () => {
     const html = render('build')
-    expect(html).toContain('<div class="sidebar-id"><b>demo</b> <span class="sid-sep">·</span> <span class="sid-v">v9.8</span> <span class="sid-st">build</span></div>')
+    expect(html).toContain('<div class="sidebar-id" title="demo = .prdt/config.json slug · v9.8 = po-state.version · build = po-state.stage"><b>demo</b> <span class="sid-sep">·</span> <span class="sid-v">v9.8</span> <span class="sid-st">build</span></div>')
     expect(html).not.toContain('class="sidebar-title"')
     expect(html).toMatch(/<span class="sp-stage">개발<\/span><span>2\/3<\/span>/)
-    expect(html).toContain('<span class="foot-tool">productune v1.13</span>')
-    expect(html).toContain('<span class="rail-tool">productune v1.13</span>')
+    const tv = collectToolVersion(INSTALL_ROOT)
+    expect(tv).toMatch(/^v\d/)
+    expect(html).toContain(`>productune ${tv}</span>`)
+    expect(html).toContain(`<span class="rail-tool">productune ${tv}</span>`)
+  })
+
+  it('tool version = installed package RELEASES.md top line, same as `prdt --version`; project without code/ still shows it', () => {
+    const html = render('build', false)
+    const tv = collectToolVersion(INSTALL_ROOT)
+    expect(html).toContain(`<span class="foot-tool"`)
+    expect(html).toContain(`>productune ${tv}</span>`)
+    expect(html).toContain('class="rail-tool"')
+    const out = execFileSync('python3', [path.join(GUI_ROOT, '../core/scripts/prdt'), '--version'], { encoding: 'utf8', cwd: os.tmpdir() }).trim()
+    expect(out).toContain(tv)
+  })
+
+  it('hover tooltips per mock: identity, card top, ticket count, dec, req, tool', () => {
+    const html = render('build')
+    expect(html).toContain('title="demo = .prdt/config.json slug · v9.8 = po-state.version · build = po-state.stage"')
+    expect(html).toContain('<div class="sp-top" title="개발 = po-state.stage(build)의 상태줄 표기')
+    expect(html).toContain('<div class="sp-count" title="티켓 = 이 버전 폴더의 open + done 티켓 중 done / 전체')
+    expect(html).toContain('<span title="dec = open 이고 type: decision 인 티켓 수')
+    expect(html).toContain('<span title="req = open · assignee: user')
+    expect(html).toContain('class="foot-tool" title="도구 이름 · 도구 버전 = 설치된 패키지 docs/RELEASES.md 맨 위 ## 줄 (prdt --version)"')
   })
 
   it('idle: 쉬는 중 and no card', () => {

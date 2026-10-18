@@ -767,14 +767,14 @@ function svgIcon(pathMarkup, size = 20) {
  * T-1165: what the sidebar's three identity parts show, all from data the page already has — the
  * statusline's own sources: project = config slug, version · stage = po-state, stage done/total =
  * `stageSegments` (the viewer's `stageOfTicketType` rule, statusline-stage-parity), ticket done/total
- * = `versionProgressCounts`, dec · req = `waitLists`, tool version = the newest RELEASES.md `##` line.
+ * = `versionProgressCounts`, dec · req = `waitLists`, tool version = the installed package's RELEASES.md top `##` line (`prdt --version`).
  * An idle product (stage idle, or no version) shows 「쉬는 중」 and no card.
  */
 export function pageIdentityOf(data) {
   const stage = data.poState?.stage || ''
   const version = data.currentVersion || ''
   const project = data.project || IDENTITY.tool
-  const toolVersion = (data.releases || [])[0]?.version || ''
+  const toolVersion = data.toolVersion || ''
   const idle = stage === 'idle' || !version
   if (idle) return { project, version, stage, idle, toolVersion, card: null }
   const currentTickets = currentVersionTickets(data.tickets, version)
@@ -790,14 +790,15 @@ function sidebarIdentityHtml(id) {
   const run = id.idle
     ? `<span class="sid-sep">·</span> <span class="sid-st">${escapeHtml(IDENTITY.idle)}</span>`
     : `<span class="sid-sep">·</span> <span class="sid-v">${escapeHtml(id.version)}</span> <span class="sid-st">${escapeHtml(id.stage)}</span>`
-  return `<div class="sidebar-id"><b>${escapeHtml(id.project)}</b> ${run}</div>`
+  const idTitle = id.idle ? IDENTITY.idIdleTitle(id.project) : IDENTITY.idTitle(id.project, id.version, id.stage)
+  return `<div class="sidebar-id" title="${escapeHtml(idTitle)}"><b>${escapeHtml(id.project)}</b> ${run}</div>`
 }
 
 function sidebarCardHtml(c) {
   if (!c) return ''
   const pct = c.total > 0 ? Math.round((c.done / c.total) * 1000) / 10 : 0
   const stageName = IDENTITY.stage[c.stage] || c.stage
-  return `<div class="sp" role="group" aria-label="${IDENTITY.cardLabel}"><div class="sp-top"><span class="sp-stage">${escapeHtml(stageName)}</span><span>${c.stageDone}/${c.stageTotal}</span></div><div class="sp-count"><small>${IDENTITY.ticket}</small> <b>${c.done}</b><span class="sp-of">/${c.total}</span></div><div class="sp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.done}" aria-label="${IDENTITY.ticketBar(c.done, c.total)}"><i style="width:${pct}%"></i></div><div class="sp-wait"><span>dec <b>${c.dec}</b></span><span>·</span><span>req <b>${c.req}</b></span></div></div>`
+  return `<div class="sp" role="group" aria-label="${IDENTITY.cardLabel}"><div class="sp-top" title="${escapeHtml(IDENTITY.cardTopTitle(stageName, c.stage))}"><span class="sp-stage">${escapeHtml(stageName)}</span><span>${c.stageDone}/${c.stageTotal}</span></div><div class="sp-count" title="${escapeHtml(IDENTITY.countTitle)}"><small>${IDENTITY.ticket}</small> <b>${c.done}</b><span class="sp-of">/${c.total}</span></div><div class="sp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.done}" aria-label="${IDENTITY.ticketBar(c.done, c.total)}"><i style="width:${pct}%"></i></div><div class="sp-wait"><span title="${escapeHtml(IDENTITY.decTitle)}">dec <b>${c.dec}</b></span><span>·</span><span title="${escapeHtml(IDENTITY.reqTitle)}">req <b>${c.req}</b></span></div></div>`
 }
 
 function toolVersionText(id) {
@@ -1332,7 +1333,7 @@ ${identity ? sidebarIdentityHtml(identity) : '<div class="sidebar-title">product
 <div class="sidebar-sub">${escapeHtml(sidebarSubLabel)}</div>
 ${!cardPlaced && !groups.some((g) => g.key === 'progress') ? sidebarCardHtml(identity?.card) : ''}
 ${sidebarButtons}
-${tool ? `<div class="sidebar-foot"><span class="foot-tool">${escapeHtml(tool)}</span></div>` : ''}
+${tool ? `<div class="sidebar-foot"><span class="foot-tool" title="${escapeHtml(IDENTITY.toolTitle)}">${escapeHtml(tool)}</span></div>` : ''}
 </nav>`
 
   const panes = groups
