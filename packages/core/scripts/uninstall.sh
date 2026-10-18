@@ -68,7 +68,7 @@ if [ -f "$SETTINGS" ]; then
   say "1) Removing prdt hooks/statusline from $SETTINGS"
   TMP="$(mktemp "$SETTINGS.XXXXXX")"
   jq --arg sl "$PRDT_HOME/bin/statusline-prdt.sh" --slurpfile manifest "$MANIFEST" '
-    ($manifest[0].basenames) as $ours |
+    ($manifest[0].basenames + ($manifest[0].retired // [])) as $ours |
     def cmdBasename($cmd): ($cmd // "")
       | (if startswith("\"") then .[1:] else . end)
       | (if endswith("\"") then .[:-1] else . end)
@@ -88,7 +88,7 @@ if [ -f "$SETTINGS" ]; then
   # about to delete — a stale spelling would have passed the old prefix check
   # vacuously without ever being removed).
   jq -e --slurpfile manifest "$MANIFEST" '
-    ($manifest[0].basenames) as $ours |
+    ($manifest[0].basenames + ($manifest[0].retired // [])) as $ours |
     def cmdBasename(cmd): (cmd // "")
       | (if startswith("\"") then .[1:] else . end)
       | (if endswith("\"") then .[:-1] else . end)

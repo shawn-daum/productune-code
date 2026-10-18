@@ -240,6 +240,8 @@ interface HookRegistration {
 
 interface HookManifest {
   basenames: readonly string[]
+  /** T-1156: hooks removed from the roster: stripped from settings.json, never registered. */
+  retired?: readonly string[]
   registrations: readonly HookRegistration[]
 }
 
@@ -337,11 +339,13 @@ export function installPrdtHooks(settingsPath: string, homeDir: string): void {
   // Quoted (mirrors install.sh's jq concat) so the registered command
   // resolves as ONE shell arg even if the home path ever contains spaces.
   const h = (name: string) => `"${path.join(hooksDir, name)}"`
+  // T-1156: a retired hook's mirror copy goes too (install.sh §1 does the same).
+  for (const b of HOOK_MANIFEST.retired ?? []) fs.rmSync(path.join(hooksDir, b), { force: true })
   const statusline = `"${path.join(prdtHome, 'bin', 'statusline-prdt.sh')}"`
   const cmd = (c: string) => ({ type: 'command', command: c })
 
   const isPrdtHook = (c: unknown): boolean =>
-    typeof c === 'string' && PRDT_HOOK_BASENAMES.some(b => c.includes(b))
+    typeof c === 'string' && [...PRDT_HOOK_BASENAMES, ...(HOOK_MANIFEST.retired ?? [])].some(b => c.includes(b))
   // Per-hook strip (mirrors install.sh §4's `strip`): drop only the prdt hook
   // COMMANDS from each entry, then drop any entry left empty — never the whole
   // entry on a single-hook match. A per-entry strip would (a) wipe audience +

@@ -316,7 +316,7 @@ export const DISCIPLINE_LOAD = {
     'prdt-overrides-inject.sh': ['기기 override', 'all', '~/.prdt/overrides/<persona>.md (+ playbook override 목록)'],
     'prdt-project-overrides-inject.sh': ['프로젝트 override', 'all', '.prdt/overrides/<persona>.md'],
   },
-  poOnlyHooks: ['prdt-user-prompt.sh', 'prdt-question-check.sh', 'prdt-link-check.sh'],
+  poOnlyHooks: ['prdt-user-prompt.sh', 'prdt-question-check.sh'],
 }
 
 /** 「읽기」 칸 값 — 「용어 사전 · 5개」 · 「릴리즈 노트 · 18개」. */

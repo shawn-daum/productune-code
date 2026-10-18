@@ -147,15 +147,13 @@ FORM_OUTLINE_HOT_LINE = (
     "never 2+ sentences on an unmarked line, never 2+ unmarked lines in a row; "
     "one blank line after each point's block, none inside it."
 )
-# T-1072: the reply hot line — the two user-chat rules the PO breaks most (ticket
-# link at first mention, wordlist check on the draft), at the moment it writes its
-# final reply. PO only, every PostToolUse and UserPromptSubmit, whatever the register
-# (the link check at Stop runs regardless of register too). User-approved wording
-# (T-1073 = A, 2026-10-11; docs/artifacts/v1.13/hot-line-links-and-voice-draft.md,
-# draft 1). po/habit.md lines 51/54 point here.
+# T-1072: the reply hot line — the wordlist check on the draft, at the moment the PO
+# writes its final reply. PO only, every PostToolUse and UserPromptSubmit, whatever
+# the register. T-1156: the ticket-link clause is gone (the MessageDisplay hook links
+# ticket ids on screen, T-1143); wording user-approved in T-1155.
+# po/habit.md lines 51/54 point here.
 REPLY_HOT_LINE = (
-    "[prdt reply] Final user-chat reply only \u2192 each ticket id's first mention = "
-    "its `prdt tickets --link` output line, in this reply itself; over one line \u2192 "
+    "[prdt reply] Final user-chat reply only, over one line \u2192 "
     "`prdt wordlist check --lang <user_lang> -` on the draft first, "
     "each hit (`\u2014` \u00b7 합치기 \u00b7 모름) \u2192 a listed replacement."
 )

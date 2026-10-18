@@ -24,7 +24,6 @@ const SCRIPTS = path.join(CORE_ROOT, 'scripts')
 const PRDT_CLI = path.join(SCRIPTS, 'prdt')
 const HOOKS = path.join(SCRIPTS, 'hooks')
 const COPIES = [
-  path.join(HOOKS, 'prdt-link-check.sh'),
   path.join(HOOKS, 'prdt-question-check.sh'),
   path.join(HOOKS, 'prdt-user-prompt.sh'),
   path.join(HOOKS, 'prdt-post-dispatch.sh'),
@@ -112,41 +111,6 @@ describe('every shell copy of the product derivation equals the CLI', () => {
     const want = cliAnswer(root)
     expect(want[0]).toEqual([])
     for (const f of COPIES) expect(copyAnswer(f, root)).toEqual(want)
-  })
-})
-
-describe('hooks read the product layout and the legacy one', () => {
-  function layoutPair(name: string) {
-    const legacy = project(`${name}-legacy`, { slug: 'proj' }, false)
-    const prod = project(`${name}-prod`, { slug: 'proj' }, true, ['proj/prd'])
-    return { legacy, prod, ldir: path.join(legacy, 'docs', 'tickets'), pdir: path.join(prod, 'docs', 'proj', 'tickets') }
-  }
-  const stop = (hook: string, cwd: string, reply: string, agent = 'prdt-po') => execFileSync('bash', [path.join(HOOKS, hook)], {
-    input: JSON.stringify({ session_id: 's', hook_event_name: 'Stop', agent_type: agent, stop_hook_active: false, cwd, last_assistant_message: reply }),
-    encoding: 'utf8', timeout: 20_000, env: env(),
-  })
-
-  test('link-check: a ticket under docs/<p>/tickets, and the shared backlog, is a known id; legacy unchanged', () => {
-    const { legacy, prod, ldir, pdir } = layoutPair('lc')
-    ticket(path.join(ldir, 'v0.1'), 'T-11')
-    ticket(path.join(pdir, 'v0.1'), 'T-11')
-    ticket(path.join(prod, 'docs', '_shared', 'tickets', 'backlog'), 'T-12')
-    const reply = 'T-11 is done and T-12 is next.'
-    const ctx = (out: string): string => {
-      const j = JSON.parse(out)
-      expect(j.decision).toBeUndefined()
-      return j.hookSpecificOutput.additionalContext as string
-    }
-    const lo = ctx(stop('prdt-link-check.sh', legacy, reply))
-    const po = ctx(stop('prdt-link-check.sh', prod, reply))
-    expect(lo).toContain('unlinked first mention: T-11.')
-    expect(po).toContain('unlinked first mention: T-11, T-12.')
-  })
-
-  test('link-check: a project with no ticket anywhere is silent in both layouts', () => {
-    const { legacy, prod } = layoutPair('lc0')
-    expect(stop('prdt-link-check.sh', legacy, 'T-99 was mentioned.')).toBe('')
-    expect(stop('prdt-link-check.sh', prod, 'T-99 was mentioned.')).toBe('')
   })
 })
 

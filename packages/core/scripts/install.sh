@@ -242,6 +242,14 @@ while IFS= read -r b; do
 done <<EOF
 $HOOK_BASENAMES
 EOF
+# T-1156: a hook retired from the roster leaves its old mirror copy behind; its
+# settings.json registration is swept in §4 by the same manifest `retired` list.
+while IFS= read -r b; do
+  [ -n "$b" ] || continue
+  rm -f "$PRDT_HOME/hooks/$b"
+done <<EOF
+$(jq -r '(.retired // [])[]' "$MANIFEST")
+EOF
 cp "$ROOT/scripts/prdt" "$PRDT_HOME/bin/prdt"
 cp "$ROOT/scripts/prdt-messages.json" "$PRDT_HOME/bin/prdt-messages.json"
 cp "$ROOT/scripts/statusline-prdt.sh" "$PRDT_HOME/bin/statusline-prdt.sh"
@@ -603,7 +611,8 @@ jq --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
   # both write) or bare, so the wrapping quote is stripped before taking the
   # final path segment. This is the ONE predicate install.sh/uninstall.sh/
   # onboarding.ts now all use for "is this registration ours".
-  ($manifest[0].basenames) as $ours |
+  # T-1156: retired basenames count as ours for the strip (never re-registered).
+  ($manifest[0].basenames + ($manifest[0].retired // [])) as $ours |
   def cmdBasename($cmd): ($cmd // "")
     | (if startswith("\"") then .[1:] else . end)
     | (if endswith("\"") then .[:-1] else . end)
@@ -653,7 +662,7 @@ jq --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
 # even though the stale half's path text never matched this run's $PRDT_HOME.
 jq -e --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
   ($manifest[0].registrations) as $regs |
-  ($manifest[0].basenames) as $ours |
+  ($manifest[0].basenames + ($manifest[0].retired // [])) as $ours |
   def cmdBasename(cmd): (cmd // "")
     | (if startswith("\"") then .[1:] else . end)
     | (if endswith("\"") then .[:-1] else . end)
