@@ -836,3 +836,13 @@ def compute_lanes(root, tickets, st, line, version, in_flight):
         if not lane["working"]:
             lane["next"], lane["next_owner"] = list(lane["ready"]), dict(lane["ready_owner"])
     return lanes
+
+
+def lanes_for(root, line=None):
+    """[lane dict] of one product (`line` None = the home product) — the statusline's read.
+    Same inputs `compute_schedule` hands `compute_lanes`, so `prdt schedule --json`'s `lanes`
+    and this are one computation."""
+    root = Path(root)
+    st = read_json(root / ".prdt" / "po-state.json") or {}
+    version = line_state(st, line)[1]
+    return compute_lanes(root, _schedule_tickets(root), st, line, version, _schedule_in_flight(root))
