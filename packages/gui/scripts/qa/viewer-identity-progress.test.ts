@@ -112,7 +112,9 @@ describe('T-1165: rendered sidebar', () => {
   it('hover tooltips per mock: identity, card top, ticket count, dec, req, tool', () => {
     const html = render('build')
     expect(html).toContain('title="demo = .prdt/config.json slug · v9.8 = po-state.version · build = po-state.stage"')
-    expect(html).toContain('<div class="sp-top" title="개발 = po-state.stage(build)의 상태줄 표기')
+    const top = `개발 = po-state.stage(build)의 상태줄 표기 · 2/3 = 이 버전 티켓 중 현재 단계에 속하는 티켓의 done / 전체 (상태줄 「단계: 개발 2/3」, stageOfTicketType 규칙)`
+    expect(html).toContain(`<div class="sp-top" title="${top}">`)
+    expect(html).not.toContain('현재 단계 n/m')
     expect(html).toContain('<div class="sp-count" title="티켓 = 이 버전 폴더의 open + done 티켓 중 done / 전체')
     expect(html).toContain('<span title="dec = open 이고 type: decision 인 티켓 수')
     expect(html).toContain('<span title="req = open · assignee: user')

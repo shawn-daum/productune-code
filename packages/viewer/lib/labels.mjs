@@ -440,7 +440,7 @@ export const IDENTITY = {
   // hover tooltips, worded as the approved mock (T-1165)
   idTitle: (project, version, stage) => `${project} = .prdt/config.json slug · ${version} = po-state.version · ${stage} = po-state.stage`,
   idIdleTitle: (project) => `${project} = .prdt/config.json slug · 쉬는 중 = po-state.stage 가 idle 이거나 버전이 없을 때`,
-  cardTopTitle: (stageName, stage) => `${stageName} = po-state.stage(${stage})의 상태줄 표기 · 현재 단계 n/m = 이 버전 티켓 중 현재 단계에 속하는 티켓의 done / 전체 (상태줄 「단계: ${stageName} n/m」, stageOfTicketType 규칙)`,
+  cardTopTitle: (stageName, stage, done, total) => `${stageName} = po-state.stage(${stage})의 상태줄 표기 · ${done}/${total} = 이 버전 티켓 중 현재 단계에 속하는 티켓의 done / 전체 (상태줄 「단계: ${stageName} ${done}/${total}」, stageOfTicketType 규칙)`,
   countTitle: '티켓 = 이 버전 폴더의 open + done 티켓 중 done / 전체 (dropped 제외, type 무관)',
   decTitle: 'dec = open 이고 type: decision 인 티켓 수 (상태줄 결정사항)',
   reqTitle: 'req = open · assignee: user · decision 아님 · 선행 티켓이 모두 닫힌 티켓 수 (상태줄 요청사항)',
