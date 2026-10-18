@@ -14864,6 +14864,141 @@ def _schedule_tickets(root):
     return tickets
 
 
+# ── T-1145 (v1.14 `lanes`): one lane per PRD 합격선 row ──────────────────────
+# Design SoT: docs/artifacts/v1.14/lanes-design.html, rules R1–R3 + R6. The ONE
+# lane computation: `prdt schedule` / `--json` render from it, the dispatch gate
+# reads it, and the statusline (T-1147) and viewer home read `prdt schedule
+# --json` `lanes` — nobody re-implements it. R1's gate-ticket rule is a Python
+# twin of `findGateTicket` (packages/viewer/lib/home-graph.mjs); the parity
+# test packages/core/test/scripts/prdt-lanes-gate-parity.test.ts pins the two.
+LANE_GATE_PATH_RE = re.compile(r"`(docs/[^`\s]+)`")
+LANE_NAME_RE = re.compile(r"^레인\s+(\S+)\s*·")
+LANE_HEADING_RE = re.compile(r"^###\s+합격선(\s|$)")
+
+
+def _lane_gate_rows(root, st, line):
+    """[(name, gate_path_or_None)] — one per 합격선 row of the open PRD
+    section's `### 합격선` table, in table order (R1)."""
+    _v, body = _prd_open_section(root, st, line)
+    rows, inside = [], False
+    for _ln, text in body:
+        if text.startswith("#"):
+            inside = bool(LANE_HEADING_RE.match(text))
+            continue
+        if not inside or not text.lstrip().startswith("|"):
+            continue
+        cells = [c.strip() for c in text.strip().strip("|").split("|")]
+        if len(cells) < 2 or cells[0].replace("**", "").strip() != "합격선":
+            continue
+        m = LANE_NAME_RE.match(cells[1].replace("**", "").strip())
+        pm = LANE_GATE_PATH_RE.search(text)
+        rows.append((m.group(1) if m else None, pm.group(1) if pm else None))
+    return [(n or chr(65 + i), g) for i, (n, g) in enumerate(rows)]
+
+
+def _lane_longest_ending_at(ids, preds):
+    """{id: node count of the longest dep chain ending at it}, cycle-safe —
+    twin of home-graph.mjs `longestEndingAt`."""
+    memo, stack, idset = {}, set(), set(ids)
+
+    def walk(i):
+        if i in memo:
+            return memo[i]
+        if i in stack:
+            return 0
+        stack.add(i)
+        n = 1
+        for p_ in sorted((x for x in preds.get(i, []) if x in idset), key=_ticket_num_key):
+            n = max(n, walk(p_) + 1)
+        stack.discard(i)
+        memo[i] = n
+        return n
+    for i in ids:
+        walk(i)
+    return memo
+
+
+def _lane_find_gate_ticket(tickets, version, paths, bodies):
+    """Twin of `findGateTicket`: among the current version's open+done tickets
+    whose body names a gate path, the longest dep chain wins, then the higher number."""
+    paths = [x for x in paths if x]
+    if not paths:
+        return None
+    live = [t for t, (r, _p) in tickets.items() if r["status"] in ("open", "done") and r["version"] == version]
+    hits = [t for t in live if any(g in bodies(t) for g in paths)]
+    if not hits:
+        return None
+    memo = _lane_longest_ending_at(live, {t: tickets[t][0]["deps"] for t in live})
+    return max(hits, key=lambda t: (memo.get(t, 0), _ticket_num_key(t)))
+
+
+def compute_lanes(root, tickets, st, line, version, in_flight):
+    """[lane dict] — one per 합격선 row, [] when the PRD has none (R1–R3).
+    {name, gate_path, gate_ticket, linked, done, total, finished, tickets,
+    working, next, blockers:[{id, kind: decision|request}], warning}."""
+    rows = _lane_gate_rows(root, st, line)
+    if not rows:
+        return []
+    cache = {}
+
+    def body(t):
+        if t not in cache:
+            cache[t] = parse_frontmatter(tickets[t][1])[1] or ""
+        return cache[t]
+    lanes, taken = [], set()
+    for name, gpath in rows:
+        lane = {"name": name, "gate_path": gpath, "gate_ticket": None, "linked": False, "done": 0,
+                "total": 0, "finished": False, "tickets": [], "working": [], "next": [],
+                "next_owner": {}, "blockers": [], "warning": None}
+        lanes.append(lane)
+        if not gpath:
+            continue
+        alt = gpath
+        try:
+            alt = resolve_docs_ref(root, gpath, line) or gpath
+        except Exception:
+            pass
+        gate = _lane_find_gate_ticket(tickets, version, [gpath, alt], body)
+        if gate is None:
+            continue
+        if gate in taken:
+            lane["warning"] = (f"lane {name}: its gate path reaches {gate}, which an earlier lane already "
+                               f"holds — not linked")
+            continue
+        taken.add(gate)
+        lane["gate_ticket"], lane["linked"] = gate, True
+        seen, stack = set(), [gate]
+        while stack:
+            t = stack.pop()
+            if t in seen or t not in tickets or tickets[t][0]["status"] == "dropped":
+                continue
+            seen.add(t)
+            stack.extend(tickets[t][0]["deps"])
+        ids = sorted(seen, key=_ticket_num_key)
+        here = [t for t in ids if tickets[t][0]["version"] == version]
+        lane["tickets"] = ids
+        lane["total"] = len(here)
+        lane["done"] = sum(1 for t in here if tickets[t][0]["status"] == "done")
+        lane["finished"] = lane["total"] > 0 and lane["done"] == lane["total"]
+        lane["working"] = [t for t in ids if t in in_flight]
+        for t in ids:
+            r = tickets[t][0]
+            if r["status"] != "open":
+                continue
+            if r["type"] == "decision":
+                lane["blockers"].append({"id": t, "kind": "decision"})
+            elif r["assignee"] == "user":
+                lane["blockers"].append({"id": t, "kind": "request"})
+        if not lane["working"]:
+            def satisfied(d):
+                return d not in tickets or tickets[d][0]["status"] in ("done", "dropped")
+            lane["next"] = [t for t in ids if tickets[t][0]["status"] == "open"
+                            and tickets[t][0]["type"] != "decision" and tickets[t][0]["assignee"] != "user"
+                            and t not in in_flight and all(satisfied(d) for d in tickets[t][0]["deps"])]
+            lane["next_owner"] = {t: tickets[t][0]["assignee"] for t in lane["next"]}
+    return lanes
+
+
 def compute_schedule(root, tickets=None, line=None):
     """The schedule as one dict (the `--json` shape; text renders from it).
     `tickets` = a `_schedule_tickets()` result the caller already holds."""
@@ -14875,6 +15010,8 @@ def compute_schedule(root, tickets=None, line=None):
         tickets = _schedule_tickets(root)
     out = {"version": version, "cycle": None, "critical_path": [], "cp_length": 0,
            "rows": [], "missing_deps": []}
+    in_flight = _schedule_in_flight(root)
+    out["lanes"] = compute_lanes(root, tickets, st, line, version, in_flight)
     if project_line_names(root):
         out["product"] = line or _resource_project_slug(root)
 
@@ -14927,7 +15064,6 @@ def compute_schedule(root, tickets=None, line=None):
         for i, (_ln, key, _c) in enumerate(k for k in _prd_h4_items(body) if k[1]):
             h4.setdefault(key, i)
     open_vkey = _version_id_canon(open_v) if open_v else None
-    in_flight = _schedule_in_flight(root)
 
     rows = []
     for t, (r, p) in nodes.items():
@@ -15011,6 +15147,26 @@ def cmd_schedule(args):
         sys.exit(1)
 
 
+def _render_lane(ln, rows, lab):
+    """One lane line: `lane A 19/25 | working … | next … | blocker …` (R3)."""
+    head = f"lane {lab(ln['name'])}"
+    if not ln["linked"]:
+        return f"{head} not linked"
+    head += f" {ln['done']}/{ln['total']}"
+    cells = [head]
+    if ln["finished"]:
+        cells.append("done")
+    elif ln["working"]:
+        cells.append("working " + " ".join(lab(t) for t in ln["working"]))
+    elif ln["next"]:
+        cells.append("next " + " ".join(f"{lab(t)} ({lab(ln['next_owner'].get(t))})" for t in ln["next"]))
+    else:
+        cells.append("working 0")
+    if ln["blockers"]:
+        cells.append("blocker " + " ".join(f"{lab(b['id'])} ({b['kind']})" for b in ln["blockers"]))
+    return " | ".join(cells)
+
+
 def _render_schedule(s):
     """Print one line's schedule; True when it carries a dependency cycle."""
     lab = lambda v: safe_label(str(v if v is not None else "-"))
@@ -15022,7 +15178,17 @@ def _render_schedule(s):
         return True
     rows = s["rows"]
     print(f"schedule {lab(s['version'])} — {len(rows)} open ticket(s) in the graph")
-    if s["critical_path"]:
+    lanes = s.get("lanes") or []
+    if lanes:
+        # T-1145 / R6: one block per lane, then the open tickets outside every lane.
+        for ln in lanes:
+            print(_render_lane(ln, rows, lab))
+            if ln["warning"]:
+                print(f"note: {lab(ln['warning'])}")
+        inside = {t for ln in lanes for t in ln["tickets"]}
+        rows = [r for r in rows if r["id"] not in inside]
+        print(f"outside the lanes — {len(rows)} open ticket(s)")
+    elif s["critical_path"]:
         print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
     else:
         print("critical path: (none)")
@@ -15252,6 +15418,20 @@ def _safe_ids(ids):
     return [t if isinstance(t, str) and SCHEDULE_ID_RE.match(t) else "?" for t in ids]
 
 
+def _lane_gate_warning(lanes, ticket):
+    """R6: the warning text, or None. Fires only for a ticket that is in no lane."""
+    if not ticket or any(ticket in ln["tickets"] for ln in lanes):
+        return None
+    idle = [ln for ln in lanes if ln["next"] and not ln["working"]]
+    if not idle:
+        return None
+    parts = "; ".join(f"lane {safe_label(str(ln['name']))} next "
+                      + " ".join(_safe_ids(ln["next"])) for ln in idle)
+    return (f"[prdt dispatch gate] outside the lanes: this dispatch sends {_safe_ids([ticket])[0]}, "
+            f"which is in no lane, while a lane has work to do and nothing running ({parts}). "
+            f"Warning only, this dispatch proceeds (T-765).")
+
+
 def schedule_record(ev, now=None):
     """Build + append the `dispatch` row for one gate-passed PreToolUse:Agent
     event; return (row, warning-or-None). Raises nothing the caller must
@@ -15304,7 +15484,12 @@ def schedule_record(ev, now=None):
         row["cycle"] = sched["cycle"]
     append_schedule_row(root, row)
     warning = None
-    if cls == "deviated" and reason is None:
+    if sched.get("lanes"):
+        # T-1145 / R6: with lanes the critical-path deviation warning does not apply
+        # (riders run beside the lanes by rule) — warn only when an out-of-lane ticket is
+        # sent while a lane has something to do (`next`) and nothing running.
+        warning = _lane_gate_warning(sched["lanes"], ticket)
+    elif cls == "deviated" and reason is None:
         sent = _safe_ids([ticket])[0]
         top_s = ", ".join(_safe_ids(top)) if top else "(none dispatchable)"
         cp = " → ".join(_safe_ids(sched["critical_path"])) or "(none)"
