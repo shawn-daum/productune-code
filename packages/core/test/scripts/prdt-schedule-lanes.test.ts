@@ -32,6 +32,17 @@ function run(args: string[], input?: string): { out: string; err: string; status
   }
 }
 
+function liveMarker(ticket: string, persona = 'developer') {
+  const md = path.join(prdtHome, 'run', 'dispatches')
+  fs.mkdirSync(md, { recursive: true })
+  const transcript = path.join(tmpRoot, `agent-${ticket}.jsonl`)
+  fs.writeFileSync(transcript, '{"type":"assistant","message":{"model":"claude-x"}}\n')
+  fs.writeFileSync(path.join(md, `${ticket}.json`), JSON.stringify({
+    agent_id: `a-${ticket}`, persona, ticket_id: ticket, dispatch_id: `d-${ticket}`,
+    project_root: fs.realpathSync(projectDir), since: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'), transcript,
+  }))
+}
+
 const GATE_A = 'docs/artifacts/v0.1/a.md'
 const GATE_B = 'docs/artifacts/v0.1/b.md'
 
@@ -160,6 +171,65 @@ describe.skipIf(!PYTHON3)('prdt schedule lanes', () => {
     expect(t).toContain('critical path (1): T-001')
     expect(t).not.toMatch(/^lane /m)
     expect(t).not.toContain('outside the lanes')
+  })
+
+  describe('T-1145 QA fail rows (R6 / R3 / T-1158 = B)', () => {
+    test('lane mode: no separate `PO work:` line; an out-of-lane PO ticket is in `dispatch next`, ranks contiguous from 1', () => {
+      writePrd([rowA])
+      writeTicket('v0.1', 'T-001', { gate: GATE_A })
+      writeTicket('v0.1', 'T-002', { assignee: 'po' })
+      writeTicket('v0.1', 'T-003', {})
+      writeTicket('v0.1', 'T-004', {})
+      const t = run(['schedule']).out
+      expect(t).not.toMatch(/^PO work:/m)
+      const nextBlock = t.split('dispatch next:\n')[1].split(/^\S/m)[0]
+      const ranks = [...nextBlock.matchAll(/^\s+(\d+)\s+(T-\d+)/gm)].map(m => [Number(m[1]), m[2]])
+      expect(ranks.map(r => r[1]).sort()).toEqual(['T-002', 'T-003', 'T-004'])
+      expect(ranks.map(r => r[0])).toEqual([1, 2, 3])
+      expect(t).toMatch(/^waiting on user:/m)
+      expect(t).toMatch(/^in flight:/m)
+    })
+
+    test('no lanes: the old `PO work:` line stays', () => {
+      writePrd([])
+      writeTicket('v0.1', 'T-001', { assignee: 'po' })
+      const t = run(['schedule']).out
+      expect(t).toMatch(/^PO work: T-001$/m)
+    })
+
+    test('working shows the persona of the running dispatch', () => {
+      writePrd([rowA])
+      writeTicket('v0.1', 'T-001', { gate: GATE_A, deps: '[T-002]' })
+      writeTicket('v0.1', 'T-002', {})
+      liveMarker('T-002', 'developer')
+      const [a] = lanes()
+      expect(a.working_owner).toEqual({ 'T-002': 'developer' })
+      expect(run(['schedule']).out).toMatch(/^lane A 0\/2 \| working T-002 \(developer\)$/m)
+    })
+
+    test('T-1158: ready tickets shown while working (text + JSON `ready`), statusline `next` stays empty', () => {
+      writePrd([rowA])
+      writeTicket('v0.1', 'T-001', { gate: GATE_A, deps: '[T-002, T-003, T-004]' })
+      writeTicket('v0.1', 'T-002', {})
+      writeTicket('v0.1', 'T-003', {})
+      writeTicket('v0.1', 'T-004', { deps: '[T-002]' })
+      liveMarker('T-002', 'developer')
+      const [a] = lanes()
+      expect(a.working).toEqual(['T-002'])
+      expect(a.next).toEqual([])
+      expect(a.ready).toEqual(['T-003'])
+      expect(a.ready_owner).toEqual({ 'T-003': 'developer' })
+      expect(run(['schedule']).out).toMatch(/^lane A 0\/4 \| working T-002 \(developer\) \| ready T-003$/m)
+    })
+
+    test('T-1158: idle lane — `ready` equals `next` in JSON, text unchanged', () => {
+      writePrd([rowA])
+      writeTicket('v0.1', 'T-001', { gate: GATE_A })
+      const [a] = lanes()
+      expect(a.ready).toEqual(['T-001'])
+      expect(a.next).toEqual(['T-001'])
+      expect(run(['schedule']).out).toMatch(/^lane A 0\/1 \| next T-001 \(developer\)$/m)
+    })
   })
 
   describe('dispatch gate warning (R6)', () => {
