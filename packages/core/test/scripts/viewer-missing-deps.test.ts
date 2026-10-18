@@ -14,6 +14,7 @@
  * checkout whose contents this file controls; the generator is a stub cli.mjs.
  */
 import path from 'path'
+import { copyPrdtCli } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawnSync } from 'child_process'
@@ -61,7 +62,7 @@ function fakeCheckout(opts: { omit?: string[]; cli?: string } = {}): Fake {
   const viewer = path.join(code, 'packages', 'viewer')
   fs.mkdirSync(scripts, { recursive: true })
   const prdt = path.join(scripts, 'prdt')
-  fs.copyFileSync(REAL_PRDT, prdt)
+  copyPrdtCli(REAL_PRDT, prdt)
   fs.chmodSync(prdt, 0o755)
   if (!omit.has('cli.mjs')) {
     fs.mkdirSync(viewer, { recursive: true })
@@ -135,7 +136,7 @@ describe.skipIf(!PYTHON3)('prdt viewer — the cause is named, with the one fix 
     // an installed copy: two levels up is $PRDT_HOME itself, which has no scripts/prdt
     const bin = path.join(home, 'bin')
     fs.mkdirSync(bin, { recursive: true })
-    fs.copyFileSync(REAL_PRDT, path.join(bin, 'prdt'))
+    copyPrdtCli(REAL_PRDT, path.join(bin, 'prdt'))
     const r = run(path.join(bin, 'prdt'), ['viewer'])
     expect(r.code).not.toBe(0)
     expect(r.err).toContain('prdt 체크아웃을 찾지 못했어요')
@@ -146,7 +147,7 @@ describe.skipIf(!PYTHON3)('prdt viewer — the cause is named, with the one fix 
   test('no prdt checkout found: PRDT_REPO pointing nowhere names that path', () => {
     const bin = path.join(home, 'bin')
     fs.mkdirSync(bin, { recursive: true })
-    fs.copyFileSync(REAL_PRDT, path.join(bin, 'prdt'))
+    copyPrdtCli(REAL_PRDT, path.join(bin, 'prdt'))
     fs.writeFileSync(path.join(home, 'prdt.env'), `PRDT_REPO=${path.join(sb, 'gone')}\n`)
     const r = run(path.join(bin, 'prdt'), ['viewer'])
     expect(r.err).toContain(path.join(sb, 'gone'))

@@ -760,8 +760,59 @@ links = {}  # ticket_id -> resolved viewer link target (T-805), filled in as seg
             # strip the OSC 8 escape bytes as control characters, same as it
             # strips any other Cc/Cf/Zl/Zp — see the wrap step's own note).
 
+# ── T-1147 (v1.14 `lanes`): lane rows under a build-stage product row ─────────
+# The lane computation is `prdt_lanes.lanes_for` — the module `prdt schedule` itself
+# imports (T-1145, design R6), imported here, never re-implemented. A module import
+# keeps python's bytecode cache (spawning the 20k-line `prdt` recompiled it on every
+# render). Read-only: nothing is written. A missing/stale module or any failure = no
+# lane rows (degrade silently). Cost control: the read happens only for a product in
+# stage build while the project's PRD.md carries a `합격선` heading.
+
+
+def _prd_has_gate_table():
+    cands = [os.path.join(root, "docs", "prd", "PRD.md")]
+    cands += [os.path.join(root, "docs", p, "prd", "PRD.md") for p in ticket_prods]
+    for c in cands:
+        try:
+            # same heading test as prdt_lanes.LANE_HEADING_RE (T-1147 QA: the two must agree)
+            if any(re.match(r"^###\s+합격선(\s|$)", ln) for ln in open(c, encoding="utf-8", errors="replace").read().splitlines()):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def read_lanes():
+    """{line (None = home): [lane dict]} for each build-stage product; absent = no lane rows."""
+    want = [r["line"] for r in rows if token(r["st"].get("stage"), lambda v: v in STAGES) == "build"]
+    if not want or not _prd_has_gate_table():
+        return {}
+    try:
+        import prdt_lanes
+    except Exception:
+        return {}
+    out = {}
+    for ln in want:
+        try:
+            lanes = prdt_lanes.lanes_for(root, ln)
+        except Exception:
+            continue
+        lanes = [x for x in (lanes if isinstance(lanes, list) else []) if isinstance(x, dict)]
+        if lanes:
+            out[ln] = lanes
+    return out
+
+
+lane_data = read_lanes()
+
+
+def _ids(v):
+    return [t for t in (v if isinstance(v, list) else []) if isinstance(t, str) and TICKET_RE.match(t)]
+
+
+
 running = running_dispatches()
-idx = open_index_ro() if (running or dec or req) else None
+idx = open_index_ro() if (running or dec or req or lane_data) else None
 
 
 def fmt_group(ids, limit, succ_limit, with_persona=None):
@@ -834,6 +885,73 @@ def fit(build, tail=""):
     return cut + sep
 
 
+def lane_text(lane, cap):
+    """R3 cells + R5 folding of ONE lane row (plain text; links wrap later).
+    `lane: NAME  d/t` is never cut; the rest folds 3 → 2 → 1 ids + `+N` →
+    persona off → ids as `+N` → one blocker id + `+N` (kind kept) → `…` cut."""
+    name = clean(lane.get("name"), cap=12) or "?"
+    head = L("lane", name=name) + "  "
+    if not lane.get("linked"):
+        return head + L("lane.unlinked")
+    head += f"{int(lane.get('done') or 0)}/{int(lane.get('total') or 0)}"
+    if lane.get("finished"):
+        return head + " | " + L("lane.done")
+    work, nxt = _ids(lane.get("working")), _ids(lane.get("next"))
+    work_owner = lane.get("working_owner") if isinstance(lane.get("working_owner"), dict) else {}
+    next_owner = lane.get("next_owner") if isinstance(lane.get("next_owner"), dict) else {}
+    blockers = [(b["id"], b["kind"]) for b in (lane.get("blockers") if isinstance(lane.get("blockers"), list) else [])
+                if isinstance(b, dict) and isinstance(b.get("id"), str) and TICKET_RE.match(b["id"])
+                and b.get("kind") in ("decision", "request")]
+    if work:
+        key, ids = "lane.work", work
+        owners = {t: (personas.get(t) or ([work_owner[t]] if work_owner.get(t) in ASSIGNEES else [])) for t in ids}
+    elif nxt:
+        key, ids = "lane.next", nxt
+        owners = {t: ([next_owner[t]] if next_owner.get(t) in ASSIGNEES else []) for t in ids}
+    else:
+        key, ids, owners = ("lane.work", [], {})
+
+    def cells(lim, persona, blk_lim):
+        out = [head]
+        if ids:
+            shown, extra = collapse(ids, lim) if lim is not None else ([], len(ids))
+            bits = []
+            for t in shown:
+                links.setdefault(t, ticket_link_target(idx, t))
+                bits.append(t + ("(" + "+".join(persona_label(x) for x in owners[t]) + ")" if persona and owners[t] else ""))
+            if extra:
+                bits.append(f"+{extra}")
+            out.append(L(key) + " " + " ".join(bits))
+        elif not blockers:
+            out.append(L("lane.work") + " 0")
+        if blockers:
+            shown, extra = collapse(blockers, blk_lim)
+            bits = []
+            for t, kind in shown:
+                links.setdefault(t, ticket_link_target(idx, t))
+                bits.append(f"{t}({L('decision' if kind == 'decision' else 'request')})")
+            if extra:
+                bits.append(f"+{extra}")
+            out.append(L("lane.blocker") + " " + " ".join(bits))
+        return " | ".join(out)
+
+    steps = [(n, True, 99) for n in (3, 2, 1)] + [(1, False, 99), (None, False, 99), (None, False, 1)]
+    cand = ""
+    for lim, persona, blk in steps:
+        cand = cells(lim, persona, blk)
+        if dw(cand) <= cap:
+            return cand
+    return head + cut_cols(cand[len(head):], max(cap - dw(head), 1))
+
+
+def lane_cap():
+    try:
+        cols = int(os.environ.get("COLUMNS", ""))
+    except ValueError:
+        cols = 0
+    return min(cols, LINE_CAP) if cols > 0 else LINE_CAP
+
+
 # T-984 layout (user-confirmed 2026-10-06):
 #   <label> <version> | stage: <stage> n/m | total tickets n/m | working … | branch: <b>   (T-1017)
 # One row per line, home first, then ALWAYS one `dec … | req …` row last
@@ -842,14 +960,44 @@ def fit(build, tail=""):
 line_budget = MAX_ROWS - 1
 shown = rows if len(rows) <= line_budget else rows[:line_budget - 1]
 out_rows = []
-for r in shown:
+# T-1147: parallel to `shown` — [(lane, text)] under each product row. Any lane
+# failure (stale module, odd data) = no lane rows at all; the rest stays intact.
+try:
+    lane_rows = [[(x, lane_text(x, lane_cap())) for x in lane_data.get(r["line"], [])] for r in shown]
+except Exception:
+    lane_rows = [[] for _ in shown]
+fixed = len(shown) + (1 if len(shown) < len(rows) else 0) + 1
+
+# T-1147 R5: lane rows go right under their product row. Over MAX_ROWS: finished
+# lane rows leave first (bottom product up), then each product's remaining lanes
+# fold into one `lanes +N` row, then those fold rows (bottom up) — product rows,
+# the `+N products` row and the last row never leave for a lane.
+if any(lane_rows):
+    def total():
+        return fixed + sum(len(x) for x in lane_rows)
+    for i in range(len(lane_rows) - 1, -1, -1):
+        for j in range(len(lane_rows[i]) - 1, -1, -1):
+            if MAX_ROWS < total() and lane_rows[i][j][0].get("finished"):
+                del lane_rows[i][j]
+    if MAX_ROWS < total():
+        lane_rows = [[({}, L("lane.more", n=len(x)))] if x else x for x in lane_rows]
+        for i in range(len(lane_rows) - 1, -1, -1):
+            if MAX_ROWS < total():
+                lane_rows[i] = []
+
+# product rows — a running dispatch stays on `working` unless a surviving lane row
+# of its product prints that id (the user must always see what is running)
+for k, r in enumerate(shown):
     head = [r["slug_ver"], r["stage"]]
     if r["vtotal"]:
         head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
-    ids = [tid for tid, _ in running if line_of(tid) == r["line"]]
+    lane_txt = " ".join(t for _, t in lane_rows[k])
+    ids = [tid for tid, _ in running if line_of(tid) == r["line"]
+           and not re.search(r"(?<![\w-])" + re.escape(tid) + r"(?!\d)", lane_txt)]
     branch = L("branch", name=r["branch"]) if r["branch"] else ""
     out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
                                         " | ".join(head + [working_seg(ids, lim)]), branch)))
+    out_rows.extend((None, t) for _, t in lane_rows[k])
 if len(shown) < len(rows):
     out_rows.append((None, L("lines", n=len(rows) - len(shown))))
 out_rows.append((None, action_row()))

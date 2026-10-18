@@ -14,6 +14,7 @@
  * dependencies the way a real filtered install does. No network.
  */
 import path from 'path'
+import { copyPrdtCli } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawn, spawnSync } from 'child_process'
@@ -62,7 +63,7 @@ function fakeCheckout(withDeps: boolean, omitPkg: string[] = []) {
   const viewer = path.join(code, 'packages', 'viewer')
   fs.mkdirSync(scripts, { recursive: true })
   prdt = path.join(scripts, 'prdt')
-  fs.copyFileSync(REAL_PRDT, prdt)
+  copyPrdtCli(REAL_PRDT, prdt)
   fs.chmodSync(prdt, 0o755)
   fs.mkdirSync(viewer, { recursive: true })
   fs.writeFileSync(path.join(viewer, 'cli.mjs'), OK_CLI)

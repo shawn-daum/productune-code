@@ -72,6 +72,10 @@ function plant(sb: InstallSandbox): Attack {
 }
 
 function run(script: string, sb: InstallSandbox): void {
+  // T-1147: the pinned pre-fix install.sh copies only `prdt`, and its later `prdt menus` step needs the module beside it
+  const bin = path.join(String(sb.env.PRDT_HOME), 'bin')
+  fs.mkdirSync(bin, { recursive: true })
+  fs.copyFileSync(path.join(CORE_ROOT, 'scripts', 'prdt_lanes.py'), path.join(bin, 'prdt_lanes.py'))
   execFileSync('bash', [script], { env: sb.env, stdio: 'ignore' })
 }
 

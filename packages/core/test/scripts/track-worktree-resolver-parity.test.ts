@@ -39,6 +39,8 @@ function unbounded(script: string): string {
   expect(src).toContain('"tracks"')
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1112-prefix-'))
   const p = path.join(dir, path.basename(script))
+  const lanes = path.join(path.dirname(script), 'prdt_lanes.py')
+  if (fs.existsSync(lanes)) fs.copyFileSync(lanes, path.join(dir, 'prdt_lanes.py'))
   fs.writeFileSync(p, src.replaceAll('"tracks"', '"tracks-off"').replaceAll('name == "tracks-off"', 'name == "tracks-off"'), { mode: 0o755 })
   return p
 }

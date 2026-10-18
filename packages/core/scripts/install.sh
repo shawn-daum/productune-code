@@ -252,6 +252,8 @@ $(jq -r '(.retired // [])[]' "$MANIFEST")
 EOF
 cp "$ROOT/scripts/prdt" "$PRDT_HOME/bin/prdt"
 cp "$ROOT/scripts/prdt-messages.json" "$PRDT_HOME/bin/prdt-messages.json"
+# T-1147: the lane computation `prdt` and the statusline both import; always beside bin/prdt.
+cp "$ROOT/scripts/prdt_lanes.py" "$PRDT_HOME/bin/prdt_lanes.py"
 cp "$ROOT/scripts/statusline-prdt.sh" "$PRDT_HOME/bin/statusline-prdt.sh"
 # T-906: the shared symlink-safe walk/writers the statusline, prdt-auto-open.sh's
 # regen worker and the post-dispatch / return-check appends import; always

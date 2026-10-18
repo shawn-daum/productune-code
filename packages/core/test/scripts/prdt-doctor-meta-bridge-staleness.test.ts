@@ -18,6 +18,7 @@
  */
 
 import path from 'path'
+import { copyPrdtCli } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -83,7 +84,7 @@ function cliWithBridgeFixture(opts: {
   tmpRoots.push(tmp)
   fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
   const cli = path.join(tmp, 'scripts', 'prdt')
-  fs.copyFileSync(PRDT_CLI, cli)
+  copyPrdtCli(PRDT_CLI, cli)
   fs.chmodSync(cli, 0o755)
 
   const now = Date.now() / 1000
@@ -136,7 +137,7 @@ function repoRootFixture(opts: {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-repo-root-'))
   tmpRoots.push(tmp)
   fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
-  fs.copyFileSync(PRDT_CLI, path.join(tmp, 'scripts', 'prdt'))
+  copyPrdtCli(PRDT_CLI, path.join(tmp, 'scripts', 'prdt'))
   fs.chmodSync(path.join(tmp, 'scripts', 'prdt'), 0o755)
 
   const now = Date.now() / 1000
@@ -193,7 +194,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — meta-cli bridge staleness (T-731)', (
     tmpRoots.push(tmp)
     fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
     const cli = path.join(tmp, 'scripts', 'prdt')
-    fs.copyFileSync(PRDT_CLI, cli)
+    copyPrdtCli(PRDT_CLI, cli)
     fs.chmodSync(cli, 0o755)
     const out = doctor(cli)
     expect(out).not.toMatch(/^⚠.*meta-cli bridge/m)
