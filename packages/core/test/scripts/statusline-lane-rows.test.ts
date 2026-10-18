@@ -260,6 +260,66 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     expect(r2[2]).toBe('decision 0 | request 0')
   })
 
+  test('QA 1a: QA running on a done ticket of a finished lane stays on the product row `working`', () => {
+    writePrd([rowA])
+    ticket('T-001', { status: 'done', gate: GATE_A })
+    setStage('build')
+    marker('T-001', 'qa')
+    const r = rows()
+    expect(r[1]).toBe('lane: A  1/1 | done')
+    expect(r[0]).toContain('working T-001(qa)')
+  })
+
+  test('QA 1b: a running dispatch whose lane row the 17-row cap folded away stays on `working`', () => {
+    const more = Array.from({ length: 20 }, (_, i) => {
+      const g = `docs/artifacts/v0.1/h${i}.md`
+      return { g, row: `| **합격선** | **레인 H${i} · \`${g}\` 가 있다** |` }
+    })
+    writePrd(more.map((m) => m.row))
+    more.forEach((m, i) => ticket(`T-${300 + i}`, { gate: m.g }))
+    setStage('build')
+    marker('T-305')
+    const r = rows()
+    expect(r[1]).toBe('lanes +20')
+    expect(r[0]).toContain('working T-305(developer)')
+  })
+
+  test('QA 2: heading with extra spaces (`###  합격선`) — precheck and lane parser agree: lanes show', () => {
+    writePrd([rowA])
+    const f = path.join(root, 'docs', 'prd', 'PRD.md')
+    fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('### 합격선', '###  합격선'))
+    ticket('T-001', { gate: GATE_A })
+    setStage('build')
+    expect(rows()[1]).toBe('lane: A  0/1 | next T-001(developer)')
+    // a heading the lane regex rejects (`### 합격선표`) shows no lane row
+    fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('###  합격선', '### 합격선표'))
+    expect(rows()).toHaveLength(2)
+  })
+
+  test('QA 3: lane rendering that throws → no lane rows, rest of the statusline intact', () => {
+    writePrd([rowA])
+    ticket('T-001', { gate: GATE_A })
+    ticket('T-009')
+    setStage('build')
+    marker('T-001')
+    marker('T-009')
+    const dir = path.join(tmpRoot, 'scripts-copy')
+    fs.cpSync(path.join(CORE, 'scripts'), dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'prdt_lanes.py'),
+      'def lanes_for(root, line=None):\n    return [{"name": "A", "linked": True, "done": "x", "total": 1}]\n')
+    const out = unwrap(execFileSync('bash', [path.join(dir, 'statusline-prdt.sh')], {
+      input: JSON.stringify({ workspace: { current_dir: root } }), encoding: 'utf8',
+      env: { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en' } as NodeJS.ProcessEnv, timeout: subprocessTimeout('cli'),
+    })).replace(/\n$/, '').split('\n')
+    expect(out).toHaveLength(2)
+    expect(out[0]).toContain('working T-001(developer) T-009(developer)')
+    expect(out[1]).toBe('decision 0 | request 0')
+  })
+
+  test('QA 4: doctor tracks prdt_lanes.py as a bin helper module', () => {
+    expect(fs.readFileSync(PRDT_CLI, 'utf8')).toMatch(/BIN_HELPER_MODULES = \([^)]*"prdt_lanes\.py"/)
+  })
+
   test('statusline reads prdt schedule --json: it makes no meta-backup / update-state write', () => {
     writePrd([rowA])
     ticket('T-001', { gate: GATE_A })
