@@ -14835,7 +14835,7 @@ def _schedule_in_flight(root):
     """Ticket ids this project has a LIVE dispatch marker for — the dispatch
     gate's liveness rule (`_dispatch_state`, T-695), read-only."""
     d = prdt_home() / "run" / "dispatches"
-    hits = set()
+    hits = {}  # ticket id -> persona of its live dispatch (T-1145: `working T-1 (developer)`)
     if not d.is_dir():
         return hits
     now = datetime.now(timezone.utc)
@@ -14852,7 +14852,7 @@ def _schedule_in_flight(root):
         except Exception:
             continue
         if _dispatch_state(data, now).startswith("live"):
-            hits.add(tid)
+            hits.setdefault(tid, data.get("persona") if isinstance(data.get("persona"), str) else None)
     return hits
 
 
@@ -14948,8 +14948,8 @@ def compute_lanes(root, tickets, st, line, version, in_flight):
     lanes, taken = [], set()
     for name, gpath in rows:
         lane = {"name": name, "gate_path": gpath, "gate_ticket": None, "linked": False, "done": 0,
-                "total": 0, "finished": False, "tickets": [], "working": [], "next": [],
-                "next_owner": {}, "blockers": [], "warning": None}
+                "total": 0, "finished": False, "tickets": [], "working": [], "working_owner": {},
+                "next": [], "next_owner": {}, "ready": [], "ready_owner": {}, "blockers": [], "warning": None}
         lanes.append(lane)
         if not gpath:
             continue
@@ -14981,6 +14981,7 @@ def compute_lanes(root, tickets, st, line, version, in_flight):
         lane["done"] = sum(1 for t in here if tickets[t][0]["status"] == "done")
         lane["finished"] = lane["total"] > 0 and lane["done"] == lane["total"]
         lane["working"] = [t for t in ids if t in in_flight]
+        lane["working_owner"] = {t: in_flight[t] for t in lane["working"]}
         for t in ids:
             r = tickets[t][0]
             if r["status"] != "open":
@@ -14989,13 +14990,16 @@ def compute_lanes(root, tickets, st, line, version, in_flight):
                 lane["blockers"].append({"id": t, "kind": "decision"})
             elif r["assignee"] == "user":
                 lane["blockers"].append({"id": t, "kind": "request"})
+        def satisfied(d):
+            return d not in tickets or tickets[d][0]["status"] in ("done", "dropped")
+        # T-1158 = B: `ready` = R3's 다음 criteria, shown even while the lane has work running.
+        # `next` stays the statusline-facing value (T-1147): only when nothing is running.
+        lane["ready"] = [t for t in ids if tickets[t][0]["status"] == "open"
+                         and tickets[t][0]["type"] != "decision" and tickets[t][0]["assignee"] != "user"
+                         and t not in in_flight and all(satisfied(d) for d in tickets[t][0]["deps"])]
+        lane["ready_owner"] = {t: tickets[t][0]["assignee"] for t in lane["ready"]}
         if not lane["working"]:
-            def satisfied(d):
-                return d not in tickets or tickets[d][0]["status"] in ("done", "dropped")
-            lane["next"] = [t for t in ids if tickets[t][0]["status"] == "open"
-                            and tickets[t][0]["type"] != "decision" and tickets[t][0]["assignee"] != "user"
-                            and t not in in_flight and all(satisfied(d) for d in tickets[t][0]["deps"])]
-            lane["next_owner"] = {t: tickets[t][0]["assignee"] for t in lane["next"]}
+            lane["next"], lane["next_owner"] = list(lane["ready"]), dict(lane["ready_owner"])
     return lanes
 
 
@@ -15157,7 +15161,9 @@ def _render_lane(ln, rows, lab):
     if ln["finished"]:
         cells.append("done")
     elif ln["working"]:
-        cells.append("working " + " ".join(lab(t) for t in ln["working"]))
+        cells.append("working " + " ".join(f"{lab(t)} ({lab(ln['working_owner'].get(t))})" for t in ln["working"]))
+        if ln["ready"]:
+            cells.append("ready " + " ".join(lab(t) for t in ln["ready"]))
     elif ln["next"]:
         cells.append("next " + " ".join(f"{lab(t)} ({lab(ln['next_owner'].get(t))})" for t in ln["next"]))
     else:
@@ -15199,19 +15205,28 @@ def _render_schedule(s):
         waits = f"  waits {','.join(lab(x) for x in r['waits_on'])}" if r["state"] == "blocked" else ""
         return (f"{lead}{lab(r['id']):<{w}}  slack {r['slack']}  {lab(r['assignee']):<9}  "
                 f"blocks {r['blocks']}{waits}{extra}")
-    ready = [r for r in rows if r["state"] == "ready"]
+    if lanes:
+        # R6: PO work is not taken out of `dispatch next`; ranks restart at 1 in the list shown.
+        ready = [r for r in rows if r["state"] == "ready" or (r["state"] == "po" and not r["waits_on"])]
+        blocked = [r for r in rows if r["state"] == "blocked" or (r["state"] == "po" and r["waits_on"])]
+        ranked = {r["id"]: i for i, r in enumerate(ready, 1)}
+    else:
+        ready = [r for r in rows if r["state"] == "ready"]
+        blocked = [r for r in rows if r["state"] == "blocked"]
+        ranked = {r["id"]: r["rank"] for r in ready}
     if ready:
         print("dispatch next:")
         for r in ready:
-            print(line(r, f"  {r['rank']:>2}  "))
+            print(line(r, f"  {ranked[r['id']]:>2}  "))
     else:
         print("dispatch next: (none)")
-    blocked = [r for r in rows if r["state"] == "blocked"]
     if blocked:
         print("blocked (deps open):")
         for r in blocked:
             print(line(r, "      "))
-    for state, title in (("waiting-user", "waiting on user"), ("po", "PO work"), ("in-flight", "in flight")):
+    states = (("waiting-user", "waiting on user"), ("in-flight", "in flight")) if lanes else \
+        (("waiting-user", "waiting on user"), ("po", "PO work"), ("in-flight", "in flight"))
+    for state, title in states:
         ids = [lab(r["id"]) for r in rows if r["state"] == state]
         print(f"{title}: {' '.join(ids) if ids else '(none)'}")
     return False
