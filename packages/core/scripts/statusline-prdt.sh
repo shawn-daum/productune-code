@@ -760,8 +760,73 @@ links = {}  # ticket_id -> resolved viewer link target (T-805), filled in as seg
             # strip the OSC 8 escape bytes as control characters, same as it
             # strips any other Cc/Cf/Zl/Zp — see the wrap step's own note).
 
+# ── T-1147 (v1.14 `lanes`): lane rows under a build-stage product row ─────────
+# The lane computation is `prdt schedule --json` `lanes` (T-1145, design R6) —
+# read here, never re-implemented. Read-only: PRDT_META_BACKUP=0 keeps the CLI's
+# own detached backup tick out of a pure-display render; `--json` already mutes
+# the update nudge. A missing/failed/slow CLI = no lane rows (degrade silently).
+# Cost control (render time stays at today's level for lane-less projects): the
+# CLI is spawned only for a product in stage build while the project's PRD.md
+# carries a `합격선` heading, and all products' spawns run concurrently.
+LANE_TIMEOUT = 5
+
+
+def _prd_has_gate_table():
+    cands = [os.path.join(root, "docs", "prd", "PRD.md")]
+    cands += [os.path.join(root, "docs", p, "prd", "PRD.md") for p in ticket_prods]
+    for c in cands:
+        try:
+            if "### 합격선" in open(c, encoding="utf-8", errors="replace").read():
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def read_lanes():
+    """{line (None = home): [lane dict]} for each build-stage product; absent = no lane rows."""
+    prdt = os.path.join(os.environ.get("SCRIPT_DIR", ""), "prdt")
+    want = [r["line"] for r in rows if token(r["st"].get("stage"), lambda v: v in STAGES) == "build"]
+    if not want or not os.path.isfile(prdt) or not _prd_has_gate_table():
+        return {}
+    env = dict(os.environ, PRDT_META_BACKUP="0")
+    procs = {}
+    for ln in want:
+        cmd = [sys.executable or "python3", prdt, "schedule", "--json"] + (["--product", ln] if ln else [])
+        try:
+            procs[ln] = subprocess.Popen(cmd, cwd=root, env=env, stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        except Exception:
+            continue
+    out = {}
+    for ln, pr in procs.items():
+        try:
+            data = json.loads(pr.communicate(timeout=LANE_TIMEOUT)[0])
+        except Exception:
+            try:
+                pr.kill()
+            except Exception:
+                pass
+            continue
+        lanes = data.get("lanes") if isinstance(data, dict) else None
+        lanes = [x for x in (lanes if isinstance(lanes, list) else []) if isinstance(x, dict)]
+        if lanes:
+            out[ln] = lanes
+    return out
+
+
+lane_data = read_lanes()
+
+
+def _ids(v):
+    return [t for t in (v if isinstance(v, list) else []) if isinstance(t, str) and TICKET_RE.match(t)]
+
+
+# ids of every lane's tickets of a product: they show on the lane row, not in the product row's `working`
+lane_ticket_ids = {ln: {t for x in lanes for t in _ids(x.get("tickets"))} for ln, lanes in lane_data.items()}
+
 running = running_dispatches()
-idx = open_index_ro() if (running or dec or req) else None
+idx = open_index_ro() if (running or dec or req or lane_data) else None
 
 
 def fmt_group(ids, limit, succ_limit, with_persona=None):
@@ -834,6 +899,73 @@ def fit(build, tail=""):
     return cut + sep
 
 
+def lane_text(lane, cap):
+    """R3 cells + R5 folding of ONE lane row (plain text; links wrap later).
+    `lane: <name>  d/t` is never cut; the rest folds 3 → 2 → 1 ids + `+N` →
+    persona off → ids as `+N` → one blocker id + `+N` (kind kept) → `…` cut."""
+    name = clean(lane.get("name"), cap=12) or "?"
+    head = L("lane", name=name) + "  "
+    if not lane.get("linked"):
+        return head + L("lane.unlinked")
+    head += f"{int(lane.get('done') or 0)}/{int(lane.get('total') or 0)}"
+    if lane.get("finished"):
+        return head + " | " + L("lane.done")
+    work, nxt = _ids(lane.get("working")), _ids(lane.get("next"))
+    work_owner = lane.get("working_owner") if isinstance(lane.get("working_owner"), dict) else {}
+    next_owner = lane.get("next_owner") if isinstance(lane.get("next_owner"), dict) else {}
+    blockers = [(b["id"], b["kind"]) for b in (lane.get("blockers") if isinstance(lane.get("blockers"), list) else [])
+                if isinstance(b, dict) and isinstance(b.get("id"), str) and TICKET_RE.match(b["id"])
+                and b.get("kind") in ("decision", "request")]
+    if work:
+        key, ids = "lane.work", work
+        owners = {t: (personas.get(t) or ([work_owner[t]] if work_owner.get(t) in ASSIGNEES else [])) for t in ids}
+    elif nxt:
+        key, ids = "lane.next", nxt
+        owners = {t: ([next_owner[t]] if next_owner.get(t) in ASSIGNEES else []) for t in ids}
+    else:
+        key, ids, owners = ("lane.work", [], {})
+
+    def cells(lim, persona, blk_lim):
+        out = [head]
+        if ids:
+            shown, extra = collapse(ids, lim) if lim is not None else ([], len(ids))
+            bits = []
+            for t in shown:
+                links.setdefault(t, ticket_link_target(idx, t))
+                bits.append(t + ("(" + "+".join(persona_label(x) for x in owners[t]) + ")" if persona and owners[t] else ""))
+            if extra:
+                bits.append(f"+{extra}")
+            out.append(L(key) + " " + " ".join(bits))
+        elif not blockers:
+            out.append(L("lane.work") + " 0")
+        if blockers:
+            shown, extra = collapse(blockers, blk_lim)
+            bits = []
+            for t, kind in shown:
+                links.setdefault(t, ticket_link_target(idx, t))
+                bits.append(f"{t}({L('decision' if kind == 'decision' else 'request')})")
+            if extra:
+                bits.append(f"+{extra}")
+            out.append(L("lane.blocker") + " " + " ".join(bits))
+        return " | ".join(out)
+
+    steps = [(n, True, 99) for n in (3, 2, 1)] + [(1, False, 99), (None, False, 99), (None, False, 1)]
+    cand = ""
+    for lim, persona, blk in steps:
+        cand = cells(lim, persona, blk)
+        if dw(cand) <= cap:
+            return cand
+    return head + cut_cols(cand[len(head):], max(cap - dw(head), 1))
+
+
+def lane_cap():
+    try:
+        cols = int(os.environ.get("COLUMNS", ""))
+    except ValueError:
+        cols = 0
+    return min(cols, LINE_CAP) if cols > 0 else LINE_CAP
+
+
 # T-984 layout (user-confirmed 2026-10-06):
 #   <label> <version> | stage: <stage> n/m | total tickets n/m | working … | branch: <b>   (T-1017)
 # One row per line, home first, then ALWAYS one `dec … | req …` row last
@@ -842,17 +974,44 @@ def fit(build, tail=""):
 line_budget = MAX_ROWS - 1
 shown = rows if len(rows) <= line_budget else rows[:line_budget - 1]
 out_rows = []
+lane_rows = []   # T-1147: parallel to `shown` — [(lane, text)] under each product row
 for r in shown:
     head = [r["slug_ver"], r["stage"]]
     if r["vtotal"]:
         head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
-    ids = [tid for tid, _ in running if line_of(tid) == r["line"]]
+    in_lane = lane_ticket_ids.get(r["line"], ())
+    ids = [tid for tid, _ in running if line_of(tid) == r["line"] and tid not in in_lane]
     branch = L("branch", name=r["branch"]) if r["branch"] else ""
     out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
                                         " | ".join(head + [working_seg(ids, lim)]), branch)))
+    lane_rows.append([(x, lane_text(x, lane_cap())) for x in lane_data.get(r["line"], [])])
 if len(shown) < len(rows):
     out_rows.append((None, L("lines", n=len(rows) - len(shown))))
 out_rows.append((None, action_row()))
+
+# T-1147 R5: lane rows go right under their product row. Over MAX_ROWS: finished
+# lane rows leave first (bottom product up), then each product's remaining lanes
+# fold into one `lanes +N` row, then those fold rows (bottom up) — product rows,
+# the `+N products` row and the last row never leave for a lane.
+fixed = len(out_rows)
+if any(lane_rows):
+    def total():
+        return fixed + sum(len(x) for x in lane_rows)
+    for i in range(len(lane_rows) - 1, -1, -1):
+        for j in range(len(lane_rows[i]) - 1, -1, -1):
+            if total() > MAX_ROWS and lane_rows[i][j][0].get("finished"):
+                del lane_rows[i][j]
+    if total() > MAX_ROWS:
+        lane_rows = [[({}, L("lane.more", n=len(x)))] if x else x for x in lane_rows]
+        for i in range(len(lane_rows) - 1, -1, -1):
+            if total() > MAX_ROWS:
+                lane_rows[i] = []
+    merged = []
+    for k, item in enumerate(out_rows):
+        merged.append(item)
+        if k < len(lane_rows):
+            merged.extend((None, t) for _, t in lane_rows[k])
+    out_rows = merged
 
 
 def wrap_links(text, link_map):
