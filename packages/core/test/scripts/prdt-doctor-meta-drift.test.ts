@@ -21,6 +21,7 @@
  */
 
 import path from 'path'
+import { copyPrdtCli } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -320,7 +321,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — allowlist fixed-path parity vs core (
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-cli-copy-'))
     fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
     const cli = path.join(tmp, 'scripts', 'prdt')
-    fs.copyFileSync(PRDT_CLI, cli)
+    copyPrdtCli(PRDT_CLI, cli)
     fs.chmodSync(cli, 0o755)
     fs.mkdirSync(path.join(tmp, 'src', 'git-workflow'), { recursive: true })
     const body = entries.map((e) => `  '${e}',`).join('\n')
@@ -357,7 +358,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — allowlist fixed-path parity vs core (
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-cli-noTS-'))
     fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
     const cli = path.join(tmp, 'scripts', 'prdt')
-    fs.copyFileSync(PRDT_CLI, cli)
+    copyPrdtCli(PRDT_CLI, cli)
     fs.chmodSync(cli, 0o755)
     const out = doctor(cli)
     expect(out).not.toMatch(/allowlist default drift/)
@@ -387,7 +388,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — exclude-list fixed-path parity vs cor
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-cli-copy-excl-'))
     fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
     const cli = path.join(tmp, 'scripts', 'prdt')
-    fs.copyFileSync(PRDT_CLI, cli)
+    copyPrdtCli(PRDT_CLI, cli)
     fs.chmodSync(cli, 0o755)
     fs.mkdirSync(path.join(tmp, 'src', 'git-workflow'), { recursive: true })
     const body = entries.map((e) => `  '${e}',`).join('\n')
@@ -445,7 +446,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — exclude-list fixed-path parity vs cor
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-cli-noTS-excl-'))
     fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
     const cli = path.join(tmp, 'scripts', 'prdt')
-    fs.copyFileSync(PRDT_CLI, cli)
+    copyPrdtCli(PRDT_CLI, cli)
     fs.chmodSync(cli, 0o755)
     const out = doctor(cli)
     expect(out).not.toMatch(/exclude default drift/)
