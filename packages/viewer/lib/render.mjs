@@ -742,9 +742,6 @@ const STORE_ICON_PATHS = {
   artifact:
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
 }
-// T-1047: lucide Eye / EyeOff, the same icons the GUI env pane's reveal toggle uses.
-const EYE_ICON_PATH = '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>'
-const EYE_OFF_ICON_PATH = '<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>'
 const CLOSE_ICON_PATH = '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
 const MOON_ICON_PATH = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'
 const SUN_ICON_PATH = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'
@@ -2336,6 +2333,11 @@ function envOfView(data, v) {
   return l ? l.env : null
 }
 
+/** T-1191: what a file card's open links need besides the file — project root, line, VS Code found. */
+function envWhere(data, line) {
+  return data.projectRoot ? { root: data.projectRoot, line: line || null, vscode: !!(data.editors && data.editors.vscode) } : null
+}
+
 function envPill(set) {
   return `<span class="est ${set ? 'on' : 'off'}">${set ? ENV.set : ENV.unset}</span>`
 }
@@ -2344,29 +2346,39 @@ function envSetCount(f) {
   return f.keys.filter((k) => k.set).length
 }
 
-function envFileBody(f, dir) {
+/** T-1191: a file card's open controls. The prdt link carries the project root, the line and the
+ *  file NAME only — the URL handler (packages/core/scripts/prdt_open_url.py) rebuilds the path from
+ *  that project's own config, so a link can name nothing but an env file in a code folder. */
+function envActions(f, where) {
+  if (!where || !where.root || !where.absDir) return ''
+  const q = [`root=${encodeURIComponent(where.root)}`, ...(where.line ? [`line=${encodeURIComponent(where.line)}`] : []), `file=${encodeURIComponent(f.name)}`].join('&')
+  const abs = `${where.absDir}/${f.name}`
+  const vscode = where.vscode ? `<a class="env-act" href="${escapeHtml(`vscode://file${abs.split('/').map(encodeURIComponent).join('/')}`)}">${ENV.openVsCode}</a>` : ''
+  return `<div class="env-acts"><a class="env-act" href="${escapeHtml(`prdt://open-env?${q}`)}">${ENV.openEditor}</a>${vscode}` +
+    `<button type="button" class="env-act" data-env-copy="${escapeHtml(abs)}" data-label-done="${ENV.copied}">${ENV.copyPath}</button></div>`
+}
+
+function envFileBody(f, dir, where) {
   const set = envSetCount(f)
   // A sample file counts no set / empty (every key reads empty by design): names only.
   const tags = (k) => (k.codeWins ? `<span class="tagw">${ENV.codeWins}</span>` : '') + (k.plain ? `<span class="tagw">${ENV.plainValue}</span>` : '')
   const rows = f.keys.map((k) => `<div class="erow">${tags(k) ? `<span><code>${escapeHtml(k.name)}</code>${tags(k)}</span>` : `<code>${escapeHtml(k.name)}</code>`}${f.sample ? '' : envPill(k.set)}</div>`).join('')
-  const where = f.sample ? ENV.sampleKeys(f.keys.length) : dir || ''
+  const sampleWhere = f.sample ? ENV.sampleKeys(f.keys.length) : dir || ''
   const counts = f.sample ? '' : `<span class="env-c">${envPill(true)} ${set} ${envPill(false)} ${f.keys.length - set}</span>`
-  // T-1047: the key list is collapsed until the eye button reveals it (state per file card).
-  const eye = `<button type="button" class="env-eye" data-env-eye aria-expanded="false" aria-label="${ENV.reveal}" title="${ENV.reveal}" data-label-show="${ENV.reveal}" data-label-hide="${ENV.mask}">` +
-    `<span class="eye-on">${svgIcon(EYE_ICON_PATH, 14)}</span><span class="eye-off">${svgIcon(EYE_OFF_ICON_PATH, 14)}</span></button>`
-  return `<div class="dash-card env-card"><div class="env-h"><b>${escapeHtml(f.name)}</b><span class="env-dir">${escapeHtml(where)}</span>` +
-    `${counts}${eye}</div>` +
-    `<p class="env-note">${f.sample ? ENV.sampleNote : ENV.note}</p><div class="erows" hidden>${rows}</div></div>`
+  // T-1191 (T-1047 eye toggle removed): key names are shown by default — the page holds no value to hide.
+  return `<div class="dash-card env-card"><div class="env-h"><b>${escapeHtml(f.name)}</b><span class="env-dir">${escapeHtml(sampleWhere)}</span>` +
+    `${counts}</div>` +
+    `<p class="env-note">${f.sample ? ENV.sampleNote : ENV.note}</p>${envActions(f, where)}<div class="erows">${rows}</div></div>`
 }
 
 /** One current-version sidebar group per view: env = the last item (after 결정), its count = env file count (samples included). */
-function envGroup(env, emptyHead, machine) {
+function envGroup(env, emptyHead, machine, where) {
   const machineHtml = machineEnvBody(machine)
   if (!env || env.files.length === 0) {
     const body = `<div class="env-nofile"><b>${escapeHtml(emptyHead)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
     return { key: 'env', label: STORE_LABEL.env, count: 0, bodyHtml: body + machineHtml }
   }
-  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir)).join('\n') + machineHtml }
+  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir, where && { ...where, absDir: env.absDir })).join('\n') + machineHtml }
 }
 
 /** T-1109: the machine-scope section (~/.prdt/env/.env) — names, 설정됨 / 비어 있음, 제품 코드 값이 우선; none stored → the empty card. Absent `machine` (a single-file render) → nothing. */
@@ -2377,23 +2389,6 @@ function machineEnvBody(machine) {
     return `${head}<div class="env-nofile"><b>${ENV.machineEmptyHead}</b><span>${escapeHtml(ENV.machineEmptyDetail)}</span></div>`
   }
   return head + envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir)
-}
-
-/** Home's env block: per real env file (samples only when there is no real one) 설정됨 n · 비어 있음 m, the empty keys named, a link to the env item of the same version; no env file → one line. */
-function homeEnvBlock(env, prefix, noneText) {
-  const head = `<div class="cp-h">${STORE_LABEL.env}</div>`
-  const all = env ? env.files : []
-  const real = all.filter((f) => !f.sample)
-  const shown = real.length > 0 ? real : all
-  if (shown.length === 0) return `<div class="cp-block env-blk">${head}<p class="env-none">${noneText}</p></div>\n`
-  const rows = shown.map((f) => {
-    const set = envSetCount(f)
-    const empty = f.keys.filter((k) => !k.set)
-    const emptyHtml = empty.length === 0 ? '' : `<p class="env-empty"><span>${ENV.unset}</span>: ${empty.map((k) => `<code>${escapeHtml(k.name)}</code>`).join(' · ')}</p>`
-    return `<div class="env-file"><code>${escapeHtml(f.name)}</code><span class="env-c">${envPill(true)} ${set} · ${envPill(false)} ${f.keys.length - set}</span>` +
-      `<button type="button" class="env-go" data-open-store="home" data-open-group="${escapeHtml(prefix)}env">${escapeHtml(ENV.go)}</button></div>${emptyHtml}`
-  }).join('')
-  return `<div class="cp-block env-blk">${head}${rows}</div>\n`
 }
 
 // ---------- home: the in-progress version's workspace (T-666 slice 2a) ----------
@@ -2676,13 +2671,13 @@ function homeDependency(data, currentTickets) {
   return `<div class="cp-block">${head}${notice}${dependencyDiagram(graph, layoutHomeGraph(graph), dgId)}</div>`
 }
 
-function homeProgressBody(data, envHtml = '') {
+function homeProgressBody(data) {
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
 ${homeStageBar(currentTickets, data.poState?.stage || '?')}
 <div class="sc sc-grid">${homeWaits(data)}${homeScope(data, currentTickets)}</div>
-${envHtml}${homeDependency(data, currentTickets)}
+${homeDependency(data, currentTickets)}
 </div>`
 }
 
@@ -2699,12 +2694,12 @@ function homeLineGroups(data, v, views, repoRootHref) {
   // T-1108: an idle product has no open version, so its ticket pane lists every ticket it has (backlog + closed rounds).
   const homeTickets = idle ? [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))] : currentTickets
   const groups = [
-    { key: 'progress', label: HOME.working, bodyHtml: idle ? idleHomeHtml : `<div class="dash-grid">${homeProgressBody(ld, homeEnvBlock(envOfView(data, v), v.prefix, ENV.homeNoneLine))}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: idle ? idleHomeHtml : `<div class="dash-grid">${homeProgressBody(ld)}</div>` },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: idle ? lastClosedId(v) : v.currentVersion, bodyHtml: idle ? idleNotice(IDLE.prdHead(v.name), IDLE.prdDetail()) : prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: homeTickets.length, bodyHtml: ticketRowsTable(homeTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
-    envGroup(envOfView(data, v), ENV.emptyHead, v.line ? null : data.machineEnv),
+    envGroup(envOfView(data, v), ENV.emptyHead, v.line ? null : data.machineEnv, envWhere(data, v.line)),
   ]
   return { groups, defaultKey: 'progress' }
 }
@@ -2741,12 +2736,12 @@ function homeSection(data, repoRootHref) {
   const currentDecisions = currentDecisionPages(data.wiki, data.currentVersion)
   const decisionTickets = decisionTicketsOf(currentTickets)
   const groups = [
-    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data, homeEnvBlock(data.env, '', ENV.homeNone))}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
-    envGroup(data.env, ENV.homeNone, data.machineEnv),
+    envGroup(data.env, ENV.homeNone, data.machineEnv, envWhere(data, null)),
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
   const heading = `${STORE_LABEL.home} · ${data.currentVersion}`
@@ -3248,7 +3243,7 @@ details.v-fold[open] summary { color: var(--text-primary); }
 :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill:first-child, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note + h3.pill { margin-top: var(--space-16); }
 :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note { font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 var(--space-4); }
 @media (prefers-reduced-motion: reduce) { :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row td { transition: none; } }
-/* T-958: env screen + Home env block (approved screen set docs/artifacts/v1.13/define-screen-set.html #screen-env · home env-blk) */
+/* T-958: env screen (approved screen set docs/artifacts/v1.13/define-screen-set.html #screen-env; the Home env block left 진행 상황 in T-1191 / T-1179 C) */
 .nav-item.nav-dim:not(.active) span:first-child { color: var(--text-tertiary); }
 .env-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 4px; }
 .env-h b { font-family: var(--font-mono); font-size: 13px; }
@@ -3265,24 +3260,11 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .env-nofile b { color: var(--text-primary); font-size: 13px; }
 .env-scope { margin: 18px 0 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .tagw { font-family: var(--font-family); font-size: 10.5px; color: var(--text-tertiary); border: 1px solid var(--border-inline); border-radius: 100px; padding: 0 7px; margin-left: 8px; white-space: nowrap; }
-.env-file { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
-.env-file + .env-file, .env-empty + .env-file { margin-top: 8px; }
-.env-file code { font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); }
-.env-file .env-c { margin-left: 0; }
-.env-eye { background: none; border: 1px solid transparent; padding: 4px; min-width: 24px; min-height: 24px; justify-content: center; border-radius: 6px; cursor: pointer; color: var(--text-tertiary); display: inline-flex; align-items: center; margin-left: auto; }
-.env-c + .env-eye { margin-left: 0; }
-.env-eye:hover { background: var(--bg-state-hover); border-color: var(--border-hover); color: var(--text-primary); }
-.env-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.env-eye .eye-off, .env-eye[aria-expanded="true"] .eye-on { display: none; }
-.env-eye[aria-expanded="true"] .eye-off { display: inline-flex; }
-.env-eye .eye-on { display: inline-flex; }
-.erows[hidden] { display: none; }
 .env-card + .env-card { margin-top: 12px; }
-.env-go { margin-left: auto; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; background: none; border: none; padding: 0; }
-.env-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
-.env-empty { margin: 6px 0 0; font-size: 12px; color: var(--text-tertiary); line-height: 1.8; }
-.env-empty code { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); background: var(--bg-surface-on); border-radius: 4px; padding: 0 5px; }
-.env-none { margin: 0; font-size: 12px; color: var(--text-tertiary); }
+/* T-1191: a file card's open controls — link-styled, the same accent link look as .env-go had */
+.env-acts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 10px; }
+.env-act { color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; background: none; border: none; padding: 0; }
+.env-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 /* T-886: discipline screens (approved screen set docs/artifacts/v1.12/define-screen-set.html 「규율」) */
 a.dl { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 a.dl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
@@ -3853,19 +3835,29 @@ ${PRD_READING_SCRIPT}
       return;
     }
 
-    // T-1047: the eye button shows / hides that env file's key list (names and set / empty only).
-    var eyeBtn = ev.target.closest('[data-env-eye]');
-    if (eyeBtn) {
+    // T-1191: 경로 복사 — the env file's path (never a value) to the clipboard.
+    var copyBtn = ev.target.closest('[data-env-copy]');
+    if (copyBtn) {
       ev.preventDefault();
-      var envCard = eyeBtn.closest('.env-card');
-      var envRows = envCard ? envCard.querySelector('.erows') : null;
-      if (!envRows) return;
-      var envOpen = eyeBtn.getAttribute('aria-expanded') !== 'true';
-      eyeBtn.setAttribute('aria-expanded', envOpen ? 'true' : 'false');
-      envRows.hidden = !envOpen;
-      var envLabel = eyeBtn.getAttribute(envOpen ? 'data-label-hide' : 'data-label-show');
-      eyeBtn.setAttribute('aria-label', envLabel);
-      eyeBtn.setAttribute('title', envLabel);
+      var copyText = copyBtn.getAttribute('data-env-copy');
+      var copyDone = function () {
+        var done = copyBtn.getAttribute('data-label-done');
+        copyBtn.setAttribute('title', done);
+        copyBtn.setAttribute('aria-label', done);
+      };
+      var copyFallback = function () {
+        var ta = document.createElement('textarea');
+        ta.value = copyText;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { if (document.execCommand('copy')) copyDone(); } catch (e) {}
+        document.body.removeChild(ta);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(copyText).then(copyDone, copyFallback);
+      else copyFallback();
       return;
     }
 

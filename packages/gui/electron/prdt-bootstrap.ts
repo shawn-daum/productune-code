@@ -227,6 +227,26 @@ export function runBootstrap(paths: BootstrapPaths): BootstrapResult {
       fs.copyFileSync(path.join(payloadRoot, 'scripts', m), path.join(prdtHome, 'bin', m))
     }
 
+    // T-1191: prdt:// URL scheme (install.sh §1a parity) — best-effort: a payload without it, a
+    // non-macOS host or a failed build leaves the viewer's 경로 복사 working; never fails provision.
+    // The script registers with LaunchServices only when prdtHome is the login user's own ~/.prdt.
+    const schemeSh = path.join(payloadRoot, 'scripts', 'prdt-url-scheme.sh')
+    const openPy = path.join(payloadRoot, 'scripts', 'prdt_open_url.py')
+    if (process.platform === 'darwin' && fs.existsSync(schemeSh) && fs.existsSync(openPy)) {
+      try {
+        for (const [src, name] of [[openPy, 'prdt_open_url.py'], [schemeSh, 'prdt-url-scheme.sh']] as const) {
+          const dst = path.join(prdtHome, 'bin', name)
+          fs.copyFileSync(src, dst)
+          fs.chmodSync(dst, 0o755)
+        }
+        execFileSync('bash', [path.join(prdtHome, 'bin', 'prdt-url-scheme.sh'), 'install'], {
+          env: { ...process.env, PRDT_HOME: prdtHome },
+          stdio: 'ignore',
+          timeout: 60_000,
+        })
+      } catch { /* best-effort — see above */ }
+    }
+
     // menus are derived — regenerate against the installed mirror (install.sh §1)
     execFileSync(binPrdt, ['menus'], {
       env: { ...process.env, PRDT_DISCIPLINE: path.join(prdtHome, 'discipline') },
