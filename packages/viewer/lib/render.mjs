@@ -828,7 +828,7 @@ function storeSection(key, { active = false, innerHtml }) {
 // "v1.10" before "v1.9"). One rule, two call sites (T-709 결정 1/2): the
 // ticket sidebar's per-bucket rows and the PRD store's closed-round rows.
 function versionNumericParts(id) {
-  return (id.match(/\d+/g) || []).map(Number)
+  return (String(id ?? '').match(/\d+/g) || []).map(Number)
 }
 function compareVersionIdsDesc(a, b) {
   const pa = versionNumericParts(a)
