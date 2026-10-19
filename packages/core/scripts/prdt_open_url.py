@@ -12,8 +12,10 @@ same code-folder rule the viewer uses (packages/viewer/lib/env-status.mjs
 homeEnvDir · lineEnvDir). Opened only when ALL hold:
   - scheme `prdt`, host `open-env`, no path/fragment, only the keys root ·
     file · line, each at most once;
-  - root is absolute, canonical (its realpath, no symlink in it) and a prdt
-    project (`.prdt/po-state.json` a regular file);
+  - root is absolute, canonical (its realpath, no symlink in it), a prdt
+    project (`.prdt/po-state.json` a regular file) AND recorded by our own
+    tooling (a line of $PRDT_HOME/run/open-roots, written by the viewer
+    generator) — a planted dir with a po-state.json is not a project here;
   - file matches `.env` / `.env.<suffix>` ([A-Za-z0-9_.-]), no separator;
   - the file in that code folder is a regular file, not a symlink.
 Anything else is refused and logged; the file's bytes are never read here —
@@ -46,6 +48,18 @@ def _home():
         return env
     # installed at $PRDT_HOME/bin/ — LaunchServices starts the applet without PRDT_HOME
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _recorded_roots():
+    """Roots our tooling recorded: $PRDT_HOME/run/open-roots, a regular file (a symlink there is refused)."""
+    path = os.path.join(_home(), "run", "open-roots")
+    if not _regular(path):
+        return set()
+    try:
+        with open(path, encoding="utf-8") as f:
+            return {ln for ln in f.read().split("\n") if ln}
+    except (OSError, ValueError):
+        return set()
 
 
 def _log(verdict, reason, url):
@@ -112,6 +126,8 @@ def resolve(url):
         raise Refused("NUL in a field")
     if not os.path.isabs(root) or os.path.realpath(root) != root:
         raise Refused("root is not a canonical absolute path")
+    if root not in _recorded_roots():
+        raise Refused("root was not recorded by prdt tooling")
     if not _regular(os.path.join(root, ".prdt", "po-state.json")):
         raise Refused("root is not a prdt project")
     if line and not LINE_RE.match(line):

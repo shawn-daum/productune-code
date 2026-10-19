@@ -23,7 +23,7 @@ function write(rel: string, text: string) {
   fs.writeFileSync(p, text)
 }
 function check(url: string) {
-  const r = spawnSync('python3', [HANDLER, '--check', url], { env: { PATH: process.env.PATH, PRDT_HOME: prdtHome }, encoding: 'utf8' })
+  const r = spawnSync('python3', ['-I', HANDLER, '--check', url], { env: { PATH: process.env.PATH, PRDT_HOME: prdtHome }, encoding: 'utf8' })
   return { code: r.status, out: r.stdout.trim(), err: r.stderr }
 }
 const link = (q: Record<string, string>) => 'prdt://open-env?' + new URLSearchParams(q).toString()
@@ -42,6 +42,18 @@ beforeAll(() => {
   fs.symlinkSync(path.join(base, 'secret.txt'), path.join(root, 'code', '.env.link'))
   write('notproj/code/.env', 'C=1\n')
   fs.symlinkSync(root, path.join(base, 'proj-link'))
+  // QA's three routes (T-1191 security pass): planted dirs that carry .prdt/po-state.json but were never recorded
+  write('victim/.env', 'V=1\n')
+  write('planted1/.prdt/po-state.json', '{}')
+  write('planted1/.prdt/config.json', JSON.stringify({ lines: [{ name: 'x', code: { dir: '../victim' } }] }))
+  write('planted2/.prdt/po-state.json', '{}')
+  fs.symlinkSync(path.join(base, 'victim'), path.join(base, 'planted2', 'code'))
+  write('planted3/.prdt/po-state.json', '{}')
+  write('planted3/.prdt/config.json', JSON.stringify({ code: { dir: 'sub/code' } }))
+  fs.symlinkSync(path.join(base, 'victim'), path.join(base, 'planted3', 'sub'))
+  // only our own tooling records a root: here the test plays the viewer generator
+  fs.mkdirSync(path.join(prdtHome, 'run'), { recursive: true })
+  fs.writeFileSync(path.join(prdtHome, 'run', 'open-roots'), root + '\n' + path.join(base, 'notproj') + '\n')
 })
 afterAll(() => fs.rmSync(base, { recursive: true, force: true }))
 
@@ -69,6 +81,29 @@ describe('prdt_open_url.py — resolves only an env file in a prdt project code 
     expect(check(link({ root: path.join(base, 'proj-link'), file: '.env.local' })).code).toBe(1)
     expect(check(link({ root: root + '/../proj', file: '.env.local' })).code).toBe(1)
     expect(check(link({ root: 'proj', file: '.env.local' })).code).toBe(1)
+  })
+
+  test("refuses QA's three planted-root routes: ../ line dir, symlinked code, symlinked parent", () => {
+    expect(check(link({ root: path.join(base, 'planted1'), line: 'x', file: '.env' })).code).toBe(1)
+    expect(check(link({ root: path.join(base, 'planted2'), file: '.env' })).code).toBe(1)
+    expect(check(link({ root: path.join(base, 'planted3'), file: '.env' })).code).toBe(1)
+  })
+
+  test('a project root is refused when the record is missing, a symlink, or a relative/partial line', () => {
+    const rec = path.join(prdtHome, 'run', 'open-roots')
+    const saved = fs.readFileSync(rec)
+    try {
+      fs.writeFileSync(rec, path.dirname(root) + '\n' + root.slice(0, -1) + '\n') // parent and prefix are not the root
+      expect(check(link({ root, file: '.env.local' })).code).toBe(1)
+      fs.rmSync(rec)
+      expect(check(link({ root, file: '.env.local' })).code).toBe(1)
+      fs.writeFileSync(path.join(base, 'real-roots'), root + '\n')
+      fs.symlinkSync(path.join(base, 'real-roots'), rec)
+      expect(check(link({ root, file: '.env.local' })).code).toBe(1)
+    } finally {
+      fs.rmSync(rec, { force: true })
+      fs.writeFileSync(rec, saved)
+    }
   })
 
   test('refuses another scheme or host, extra or repeated keys, a fragment', () => {
