@@ -524,41 +524,32 @@ case "$GATE" in
   *'"permissionDecision":"deny"'*) printf '%s\n' "$GATE"; exit 0 ;;
 esac
 
-# ── T-1151: a user-started ticket needs the user's purpose + confirmed definition ──
+# ── T-1151: a user-started ticket needs the user's purpose + confirmation ──
 # WHY (T-1179, 2026-10-19): the user said a symptom ("어지러워"), the PO wrote its
 # own five observations as the problem and dispatched a Designer mock; the user
-# rejected it ("왜 문제를 너마음대로 정의하고 개선해?"). The ticket HAD an analysis
-# — a presence check on `## problem` would have passed it (T-1151 QA grill: 0/34
-# prevented). What was missing was the USER confirming the problem definition.
-# T-1189 (user, 2026-10-19) widened it to requests: why first, then the root
-# definition (or the patch/root split), confirmed by the user.
+# rejected it ("왜 문제를 너마음대로 정의하고 개선해?"). What was missing was the
+# USER confirming the problem definition (T-1189: also for plain requests).
 #
+# DECIDED BY PLACE, NEVER BY WORDS (T-1190 = B, user 2026-10-19). Round 2 matched
+# keyword lists on prose and QA failed it 28/39: a regex cannot tell who wrote
+# a sentence. So the PO files the user's verbatim lines under fixed headings
+# inside `## problem`, and the gate only checks that the places are filled:
+#   ### 목적 (or ### why)      >= 1 quote line under it   -> the user's purpose
+#   ### 확인 (or ### confirm)  >= 1 quote line under it   -> the user's confirmation
+# A quote = `*"…"*` · `“…”` · `「…」` with any content (wording is free). A
+# heading counts when its text STARTS with the label (`### 목적 (션님 답)` ok,
+# `### 확인된 문제 정의` is not the label). A quote line belongs to the nearest
+# `###` above it, up to the next `##`/`###`.
+# GO-AHEAD (user: "내가 일단 시안가져와봐하면 그대로하는거고"): the gate cannot
+# tell a go-ahead from other words, so the PO marks it by place — a quote under
+# `### 확인 (바로 진행)` (also `go-ahead` · `just go`) alone satisfies both.
+# An unmarked `### 확인` quote with no `### 목적` is denied (verdict purpose).
 # SCOPE: a `prdt-designer` / `prdt-developer` dispatch whose ticket (frontmatter
 # `slug:` == `[ctx].slug`, under the tickets dir `[ctx].prd_path` names) is
-# `type: design|impl` AND user-started = its `## problem` section quotes the user
-# (`*"…"*` or `“…”` — a symptom or a request alike). It then needs BOTH:
-#  PURPOSE — a user quote that states a reason (때문 · 위해 · 려고 · 중요 ·
-#    because …), or one on a line / under a heading labelled 목적 · 이유 · 왜 · why.
-#  CONFIRM — on a REPLY line (any quoted line except the `## problem` statement
-#    itself; a `### …` heading there that names a confirmation or a reply opens
-#    reply lines, and so does a statement line naming read-back · 답 · reply):
-#    (a) a user quote with a confirm phrase OUTSIDE it on the line or in its
-#        heading — 사용자 확인 · 확인한/된/됨 · 합의 · 동의 · 승인 · read-back ·
-#        confirmed · go-ahead; a negated form (미확인 · 확인 전 · 비동의 ·
-#        unconfirmed · pending confirm) is stripped first, a bare 「확인」 alone
-#        ("캡처로 확인") is not one;
-#    (b) a quote that OPENS with an agreement reply (ㅇㅇ · ㅇㅋ · 네 · 그래 · ok …);
-#        a quote that is NOTHING BUT one ("ㅇㅇ", "yes.") counts on any line, and
-#        on a statement line every quote AFTER its first is a reply (T-1181's
-#        `… · PO 범위 안내 뒤 *"ㅇㅋ 넣자."*`) for (b) · (c);
-#    (c) a quote whose clause ENDS on a go-ahead ("일단 시안 가져와봐", "그냥 해줘",
-#        "just do it") — "그냥 해봐도 계속 깨져" · "가져와봐하면" are not. A go-ahead
-#        reply counts as purpose AND confirmation (user, T-1151: "내가 일단
-#        시안가져와봐하면 그대로하는거고").
-#  (b) · (c) also read 「…」 and plain "…" quotes (the PO writes 「ㅇㅇ」).
-# Never read: fenced code, inline `code`, and `## acceptance` lines carrying no
-# YYYY-MM-DD date (spec text such as `User confirms the mock: *"OK"*`).
-# Loose on purpose (user, 2026-10-19: "확인 원문을 또 너무 형식을 빡빡하게 잡지는말고").
+# `type: design|impl` AND user-started = `## problem` holds a `*"…"*` or `“…”`
+# user quote anywhere (symptom or request; a PO label in 「…」 alone is not one).
+# Verdict: purpose (목적 missing) · confirm (확인 missing) · both. Fenced code and
+# inline `code` are never read.
 # FAIL OPEN on every unreadable case: no/odd slug, no tickets dir, zero or 2+
 # tickets with the slug, unreadable file, awk failure. The deny echoes only the
 # ticket id (validated `T-<digits>` from the filename) and fixed text.
@@ -586,23 +577,7 @@ if [ -n "$WANT_TICKET" ]; then
       ''|*$'\n'*) ;;   # none, or ambiguous: fail open
       *)
         T_VERDICT="$(awk '
-          function negstrip(x) {
-            gsub(/(미|비|불)(확인|합의|동의|승인)/, " ", x)
-            gsub(/(확인|합의|동의|승인)[ \t]*(전|안|못|필요|요청|대기|예정|중|해야|할|하기|부탁|해[ \t]*줘|해[ \t]*주)/, " ", x)
-            gsub(/(un|not[ \t]+|pending[ \t]+|awaiting[ \t]+|to[ \t]+|needs?[ \t]+|before[ \t]+|without[ \t]+|no[ \t]+)(confirm|approv|agree|read-?back)[a-z]*/, " ", x)
-            gsub(/(confirm|approv|agree)[a-z]*[ \t]+(pending|needed|required)/, " ", x)
-            return x
-          }
-          BEGIN { fm = 0; fence = 0; sec = ""; head = ""; h3 = 0; typ = ""; sym = 0; why = 0; ok = 0; go = 0
-            KPOS = "사용자[ \t]*확인|확인(한|된|됨|함|했|받)|합의(한|된|됨|함|했|$|[ \t.,);])|동의(한|된|됨|함|했|$|[ \t.,);])|승인(한|된|됨|함|했|$|[ \t.,);])|confirm(ed|s|ation)?|go-?ahead|approved|agreed"
-            KREPLY = "read-?back|리드백|답|reply|answer"
-            KWHY = "목적|이유|왜|why|purpose"
-            CWHY = "때문|왜냐|위해|위한|려고|하도록|게끔|이유|목적|중요|so that|because|in order to"
-            ATOK = "(ㅇㅇ|ㅇㅋ|ㄱㄱ|응|네|넵|좋아|좋아요|그러자|그래|맞아|ok|okay|yes|yep)"
-            AGREE = ATOK "([ \t.,!~]|"
-            AONLY = "[ \t]*" ATOK "[ \t.,!~]*"
-            GO = "(일단|그냥|바로|먼저)[ \t]*([^ \t\001\002\003\004]*[ \t]+)?[^ \t\001\002\003\004]*(해|하자|가져와|만들어|진행해|그려)(봐|줘|와|라|요|주세요)?[.!~]*[ \t]*(\002|\004|,)"
-          }
+          BEGIN { fm = 0; fence = 0; inprob = 0; kind = ""; typ = ""; sym = 0; wq = 0; cq = 0; go = 0 }
           NR == 1 && /^---[ \t]*$/ { fm = 1; next }
           fm == 1 { if ($0 ~ /^---[ \t]*$/) { fm = 2; next }
                     if ($0 ~ /^type:/) { typ = $0; sub(/^type:[ \t]*/, "", typ); sub(/[ \t]+$/, "", typ) }
@@ -611,33 +586,30 @@ if [ -n "$WANT_TICKET" ]; then
           fence { next }
           {
             l = $0
-            if (l ~ /^#+[ \t]/) { head = negstrip(tolower(l))
-              if (l ~ /^##[ \t]/) { sec = head; h3 = 0 } else h3 = 1
-              next }
-            inprob = (sec ~ /^##[ \t]+(problem|문제)/)
-            if (sec ~ /^##[ \t]+(acceptance|수용)/ && l !~ /20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]/) next
+            if (l ~ /^##[ \t]/) { inprob = (tolower(l) ~ /^##[ \t]+(problem|문제)/); kind = ""; next }
+            if (!inprob) next
+            if (l ~ /^###[ \t]/) {
+              h = tolower(l); kind = ""
+              if (h ~ /^###[ \t]+(목적|why)([ \t(:,.\/?-]|$)/) kind = "why"
+              else if (h ~ /^###[ \t]+(확인|confirm)([ \t(:,.\/?-]|$)/) {
+                kind = "confirm"; gok = (h ~ /바로[ \t]*진행|go-?ahead|just[ \t]*go/)
+              }
+              next
+            }
+            if (l ~ /^#/) next
             gsub(/`[^`]*`/, " ", l)
             gsub(/\*"/, "\001", l); gsub(/"\*/, "\002", l)
             gsub(/“/, "\001", l);  gsub(/”/, "\002", l)
             gsub(/「/, "\003", l);  gsub(/」/, "\004", l)
-            while (match(l, /"[^"]*"/)) l = substr(l, 1, RSTART - 1) "\003" substr(l, RSTART + 1, RLENGTH - 2) "\004" substr(l, RSTART + RLENGTH)
-            if (l !~ /\001[^\001\002]*\002/ && l !~ /\003[^\003\004]*\004/) next
-            sq = ""; wq = ""; out = l
-            while (match(out, /\001[^\001\002]*\002/)) { sq = sq " " substr(out, RSTART, RLENGTH); out = substr(out, 1, RSTART - 1) " " substr(out, RSTART + RLENGTH) }
-            while (match(out, /\003[^\003\004]*\004/)) { wq = wq " " substr(out, RSTART, RLENGTH); out = substr(out, 1, RSTART - 1) " " substr(out, RSTART + RLENGTH) }
-            lo = negstrip(tolower(out)); sq = tolower(sq); wq = tolower(wq)
-            user = (lo ~ /션님|사용자|user|유저/)
-            if (inprob && sq != "") sym = 1
-            if ((sq != "" || (wq != "" && user)) && (sq wq ~ CWHY || lo ~ KWHY || head ~ KWHY)) why = 1
-            reply = !inprob || (h3 && (head ~ KPOS || head ~ KREPLY)) || lo ~ KREPLY
-            if (sq ~ ("\001" AONLY "\002") || (user && wq ~ ("\003" AONLY "\004"))) ok = 1
-            rq = sq; rw = wq
-            if (!reply) { sub(/^ \001[^\001\002]*\002/, "", rq); rw = "" }
-            if (reply && (sq != "" || (wq != "" && user)) && (lo ~ KPOS || head ~ KPOS)) ok = 1
-            if (rq ~ ("\001[ \t]*" AGREE "\002)") || rw ~ ("\003[ \t]*" AGREE "\004)")) ok = 1
-            if (rq rw ~ GO || rq rw ~ /just (do|bring|make|build)|go ahead/) go = 1
+            u = (l ~ /\001[^\001\002]*[^ \t\001\002][^\001\002]*\002/)
+            w = (l ~ /\003[^\003\004]*[^ \t\003\004][^\003\004]*\004/)
+            if (u) sym = 1
+            if (u || w) {
+              if (kind == "why") wq = 1
+              else if (kind == "confirm") { cq = 1; if (gok) go = 1 }
+            }
           }
-          END { if ((typ == "design" || typ == "impl") && sym && !go && !(why && ok)) print (why ? "confirm" : (ok ? "purpose" : "both")) }
+          END { if ((typ == "design" || typ == "impl") && sym && !go && !(wq && cq)) print (wq ? "confirm" : (cq ? "purpose" : "both")) }
         ' "$T_HITS" 2>/dev/null)"
         if [ -n "$T_VERDICT" ]; then
           T_ID="${T_HITS##*/}"; T_ID="${T_ID%.md}"
@@ -650,8 +622,8 @@ if [ -n "$WANT_TICKET" ]; then
           # PLACEHOLDER wording (T-1151) — final text is the designer's inject-edit.
           jq -nc --arg id "$T_ID" --arg miss "$T_MISS" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny",
             permissionDecisionReason: ("[prdt dispatch gate] DENIED before the worker spawned: " + $id
-              + " [T-1151 PLACEHOLDER — inject-edit pending] quotes the user in `## problem` but carries no verbatim user line for " + $miss + "."
-              + " Ask why, read the root definition (or the patch/root split) back, quote the replies into the ticket, then re-dispatch.")}}'
+              + " [T-1151 PLACEHOLDER — inject-edit pending] quotes the user in `## problem` but has no user quote under the heading for " + $miss + "."
+              + " Ask why, read the root definition (or the patch/root split) back, quote the replies verbatim under `### 목적` / `### 확인` in `## problem` (a go-ahead: `### 확인 (바로 진행)`), then re-dispatch.")}}'
           exit 0
         fi ;;
     esac

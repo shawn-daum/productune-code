@@ -1530,18 +1530,16 @@ describe('T-695: the machine resource cap', () => {
   })
 })
 
-// ── T-1151 / T-1189: a user-started ticket needs the user's purpose + confirmation ──
-// The gate finds the dispatch's ticket by `[ctx].slug` (frontmatter `slug:`)
-// under the product's tickets dir named by `[ctx].prd_path`, and only judges a
-// `prdt-designer` / `prdt-developer` dispatch on a `type: design|impl` ticket.
-// User-started = the `## problem` section quotes the user (`*"…"*` or `“…”`) —
-// a symptom or a request (T-1189). It then needs, in the user's words, the
-// PURPOSE (a quote stating a reason, or one labelled 목적 · 이유 · why) and a
-// CONFIRMATION on a reply line (never the problem statement's own words): a
-// confirm phrase outside the quote, a quote opening with an agreement reply,
-// or a quote ending on a go-ahead. Loose (user: "형식을 빡빡하게 잡지는말고"),
-// but QA's round-1 false passes each have a negative fixture below.
-describe('T-1151: a user-started ticket needs the user\'s purpose and confirmation', () => {
+// ── T-1151 / T-1189 / T-1190: a user-started ticket needs the user's purpose + confirmation ──
+// Decided by PLACE, never by words (T-1190 = B). The gate finds the dispatch's
+// ticket by `[ctx].slug` under the product's tickets dir named by `[ctx].prd_path`
+// and only judges a `prdt-designer` / `prdt-developer` dispatch on a
+// `type: design|impl` ticket. User-started = `## problem` holds a `*"…"*` or
+// `“…”` quote. It then needs, inside `## problem`, a `### 목적` (or `### why`)
+// heading with >=1 quote under it AND a `### 확인` (or `### confirm`) heading
+// with >=1 quote under it (any style `*"…"*` · `“…”` · `「…」`, any wording).
+// `### 확인 (바로 진행)` with a quote alone satisfies both (the go-ahead rule).
+describe('T-1151: a user-started ticket needs the user\'s purpose and confirmation, by place', () => {
   const PRD14 = 'docs/productune/prd/PRD.md#v1.14'
   const SLUG = 'viewer-home-progress-clutter'
   const REL = 'docs/productune/tickets/v1.14/T-1179.md'
@@ -1566,18 +1564,18 @@ describe('T-1151: a user-started ticket needs the user\'s purpose and confirmati
     return decision({ cwd: proj, subagentType: sub, prompt: promptWith({ ...VALID_CTX, slug, prd_path: prd }) })
   }
 
-  /** T-1179 body with `extra` inserted before `## related`, judged as a designer dispatch. */
+  /** T-1179 body judged as a designer dispatch (or `type`). */
   function judge(body: string, type = 'design') {
     const proj = projWith({ [REL]: ticket({ id: 'T-1179', slug: SLUG, type }, body) })
     return dispatchOn(proj, SLUG)
   }
-  /** Lines added at the end of `## problem` (the user's statement section). */
-  const withLines = (base: string, ...lines: string[]) => base.replace('## related', `${lines.join('\n')}\n\n## related`)
-  /** Lines added under `## log` (reply lines). */
+  /** Lines added at the end of `## problem`. */
+  const inProblem = (base: string, ...lines: string[]) => base.replace('## related', `${lines.join('\n')}\n\n## related`)
+  /** Lines added under `## log` (outside `## problem`). */
   const inLog = (base: string, ...lines: string[]) => `${base}${lines.join('\n')}\n`
 
   // T-1179 as it stood when the PO dispatched the first mock (2026-10-19): the
-  // user's symptom quoted, the PO's own observations, no user confirmation.
+  // user's symptom quoted, the PO's own observations, no headings.
   const T1179_AT_DISPATCH = [
     '## problem', '',
     '- 션님 *"ntf pm 뷰어인데 좀 어지러워 이거.. 그리고 여기 진행사항 기획~ 이렇게써있는 블록도 누르면 진행상황탭에 열렸으면해 gui처럼"* (2026-10-19, T-1111 빌드 관측 화면 8)',
@@ -1586,12 +1584,15 @@ describe('T-1151: a user-started ticket needs the user\'s purpose and confirmati
     '- Mock of the home progress block, As-Is beside To-Be: stage strip on one line, scope item names readable.',
     '- User confirms the mock before implementation.', '', '## log', '',
   ].join('\n')
-  // The user's answer to the PO's why-question — the purpose, with no confirmation.
-  const WHY = '- 션님 (PO 의 왜? 질문에 답, 2026-10-19): *"지금 어디까지 왔는지 한눈에 보려고"*'
-  const WITH_WHY = withLines(T1179_AT_DISPATCH, WHY)
-  const CONFIRM = '- PO read-back (문제 정의: 스코프 이름이 잘린다) → 션님 *"ㅇㅇ"* (2026-10-19)'
+  const WHY_H = '### 목적'
+  const WHY_Q = '- 션님 (PO 의 왜? 질문에 답): *"지금 어디까지 왔는지 한눈에 보려고"*'
+  const CONF_H = '### 확인'
+  const CONF_Q = '- PO read-back (문제 정의: 스코프 이름이 잘린다) → 션님 *"ㅇㅇ"*'
+  const withWhy = inProblem(T1179_AT_DISPATCH, WHY_H, '', WHY_Q)
+  const withConf = inProblem(T1179_AT_DISPATCH, CONF_H, '', CONF_Q)
+  const withBoth = inProblem(T1179_AT_DISPATCH, WHY_H, '', WHY_Q, '', CONF_H, '', CONF_Q)
 
-  test('T-1179 2026-10-19 sequence: the first mock dispatch is DENIED', () => {
+  test('T-1179 2026-10-19 sequence (symptom, no headings): the first mock dispatch is DENIED', () => {
     const d = judge(T1179_AT_DISPATCH)
     expect(d.deny).toBeTruthy()
     expect(d.deny).toContain('T-1179')
@@ -1610,128 +1611,144 @@ describe('T-1151: a user-started ticket needs the user\'s purpose and confirmati
     expect(dispatchOn(proj, SLUG, 'prdt-developer').deny).toBeTruthy()
   })
 
-  test('purpose + confirmation passes; either alone is denied, naming what is missing', () => {
-    expect(judge(withLines(WITH_WHY, CONFIRM))).toEqual({})
-    const noConfirm = judge(WITH_WHY).deny!
+  test('목적 + 확인 each with a quote passes', () => {
+    expect(judge(withBoth)).toEqual({})
+  })
+
+  test('either heading alone is denied, naming what is missing', () => {
+    const noConfirm = judge(withWhy).deny!
     expect(noConfirm).toContain('confirmation')
     expect(noConfirm).not.toContain('purpose')
-    const noWhy = judge(withLines(T1179_AT_DISPATCH, CONFIRM)).deny!
+    const noWhy = judge(withConf).deny!
     expect(noWhy).toContain('purpose')
     expect(noWhy).not.toContain('confirmation')
+    const none = judge(T1179_AT_DISPATCH).deny!
+    expect(none).toContain('purpose')
+    expect(none).toContain('confirmation')
   })
 
-  test('T-1179 after the read-back ("ㅇㅇ" on a dated acceptance line naming the confirmation) passes', () => {
-    const confirmed = WITH_WHY.replace('## acceptance\n\n',
-      '## acceptance\n\n- (2026-10-19 사용자 확인 문제 정의 — supersedes the lines below) 션님 *"ㅇㅇ"* to the PO read-back: (1) scope names cut.\n')
-    expect(judge(confirmed)).toEqual({})
-  })
-
-  test('purpose from the original quote itself (it states the reason) passes with a confirmation', () => {
-    const body = T1179_AT_DISPATCH.replace('gui처럼"*', 'gui처럼. 어디까지 왔는지 한눈에 봐야 하기 때문에"*')
-    expect(judge(withLines(body, CONFIRM))).toEqual({})
-  })
-
-  test('purpose from a labelled line (목적) passes with a confirmation', () => {
-    expect(judge(withLines(T1179_AT_DISPATCH, '- 목적 (션님): *"진행 상황을 한눈에"*', CONFIRM))).toEqual({})
-  })
-
-  test('"just bring a mock" as the user\'s reply line passes; English "just do it" too', () => {
-    for (const q of ['- 션님 *"그냥 해줘"* (2026-10-19)', '- 션님 *"ㅇㅋ 일단 시안 가져와봐"*', '- User: “just do it, bring a mock” (2026-10-19)']) {
-      expect(judge(inLog(WITH_WHY, q)), q).toEqual({})
+  test('go-ahead: a quote under `### 확인 (바로 진행)` alone passes — "일단 시안 가져와봐"', () => {
+    for (const h of ['### 확인 (바로 진행)', '### 확인 (go-ahead)', '### confirm (just go)', '### 확인: 바로진행']) {
+      expect(judge(inProblem(T1179_AT_DISPATCH, h, '', '- 션님 *"일단 시안 가져와봐"* (2026-10-19)')), h).toEqual({})
     }
   })
 
-  test('a go-ahead reply stands for purpose AND confirmation — no why line needed', () => {
-    for (const q of ['- 션님 *"일단 시안 가져와봐"* (2026-10-19)', '- 션님 *"바로 해"*']) {
-      expect(judge(inLog(T1179_AT_DISPATCH, q)), q).toEqual({})
+  test('the same go-ahead quote under an UNMARKED `### 확인` is denied (verdict purpose) — no word list', () => {
+    const d = judge(inProblem(T1179_AT_DISPATCH, CONF_H, '', '- 션님 *"일단 시안 가져와봐"*')).deny!
+    expect(d).toContain('purpose')
+    expect(d).not.toContain('confirmation')
+  })
+
+  test('a go-ahead heading with no quote under it is denied', () => {
+    expect(judge(inProblem(T1179_AT_DISPATCH, '### 확인 (바로 진행)', '', '- PO: 시안부터 가자고 하심')).deny).toBeTruthy()
+  })
+
+  test('every quote style counts under the headings: *"…"*, “…”, 「…」; wording is free', () => {
+    for (const q of ['- 션님 *"한눈에 보려고"*', '- 션님 “한눈에 보려고”', '- 션님 「한눈에 보려고」', '- 션님 「ㅇㅇ」']) {
+      expect(judge(inProblem(T1179_AT_DISPATCH, WHY_H, '', q, '', CONF_H, '', q)), q).toEqual({})
     }
   })
 
-  test('a go-ahead inside the problem statement\'s own words is not a reply — denied', () => {
-    const body = WITH_WHY.replace('gui처럼"*', 'gui처럼 일단 시안 가져와봐"*')
-    expect(judge(body).deny).toBeTruthy()
+  test('English headings: ### why + ### confirm', () => {
+    expect(judge(inProblem(T1179_AT_DISPATCH, '### why', '', WHY_Q, '', '### confirm', '', CONF_Q))).toEqual({})
   })
 
-  test('a confirm heading over a user quote passes (T-1151\'s own "확인된 문제 정의" shape)', () => {
-    const body = WITH_WHY.replace('## related',
-      '### 확인된 문제 정의 (2026-10-19)\n\n- PO read-back: 스코프 이름이 잘린다.\n- 션님 *"그거 맞고 우선순위 올리자"*\n\n## related')
+  test('heading label may carry a suffix; a quote anywhere under it (several lines, nested ####) counts', () => {
+    const body = inProblem(T1179_AT_DISPATCH, '### 목적 (션님 답, 2026-10-19)', '', '- PO 질문: 왜?', '', '#### 원문', '- 션님 *"한눈에"*',
+      '', '### 확인 — read-back 뒤', '', '- PO: 스코프 이름이 잘린다', '- 션님 「그거야」')
     expect(judge(body)).toEqual({})
   })
 
-  test('a quote that opens with an agreement reply passes — *"…"*, 「…」 (T-997) and plain "…"', () => {
-    for (const q of ['- 션님 *"ㅇㅋ"*', '- 션님 *"ㅇㅇ 그러자 방식만 가져오면되지"*', '- User: *"yes."*',
-      '- 앞선 정리 (2026-10-07 PO, 사용자 「ㅇㅇ」): 결정이 하는 일 = 기다림 표시 · 답의 기록.',
-      '- PO read-back 에 션님 "ㅇㅇ 그거야" (2026-10-19)']) {
-      expect(judge(inLog(WITH_WHY, q)), q).toEqual({})
-    }
-  })
-
-  test('on a statement line, a later quote is a reply (T-1181 shape); the first quote never is', () => {
-    expect(judge(withLines(WITH_WHY, '- 션님 *"옛 새 가아니라 asis tobe라니까"* · PO 범위 안내 뒤 *"ㅇㅋ 넣자."*'))).toEqual({})
-    expect(judge(withLines(T1179_AT_DISPATCH, '- 션님 *"이거 왜 이래"* → PO 안 → *"그냥 해줘"*'))).toEqual({})
-    expect(judge(withLines(WITH_WHY, '- 션님 *"ㅇㅇ 근데 이거 왜 이래"* · *"블록이 안 열려"*')).deny).toBeTruthy()
-  })
-
-  test('a quote that is nothing but an agreement counts even in `## problem`', () => {
-    expect(judge(withLines(WITH_WHY, '- 션님 *"ㅇㅋ"*'))).toEqual({})
-  })
-
-  test('an English confirmation line passes', () => {
-    expect(judge(inLog(WITH_WHY, '- User confirmed the read-back: *"that is the problem"*'))).toEqual({})
-  })
-
-  test('a request ticket (T-1189): the request alone is denied; why + confirmation passes', () => {
+  test('a request ticket (T-1189): the request alone is denied; 목적 + 확인 passes', () => {
     const req = [
       '## problem', '',
       '- 션님 (2026-10-18, 원문): *"홈에 레인별 진행 막대를 넣으면좋겠따"*',
       '', '## related', '', '## acceptance', '', '- Lane bars on home.', '',
     ].join('\n')
     expect(judge(req, 'impl').deny).toBeTruthy()
-    expect(judge(withLines(req, '- 션님 (왜? 에 답): *"레인이 어디서 막혔는지 보려고"*',
-      '- PO read-back (근본: 막힌 레인이 안 보임 · 땜빵: 막대만 이번 버전) → 션님 *"ㅇㅇ 그렇게 가자"*'), 'impl')).toEqual({})
+    expect(judge(inProblem(req, '### 목적', '', '- 션님 *"레인이 어디서 막혔는지 보려고"*', '', '### 확인', '',
+      '- 션님 *"ㅇㅇ 그렇게 가자"*'), 'impl')).toEqual({})
   })
 
-  describe('QA round-1 false passes stay denied (purpose present, no real confirmation)', () => {
-    const cases: [string, string][] = [
-      ['confirm word in a bare 「확인」 ("캡처로 확인")', '- 션님 *"블록이 안 열려"* (캡처로 확인)'],
+  describe('QA round-2 cases, decided by place (no word is read)', () => {
+    // Words that fooled the keyword gate, written where the user's reply is NOT filed.
+    const lines: [string, string][] = [
       ['미확인', '- 션님 *"블록이 안 열려"* (미확인)'],
+      ['캡처로 확인', '- 션님 *"블록이 안 열려"* (캡처로 확인)'],
       ['사용자 확인 전', '- PO read-back: 스코프 이름이 잘린다 — 사용자 확인 전. 션님 *"블록이 안 열려"*'],
-      ['T-1115 L18 shape (문구 확인을 … → 사용자 quote)', '- 관측 2 (2026-10-12, productune): 문구 확인을 결정 티켓 없이 채팅으로 여러 턴 물음 → 사용자 *"또 결정사항에 안넣어놓고 한세월 묻고있지?"* (T-1114).'],
+      ['T-1115 L18 shape', '- 관측 2: 문구 확인을 결정 티켓 없이 채팅으로 여러 턴 물음 → 사용자 *"또 결정사항에 안넣어놓고 한세월 묻고있지?"*'],
       ['비동의 · unconfirmed', '- 션님 *"그건 아니지"* (비동의, unconfirmed)'],
-      ['go-ahead word in symptom text ("그냥 해봐도 계속 깨져")', '- 션님 *"그냥 해봐도 계속 깨져"*'],
-      ['go-ahead word in symptom text ("바로 진행이 안돼")', '- 션님 *"바로 진행이 안돼"*'],
-      ['the user quoting the rule', '- 션님 (원문): *"내가 증상 얘기하면 문제 분석해서 나랑 얘기하고 설계하기로 되어있지않나? 내가 일단 시안가져와봐하면 그대로하는거고."*'],
-      ['agreement word that only starts a longer word ("그래서 …")', '- 션님 *"그래서 이거 왜 이래"*'],
-      ['confirm word only INSIDE a quote', '- 션님 *"확인해봐 이거 이상해"*'],
-      ['confirm claim with no user quote (PO\'s own)', '- 문제 정의 확인됨 (PO)'],
+      ['go-ahead words in symptom text', '- 션님 *"그냥 해봐도 계속 깨져"*'],
+      ['바로 진행이 안돼', '- 션님 *"바로 진행이 안돼"*'],
+      ['the user quoting the rule', '- 션님 (원문): *"내가 일단 시안가져와봐하면 그대로하는거고."*'],
+      ['그래서 …', '- 션님 *"그래서 이거 왜 이래"*'],
+      ['확인해봐 inside a quote', '- 션님 *"확인해봐 이거 이상해"*'],
+      ['the PO claims a confirmation, no quote', '- 문제 정의 확인됨 (PO)'],
+      ['because-words in the symptom ("때문에")', '- 션님 *"이게 안 열리기 때문에 불편해"*'],
+      ['an agreement-looking quote in problem', '- 션님 *"ㅇㅇ 근데 이거 왜 이래"* · *"ㅇㅋ"*'],
     ]
-    for (const [name, line] of cases) {
-      test(name, () => {
-        expect(judge(withLines(WITH_WHY, line)).deny, `problem: ${line}`).toBeTruthy()
-        expect(judge(inLog(WITH_WHY, line)).deny, `log: ${line}`).toBeTruthy()
+    for (const [name, line] of lines) {
+      test(`${name}: in the problem body or in the log it is not a 목적 / 확인 record`, () => {
+        expect(judge(inProblem(T1179_AT_DISPATCH, line)).deny, `problem: ${line}`).toBeTruthy()
+        expect(judge(inLog(T1179_AT_DISPATCH, line)).deny, `log: ${line}`).toBeTruthy()
+        // the same line does not turn a 목적-only ticket into a passing one
+        expect(judge(inProblem(withWhy, line)).deny, `with 목적: ${line}`).toBeTruthy()
       })
     }
 
-    test('### 미확인 증상 heading over a user quote', () => {
-      expect(judge(WITH_WHY.replace('## related', '### 미확인 증상\n\n- 션님 *"블록이 안 열려"*\n\n## related')).deny).toBeTruthy()
-    })
-
-    test('the problem statement itself opening with ㅇㅇ / 네 / 그래 / ok', () => {
-      for (const w of ['ㅇㅇ', '네', '그래', 'ok']) {
-        const body = WITH_WHY.replace('*"ntf pm 뷰어인데', `*"${w} ntf pm 뷰어인데`)
-        expect(judge(body).deny, w).toBeTruthy()
+    test('the same lines under the headings DO count — place decides, not wording', () => {
+      for (const [name, line] of lines.filter(([, l]) => l.includes('*"'))) {
+        expect(judge(inProblem(T1179_AT_DISPATCH, WHY_H, '', line, '', CONF_H, '', line)), name).toEqual({})
       }
     })
 
+    test('### 미확인 증상 is not the 확인 heading', () => {
+      expect(judge(inProblem(withWhy, '### 미확인 증상', '', '- 션님 *"블록이 안 열려"*')).deny).toBeTruthy()
+    })
+
+    test('### 확인된 문제 정의 is not the label either (the PO files under the exact label)', () => {
+      expect(judge(inProblem(withWhy, '### 확인된 문제 정의', '', '- 션님 *"그거 맞아"*')).deny).toBeTruthy()
+    })
+
+    test('the problem statement opening with ㅇㅇ / 네 / 그래 / ok is still only a symptom', () => {
+      for (const w of ['ㅇㅇ', '네', '그래', 'ok']) {
+        expect(judge(T1179_AT_DISPATCH.replace('*"ntf pm 뷰어인데', `*"${w} ntf pm 뷰어인데`)).deny, w).toBeTruthy()
+      }
+    })
+
+    test('headings outside `## problem` (log, acceptance, related) fill nothing', () => {
+      for (const sec of ['## log', '## acceptance', '## related']) {
+        const body = T1179_AT_DISPATCH.replace(sec, `${sec}\n\n${WHY_H}\n\n${WHY_Q}\n\n${CONF_H}\n\n${CONF_Q}\n`)
+        expect(judge(body).deny, sec).toBeTruthy()
+      }
+    })
+
+    test('a quote under a heading that comes after a `## ` boundary does not leak back', () => {
+      // 확인 filed in `## problem`, its quote placed after the next section opens
+      const body = T1179_AT_DISPATCH.replace('## related', `${WHY_H}\n\n${WHY_Q}\n\n${CONF_H}\n\n## related\n\n${CONF_Q}`)
+      expect(judge(body).deny).toBeTruthy()
+    })
+
+    test('a quote under a different ### heading between them does not count for the earlier one', () => {
+      const body = inProblem(T1179_AT_DISPATCH, WHY_H, '', WHY_Q, '', CONF_H, '', '- PO: read-back 보냄', '', '### 관측', '', CONF_Q)
+      expect(judge(body).deny).toBeTruthy()
+    })
+
     test('an acceptance spec line (`User confirms the mock: *"OK"*`) is not a record', () => {
-      expect(judge(WITH_WHY.replace('- User confirms the mock before implementation.', '- User confirms the mock: *"OK"*')).deny).toBeTruthy()
+      expect(judge(withWhy.replace('- User confirms the mock before implementation.', '- User confirms the mock: *"OK"*')).deny).toBeTruthy()
     })
 
     test('a code-fence or inline-code example is not a record', () => {
-      const fence = WITH_WHY.replace('## log', '```\n- 션님 *"ㅇㅇ"* (사용자 확인)\n```\n\n## log')
+      const fence = inProblem(withWhy, '```', CONF_H, '', CONF_Q, '```')
       expect(judge(fence).deny).toBeTruthy()
-      const inline = WITH_WHY.replace('## log', '- example: `션님 *"ㅇㅇ"*` (사용자 확인 shape)\n\n## log')
+      const inline = inProblem(withWhy, CONF_H, '', '- example: `션님 *"ㅇㅇ"*` shape')
       expect(judge(inline).deny).toBeTruthy()
+      const fencedBoth = inProblem(T1179_AT_DISPATCH, '```', WHY_H, WHY_Q, CONF_H, CONF_Q, '```')
+      expect(judge(fencedBoth).deny).toBeTruthy()
+    })
+
+    test('an empty quote (`*""*`) under a heading fills nothing', () => {
+      expect(judge(inProblem(withWhy, CONF_H, '', '- 션님 *""*')).deny).toBeTruthy()
     })
   })
 
