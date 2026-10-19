@@ -7,6 +7,7 @@
  * or mis-draw. Every expectation is a literal fixed by the fixture.
  */
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -197,7 +198,7 @@ describe.skipIf(!CAN_RUN)('prdt doctor — feature taxonomy (T-882)', () => {
   })
 
   test('T-1049: the surface keys doctor accepts are the ones the viewer draws', () => {
-    const py = fs.readFileSync(PRDT_CLI, 'utf8')
+    const py = prdtSource(PRDT_CLI)
     const block = /SURFACE_KEYS = \{([\s\S]*?)\n\}/.exec(py)![1]
     const doctor = [...block.matchAll(/"(\w+)": \(([^)]*)\)/g)].map(m => [m[1], [...m[2].matchAll(/"(\w+)"/g)].map(x => x[1])])
     const labels = fs.readFileSync(path.resolve(__dirname, '../../../viewer/lib/labels.mjs'), 'utf8')

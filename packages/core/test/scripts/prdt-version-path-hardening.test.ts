@@ -11,6 +11,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { spawnSync } from 'child_process'
@@ -186,6 +187,8 @@ describe('installed_prdt_version reads a checkout root only from packages/core/s
     const src = fs.readFileSync(PRDT_CLI, 'utf8')
     put(repo, 'a/b/c/prdt', src)
     put(repo, 'packages/core/scripts/prdt', src)
+    put(repo, 'a/b/c/prdt_cli.py', prdtSource(PRDT_CLI))
+    put(repo, 'packages/core/scripts/prdt_cli.py', prdtSource(PRDT_CLI))
     const lanes = fs.readFileSync(path.join(path.dirname(PRDT_CLI), 'prdt_lanes.py'), 'utf8')
     put(repo, 'a/b/c/prdt_lanes.py', lanes)
     put(repo, 'packages/core/scripts/prdt_lanes.py', lanes)

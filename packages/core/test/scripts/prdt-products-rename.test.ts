@@ -6,6 +6,7 @@
  * Every run uses a scratch project and a scratch PRDT_HOME.
  */
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { spawnSync } from 'child_process'
@@ -82,7 +83,7 @@ describe('T-1108 lines → products', () => {
   }, T)
 
   test('the rewrite lives in one named helper, never in main()', () => {
-    const src = fs.readFileSync(PRDT_CLI, 'utf8')
+    const src = prdtSource(PRDT_CLI)
     const calls = src.split('\n').filter((l) => /migrate_lines_to_products\(/.test(l) && !l.startsWith('def '))
     expect(calls).toEqual([])
   }, T)
