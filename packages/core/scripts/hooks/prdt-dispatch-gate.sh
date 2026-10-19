@@ -461,6 +461,18 @@ def want_files:
   want_ctx as $c
   | if $c != null and (($c.change_meta // null) | type) == "object" and (($c.change_meta.files // null) | type) == "array"
     then ($c.change_meta.files | tojson) else "" end;
+# T-1151: "<slug> <prd_path> <T-ids the prompt names…>" for a `prdt-designer` /
+# `prdt-developer` dispatch whose `[ctx]` carries a kebab-case slug and a
+# well-formed prd_path ("" else) — the ticket check below reads it, so it needs
+# no jq of its own; the named ids let it open those files first instead of
+# scanning every ticket (QA: +86 ms per dispatch).
+def want_ticket:
+  ((.tool_input.subagent_type // "")) as $s
+  | want_ctx as $c
+  | if ($s | type) == "string" and ($s | test("^prdt-(designer|developer)$")) and $c != null
+       and (($c.slug // null) | type) == "string" and ($c.slug | test("^[a-z0-9]+(-[a-z0-9]+)*$"))
+       and (($c.prd_path // null) | type) == "string" and ($c.prd_path | test("^docs/([a-z0-9-]+/)?prd/PRD\\.md#v[0-9]+\\.[0-9]+$"))
+    then "\($c.slug) \($c.prd_path) \([.tool_input.prompt | scan("T-[0-9]+")] | unique | .[:8] | join(" "))" else "" end;
 def want_model:
   ((.tool_input.model // "") ) as $m
   | if ($m | type) == "string" and ($m | test("^(sonnet|opus|haiku|fable)$")) then $m else "default" end;
@@ -474,8 +486,8 @@ def want_model:
 {applies: (if (.hook_event_name == "PreToolUse") and (.tool_name == "Agent") and ((.tool_input // {}) | type) == "object"
               and (((.tool_input // {}).subagent_type // "") | type) == "string"
            then ((.tool_input // {}).subagent_type // "") | test("^prdt-") else false end),
- out: ([gate] | first), model: want_model, persona: want_persona, checkout: want_checkout, files: want_files}
-| "\(.applies)\t\(.model)\t\(.persona)\t\(.checkout)\t\(.files)\n\(if .out == null then "" else (.out | tojson) end)"
+ out: ([gate] | first), model: want_model, persona: want_persona, checkout: want_checkout, ticket: want_ticket, files: want_files}
+| "\(.applies)\t\(.model)\t\(.persona)\t\(.checkout)\t\(.ticket)\t\(.files)\n\(if .out == null then "" else (.out | tojson) end)"
 JQ
 
 RAW="$(printf '%s' "$EV" | jq -r \
@@ -502,6 +514,8 @@ WANT_PERSONA="${L1REST%%$'\t'*}"
 WANT_CO="${L1REST#*$'\t'}"; [ "$WANT_CO" = "$L1REST" ] && WANT_CO=""
 WANT_FILES="${WANT_CO#*$'\t'}"; [ "$WANT_FILES" = "$WANT_CO" ] && WANT_FILES=""
 WANT_CO="${WANT_CO%%$'\t'*}"
+WANT_TICKET="${WANT_FILES%%$'\t'*}"
+WANT_FILES="${WANT_FILES#*$'\t'}"; [ "$WANT_FILES" = "$WANT_TICKET" ] && WANT_FILES=""
 if [ "$APPLIES" != "true" ]; then
   [ -n "$GATE" ] && printf '%s\n' "$GATE"
   exit 0
@@ -510,86 +524,134 @@ case "$GATE" in
   *'"permissionDecision":"deny"'*) printf '%s\n' "$GATE"; exit 0 ;;
 esac
 
-# ── T-1151: a symptom-started ticket needs the user's confirmed problem definition ──
+# ── T-1151: a user-started ticket needs the user's purpose + confirmed definition ──
 # WHY (T-1179, 2026-10-19): the user said a symptom ("어지러워"), the PO wrote its
 # own five observations as the problem and dispatched a Designer mock; the user
 # rejected it ("왜 문제를 너마음대로 정의하고 개선해?"). The ticket HAD an analysis
 # — a presence check on `## problem` would have passed it (T-1151 QA grill: 0/34
 # prevented). What was missing was the USER confirming the problem definition.
-# Injected-text reminders held ~10% (T-1153), so the check sits here.
+# T-1189 (user, 2026-10-19) widened it to requests: why first, then the root
+# definition (or the patch/root split), confirmed by the user.
 #
 # SCOPE: a `prdt-designer` / `prdt-developer` dispatch whose ticket (frontmatter
 # `slug:` == `[ctx].slug`, under the tickets dir `[ctx].prd_path` names) is
-# `type: design|impl` AND symptom-started = its `## problem` section quotes the
-# user (`*"…"*` or `“…”`). It then needs, ANYWHERE in the body, a user quote
-#   (a) on a line whose text OUTSIDE the quotes says confirm (확인 · confirm ·
-#       read-back · 합의 · 동의 · 승인 · go-ahead …), or under a heading that does; or
-#   (b) whose own text is a direct go-ahead ("일단 시안 가져와봐", "just do it"), or
-#       opens with a bare agreement reply ("ㅇㅇ …", "ㅇㅋ", "그러자", "yes") —
-#       the user answering a read-back.
+# `type: design|impl` AND user-started = its `## problem` section quotes the user
+# (`*"…"*` or `“…”` — a symptom or a request alike). It then needs BOTH:
+#  PURPOSE — a user quote that states a reason (때문 · 위해 · 려고 · 중요 ·
+#    because …), or one on a line / under a heading labelled 목적 · 이유 · 왜 · why.
+#  CONFIRM — on a REPLY line (any quoted line except the `## problem` statement
+#    itself; a `### …` heading there that names a confirmation or a reply opens
+#    reply lines, and so does a statement line naming read-back · 답 · reply):
+#    (a) a user quote with a confirm phrase OUTSIDE it on the line or in its
+#        heading — 사용자 확인 · 확인한/된/됨 · 합의 · 동의 · 승인 · read-back ·
+#        confirmed · go-ahead; a negated form (미확인 · 확인 전 · 비동의 ·
+#        unconfirmed · pending confirm) is stripped first, a bare 「확인」 alone
+#        ("캡처로 확인") is not one;
+#    (b) a quote that OPENS with an agreement reply (ㅇㅇ · ㅇㅋ · 네 · 그래 · ok …);
+#        a quote that is NOTHING BUT one ("ㅇㅇ", "yes.") counts on any line, and
+#        on a statement line every quote AFTER its first is a reply (T-1181's
+#        `… · PO 범위 안내 뒤 *"ㅇㅋ 넣자."*`) for (b) · (c);
+#    (c) a quote whose clause ENDS on a go-ahead ("일단 시안 가져와봐", "그냥 해줘",
+#        "just do it") — "그냥 해봐도 계속 깨져" · "가져와봐하면" are not. A go-ahead
+#        reply counts as purpose AND confirmation (user, T-1151: "내가 일단
+#        시안가져와봐하면 그대로하는거고").
+#  (b) · (c) also read 「…」 and plain "…" quotes (the PO writes 「ㅇㅇ」).
+# Never read: fenced code, inline `code`, and `## acceptance` lines carrying no
+# YYYY-MM-DD date (spec text such as `User confirms the mock: *"OK"*`).
 # Loose on purpose (user, 2026-10-19: "확인 원문을 또 너무 형식을 빡빡하게 잡지는말고").
-# A confirm word INSIDE a quote never counts for (a) — that is the user's symptom.
 # FAIL OPEN on every unreadable case: no/odd slug, no tickets dir, zero or 2+
 # tickets with the slug, unreadable file, awk failure. The deny echoes only the
-# ticket id (validated `T-<digits>` from the filename), never ticket text.
-T1151_KEY="$(printf '%s' "$EV" | jq -r '
-  (.tool_input // {}) as $ti
-  | if (($ti.subagent_type // "") | type) != "string" or (($ti.subagent_type // "") | test("^prdt-(designer|developer)$") | not)
-       or (($ti.prompt // null) | type) != "string" then empty
-    else ([$ti.prompt | split("\n")[] | select(test("^\\[ctx\\] \\{"))] | first) as $l
-    | (try ($l | sub("^\\[ctx\\] "; "") | fromjson) catch null) as $c
-    | if ($c | type) != "object" or (($c.slug // null) | type) != "string" or (($c.prd_path // null) | type) != "string" then empty
-      else "\($c.slug)\t\($c.prd_path)" end
-    end' 2>/dev/null)"
-if [ -n "$T1151_KEY" ]; then
-  T_SLUG="${T1151_KEY%%$'\t'*}"; T_PRD="${T1151_KEY#*$'\t'}"; T_DIR=""
-  case "$T_SLUG" in ''|*[!a-z0-9-]*) T_SLUG="" ;; esac
+# ticket id (validated `T-<digits>` from the filename) and fixed text.
+if [ -n "$WANT_TICKET" ]; then
+  T_SLUG="${WANT_TICKET%% *}"; T_PRD="${WANT_TICKET#* }"; T_IDS="${T_PRD#* }"; T_PRD="${T_PRD%% *}"; T_DIR=""
+  [ "$T_IDS" = "$T_PRD" ] && T_IDS=""
   case "$T_PRD" in
     docs/prd/PRD.md\#*) T_DIR="$DIR/docs/tickets" ;;
-    docs/*/prd/PRD.md\#*) T_P="${T_PRD#docs/}"; T_P="${T_P%%/*}"
-      case "$T_P" in ''|*[!a-z0-9-]*) ;; *) T_DIR="$DIR/docs/$T_P/tickets" ;; esac ;;
+    docs/*/prd/PRD.md\#*) T_P="${T_PRD#docs/}"; T_P="${T_P%%/*}"; T_DIR="$DIR/docs/$T_P/tickets" ;;
   esac
-  if [ -n "$T_SLUG" ] && [ -n "$T_DIR" ] && [ -d "$T_DIR" ]; then
-    T_HITS="$(grep -rlE --include='T-*.md' "^slug:[[:space:]]*${T_SLUG}[[:space:]]*\$" "$T_DIR" 2>/dev/null)"
+  if [ -n "$T_DIR" ] && [ -d "$T_DIR" ]; then
+    # Fast path: the ticket files the prompt names (a glob per id — no content
+    # scan of the whole tree, which cost ~90 ms on 1.3k tickets); the full
+    # scan only when none of them carries the slug.
+    T_HITS=""
+    if [ -n "$T_IDS" ]; then
+      T_CAND=()
+      for T_I in $T_IDS; do
+        for T_F in "$T_DIR/$T_I.md" "$T_DIR"/*/"$T_I.md"; do [ -f "$T_F" ] && T_CAND+=("$T_F"); done
+      done
+      [ "${#T_CAND[@]}" -gt 0 ] && T_HITS="$(grep -lE "^slug:[[:space:]]*${T_SLUG}[[:space:]]*\$" "${T_CAND[@]}" 2>/dev/null)"
+    fi
+    [ -n "$T_HITS" ] || T_HITS="$(grep -rlE --include='T-*.md' "^slug:[[:space:]]*${T_SLUG}[[:space:]]*\$" "$T_DIR" 2>/dev/null)"
     case "$T_HITS" in
       ''|*$'\n'*) ;;   # none, or ambiguous: fail open
       *)
         T_VERDICT="$(awk '
-          BEGIN { fm = 0; inprob = 0; head = ""; typ = ""; sym = 0; ok = 0 }
+          function negstrip(x) {
+            gsub(/(미|비|불)(확인|합의|동의|승인)/, " ", x)
+            gsub(/(확인|합의|동의|승인)[ \t]*(전|안|못|필요|요청|대기|예정|중|해야|할|하기|부탁|해[ \t]*줘|해[ \t]*주)/, " ", x)
+            gsub(/(un|not[ \t]+|pending[ \t]+|awaiting[ \t]+|to[ \t]+|needs?[ \t]+|before[ \t]+|without[ \t]+|no[ \t]+)(confirm|approv|agree|read-?back)[a-z]*/, " ", x)
+            gsub(/(confirm|approv|agree)[a-z]*[ \t]+(pending|needed|required)/, " ", x)
+            return x
+          }
+          BEGIN { fm = 0; fence = 0; sec = ""; head = ""; h3 = 0; typ = ""; sym = 0; why = 0; ok = 0; go = 0
+            KPOS = "사용자[ \t]*확인|확인(한|된|됨|함|했|받)|합의(한|된|됨|함|했|$|[ \t.,);])|동의(한|된|됨|함|했|$|[ \t.,);])|승인(한|된|됨|함|했|$|[ \t.,);])|confirm(ed|s|ation)?|go-?ahead|approved|agreed"
+            KREPLY = "read-?back|리드백|답|reply|answer"
+            KWHY = "목적|이유|왜|why|purpose"
+            CWHY = "때문|왜냐|위해|위한|려고|하도록|게끔|이유|목적|중요|so that|because|in order to"
+            ATOK = "(ㅇㅇ|ㅇㅋ|ㄱㄱ|응|네|넵|좋아|좋아요|그러자|그래|맞아|ok|okay|yes|yep)"
+            AGREE = ATOK "([ \t.,!~]|"
+            AONLY = "[ \t]*" ATOK "[ \t.,!~]*"
+            GO = "(일단|그냥|바로|먼저)[ \t]*([^ \t\001\002\003\004]*[ \t]+)?[^ \t\001\002\003\004]*(해|하자|가져와|만들어|진행해|그려)(봐|줘|와|라|요|주세요)?[.!~]*[ \t]*(\002|\004|,)"
+          }
           NR == 1 && /^---[ \t]*$/ { fm = 1; next }
           fm == 1 { if ($0 ~ /^---[ \t]*$/) { fm = 2; next }
                     if ($0 ~ /^type:/) { typ = $0; sub(/^type:[ \t]*/, "", typ); sub(/[ \t]+$/, "", typ) }
                     next }
+          /^[ \t]*(```|~~~)/ { fence = !fence; next }
+          fence { next }
           {
             l = $0
-            if (l ~ /^#+[ \t]/) { head = tolower(l)
-              if (l ~ /^##[ \t]/) inprob = (head ~ /^##[ \t]+(problem|문제)/) ? 1 : 0
+            if (l ~ /^#+[ \t]/) { head = negstrip(tolower(l))
+              if (l ~ /^##[ \t]/) { sec = head; h3 = 0 } else h3 = 1
               next }
+            inprob = (sec ~ /^##[ \t]+(problem|문제)/)
+            if (sec ~ /^##[ \t]+(acceptance|수용)/ && l !~ /20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]/) next
+            gsub(/`[^`]*`/, " ", l)
             gsub(/\*"/, "\001", l); gsub(/"\*/, "\002", l)
             gsub(/“/, "\001", l);  gsub(/”/, "\002", l)
-            if (l !~ /\001[^\001\002]*\002/) next
-            if (inprob) sym = 1
-            q = ""; out = l
-            while (match(out, /\001[^\001\002]*\002/)) {
-              q = q " " substr(out, RSTART, RLENGTH)
-              out = substr(out, 1, RSTART - 1) " " substr(out, RSTART + RLENGTH)
-            }
-            kw = "확인|confirm|read-?back|리드백|합의|동의|승인|go-?ahead|approved|agreed"
-            if (tolower(out) ~ kw || head ~ kw) ok = 1
-            if (q ~ /\001[ \t]*(ㅇㅇ|ㅇㅋ|ㄱㄱ|응|네|좋아|그러자|그래|맞아|ok|okay|yes|yep)([ \t.,!~]|\002)/) ok = 1
-            if (q ~ /(일단|그냥|바로|먼저)[ \t]*[^ \t]*[ \t]*(해|가져와|만들어|진행|그려)/ || tolower(q) ~ /just (do|bring|make|build)|go ahead/) ok = 1
+            gsub(/「/, "\003", l);  gsub(/」/, "\004", l)
+            while (match(l, /"[^"]*"/)) l = substr(l, 1, RSTART - 1) "\003" substr(l, RSTART + 1, RLENGTH - 2) "\004" substr(l, RSTART + RLENGTH)
+            if (l !~ /\001[^\001\002]*\002/ && l !~ /\003[^\003\004]*\004/) next
+            sq = ""; wq = ""; out = l
+            while (match(out, /\001[^\001\002]*\002/)) { sq = sq " " substr(out, RSTART, RLENGTH); out = substr(out, 1, RSTART - 1) " " substr(out, RSTART + RLENGTH) }
+            while (match(out, /\003[^\003\004]*\004/)) { wq = wq " " substr(out, RSTART, RLENGTH); out = substr(out, 1, RSTART - 1) " " substr(out, RSTART + RLENGTH) }
+            lo = negstrip(tolower(out)); sq = tolower(sq); wq = tolower(wq)
+            user = (lo ~ /션님|사용자|user|유저/)
+            if (inprob && sq != "") sym = 1
+            if ((sq != "" || (wq != "" && user)) && (sq wq ~ CWHY || lo ~ KWHY || head ~ KWHY)) why = 1
+            reply = !inprob || (h3 && (head ~ KPOS || head ~ KREPLY)) || lo ~ KREPLY
+            if (sq ~ ("\001" AONLY "\002") || (user && wq ~ ("\003" AONLY "\004"))) ok = 1
+            rq = sq; rw = wq
+            if (!reply) { sub(/^ \001[^\001\002]*\002/, "", rq); rw = "" }
+            if (reply && (sq != "" || (wq != "" && user)) && (lo ~ KPOS || head ~ KPOS)) ok = 1
+            if (rq ~ ("\001[ \t]*" AGREE "\002)") || rw ~ ("\003[ \t]*" AGREE "\004)")) ok = 1
+            if (rq rw ~ GO || rq rw ~ /just (do|bring|make|build)|go ahead/) go = 1
           }
-          END { if ((typ == "design" || typ == "impl") && sym && !ok) print "deny" }
+          END { if ((typ == "design" || typ == "impl") && sym && !go && !(why && ok)) print (why ? "confirm" : (ok ? "purpose" : "both")) }
         ' "$T_HITS" 2>/dev/null)"
-        if [ "$T_VERDICT" = "deny" ]; then
+        if [ -n "$T_VERDICT" ]; then
           T_ID="${T_HITS##*/}"; T_ID="${T_ID%.md}"
           case "$T_ID" in T-[0-9]*) case "${T_ID#T-}" in *[!0-9]*) T_ID="this ticket" ;; esac ;; *) T_ID="this ticket" ;; esac
+          case "$T_VERDICT" in
+            purpose) T_MISS="the user's purpose (why)" ;;
+            confirm) T_MISS="the user's confirmation of the problem definition" ;;
+            *)       T_MISS="the user's purpose (why) and the user's confirmation of the problem definition" ;;
+          esac
           # PLACEHOLDER wording (T-1151) — final text is the designer's inject-edit.
-          jq -nc --arg id "$T_ID" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny",
+          jq -nc --arg id "$T_ID" --arg miss "$T_MISS" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny",
             permissionDecisionReason: ("[prdt dispatch gate] DENIED before the worker spawned: " + $id
-              + " [T-1151 PLACEHOLDER — inject-edit pending] is symptom-started (its `## problem` quotes the user) but carries no user line confirming the problem definition."
-              + " Accepted: a verbatim user quote on a line, or under a heading, that says it confirms (확인 · confirm · read-back), or the user'"'"'s own go-ahead quote (\"일단 시안 가져와봐\")."
-              + " Read the problem definition back to the user, quote the reply into the ticket, then re-dispatch.")}}'
+              + " [T-1151 PLACEHOLDER — inject-edit pending] quotes the user in `## problem` but carries no verbatim user line for " + $miss + "."
+              + " Ask why, read the root definition (or the patch/root split) back, quote the replies into the ticket, then re-dispatch.")}}'
           exit 0
         fi ;;
     esac
