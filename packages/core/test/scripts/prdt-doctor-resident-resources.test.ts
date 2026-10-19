@@ -12,6 +12,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -148,7 +149,7 @@ afterEach(() => {
 
 describe.skipIf(!PYTHON3)('prdt doctor — resident machine resources (T-592, report only)', () => {
   test('never acts: the added source carries no stop/kill/shutdown/quit/rm verb reaching a subprocess call', () => {
-    const src = fs.readFileSync(PRDT_CLI, 'utf-8')
+    const src = prdtSource(PRDT_CLI)
     const start = src.indexOf('# ── resident machine resources')
     const end = src.indexOf('def cmd_doctor(_args):')
     expect(start).toBeGreaterThan(0)

@@ -21,7 +21,7 @@
  */
 
 import path from 'path'
-import { copyPrdtCli } from '../helpers/copy-prdt'
+import { copyPrdtCli, prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -307,7 +307,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — allowlist fixed-path parity vs core (
    * the "matching fixture" test below, because the fixture was a stale THIRD
    * copy of the list this suite exists to keep at two. */
   const PY_DEFAULT: string[] = (() => {
-    const m = /META_ALLOWLIST_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(fs.readFileSync(PRDT_CLI, 'utf-8'))
+    const m = /META_ALLOWLIST_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(prdtSource(PRDT_CLI))
     if (!m) throw new Error('META_ALLOWLIST_DEFAULT not found in the prdt CLI')
     const entries = m[1].split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
     if (entries.length < 5) throw new Error(`parsed a suspiciously short default: ${entries.join()}`)
@@ -375,7 +375,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — allowlist fixed-path parity vs core (
  */
 describe.skipIf(!PYTHON3)('prdt doctor — exclude-list fixed-path parity vs core (T-513)', () => {
   const PY_EXCLUDE: string[] = (() => {
-    const m = /META_EXCLUDE_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(fs.readFileSync(PRDT_CLI, 'utf-8'))
+    const m = /META_EXCLUDE_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(prdtSource(PRDT_CLI))
     if (!m) throw new Error('META_EXCLUDE_DEFAULT not found in the prdt CLI')
     const entries = m[1].split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
     if (entries.length < 5) throw new Error(`parsed a suspiciously short default: ${entries.join()}`)

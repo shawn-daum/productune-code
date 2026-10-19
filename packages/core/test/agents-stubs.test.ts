@@ -22,7 +22,7 @@ const ALL = ['prdt-po', ...WORKERS] as const
 // The budget doctor enforces — read from the CLI's CAPS (its basis is stated
 // there), not restated here: two copies of one number is the T-445 drift class.
 const STUB_CAP_BYTES = (() => {
-  const m = fs.readFileSync(path.join(CORE_ROOT, 'scripts', 'prdt'), 'utf8').match(/"agent_stub_bytes":\s*(\d+)/)
+  const m = fs.readFileSync(path.join(CORE_ROOT, 'scripts', 'prdt_cli.py'), 'utf8').match(/"agent_stub_bytes":\s*(\d+)/)
   if (!m) throw new Error('CAPS["agent_stub_bytes"] not found in scripts/prdt')
   return Number(m[1])
 })()
