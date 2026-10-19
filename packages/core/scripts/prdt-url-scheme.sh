@@ -48,7 +48,7 @@ WORK="$(mktemp -d "$PRDT_HOME/apps/.build.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 cat > "$WORK/open.applescript" <<EOF
 on open location theURL
-	do shell script quoted form of "$(as_str "$PY")" & " " & quoted form of "$(as_str "$HANDLER")" & " " & quoted form of theURL
+	do shell script quoted form of "$(as_str "$PY")" & " -I " & quoted form of "$(as_str "$HANDLER")" & " " & quoted form of theURL
 end open location
 on run
 end run
