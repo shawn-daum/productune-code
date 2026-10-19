@@ -791,11 +791,12 @@ function sidebarIdentityHtml(id) {
   return `<div class="sidebar-id" title="${escapeHtml(idTitle)}"><b>${escapeHtml(id.project)}</b> ${run}</div>`
 }
 
-function sidebarCardHtml(c) {
+/** T-1180: the card opens the home store's 진행 상황 tab (`key` = that group's key, line-prefixed on a multi-line page) — a button for mouse and keyboard, like the tab link above it. */
+function sidebarCardHtml(c, key = 'progress') {
   if (!c) return ''
   const pct = c.total > 0 ? Math.round((c.done / c.total) * 1000) / 10 : 0
   const stageName = IDENTITY.stage[c.stage] || c.stage
-  return `<div class="sp" role="group" aria-label="${IDENTITY.cardLabel}"><div class="sp-top" title="${escapeHtml(IDENTITY.cardTopTitle(stageName, c.stage, c.stageDone, c.stageTotal))}"><span class="sp-stage">${escapeHtml(stageName)}</span><span>${c.stageDone}/${c.stageTotal}</span></div><div class="sp-count" title="${escapeHtml(IDENTITY.countTitle)}"><small>${IDENTITY.ticket}</small> <b>${c.done}</b><span class="sp-of">/${c.total}</span></div><div class="sp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.done}" aria-label="${IDENTITY.ticketBar(c.done, c.total)}"><i style="width:${pct}%"></i></div><div class="sp-wait"><span title="${escapeHtml(IDENTITY.decTitle)}">dec <b>${c.dec}</b></span><span>·</span><span title="${escapeHtml(IDENTITY.reqTitle)}">req <b>${c.req}</b></span></div></div>`
+  return `<div class="sp" role="button" tabindex="0" data-card-open="${escapeHtml(key)}" aria-label="${IDENTITY.cardLabel}"><div class="sp-top" title="${escapeHtml(IDENTITY.cardTopTitle(stageName, c.stage, c.stageDone, c.stageTotal))}"><span class="sp-stage">${escapeHtml(stageName)}</span><span>${c.stageDone}/${c.stageTotal}</span></div><div class="sp-count" title="${escapeHtml(IDENTITY.countTitle)}"><small>${IDENTITY.ticket}</small> <b>${c.done}</b><span class="sp-of">/${c.total}</span></div><div class="sp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.done}" aria-label="${IDENTITY.ticketBar(c.done, c.total)}"><i style="width:${pct}%"></i></div><div class="sp-wait"><span title="${escapeHtml(IDENTITY.decTitle)}">dec <b>${c.dec}</b></span><span>·</span><span title="${escapeHtml(IDENTITY.reqTitle)}">req <b>${c.req}</b></span></div></div>`
 }
 
 function toolVersionText(id) {
@@ -1211,10 +1212,10 @@ export const LINE_SECTIONED_STORES = ['home', 'prd', 'ticket', 'feature', 'artif
  */
 export function lineViews(data) {
   if (!Array.isArray(data.lines) || data.lines.length === 0) return []
-  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd }
+  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes }
   return [
     home,
-    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd })),
+    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes })),
   ]
 }
 
@@ -1239,7 +1240,7 @@ function lineHead(v) {
 
 /** `data` with tickets · PRD · version · stage scoped to one line. */
 function lineData(data, v) {
-  return { ...data, tickets: v.tickets, prd: v.prd, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
+  return { ...data, tickets: v.tickets, prd: v.prd, lanes: v.lanes, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
 }
 
 /** Flattens per-line `{groups, defaultKey}` into one group list: keys prefixed `<line>/` (home line bare), the first group of each line carrying the section head. `defaultKey` = the home line's default. */
@@ -1319,7 +1320,7 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', d
           const crumbAttr = g.crumb ? ` data-crumb="${escapeHtml(g.crumb)}"` : ''
           const dim = g.dim ? ' nav-dim' : ''
           // T-1165: the progress card sits right under the home store's 진행 상황 item.
-          const card = g.key === 'progress' && !cardPlaced ? ((cardPlaced = true), sidebarCardHtml(identity?.card)) : ''
+          const card = g.key === 'progress' && !cardPlaced ? ((cardPlaced = true), sidebarCardHtml(identity?.card, g.key)) : ''
           return `${head}<button type="button" class="nav-item nav-item-clickable${dim}${active}" data-group-select="${escapeHtml(g.key)}"${crumbAttr}><span>${escapeHtml(g.label)}</span>${countHtml}</button>${card}`
         })
         .join('\n')
@@ -2461,6 +2462,18 @@ function ticketButtonAttrs(id) {
   return `data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}" role="button" tabindex="0"`
 }
 
+/**
+ * T-1180: a scope row's name — the heading label up to its colon (a colon between digits is a clock time, never a
+ * split: 「05:20 …」), minus the trailing ticket refs `(T-…)` the PRD appends. Never shortened further; the full heading stays the tooltip.
+ */
+export function scopeItemName(label) {
+  const plain = String(label).replace(/`/g, '')
+  const m = /(?<!\d)[:：]|[:：](?!\d)/.exec(plain)
+  const head = (m ? plain.slice(0, m.index) : plain).trim()
+  const name = head.replace(/(?:\s*\(T-[^)]*\))+\s*$/, '').trim()
+  return name || head || plain.trim()
+}
+
 /** 스코프: one row per PRD item of the open section (label up to its colon; the full heading is the tooltip), then the 「PRD 항목 밖 티켓」 block (work tickets only; T-1046). */
 function homeScope(data, currentTickets) {
   const openItems = data.prd.openItems || []
@@ -2488,7 +2501,6 @@ function homeScope(data, currentTickets) {
   }
   const row = (label, title, tickets, extra = '', fix = 0) => {
     const sorted = [...tickets.filter((t) => t.frontmatter.status === 'done'), ...tickets.filter((t) => t.frontmatter.status !== 'done')]
-      .map((t) => t)
       .sort((x, y) => (x.frontmatter.status === 'done' ? 0 : 1) - (y.frontmatter.status === 'done' ? 0 : 1) || compareTicketIds(x.frontmatter.id, y.frontmatter.id))
     const done = tickets.filter((t) => t.frontmatter.status === 'done').length
     const sq = sorted
@@ -2497,19 +2509,39 @@ function homeScope(data, currentTickets) {
     const fixTag = fix > 0 ? `<span class="sc-fix" title="${escapeHtml(HOME.scopeFixTitle)}">${escapeHtml(HOME.scopeFixTag(fix))}</span>` : ''
     return `<div class="sc-row${extra}"><span class="sc-lab" title="${escapeHtml(title)}">${escapeHtml(label)}</span><span class="sc-sq">${sq}${fixTag}</span><span class="mono sc-n">${done}/${tickets.length}</span></div>`
   }
-  const rows = openItems.map((i) => {
-    const plain = i.label.replace(/`/g, '')
-    return row(plain.split(/[:：]/)[0].trim(), plain, byItem.get(i.key), '', fixCount.get(i.key) || 0)
-  })
+  const items = openItems.map((i) => ({ key: i.key, tickets: byItem.get(i.key), html: row(scopeItemName(i.label), i.label.replace(/`/g, ''), byItem.get(i.key), '', fixCount.get(i.key) || 0) }))
+  // T-1180: under their 합격선 lane (the one lane computation: prdt_lanes) — an item goes to the lane holding most of its tickets, ties to the earlier lane.
+  const lanes = Array.isArray(data.lanes) ? data.lanes : []
+  const groups = lanes.map((l) => ({ head: HOME.scopeLane(l.name), count: l.linked ? `${l.done}/${l.total}` : '', rows: [] }))
+  const loose = []
+  for (const it of items) {
+    const ids = it.tickets.map((t) => t.frontmatter.id)
+    let best = -1
+    let bestN = 0
+    lanes.forEach((l, i) => {
+      const n = ids.filter((id) => l.tickets.includes(id)).length
+      if (n > bestN) { best = i; bestN = n }
+    })
+    if (best >= 0) groups[best].rows.push(it.html)
+    else loose.push(it.html)
+  }
+  if (loose.length > 0 && groups.length > 0) groups.push({ head: HOME.scopeNoLane, count: '', rows: loose })
+  const grouped = groups.length > 0 ? groups.filter((g) => g.rows.length > 0 || g.head !== HOME.scopeNoLane) : []
+  const bodyRows = grouped.length > 0
+    ? grouped.map((g) => `<div class="sc-grp">${escapeHtml(g.head)}${g.count ? ` <span class="mono sc-n">${escapeHtml(g.count)}</span>` : ''}</div>${g.rows.join('')}`).join('')
+    : items.map((it) => it.html).join('')
   // T-1046: its own block under a divider; the row never disappears (0 shows 「없음」).
   const listKey = `${data.listPrefix || ''}${currentTicketBucketKey(data.tickets, data.currentVersion)}`
   const link = (text, store, key) => `<button type="button" class="sc-why-link" data-open-store="${store}" data-open-group="${escapeHtml(key)}">${escapeHtml(text)}</button>`
   const outRow = outOfScope.length > 0
     ? row(PROGRESS_OUT_OF_SCOPE_LABEL, PROGRESS_OUT_OF_SCOPE_LABEL, outOfScope, ' sc-out')
     : `<div class="sc-row sc-out"><span class="sc-lab">${escapeHtml(PROGRESS_OUT_OF_SCOPE_LABEL)}</span><span class="sc-sq"><span class="cp-empty">${escapeHtml(HOME.scopeOutEmpty)}</span></span><span class="mono sc-n">0</span></div>`
-  const defHtml = outOfScope.length > 0 ? `<p class="sc-why">${escapeHtml(HOME.scopeOutDef)}${malformed > 0 ? ` ${link(HOME.scopeMalformed(malformed), 'ticket', listKey)}` : ''}</p>` : ''
-  const noteHtml = decisions > 0 ? `<p class="sc-why">${escapeHtml(HOME.scopeDecisionNote(decisions))} ${link(HOME.scopeDecisionLink, 'home', `${data.listPrefix || ''}decision`)}</p>` : ''
-  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div>${rows.join('')}<div class="sc-outside">${outRow}${defHtml}${noteHtml}</div></div>`
+  // T-1180: one line — why outside · decisions left out · links.
+  const whyParts = []
+  if (outOfScope.length > 0) whyParts.push(`${escapeHtml(HOME.scopeOutDef)}${malformed > 0 ? ` ${link(HOME.scopeMalformed(malformed), 'ticket', listKey)}` : ''}`)
+  if (decisions > 0) whyParts.push(`${escapeHtml(HOME.scopeDecisionNote(decisions))} · ${link(HOME.scopeDecisionLink, 'home', `${data.listPrefix || ''}decision`)}`)
+  const whyHtml = whyParts.length > 0 ? `<p class="sc-why">${whyParts.join(' · ')}</p>` : ''
+  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div><div class="sc-rows">${bodyRows}<div class="sc-sep"></div>${outRow}</div>${whyHtml}</div>`
 }
 
 /** dec · req wait lists of `data.tickets`; the sidebar card (T-1165) and Home's wait block share this one call. */
@@ -2794,7 +2826,9 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .sidebar-foot { display: flex; align-items: flex-end; position: sticky; bottom: 0; margin: auto calc(-1 * var(--space-12)) 0; padding: var(--space-8) var(--space-12) var(--space-16); background: var(--bg-surface-on); border-top: 1px solid var(--border-item); }
 .foot-tool { height: 28px; display: flex; align-items: center; font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
 .rail-tool { display: none; }
-.sp { display: grid; gap: var(--space-6); margin: var(--space-8) 0 var(--space-12); padding: var(--space-10) var(--space-12); border: 1px solid var(--border-item); border-radius: var(--radius-8); background: var(--bg-surface-base); }
+.sp { cursor: pointer; display: grid; gap: var(--space-6); margin: var(--space-8) 0 var(--space-12); padding: var(--space-10) var(--space-12); border: 1px solid var(--border-item); border-radius: var(--radius-8); background: var(--bg-surface-base); }
+.sp:hover { border-color: var(--border-hover); }
+.sp:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .sp-top { display: flex; align-items: baseline; gap: var(--space-8); font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
 .sp-stage { font-family: var(--font-family); font-size: 10.5px; font-weight: 600; color: var(--text-info); background: var(--health-info-subtle); border: 1px solid var(--health-info); border-radius: var(--radius-4); padding: 1px 6px; }
 .sp-count { display: flex; align-items: baseline; gap: var(--space-6); font-family: var(--font-mono); color: var(--text-primary); }
@@ -2928,9 +2962,13 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .stage-sq.sq-done { background: var(--accent); border-color: var(--accent); }
 .sc { border-top: 1px solid var(--border-item); margin: var(--space-16) 0 0; padding: var(--space-16) 0 0; }
 .sc-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--space-24); }
-.sc-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: center; gap: var(--space-10); min-height: 20px; }
-.sc-lab { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sc-outside { margin-top: var(--space-12); padding-top: var(--space-10); border-top: 1px dashed var(--border-item); }
+.sc-rows { display: grid; grid-template-columns: fit-content(calc(100% - 140px)) minmax(72px, 1fr) auto; column-gap: var(--space-10); align-items: center; }
+.sc-row { display: contents; }
+.sc-lab { font-size: 12px; color: var(--text-secondary); padding: 3px 0; line-height: 1.45; overflow-wrap: anywhere; }
+.sc-sq, .sc-n { padding: 3px 0; }
+.sc-grp { grid-column: 1 / -1; font-size: 11px; font-weight: 600; color: var(--text-tertiary); margin: var(--space-10) 0 1px; }
+.sc-grp:first-child { margin-top: 0; }
+.sc-sep { grid-column: 1 / -1; border-top: 1px dashed var(--border-item); margin: var(--space-10) 0 var(--space-4); }
 .sc-out .sc-lab { color: var(--text-primary); font-weight: 600; }
 .sc-sq { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-width: 0; }
 .sc-n { font-size: 10.5px; color: var(--text-tertiary); }
@@ -3315,7 +3353,6 @@ ${DISCIPLINE_LOAD_CSS}
   .dash-card { padding: var(--space-12); }
   .sc-grid { grid-template-columns: 1fr; }
   .sc-waits { border-right: none; padding-right: 0; }
-  .sc-row { grid-template-columns: 96px minmax(0, 1fr) auto; }
   .sb { flex-wrap: wrap; row-gap: var(--space-8); }
   .sp { grid-template-columns: auto 1fr; align-items: center; column-gap: var(--space-12); margin: var(--space-6) 0 var(--space-8); }
   .sp-count, .sp-top { grid-column: 1; }
@@ -3825,6 +3862,16 @@ ${PRD_READING_SCRIPT}
       return;
     }
 
+    // T-1180: the sidebar progress card opens the home store's 진행 상황 tab.
+    var cardBtn = ev.target.closest('[data-card-open]');
+    if (cardBtn) {
+      ev.preventDefault();
+      var homeSec = selectStore('home');
+      if (homeSec) selectGroup(homeSec, cardBtn.getAttribute('data-card-open'));
+      clearHashMarks();
+      return;
+    }
+
     var groupBtn = ev.target.closest('[data-group-select]');
     if (groupBtn) {
       ev.preventDefault();
@@ -3932,6 +3979,7 @@ ${PRD_READING_SCRIPT}
   document.addEventListener('click', function (ev) { onClick(ev); syncUrl(false); });
 
   document.addEventListener('keydown', function (ev) {
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('[data-card-open]')) { ev.preventDefault(); onClick(ev); syncUrl(false); return; }
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('tr.detail-row[data-detail-kind], [role="button"][data-detail-kind]')) {
       ev.preventDefault();
       if (ev.target.getAttribute('data-detail-kind') === 'disc') discOrigin = null;

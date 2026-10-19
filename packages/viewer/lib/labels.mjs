@@ -85,13 +85,15 @@ export const HOME = {
   stageDone: (done, total) => `티켓 완료 ${done}/${total}`,
   scope: '스코프',
   scopeSub: (n) => `이번 버전 PRD ${n}항목`,
-  // T-1046: the 「PRD 항목 밖 티켓」 block — one-line definition, then (only when any) the malformed count linking to the ticket list.
-  scopeOutDef: '어느 PRD 항목에도 묶이지 않은 작업 티켓이에요. 티켓의 prd_item 이 비어 있거나 열린 섹션 항목과 맞지 않아요.',
+  // T-1046 → T-1180: the 「PRD 항목 밖 티켓」 block's explainer is ONE line: why a ticket is outside · decisions left out (count) · link to them.
+  scopeOutDef: 'prd_item 이 비었거나 맞는 항목 없음',
   scopeOutEmpty: '없음',
   scopeMalformed: (n) => `형식이 틀린 티켓 ${n}건`,
-  // T-1046 (T-1051 = A): decision records are not scope work, so the count skips them; this note says how many.
-  scopeDecisionNote: (n) => `결정 기록 ${n}건은 항목에 묶지 않아 여기서 세지 않아요.`,
-  scopeDecisionLink: '결정 목록 보기',
+  scopeDecisionNote: (n) => `결정 ${n}건 제외`,
+  scopeDecisionLink: '결정 목록',
+  // T-1180: scope rows grouped under their 합격선 lane (gate row); items no lane's tickets reach sit under the last head.
+  scopeLane: (name) => `레인 ${name}`,
+  scopeNoLane: '레인에 묶이지 않은 항목',
   scopeFixTag: (n) => `형식 고치기 ${n}`,
   scopeFixTitle: '버전 없이 키만 적혀 있어요. <버전>#<키> 형식으로 고쳐 주세요.',
   waitDec: '내 결정 대기',
