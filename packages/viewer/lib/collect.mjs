@@ -132,7 +132,10 @@ export function readPoState(repoRoot) {
     if (!fs.existsSync(abs)) return readJson(abs)
     return { schema_version: 0, stage: '', version: '', current_task: null }
   }
-  return readJson(real)
+  const state = readJson(real)
+  // T-1168: `version` null / missing / non-string reads as '' (idle) — every consumer assumes a string.
+  if (state && typeof state === 'object' && typeof state.version !== 'string') state.version = ''
+  return state
 }
 
 // null when the file's real path leaves the repo (callers skip the entry).
