@@ -46,7 +46,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { collectEnv, collectMachineEnv, homeEnvDir, lineEnvDir } from './env-status.mjs'
+import { collectEnv, collectMachineEnv, detectVsCode, homeEnvDir, lineEnvDir } from './env-status.mjs'
 import { parseFrontmatter } from './frontmatter.mjs'
 // T-1104: the product-first docs layout (JS port of the CLI seam) — where each row is read from.
 import { createDocsLayout } from './docs-layout.mjs'
@@ -858,6 +858,18 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
     env: homeEnv,
     // T-1109: machine scope (~/.prdt/env/.env) — names and set/empty only.
     machineEnv: collectMachineEnv(process.env.PRDT_HOME || path.join(os.homedir(), '.prdt'), homeEnv),
+    // T-1191: the env cards' open links — the prdt link names the project root (realpath, what the
+    // URL handler checks), never a file path; VS Code's button shows only when it is installed.
+    projectRoot: realRootOrNull(repoRoot),
+    editors: { vscode: detectVsCode() },
+  }
+}
+
+function realRootOrNull(repoRoot) {
+  try {
+    return fs.realpathSync(repoRoot)
+  } catch {
+    return null
   }
 }
 
