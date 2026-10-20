@@ -78,6 +78,7 @@ function run(script: string, sb: InstallSandbox): void {
   fs.copyFileSync(path.join(CORE_ROOT, 'scripts', 'prdt_lanes.py'), path.join(bin, 'prdt_lanes.py'))
   // T-1170: likewise the CLI body the `prdt` launcher loads
   fs.copyFileSync(path.join(CORE_ROOT, 'scripts', 'prdt_cli.py'), path.join(bin, 'prdt_cli.py'))
+  fs.copyFileSync(path.join(CORE_ROOT, 'scripts', 'prdt_safe_fs.py'), path.join(bin, 'prdt_safe_fs.py')) // T-1134: prdt_cli imports it
   execFileSync('bash', [script], { env: sb.env, stdio: 'ignore' })
 }
 

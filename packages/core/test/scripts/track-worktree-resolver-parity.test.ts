@@ -44,6 +44,8 @@ function unbounded(script: string): string {
   const p = path.join(dir, path.basename(isLauncher ? body : script))
   const lanes = path.join(path.dirname(script), 'prdt_lanes.py')
   if (fs.existsSync(lanes)) fs.copyFileSync(lanes, path.join(dir, 'prdt_lanes.py'))
+  const safeFs = path.join(path.dirname(script), 'prdt_safe_fs.py') // T-1134
+  if (fs.existsSync(safeFs)) fs.copyFileSync(safeFs, path.join(dir, 'prdt_safe_fs.py'))
   if (isLauncher) fs.copyFileSync(script, path.join(dir, 'prdt'))
   fs.writeFileSync(p, src.replaceAll('"tracks"', '"tracks-off"').replaceAll('name == "tracks-off"', 'name == "tracks-off"'), { mode: 0o755 })
   return isLauncher ? path.join(dir, 'prdt') : p
