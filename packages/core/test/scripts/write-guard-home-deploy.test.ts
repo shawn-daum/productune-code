@@ -42,12 +42,16 @@ function mk(stage = 'build', version = 'v1.2'): void {
   fs.writeFileSync(transcript, '')
 }
 
-type Who = 'main' | 'general-purpose' | 'fork' | 'prdt-developer' | 'prdt-designer'
-function run(who: Who, tool: string, input: Record<string, unknown>, cwd = root): string {
+// `main` = the real PO main-session shape (measured, QA d-v114-t1173-qa1): agent_type 'prdt-po', NO agent_id.
+// `main-bare` = neither key. `typed-only` = an agent_type that is not the PO, still no agent_id: a subagent.
+type Who = 'main' | 'main-bare' | 'typed-only' | 'general-purpose' | 'fork' | 'prdt-developer' | 'prdt-designer'
+function run(who: Who, tool: string, input: Record<string, unknown>, cwd = root, extraEnv: Record<string, string> = {}): string {
   const ev: Record<string, unknown> = { session_id: 's', transcript_path: transcript, cwd }
-  if (who !== 'main') { ev.agent_id = 'agent-x'; ev.agent_type = who }
+  if (who === 'main') ev.agent_type = 'prdt-po'
+  else if (who === 'typed-only') ev.agent_type = 'probe'
+  else if (who !== 'main-bare') { ev.agent_id = 'agent-x'; ev.agent_type = who }
   Object.assign(ev, { hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, tool_use_id: 't1' })
-  const env = { ...process.env, HOME: home }
+  const env = { ...process.env, HOME: home, ...extraEnv }
   delete env.PRDT_HOME
   const r = spawnSync('bash', [HOOK], { input: JSON.stringify(ev), encoding: 'utf8', env })
   expect(r.status).toBe(0)
@@ -88,6 +92,24 @@ describe.skipIf(!PY)('T-1173 rule 5 — the runtime root is read-only', () => {
       expect(bash('main', c), c).toBe('')
   })
 
+  test('main-session detection: no agent_id and agent_type absent or prdt-po is the PO; any other agent_type is a subagent', () => {
+    const f = path.join(ph, 'overrides', 'developer.md')
+    expect(write('main', f)).toBe('')
+    expect(write('main-bare', f)).toBe('')
+    expect(reason(write('typed-only', f))).toContain('T-1173 rule 5')
+    expect(reason(bash('typed-only', 'touch ~/.prdt/wiki/x.md'))).toContain('T-1173 rule 5')
+    expect(reason(write('main', path.join(ph, 'wiki', 'feedback.md')))).toContain('T-1173 rule 5')
+  })
+
+  test('a PO delete or overwrite whose glob or recursive target covers wiki/feedback.md is denied', () => {
+    for (const c of ['rm -rf ~/.prdt/wiki/*', 'rm -rf ~/.prdt/wiki', 'rm -rf ~/.prdt/wiki/', 'rm ~/.prdt/wiki/f*',
+      'rm ~/.prdt/wiki/*.md', 'rm -rf ~/.prdt/wiki/{fact,feedback}*', 'find ~/.prdt/wiki -delete', 'cd ~/.prdt/wiki && rm -rf *'])
+      expect(reason(bash('main', c)), c).toContain('T-1173 rule 5')
+    for (const c of ['rm ~/.prdt/wiki/fact--x.md', 'rm ~/.prdt/wiki/fact--*.md', 'cp /tmp/f ~/.prdt/wiki/', 'rm -rf ~/.prdt/overrides/playbooks',
+      'cat ~/.prdt/wiki/*'])
+      expect(bash('main', c), c).toBe('')
+  })
+
   test('a non-prdt subagent (general-purpose, fork) and a prdt worker get no carve-out', () => {
     for (const who of ['general-purpose', 'fork', 'prdt-developer', 'prdt-designer'] as const) {
       expect(reason(write(who, path.join(ph, 'overrides', 'developer.md'))), who).toContain('T-1173 rule 5')
@@ -120,6 +142,15 @@ describe.skipIf(!PY)('T-1173 rule 3 — a deploy command waits for ship entry', 
     }
   })
 
+  test('a tag push ships on the deploy: --tags, v* and refs/tags/v* are deploys; --dry-run / -n are allowed', () => {
+    for (const c of ['git push --tags', 'git push origin --tags', 'git push origin v1.14', 'git push origin refs/tags/v1.14',
+      'git push origin tag v1.14', 'git push origin HEAD:refs/tags/v1.14', 'git -C code push origin v1.14.2'])
+      expect(reason(bash('main', c)), c).toContain('T-1173 rule 3')
+    for (const c of ['git push -n origin main', 'git push --dry-run origin main', 'git push --dry-run --tags', 'git push -n --tags',
+      'git push origin v1.14 --dry-run', 'git push origin dev', 'git push origin validation-fix'])
+      expect(bash('main', c), c).toBe('')
+  })
+
   test('a worker is held to it too', () => {
     expect(reason(bash('prdt-developer', 'git push origin main'))).toContain('T-1173 rule 3')
   })
@@ -149,5 +180,25 @@ describe.skipIf(!PY)('T-1173 rule 3 — a deploy command waits for ship entry', 
     fs.appendFileSync(path.join(root, 'docs', '_shared', 'wiki', 'log.md'), '- 2026-10-20 readiness v1.2 N/A-skip (single patch)\n')
     expect(bash('main', 'git push origin main')).toBe('')
     expect(bash('main', 'git push origin main', scratch)).toBe('')
+  })
+})
+
+describe.skipIf(!PY)('T-1173 pre-filter — push/merge/vercel/netlify words reach python for Bash events only', () => {
+  beforeEach(() => mk())
+  // A python3 stub that records being invoked: the hook's pre-filter decides whether it ever starts.
+  function reached(who: Who, tool: string, input: Record<string, unknown>): boolean {
+    const stub = path.join(sb, 'stub'); fs.mkdirSync(stub, { recursive: true })
+    const mark = path.join(sb, 'mark')
+    fs.writeFileSync(path.join(stub, 'python3'), `#!/bin/sh\ntouch ${mark}\ncat >/dev/null\n`, { mode: 0o755 })
+    run(who, tool, input, root, { PATH: `${stub}:${process.env.PATH}` })
+    return fs.existsSync(mark)
+  }
+  test('Write/Edit content with a deploy word stays in the pre-filter; a Bash command with one goes on', () => {
+    for (const w of ['push', 'merge', 'vercel', 'netlify'])
+      expect(reached('main', 'Write', { file_path: path.join(scratch, 'a.md'), content: `we ${w} it` }), `Write ${w}`).toBe(false)
+    expect(reached('main', 'Edit', { file_path: path.join(scratch, 'a.md'), old_string: 'x', new_string: 'git push origin main' })).toBe(false)
+    for (const w of ['git push origin dev', 'git merge dev', 'vercel deploy', 'netlify status'])
+      expect(reached('main', 'Bash', { command: w }), w).toBe(true)
+    expect(reached('main', 'Write', { file_path: path.join(ph, 'run', 'x'), content: 'x' })).toBe(true)
   })
 })

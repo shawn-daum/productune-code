@@ -666,6 +666,9 @@ def handback_delivered(path):
 # Each return is appended once: `.prdt/.inbox-appended.json` keeps a capped list
 # of (agent_id, notes) digests, so a handback retried after another hook's deny
 # never doubles its lines.
+# Accepted gap: a retry whose notes CHANGED (not byte-equal after whitespace
+# folding) digests differently, so notes repeated across the two returns are
+# appended twice; the PO dedups at inbox triage.
 INBOX_SEEN_CAP = 64
 
 
@@ -687,10 +690,28 @@ def _ctx_slug(agent_id):
 
 
 def append_inbox(text, agent_id):
+    env = None
     try:
         env = json.loads(text.strip())
     except Exception:
-        return
+        pass
+    if not (isinstance(env, dict) and "memory_notes" in env):
+        # A return let through at the retry cap may carry prose around its
+        # JSON: take the first top-level {...} that parses with a memory_notes key.
+        env, dec, i = None, json.JSONDecoder(), 0
+        while True:
+            i = text.find("{", i)
+            if i < 0:
+                break
+            try:
+                obj, end = dec.raw_decode(text, i)
+            except Exception:
+                i += 1
+                continue
+            if isinstance(obj, dict) and "memory_notes" in obj:
+                env = obj
+                break
+            i = end
     notes = env.get("memory_notes") if isinstance(env, dict) else None
     if not isinstance(notes, list):
         return
