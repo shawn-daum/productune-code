@@ -849,3 +849,160 @@ def lanes_for(root, line=None):
     st = read_json(root / ".prdt" / "po-state.json") or {}
     version = line_state(st, line)[1]
     return compute_lanes(root, _schedule_tickets(root), st, line, version, _schedule_in_flight(root))
+
+
+# ── T-1184: the schedule rank order lives here too, so a lane's queue (R12) is
+# `prdt schedule`'s order for every reader (statusline · viewer · CLI). Moved
+# verbatim from `prdt` (T-772 critical path).
+# Item-address key, shared by the H4 form (P1 #2) and `prd_item`'s dst half
+# (E4) — design §2.4 "항목 주소": same regex as the feature vocab key.
+PRD_ITEM_KEY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+PRD_H4_RE = re.compile(r"^#### (.+)$")
+# A ticket's src half: `prd_item: <version>#<key>` (T-663 §「항목 주소」).
+PRD_ITEM_RE = re.compile(r"^((?:[a-z0-9]+(?:-[a-z0-9]+)*/)?v\d+(?:\.\d+){0,2})#([a-z0-9]+(?:-[a-z0-9]+)*)$", re.ASCII)
+
+
+def _prd_h4_items(lines):
+    """[(line_no, key_or_None, heading_content)] for every `#### ` line in
+    `lines` ([(line_no, line), ...]). `key_or_None` is the parsed item key
+    when the heading takes item-address form `#### <key> — <label>` (T-663
+    §「항목 주소」: split on the FIRST ` — `, the left side read as the key,
+    `^[a-z0-9]+(-[a-z0-9]+)*$`); None for any other `#### ` shape (a numbered
+    `#### 1. …` heading, or no ` — ` separator at all) — P1 grades that as an
+    address-less item, E4's key harvest just skips it."""
+    out = []
+    for ln, line in lines:
+        m = PRD_H4_RE.match(line)
+        if not m:
+            continue
+        content = m.group(1)
+        key = None
+        if " — " in content:
+            head, _label = content.split(" — ", 1)
+            if PRD_ITEM_KEY_RE.match(head):
+                key = head
+        out.append((ln, key, content))
+    return out
+
+
+def _resource_project_slug(root):
+    if not root:
+        return None
+    cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
+    slug = cfg.get("slug")
+    return slug if isinstance(slug, str) and slug else None
+
+
+SCHEDULE_DISPATCHABLE = ("designer", "developer", "qa")
+
+
+def compute_schedule(root, tickets=None, line=None):
+    """The schedule as one dict (the `--json` shape; text renders from it).
+    `tickets` = a `_schedule_tickets()` result the caller already holds."""
+    import graphlib
+    root = Path(root)
+    st = read_json(root / ".prdt" / "po-state.json") or {}
+    version = line_state(st, line)[1]
+    if tickets is None:
+        tickets = _schedule_tickets(root)
+    out = {"version": version, "cycle": None, "critical_path": [], "cp_length": 0,
+           "rows": [], "missing_deps": []}
+    in_flight = _schedule_in_flight(root)
+    out["lanes"] = compute_lanes(root, tickets, st, line, version, in_flight)
+    if project_line_names(root):
+        out["product"] = line or _resource_project_slug(root)
+
+    # node set: current version's open tickets, then open deps wherever they live
+    nodes, stack = {}, [t for t, (r, _) in tickets.items()
+                        if r["status"] == "open" and r["version"] == version]
+    while stack:
+        tid = stack.pop()
+        if tid in nodes:
+            continue
+        nodes[tid] = tickets[tid]
+        for d in nodes[tid][0]["deps"]:
+            if d not in tickets:
+                out["missing_deps"].append({"ticket": tid, "dep": d})
+            elif tickets[d][0]["status"] == "open" and d not in nodes:
+                stack.append(d)
+    out["missing_deps"].sort(key=lambda m: (_ticket_num_key(m["ticket"]), _ticket_num_key(m["dep"])))
+    preds = {t: sorted({d for d in r["deps"] if d in nodes and d != t} | ({t} if t in r["deps"] else set()))
+             for t, (r, _) in nodes.items()}
+
+    ts = graphlib.TopologicalSorter(preds)
+    try:
+        order = list(ts.static_order())
+    except graphlib.CycleError as e:
+        out["cycle"] = list(e.args[1]) if len(e.args) > 1 else []
+        return out
+
+    succ = {t: [] for t in nodes}
+    for t, ps in preds.items():
+        for p_ in ps:
+            succ[p_].append(t)
+    es = {}
+    for t in order:
+        es[t] = max((es[p_] + 1 for p_ in preds[t]), default=0)
+    length = max(es.values(), default=-1) + 1
+    ls = {}
+    for t in reversed(order):
+        ls[t] = min((ls[s] - 1 for s in succ[t]), default=length - 1)
+    below = {}
+    for t in reversed(order):
+        acc = set()
+        for s in succ[t]:
+            acc.add(s)
+            acc |= below[s]
+        below[t] = acc
+
+    h4 = {}
+    open_v, body = _prd_open_section(root, st, line)
+    if open_v is not None:
+        for i, (_ln, key, _c) in enumerate(k for k in _prd_h4_items(body) if k[1]):
+            h4.setdefault(key, i)
+    open_vkey = _version_id_canon(open_v) if open_v else None
+
+    rows = []
+    for t, (r, p) in nodes.items():
+        fm, _ = parse_frontmatter(p)
+        prd_item = fm.get("prd_item") if isinstance(fm.get("prd_item"), str) else None
+        m = PRD_ITEM_RE.match(prd_item.strip()) if prd_item else None
+        m_line, m_ver = split_line_id(m.group(1)) if m else (None, None)
+        prd_order = (h4.get(m.group(2)) if m and open_vkey is not None and m_line == line
+                     and _version_id_canon(m_ver) == open_vkey else None)
+        waits = sorted(preds[t], key=_ticket_num_key)
+        if r["type"] == "decision" or r["assignee"] == "user":
+            state = "waiting-user"
+        elif r["assignee"] not in SCHEDULE_DISPATCHABLE:
+            state = "po"
+        elif t in in_flight:
+            state = "in-flight"
+        elif waits:
+            state = "blocked"
+        else:
+            state = "ready"
+        rows.append({"id": t, "slug": r["slug"], "version": r["version"], "type": r["type"],
+                     "assignee": r["assignee"], "state": state, "slack": ls[t] - es[t],
+                     "es": es[t], "ls": ls[t], "blocks": len(below[t]), "waits_on": waits,
+                     "prd_item": prd_item, "prd_order": prd_order, "rank": None})
+
+    def tie(row):
+        return (-row["blocks"], row["prd_order"] if row["prd_order"] is not None else math.inf,
+                _ticket_num_key(row["id"]))
+    rows.sort(key=lambda row: (row["slack"], tie(row)))
+    rank = 0
+    for row in rows:
+        if row["state"] == "ready":
+            rank += 1
+            row["rank"] = rank
+    by_id = {row["id"]: row for row in rows}
+    chain, cur = [], None
+    while True:
+        cand = [by_id[s] for s in (succ[cur] if cur else nodes)
+                if by_id[s]["slack"] == 0 and es[s] == (es[cur] + 1 if cur else 0)]
+        if not cand:
+            break
+        cur = min(cand, key=tie)["id"]
+        chain.append(cur)
+    out.update(critical_path=chain, cp_length=length if length > 0 else 0, rows=rows)
+    return out
