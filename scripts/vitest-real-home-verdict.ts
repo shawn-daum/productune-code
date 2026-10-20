@@ -49,6 +49,8 @@ export default function setup(): () => void {
   // scope, which is deliberately EARLIER than this function runs.
   return function teardown(): void {
     const result = verifyTripwire()
+    // T-1134: drift no process of this run wrote is a notice, never a failure.
+    if (result.notice) process.stdout.write(result.notice)
     if (result.ok) return
     process.stdout.write(result.report)
     process.stdout.write(

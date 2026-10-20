@@ -293,6 +293,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const { containmentKey, realHome } = require('./isolation-rules.cjs')
+const writeJournal = require('./real-home-write-journal.cjs')
 
 /**
  * Entry budget for one snapshot, in place of a depth limit.
@@ -761,8 +762,34 @@ function verifyTripwire(options = {}) {
       report: `\nT-450 TRIPWIRE FINGERPRINT INCOMPLETE: ${before.truncated ?? after.truncated}\n`,
     }
   }
-  const drift = diffSnapshots(before, after)
+  const allDrift = diffSnapshots(before, after)
+  // T-1134: split the drift by WRITER. A path with a journal record was written
+  // from inside this run and fails it; the rest was written by a process outside
+  // the run (another session's `prdt`, a hook) and is only noticed.
+  const journal = writeJournal.readJournal()
+  const drift = []
+  const external = []
+  for (const d of allDrift) {
+    const own = (l) => writeJournal.attributedToSuite(l.split('\t')[0], journal)
+    const mine = { surface: d.surface, added: d.added.filter(own), removed: d.removed.filter(own) }
+    const theirs = {
+      surface: d.surface,
+      added: d.added.filter((l) => !own(l)),
+      removed: d.removed.filter((l) => !own(l)),
+    }
+    if (mine.added.length || mine.removed.length) drift.push(mine)
+    if (theirs.added.length || theirs.removed.length) external.push(theirs)
+  }
+  const notice = formatExternalNotice(external)
 
+  if (consume) {
+    try {
+      const jf = writeJournal.journalPath()
+      if (jf) fs.rmSync(jf, { force: true })
+    } catch {
+      /* housekeeping only */
+    }
+  }
   if (consume) {
     // Persist the final state for the next run's warning, then drop the baseline.
     try {
@@ -774,14 +801,28 @@ function verifyTripwire(options = {}) {
     }
   }
 
-  if (drift.length === 0) return clean
-  return { ok: false, drift, report: formatDrift(drift) }
+  if (drift.length === 0) return { ...clean, notice, externalDrift: external }
+  return { ok: false, drift, report: formatDrift(drift) + notice, notice, externalDrift: external }
+}
+
+/** T-1134: the notice for drift no process of this run wrote. Empty when none. */
+function formatExternalNotice(external) {
+  const paths = external.flatMap((d) => [...d.added, ...d.removed].map((l) => l.split('\t')[0]))
+  if (paths.length === 0) return ''
+  return (
+    '\nT-450 notice: the real home changed during this run, and no process of this run\n' +
+    'wrote it (no write journal entry) — most likely another session or a hook. NOT a failure:\n' +
+    [...new Set(paths)].slice(0, 20).map((p) => `  ~ ${p}\n`).join('') +
+    (paths.length > 20 ? `  … ${paths.length - 20} more\n` : '') +
+    '\n'
+  )
 }
 
 /** `verifyTripwire()` as a throw, for callers whose runner reads an exception. */
 function assertTripwireClean(where, options = {}) {
   const result = verifyTripwire(options)
   if (result.ok) {
+    if (result.notice) process.stdout.write(result.notice)
     if (!tripwireDisabled() && (options.consume ?? true)) {
       process.stdout.write(`T-450 real-home tripwire (${where}): real home unchanged across the run.\n`)
     }
