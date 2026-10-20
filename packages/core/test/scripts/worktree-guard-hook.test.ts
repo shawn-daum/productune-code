@@ -402,14 +402,15 @@ describe.skipIf(!PY)('T-834 — no worker writes the track records', () => {
     expect(bash('prdt track review T-2')).toBe('')
   })
 
-  test('every worker persona is guarded; the PO (main session) is not', () => {
+  test('every worker persona is guarded; the PO (main session) keeps its prdt track commands', () => {
     const w = { tool: 'Write', input: { file_path: rec, content: '{}' } }
     why(run({ ...w, atype: 'prdt-qa' }))
     why(run({ ...w, atype: 'prdt-designer' }))
     why(run({ ...w, aid: 'agent-unknown' }))                          // no transcript at all: still denied
-    expect(run({ ...w, aid: null, atype: null })).toBe('')
+    // T-1173: the PO's own `prdt track …` runs; a hand write to run/ is rule 5's deny
+    expect(denied(run({ ...w, aid: null, atype: null }))).toContain('T-1173')
     expect(run({ tool: 'Bash', aid: null, atype: null, input: { command: 'prdt track open T-3 --base main' } })).toBe('')
-    expect(run({ tool: 'Bash', aid: null, atype: null, input: { command: `rm ${rec}` } })).toBe('')
+    expect(denied(run({ tool: 'Bash', aid: null, atype: null, input: { command: `rm ${rec}` } }))).toContain('T-1173')
   })
 
   test('reads, other run/ files and a sandbox PRDT_HOME stay silent', () => {
@@ -458,9 +459,11 @@ describe.skipIf(!PY)('T-834 — no worker writes the track records', () => {
     ]) {
       why(bash(c))
     }
-    // a glob elsewhere, or one in PRDT_HOME that cannot reach run/tracks, stays silent
-    for (const c of [`rm -f ${scratch}/*.json`, `touch ${prdtHome}/*.log`, `rm -f ${prdtHome}/w*`]) {
-      expect(bash(c), c).toBe('')
+    // a glob elsewhere stays silent; one in PRDT_HOME that cannot reach the
+    // records is no longer silent since T-1173 rule 5 (the runtime root is read-only)
+    expect(bash(`rm -f ${scratch}/*.json`)).toBe('')
+    for (const c of [`touch ${prdtHome}/*.log`, `rm -f ${prdtHome}/w*`]) {
+      expect(denied(bash(c)), c).toContain('T-1173 rule 5')
     }
   })
 
@@ -569,7 +572,7 @@ describe.skipIf(!PY)('T-834 — no worker writes the track records', () => {
     }
     // the PO main session is never denied
     for (const c of [`tar xf f.tar -C ${run_}`, `unzip f.zip -d${tracks}`, `install -d ${tracks}/x`]) {
-      expect(run({ tool: 'Bash', aid: null, atype: null, input: { command: c } }), c).toBe('')
+      expect(denied(run({ tool: 'Bash', aid: null, atype: null, input: { command: c } })), c).toContain('T-1173')
     }
   })
 
@@ -609,7 +612,7 @@ describe.skipIf(!PY)('T-834 — no worker writes the track records', () => {
       'env -u X node x.js', `timeout 5 rm -rf ${scratch}/x`, `nice -n 5 cat ${rec}`]) {
       expect(bash(c), c).toBe('')
     }
-    expect(run({ tool: 'Bash', aid: null, atype: null, input: { command: `nice -n 5 rm -rf ${tracks}` } })).toBe('')
+    expect(denied(run({ tool: 'Bash', aid: null, atype: null, input: { command: `nice -n 5 rm -rf ${tracks}` } }))).toContain('T-1173')
   })
 
   test('T-910 — a variable assigned a literal path in the same command is followed to its use', () => {
@@ -644,7 +647,7 @@ describe.skipIf(!PY)('T-834 — no worker writes the track records', () => {
     ]) {
       expect(bash(c), c).toBe('')
     }
-    expect(run({ tool: 'Bash', aid: null, atype: null, input: { command: `T=${tracks}; rm -rf "$T"` } })).toBe('')
+    expect(denied(run({ tool: 'Bash', aid: null, atype: null, input: { command: `T=${tracks}; rm -rf "$T"` } }))).toContain('T-1173')
   })
 
   test('with a worktree, both rules apply: the shared checkout and the records', () => {

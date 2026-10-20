@@ -657,6 +657,101 @@ def handback_delivered(path):
     return False
 
 
+# ── T-1173 rule 4: memory_notes[] reach the inbox by this hook ───────────────
+# A return that is about to reach the PO (clean, or let through after its one
+# re-ask) has its `memory_notes[]` appended verbatim, one line each, to the
+# project inbox (`docs/_shared/wiki/inbox.md`; legacy layout `docs/wiki/`) as
+# `- <date> [<ctx slug>] <note>` — the shape the PO wrote by hand. File write
+# only: nothing is printed (a SubagentStop output would resume the worker).
+# Each return is appended once: `.prdt/.inbox-appended.json` keeps a capped list
+# of (agent_id, notes) digests, so a handback retried after another hook's deny
+# never doubles its lines.
+INBOX_SEEN_CAP = 64
+
+
+def _ctx_slug(agent_id):
+    path = worker_transcript_path(agent_id)
+    try:
+        with open(path, encoding="utf-8") as f:
+            rec = json.loads(f.readline())
+        content = rec["message"]["content"]
+        if isinstance(content, list):
+            content = next(b.get("text") for b in content if isinstance(b, dict) and b.get("type") == "text")
+        for line in content.split("\n"):
+            if line.startswith("[ctx] {"):
+                slug = json.loads(line[len("[ctx] "):]).get("slug")
+                return slug if isinstance(slug, str) and re.fullmatch(r"T-[0-9]+", slug) else None
+    except Exception:
+        return None
+    return None
+
+
+def append_inbox(text, agent_id):
+    try:
+        env = json.loads(text.strip())
+    except Exception:
+        return
+    notes = env.get("memory_notes") if isinstance(env, dict) else None
+    if not isinstance(notes, list):
+        return
+    lines = []
+    for n in notes:
+        n = n if isinstance(n, str) else json.dumps(n, ensure_ascii=False)
+        n = " ".join(n.split())
+        if n:
+            lines.append(n)
+    if not lines:
+        return
+    import hashlib
+    digest = hashlib.sha256(json.dumps([agent_id, lines]).encode("utf-8")).hexdigest()
+    seen_path = os.path.join(state_dir, ".inbox-appended.json")
+    try:
+        with open(seen_path) as f:
+            seen = json.load(f)
+        if not isinstance(seen, list):
+            seen = []
+    except Exception:
+        seen = []
+    if digest in seen:
+        return
+    rel = ["docs", "_shared", "wiki", "inbox.md"]
+    if not os.path.isdir(os.path.join(root, "docs", "_shared")):
+        rel = ["docs", "wiki", "inbox.md"]
+    if not os.path.isdir(os.path.join(root, *rel[:-1])):
+        return
+    slug = _ctx_slug(agent_id)
+    day = datetime.now().strftime("%Y-%m-%d")
+    body = "".join(f"- {day}{' [' + slug + ']' if slug else ''} {n}\n" for n in lines)
+    path = os.path.join(root, *rel)
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            if f.tell():
+                f.seek(-1, 2)
+                if f.read(1) != b"\n":
+                    body = "\n" + body
+    except Exception:
+        pass
+    safe_dir = os.environ.get("PRDT_SAFE_DIR", "")
+    try:
+        if safe_dir:
+            if safe_dir not in sys.path:
+                sys.path.append(safe_dir)
+            import prdt_safe_fs
+            prdt_safe_fs.append_line(root, rel, body, 0o644)
+        else:
+            fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
+            with os.fdopen(fd, "a") as f:
+                f.write(body)
+    except Exception:
+        return
+    seen.append(digest)
+    try:
+        atomic_write(seen_path, seen[-INBOX_SEEN_CAP:])
+    except Exception:
+        pass
+
+
 def deny_reason_envelope(reason):
     # PreToolUse's own channel (the one prdt-dispatch-gate.sh uses): the reason
     # reaches the WORKER as the tool call's error, so the worker calls
@@ -711,6 +806,7 @@ try:
                     log_gate("repaired", already, agent_id, "handback")
                 except Exception:
                     pass
+            append_inbox(text, agent_id)
             sys.exit(0)
         codes = [c for c, _d in violations]
         if already is None:
@@ -736,6 +832,7 @@ try:
                 log_gate("failed", codes, agent_id, "handback")
             except Exception:
                 pass
+            append_inbox(text, agent_id)
         sys.exit(0)
 
     # ── SubagentStop: the return of a worker that did not hand back ─────────
@@ -755,6 +852,7 @@ try:
                 log_gate("repaired", original, agent_id)
             except Exception:
                 pass
+        append_inbox(last, agent_id)
         sys.exit(0)
     codes = [c for c, _d in violations]
     if not refire:
@@ -785,6 +883,7 @@ try:
             log_gate("failed", codes, agent_id)
         except Exception:
             pass
+        append_inbox(last, agent_id)
 except SystemExit:
     raise
 except Exception:
