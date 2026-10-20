@@ -78,7 +78,8 @@ function scanRepo(): Record<string, number> {
   const add = (r: Record<string, number>) => { for (const [k, v] of Object.entries(r)) all[k] = (all[k] ?? 0) + v }
   const read = (p: string) => fs.readFileSync(p, 'utf8')
   const prdt = path.join(PKGS, 'core', 'scripts', 'prdt')
-  add(scanPython(rel(prdt), read(prdt)))
+  // T-1170: the CLI body lives in prdt_cli.py; its sites stay keyed under the `prdt` name (the launcher has none)
+  add(scanPython(rel(prdt), read(path.join(PKGS, 'core', 'scripts', 'prdt_cli.py'))))
   const scripts = path.join(PKGS, 'core', 'scripts')
   // hooks and the status line carry embedded Python — counted per file
   const shell = [...walk(path.join(scripts, 'hooks'), (f) => f.endsWith('.sh')), path.join(scripts, 'statusline-prdt.sh')]

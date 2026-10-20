@@ -33,6 +33,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -232,7 +233,7 @@ describe.skipIf(!PYTHON3)('derived index — one command never empties another c
     // one reindex_*. With no `rebuild` argument to pass, a caller that wants a
     // fresh file has to go through `rebuild_index`, which fills tickets + wiki +
     // machine or nothing at all.
-    const src = fs.readFileSync(PRDT_CLI, 'utf-8')
+    const src = prdtSource(PRDT_CLI)
     expect(src).not.toMatch(/open_db\([^)]*rebuild/)
     const rebuildBody = src.slice(src.indexOf('def rebuild_index'))
       .slice(0, src.slice(src.indexOf('def rebuild_index')).indexOf('\n\n\n'))
