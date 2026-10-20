@@ -70,6 +70,9 @@ export interface VerifyResult {
   /** Empty when ok. */
   report: string
   drift: SurfaceDrift[]
+  /** T-1134: drift written by no process of this run (another session). Never fails the run. */
+  notice?: string
+  externalDrift?: SurfaceDrift[]
 }
 
 export interface VerifyOptions {
