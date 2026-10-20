@@ -615,15 +615,18 @@ if [ -n "$WANT_TICKET" ]; then
           T_ID="${T_HITS##*/}"; T_ID="${T_ID%.md}"
           case "$T_ID" in T-[0-9]*) case "${T_ID#T-}" in *[!0-9]*) T_ID="this ticket" ;; esac ;; *) T_ID="this ticket" ;; esac
           case "$T_VERDICT" in
-            purpose) T_MISS="the user's purpose (why)" ;;
-            confirm) T_MISS="the user's confirmation of the problem definition" ;;
-            *)       T_MISS="the user's purpose (why) and the user's confirmation of the problem definition" ;;
+            purpose) T_MISS="no user quote under \`### 목적\` (the user's purpose)"
+                     T_NEXT="their reason already in their own words → quote it under \`### 목적\`; else ask why it matters, end your turn, quote the answer there. Your \`### 확인\` quote is a go-ahead (\"일단 시안 가져와봐\") → retitle it \`### 확인 (바로 진행)\` instead. Then re-dispatch." ;;
+            confirm) T_MISS="no user quote under \`### 확인\` (the user's confirmation of the problem definition)"
+                     T_NEXT="read the root problem + fix direction back (+ patch now / root later when urgent), end your turn; quote the reply under \`### 확인\`, then re-dispatch." ;;
+            *)       T_MISS="no user quote under \`### 목적\` (the user's purpose) or \`### 확인\` (their confirmation of the problem definition)"
+                     T_NEXT="in one reply ask why (skip it when their words already say it) and read the root problem + fix direction back (+ patch now / root later when urgent), end your turn; quote the why under \`### 목적\`, the reply under \`### 확인\` — a go-ahead (\"일단 시안 가져와봐\") under \`### 확인 (바로 진행)\` alone covers both. Then re-dispatch." ;;
           esac
-          # PLACEHOLDER wording (T-1151) — final text is the designer's inject-edit.
-          jq -nc --arg id "$T_ID" --arg miss "$T_MISS" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny",
-            permissionDecisionReason: ("[prdt dispatch gate] DENIED before the worker spawned: " + $id
-              + " [T-1151 PLACEHOLDER — inject-edit pending] quotes the user in `## problem` but has no user quote under the heading for " + $miss + "."
-              + " Ask why, read the root definition (or the patch/root split) back, quote the replies verbatim under `### 목적` / `### 확인` in `## problem` (a go-ahead: `### 확인 (바로 진행)`), then re-dispatch.")}}'
+          jq -nc --arg id "$T_ID" --arg miss "$T_MISS" --arg next "$T_NEXT" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny",
+            permissionDecisionReason: ("[prdt dispatch gate] DENIED before the worker spawned, nothing spent: " + $id
+              + " quotes the user in `## problem` but has " + $miss + "."
+              + "\nCounts: inside `## problem`, a heading starting `### 목적` / `### 확인` (or `### why` / `### confirm`) with ≥1 line under it quoting the user verbatim — *\"…\"* · “…” · 「…」, any wording, never your own words."
+              + "\nNext: " + $next)}}'
           exit 0
         fi ;;
     esac
