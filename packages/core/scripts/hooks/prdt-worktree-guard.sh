@@ -648,9 +648,15 @@ def home_target(path, base, env, purge=False):
 
 
 def deny_home(rp, how):
-    # PLACEHOLDER — final wording: designer inject-edit, user-confirmed (T-1173).
-    msg = (f"[prdt write guard] PLACEHOLDER (T-1173 rule 5, wording pending): denied {how}: {rp}. "
-           f"{prdt_home_abs} is read-only; allowed writes: contracts/runtime-writes.md.")
+    msg = f"[prdt write guard] denied {how}: {rp} — {prdt_home_abs} is read-only"
+    if is_main:
+        msg += (" except overrides/ and wiki/ (wiki/feedback.md only via `prdt feedback record`). "
+                "Next: the `prdt` command that owns that file (`settings` · `register` · `feedback record` · "
+                "`inbox` · `resource register-stop` · `preflight --recheck`; contracts/runtime-writes.md); "
+                "none owns it → leave it unwritten.")
+    else:
+        msg += (" for every subagent. Next: return the change as a `memory_notes[]` line "
+                "(situation → act, and why); it blocks your task → `needs_info`.")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "deny",
                                              "permissionDecisionReason": msg}}))
@@ -678,9 +684,9 @@ def wiki_target(path, base):
 
 
 def deny_wiki(rp, how):
-    # PLACEHOLDER — final wording: designer inject-edit, user-confirmed (T-1173).
-    msg = (f"[prdt write guard] PLACEHOLDER (T-1173 rule 5, wording pending): denied {how}: {rp}. "
-           f"A worker never writes a wiki page; return it in memory_notes[].")
+    msg = (f"[prdt write guard] denied {how}: {rp} — a worker never writes a project wiki "
+           "(docs/*/wiki/**). Next: return that content as a `memory_notes[]` line; "
+           "the return hook appends it to wiki/inbox.md.")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "deny",
                                              "permissionDecisionReason": msg}}))
@@ -972,7 +978,7 @@ def sub_var(path, lv):
 # command actually run — never on prompt wording (the retired S30 tripwire
 # misfired 11/11). Shapes: `git push` whose destination is `main` (a refspec
 # naming it, `--all`/`--mirror`, or no refspec / `HEAD` while the repo's
-# checked-out branch is main; `--tags` or a `v<digit>…` / `refs/tags/v…` refspec,
+# checked-out branch is main; `--tags`/`--follow-tags` or a `v<digit>…` / `refs/tags/v…` refspec,
 # since a tag push ships on the deploy; `-n`/`--dry-run` ships nothing) · `git merge` while on main (promotion) ·
 # `gh pr merge` · `vercel … --prod`/`promote` · `netlify deploy --prod`.
 # Any session, any persona; silent outside a prdt project or in stage ship.
@@ -1046,10 +1052,18 @@ def deploy_gate(start):
 
 def deny_deploy(gate, how):
     stage, version = gate
-    # PLACEHOLDER — final wording: designer inject-edit, user-confirmed (T-1173).
-    msg = (f"[prdt deploy guard] PLACEHOLDER (T-1173 rule 3, wording pending): denied {how} — "
-           f"a deploy while stage={stage} ({version}). Ship entry first: readiness pass + stage "
-           f"write to ship, or an N/A-skip line naming {version} in the wiki log.md (PO habit — Deploy IS ship).")
+    msg = (f"[prdt deploy guard] denied {how}: po-state stage={stage}"
+           + (f" ({version})" if version else "")
+           + "; a deploy runs only at stage=ship. ")
+    if not is_main:
+        msg += "Next: return `blocked` naming this deploy; the PO runs ship entry."
+    else:
+        skip = (f", or a wiki/log.md line holding both `N/A-skip` and `{version}`"
+                if re.fullmatch(r"v[0-9]+(?:\.[0-9]+){0,2}", version or "") else "")
+        msg += ("Next: ship entry (PO habit Deploy IS ship) — readiness pass (`readiness-dispatch`) "
+                f"+ po-state stage write to ship{skip}, then re-run.")
+        if how == "Bash gh pr merge":
+            msg += " A PR into a branch other than main: the user merges it themselves."
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "deny",
                                              "permissionDecisionReason": msg}}))
@@ -1136,7 +1150,7 @@ def deploy_shape(name, args, ecwd, heads):
             return None  # a dry run ships nothing
         if a in ("--all", "--mirror", "--branches"):
             every = True
-        elif a == "--tags":
+        elif a in ("--tags", "--follow-tags"):
             tags = True
         elif a == "--":
             pos.extend(rest[k + 1:])
@@ -1147,7 +1161,7 @@ def deploy_shape(name, args, ecwd, heads):
     if every:
         return repo, "Bash git push --all/--mirror (includes main)"
     if tags:
-        return repo, "Bash git push --tags (a tag push ships on the deploy)"
+        return repo, "Bash git push --tags/--follow-tags (a tag push ships on the deploy)"
     refspecs = pos[1:]
     if not refspecs:
         return (repo, "Bash git push of the checked-out main") if head() == PROD_BRANCH else None
