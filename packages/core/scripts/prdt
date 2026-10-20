@@ -6718,15 +6718,8 @@ def cmd_po(args):
     # T-799: last thing before Claude Code owns the tty.
     reset_terminal_input_modes()
     cmd = ["claude", "--agent", "prdt-po"] + (getattr(args, "rest", None) or [])
-    # T-1095/T-1192: new sessions start in Claude Code's classic renderer (fullscreen
-    # turns on mouse/focus reporting whose split reports land in the prompt as ghost
-    # text). Env on the child applies at spawn only — running sessions and the user's
-    # ~/.claude/settings.json are untouched. A user-exported value (even "0" or "")
-    # wins. prdt sets no CLAUDE_CODE_DISABLE_MOUSE_CLICKS (5145a54d).
-    child_env = dict(os.environ)
-    child_env.setdefault("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN", "1")
     try:
-        run_claude_then_restore(cmd, env=child_env)
+        run_claude_then_restore(cmd)
     except FileNotFoundError:
         sys.exit("prdt po: `claude` CLI를 찾을 수 없어요 — Claude Code 설치/PATH 확인")
 
