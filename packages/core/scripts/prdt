@@ -5461,16 +5461,37 @@ def cmd_tickets_new(args, root):
     ttype = args.type
     tid = next_ticket_id(root)
     line = getattr(args, "line", None)
+    # T-1084: an explicit placement. `--backlog` → backlog/; `--version [<product>/]vX.Y`
+    # → that version's folder (created if absent). A product prefix on --version is
+    # the same release-line rule as --product; both naming different products is an error.
+    explicit = getattr(args, "version", None)
+    if getattr(args, "backlog", False):
+        if explicit:
+            sys.exit("prdt tickets new: --backlog and --version are mutually exclusive")
+        explicit = "backlog"
+    if explicit:
+        pref, bare = split_line_id(explicit)
+        if pref is not None:
+            if line is not None and line != pref:
+                sys.exit(f"prdt tickets new: --version {safe_label(explicit)} names product "
+                         f"{safe_label(pref)} but --product is {safe_label(line)}")
+            line = pref
+        if not is_version_path_id(bare):
+            sys.exit(f"prdt tickets new: --version '{safe_label(str(explicit))}' is not a version id "
+                     f"(v<N>[.<m>[.<p>]] or backlog) — no ticket written")
     if line is not None and line not in project_line_names(root):
         if line == _resource_project_slug(root):
             line = None
         else:
             sys.exit(f"prdt tickets new: --product {safe_label(line)} is not a product declared in "
                      f".prdt/config.json `products`")
-    try:
-        version = current_version_id(root, line)
-    except ValueError as e:
-        sys.exit(f"prdt tickets new: {e} — no ticket written")
+    if explicit:
+        version = join_line_id(line, split_line_id(explicit)[1])
+    else:
+        try:
+            version = current_version_id(root, line)
+        except ValueError as e:
+            sys.exit(f"prdt tickets new: {e} — no ticket written")
     # `type: decision` forces `assignee: user` (contracts §Tickets) — never a
     # CLI choice, the same way the frame itself is never a per-ticket choice.
     assignee = "user" if ttype == "decision" else (args.assignee or "po")
@@ -5499,8 +5520,13 @@ def cmd_tickets_new(args, root):
     body = "".join(_section(k) for k in body_keys)
     text = "\n".join(fm_lines) + "\n\n" + body
     tdir = tickets_version_dir(root, version)
-    tdir.mkdir(parents=True, exist_ok=True)
     path = tdir / f"{tid}.md"
+    if getattr(args, "dry_run", False):
+        # T-1084: nothing is written, no dir created, no reindex; the id is derived
+        # from disk so none is consumed.
+        print(f"dry-run: would write {path}\n" + "\n".join(fm_lines))
+        return
+    tdir.mkdir(parents=True, exist_ok=True)
     if path.exists():
         sys.exit(f"prdt tickets new: {path} already exists — id collision, re-run (next_ticket_id is derived, never cached)")
     atomic_write_text(path, text)
@@ -5517,7 +5543,7 @@ def cmd_tickets_new(args, root):
     # T-992: a version-folder ticket created without `--prd-item` gets a one-line
     # hint naming the open section's item keys — advisory, stderr (stdout stays
     # the paste-ready link), never blocks the create above.
-    if not args.prd_item and ttype != "decision" and not version.endswith("backlog"):
+    if not args.prd_item and ttype != "decision" and not explicit:
         hint = prd_item_hint(root, line)
         if hint:
             print(hint, file=sys.stderr)
@@ -19596,13 +19622,16 @@ def main():
                                        f"{TICKET_FRAME_LANDING_DATE} only, an older ticket is skipped untouched")
     p.add_argument("action", nargs="?", choices=("new", "fmt"), help="omit for the plain listing")
     p.add_argument("ids", nargs="*", metavar="ID", help="fmt: one or more ticket ids")
-    p.add_argument("--version"); p.add_argument("--feature", help="list: filter · new: this ticket's `feature`")
+    p.add_argument("--version", help="list: filter · new: place the ticket in this version's folder "
+                                     "([<product>/]vX.Y, created if absent; T-1084)")
+    p.add_argument("--feature", help="list: filter · new: this ticket's `feature`")
     p.add_argument("--status", choices=TICKET_STATUS)
     p.add_argument("--assignee", choices=ASSIGNEES,
                    help="list: filter by assignee (legacy `pdt-` frontmatter normalizes on index, so one value "
                         "matches both spellings) · new: this ticket's `assignee` (default `po`; `decision` "
                         "always forces `user`)")
-    p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true")
+    p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true",
+                   help="list: backlog only · new: place the ticket in backlog/ (T-1084)")
     p.add_argument("--link", nargs="+", metavar="ID",
                    help="resolve ticket ids to `[T-NNN](file://…)` links that open the viewer with that ticket "
                         "selected (T-746); never opens itself (T-794) — a main-session-only hook opens it for "
@@ -19619,7 +19648,8 @@ def main():
     p.add_argument("--deps", nargs="+", metavar="ID", help="new: `deps` ticket ids")
     p.add_argument("--check", action="store_true",
                    help="fmt: report violations and exit non-zero instead of writing")
-    p.add_argument("--dry-run", action="store_true", help="fmt: print the diff, write nothing")
+    p.add_argument("--dry-run", action="store_true", help="fmt: print the diff, write nothing · new: print the would-be path and "
+                                                       "frontmatter, write nothing (T-1084)")
     p.set_defaults(fn=cmd_tickets)
     p = sub.add_parser("artifacts", help="sync (write the ONE docs/artifacts/manifest.json from disk) "
                                          "| check (report artifacts the bucket rule cannot place, and a "
