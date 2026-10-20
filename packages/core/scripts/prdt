@@ -5543,7 +5543,8 @@ def cmd_tickets_new(args, root):
     # T-992: a version-folder ticket created without `--prd-item` gets a one-line
     # hint naming the open section's item keys — advisory, stderr (stdout stays
     # the paste-ready link), never blocks the create above.
-    if not args.prd_item and ttype != "decision" and not explicit:
+    if not args.prd_item and ttype != "decision" and not explicit \
+            and not version.endswith("backlog"):
         hint = prd_item_hint(root, line)
         if hint:
             print(hint, file=sys.stderr)
