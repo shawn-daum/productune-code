@@ -112,7 +112,7 @@ describe('agents/prdt-*.md are stubs over one hook-carried bootstrap (T-578)', (
     const RULE_LINE = /^- (?:\*\*)?(?:Turn|Dispatch) economy\b/
     const TERMS: Record<string, RegExp> = {
       po: /You yourself are not counted\./,
-      developer: /warns you at 40 API turns and denies every tool call at 60/,
+      developer: /governor warns, then denies every tool call/,
       qa: /never denied a tool call/,
       designer: /never denied a tool call/,
     }
