@@ -764,22 +764,12 @@ function patchElectron(mod) {
   }
 }
 
-let journal = null
 function installIsolationEnforcer() {
   const g = globalThis
   if (g[INSTALLED]) return
   g[INSTALLED] = true
 
   realHome() // freeze + re-assert the env var before anything can read it
-
-  // T-1134: journal this realm's real-home writes so the tripwire can tell the
-  // suite's own writes from another session's. Never allowed to break a realm.
-  try {
-    journal = require('./real-home-write-journal.cjs')
-    journal.installWriteJournal()
-  } catch {
-    /* attribution is best-effort; the tripwire then treats drift as the suite's */
-  }
 
   // ── _electron.launch ──────────────────────────────────────────────────────
   // Eager if Playwright is already loaded (the runner and every worker), lazy
@@ -1008,7 +998,6 @@ function installIsolationEnforcer() {
         // Rules 1, 4 and 6 first, for every child, ahead of any shape gate. The
         // shape is passed in only to choose the REMEDY for a missing HOME (refuse
         // vs. fill in) — never to decide whether HOME is checked at all.
-        if (journal) journal.noteChildRealHomeRef(file, args)
         const appShaped = looksLikeAppLaunch(file, args)
         assertHomeSafe(how, opts, appShaped)
         assertNotDetached(how, opts)
@@ -1072,7 +1061,6 @@ function installIsolationEnforcer() {
         const slot = optionsSlot(callArgs, false)
         const opts = slot.value
         const how = `child_process.${name}()`
-        if (journal) journal.noteChildRealHomeRef(command, [])
         const appShaped = looksLikeAppLaunch(command, args)
         assertHomeSafe(how, opts, appShaped)
         assertNotDetached(how, opts)
