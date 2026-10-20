@@ -42,8 +42,8 @@ function fire(ev: Record<string, unknown>): string {
 }
 const handback = (aid: string, message: string) => fire({ hook_event_name: 'PreToolUse', tool_name: 'SubagentHandback',
   agent_id: aid, agent_type: 'prdt-developer', cwd: root, session_id: 'sess', transcript_path: parent, tool_input: { message } })
-const stop = (aid: string, last: string) => fire({ hook_event_name: 'SubagentStop', agent_id: aid, agent_type: 'prdt-developer',
-  cwd: root, session_id: 'sess', transcript_path: parent, last_assistant_message: last, stop_hook_active: false })
+const stop = (aid: string, last: string, refire = false) => fire({ hook_event_name: 'SubagentStop', agent_id: aid, agent_type: 'prdt-developer',
+  cwd: root, session_id: 'sess', transcript_path: parent, last_assistant_message: last, stop_hook_active: refire })
 const added = () => fs.readFileSync(inbox, 'utf8').split('\n').slice(1).filter(Boolean)
 
 describe.skipIf(!PY)('T-1173 rule 4 — memory_notes reach the inbox by the return hook', () => {
@@ -84,5 +84,25 @@ describe.skipIf(!PY)('T-1173 rule 4 — memory_notes reach the inbox by the retu
     worker('a5')
     expect(handback('a5', env({ memory_notes: ['legacy'] }))).toBe('')
     expect(added()).toHaveLength(1)
+  })
+
+  test('a return let through at the retry cap with prose around its JSON still yields its memory_notes, silently', () => {
+    worker('a6')
+    const wrapped = 'Here is my report:\n' + env({ memory_notes: ['capped note', 'a {brace} inside'] }) + '\nDone.'
+    const noise = 'see {not json} and {"other": 1}\n'
+    expect(handback('a6', '```json\n' + env() + '\n```')).toContain('deny')
+    expect(handback('a6', noise + wrapped)).toBe('')
+    expect(added()).toEqual([expect.stringMatching(/\[T-7\] capped note$/), expect.stringMatching(/\[T-7\] a \{brace\} inside$/)])
+    worker('a7')
+    expect(stop('a7', wrapped)).toContain('block')
+    expect(stop('a7', wrapped, true)).toBe('')
+    expect(added()).toHaveLength(4)
+  })
+
+  test('prose with no JSON object carrying memory_notes appends nothing', () => {
+    worker('a8')
+    expect(handback('a8', 'nope')).toContain('deny')
+    expect(handback('a8', 'still nope {"a": 1} {broken')).toBe('')
+    expect(added()).toHaveLength(0)
   })
 })

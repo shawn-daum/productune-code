@@ -159,14 +159,24 @@ IFS= read -r -d '' EV 2>/dev/null
 # fork-0 pre-filter: a worker persona's event always goes on; any other event
 # (main session, non-prdt subagent) only when its text could name the runtime
 # root (T-1173 rule 5) or a deploy command (T-1173 rule 3).
+# The deploy words (rule 3 judges Bash commands only) route a Bash event on; in a
+# Write/Edit body they are prose and stay in the pre-filter.
+route=0
 case "$EV" in
-  *'"agent_type":"prdt-developer"'*|*'"agent_type": "prdt-developer"'*|*'"agent_type":"prdt-qa"'*|*'"agent_type": "prdt-qa"'*) ;;
-  *'"agent_type":"prdt-designer"'*|*'"agent_type": "prdt-designer"'*) ;;
-  *.prdt*|*PRDT_HOME*|*push*|*merge*|*vercel*|*netlify*) ;;
-  *)
-    [ -n "$PRDT_HOME" ] || exit 0
-    case "$EV" in *"$PRDT_HOME"*) ;; *) exit 0 ;; esac ;;
+  *'"agent_type":"prdt-developer"'*|*'"agent_type": "prdt-developer"'*|*'"agent_type":"prdt-qa"'*|*'"agent_type": "prdt-qa"'*) route=1 ;;
+  *'"agent_type":"prdt-designer"'*|*'"agent_type": "prdt-designer"'*) route=1 ;;
+  *.prdt*|*PRDT_HOME*) route=1 ;;
 esac
+if [ "$route" = 0 ]; then
+  case "$EV" in
+    *'"tool_name":"Bash"'*|*'"tool_name": "Bash"'*)
+      case "$EV" in *push*|*merge*|*vercel*|*netlify*) route=1 ;; esac ;;
+  esac
+fi
+if [ "$route" = 0 ]; then
+  [ -n "$PRDT_HOME" ] || exit 0
+  case "$EV" in *"$PRDT_HOME"*) ;; *) exit 0 ;; esac
+fi
 command -v python3 >/dev/null 2>&1 || exit 0
 
 PRDT_EVENT_JSON="$EV" python3 - <<'PYEOF'
@@ -191,11 +201,14 @@ atype, aid = ev.get("agent_type"), ev.get("agent_id")
 # T-1173: who is acting. A worker persona keeps every rule below; any other
 # subagent (general-purpose, Explore, Plan, a fork — anything carrying an
 # agent_id or an agent_type) gets rule 5 with no carve-out; the main session
-# (neither key) gets rule 5 with the PO's carve-outs, and rule 3.
+# gets rule 5 with the PO's carve-outs, and rule 3. The main session carries NO
+# agent_id and an agent_type that is absent or `prdt-po` (measured with a real
+# `claude -p --agent` session: PreToolUse = {agent_type: <agent>, no agent_id});
+# any other agent_type is a subagent.
 is_worker = atype in WORKERS and isinstance(aid, str) and bool(aid) and "/" not in aid
 if atype in WORKERS and not is_worker:
     out_open()
-is_main = "agent_id" not in ev and "agent_type" not in ev
+is_main = "agent_id" not in ev and atype in (None, "prdt-po")
 tool = ev.get("tool_name")
 tin = ev.get("tool_input") if isinstance(ev.get("tool_input"), dict) else {}
 if tool not in ("Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"):
@@ -597,6 +610,9 @@ def glob_reaches_dir(pat, target):
     return len(pc) >= len(tc) and all(fnmatch.fnmatchcase(tc[i], pc[i]) for i in range(n))
 
 
+FEEDBACK_ABS = os.path.join(prdt_home_abs, "wiki", "feedback.md")
+
+
 def po_may_write(rp):
     rel = os.path.relpath(fold(rp), fold(prdt_home_abs))
     if rel in (fold(x) for x in PO_DENY):
@@ -604,9 +620,11 @@ def po_may_write(rp):
     return any(rel == d or rel.startswith(d + "/") for d in PO_DIRS)
 
 
-def home_target(path, base, env):
+def home_target(path, base, env, purge=False):
     """realpath (or pattern) of a write target under the runtime root that
-    this actor may not write, else None."""
+    this actor may not write, else None. The PO's wiki/ carve-out excludes
+    feedback.md, so a glob that can match it, or a recursive removal (`purge`)
+    of a directory holding it, is denied too."""
     if not isinstance(path, str) or not path:
         return None
     for alt in brace_expand(path):
@@ -616,7 +634,7 @@ def home_target(path, base, env):
         if r[0] == "glob":
             _k, lit, pat = r
             if under_ci(lit, prdt_home_abs):
-                if not (is_main and po_may_write(lit) and lit != prdt_home_abs):
+                if not (is_main and po_may_write(lit) and lit != prdt_home_abs) or glob_reaches_dir(pat, FEEDBACK_ABS):
                     return pat
             elif glob_reaches_dir(pat, prdt_home_abs):
                 return pat
@@ -624,6 +642,8 @@ def home_target(path, base, env):
         rp = r[1]
         if under_ci(rp, prdt_home_abs) and not (is_main and po_may_write(rp)):
             return rp
+        if purge and is_main and under_ci(FEEDBACK_ABS, rp):
+            return rp  # `rm -rf ~/.prdt/wiki` removes feedback.md too
     return None
 
 
@@ -952,9 +972,14 @@ def sub_var(path, lv):
 # command actually run — never on prompt wording (the retired S30 tripwire
 # misfired 11/11). Shapes: `git push` whose destination is `main` (a refspec
 # naming it, `--all`/`--mirror`, or no refspec / `HEAD` while the repo's
-# checked-out branch is main) · `git merge` while on main (promotion) ·
+# checked-out branch is main; `--tags` or a `v<digit>…` / `refs/tags/v…` refspec,
+# since a tag push ships on the deploy; `-n`/`--dry-run` ships nothing) · `git merge` while on main (promotion) ·
 # `gh pr merge` · `vercel … --prod`/`promote` · `netlify deploy --prod`.
 # Any session, any persona; silent outside a prdt project or in stage ship.
+# Accepted gaps (documented, not guessed): a deploy run from inside an interpreter
+# one-liner (python -c, node -e); a git alias or shell alias that expands to a
+# push; a refspec held in a variable (`git push origin $REF`); `gh api` calling
+# the merge endpoint instead of `gh pr merge`.
 PROD_BRANCH = "main"
 PUSH_VALUE_FLAGS = {"--repo", "-o", "--push-option", "--receive-pack", "--exec"}
 _stage_cache = {}
@@ -1101,14 +1126,18 @@ def deploy_shape(name, args, ecwd, heads):
         return None
     if sub != "push":
         return None
-    pos, k, every = [], 0, False
+    pos, k, every, tags = [], 0, False, False
     while k < len(rest):
         a = rest[k]
         if a in PUSH_VALUE_FLAGS:
             k += 2
             continue
+        if a == "--dry-run" or (a.startswith("-") and not a.startswith("--") and "n" in a[1:]):
+            return None  # a dry run ships nothing
         if a in ("--all", "--mirror", "--branches"):
             every = True
+        elif a == "--tags":
+            tags = True
         elif a == "--":
             pos.extend(rest[k + 1:])
             break
@@ -1117,12 +1146,16 @@ def deploy_shape(name, args, ecwd, heads):
         k += 1
     if every:
         return repo, "Bash git push --all/--mirror (includes main)"
+    if tags:
+        return repo, "Bash git push --tags (a tag push ships on the deploy)"
     refspecs = pos[1:]
     if not refspecs:
         return (repo, "Bash git push of the checked-out main") if head() == PROD_BRANCH else None
     for r in refspecs:
         dst = r.split(":", 1)[1] if ":" in r else r
         dst = dst.lstrip("+")
+        if re.match(r"(?:refs/tags/)?v[0-9]", dst):
+            return repo, "Bash git push of a v* tag (a tag push ships on the deploy)"
         if dst in (PROD_BRANCH, "refs/heads/" + PROD_BRANCH):
             return repo, f"Bash git push to {PROD_BRANCH}"
         if dst == "HEAD" and ":" not in r and head() == PROD_BRANCH:
@@ -1173,13 +1206,13 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch, lv=None):
     heads = {}
     paren_stack, dir_stack = [], []
 
-    def check(path, how, base=None, removal=False):
+    def check(path, how, base=None, removal=False, purge=False):
         b = base if base is not None else ecwd
         path = sub_var(path, lv)
         rp = tracks_target(path, b, sh, removal) if is_worker else None
         if rp:
             deny_tracks(rp, how)
-        rp = home_target(path, b, sh)
+        rp = home_target(path, b, sh, purge)
         if rp:
             deny_home(rp, how)
         rp = wiki_target(path, b)
@@ -1351,7 +1384,7 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch, lv=None):
                     continue
                 if name == "truncate" and j > 0 and args[j - 1] in ("-s", "--size", "-r", "--reference"):
                     continue
-                check(a, f"Bash {name}", removal=name in REMOVERS)
+                check(a, f"Bash {name}", removal=name in REMOVERS, purge=name in REMOVERS)
         elif name in ("chmod", "chown", "chgrp"):
             for a in ops[1:]:
                 check(a, f"Bash {name}")
@@ -1385,7 +1418,7 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch, lv=None):
                 # moving a file OUT of the shared checkout is still a write
                 srcs = ops if uses_target_flag else ops[:-1]
                 for s in srcs:
-                    check(s, "Bash mv (source)", removal=True)
+                    check(s, "Bash mv (source)", removal=True, purge=True)
         elif name in ("sed", "gsed", "perl"):
             # T-783: perl's arg-taking flags (-m/-M module, -I include path, …)
             # swallow the rest of that token as their OWN argument — a plain
@@ -1435,7 +1468,7 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch, lv=None):
                 paths.append(a)
             if "-delete" in args:
                 for p in paths:
-                    check(p, "Bash find -delete", removal=True)
+                    check(p, "Bash find -delete", removal=True, purge=True)
         elif name == "dd":
             for a in args:
                 if a.startswith("of="):
