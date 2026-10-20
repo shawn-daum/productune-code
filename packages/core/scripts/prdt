@@ -14341,8 +14341,21 @@ def cmd_schedule(args):
         sys.exit(1)
 
 
+def _owner_runs(ids, owner, lab):
+    """`T-1 T-2 (developer) T-3 (designer)` — a run of same-owner ids shares one tag (T-1184)."""
+    out, i = [], 0
+    while i < len(ids):
+        j = i
+        while j + 1 < len(ids) and owner.get(ids[j + 1]) == owner.get(ids[i]):
+            j += 1
+        out.append(" ".join(lab(t) for t in ids[i:j + 1]) + f" ({lab(owner.get(ids[i]))})")
+        i = j + 1
+    return " ".join(out)
+
+
 def _render_lane(ln, rows, lab):
-    """One lane line: `lane A 19/25 | working … | next … | blocker …` (R3)."""
+    """One lane line: `lane A 19/25 | working … | next … | blocker …` (R3); the
+    queue (`next` / `ready`) in `prdt schedule` order (R12)."""
     head = f"lane {lab(ln['name'])}"
     if not ln["linked"]:
         return f"{head} not linked"
@@ -14351,16 +14364,52 @@ def _render_lane(ln, rows, lab):
     if ln["finished"]:
         cells.append("done")
     elif ln["working"]:
-        cells.append("working " + " ".join(f"{lab(t)} ({lab(ln['working_owner'].get(t))})" for t in ln["working"]))
+        cells.append("working " + _owner_runs(ln["working"], ln["working_owner"], lab))
         if ln["ready"]:
-            cells.append("ready " + " ".join(lab(t) for t in ln["ready"]))
+            cells.append("ready " + _owner_runs(ln["ready"], ln["ready_owner"], lab))
     elif ln["next"]:
-        cells.append("next " + " ".join(f"{lab(t)} ({lab(ln['next_owner'].get(t))})" for t in ln["next"]))
+        cells.append("next " + _owner_runs(ln["next"], ln["next_owner"], lab))
     else:
         cells.append("working 0")
     if ln["blockers"]:
         cells.append("blocker " + " ".join(f"{lab(b['id'])} ({b['kind']})" for b in ln["blockers"]))
     return " | ".join(cells)
+
+
+def _render_lanes_schedule(s, lab):
+    """Lane mode (T-1184, R6/R10): one block per lane (the 자투리 lane last holds
+    what `dispatch next` listed), `lanes done:`, the total line, blocked rows
+    named by lane, then waiting-on-user / in-flight over every row."""
+    rows, lanes = s["rows"], s["lanes"]
+    lane_of = {}
+    for ln in lanes:
+        print(_render_lane(ln, rows, lab))
+        if ln.get("unnamed"):
+            print(f"note: lane {lab(ln['name'])} has no name")
+        if ln["warning"]:
+            print(f"note: {lab(ln['warning'])}")
+        for t in ln["tickets"]:
+            lane_of.setdefault(t, ln["name"])
+    outside = [r for r in rows if r["id"] not in lane_of]
+    if outside:
+        print(f"outside the lanes — {len(outside)} open ticket(s): " + " ".join(lab(r["id"]) for r in outside))
+    done = [ln for ln in lanes if ln["finished"]]
+    print("lanes done: " + (" · ".join(f"{lab(ln['name'])} {ln['done']}/{ln['total']}" for ln in done)
+                            if done else "(none)"))
+    tot = s.get("totals") or {}
+    print(f"total {tot.get('done', 0)}/{tot.get('total', 0)} = lanes {sum(ln['done'] for ln in lanes)}/"
+          f"{sum(ln['total'] for ln in lanes)} · impl {tot.get('impl_done', 0)}/{tot.get('impl_total', 0)}")
+    blocked = [r for r in rows if r["state"] == "blocked" or (r["state"] == "po" and r["waits_on"])]
+    if blocked:
+        print("blocked (deps open):")
+        for r in blocked:
+            extra = f"  [{lab(r['version'])}]" if r["version"] != s["version"] else ""
+            print(f"      {lab(r['id'])}  {lab(lane_of.get(r['id']))}  waits "
+                  f"{','.join(lab(x) for x in r['waits_on'])}{extra}")
+    for state, title in (("waiting-user", "waiting on user"), ("in-flight", "in flight")):
+        ids = [lab(r["id"]) for r in rows if r["state"] == state]
+        print(f"{title}: {' '.join(ids) if ids else '(none)'}")
+    return False
 
 
 def _render_schedule(s):
@@ -14376,15 +14425,8 @@ def _render_schedule(s):
     print(f"schedule {lab(s['version'])} — {len(rows)} open ticket(s) in the graph")
     lanes = s.get("lanes") or []
     if lanes:
-        # T-1145 / R6: one block per lane, then the open tickets outside every lane.
-        for ln in lanes:
-            print(_render_lane(ln, rows, lab))
-            if ln["warning"]:
-                print(f"note: {lab(ln['warning'])}")
-        inside = {t for ln in lanes for t in ln["tickets"]}
-        rows = [r for r in rows if r["id"] not in inside]
-        print(f"outside the lanes — {len(rows)} open ticket(s)")
-    elif s["critical_path"]:
+        return _render_lanes_schedule(s, lab)
+    if s["critical_path"]:
         print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
     else:
         print("critical path: (none)")
@@ -14395,15 +14437,9 @@ def _render_schedule(s):
         waits = f"  waits {','.join(lab(x) for x in r['waits_on'])}" if r["state"] == "blocked" else ""
         return (f"{lead}{lab(r['id']):<{w}}  slack {r['slack']}  {lab(r['assignee']):<9}  "
                 f"blocks {r['blocks']}{waits}{extra}")
-    if lanes:
-        # R6: PO work is not taken out of `dispatch next`; ranks restart at 1 in the list shown.
-        ready = [r for r in rows if r["state"] == "ready" or (r["state"] == "po" and not r["waits_on"])]
-        blocked = [r for r in rows if r["state"] == "blocked" or (r["state"] == "po" and r["waits_on"])]
-        ranked = {r["id"]: i for i, r in enumerate(ready, 1)}
-    else:
-        ready = [r for r in rows if r["state"] == "ready"]
-        blocked = [r for r in rows if r["state"] == "blocked"]
-        ranked = {r["id"]: r["rank"] for r in ready}
+    ready = [r for r in rows if r["state"] == "ready"]
+    blocked = [r for r in rows if r["state"] == "blocked"]
+    ranked = {r["id"]: r["rank"] for r in ready}
     if ready:
         print("dispatch next:")
         for r in ready:
@@ -14414,8 +14450,7 @@ def _render_schedule(s):
         print("blocked (deps open):")
         for r in blocked:
             print(line(r, "      "))
-    states = (("waiting-user", "waiting on user"), ("in-flight", "in flight")) if lanes else \
-        (("waiting-user", "waiting on user"), ("po", "PO work"), ("in-flight", "in flight"))
+    states = (("waiting-user", "waiting on user"), ("po", "PO work"), ("in-flight", "in flight"))
     for state, title in states:
         ids = [lab(r["id"]) for r in rows if r["state"] == state]
         print(f"{title}: {' '.join(ids) if ids else '(none)'}")
@@ -14624,7 +14659,9 @@ def _safe_ids(ids):
 
 
 def _lane_gate_warning(lanes, ticket):
-    """R6: the warning text, or None. Fires only for a ticket that is in no lane."""
+    """R6 / R9: the warning text, or None. Fires only for a ticket in no gate lane
+    (a 자투리 ticket or one outside every lane), and only over gate lanes."""
+    lanes = [ln for ln in lanes if not ln.get("besteffort")]
     if not ticket or any(ticket in ln["tickets"] for ln in lanes):
         return None
     idle = [ln for ln in lanes if ln["next"] and not ln["working"]]

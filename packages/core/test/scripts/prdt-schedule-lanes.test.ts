@@ -3,7 +3,7 @@
  * 합격선 row, computed once (`compute_lanes`) and rendered by `prdt schedule`,
  * `--json` and the dispatch gate's warning. Black-box over the REAL CLI.
  *
- * Design SoT: docs/artifacts/v1.14/lanes-design.html, rules R1–R3 + R6.
+ * Design SoT: docs/artifacts/v1.14/lanes-design.html, rules R1–R3 + R6; rev2/rev3 tab 「T-1178 · 레인 = 합격선 + 자투리」 R7–R12 (T-1184).
  */
 
 import path from 'path'
@@ -91,15 +91,20 @@ describe.skipIf(!PYTHON3)('prdt schedule lanes', () => {
     writeTicket('v0.1', 'T-003', { deps: '[T-002]' })
     writeTicket('v0.1', 'T-004', { status: 'dropped' })
     writeTicket('v0.1', 'T-005', { deps: '[T-003, T-004]', gate: GATE_A })
-    writeTicket('v0.1', 'T-006', {}) // outside the lane
-    const [a, ...rest] = lanes()
+    writeTicket('v0.1', 'T-006', {}) // in no gate lane: 자투리 (R7)
+    const [a, j, ...rest] = lanes()
     expect(rest).toEqual([])
+    expect(j).toMatchObject({ name: '자투리', besteffort: true, linked: true, gate_ticket: null, done: 0, total: 1, tickets: ['T-006'], next: ['T-006'] })
     expect(a).toMatchObject({ name: 'A', gate_ticket: 'T-005', linked: true, done: 1, total: 3, finished: false, working: [], blockers: [] })
     expect(a.tickets).toEqual(['T-001', 'T-002', 'T-003', 'T-005'])
     expect(a.next).toEqual(['T-003'])
     const t = run(['schedule'])
     expect(t.out).toMatch(/^lane A 1\/3 \| next T-003 \(developer\)$/m)
-    expect(t.out).toMatch(/outside the lanes — 1 open ticket/)
+    expect(t.out).toMatch(/^lane 자투리 0\/1 \| next T-006 \(developer\)$/m)
+    expect(t.out).not.toContain('outside the lanes')
+    expect(t.out).not.toContain('dispatch next')
+    expect(t.out).toMatch(/^lanes done: \(none\)$/m)
+    expect(t.out).toMatch(/^total 1\/4 = lanes 1\/4 · impl 1\/4$/m)
     expect(t.out).not.toContain('critical path')
   })
 
@@ -109,12 +114,81 @@ describe.skipIf(!PYTHON3)('prdt schedule lanes', () => {
     writeTicket('v0.1', 'T-002', { gate: GATE_B, deps: '[T-001]' })
     const ls = lanes()
     expect(ls.map((l: any) => [l.name, l.gate_ticket, l.linked])).toEqual([['A', 'T-001', true], ['B', 'T-002', true], ['C', null, false], ['D', null, false]])
-    expect(ls[1]).toMatchObject({ done: 0, total: 2 }) // lane B reaches T-001 through deps: counted in both lanes
-    expect(ls[0]).toMatchObject({ done: 0, total: 1 })
+    expect(ls[1]).toMatchObject({ done: 0, total: 1, tickets: ['T-002'] }) // R8: T-001 counts once, in the earlier row's lane
+    expect(ls[0]).toMatchObject({ done: 0, total: 1, tickets: ['T-001'] })
+    expect(ls.map((l: any) => l.unnamed)).toEqual([false, false, true, true])
     expect(ls[3].warning).toMatch(/T-001/)
     const t = run(['schedule']).out
     expect(t).toMatch(/^lane C not linked$/m)
     expect(t).toMatch(/^note: lane D: /m)
+    expect(t).toMatch(/^note: lane C has no name$/m)
+    expect(t).toMatch(/^note: lane D has no name$/m)
+    expect(t).not.toMatch(/^note: lane A has no name$/m)
+  })
+
+  test('R11: a multi-word lane name is read whole', () => {
+    writePrd([`| **합격선** | **레인 여러 제품 관측 · \`${GATE_A}\` 가 있다** |`, `| **합격선** | **레인  도구 개선  ·  \`${GATE_B}\` 가 있다** |`])
+    writeTicket('v0.1', 'T-001', { gate: GATE_A })
+    writeTicket('v0.1', 'T-002', { gate: GATE_B })
+    expect(lanes().map((l: any) => [l.name, l.unnamed])).toEqual([['여러 제품 관측', false], ['도구 개선', false]])
+    const t = run(['schedule']).out
+    expect(t).toMatch(/^lane 여러 제품 관측 0\/1 \| next T-001 \(developer\)$/m)
+    expect(t).toMatch(/^lane 도구 개선 0\/1 \| next T-002 \(developer\)$/m)
+    expect(t).not.toMatch(/has no name/)
+  })
+
+  test('R7/R8/R10: 자투리 = this version\'s open+done tickets in no gate lane; the lane sums equal the version total', () => {
+    writePrd([rowA, rowB])
+    writeTicket('v0.1', 'T-001', { status: 'done' })
+    writeTicket('v0.1', 'T-002', { gate: GATE_A, deps: '[T-001]' })
+    writeTicket('v0.1', 'T-003', { status: 'done', gate: GATE_B, deps: '[T-001]' }) // T-001 already in A
+    writeTicket('v0.1', 'T-004', { status: 'done' })
+    writeTicket('v0.1', 'T-005', { type: 'design', assignee: 'designer' })
+    writeTicket('v0.1', 'T-006', { status: 'dropped' })
+    writeTicket('v0.0', 'T-007', {}) // another version: never 자투리
+    const ls = lanes()
+    expect(ls.map((l: any) => [l.name, l.done, l.total, l.finished])).toEqual([['A', 1, 2, false], ['B', 1, 1, true], ['자투리', 1, 2, false]])
+    expect(ls[2].tickets).toEqual(['T-004', 'T-005'])
+    const t = run(['schedule']).out
+    expect(t).toMatch(/^lane B 1\/1 \| done$/m)
+    expect(t).toMatch(/^lanes done: B 1\/1$/m)
+    expect(t).toMatch(/^total 3\/5 = lanes 3\/5 · impl 3\/4$/m)
+  })
+
+  test('R7: every version ticket in a gate lane → no 자투리 lane', () => {
+    writePrd([rowA])
+    writeTicket('v0.1', 'T-001', { gate: GATE_A })
+    expect(lanes().map((l: any) => l.name)).toEqual(['A'])
+    expect(run(['schedule']).out).not.toContain('자투리')
+  })
+
+  test('R10: two finished lanes on one `lanes done:` line, table order, joined with ` · `', () => {
+    writePrd([rowA, rowB])
+    writeTicket('v0.1', 'T-001', { status: 'done', gate: GATE_A })
+    writeTicket('v0.1', 'T-002', { status: 'done', gate: GATE_B })
+    expect(run(['schedule']).out).toMatch(/^lanes done: A 1\/1 · B 1\/1$/m)
+  })
+
+  test('R12: a lane queue is `prdt schedule` order (slack, then blocks), not ticket-number order; same-owner runs share one owner tag', () => {
+    writePrd([rowA])
+    writeTicket('v0.1', 'T-002', {})
+    writeTicket('v0.1', 'T-003', {})
+    writeTicket('v0.1', 'T-005', { deps: '[T-003]' })
+    writeTicket('v0.1', 'T-010', { gate: GATE_A, deps: '[T-002, T-003, T-005]' })
+    const [a] = lanes()
+    expect(a.ready).toEqual(['T-003', 'T-002'])
+    expect(a.next).toEqual(['T-003', 'T-002'])
+    expect(run(['schedule']).out).toMatch(/^lane A 0\/4 \| next T-003 T-002 \(developer\)$/m)
+  })
+
+  test('R6: blocked rows name their lane', () => {
+    writePrd([rowA])
+    writeTicket('v0.1', 'T-001', { gate: GATE_A, deps: '[T-002]' })
+    writeTicket('v0.1', 'T-002', {})
+    writeTicket('v0.1', 'T-003', {})
+    writeTicket('v0.1', 'T-004', { deps: '[T-003]' })
+    const t = run(['schedule']).out
+    expect(t).toMatch(/^blocked \(deps open\):\n\s+T-001  A  waits T-002\n\s+T-004  자투리  waits T-003$/m)
   })
 
   test('PO-owned tickets are in the lane and in `next`', () => {
@@ -174,7 +248,7 @@ describe.skipIf(!PYTHON3)('prdt schedule lanes', () => {
   })
 
   describe('T-1145 QA fail rows (R6 / R3 / T-1158 = B)', () => {
-    test('lane mode: no separate `PO work:` line; an out-of-lane PO ticket is in `dispatch next`, ranks contiguous from 1', () => {
+    test('lane mode: no separate `PO work:` line; an out-of-lane PO ticket is in the 자투리 queue with its owner', () => {
       writePrd([rowA])
       writeTicket('v0.1', 'T-001', { gate: GATE_A })
       writeTicket('v0.1', 'T-002', { assignee: 'po' })
@@ -182,10 +256,7 @@ describe.skipIf(!PYTHON3)('prdt schedule lanes', () => {
       writeTicket('v0.1', 'T-004', {})
       const t = run(['schedule']).out
       expect(t).not.toMatch(/^PO work:/m)
-      const nextBlock = t.split('dispatch next:\n')[1].split(/^\S/m)[0]
-      const ranks = [...nextBlock.matchAll(/^\s+(\d+)\s+(T-\d+)/gm)].map(m => [Number(m[1]), m[2]])
-      expect(ranks.map(r => r[1]).sort()).toEqual(['T-002', 'T-003', 'T-004'])
-      expect(ranks.map(r => r[0])).toEqual([1, 2, 3])
+      expect(t).toMatch(/^lane 자투리 0\/3 \| next T-002 \(po\) T-003 T-004 \(developer\)$/m)
       expect(t).toMatch(/^waiting on user:/m)
       expect(t).toMatch(/^in flight:/m)
     })
@@ -219,7 +290,7 @@ describe.skipIf(!PYTHON3)('prdt schedule lanes', () => {
       expect(a.next).toEqual([])
       expect(a.ready).toEqual(['T-003'])
       expect(a.ready_owner).toEqual({ 'T-003': 'developer' })
-      expect(run(['schedule']).out).toMatch(/^lane A 0\/4 \| working T-002 \(developer\) \| ready T-003$/m)
+      expect(run(['schedule']).out).toMatch(/^lane A 0\/4 \| working T-002 \(developer\) \| ready T-003 \(developer\)$/m)
     })
 
     test('T-1158: idle lane — `ready` equals `next` in JSON, text unchanged', () => {
@@ -238,13 +309,22 @@ describe.skipIf(!PYTHON3)('prdt schedule lanes', () => {
       const ev = { cwd: projectDir, session_id: 's', tool_use_id: 'toolu_1', tool_name: 'Agent', tool_input: { subagent_type: 'prdt-developer', prompt: `[ctx] ${JSON.stringify(ctx)}\n\nx` } }
       return run(['schedule', 'record'], JSON.stringify(ev)).out
     }
-    test('outside-lane dispatch while a lane has next and nothing running warns with lane name and next ticket', () => {
+    test('a 자투리 dispatch while a gate lane has next and nothing running warns with lane name and next ticket (R9)', () => {
       writePrd([rowA])
       writeTicket('v0.1', 'T-001', { gate: GATE_A })
       writeTicket('v0.1', 'T-002', {})
       const out = record('s-t-002')
       expect(out).toMatch(/outside the lanes/)
       expect(out).toMatch(/lane A next T-001/)
+      expect(out).not.toMatch(/lane 자투리 next/)
+    })
+    test('an idle 자투리 lane never triggers the warning', () => {
+      writePrd([rowA])
+      writeTicket('v0.1', 'T-001', { gate: GATE_A, deps: '[T-003]' })
+      writeTicket('v0.1', 'T-002', {})
+      writeTicket('v0.1', 'T-003', {})
+      liveMarker('T-003')
+      expect(record('s-t-002')).toBe('')
     })
     test('a lane ticket, or an idle-less lane, or no lanes at all: no lane warning', () => {
       writePrd([rowA])

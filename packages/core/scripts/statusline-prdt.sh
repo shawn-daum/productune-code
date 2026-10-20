@@ -23,7 +23,8 @@
 #   - The `dec … | req …` row is ALWAYS its own last row (`dec 0 | req 0` when
 #     empty), single-line and multi-line projects alike (T-988 = A, T-984
 #     reversed by the user 2026-10-06).
-#   - Never more than MAX_ROWS (17, measured on the user's machine) rows.
+#   - Never more than MAX_ROWS (17, measured on the user's machine) product rows; lane rows
+#     (T-1147) are never capped or folded (T-1184 R12).
 #   - `<stage> n/m` (T-923) = done/total of this version's tickets in the current
 #     stage, by the viewer's type rule; retro · idle → 0/0. No checklist record is read.
 #   - `<label> <version>` is ONE OSC 8 link to `.prdt/scratch/viewer/viewer.html`
@@ -885,44 +886,45 @@ def fit(build, tail=""):
     return cut + sep
 
 
+def lane_name(lane):
+    """R11: the 합격선 name whole (words included); the 자투리 lane's fixed label."""
+    return L("lane.besteffort") if lane.get("besteffort") is True else (clean(lane.get("name")) or "?")
+
+
 def lane_text(lane, cap):
-    """R3 cells + R5 folding of ONE lane row (plain text; links wrap later).
-    `lane: NAME  d/t` is never cut; the rest folds 3 → 2 → 1 ids + `+N` →
-    persona off → ids as `+N` → one blocker id + `+N` (kind kept) → `…` cut."""
-    name = clean(lane.get("name"), cap=12) or "?"
-    head = L("lane", name=name) + "  "
+    """R3 cells of ONE unfinished lane row (plain text; links wrap later):
+    `working` ids, then `next` = the head of the lane queue only (R12, shown
+    beside `working`), then blockers. `lane: NAME  d/t` is never cut; to fit
+    `cap` the working ids fold 3 → 2 → 1 + `+N` → persona off → ids as `+N` →
+    one blocker id + `+N` (kind kept) → `…` cut."""
+    head = L("lane", name=lane_name(lane)) + "  "
     if not lane.get("linked"):
         return head + L("lane.unlinked")
     head += f"{int(lane.get('done') or 0)}/{int(lane.get('total') or 0)}"
-    if lane.get("finished"):
-        return head + " | " + L("lane.done")
-    work, nxt = _ids(lane.get("working")), _ids(lane.get("next"))
+    work, nxt = _ids(lane.get("working")), _ids(lane.get("ready"))[:1]
     work_owner = lane.get("working_owner") if isinstance(lane.get("working_owner"), dict) else {}
-    next_owner = lane.get("next_owner") if isinstance(lane.get("next_owner"), dict) else {}
+    next_owner = lane.get("ready_owner") if isinstance(lane.get("ready_owner"), dict) else {}
     blockers = [(b["id"], b["kind"]) for b in (lane.get("blockers") if isinstance(lane.get("blockers"), list) else [])
                 if isinstance(b, dict) and isinstance(b.get("id"), str) and TICKET_RE.match(b["id"])
                 and b.get("kind") in ("decision", "request")]
-    if work:
-        key, ids = "lane.work", work
-        owners = {t: (personas.get(t) or ([work_owner[t]] if work_owner.get(t) in ASSIGNEES else [])) for t in ids}
-    elif nxt:
-        key, ids = "lane.next", nxt
-        owners = {t: ([next_owner[t]] if next_owner.get(t) in ASSIGNEES else []) for t in ids}
-    else:
-        key, ids, owners = ("lane.work", [], {})
+    owners = {t: (personas.get(t) or ([work_owner[t]] if work_owner.get(t) in ASSIGNEES else [])) for t in work}
+    owners.update({t: ([next_owner[t]] if next_owner.get(t) in ASSIGNEES else []) for t in nxt})
+
+    def tag(t, persona):
+        links.setdefault(t, ticket_link_target(idx, t))
+        return t + ("(" + "+".join(persona_label(x) for x in owners[t]) + ")" if persona and owners[t] else "")
 
     def cells(lim, persona, blk_lim):
         out = [head]
-        if ids:
-            shown, extra = collapse(ids, lim) if lim is not None else ([], len(ids))
-            bits = []
-            for t in shown:
-                links.setdefault(t, ticket_link_target(idx, t))
-                bits.append(t + ("(" + "+".join(persona_label(x) for x in owners[t]) + ")" if persona and owners[t] else ""))
+        if work:
+            shown, extra = collapse(work, lim) if lim is not None else ([], len(work))
+            bits = [tag(t, persona) for t in shown]
             if extra:
                 bits.append(f"+{extra}")
-            out.append(L(key) + " " + " ".join(bits))
-        elif not blockers:
+            out.append(L("lane.work") + " " + " ".join(bits))
+        if nxt:
+            out.append(L("lane.next") + " " + tag(nxt[0], persona))
+        if not work and not nxt and not blockers:
             out.append(L("lane.work") + " 0")
         if blockers:
             shown, extra = collapse(blockers, blk_lim)
@@ -944,6 +946,19 @@ def lane_text(lane, cap):
     return head + cut_cols(cand[len(head):], max(cap - dw(head), 1))
 
 
+def lane_block(lanes, cap):
+    """[(lane, text)] under one product row: R10 — every finished lane (gate
+    and 자투리 alike) on ONE `done: NAME d/t · …` row first, in table order;
+    then one row per other lane, 자투리 last. No row cap, no folding (R12)."""
+    done = [x for x in lanes if x.get("finished") is True]
+    out = []
+    if done:
+        names = " · ".join(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}" for x in done)
+        out.append(({}, clean(L("lane.finished", lanes=names), cap=cap)))
+    out.extend((x, lane_text(x, cap)) for x in lanes if x.get("finished") is not True)
+    return out
+
+
 def lane_cap():
     try:
         cols = int(os.environ.get("COLUMNS", ""))
@@ -963,27 +978,12 @@ out_rows = []
 # T-1147: parallel to `shown` — [(lane, text)] under each product row. Any lane
 # failure (stale module, odd data) = no lane rows at all; the rest stays intact.
 try:
-    lane_rows = [[(x, lane_text(x, lane_cap())) for x in lane_data.get(r["line"], [])] for r in shown]
+    lane_rows = [lane_block(lane_data.get(r["line"], []), lane_cap()) for r in shown]
 except Exception:
     lane_rows = [[] for _ in shown]
-fixed = len(shown) + (1 if len(shown) < len(rows) else 0) + 1
 
-# T-1147 R5: lane rows go right under their product row. Over MAX_ROWS: finished
-# lane rows leave first (bottom product up), then each product's remaining lanes
-# fold into one `lanes +N` row, then those fold rows (bottom up) — product rows,
-# the `+N products` row and the last row never leave for a lane.
-if any(lane_rows):
-    def total():
-        return fixed + sum(len(x) for x in lane_rows)
-    for i in range(len(lane_rows) - 1, -1, -1):
-        for j in range(len(lane_rows[i]) - 1, -1, -1):
-            if MAX_ROWS < total() and lane_rows[i][j][0].get("finished"):
-                del lane_rows[i][j]
-    if MAX_ROWS < total():
-        lane_rows = [[({}, L("lane.more", n=len(x)))] if x else x for x in lane_rows]
-        for i in range(len(lane_rows) - 1, -1, -1):
-            if MAX_ROWS < total():
-                lane_rows[i] = []
+# T-1147 / T-1184 R12: lane rows go right under their product row — every one of
+# them: no row cap and no folding for lanes (MAX_ROWS still folds product rows).
 
 # product rows — a running dispatch stays on `working` unless a surviving lane row
 # of its product prints that id (the user must always see what is running)

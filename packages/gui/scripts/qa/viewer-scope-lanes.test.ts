@@ -26,13 +26,18 @@ function project(): string {
   fs.writeFileSync(
     path.join(root, 'docs', 'prd', 'PRD.md'),
     `# PRD\n\n## ${VERSION} — round\n\n### 합격선\n\n| 항목 | 문언 |\n|:--|:--|\n| **합격선** | **레인 A · \`${GATE_A}\` 가 돈다** |\n| **합격선** | **레인 B · \`${GATE_B}\` 가 돈다** |\n\n### 항목\n\n` +
-      `#### a1 — 첫째 항목의 아주 긴 이름도 끝까지 보인다 (T-1 · T-2)\n\n#### b1 — 05:20 데일리가 끝까지 돈다 (T-3)\n\n#### z1 — 어느 레인에도 안 걸린 항목\n`,
+      `#### a1 — 첫째 항목의 아주 긴 이름도 끝까지 보인다 (T-1 · T-2)\n\n#### b1 — 05:20 데일리가 끝까지 돈다 (T-3)\n\n#### y1 — 합격선 밖 작은 일 (T-4 · T-5)\n\n#### z1 — 어느 레인에도 안 걸린 항목\n`,
   )
   const dir = path.join(root, 'docs', 'tickets', VERSION)
   fs.mkdirSync(dir, { recursive: true })
   ticket(dir, 'T-1', 'done', `${VERSION}#a1`)
   ticket(dir, 'T-2', 'open', `${VERSION}#a1`, 'deps: [T-1]\n', `gate ${GATE_A}`)
   ticket(dir, 'T-3', 'open', `${VERSION}#b1`, '', `gate ${GATE_B}`)
+  // T-1184: y1's tickets are in no gate lane — the 자투리 lane holds them; T-5 belongs to lane B (deps of T-3) but y1's majority is 자투리
+  ticket(dir, 'T-4', 'open', `${VERSION}#y1`)
+  ticket(dir, 'T-6', 'done', `${VERSION}#y1`)
+  ticket(dir, 'T-5', 'open', `${VERSION}#y1`)
+  fs.writeFileSync(path.join(dir, 'T-3.md'), fs.readFileSync(path.join(dir, 'T-3.md'), 'utf8').replace('prd_item:', 'deps: [T-5]\nprd_item:'))
   return root
 }
 
@@ -53,7 +58,29 @@ describe('T-1180: scope rows by lane + one-line explainer', () => {
 
   it('collectLanes returns the prdt_lanes computation (no second copy)', () => {
     const lanes = collectLanes(root)
-    expect(lanes.map((l) => [l.name, l.linked, l.tickets])).toEqual([['A', true, ['T-1', 'T-2']], ['B', true, ['T-3']]])
+    expect(lanes.map((l) => [l.name, l.linked, l.tickets])).toEqual([['A', true, ['T-1', 'T-2']], ['B', true, ['T-3', 'T-5']], ['자투리', true, ['T-4', 'T-6']]])
+  })
+
+  it('T-1184: 자투리 counts as a lane when placing an item (the lane holding most of its tickets)', () => {
+    const iB = scope.indexOf('레인 B')
+    const iJ = scope.indexOf('레인 자투리')
+    const iNo = scope.indexOf('레인에 묶이지 않은 항목')
+    expect(iJ).toBeGreaterThan(iB)
+    expect(iNo).toBeGreaterThan(iJ)
+    const iY = scope.indexOf('합격선 밖 작은 일')
+    expect(iY).toBeGreaterThan(iJ)
+    expect(iY).toBeLessThan(iNo)
+    expect(scope.slice(iJ, iJ + 200)).toMatch(/1\/2/)
+  })
+
+  it('T-1184: the page states how lane head numbers relate to the item rows', () => {
+    expect(scope).toContain('레인 숫자 = 그 레인 티켓 전체 · 항목 숫자 = 그 항목 티켓 · 항목은 티켓이 가장 많은 레인 아래')
+    const flat = page({ ...data, lanes: [] })
+    expect(flat).not.toContain('레인 숫자 =')
+  })
+
+  it('T-1184: Korean names wrap at word gaps only (.sc-lab word-break: keep-all)', () => {
+    expect(/\.sc-lab \{[^}]*\}/.exec(html)![0]).toContain('word-break: keep-all')
   })
 
   it('groups each item under its lane head; unreached items under the last head', () => {

@@ -708,15 +708,21 @@ def _schedule_tickets(root):
 LANE_GATE_PATH_RE = re.compile(r"`(docs/[^`\s]+)`")
 
 
-LANE_NAME_RE = re.compile(r"^레인\s+(\S+)\s*·")
+# R11 (T-1184): the name is everything between `레인 ` and the first ` ·` — words included.
+LANE_NAME_RE = re.compile(r"^레인\s+(\S.*?)\s*·")
+
+
+# R7/R11: the 자투리 lane's fixed name (statusline label `statusline.lane.besteffort`).
+LANE_BESTEFFORT_NAME = "자투리"
 
 
 LANE_HEADING_RE = re.compile(r"^###\s+합격선(\s|$)")
 
 
 def _lane_gate_rows(root, st, line):
-    """[(name, gate_path_or_None)] — one per 합격선 row of the open PRD
-    section's `### 합격선` table, in table order (R1)."""
+    """[(name, gate_path_or_None, named)] — one per 합격선 row of the open PRD
+    section's `### 합격선` table, in table order (R1); `named` False = the
+    A · B · C fallback (R11)."""
     _v, body = _prd_open_section(root, st, line)
     rows, inside = [], False
     for _ln, text in body:
@@ -731,7 +737,7 @@ def _lane_gate_rows(root, st, line):
         m = LANE_NAME_RE.match(cells[1].replace("**", "").strip())
         pm = LANE_GATE_PATH_RE.search(text)
         rows.append((m.group(1) if m else None, pm.group(1) if pm else None))
-    return [(n or chr(65 + i), g) for i, (n, g) in enumerate(rows)]
+    return [(n or chr(65 + i), g, bool(n)) for i, (n, g) in enumerate(rows)]
 
 
 def _lane_longest_ending_at(ids, preds):
@@ -770,85 +776,109 @@ def _lane_find_gate_ticket(tickets, version, paths, bodies):
     return max(hits, key=lambda t: (memo.get(t, 0), _ticket_num_key(t)))
 
 
-def compute_lanes(root, tickets, st, line, version, in_flight):
-    """[lane dict] — one per 합격선 row, [] when the PRD has none (R1–R3).
+def _lane_fill(lane, ids, tickets, in_flight, pos):
+    """R3 cells of one lane over its member `ids`: counts over this version's
+    tickets, working, blockers, and the queue — `ready` in `prdt schedule`
+    order (`pos`: id -> row position; R12), `next` = `ready` while nothing runs."""
+    version = lane.pop("_version")
+    ids = sorted(ids, key=_ticket_num_key)
+    here = [t for t in ids if tickets[t][0]["version"] == version]
+    lane["tickets"] = ids
+    lane["total"] = len(here)
+    lane["done"] = sum(1 for t in here if tickets[t][0]["status"] == "done")
+    lane["finished"] = lane["total"] > 0 and lane["done"] == lane["total"]
+    lane["working"] = [t for t in ids if t in in_flight]
+    lane["working_owner"] = {t: in_flight[t] for t in lane["working"]}
+    for t in ids:
+        r = tickets[t][0]
+        if r["status"] != "open":
+            continue
+        if r["type"] == "decision":
+            lane["blockers"].append({"id": t, "kind": "decision"})
+        elif r["assignee"] == "user":
+            lane["blockers"].append({"id": t, "kind": "request"})
+
+    def satisfied(d):
+        return d not in tickets or tickets[d][0]["status"] in ("done", "dropped")
+    # T-1158 = B: `ready` = R3's 다음 criteria, shown even while the lane has work running.
+    # `next` stays the dispatch-gate-facing value (T-1147): only when nothing is running.
+    ready = [t for t in ids if tickets[t][0]["status"] == "open"
+             and tickets[t][0]["type"] != "decision" and tickets[t][0]["assignee"] != "user"
+             and t not in in_flight and all(satisfied(d) for d in tickets[t][0]["deps"])]
+    lane["ready"] = sorted(ready, key=lambda t: (pos.get(t, math.inf), _ticket_num_key(t)))
+    lane["ready_owner"] = {t: tickets[t][0]["assignee"] for t in lane["ready"]}
+    if not lane["working"]:
+        lane["next"], lane["next_owner"] = list(lane["ready"]), dict(lane["ready_owner"])
+
+
+def _lane_new(name, gpath, named, version, besteffort=False):
+    return {"name": name, "gate_path": gpath, "gate_ticket": None, "linked": besteffort, "done": 0,
+            "total": 0, "finished": False, "tickets": [], "working": [], "working_owner": {},
+            "next": [], "next_owner": {}, "ready": [], "ready_owner": {}, "blockers": [], "warning": None,
+            "unnamed": not named, "besteffort": besteffort, "_version": version}
+
+
+def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
+    """[lane dict] — one per 합격선 row, then the 자투리 lane; [] when the PRD
+    has no 합격선 row (R1–R3, R7–R12). `order` = ticket ids in `prdt schedule`
+    row order (the lane queue order, R12); None → ticket-number order.
     {name, gate_path, gate_ticket, linked, done, total, finished, tickets,
-    working, next, blockers:[{id, kind: decision|request}], warning}."""
+    working, next, ready, blockers:[{id, kind: decision|request}], warning,
+    unnamed, besteffort}. A ticket belongs to ONE lane: the earliest row whose
+    gate ticket's deps closure holds it (R8); this version's open+done tickets
+    in no row's closure are the 자투리 lane (R7), present only when non-empty."""
     rows = _lane_gate_rows(root, st, line)
     if not rows:
         return []
+    pos = {t: i for i, t in enumerate(order or [])}
     cache = {}
 
     def body(t):
         if t not in cache:
             cache[t] = parse_frontmatter(tickets[t][1])[1] or ""
         return cache[t]
-    lanes, taken = [], set()
-    for name, gpath in rows:
-        lane = {"name": name, "gate_path": gpath, "gate_ticket": None, "linked": False, "done": 0,
-                "total": 0, "finished": False, "tickets": [], "working": [], "working_owner": {},
-                "next": [], "next_owner": {}, "ready": [], "ready_owner": {}, "blockers": [], "warning": None}
+    lanes, taken, claimed = [], set(), set()
+    for name, gpath, named in rows:
+        lane = _lane_new(name, gpath, named, version)
         lanes.append(lane)
-        if not gpath:
-            continue
-        alt = gpath
-        try:
-            alt = resolve_docs_ref(root, gpath, line) or gpath
-        except Exception:
-            pass
-        gate = _lane_find_gate_ticket(tickets, version, [gpath, alt], body)
-        if gate is None:
-            continue
-        if gate in taken:
-            lane["warning"] = (f"lane {name}: its gate path reaches {gate}, which an earlier lane already "
-                               f"holds — not linked")
-            continue
-        taken.add(gate)
-        lane["gate_ticket"], lane["linked"] = gate, True
-        seen, stack = set(), [gate]
-        while stack:
-            t = stack.pop()
-            if t in seen or t not in tickets or tickets[t][0]["status"] == "dropped":
-                continue
-            seen.add(t)
-            stack.extend(tickets[t][0]["deps"])
-        ids = sorted(seen, key=_ticket_num_key)
-        here = [t for t in ids if tickets[t][0]["version"] == version]
-        lane["tickets"] = ids
-        lane["total"] = len(here)
-        lane["done"] = sum(1 for t in here if tickets[t][0]["status"] == "done")
-        lane["finished"] = lane["total"] > 0 and lane["done"] == lane["total"]
-        lane["working"] = [t for t in ids if t in in_flight]
-        lane["working_owner"] = {t: in_flight[t] for t in lane["working"]}
-        for t in ids:
-            r = tickets[t][0]
-            if r["status"] != "open":
-                continue
-            if r["type"] == "decision":
-                lane["blockers"].append({"id": t, "kind": "decision"})
-            elif r["assignee"] == "user":
-                lane["blockers"].append({"id": t, "kind": "request"})
-        def satisfied(d):
-            return d not in tickets or tickets[d][0]["status"] in ("done", "dropped")
-        # T-1158 = B: `ready` = R3's 다음 criteria, shown even while the lane has work running.
-        # `next` stays the statusline-facing value (T-1147): only when nothing is running.
-        lane["ready"] = [t for t in ids if tickets[t][0]["status"] == "open"
-                         and tickets[t][0]["type"] != "decision" and tickets[t][0]["assignee"] != "user"
-                         and t not in in_flight and all(satisfied(d) for d in tickets[t][0]["deps"])]
-        lane["ready_owner"] = {t: tickets[t][0]["assignee"] for t in lane["ready"]}
-        if not lane["working"]:
-            lane["next"], lane["next_owner"] = list(lane["ready"]), dict(lane["ready_owner"])
+        members = []
+        if gpath:
+            alt = gpath
+            try:
+                alt = resolve_docs_ref(root, gpath, line) or gpath
+            except Exception:
+                pass
+            gate = _lane_find_gate_ticket(tickets, version, [gpath, alt], body)
+            if gate is not None and gate in taken:
+                lane["warning"] = (f"lane {name}: its gate path reaches {gate}, which an earlier lane already "
+                                   f"holds — not linked")
+            elif gate is not None:
+                taken.add(gate)
+                lane["gate_ticket"], lane["linked"] = gate, True
+                seen, stack = set(), [gate]
+                while stack:
+                    t = stack.pop()
+                    if t in seen or t not in tickets or tickets[t][0]["status"] == "dropped":
+                        continue
+                    seen.add(t)
+                    stack.extend(tickets[t][0]["deps"])
+                members = [t for t in seen if t not in claimed]
+                claimed |= seen
+        _lane_fill(lane, members, tickets, in_flight, pos)
+    rest = [t for t, (r, _p) in tickets.items()
+            if r["version"] == version and r["status"] in ("open", "done") and t not in claimed]
+    if rest:
+        lane = _lane_new(LANE_BESTEFFORT_NAME, None, True, version, besteffort=True)
+        _lane_fill(lane, rest, tickets, in_flight, pos)
+        lanes.append(lane)
     return lanes
 
 
 def lanes_for(root, line=None):
     """[lane dict] of one product (`line` None = the home product) — the statusline's read.
     Same inputs `compute_schedule` hands `compute_lanes`, so `prdt schedule --json`'s `lanes`
-    and this are one computation."""
-    root = Path(root)
-    st = read_json(root / ".prdt" / "po-state.json") or {}
-    version = line_state(st, line)[1]
-    return compute_lanes(root, _schedule_tickets(root), st, line, version, _schedule_in_flight(root))
+    and this are one computation (T-1184: the schedule itself, so a lane queue has its order)."""
+    return compute_schedule(Path(root), line=line)["lanes"]
 
 
 # ── T-1184: the schedule rank order lives here too, so a lane's queue (R12) is
@@ -908,7 +938,9 @@ def compute_schedule(root, tickets=None, line=None):
     out = {"version": version, "cycle": None, "critical_path": [], "cp_length": 0,
            "rows": [], "missing_deps": []}
     in_flight = _schedule_in_flight(root)
-    out["lanes"] = compute_lanes(root, tickets, st, line, version, in_flight)
+    # T-1184 R12: filled once the rows are ranked (a lane queue is this order); the key
+    # is placed here so the --json key order is unchanged.
+    out["lanes"] = []
     if project_line_names(root):
         out["product"] = line or _resource_project_slug(root)
 
@@ -934,6 +966,7 @@ def compute_schedule(root, tickets=None, line=None):
         order = list(ts.static_order())
     except graphlib.CycleError as e:
         out["cycle"] = list(e.args[1]) if len(e.args) > 1 else []
+        out["lanes"] = compute_lanes(root, tickets, st, line, version, in_flight)
         return out
 
     succ = {t: [] for t in nodes}
@@ -1005,4 +1038,11 @@ def compute_schedule(root, tickets=None, line=None):
         cur = min(cand, key=tie)["id"]
         chain.append(cur)
     out.update(critical_path=chain, cp_length=length if length > 0 else 0, rows=rows)
+    out["lanes"] = compute_lanes(root, tickets, st, line, version, in_flight, [r["id"] for r in rows])
+    if out["lanes"]:
+        # T-1184 R10: the version total the lane sums must equal (text `total` line)
+        here = [r for r, _p in tickets.values() if r["version"] == version and r["status"] in ("open", "done")]
+        impl = [r for r in here if r["type"] == "impl"]
+        out["totals"] = {"done": sum(r["status"] == "done" for r in here), "total": len(here),
+                         "impl_done": sum(r["status"] == "done" for r in impl), "impl_total": len(impl)}
     return out
