@@ -66,11 +66,11 @@
     "statusline.stage.ship": "배포",
     "statusline.stage.retro": "회고",
     "statusline.stage.idle": "유휴",
-    "statusline.persona.developer": "개발자",
-    "statusline.persona.designer": "기획자",
+    "statusline.persona.developer": "developer",
+    "statusline.persona.designer": "designer",
     "statusline.persona.qa": "QA",
     "statusline.persona.po": "PO",
-    "statusline.persona.user": "사용자"
+    "statusline.persona.user": "user"
   },
   "en": {
     "settings.list.header.key": "Key",
