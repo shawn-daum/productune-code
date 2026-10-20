@@ -94,6 +94,8 @@ export const HOME = {
   // T-1180: scope rows grouped under their 합격선 lane (gate row); items no lane's tickets reach sit under the last head.
   scopeLane: (name) => `레인 ${name}`,
   scopeNoLane: '레인에 묶이지 않은 항목',
+  // T-1184 (T-1180 QA): the lane head counts every ticket of the lane, an item row only its own — said once under the rows.
+  scopeLaneRule: '레인 숫자 = 그 레인 티켓 전체 · 항목 숫자 = 그 항목 티켓 · 항목은 티켓이 가장 많은 레인 아래',
   scopeFixTag: (n) => `형식 고치기 ${n}`,
   scopeFixTitle: '버전 없이 키만 적혀 있어요. <버전>#<키> 형식으로 고쳐 주세요.',
   waitDec: '내 결정 대기',

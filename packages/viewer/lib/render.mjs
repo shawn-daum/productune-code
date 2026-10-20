@@ -2511,6 +2511,7 @@ function homeScope(data, currentTickets) {
   }
   const items = openItems.map((i) => ({ key: i.key, tickets: byItem.get(i.key), html: row(scopeItemName(i.label), i.label.replace(/`/g, ''), byItem.get(i.key), '', fixCount.get(i.key) || 0) }))
   // T-1180: under their 합격선 lane (the one lane computation: prdt_lanes) — an item goes to the lane holding most of its tickets, ties to the earlier lane.
+  // T-1184: prdt_lanes now returns the 자투리 lane too (last), so it counts like any lane; an item no lane reaches stays lane-less.
   const lanes = Array.isArray(data.lanes) ? data.lanes : []
   const groups = lanes.map((l) => ({ head: HOME.scopeLane(l.name), count: l.linked ? `${l.done}/${l.total}` : '', rows: [] }))
   const loose = []
@@ -2541,7 +2542,8 @@ function homeScope(data, currentTickets) {
   if (outOfScope.length > 0) whyParts.push(`${escapeHtml(HOME.scopeOutDef)}${malformed > 0 ? ` ${link(HOME.scopeMalformed(malformed), 'ticket', listKey)}` : ''}`)
   if (decisions > 0) whyParts.push(`${escapeHtml(HOME.scopeDecisionNote(decisions))} · ${link(HOME.scopeDecisionLink, 'home', `${data.listPrefix || ''}decision`)}`)
   const whyHtml = whyParts.length > 0 ? `<p class="sc-why">${whyParts.join(' · ')}</p>` : ''
-  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div><div class="sc-rows">${bodyRows}<div class="sc-sep"></div>${outRow}</div>${whyHtml}</div>`
+  const ruleHtml = grouped.length > 0 ? `<p class="sc-why">${escapeHtml(HOME.scopeLaneRule)}</p>` : ''
+  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div><div class="sc-rows">${bodyRows}<div class="sc-sep"></div>${outRow}</div>${ruleHtml}${whyHtml}</div>`
 }
 
 /** dec · req wait lists of `data.tickets`; the sidebar card (T-1165) and Home's wait block share this one call. */
@@ -2964,7 +2966,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .sc-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--space-24); }
 .sc-rows { display: grid; grid-template-columns: fit-content(calc(100% - 140px)) minmax(72px, 1fr) auto; column-gap: var(--space-10); align-items: center; }
 .sc-row { display: contents; }
-.sc-lab { font-size: 12px; color: var(--text-secondary); padding: 3px 0; line-height: 1.45; overflow-wrap: anywhere; }
+.sc-lab { font-size: 12px; color: var(--text-secondary); padding: 3px 0; line-height: 1.45; word-break: keep-all; overflow-wrap: anywhere; }
 .sc-sq, .sc-n { padding: 3px 0; }
 .sc-grp { grid-column: 1 / -1; font-size: 11px; font-weight: 600; color: var(--text-tertiary); margin: var(--space-10) 0 1px; }
 .sc-grp:first-child { margin-top: 0; }
