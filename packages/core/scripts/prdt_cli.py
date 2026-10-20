@@ -166,7 +166,7 @@ CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 64, "worker_habit": 4
         "register_body_bytes": 2000, "agent_stub_bytes": 2000,
         "doctrine_bytes": 1400, "contracts_bytes": 15700, "po_habit_bytes": 16800,
         "worker_habit_bytes": 5800, "menu_bytes": 1400,
-        "persona_total_bytes": {"po": 38000, "designer": 21500, "developer": 20400, "qa": 23500}}
+        "persona_total_bytes": {"po": 38000, "designer": 21500, "developer": 20700, "qa": 23500}}
 # T-701: a BYTE budget beside every line cap above that the session-start hook
 # actually injects (doctrine.md · contracts.md · each persona's habit.md · each
 # persona's playbook menu) — `discipline_byte_caps` GATES on these (a real
@@ -191,6 +191,8 @@ CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 64, "worker_habit": 4
 # already-standing budget, so they hold at their T-702 values). Only
 # `contracts_bytes` and `po_habit_bytes` move, and only down, locking in the
 # split instead of leaving the old headroom for hot text to grow back into.
+# T-1199: developer 20,400 -> 20,700 B (measured 20,623 B) — user-approved +314 B hot
+# rule in developer/habit.md ("Readers, not importers", 2026-10-20).
 # `persona_total_bytes`: the sum of documents this persona's session-start hook
 # actually carries — `_plan_docs_bytes` on `prdt-session-start.sh --plan
 # <persona>`, the same figure `discipline delivery`/`discipline delivery
