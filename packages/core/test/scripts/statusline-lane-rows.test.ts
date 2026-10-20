@@ -192,6 +192,26 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     for (let i = 0; i < 9; i++) expect(r.join('\n')).toContain(`아주 긴 이름의 레인 번호 ${i} 1/1`)
   })
 
+  test('F2b (QA2): a lane name over 40 columns prints whole — finished row and unfinished lane row, COLUMNS 80/unset, en/ko', () => {
+    const LONG = '아주아주 긴 이름을 가진 합격선 레인으로 사십칸을 넘는 경우'
+    const gA = 'docs/artifacts/v0.1/a.md'
+    const gB = 'docs/artifacts/v0.1/b.md'
+    writePrd([`| **합격선** | **레인 ${LONG} · \`${gA}\` 가 있다** |`, `| **합격선** | **레인 ${LONG}둘 · \`${gB}\` 가 있다** |`])
+    ticket('T-001', { status: 'done', gate: gA })
+    ticket('T-002', { gate: gB })
+    ticket('T-003', { gate: gB })
+    marker('T-002')
+    setStage('build')
+    for (const COLUMNS of ['80', undefined]) {
+      for (const PRDT_LANG of ['en', 'ko']) {
+        const out = rows({ COLUMNS, PRDT_LANG }).join('\n')
+        expect(out).not.toContain('…')
+        expect(out).toContain(`${LONG} 1/1`)
+        expect(out).toContain(`${LONG}둘  0/1`)
+      }
+    }
+  })
+
   test('R3: a lane that is not linked reads `not linked`', () => {
     writePrd([rowA, rowB])
     ticket('T-001', { gate: GATE_A })

@@ -888,7 +888,7 @@ def fit(build, tail=""):
 
 def lane_name(lane):
     """R11: the 합격선 name whole (words included); the 자투리 lane's fixed label."""
-    return L("lane.besteffort") if lane.get("besteffort") is True else (clean(lane.get("name")) or "?")
+    return L("lane.besteffort") if lane.get("besteffort") is True else (clean(lane.get("name"), cap=10**6) or "?")
 
 
 def lane_text(lane, cap):
@@ -943,6 +943,8 @@ def lane_text(lane, cap):
         cand = cells(lim, persona, blk)
         if dw(cand) <= cap:
             return cand
+    if dw(lane_name(lane)) > 40:   # T-1184 F2b: a long name is never cut, nor are the cells beside it — the row wraps
+        return cand
     return head + cut_cols(cand[len(head):], max(cap - dw(head), 1))
 
 
