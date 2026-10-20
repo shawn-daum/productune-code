@@ -4,7 +4,9 @@
  * `prdt schedule --json` `lanes` (T-1145) — never re-computed here.
  *
  * Design SoT: docs/artifacts/v1.14/lanes-design.html — R3 (cells), R4 (byte
- * identity outside the new rows), R5 (width folding, 17-row cap), label keys.
+ * identity outside the new rows), width folding, label keys; rev3 tab
+ * 「T-1178 · 레인 = 합격선 + 자투리」 (T-1184): R7 자투리 row, R10 one finished
+ * row, R11 multi-word names, R12 head-of-queue `next`, no row cap / folding.
  * Drives the REAL statusline-prdt.sh next to the REAL prdt CLI.
  */
 
@@ -94,21 +96,44 @@ beforeEach(() => {
 afterEach(() => { fs.rmSync(tmpRoot, { recursive: true, force: true }) })
 
 describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
-  test('R3: a working lane — lane row under the product row, lane ticket leaves the product `working`', () => {
+  test('R3/R7: a working lane and the 자투리 row — lane tickets leave the product `working`', () => {
     writePrd([rowA])
     ticket('T-001', { status: 'done' })
     ticket('T-002', { deps: '[T-001]', gate: GATE_A })
-    ticket('T-003', { deps: '[T-002]' })
-    ticket('T-009') // outside the lane
+    ticket('T-003', { deps: '[T-002]' }) // depends on the gate ticket, not in its closure: 자투리
+    ticket('T-009') // in no gate lane: 자투리
     setStage('build')
     marker('T-002', 'developer')
     marker('T-009', 'qa')
     const r = rows()
-    expect(r).toHaveLength(3)
+    expect(r).toHaveLength(4)
     expect(r[1]).toBe('lane: A  1/2 | working T-002(developer)')
-    expect(r[2]).toBe('decision 0 | request 0')
-    expect(r[0]).toContain('working T-009(qa)')
-    expect(r[0]).not.toContain('T-002')
+    expect(r[2]).toBe('lane: 자투리  0/2 | working T-009(qa)')
+    expect(r[3]).toBe('decision 0 | request 0')
+    expect(r[0]).toContain('working 0')
+    expect(r[0]).toContain('total tickets 1/4')
+  })
+
+  test('R11: a multi-word lane name is shown whole; 자투리 label is the same in ko and en', () => {
+    writePrd([`| **합격선** | **레인 여러 제품 관측 · \`${GATE_A}\` 가 있다** |`])
+    ticket('T-001', { gate: GATE_A })
+    ticket('T-002')
+    setStage('build')
+    expect(rows().slice(1, 3)).toEqual(['lane: 여러 제품 관측  0/1 | next T-001(developer)', 'lane: 자투리  0/1 | next T-002(developer)'])
+    expect(rows({ PRDT_LANG: 'ko' }).slice(1, 3)).toEqual(['레인: 여러 제품 관측  0/1 | 다음 T-001(developer)', '레인: 자투리  0/1 | 다음 T-002(developer)'])
+  })
+
+  test('R12: `next` is the head of the lane queue only (schedule order), shown beside `working`', () => {
+    writePrd([rowA])
+    ticket('T-002')
+    ticket('T-003')
+    ticket('T-004')
+    ticket('T-005', { deps: '[T-004]' })
+    ticket('T-010', { gate: GATE_A, deps: '[T-002, T-003, T-004, T-005]' })
+    setStage('build')
+    expect(rows()[1]).toBe('lane: A  0/5 | next T-004(developer)')
+    marker('T-004', 'designer')
+    expect(rows()[1]).toBe('lane: A  0/5 | working T-004(designer) | next T-002(developer)')
   })
 
   test('R3: nothing running — `next` (PO-owned tickets included, with owner); ko labels with the two-space gap', () => {
@@ -140,14 +165,52 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     expect(rows()[1]).toBe('lane: A  0/2 | blocker T-001(request)')
   })
 
-  test('R3: lane done — that one cell only, even with a blocker-free finished lane', () => {
-    writePrd([rowA, rowB])
+  test('R10: finished lanes leave their rows for ONE `done:` row above the lanes, table order, ` · `-joined', () => {
+    const rowC = `| **합격선** | **레인 C · \`docs/artifacts/v0.1/c.md\` 가 있다** |`
+    writePrd([rowA, rowB, rowC])
     ticket('T-001', { status: 'done', gate: GATE_A })
     ticket('T-002', { gate: GATE_B })
+    ticket('T-003', { status: 'done', gate: 'docs/artifacts/v0.1/c.md' })
+    ticket('T-004', { status: 'done' }) // 자투리, finished too
     setStage('build')
     const r = rows()
-    expect(r[1]).toBe('lane: A  1/1 | done')
+    expect(r).toHaveLength(4)
+    expect(r[1]).toBe('done: A 1/1 · C 1/1 · 자투리 1/1')
     expect(r[2]).toBe('lane: B  0/1 | next T-002(developer)')
+    expect(rows({ PRDT_LANG: 'ko' })[1]).toBe('작업완료: A 1/1 · C 1/1 · 자투리 1/1')
+  })
+
+  test('F2 (QA): the finished row never truncates an entry — it continues on the next row (9 long names, COLUMNS=80)', () => {
+    const gates = Array.from({ length: 9 }, (_, i) => `docs/artifacts/v0.1/g${i}.md`)
+    writePrd(gates.map((g, i) => `| **합격선** | **레인 아주 긴 이름의 레인 번호 ${i} · \`${g}\` 가 있다** |`))
+    gates.forEach((g, i) => ticket(`T-00${i + 1}`, { status: 'done', gate: g }))
+    ticket('T-050')
+    setStage('build')
+    const r = rows({ COLUMNS: '80' })
+    expect(r.join('\n')).not.toContain('…')
+    const doneRows = r.filter((x, i) => i > 0 && (x.startsWith('done:') || /^\S.*\d+\/\d+$/.test(x) && !x.startsWith('lane')))
+    expect(doneRows.length).toBeGreaterThan(1)
+    for (let i = 0; i < 9; i++) expect(r.join('\n')).toContain(`아주 긴 이름의 레인 번호 ${i} 1/1`)
+  })
+
+  test('F2b (QA2): a lane name over 40 columns prints whole — finished row and unfinished lane row, COLUMNS 80/unset, en/ko', () => {
+    const LONG = '아주아주 긴 이름을 가진 합격선 레인으로 사십칸을 넘는 경우'
+    const gA = 'docs/artifacts/v0.1/a.md'
+    const gB = 'docs/artifacts/v0.1/b.md'
+    writePrd([`| **합격선** | **레인 ${LONG} · \`${gA}\` 가 있다** |`, `| **합격선** | **레인 ${LONG}둘 · \`${gB}\` 가 있다** |`])
+    ticket('T-001', { status: 'done', gate: gA })
+    ticket('T-002', { gate: gB })
+    ticket('T-003', { gate: gB })
+    marker('T-002')
+    setStage('build')
+    for (const COLUMNS of ['80', undefined]) {
+      for (const PRDT_LANG of ['en', 'ko']) {
+        const out = rows({ COLUMNS, PRDT_LANG }).join('\n')
+        expect(out).not.toContain('…')
+        expect(out).toContain(`${LONG} 1/1`)
+        expect(out).toContain(`${LONG}둘  0/1`)
+      }
+    }
   })
 
   test('R3: a lane that is not linked reads `not linked`', () => {
@@ -194,9 +257,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
   test('R4: with lanes, only two things change — the lane rows and the lane tickets leaving `working`', () => {
     writePrd([rowA])
     ticket('T-001', { gate: GATE_A })
-    ticket('T-002')
     setStage('build')
-    marker('T-002')
     const withLane = rows()
     writePrd([])
     const without = rows()
@@ -230,35 +291,24 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     expect(tiny.endsWith('…')).toBe(true)
   })
 
-  test('R5: more than 17 rows — finished lane rows go first, then each product folds its lanes into `lanes +N`; product rows and last row stay', () => {
-    const many = Array.from({ length: 18 }, (_, i) => {
-      const g = `docs/artifacts/v0.1/g${i}.md`
-      return { g, row: `| **합격선** | **레인 L${i} · \`${g}\` 가 있다** |` }
-    })
-    writePrd(many.map((m) => m.row))
-    many.forEach((m, i) => ticket(`T-${100 + i}`, { gate: m.g, status: i < 4 ? 'done' : 'open' }))
-    setStage('build')
-    const r = rows()
-    expect(r.length).toBeLessThanOrEqual(17)
-    // 18 lanes + product row + last row = 20 > 17: finished lanes drop from the bottom, only as many as needed (3 of 4)
-    expect(r).toHaveLength(17)
-    expect(r.filter((x) => x.includes('| done'))).toEqual(['lane: L0  1/1 | done'])
-    expect(r.filter((x) => x.startsWith('lane: ')).length).toBe(15)
-    expect(r[0]).toContain('proj v0.1')
-    expect(r[r.length - 1]).toBe('decision 0 | request 0')
-
-    // 20 unfinished lanes: nothing finished to drop -> folded into one `lanes +N` row
+  test('R12: no row cap and no folding — 20 lanes give 20 lane rows; the 자투리 row is never folded', () => {
     const more = Array.from({ length: 20 }, (_, i) => {
       const g = `docs/artifacts/v0.1/h${i}.md`
       return { g, row: `| **합격선** | **레인 H${i} · \`${g}\` 가 있다** |` }
     })
-    fs.rmSync(path.join(root, 'docs', 'tickets'), { recursive: true, force: true })
     writePrd(more.map((m) => m.row))
     more.forEach((m, i) => ticket(`T-${300 + i}`, { gate: m.g }))
-    const r2 = rows()
-    expect(r2).toHaveLength(3)
-    expect(r2[1]).toBe('lanes +20')
-    expect(r2[2]).toBe('decision 0 | request 0')
+    ticket('T-400')
+    setStage('build')
+    marker('T-305')
+    const r = rows()
+    expect(r).toHaveLength(23)
+    expect(r.filter((x) => x.startsWith('lane: H'))).toHaveLength(20)
+    expect(r[5]).toBe('lane: H4  0/1 | next T-304(developer)')
+    expect(r[6]).toBe('lane: H5  0/1 | working T-305(developer)')
+    expect(r[21]).toBe('lane: 자투리  0/1 | next T-400(developer)')
+    expect(r.join('\n')).not.toMatch(/\+\d+/)
+    expect(r[0]).toContain('working 0')
   })
 
   test('QA 1a: QA running on a done ticket of a finished lane stays on the product row `working`', () => {
@@ -267,22 +317,8 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     setStage('build')
     marker('T-001', 'qa')
     const r = rows()
-    expect(r[1]).toBe('lane: A  1/1 | done')
+    expect(r[1]).toBe('done: A 1/1')
     expect(r[0]).toContain('working T-001(qa)')
-  })
-
-  test('QA 1b: a running dispatch whose lane row the 17-row cap folded away stays on `working`', () => {
-    const more = Array.from({ length: 20 }, (_, i) => {
-      const g = `docs/artifacts/v0.1/h${i}.md`
-      return { g, row: `| **합격선** | **레인 H${i} · \`${g}\` 가 있다** |` }
-    })
-    writePrd(more.map((m) => m.row))
-    more.forEach((m, i) => ticket(`T-${300 + i}`, { gate: m.g }))
-    setStage('build')
-    marker('T-305')
-    const r = rows()
-    expect(r[1]).toBe('lanes +20')
-    expect(r[0]).toContain('working T-305(developer)')
   })
 
   test('QA 2: heading with extra spaces (`###  합격선`) — precheck and lane parser agree: lanes show', () => {

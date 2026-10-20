@@ -189,18 +189,16 @@ describe.skipIf(!PYTHON3)('prdt launch — terminal restored after Claude Code e
     expect(r.out.lastIndexOf(`${ESC}[<99u`)).toBeGreaterThan(r.out.lastIndexOf(`${ESC}[>1u`))
   }, 20000)
 
-  // T-1095: under `tui: fullscreen` Claude Code 2.1.296 turns on any-motion
-  // mouse reporting (?1003h); a report split across reads lands in the input
-  // box as text. Measured with real claude (sandbox HOME): with
-  // CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 it enables ?1000h/?1006h only (wheel),
-  // never ?1002h/?1003h. prdt sets it for the child unless the user set it.
-  test('claude child env carries CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 by default', () => {
+  // T-1095 (reverted, T-1192): CLAUDE_CODE_DISABLE_MOUSE_CLICKS makes fullscreen
+  // Claude Code ignore left click/drag, so prdt must not set it. A value the
+  // user exported passes through unchanged.
+  test('claude child env does not gain CLAUDE_CODE_DISABLE_MOUSE_CLICKS when unset', () => {
     const r = runPrdt('exit', 'none')
     expect(r.status).toBe(0)
-    expect(fs.readFileSync(`${r.marker}.mouse`, 'utf8')).toBe('1')
+    expect(fs.readFileSync(`${r.marker}.mouse`, 'utf8')).toBe('<unset>')
   }, 20000)
 
-  test.each(['0', ''])('a CLAUDE_CODE_DISABLE_MOUSE_CLICKS the user exported (%j) is kept', (v) => {
+  test.each(['0', '1', ''])('a CLAUDE_CODE_DISABLE_MOUSE_CLICKS the user exported (%j) passes through', (v) => {
     const r = runPrdt('exit', 'none', { CLAUDE_CODE_DISABLE_MOUSE_CLICKS: v })
     expect(r.status).toBe(0)
     expect(fs.readFileSync(`${r.marker}.mouse`, 'utf8')).toBe(v)

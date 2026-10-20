@@ -209,11 +209,12 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
   // T-631) — QA named that class each time. Ceilings at what the tree now holds
   // instead: 77, not 76, because T-630 moved a voice kernel out of po/habit.md
   // into contracts §Language today, costing po habit 2 lines (58→56) and
-  // contracts 1 (76→77).
-  test('line room stays within what T-586/T-611/T-630 compressed it to (contracts ≤77, po habit ≤56) — hard caps enforced elsewhere', () => {
+  // contracts 1 (76→77). T-1185's approved lanes wording then added 1 line
+  // to po habit (56→57); hard cap stays 64.
+  test('line room stays within what T-586/T-611/T-630 compressed it to (contracts ≤77, po habit ≤57) — hard caps enforced elsewhere', () => {
     const lines = (s: string) => s.replace(/\n$/, '').split('\n').length
     expect(lines(CONTRACTS)).toBeLessThanOrEqual(77)
-    expect(lines(HABITS.po)).toBeLessThanOrEqual(56)
+    expect(lines(HABITS.po)).toBeLessThanOrEqual(57)
     expect(lines(HABITS.developer)).toBeLessThanOrEqual(40)
     expect(lines(HABITS.qa)).toBeLessThanOrEqual(40)
     expect(lines(HABITS.designer)).toBeLessThanOrEqual(40)

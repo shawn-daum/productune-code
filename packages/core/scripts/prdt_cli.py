@@ -28,8 +28,12 @@ from prdt_lanes import (
     LANE_NAME_RE,
     LEGACY_ASSIGNEE_RE,
     LINE_NAME_RE,
+    PRD_H4_RE,
+    PRD_ITEM_KEY_RE,
+    PRD_ITEM_RE,
     PRD_VERSION_HEADING_RE,
     PRODUCT_DOCS_KINDS,
+    SCHEDULE_DISPATCHABLE,
     TICKET_INDEX_FIELDS,
     TICKET_STATUS,
     TICKET_TYPES,
@@ -44,17 +48,20 @@ from prdt_lanes import (
     _line_st,
     _md_structural_lines,
     _need_product,
+    _prd_h4_items,
     _prd_line_headings,
     _prd_open_section,
     _prd_version_headings,
     _product_from_docs_path,
     _products_key,
+    _resource_project_slug,
     _scan_ticket_dir,
     _schedule_in_flight,
     _schedule_tickets,
     _ticket_num_key,
     _version_id_canon,
     compute_lanes,
+    compute_schedule,
     current_product,
     docs_layout,
     docs_path,
@@ -6621,19 +6628,6 @@ def discard_pending_tty_input(settle=0.08):
         pass
 
 
-def claude_child_env():
-    """T-1095: environment for the Claude Code child. Under `tui: fullscreen`
-    Claude Code 2.1.296 turns on any-motion mouse reporting (`?1003h`); a
-    report split across reads lands in its input box as text (`^[[<35;5;7M`).
-    Measured with real claude (sandbox HOME, 2026-10-13):
-    `CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1` keeps only `?1000h`/`?1006h` (wheel
-    scroll) and never enables `?1002h`/`?1003h`. Decision T-1096 = B. A value
-    the user already exported (any value, empty included) is kept."""
-    env = dict(os.environ)
-    env.setdefault("CLAUDE_CODE_DISABLE_MOUSE_CLICKS", "1")
-    return env
-
-
 def run_claude_then_restore(cmd, env=None):
     """T-957: run Claude Code as a child (not `execvp`) so prdt outlives it and
     can put the terminal back. Claude Code turns on SGR any-motion mouse
@@ -6733,7 +6727,7 @@ def cmd_po(args):
     reset_terminal_input_modes()
     cmd = ["claude", "--agent", "prdt-po"] + (getattr(args, "rest", None) or [])
     try:
-        run_claude_then_restore(cmd, env=claude_child_env())
+        run_claude_then_restore(cmd)
     except FileNotFoundError:
         sys.exit("prdt po: `claude` CLI를 찾을 수 없어요 — Claude Code 설치/PATH 확인")
 
@@ -12473,37 +12467,8 @@ PRD_REVERSED_NONE_ROW = "- 없음"
 # doubled dot still fails since the separator only sits between alnum runs.
 PRD_REVERSED_ROW_RE = re.compile(
     r"^- (\[\[decision--[a-z0-9]+([.-][a-z0-9]+)*\]\]|T-[0-9]+) — .+$")
-# Item-address key, shared by the H4 form (P1 #2) and `prd_item`'s dst half
-# (E4) — design §2.4 "항목 주소": same regex as the feature vocab key.
-PRD_ITEM_KEY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-PRD_H4_RE = re.compile(r"^#### (.+)$")
-# A ticket's src half: `prd_item: <version>#<key>` (T-663 §「항목 주소」).
-PRD_ITEM_RE = re.compile(r"^((?:[a-z0-9]+(?:-[a-z0-9]+)*/)?v\d+(?:\.\d+){0,2})#([a-z0-9]+(?:-[a-z0-9]+)*)$", re.ASCII)
 
 
-
-
-def _prd_h4_items(lines):
-    """[(line_no, key_or_None, heading_content)] for every `#### ` line in
-    `lines` ([(line_no, line), ...]). `key_or_None` is the parsed item key
-    when the heading takes item-address form `#### <key> — <label>` (T-663
-    §「항목 주소」: split on the FIRST ` — `, the left side read as the key,
-    `^[a-z0-9]+(-[a-z0-9]+)*$`); None for any other `#### ` shape (a numbered
-    `#### 1. …` heading, or no ` — ` separator at all) — P1 grades that as an
-    address-less item, E4's key harvest just skips it."""
-    out = []
-    for ln, line in lines:
-        m = PRD_H4_RE.match(line)
-        if not m:
-            continue
-        content = m.group(1)
-        key = None
-        if " — " in content:
-            head, _label = content.split(" — ", 1)
-            if PRD_ITEM_KEY_RE.match(head):
-                key = head
-        out.append((ln, key, content))
-    return out
 
 
 def _prd_reversed_section_warnings(root, version, body, tickets):
@@ -14240,14 +14205,6 @@ def _resource_owner(name):
     return "prdt" if _resource_markers(name) or name in _resource_failed_stops() else "user"
 
 
-def _resource_project_slug(root):
-    if not root:
-        return None
-    cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
-    slug = cfg.get("slug")
-    return slug if isinstance(slug, str) and slug else None
-
-
 # ── T-695 slice 2: `prdt dispatch ls` — every project's in-flight markers ────
 # The dispatch gate counts `run/dispatches` markers MACHINE-WIDE and only the
 # ones whose worker transcript says the worker is alive; this is the command its
@@ -14349,135 +14306,7 @@ def cmd_dispatch(args):
 # satisfied; an edge to an id no md carries is ignored with one line (doctor
 # E5 already flags it). Reads md frontmatter in memory — never index.db, whose
 # ticket slice can lag the md (design §5) — and writes nothing.
-SCHEDULE_DISPATCHABLE = ("designer", "developer", "qa")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def compute_schedule(root, tickets=None, line=None):
-    """The schedule as one dict (the `--json` shape; text renders from it).
-    `tickets` = a `_schedule_tickets()` result the caller already holds."""
-    import graphlib
-    root = Path(root)
-    st = read_json(root / ".prdt" / "po-state.json") or {}
-    version = line_state(st, line)[1]
-    if tickets is None:
-        tickets = _schedule_tickets(root)
-    out = {"version": version, "cycle": None, "critical_path": [], "cp_length": 0,
-           "rows": [], "missing_deps": []}
-    in_flight = _schedule_in_flight(root)
-    out["lanes"] = compute_lanes(root, tickets, st, line, version, in_flight)
-    if project_line_names(root):
-        out["product"] = line or _resource_project_slug(root)
-
-    # node set: current version's open tickets, then open deps wherever they live
-    nodes, stack = {}, [t for t, (r, _) in tickets.items()
-                        if r["status"] == "open" and r["version"] == version]
-    while stack:
-        tid = stack.pop()
-        if tid in nodes:
-            continue
-        nodes[tid] = tickets[tid]
-        for d in nodes[tid][0]["deps"]:
-            if d not in tickets:
-                out["missing_deps"].append({"ticket": tid, "dep": d})
-            elif tickets[d][0]["status"] == "open" and d not in nodes:
-                stack.append(d)
-    out["missing_deps"].sort(key=lambda m: (_ticket_num_key(m["ticket"]), _ticket_num_key(m["dep"])))
-    preds = {t: sorted({d for d in r["deps"] if d in nodes and d != t} | ({t} if t in r["deps"] else set()))
-             for t, (r, _) in nodes.items()}
-
-    ts = graphlib.TopologicalSorter(preds)
-    try:
-        order = list(ts.static_order())
-    except graphlib.CycleError as e:
-        out["cycle"] = list(e.args[1]) if len(e.args) > 1 else []
-        return out
-
-    succ = {t: [] for t in nodes}
-    for t, ps in preds.items():
-        for p_ in ps:
-            succ[p_].append(t)
-    es = {}
-    for t in order:
-        es[t] = max((es[p_] + 1 for p_ in preds[t]), default=0)
-    length = max(es.values(), default=-1) + 1
-    ls = {}
-    for t in reversed(order):
-        ls[t] = min((ls[s] - 1 for s in succ[t]), default=length - 1)
-    below = {}
-    for t in reversed(order):
-        acc = set()
-        for s in succ[t]:
-            acc.add(s)
-            acc |= below[s]
-        below[t] = acc
-
-    h4 = {}
-    open_v, body = _prd_open_section(root, st, line)
-    if open_v is not None:
-        for i, (_ln, key, _c) in enumerate(k for k in _prd_h4_items(body) if k[1]):
-            h4.setdefault(key, i)
-    open_vkey = _version_id_canon(open_v) if open_v else None
-
-    rows = []
-    for t, (r, p) in nodes.items():
-        fm, _ = parse_frontmatter(p)
-        prd_item = fm.get("prd_item") if isinstance(fm.get("prd_item"), str) else None
-        m = PRD_ITEM_RE.match(prd_item.strip()) if prd_item else None
-        m_line, m_ver = split_line_id(m.group(1)) if m else (None, None)
-        prd_order = (h4.get(m.group(2)) if m and open_vkey is not None and m_line == line
-                     and _version_id_canon(m_ver) == open_vkey else None)
-        waits = sorted(preds[t], key=_ticket_num_key)
-        if r["type"] == "decision" or r["assignee"] == "user":
-            state = "waiting-user"
-        elif r["assignee"] not in SCHEDULE_DISPATCHABLE:
-            state = "po"
-        elif t in in_flight:
-            state = "in-flight"
-        elif waits:
-            state = "blocked"
-        else:
-            state = "ready"
-        rows.append({"id": t, "slug": r["slug"], "version": r["version"], "type": r["type"],
-                     "assignee": r["assignee"], "state": state, "slack": ls[t] - es[t],
-                     "es": es[t], "ls": ls[t], "blocks": len(below[t]), "waits_on": waits,
-                     "prd_item": prd_item, "prd_order": prd_order, "rank": None})
-
-    def tie(row):
-        return (-row["blocks"], row["prd_order"] if row["prd_order"] is not None else math.inf,
-                _ticket_num_key(row["id"]))
-    rows.sort(key=lambda row: (row["slack"], tie(row)))
-    rank = 0
-    for row in rows:
-        if row["state"] == "ready":
-            rank += 1
-            row["rank"] = rank
-    by_id = {row["id"]: row for row in rows}
-    chain, cur = [], None
-    while True:
-        cand = [by_id[s] for s in (succ[cur] if cur else nodes)
-                if by_id[s]["slack"] == 0 and es[s] == (es[cur] + 1 if cur else 0)]
-        if not cand:
-            break
-        cur = min(cand, key=tie)["id"]
-        chain.append(cur)
-    out.update(critical_path=chain, cp_length=length if length > 0 else 0, rows=rows)
-    return out
+# `compute_schedule` itself lives in prdt_lanes.py (T-1184) — one rank order for every reader.
 
 
 def cmd_schedule(args):
@@ -14516,8 +14345,21 @@ def cmd_schedule(args):
         sys.exit(1)
 
 
+def _owner_runs(ids, owner, lab):
+    """`T-1 T-2 (developer) T-3 (designer)` — a run of same-owner ids shares one tag (T-1184)."""
+    out, i = [], 0
+    while i < len(ids):
+        j = i
+        while j + 1 < len(ids) and owner.get(ids[j + 1]) == owner.get(ids[i]):
+            j += 1
+        out.append(" ".join(lab(t) for t in ids[i:j + 1]) + f" ({lab(owner.get(ids[i]))})")
+        i = j + 1
+    return " ".join(out)
+
+
 def _render_lane(ln, rows, lab):
-    """One lane line: `lane A 19/25 | working … | next … | blocker …` (R3)."""
+    """One lane line: `lane A 19/25 | working … | next … | blocker …` (R3); the
+    queue (`next` / `ready`) in `prdt schedule` order (R12)."""
     head = f"lane {lab(ln['name'])}"
     if not ln["linked"]:
         return f"{head} not linked"
@@ -14526,16 +14368,60 @@ def _render_lane(ln, rows, lab):
     if ln["finished"]:
         cells.append("done")
     elif ln["working"]:
-        cells.append("working " + " ".join(f"{lab(t)} ({lab(ln['working_owner'].get(t))})" for t in ln["working"]))
+        cells.append("working " + _owner_runs(ln["working"], ln["working_owner"], lab))
         if ln["ready"]:
-            cells.append("ready " + " ".join(lab(t) for t in ln["ready"]))
+            cells.append("ready " + _owner_runs(ln["ready"], ln["ready_owner"], lab))
     elif ln["next"]:
-        cells.append("next " + " ".join(f"{lab(t)} ({lab(ln['next_owner'].get(t))})" for t in ln["next"]))
+        cells.append("next " + _owner_runs(ln["next"], ln["next_owner"], lab))
     else:
         cells.append("working 0")
     if ln["blockers"]:
         cells.append("blocker " + " ".join(f"{lab(b['id'])} ({b['kind']})" for b in ln["blockers"]))
     return " | ".join(cells)
+
+
+def _render_lanes_schedule(s, lab):
+    """Lane mode (T-1184, R6/R10): one block per lane (the 자투리 lane last holds
+    what `dispatch next` listed), `lanes done:`, the total line, blocked rows
+    named by lane, then waiting-on-user / in-flight over every row."""
+    rows, lanes = s["rows"], s["lanes"]
+    lane_of = {}
+    # F1 (T-1184 QA): the global first pick (rank 1 of the schedule order) and the
+    # critical path, before the lane blocks — the lane queues alone hide the rank.
+    first = next((r for r in rows if r["state"] == "ready" and r["rank"] == 1), None)
+    if first:
+        print(f"first pick: {lab(first['id'])}  slack {first['slack']}  {lab(first['assignee'])}  "
+              f"blocks {first['blocks']}")
+    if s["critical_path"]:
+        print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
+    for ln in lanes:
+        print(_render_lane(ln, rows, lab))
+        if ln.get("unnamed"):
+            print(f"note: lane {lab(ln['name'])} has no name")
+        if ln["warning"]:
+            print(f"note: {lab(ln['warning'])}")
+        for t in ln["tickets"]:
+            lane_of.setdefault(t, ln["name"])
+    outside = [r for r in rows if r["id"] not in lane_of]
+    if outside:
+        print(f"outside the lanes — {len(outside)} open ticket(s): " + " ".join(lab(r["id"]) for r in outside))
+    done = [ln for ln in lanes if ln["finished"]]
+    print("lanes done: " + (" · ".join(f"{lab(ln['name'])} {ln['done']}/{ln['total']}" for ln in done)
+                            if done else "(none)"))
+    tot = s.get("totals") or {}
+    print(f"total {tot.get('done', 0)}/{tot.get('total', 0)} = lanes {sum(ln['done'] for ln in lanes)}/"
+          f"{sum(ln['total'] for ln in lanes)} · impl {tot.get('impl_done', 0)}/{tot.get('impl_total', 0)}")
+    blocked = [r for r in rows if r["state"] == "blocked" or (r["state"] == "po" and r["waits_on"])]
+    if blocked:
+        print("blocked (deps open):")
+        for r in blocked:
+            extra = f"  [{lab(r['version'])}]" if r["version"] != s["version"] else ""
+            print(f"      {lab(r['id'])}  {lab(lane_of.get(r['id']))}  waits "
+                  f"{','.join(lab(x) for x in r['waits_on'])}{extra}")
+    for state, title in (("waiting-user", "waiting on user"), ("in-flight", "in flight")):
+        ids = [lab(r["id"]) for r in rows if r["state"] == state]
+        print(f"{title}: {' '.join(ids) if ids else '(none)'}")
+    return False
 
 
 def _render_schedule(s):
@@ -14551,15 +14437,8 @@ def _render_schedule(s):
     print(f"schedule {lab(s['version'])} — {len(rows)} open ticket(s) in the graph")
     lanes = s.get("lanes") or []
     if lanes:
-        # T-1145 / R6: one block per lane, then the open tickets outside every lane.
-        for ln in lanes:
-            print(_render_lane(ln, rows, lab))
-            if ln["warning"]:
-                print(f"note: {lab(ln['warning'])}")
-        inside = {t for ln in lanes for t in ln["tickets"]}
-        rows = [r for r in rows if r["id"] not in inside]
-        print(f"outside the lanes — {len(rows)} open ticket(s)")
-    elif s["critical_path"]:
+        return _render_lanes_schedule(s, lab)
+    if s["critical_path"]:
         print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
     else:
         print("critical path: (none)")
@@ -14570,15 +14449,9 @@ def _render_schedule(s):
         waits = f"  waits {','.join(lab(x) for x in r['waits_on'])}" if r["state"] == "blocked" else ""
         return (f"{lead}{lab(r['id']):<{w}}  slack {r['slack']}  {lab(r['assignee']):<9}  "
                 f"blocks {r['blocks']}{waits}{extra}")
-    if lanes:
-        # R6: PO work is not taken out of `dispatch next`; ranks restart at 1 in the list shown.
-        ready = [r for r in rows if r["state"] == "ready" or (r["state"] == "po" and not r["waits_on"])]
-        blocked = [r for r in rows if r["state"] == "blocked" or (r["state"] == "po" and r["waits_on"])]
-        ranked = {r["id"]: i for i, r in enumerate(ready, 1)}
-    else:
-        ready = [r for r in rows if r["state"] == "ready"]
-        blocked = [r for r in rows if r["state"] == "blocked"]
-        ranked = {r["id"]: r["rank"] for r in ready}
+    ready = [r for r in rows if r["state"] == "ready"]
+    blocked = [r for r in rows if r["state"] == "blocked"]
+    ranked = {r["id"]: r["rank"] for r in ready}
     if ready:
         print("dispatch next:")
         for r in ready:
@@ -14589,8 +14462,7 @@ def _render_schedule(s):
         print("blocked (deps open):")
         for r in blocked:
             print(line(r, "      "))
-    states = (("waiting-user", "waiting on user"), ("in-flight", "in flight")) if lanes else \
-        (("waiting-user", "waiting on user"), ("po", "PO work"), ("in-flight", "in flight"))
+    states = (("waiting-user", "waiting on user"), ("po", "PO work"), ("in-flight", "in flight"))
     for state, title in states:
         ids = [lab(r["id"]) for r in rows if r["state"] == state]
         print(f"{title}: {' '.join(ids) if ids else '(none)'}")
@@ -14799,7 +14671,9 @@ def _safe_ids(ids):
 
 
 def _lane_gate_warning(lanes, ticket):
-    """R6: the warning text, or None. Fires only for a ticket that is in no lane."""
+    """R6 / R9: the warning text, or None. Fires only for a ticket in no gate lane
+    (a 자투리 ticket or one outside every lane), and only over gate lanes."""
+    lanes = [ln for ln in lanes if not ln.get("besteffort")]
     if not ticket or any(ticket in ln["tickets"] for ln in lanes):
         return None
     idle = [ln for ln in lanes if ln["next"] and not ln["working"]]
