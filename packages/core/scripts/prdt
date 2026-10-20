@@ -6620,19 +6620,6 @@ def discard_pending_tty_input(settle=0.08):
         pass
 
 
-def claude_child_env():
-    """T-1095: environment for the Claude Code child. Under `tui: fullscreen`
-    Claude Code 2.1.296 turns on any-motion mouse reporting (`?1003h`); a
-    report split across reads lands in its input box as text (`^[[<35;5;7M`).
-    Measured with real claude (sandbox HOME, 2026-10-13):
-    `CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1` keeps only `?1000h`/`?1006h` (wheel
-    scroll) and never enables `?1002h`/`?1003h`. Decision T-1096 = B. A value
-    the user already exported (any value, empty included) is kept."""
-    env = dict(os.environ)
-    env.setdefault("CLAUDE_CODE_DISABLE_MOUSE_CLICKS", "1")
-    return env
-
-
 def run_claude_then_restore(cmd, env=None):
     """T-957: run Claude Code as a child (not `execvp`) so prdt outlives it and
     can put the terminal back. Claude Code turns on SGR any-motion mouse
@@ -6732,7 +6719,7 @@ def cmd_po(args):
     reset_terminal_input_modes()
     cmd = ["claude", "--agent", "prdt-po"] + (getattr(args, "rest", None) or [])
     try:
-        run_claude_then_restore(cmd, env=claude_child_env())
+        run_claude_then_restore(cmd)
     except FileNotFoundError:
         sys.exit("prdt po: `claude` CLI를 찾을 수 없어요 — Claude Code 설치/PATH 확인")
 
