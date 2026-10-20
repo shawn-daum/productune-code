@@ -84,7 +84,7 @@ done
 [ -z "$ROOT" ] && exit 0
 
 SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
-ROOT="$ROOT" SCRIPT_DIR="$SCRIPT_DIR" python3 - <<'PYEOF'
+ROOT="$ROOT" SCRIPT_DIR="$SCRIPT_DIR" python3 -I - <<'PYEOF'
 import json, os, re, sqlite3, stat, subprocess, sys, unicodedata
 from datetime import datetime, timezone
 from urllib.parse import quote

@@ -116,7 +116,7 @@ for _d in "$_hd/../bin" "$_hd/.."; do
 done
 export PRDT_SAFE_DIR
 
-PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
+PRDT_EVENT_JSON="$EVENT_JSON" python3 -I - <<'PYEOF'
 import contextlib, fcntl, hashlib, json, os, re, shlex, shutil, subprocess, sys
 from datetime import datetime, timezone
 
