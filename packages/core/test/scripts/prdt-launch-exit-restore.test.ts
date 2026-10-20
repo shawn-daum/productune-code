@@ -64,6 +64,7 @@ function writeStub(): void {
     'open(marker + ".handoff", "w").write("fg" if fg else "notfg")',
     'open(marker + ".argv", "w").write(" ".join(sys.argv[1:]))',
     'open(marker + ".mouse", "w").write(os.environ.get("CLAUDE_CODE_DISABLE_MOUSE_CLICKS", "<unset>"))',
+    'open(marker + ".alt", "w").write(os.environ.get("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN", "<unset>"))',
     'try:',
     '    os.fstat(3); open(marker + ".fd3", "w").write("open")',
     'except OSError:',
@@ -149,6 +150,7 @@ function runPrdt(mode: string, act: 'none' | 'ctrl-c' | 'term' | 'tstp' | 'ctrl-
   }
   // T-1095: the developer's own shell value must not decide the default case.
   if (!('CLAUDE_CODE_DISABLE_MOUSE_CLICKS' in env)) delete childEnv.CLAUDE_CODE_DISABLE_MOUSE_CLICKS
+  if (!('CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN' in env)) delete childEnv.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
   const raw = execFileSync('python3', ['-c', harness], {
     cwd: projectDir, encoding: 'utf-8', timeout: subprocessTimeout('cli'), env: childEnv,
   })
@@ -189,21 +191,32 @@ describe.skipIf(!PYTHON3)('prdt launch — terminal restored after Claude Code e
     expect(r.out.lastIndexOf(`${ESC}[<99u`)).toBeGreaterThan(r.out.lastIndexOf(`${ESC}[>1u`))
   }, 20000)
 
-  // T-1095: under `tui: fullscreen` Claude Code 2.1.296 turns on any-motion
-  // mouse reporting (?1003h); a report split across reads lands in the input
-  // box as text. Measured with real claude (sandbox HOME): with
-  // CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 it enables ?1000h/?1006h only (wheel),
-  // never ?1002h/?1003h. prdt sets it for the child unless the user set it.
-  test('claude child env carries CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 by default', () => {
+  // T-1095 (reverted, T-1192): CLAUDE_CODE_DISABLE_MOUSE_CLICKS makes fullscreen
+  // Claude Code ignore left click/drag, so prdt must not set it. A value the
+  // user exported passes through unchanged.
+  test('claude child env does not gain CLAUDE_CODE_DISABLE_MOUSE_CLICKS when unset', () => {
     const r = runPrdt('exit', 'none')
     expect(r.status).toBe(0)
-    expect(fs.readFileSync(`${r.marker}.mouse`, 'utf8')).toBe('1')
+    expect(fs.readFileSync(`${r.marker}.mouse`, 'utf8')).toBe('<unset>')
   }, 20000)
 
-  test.each(['0', ''])('a CLAUDE_CODE_DISABLE_MOUSE_CLICKS the user exported (%j) is kept', (v) => {
+  test.each(['0', '1', ''])('a CLAUDE_CODE_DISABLE_MOUSE_CLICKS the user exported (%j) passes through', (v) => {
     const r = runPrdt('exit', 'none', { CLAUDE_CODE_DISABLE_MOUSE_CLICKS: v })
     expect(r.status).toBe(0)
     expect(fs.readFileSync(`${r.marker}.mouse`, 'utf8')).toBe(v)
+  }, 20000)
+
+  // T-1095: new sessions launch in the classic renderer; a user value passes through.
+  test('claude child env gets CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 when unset', () => {
+    const r = runPrdt('exit', 'none')
+    expect(r.status).toBe(0)
+    expect(fs.readFileSync(`${r.marker}.alt`, 'utf8')).toBe('1')
+  }, 20000)
+
+  test.each(['0', '1', ''])('a CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN the user exported (%j) passes through', (v) => {
+    const r = runPrdt('exit', 'none', { CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: v })
+    expect(r.status).toBe(0)
+    expect(fs.readFileSync(`${r.marker}.alt`, 'utf8')).toBe(v)
   }, 20000)
 
   test('child exit code propagates', () => {

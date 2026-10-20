@@ -347,12 +347,12 @@ describe('home fix round 1 (T-881 grill) — what a DOM-free test can pin; width
 
 describe('home scope: the 「PRD 항목 밖 티켓」 block (T-981 → T-1046)', () => {
   const scope = (tickets: ReturnType<typeof tk>[]) => /<div class="cp-h">스코프[\s\S]*?(?=<\/div><\/div><\/div>|<div class="cp-block">)/.exec(page(tickets).home)?.[0] ?? ''
-  const outside = (s: string) => /<div class="sc-outside">[\s\S]*$/.exec(s)?.[0] ?? ''
+  const outside = (s: string) => /<div class="sc-sep">[\s\S]*$/.exec(s)?.[0] ?? ''
   it('is its own block with the new label, a one-line definition, and the malformed count linking to the current-version ticket list', () => {
     const s = scope([tk({ id: 'T-1', prd_item: 'v1.12#a' }), tk({ id: 'T-2', prd_item: 'nope' }), tk({ id: 'T-3', prd_item: 'nope2' }), tk({ id: 'T-4' }), tk({ id: 'T-5', prd_item: 'v1.12#zzz' })])
     const o = outside(s)
     expect(o).toContain('PRD 항목 밖 티켓')
-    expect(o).toContain('어느 PRD 항목에도 묶이지 않은 작업 티켓이에요.')
+    expect(o).toContain('prd_item 이 비었거나 맞는 항목 없음')
     expect(o).toContain('형식이 틀린 티켓 2건')
     expect(o).toContain('data-open-store="ticket" data-open-group="v1.12"')
     expect(o).toContain('0/4')
@@ -368,17 +368,17 @@ describe('home scope: the 「PRD 항목 밖 티켓」 block (T-981 → T-1046)',
     const o = outside(scope([tk({ id: 'T-1', prd_item: 'v1.12#a' }), tk({ id: 'T-2', prd_item: 'v1.12#a' })]))
     expect(o).toContain('PRD 항목 밖 티켓')
     expect(o).toContain('없음')
-    expect(o).not.toContain('어느 PRD 항목에도')
-    expect(o).not.toContain('결정 기록')
+    expect(o).not.toContain('prd_item 이 비었거나')
+    expect(o).not.toContain('결정 ')
   })
   it('decision tickets are not counted outside; a note with a link to the current version 「결정」 appears only when there are any', () => {
     const only = outside(scope([tk({ id: 'T-1', type: 'decision' }), tk({ id: 'T-2', type: 'decision', status: 'done' })]))
     expect(only).toContain('없음')
-    expect(only).toContain('결정 기록 2건은 항목에 묶지 않아 여기서 세지 않아요.')
+    expect(only).toContain('결정 2건 제외')
     expect(only).toContain('data-open-store="home" data-open-group="decision"')
     const mixed = outside(scope([tk({ id: 'T-1', type: 'decision' }), tk({ id: 'T-2', type: 'design' }), tk({ id: 'T-3' })]))
     expect(mixed).toContain('0/2')
-    expect(mixed).toContain('결정 기록 1건')
+    expect(mixed).toContain('결정 1건 제외')
     expect(mixed).not.toContain('형식이 틀린')
   })
 })
