@@ -72,7 +72,7 @@ describe.skipIf(!PY)('T-1173 rule 5 — the runtime root is read-only', () => {
   test('main session: run/, discipline, inbox.md, feedback.md are denied; overrides/ and wiki/ pages are its carve-out', () => {
     for (const f of [path.join(ph, 'run', 'x.json'), path.join(ph, 'discipline', 'contracts.md'), path.join(ph, 'inbox.md'),
       path.join(ph, 'wiki', 'feedback.md'), path.join(ph, 'register')])
-      expect(reason(write('main', f)), f).toContain('T-1173 rule 5')
+      expect(reason(write('main', f)), f).toContain('[prdt write guard]')
     expect(write('main', path.join(ph, 'overrides', 'developer.md'))).toBe('')
     expect(write('main', path.join(ph, 'overrides', 'playbooks', 'implement.md'))).toBe('')
     expect(write('main', path.join(ph, 'wiki', 'fact--x.md'))).toBe('')
@@ -81,7 +81,7 @@ describe.skipIf(!PY)('T-1173 rule 5 — the runtime root is read-only', () => {
   test('main session Bash: redirects, rm, cp, globs and $HOME/~ spellings under the root are denied', () => {
     for (const c of ['echo x > ~/.prdt/run/a', 'rm -rf ~/.prdt/run/dispatches', 'cp /tmp/f $HOME/.prdt/discipline/x.md',
       'cd ~/.prdt && touch run/x', 'rm ~/.prdt/r*', 'sed -i "" s/a/b/ ~/.prdt/register', 'rm -rf ~/.prdt'])
-      expect(reason(bash('main', c)), c).toContain('T-1173 rule 5')
+      expect(reason(bash('main', c)), c).toContain('[prdt write guard]')
   })
 
   test('false positives stay silent: prdt CLI calls, reads, a sandbox PRDT_HOME, the home dir itself, the scratchpad', () => {
@@ -96,15 +96,15 @@ describe.skipIf(!PY)('T-1173 rule 5 — the runtime root is read-only', () => {
     const f = path.join(ph, 'overrides', 'developer.md')
     expect(write('main', f)).toBe('')
     expect(write('main-bare', f)).toBe('')
-    expect(reason(write('typed-only', f))).toContain('T-1173 rule 5')
-    expect(reason(bash('typed-only', 'touch ~/.prdt/wiki/x.md'))).toContain('T-1173 rule 5')
-    expect(reason(write('main', path.join(ph, 'wiki', 'feedback.md')))).toContain('T-1173 rule 5')
+    expect(reason(write('typed-only', f))).toContain('[prdt write guard]')
+    expect(reason(bash('typed-only', 'touch ~/.prdt/wiki/x.md'))).toContain('[prdt write guard]')
+    expect(reason(write('main', path.join(ph, 'wiki', 'feedback.md')))).toContain('[prdt write guard]')
   })
 
   test('a PO delete or overwrite whose glob or recursive target covers wiki/feedback.md is denied', () => {
     for (const c of ['rm -rf ~/.prdt/wiki/*', 'rm -rf ~/.prdt/wiki', 'rm -rf ~/.prdt/wiki/', 'rm ~/.prdt/wiki/f*',
       'rm ~/.prdt/wiki/*.md', 'rm -rf ~/.prdt/wiki/{fact,feedback}*', 'find ~/.prdt/wiki -delete', 'cd ~/.prdt/wiki && rm -rf *'])
-      expect(reason(bash('main', c)), c).toContain('T-1173 rule 5')
+      expect(reason(bash('main', c)), c).toContain('[prdt write guard]')
     for (const c of ['rm ~/.prdt/wiki/fact--x.md', 'rm ~/.prdt/wiki/fact--*.md', 'cp /tmp/f ~/.prdt/wiki/', 'rm -rf ~/.prdt/overrides/playbooks',
       'cat ~/.prdt/wiki/*'])
       expect(bash('main', c), c).toBe('')
@@ -112,8 +112,8 @@ describe.skipIf(!PY)('T-1173 rule 5 — the runtime root is read-only', () => {
 
   test('a non-prdt subagent (general-purpose, fork) and a prdt worker get no carve-out', () => {
     for (const who of ['general-purpose', 'fork', 'prdt-developer', 'prdt-designer'] as const) {
-      expect(reason(write(who, path.join(ph, 'overrides', 'developer.md'))), who).toContain('T-1173 rule 5')
-      expect(reason(bash(who, 'touch ~/.prdt/wiki/x.md')), who).toContain('T-1173 rule 5')
+      expect(reason(write(who, path.join(ph, 'overrides', 'developer.md'))), who).toContain('[prdt write guard]')
+      expect(reason(bash(who, 'touch ~/.prdt/wiki/x.md')), who).toContain('[prdt write guard]')
       expect(bash(who, 'prdt resource up vm --dispatch d-1'), who).toBe('')
     }
   })
@@ -137,22 +137,22 @@ describe.skipIf(!PY)('T-1173 rule 3 — a deploy command waits for ship entry', 
       'vercel --prod', 'npx vercel deploy --prod', 'vercel promote https://x.vercel.app', 'netlify deploy --prod',
       'bash -c "git push origin main"']) {
       const why = reason(bash('main', c))
-      expect(why, c).toContain('T-1173 rule 3')
+      expect(why, c).toContain('[prdt deploy guard]')
       expect(why, c).toContain('stage=build')
     }
   })
 
   test('a tag push ships on the deploy: --tags, v* and refs/tags/v* are deploys; --dry-run / -n are allowed', () => {
     for (const c of ['git push --tags', 'git push origin --tags', 'git push origin v1.14', 'git push origin refs/tags/v1.14',
-      'git push origin tag v1.14', 'git push origin HEAD:refs/tags/v1.14', 'git -C code push origin v1.14.2'])
-      expect(reason(bash('main', c)), c).toContain('T-1173 rule 3')
-    for (const c of ['git push -n origin main', 'git push --dry-run origin main', 'git push --dry-run --tags', 'git push -n --tags',
+      'git push origin tag v1.14', 'git push --follow-tags', 'git push origin main --follow-tags', 'git push origin HEAD:refs/tags/v1.14', 'git -C code push origin v1.14.2'])
+      expect(reason(bash('main', c)), c).toContain('[prdt deploy guard]')
+    for (const c of ['git push -n origin main', 'git push --dry-run origin main', 'git push --dry-run --tags', 'git push -n --tags', 'git push --follow-tags -n', 'git push --dry-run --follow-tags origin dev',
       'git push origin v1.14 --dry-run', 'git push origin dev', 'git push origin validation-fix'])
       expect(bash('main', c), c).toBe('')
   })
 
   test('a worker is held to it too', () => {
-    expect(reason(bash('prdt-developer', 'git push origin main'))).toContain('T-1173 rule 3')
+    expect(reason(bash('prdt-developer', 'git push origin main'))).toContain('[prdt deploy guard]')
   })
 
   test('false positives stay silent: the deploy words in prose, non-main pushes, previews, a merge off main', () => {
@@ -164,8 +164,8 @@ describe.skipIf(!PY)('T-1173 rule 3 — a deploy command waits for ship entry', 
 
   test('a bare push or merge on a checked-out main is a deploy', () => {
     fs.writeFileSync(path.join(code, '.git', 'HEAD'), 'ref: refs/heads/main\n')
-    expect(reason(bash('main', 'git push', code))).toContain('T-1173 rule 3')
-    expect(reason(bash('main', 'git merge dev', code))).toContain('T-1173 rule 3')
+    expect(reason(bash('main', 'git push', code))).toContain('[prdt deploy guard]')
+    expect(reason(bash('main', 'git merge dev', code))).toContain('[prdt deploy guard]')
     expect(bash('main', 'git merge --abort', code)).toBe('')
   })
 
@@ -176,7 +176,7 @@ describe.skipIf(!PY)('T-1173 rule 3 — a deploy command waits for ship entry', 
     expect(reason(bash('main', 'git push origin main'))).toContain('stage=define')
     mk('build', 'v1.2')
     fs.appendFileSync(path.join(root, 'docs', '_shared', 'wiki', 'log.md'), '- readiness v1.21 N/A-skip (other version)\n')
-    expect(reason(bash('main', 'git push origin main'))).toContain('T-1173 rule 3')
+    expect(reason(bash('main', 'git push origin main'))).toContain('[prdt deploy guard]')
     fs.appendFileSync(path.join(root, 'docs', '_shared', 'wiki', 'log.md'), '- 2026-10-20 readiness v1.2 N/A-skip (single patch)\n')
     expect(bash('main', 'git push origin main')).toBe('')
     expect(bash('main', 'git push origin main', scratch)).toBe('')
@@ -200,5 +200,45 @@ describe.skipIf(!PY)('T-1173 pre-filter — push/merge/vercel/netlify words reac
     for (const w of ['git push origin dev', 'git merge dev', 'vercel deploy', 'netlify status'])
       expect(reached('main', 'Bash', { command: w }), w).toBe(true)
     expect(reached('main', 'Write', { file_path: path.join(ph, 'run', 'x'), content: 'x' })).toBe(true)
+  })
+})
+
+describe.skipIf(!PY)('T-1173 deny wording — each rendered deny equals the approved lanes-design tab text', () => {
+  const SHIP = 'Next: ship entry (PO habit Deploy IS ship) — readiness pass (`readiness-dispatch`) + po-state stage write to ship'
+  const HOME_PO = ' except overrides/ and wiki/ (wiki/feedback.md only via `prdt feedback record`). Next: the `prdt` command that owns that file '
+    + '(`settings` · `register` · `feedback record` · `inbox` · `resource register-stop` · `preflight --recheck`; contracts/runtime-writes.md); '
+    + 'none owns it → leave it unwritten.'
+
+  test('deploy: PO push · PO gh pr merge · PO without a version · subagent', () => {
+    mk('build', 'v1.14')
+    const po = (how: string) => `[prdt deploy guard] denied ${how}: po-state stage=build (v1.14); a deploy runs only at stage=ship. `
+      + `${SHIP}, or a wiki/log.md line holding both \`N/A-skip\` and \`v1.14\`, then re-run.`
+    expect(reason(bash('main', 'git push origin main'))).toBe(po('Bash git push to main'))
+    expect(reason(bash('main', 'gh pr merge 12 --merge')))
+      .toBe(po('Bash gh pr merge') + ' A PR into a branch other than main: the user merges it themselves.')
+    expect(reason(bash('prdt-developer', 'git push origin main')))
+      .toBe('[prdt deploy guard] denied Bash git push to main: po-state stage=build (v1.14); a deploy runs only at stage=ship. '
+        + 'Next: return `blocked` naming this deploy; the PO runs ship entry.')
+    mk('define', '')
+    expect(reason(bash('main', 'cd code && git checkout main && git merge dev')))
+      .toBe(`[prdt deploy guard] denied Bash git merge into main: po-state stage=define; a deploy runs only at stage=ship. ${SHIP}, then re-run.`)
+  })
+
+  test('home: PO with the command list · subagent', () => {
+    mk()
+    const f = path.join(ph, 'register')
+    expect(reason(write('main', f))).toBe(`[prdt write guard] denied Write: ${f} — ${ph} is read-only${HOME_PO}`)
+    const o = path.join(ph, 'overrides', 'developer.md')
+    expect(reason(write('prdt-developer', o)))
+      .toBe(`[prdt write guard] denied Write: ${o} — ${ph} is read-only for every subagent. Next: return the change as a \`memory_notes[]\` line `
+        + '(situation → act, and why); it blocks your task → `needs_info`.')
+  })
+
+  test('wiki: a worker', () => {
+    mk()
+    const f = path.join(root, 'docs', '_shared', 'wiki', 'inbox.md')
+    expect(reason(write('prdt-developer', f)))
+      .toBe(`[prdt write guard] denied Write: ${f} — a worker never writes a project wiki (docs/*/wiki/**). `
+        + 'Next: return that content as a `memory_notes[]` line; the return hook appends it to wiki/inbox.md.')
   })
 })
