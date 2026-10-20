@@ -78,7 +78,8 @@ function scanRepo(): Record<string, number> {
   const add = (r: Record<string, number>) => { for (const [k, v] of Object.entries(r)) all[k] = (all[k] ?? 0) + v }
   const read = (p: string) => fs.readFileSync(p, 'utf8')
   const prdt = path.join(PKGS, 'core', 'scripts', 'prdt')
-  add(scanPython(rel(prdt), read(prdt)))
+  // T-1170: the CLI body lives in prdt_cli.py; its sites stay keyed under the `prdt` name (the launcher has none)
+  add(scanPython(rel(prdt), read(path.join(PKGS, 'core', 'scripts', 'prdt_cli.py'))))
   const scripts = path.join(PKGS, 'core', 'scripts')
   // hooks and the status line carry embedded Python — counted per file
   const shell = [...walk(path.join(scripts, 'hooks'), (f) => f.endsWith('.sh')), path.join(scripts, 'statusline-prdt.sh')]
@@ -162,6 +163,8 @@ const ALLOW: Record<string, number> = {
   'core/src/settings/ui-settings.ts': 1,
   // viewer: doctrine copy into a fresh mkdtemp dir used as the throwaway PRDT_HOME for `--plan` (T-1050) — outside any project / state dir
   'viewer/lib/discipline-load.mjs': 1,
+  // viewer: appends a project realpath to $PRDT_HOME/run/open-roots (T-1191) — O_NOFOLLOW append under the user-home tooling dir, never a project's .prdt/
+  'viewer/lib/open-roots.mjs': 2,
   'gui/electron/chat-store.ts': 2,
   'gui/electron/claude-installer.ts': 1,
   'gui/electron/ipc/attachments.ts': 1,
@@ -174,7 +177,7 @@ const ALLOW: Record<string, number> = {
   'gui/electron/ipc/settings.ts': 1,
   'gui/electron/mechanical-write.ts': 1,
   'gui/electron/po-session-config.ts': 1,
-  'gui/electron/prdt-bootstrap.ts': 10,
+  'gui/electron/prdt-bootstrap.ts': 11, // +1 T-1191: prdt_open_url.py / prdt-url-scheme.sh copied into $PRDT_HOME/bin (home, not a project)
   'gui/electron/toolchain.ts': 4,
   'viewer/cli.mjs': 3,
 }

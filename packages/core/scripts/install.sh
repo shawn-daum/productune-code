@@ -281,6 +281,18 @@ EOF
 PRDT_DISCIPLINE="$PRDT_HOME/discipline" "$PRDT_HOME/bin/prdt" menus >/dev/null
 say "   mirrored (discipline + doctrine + hooks + bin, menus regenerated)"
 
+# 1a. prdt:// URL scheme — T-1191: the viewer env card's 「텍스트 편집기로 열기」.
+#     A missing script (a synthetic test root) skips; a failure is one line and
+#     the install goes on (the card still has 경로 복사). The script registers
+#     with LaunchServices only when PRDT_HOME is the login user's own ~/.prdt.
+if [ -f "$ROOT/scripts/prdt_open_url.py" ] && [ -f "$ROOT/scripts/prdt-url-scheme.sh" ]; then
+  cp "$ROOT/scripts/prdt_open_url.py" "$PRDT_HOME/bin/prdt_open_url.py"
+  cp "$ROOT/scripts/prdt-url-scheme.sh" "$PRDT_HOME/bin/prdt-url-scheme.sh"
+  chmod +x "$PRDT_HOME/bin/prdt_open_url.py" "$PRDT_HOME/bin/prdt-url-scheme.sh"
+  PRDT_HOME="$PRDT_HOME" bash "$PRDT_HOME/bin/prdt-url-scheme.sh" install 2>&1 | sed 's/^/1a) /' \
+    || say "1a) url scheme NOT installed — 「텍스트 편집기로 열기」 will not open; 경로 복사 still works"
+fi
+
 # 1b. build the node bridge (dist/bin/meta-cli.cjs) — T-731.
 #     WHY: the bridge is a BUILD ARTIFACT of $ROOT/src (tsc + esbuild, per
 #     $ROOT/package.json's `build` script), `dist/` is gitignored, and until now
