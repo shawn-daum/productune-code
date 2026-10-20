@@ -463,7 +463,7 @@ describe.skipIf(!PY)('T-834 — no worker writes the track records', () => {
     // records is no longer silent since T-1173 rule 5 (the runtime root is read-only)
     expect(bash(`rm -f ${scratch}/*.json`)).toBe('')
     for (const c of [`touch ${prdtHome}/*.log`, `rm -f ${prdtHome}/w*`]) {
-      expect(denied(bash(c)), c).toContain('T-1173 rule 5')
+      expect(denied(bash(c)), c).toContain('[prdt write guard]')
     }
   })
 
