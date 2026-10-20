@@ -23,8 +23,9 @@
 #         teach a workaround. Promote to deny after one clean round.
 #   DENY  ④ (T-695) the MACHINE is over a resource cap — measured by tooling,
 #         never by PO judgment, after ①–③ pass (a malformed `[ctx]` keeps its
-#         own deny; a non-prdt dispatch and a cwd outside a prdt project stay
-#         fork-free and silent). See "T-695: machine resource cap" below for
+#         own deny; a cwd outside a prdt project stays fork-free and silent).
+#         T-1171: a non-prdt dispatch is capped too — see SET below. See
+#         "T-695: machine resource cap" below for
 #         the five axes, their measurement, the defaults and the override file.
 #   RECORD + WARN  ⑤ (T-773) every dispatch that passed ①–④ appends one row to
 #         `<project>/.prdt/schedule.jsonl` against the critical path of that
@@ -56,6 +57,25 @@
 #         candidate). Neither axis EVER guesses: no worker evidence yet, or a
 #         worktree/model this machine's other candidates cannot resolve, and
 #         that marker counts toward neither.
+#   SET   ⑦ (T-1171) a non-`prdt-` dispatch from the PO (Explore ·
+#         general-purpose · Plan · claude-code-guide · claude · an absent type ·
+#         fork) carries no `[ctx]` and is never judged on one, but it passes ④
+#         (as a no-suite dispatch) and ⑤ (persona = its type, no ticket) like
+#         any prdt dispatch. With no `tool_input.model` it would inherit the
+#         SESSION model (ntf-pm 2026-10-19: an Explore backlog sweep ran on
+#         opus), so the gate returns `updatedInput` = the same input plus
+#         `model: "sonnet"` — no permissionDecision (the normal permission flow
+#         stands), no reason, no added text. Measured on harness 2.1.304
+#         (headless, opus session, Explore, no model): without the hook the
+#         subagent ran on opus; with `updatedInput` alone it ran on sonnet.
+#         Why SET, not deny: a deny costs the PO a turn and puts a reason in
+#         its context, every time; the set costs neither. Why sonnet: the
+#         lowest floor any playbook names (no playbook floor is haiku), and a
+#         PO that wants another tier names it — an explicit `model` is never
+#         touched. A fork gets no tier: the harness ignores `model` on a fork
+#         (it always runs the parent's model). Workflow-tool agents never reach
+#         this hook (measured, same harness: their spawn raises PreToolUse
+#         `Workflow` + SubagentStart `workflow-subagent`, no PreToolUse `Agent`).
 #   NOT HERE — the return/envelope side (slice 3), and the three binary
 #         candidates held under doctrine #5 for zero observed violations
 #         (AskUserQuestion in a worker · worker↔worker calls · discipline-path
@@ -359,6 +379,9 @@ CLAUSE_PRD='`[ctx].prd_path` = `docs/<product>/prd/PRD.md#v<N>.<m>`'
 CLAUSE_LANG='Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · `dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.'
 CLAUSE_DISPATCH_ID='`"dispatch_id"` = the PO'\''s minted id, one per dispatch, never per session and never a harness agent id — it owns that dispatch'\''s resource markers; the gate denies its absence on a `prdt-qa` or `prdt-developer` `subagent_type`.'
 
+# T-1171: the tier a non-prdt, non-fork dispatch with no model is set to (SET ⑦).
+NONPRDT_TIER="sonnet"
+
 IFS= read -r -d '' PROG <<'JQ'
 def hangul_ratio:
   # Letters only, both sides: digits, punctuation and the JSON scaffolding are
@@ -378,6 +401,21 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
 def warn($what): {hookSpecificOutput: {hookEventName: "PreToolUse",
   additionalContext: $what}};
 
+def want_model:
+  ((.tool_input.model // "") ) as $m
+  | if ($m | type) == "string" and ($m | test("^(sonnet|opus|haiku|fable)$")) then $m else "default" end;
+# T-1171: the tier this dispatch will actually run at — a non-prdt, non-fork
+# dispatch with no model runs at the tier the gate sets ($tier), so the
+# model_tier axis and the schedule row count it there, never under "default".
+def eff_model:
+  if want_model != "default" then want_model
+  elif (((.tool_input // {}).subagent_type // "") | type) == "string"
+       and ((((.tool_input // {}).subagent_type // "") | test("^prdt-")) | not)
+       and ((.tool_input // {}).subagent_type // "") != "fork"
+       and (((.tool_input // {}).model // "") == "")
+       and (((.tool_input // {}).prompt | type) == "string")
+  then $tier else "default" end;
+
 def head: "[prdt dispatch gate] DENIED before the worker spawned: ";
 def tail: "\nNothing was spawned and no dispatch tokens were spent — fix the line and re-dispatch.";
 
@@ -389,7 +427,12 @@ if (.hook_event_name != "PreToolUse") or (.tool_name != "Agent") then empty
 else (.tool_input // {}) as $ti
 | if ($ti | type) != "object" then empty
   elif (($ti.subagent_type // "") | type) != "string" then empty
-  elif (($ti.subagent_type // "") | test("^prdt-")) | not then empty
+  elif (($ti.subagent_type // "") | test("^prdt-")) | not then
+    # T-1171: never judged on `[ctx]`; a missing model gets the fixed tier.
+    # A payload with no prompt is not a real call: never rewrite it (fail open).
+    if eff_model == $tier and want_model == "default" and ($ti.prompt | type) == "string"
+    then {hookSpecificOutput: {hookEventName: "PreToolUse", updatedInput: ($ti + {model: $tier})}}
+    else empty end
   elif ($ti.prompt | type) != "string" then empty
   else
     ([$ti.prompt | split("\n")[] | select(test("^\\[ctx\\] \\{"))] | first) as $line
@@ -473,20 +516,17 @@ def want_ticket:
        and (($c.slug // null) | type) == "string" and ($c.slug | test("^[a-z0-9]+(-[a-z0-9]+)*$"))
        and (($c.prd_path // null) | type) == "string" and ($c.prd_path | test("^docs/([a-z0-9-]+/)?prd/PRD\\.md#v[0-9]+\\.[0-9]+$"))
     then "\($c.slug) \($c.prd_path) \([.tool_input.prompt | scan("T-[0-9]+")] | unique | .[:8] | join(" "))" else "" end;
-def want_model:
-  ((.tool_input.model // "") ) as $m
-  | if ($m | type) == "string" and ($m | test("^(sonnet|opus|haiku|fable)$")) then $m else "default" end;
 
-# T-695: two lines — does the resource cap apply to this call (a `prdt-*`
-# dispatch on PreToolUse/Agent), and the `[ctx]` verdict above (deny · warn ·
+# T-695: two lines — does the resource cap apply to this call (any Agent
+# dispatch on PreToolUse — T-1171 dropped the `prdt-*` restriction), and the `[ctx]` verdict above (deny · warn ·
 # nothing) as one compact JSON line or an empty line. Structural, never a
 # substring test on the raw payload. T-774 adds a third value (this dispatch's
 # model tier) on the FIRST line, tab-separated after `applies` — never a third
 # line, so the existing two-line split below only needs one more cut.
-{applies: (if (.hook_event_name == "PreToolUse") and (.tool_name == "Agent") and ((.tool_input // {}) | type) == "object"
+{applies: (if (.hook_event_name == "PreToolUse") and (.tool_name == "Agent") and (.tool_input | type) == "object"
               and (((.tool_input // {}).subagent_type // "") | type) == "string"
-           then ((.tool_input // {}).subagent_type // "") | test("^prdt-") else false end),
- out: ([gate] | first), model: want_model, persona: want_persona, checkout: want_checkout, ticket: want_ticket, files: want_files}
+           then true else false end),
+ out: ([gate] | first), model: eff_model, persona: want_persona, checkout: want_checkout, ticket: want_ticket, files: want_files}
 | "\(.applies)\t\(.model)\t\(.persona)\t\(.checkout)\t\(.ticket)\t\(.files)\n\(if .out == null then "" else (.out | tojson) end)"
 JQ
 
@@ -495,6 +535,7 @@ RAW="$(printf '%s' "$EV" | jq -r \
   --arg clause_prd "$CLAUSE_PRD" \
   --arg clause_lang "$CLAUSE_LANG" \
   --arg clause_dispatch_id "$CLAUSE_DISPATCH_ID" \
+  --arg tier "$NONPRDT_TIER" \
   --argjson required '["slug","goal","change_meta","acceptance","wiki_refs","user_lang","prd_path"]' \
   "$PROG" 2>/dev/null)"
 
@@ -1165,7 +1206,14 @@ schedule_record() {
   cli="$hd/../bin/prdt"
   [ -f "$cli" ] || cli="$hd/../prdt"
   [ -f "$cli" ] || return 0
-  printf '%s' "$EV" | PRDT_META_BACKUP=0 python3 "$cli" schedule record 2>/dev/null
+  # T-1171: a tier the gate set rides the recorded event, so the row names the
+  # model the subagent actually runs at.
+  local ev="$EV"
+  case "$GATE" in
+    *'"updatedInput":'*) ev="$(printf '%s' "$EV" | jq -c --argjson g "$GATE" '.tool_input = $g.hookSpecificOutput.updatedInput' 2>/dev/null)"
+                        [ -n "$ev" ] || ev="$EV" ;;
+  esac
+  printf '%s' "$ev" | PRDT_META_BACKUP=0 python3 "$cli" schedule record 2>/dev/null
 }
 
 # Merge extra advisory lines into the `[ctx]` verdict (a warn object or empty)
@@ -1177,7 +1225,7 @@ emit() {
     exit 0
   fi
   if [ -n "$GATE" ]; then
-    out="$(printf '%s' "$GATE" | jq -c --arg n "$extra" '.hookSpecificOutput.additionalContext += "\n" + $n' 2>/dev/null)"
+    out="$(printf '%s' "$GATE" | jq -c --arg n "$extra" '.hookSpecificOutput.additionalContext |= (if . == null then $n else . + "\n" + $n end)' 2>/dev/null)"
   else
     out="$(jq -nc --arg n "$extra" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $n}}' 2>/dev/null)"
   fi

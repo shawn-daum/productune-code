@@ -14724,14 +14724,22 @@ def schedule_record(ev, now=None):
     if not isinstance(ev, dict):
         return None, None
     ti = ev.get("tool_input") if isinstance(ev.get("tool_input"), dict) else {}
-    sub = ti.get("subagent_type")
-    if not (isinstance(sub, str) and sub.startswith("prdt-")):
+    sub = ti.get("subagent_type", "")
+    if sub is None:
+        sub = ""
+    if not isinstance(sub, str):
         return None, None
+    # T-1171: a non-prdt dispatch (Explore · general-purpose · fork · …) passed
+    # the gate too and is recorded under its own type (absent = the harness
+    # default, general-purpose). It has no `[ctx]` contract, so its prompt is
+    # never read: no ticket (off-graph) and therefore never a warning line.
+    prdt = sub.startswith("prdt-")
+    persona = sub[len("prdt-"):] if prdt else (sub or "general-purpose")
     cwd = ev.get("cwd")
     root = find_project_root(Path(cwd)) if isinstance(cwd, str) and cwd.startswith("/") else None
     if root is None:
         return None, None
-    ctx = _ctx_from_prompt(ti.get("prompt")) or {}
+    ctx = (_ctx_from_prompt(ti.get("prompt")) or {}) if prdt else {}
     tickets = _schedule_tickets(root)
     sched = compute_schedule(root, tickets)
     ticket, source = schedule_ticket_for_ctx(ctx, tickets)
@@ -14757,7 +14765,7 @@ def schedule_record(ev, now=None):
            "dispatch_id": str_or_none(ctx.get("dispatch_id")),
            "tool_use_id": str_or_none(ev.get("tool_use_id")),
            "session_id": str_or_none(ev.get("session_id")),
-           "persona": sub[len("prdt-"):], "model": model, "version": sched["version"],
+           "persona": persona, "model": model, "version": sched["version"],
            "ticket": ticket, "ticket_source": source, "slug": str_or_none(ctx.get("slug")),
            "critical_path": sched["critical_path"], "cp_length": sched["cp_length"], "top": top,
            "sent_slack": by_id[ticket]["slack"] if ticket in by_id else None,
