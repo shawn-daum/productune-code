@@ -7248,7 +7248,11 @@ def readme_stale_at_tag_warnings(root):
     readme = show("README.md")
     if readme is None:
         return []
-    cli_source = show("packages/core/scripts/prdt")
+    # T-1170: the CLI body lives in prdt_cli.py behind the `prdt` launcher at
+    # tags cut after the split; older tags still hold the whole CLI in `prdt`.
+    cli_source = show("packages/core/scripts/prdt_cli.py")
+    if cli_source is None:
+        cli_source = show("packages/core/scripts/prdt")
     if cli_source is None:
         return []
     try:
