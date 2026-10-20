@@ -228,7 +228,7 @@ schedule_viewer_regen_root() {
   for d in "$hook_dir/../bin" "$hook_dir/.."; do
     [ -f "$d/prdt_safe_fs.py" ] && { safe_dir="$(cd -P -- "$d" 2>/dev/null && pwd -P)"; break; }
   done
-  python3 - "$root" "$prdt_cli" "$safe_dir" >/dev/null 2>&1 <<'PY'
+  python3 -I - "$root" "$prdt_cli" "$safe_dir" >/dev/null 2>&1 <<'PY'
 import subprocess, sys
 
 root, cli, safe_dir = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -320,7 +320,7 @@ finally:
     os.close(vfd)
 '''
 
-subprocess.Popen([sys.executable, "-c", WORKER, root, cli, safe_dir],
+subprocess.Popen([sys.executable, "-I", "-c", WORKER, root, cli, safe_dir],
                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                   start_new_session=True)
 PY

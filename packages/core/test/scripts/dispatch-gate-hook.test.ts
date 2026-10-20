@@ -315,10 +315,11 @@ describe('silence outside its scope', () => {
     }
   })
 
-  test('a non-prdt subagent_type is never judged', () => {
+  test('a non-prdt subagent_type is never judged on `[ctx]` (T-1171: it gets the resource cap and a model tier instead)', () => {
     const proj = makeProject()
     for (const st of ['general-purpose', 'Explore', 'fork', 'claude', 'prdtx-developer', '']) {
-      expect(run({ cwd: proj, subagentType: st, prompt: 'no ctx line' })).toBe('')
+      const out = run({ cwd: proj, subagentType: st, prompt: 'no ctx line', model: 'haiku' })
+      expect(out).toBe('')
     }
   })
 
@@ -408,11 +409,11 @@ describe('T-704: worker persona fork spawns are denied by caller identity (`agen
     }
   })
 
-  test('T-818: the PO (no `agent_type`, or `prdt-po`) spawning a non-fork subagent is unaffected', () => {
+  test('T-818: the PO (no `agent_type`, or `prdt-po`) spawning a non-fork subagent is not denied', () => {
     const proj = makeProject()
-    expect(run({ cwd: proj, subagentType: 'general-purpose', prompt: 'x' })).toBe('')
+    expect(run({ cwd: proj, subagentType: 'general-purpose', prompt: 'x', model: 'sonnet' })).toBe('')
     expect(
-      run({ cwd: proj, agentId: 'agent-po', agentType: 'prdt-po', subagentType: 'general-purpose', prompt: 'x' }),
+      run({ cwd: proj, agentId: 'agent-po', agentType: 'prdt-po', subagentType: 'general-purpose', prompt: 'x', model: 'sonnet' }),
     ).toBe('')
   })
 
@@ -942,9 +943,14 @@ describe('T-561: whitespace never silences the gate', () => {
     // The skip must not turn into "read anything that looks close enough": the
     // pretty payload has to reach the SAME scope decisions, including the ones
     // that end in silence.
+    // T-1171: a non-prdt dispatch is no longer silent (it gets a model tier),
+    // so "same decision" is asserted as equal output, compact vs pretty.
     const o: EventOpts = { cwd: makeProject(), prompt: 'no ctx line', subagentType: 'Explore' }
-    const res = spawnSync('bash', [HOOK], { input: JSON.stringify(eventObject(o), null, 2), encoding: 'utf8' })
-    expect(res.stdout).toBe('')
+    const env = envFor().env
+    const pretty = spawnSync('bash', [HOOK], { input: JSON.stringify(eventObject(o), null, 2), encoding: 'utf8', env })
+    const compact = spawnSync('bash', [HOOK], { input: JSON.stringify(eventObject(o)), encoding: 'utf8', env })
+    expect(pretty.stdout).not.toContain('DENIED')
+    expect(pretty.stdout).toBe(compact.stdout)
   })
 
   test('a pretty payload outside a prdt project is still total silence', () => {
@@ -1512,8 +1518,8 @@ describe('T-695: the machine resource cap', () => {
       expect(d).not.toContain('WAITING')
     })
 
-    test('a non-prdt subagent on an over-cap machine: silence', () => {
-      expect(run({ cwd: proj, subagentType: 'general-purpose', prompt: 'no ctx' }, { machine: full })).toBe('')
+    test('T-1171: a non-prdt subagent on an over-cap machine waits too — the machine is one machine', () => {
+      expect(denyReason({ cwd: proj, subagentType: 'general-purpose', prompt: 'no ctx', model: 'haiku' }, { machine: full })).toContain('WAITING')
     })
 
     test('prdt-designer and prdt-po are gated too — the machine is one machine', () => {
@@ -1527,6 +1533,128 @@ describe('T-695: the machine resource cap', () => {
     test('outside a prdt project on an over-cap machine: silence', () => {
       expect(run({ cwd: tmp('prdt-t695-bare-'), prompt: 'no ctx' }, { machine: full })).toBe('')
     })
+  })
+})
+
+// ── T-1171: built-in subagent types and the PO's fork pass the gate too ─────
+// Before T-1171 every non-`prdt-` `subagent_type` (Explore · general-purpose ·
+// Plan · claude-code-guide · claude · "" · fork) left the gate at the persona
+// check: no resource cap, no schedule row, and with no `model` it inherited the
+// session model (ntf-pm 2026-10-19: an Explore backlog sweep ran on opus). Now
+// it is NOT judged on `[ctx]` (it has none) but it passes the resource cap and
+// is recorded in `.prdt/schedule.jsonl`; with no `model` the gate SETS one tier
+// through PreToolUse `updatedInput` — no deny, no added text. A fork keeps the
+// parent's model (the harness ignores `model` on a fork), so it gets no tier.
+describe('T-1171: non-prdt subagent types and the PO fork pass the resource cap and the schedule record', () => {
+  const TIER = 'sonnet'
+  function out(o: EventOpts, r: RunEnv = {}): any {
+    const s = run(o, r)
+    return s === '' ? null : JSON.parse(s).hookSpecificOutput
+  }
+  function rows(proj: string): any[] {
+    const f = path.join(proj, '.prdt', 'schedule.jsonl')
+    return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []
+  }
+
+  test('Explore with no model: the tier is set through updatedInput — every other field kept, no decision, no text', () => {
+    const proj = makeProject()
+    const o: EventOpts = { cwd: proj, subagentType: 'Explore', prompt: 'sweep the backlog for stale tickets' }
+    const h = out(o)
+    expect(h).not.toBeNull()
+    expect(h.hookEventName).toBe('PreToolUse')
+    expect(h.updatedInput).toEqual({ ...(eventObject(o).tool_input as object), model: TIER })
+    expect(h.permissionDecision).toBeUndefined()
+    expect(h.permissionDecisionReason).toBeUndefined()
+    expect(h.additionalContext).toBeUndefined()
+  })
+
+  test('Explore with an explicit model: left alone — complete silence', () => {
+    const proj = makeProject()
+    for (const model of ['haiku', 'sonnet', 'opus', 'fable']) {
+      expect(run({ cwd: proj, subagentType: 'Explore', prompt: 'x', model })).toBe('')
+    }
+  })
+
+  test('general-purpose, Plan, claude, an absent type: the same tier when no model is given', () => {
+    const proj = makeProject()
+    for (const st of ['general-purpose', 'Plan', 'claude-code-guide', 'claude', '']) {
+      const h = out({ cwd: proj, subagentType: st, prompt: 'x' })
+      expect(h.updatedInput.model).toBe(TIER)
+      expect(h.updatedInput.subagent_type).toBe(st)
+      expect(h.permissionDecision).toBeUndefined()
+    }
+  })
+
+  test('the PO fork: no tier (a fork keeps the parent model), silence under every cap', () => {
+    expect(run({ cwd: makeProject(), subagentType: 'fork', prompt: 'research this' })).toBe('')
+  })
+
+  test('over a cap: Explore and the PO fork wait like any no-suite dispatch, and no tier rides a deny', () => {
+    const proj = makeProject()
+    for (const st of ['Explore', 'fork', 'general-purpose']) {
+      const h = out({ cwd: proj, subagentType: st, prompt: 'x' }, { machine: { memp: MEMP_OK(9) } })
+      expect(h.permissionDecision).toBe('deny')
+      expect(h.permissionDecisionReason).toBe('[prdt dispatch gate] WAITING — not spawned (no-suite dispatch): free memory 9% / min 15%. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+      expect(h.updatedInput).toBeUndefined()
+    }
+    expect(rows(proj)).toEqual([])
+  })
+
+  test('the test-running caps (load, suites) do not hold a non-prdt dispatch — it runs no suite', () => {
+    const machine = { loadavg: '{ 51.80 40.00 30.00 }', ps: [PS_QUIET, VITEST_ROOT, VITEST_ROOT].join('\n') }
+    expect(run({ cwd: makeProject(), subagentType: 'fork', prompt: 'x' }, { machine })).toBe('')
+  })
+
+  test('the model-tier cap counts the tier the gate sets, not "default"', () => {
+    const home = tmp('prdt-t1171-home-')
+    fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_sonnet_max: 0 }))
+    const dir = path.join(home, 'run', 'dispatches')
+    fs.mkdirSync(dir, { recursive: true })
+    const tdir = path.join(home, 'transcripts')
+    fs.mkdirSync(tdir, { recursive: true })
+    const t = path.join(tdir, 'agent-s1.jsonl')
+    fs.writeFileSync(t, '{"type":"assistant","message":{"model":"claude-sonnet-5","content":[]}}\n')
+    const since = new Date(Date.now() - 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+    fs.writeFileSync(path.join(dir, 's1.json'), JSON.stringify({ agent_id: 's1', persona: 'developer', since, pairing: 'confirmed', model: 'sonnet', transcript: t }))
+    const proj = makeProject()
+    const h = out({ cwd: proj, subagentType: 'Explore', prompt: 'x' }, { home })
+    expect(h.permissionDecision).toBe('deny')
+    expect(h.permissionDecisionReason).toContain('in-flight on tier "sonnet" 1 / cap 0')
+    expect(run({ cwd: proj, subagentType: 'Explore', prompt: 'x', model: 'haiku' }, { home })).toBe('')
+  })
+
+  test('each passed one leaves one schedule row: persona = its type, model = the tier it runs at, no ticket', () => {
+    const proj = makeProject()
+    run({ cwd: proj, subagentType: 'Explore', prompt: 'x' })
+    run({ cwd: proj, subagentType: 'Explore', prompt: 'x', model: 'haiku' })
+    run({ cwd: proj, subagentType: 'general-purpose', prompt: 'x' })
+    run({ cwd: proj, subagentType: 'fork', prompt: 'x' })
+    run({ cwd: proj, subagentType: '', prompt: 'x' })
+    const r = rows(proj)
+    expect(r.map((x) => [x.kind, x.persona, x.model, x.ticket, x.class])).toEqual([
+      ['dispatch', 'Explore', TIER, null, 'off-graph'],
+      ['dispatch', 'Explore', 'haiku', null, 'off-graph'],
+      ['dispatch', 'general-purpose', TIER, null, 'off-graph'],
+      ['dispatch', 'fork', 'default', null, 'off-graph'],
+      ['dispatch', 'general-purpose', TIER, null, 'off-graph'],
+    ])
+  })
+
+  test('a worker persona still cannot spawn one (T-704/T-818 deny first, no tier, no row)', () => {
+    const proj = makeProject()
+    const h = out({ cwd: proj, agentId: 'a1', agentType: 'prdt-developer', subagentType: 'Explore', prompt: 'x' })
+    expect(h.permissionDecision).toBe('deny')
+    expect(h.permissionDecisionReason).toContain('T-818')
+    expect(h.updatedInput).toBeUndefined()
+    expect(rows(proj)).toEqual([])
+  })
+
+  test('outside a prdt project: still total silence, no tier', () => {
+    expect(run({ cwd: tmp('prdt-t1171-bare-'), subagentType: 'Explore', prompt: 'x' })).toBe('')
+  })
+
+  test('a prdt-* dispatch with no model still gets no tier — prdt behavior unchanged', () => {
+    expect(run({ cwd: makeProject() })).toBe('')
   })
 })
 
