@@ -86,16 +86,23 @@ const DEFAULT_STAGES = ['define', 'build', 'ship', 'retro', 'idle']
 /** Plants README.md + the toy CLI stub + `scripts/install.sh` (a path the
  * default README's runnable block names, so it must resolve), commits, tags. */
 function plantAndTag(codeRoot: string, tag: string, readme: string, opts?: Partial<{
-  subcommands: string[]; personas: string[]; stages: string[]
+  subcommands: string[]; personas: string[]; stages: string[]; split: boolean
 }>) {
   fs.mkdirSync(codeRoot, { recursive: true })
   git(codeRoot, 'init', '-q')
   writeFile(codeRoot, 'scripts/install.sh', '#!/bin/sh\necho toy\n')
-  writeFile(codeRoot, 'packages/core/scripts/prdt', cliStub({
+  const body = cliStub({
     subcommands: opts?.subcommands ?? DEFAULT_CMDS,
     personas: opts?.personas ?? DEFAULT_PERSONAS,
     stages: opts?.stages ?? DEFAULT_STAGES,
-  }))
+  })
+  if (opts?.split) {
+    // T-1170: post-split tree — `prdt` is a launcher with no PERSONAS/STAGES/add_parser text.
+    writeFile(codeRoot, 'packages/core/scripts/prdt', '#!/usr/bin/env python3\n"""launcher"""\nexec(open("prdt_cli.py").read())\n')
+    writeFile(codeRoot, 'packages/core/scripts/prdt_cli.py', body)
+  } else {
+    writeFile(codeRoot, 'packages/core/scripts/prdt', body)
+  }
   writeFile(codeRoot, 'README.md', readme)
   git(codeRoot, 'add', '-A')
   git(codeRoot, 'commit', '-q', '-m', 'seed')
@@ -149,6 +156,21 @@ describe.skipIf(!PYTHON3)('prdt doctor — README staleness at a cut tag (T-589)
     expect(lines[0]).toMatch(/hidden/)
     expect(lines[0]).not.toMatch(/stale against the shipped tag/)
     expect(lines[0]).not.toMatch(/vocabulary disagrees/)
+  })
+
+  test('T-1170: a tag on a launcher-split tree reads prdt_cli.py — no false violations', () => {
+    runInit()
+    plantAndTag(path.join(projectDir, 'code'), 'v1.0', HEALTHY_README, { split: true })
+    const lines = readmeLines(doctor())
+    expect(lines.some((l) => /stale against the shipped tag|vocabulary disagrees/.test(l))).toBe(false)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatch(/hidden/)
+  })
+
+  test('T-1170: a split tag still flags a real stale subcommand', () => {
+    runInit()
+    plantAndTag(path.join(projectDir, 'code'), 'v1.0', HEALTHY_README.replace('prdt wiki ', 'prdt bogus'), { split: true })
+    expect(readmeLines(doctor()).some((l) => /prdt bogus/.test(l))).toBe(true)
   })
 
   test('silent: no tag at all (degrade-never-raise)', () => {
