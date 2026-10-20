@@ -41,7 +41,7 @@ Continues `contracts.md` §Tickets; binds every persona the same way, loaded on 
 
 ## `rider:` — spare-capacity eligibility, written at creation
 - PO, at creation, backlog included: `rider: true` + `touches: [<path>…]` only when all hold — `type` design|impl|qa · `assignee` designer|developer|qa · every `deps` entry `done`, or none · no open ticket names it in `deps` · no product-shape change (PO habit Triage) · `touches` = every file or `/`-terminated dir it would edit, `change_meta.files` form. One fails → no `rider` key; absent = not a rider. A `deps` edge added later, either end → drop `rider` in that same write.
-- Read by the PO's `spare-capacity` run; never a consent source (§`type: decision`).
+- A filing hint: `spare-capacity` §Pull re-checks every condition at pull and ranks it only on ties; never a consent source (§`type: decision`).
 
 ## Redeploys
 - Redeploys append to the version's single `ops` ticket, not new tickets.
