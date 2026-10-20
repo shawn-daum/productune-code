@@ -709,7 +709,7 @@ LANE_GATE_PATH_RE = re.compile(r"`(docs/[^`\s]+)`")
 
 
 # R11 (T-1184): the name is everything between `레인 ` and the first ` ·` — words included.
-LANE_NAME_RE = re.compile(r"^레인\s+(\S.*?)\s*·")
+LANE_NAME_RE = re.compile(r"^레인\s+([^\s·].*?)\s*·")
 
 
 # R7/R11: the 자투리 lane's fixed name (statusline label `statusline.lane.besteffort`).

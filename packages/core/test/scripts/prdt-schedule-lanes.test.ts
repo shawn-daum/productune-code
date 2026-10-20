@@ -105,7 +105,30 @@ describe.skipIf(!PYTHON3)('prdt schedule lanes', () => {
     expect(t.out).not.toContain('dispatch next')
     expect(t.out).toMatch(/^lanes done: \(none\)$/m)
     expect(t.out).toMatch(/^total 1\/4 = lanes 1\/4 · impl 1\/4$/m)
-    expect(t.out).not.toContain('critical path')
+    expect(t.out).toMatch(/^critical path \(2\): T-003 → T-005$/m) // F1 (T-1184 QA): lane mode prints it too
+  })
+
+  test('F3 (QA): a row whose text after 레인 starts with `·` has no name — falls back to A/B/C with the note', () => {
+    writePrd([`| **합격선** | **레인 · \`${GATE_A}\` 가 있다 · 둘째 조건** |`])
+    writeTicket('v0.1', 'T-001', { gate: GATE_A })
+    const [a] = lanes()
+    expect(a.name).toBe('A')
+    expect(a.unnamed).toBe(true)
+    expect(run(['schedule']).out).toMatch(/^note: lane A has no name$/m)
+  })
+
+  test('F1 (QA): lane mode prints the global first pick and the critical path before the lane blocks', () => {
+    writePrd([rowA, rowB])
+    writeTicket('v0.1', 'T-001', { gate: GATE_A })
+    writeTicket('v0.1', 'T-002', { gate: GATE_B })
+    writeTicket('v0.1', 'T-003', { deps: '[T-002]' })
+    writeTicket('v0.1', 'T-004', { deps: '[T-003]' })
+    const out = run(['schedule']).out.split('\n')
+    const fp = out.findIndex((l) => /^first pick: T-002  slack 0  developer  blocks 2$/.test(l))
+    expect(fp).toBeGreaterThan(0)
+    const cp = out.findIndex((l) => /^critical path \(\d+\): T-002/.test(l))
+    expect(cp).toBeGreaterThan(fp)
+    expect(out.findIndex((l) => l.startsWith('lane '))).toBeGreaterThan(cp)
   })
 
   test('two gates: lanes follow table order, a named lane keeps its name, a row with no path is not linked, a second row on the same ticket is not linked with a warning', () => {

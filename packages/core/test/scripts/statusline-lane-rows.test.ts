@@ -179,6 +179,19 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     expect(rows({ PRDT_LANG: 'ko' })[1]).toBe('작업완료: A 1/1 · C 1/1 · 자투리 1/1')
   })
 
+  test('F2 (QA): the finished row never truncates an entry — it continues on the next row (9 long names, COLUMNS=80)', () => {
+    const gates = Array.from({ length: 9 }, (_, i) => `docs/artifacts/v0.1/g${i}.md`)
+    writePrd(gates.map((g, i) => `| **합격선** | **레인 아주 긴 이름의 레인 번호 ${i} · \`${g}\` 가 있다** |`))
+    gates.forEach((g, i) => ticket(`T-00${i + 1}`, { status: 'done', gate: g }))
+    ticket('T-050')
+    setStage('build')
+    const r = rows({ COLUMNS: '80' })
+    expect(r.join('\n')).not.toContain('…')
+    const doneRows = r.filter((x, i) => i > 0 && (x.startsWith('done:') || /^\S.*\d+\/\d+$/.test(x) && !x.startsWith('lane')))
+    expect(doneRows.length).toBeGreaterThan(1)
+    for (let i = 0; i < 9; i++) expect(r.join('\n')).toContain(`아주 긴 이름의 레인 번호 ${i} 1/1`)
+  })
+
   test('R3: a lane that is not linked reads `not linked`', () => {
     writePrd([rowA, rowB])
     ticket('T-001', { gate: GATE_A })
