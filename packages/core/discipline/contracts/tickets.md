@@ -10,13 +10,14 @@ Continues `contracts.md` §Tickets; binds every persona the same way, loaded on 
 ## The frame — H2 keys, this order, nothing else at H2
 | key | holds | writer |
 |---|---|---|
-| `problem` | `As-Is` · `To-Be` · the analysis | PO |
+| `problem` | `As-Is` · `To-Be` · the analysis · `### 목적` · `### 확인` (below) | PO |
 | `options` | the scaffolded table filled — one row per option; columns `pros` · `cons` · `trade-off` · `recommend` with its 1-line why, plus one To-Be column (§`type: decision`) | PO |
 | `related` | hand-written: stakeholders · purpose · out-of-scope. Version position and feature map are DRAWN by the viewer from `prd_item` · `feature` · `deps` — never written | PO |
 | `acceptance` | the target; later additions as `###` | PO |
 | `evidence` | verbatim quotes · measurements | PO · designer |
 | `outcome` | the result; one `###` per slice | worker |
 | `log` | one dated line per entry | anyone |
+- User-started `problem` (a `*"…"*` or `“…”` user quote in it), `type` design|impl: `### 목적` (`### why`) = the user's why · `### 확인` (`### confirm`) = their reply to the read-back (PO habit Triage); heading starts with the label, a note after it allowed (`### 목적 (10-19 답)`); each ≥1 line quoting the user verbatim (`*"…"*` · `“…”` · `「…」`), any wording, never yours. A go-ahead alone under `### 확인 (바로 진행)` covers both. The dispatch gate reads only these; `related`'s purpose row stays the PO's.
 - No `## status`, no fold line in the file: the viewer draws both from frontmatter and key order.
 - `prdt tickets new --type <type> --slug <slug>` writes the frame (frontmatter · keys in order · the `options` table for `decision`); `prdt tickets fmt <id…> --check` names every violation — order · spelling · alias · a missing required key — and bare `fmt` rewrites headings only. Both skip a ticket created before 2026-09-24: an older ticket keeps its headings as written — the viewer's alias table renders them.
 - Labels live outside the ticket: the file carries keys, the viewer holds the words (one label table); a ticket names roles (`user` · `po` · `designer` · `developer` · `qa`), never a person.
