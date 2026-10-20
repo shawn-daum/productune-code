@@ -14382,6 +14382,14 @@ def _render_lanes_schedule(s, lab):
     named by lane, then waiting-on-user / in-flight over every row."""
     rows, lanes = s["rows"], s["lanes"]
     lane_of = {}
+    # F1 (T-1184 QA): the global first pick (rank 1 of the schedule order) and the
+    # critical path, before the lane blocks — the lane queues alone hide the rank.
+    first = next((r for r in rows if r["state"] == "ready" and r["rank"] == 1), None)
+    if first:
+        print(f"first pick: {lab(first['id'])}  slack {first['slack']}  {lab(first['assignee'])}  "
+              f"blocks {first['blocks']}")
+    if s["critical_path"]:
+        print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
     for ln in lanes:
         print(_render_lane(ln, rows, lab))
         if ln.get("unnamed"):

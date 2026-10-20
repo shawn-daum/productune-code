@@ -122,3 +122,15 @@ describe('T-1180: sidebar progress card opens 진행 상황', () => {
     expect(html).toContain("ev.target.matches('[data-card-open]')")
   })
 })
+
+describe('T-1184 F4: scope rule line and group heads never break mid-word', () => {
+  const html = page(collectAll(project()))
+  const decl = (sel: string) => {
+    const m = html.match(new RegExp(`(?:^|\\n)${sel.replace(/\./g, '\\.')}\\s*\\{([^}]*)\\}`))
+    return m ? m[1] : ''
+  }
+  it('.sc-why and .sc-grp use word-break: keep-all', () => {
+    expect(decl('.sc-why')).toContain('word-break: keep-all')
+    expect(decl('.sc-grp')).toContain('word-break: keep-all')
+  })
+})

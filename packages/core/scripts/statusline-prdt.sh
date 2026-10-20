@@ -953,8 +953,19 @@ def lane_block(lanes, cap):
     done = [x for x in lanes if x.get("finished") is True]
     out = []
     if done:
-        names = " · ".join(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}" for x in done)
-        out.append(({}, clean(L("lane.finished", lanes=names), cap=cap)))
+        ents = [clean(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}", cap=10**6) for x in done]
+        # F2 (T-1184 QA): never cut an entry — a row that would pass `cap` continues on the next row
+        cur = ""
+        first = True
+        pre = L("lane.finished", lanes="")
+        for e in ents:
+            lead = pre if first else ""
+            if cur and dw(lead + cur + " · " + e) > cap:
+                out.append(({}, lead + cur))
+                first, cur = False, e
+            else:
+                cur = cur + " · " + e if cur else e
+        out.append(({}, (pre if first else "") + cur))
     out.extend((x, lane_text(x, cap)) for x in lanes if x.get("finished") is not True)
     return out
 

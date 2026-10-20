@@ -2968,7 +2968,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .sc-row { display: contents; }
 .sc-lab { font-size: 12px; color: var(--text-secondary); padding: 3px 0; line-height: 1.45; word-break: keep-all; overflow-wrap: anywhere; }
 .sc-sq, .sc-n { padding: 3px 0; }
-.sc-grp { grid-column: 1 / -1; font-size: 11px; font-weight: 600; color: var(--text-tertiary); margin: var(--space-10) 0 1px; }
+.sc-grp { grid-column: 1 / -1; font-size: 11px; font-weight: 600; color: var(--text-tertiary); word-break: keep-all; overflow-wrap: break-word; margin: var(--space-10) 0 1px; }
 .sc-grp:first-child { margin-top: 0; }
 .sc-sep { grid-column: 1 / -1; border-top: 1px dashed var(--border-item); margin: var(--space-10) 0 var(--space-4); }
 .sc-out .sc-lab { color: var(--text-primary); font-weight: 600; }
@@ -2982,7 +2982,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .cp-sub { font-weight: 400; color: var(--text-tertiary); font-size: 11.5px; }
 .cp-n { font-size: 10.5px; color: var(--text-quaternary); font-weight: 400; }
 .sc-fix { font-size: 10.5px; color: var(--text-tertiary); border: 1px dashed var(--border-item); border-radius: 8px; padding: 0 6px; margin-left: var(--space-4); }
-.sc-why { font-size: 11.5px; color: var(--text-tertiary); margin: var(--space-8) 0 0; }
+.sc-why { font-size: 11.5px; color: var(--text-tertiary); word-break: keep-all; overflow-wrap: break-word; margin: var(--space-8) 0 0; }
 .sc-why-link { font: inherit; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
 .cp-empty { font-size: 11.5px; color: var(--text-tertiary); margin: var(--space-4) 0 0; }
 .cp-wlist { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
