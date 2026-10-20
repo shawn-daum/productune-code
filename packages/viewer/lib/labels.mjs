@@ -44,9 +44,11 @@ export const ENV = {
   noFile: 'env 파일 없음',
   emptyHead: '이 제품에는 env 파일이 없어요.',
   emptyDetail: (dir) => `찾은 폴더: ${dir} · 찾은 이름: .env · .env.*`,
-  go: 'env 보기',
-  reveal: '키 목록 보기',
-  mask: '키 목록 가리기',
+  // T-1191: per file card (션님 확정 2026-10-19).
+  openEditor: '텍스트 편집기로 열기',
+  openVsCode: 'VS Code 로 열기',
+  copyPath: '경로 복사',
+  copied: '경로를 복사했어요',
   sampleKeys: (n) => `견본 · ${n}개 키`,
   sampleNote: '견본 파일은 설정 여부를 세지 않아요.',
   homeNone: '코드 폴더에 env 파일이 없어요.',
@@ -55,7 +57,6 @@ export const ENV = {
   plainValue: '보통 값',
   machineEmptyHead: '기기 범위에 저장된 키가 없어요.',
   machineEmptyDetail: '터미널에서 prdt env set <KEY> 로 저장하면 키 이름이 여기에 보여요.',
-  homeNoneLine: '이 제품의 코드 폴더에 env 파일이 없어요.',
 }
 
 export const PAGE = {
@@ -84,13 +85,15 @@ export const HOME = {
   stageDone: (done, total) => `티켓 완료 ${done}/${total}`,
   scope: '스코프',
   scopeSub: (n) => `이번 버전 PRD ${n}항목`,
-  // T-1046: the 「PRD 항목 밖 티켓」 block — one-line definition, then (only when any) the malformed count linking to the ticket list.
-  scopeOutDef: '어느 PRD 항목에도 묶이지 않은 작업 티켓이에요. 티켓의 prd_item 이 비어 있거나 열린 섹션 항목과 맞지 않아요.',
+  // T-1046 → T-1180: the 「PRD 항목 밖 티켓」 block's explainer is ONE line: why a ticket is outside · decisions left out (count) · link to them.
+  scopeOutDef: 'prd_item 이 비었거나 맞는 항목 없음',
   scopeOutEmpty: '없음',
   scopeMalformed: (n) => `형식이 틀린 티켓 ${n}건`,
-  // T-1046 (T-1051 = A): decision records are not scope work, so the count skips them; this note says how many.
-  scopeDecisionNote: (n) => `결정 기록 ${n}건은 항목에 묶지 않아 여기서 세지 않아요.`,
-  scopeDecisionLink: '결정 목록 보기',
+  scopeDecisionNote: (n) => `결정 ${n}건 제외`,
+  scopeDecisionLink: '결정 목록',
+  // T-1180: scope rows grouped under their 합격선 lane (gate row); items no lane's tickets reach sit under the last head.
+  scopeLane: (name) => `레인 ${name}`,
+  scopeNoLane: '레인에 묶이지 않은 항목',
   scopeFixTag: (n) => `형식 고치기 ${n}`,
   scopeFixTitle: '버전 없이 키만 적혀 있어요. <버전>#<키> 형식으로 고쳐 주세요.',
   waitDec: '내 결정 대기',

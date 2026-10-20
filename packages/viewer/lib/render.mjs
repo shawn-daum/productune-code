@@ -742,9 +742,6 @@ const STORE_ICON_PATHS = {
   artifact:
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
 }
-// T-1047: lucide Eye / EyeOff, the same icons the GUI env pane's reveal toggle uses.
-const EYE_ICON_PATH = '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>'
-const EYE_OFF_ICON_PATH = '<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>'
 const CLOSE_ICON_PATH = '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
 const MOON_ICON_PATH = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'
 const SUN_ICON_PATH = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'
@@ -794,11 +791,12 @@ function sidebarIdentityHtml(id) {
   return `<div class="sidebar-id" title="${escapeHtml(idTitle)}"><b>${escapeHtml(id.project)}</b> ${run}</div>`
 }
 
-function sidebarCardHtml(c) {
+/** T-1180: the card opens the home store's 진행 상황 tab (`key` = that group's key, line-prefixed on a multi-line page) — a button for mouse and keyboard, like the tab link above it. */
+function sidebarCardHtml(c, key = 'progress') {
   if (!c) return ''
   const pct = c.total > 0 ? Math.round((c.done / c.total) * 1000) / 10 : 0
   const stageName = IDENTITY.stage[c.stage] || c.stage
-  return `<div class="sp" role="group" aria-label="${IDENTITY.cardLabel}"><div class="sp-top" title="${escapeHtml(IDENTITY.cardTopTitle(stageName, c.stage, c.stageDone, c.stageTotal))}"><span class="sp-stage">${escapeHtml(stageName)}</span><span>${c.stageDone}/${c.stageTotal}</span></div><div class="sp-count" title="${escapeHtml(IDENTITY.countTitle)}"><small>${IDENTITY.ticket}</small> <b>${c.done}</b><span class="sp-of">/${c.total}</span></div><div class="sp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.done}" aria-label="${IDENTITY.ticketBar(c.done, c.total)}"><i style="width:${pct}%"></i></div><div class="sp-wait"><span title="${escapeHtml(IDENTITY.decTitle)}">dec <b>${c.dec}</b></span><span>·</span><span title="${escapeHtml(IDENTITY.reqTitle)}">req <b>${c.req}</b></span></div></div>`
+  return `<div class="sp" role="button" tabindex="0" data-card-open="${escapeHtml(key)}" aria-label="${IDENTITY.cardLabel}"><div class="sp-top" title="${escapeHtml(IDENTITY.cardTopTitle(stageName, c.stage, c.stageDone, c.stageTotal))}"><span class="sp-stage">${escapeHtml(stageName)}</span><span>${c.stageDone}/${c.stageTotal}</span></div><div class="sp-count" title="${escapeHtml(IDENTITY.countTitle)}"><small>${IDENTITY.ticket}</small> <b>${c.done}</b><span class="sp-of">/${c.total}</span></div><div class="sp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.done}" aria-label="${IDENTITY.ticketBar(c.done, c.total)}"><i style="width:${pct}%"></i></div><div class="sp-wait"><span title="${escapeHtml(IDENTITY.decTitle)}">dec <b>${c.dec}</b></span><span>·</span><span title="${escapeHtml(IDENTITY.reqTitle)}">req <b>${c.req}</b></span></div></div>`
 }
 
 function toolVersionText(id) {
@@ -1214,10 +1212,10 @@ export const LINE_SECTIONED_STORES = ['home', 'prd', 'ticket', 'feature', 'artif
  */
 export function lineViews(data) {
   if (!Array.isArray(data.lines) || data.lines.length === 0) return []
-  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd }
+  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes }
   return [
     home,
-    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd })),
+    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes })),
   ]
 }
 
@@ -1242,7 +1240,7 @@ function lineHead(v) {
 
 /** `data` with tickets · PRD · version · stage scoped to one line. */
 function lineData(data, v) {
-  return { ...data, tickets: v.tickets, prd: v.prd, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
+  return { ...data, tickets: v.tickets, prd: v.prd, lanes: v.lanes, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
 }
 
 /** Flattens per-line `{groups, defaultKey}` into one group list: keys prefixed `<line>/` (home line bare), the first group of each line carrying the section head. `defaultKey` = the home line's default. */
@@ -1322,7 +1320,7 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', d
           const crumbAttr = g.crumb ? ` data-crumb="${escapeHtml(g.crumb)}"` : ''
           const dim = g.dim ? ' nav-dim' : ''
           // T-1165: the progress card sits right under the home store's 진행 상황 item.
-          const card = g.key === 'progress' && !cardPlaced ? ((cardPlaced = true), sidebarCardHtml(identity?.card)) : ''
+          const card = g.key === 'progress' && !cardPlaced ? ((cardPlaced = true), sidebarCardHtml(identity?.card, g.key)) : ''
           return `${head}<button type="button" class="nav-item nav-item-clickable${dim}${active}" data-group-select="${escapeHtml(g.key)}"${crumbAttr}><span>${escapeHtml(g.label)}</span>${countHtml}</button>${card}`
         })
         .join('\n')
@@ -2336,6 +2334,11 @@ function envOfView(data, v) {
   return l ? l.env : null
 }
 
+/** T-1191: what a file card's open links need besides the file — project root, line, VS Code found. */
+function envWhere(data, line) {
+  return data.projectRoot ? { root: data.projectRoot, line: line || null, vscode: !!(data.editors && data.editors.vscode) } : null
+}
+
 function envPill(set) {
   return `<span class="est ${set ? 'on' : 'off'}">${set ? ENV.set : ENV.unset}</span>`
 }
@@ -2344,29 +2347,39 @@ function envSetCount(f) {
   return f.keys.filter((k) => k.set).length
 }
 
-function envFileBody(f, dir) {
+/** T-1191: a file card's open controls. The prdt link carries the project root, the line and the
+ *  file NAME only — the URL handler (packages/core/scripts/prdt_open_url.py) rebuilds the path from
+ *  that project's own config, so a link can name nothing but an env file in a code folder. */
+function envActions(f, where) {
+  if (!where || !where.root || !where.absDir) return ''
+  const q = [`root=${encodeURIComponent(where.root)}`, ...(where.line ? [`line=${encodeURIComponent(where.line)}`] : []), `file=${encodeURIComponent(f.name)}`].join('&')
+  const abs = `${where.absDir}/${f.name}`
+  const vscode = where.vscode ? `<a class="env-act" href="${escapeHtml(`vscode://file${abs.split('/').map(encodeURIComponent).join('/')}`)}">${ENV.openVsCode}</a>` : ''
+  return `<div class="env-acts"><a class="env-act" href="${escapeHtml(`prdt://open-env?${q}`)}">${ENV.openEditor}</a>${vscode}` +
+    `<button type="button" class="env-act" data-env-copy="${escapeHtml(abs)}" data-label-done="${ENV.copied}">${ENV.copyPath}</button></div>`
+}
+
+function envFileBody(f, dir, where) {
   const set = envSetCount(f)
   // A sample file counts no set / empty (every key reads empty by design): names only.
   const tags = (k) => (k.codeWins ? `<span class="tagw">${ENV.codeWins}</span>` : '') + (k.plain ? `<span class="tagw">${ENV.plainValue}</span>` : '')
   const rows = f.keys.map((k) => `<div class="erow">${tags(k) ? `<span><code>${escapeHtml(k.name)}</code>${tags(k)}</span>` : `<code>${escapeHtml(k.name)}</code>`}${f.sample ? '' : envPill(k.set)}</div>`).join('')
-  const where = f.sample ? ENV.sampleKeys(f.keys.length) : dir || ''
+  const sampleWhere = f.sample ? ENV.sampleKeys(f.keys.length) : dir || ''
   const counts = f.sample ? '' : `<span class="env-c">${envPill(true)} ${set} ${envPill(false)} ${f.keys.length - set}</span>`
-  // T-1047: the key list is collapsed until the eye button reveals it (state per file card).
-  const eye = `<button type="button" class="env-eye" data-env-eye aria-expanded="false" aria-label="${ENV.reveal}" title="${ENV.reveal}" data-label-show="${ENV.reveal}" data-label-hide="${ENV.mask}">` +
-    `<span class="eye-on">${svgIcon(EYE_ICON_PATH, 14)}</span><span class="eye-off">${svgIcon(EYE_OFF_ICON_PATH, 14)}</span></button>`
-  return `<div class="dash-card env-card"><div class="env-h"><b>${escapeHtml(f.name)}</b><span class="env-dir">${escapeHtml(where)}</span>` +
-    `${counts}${eye}</div>` +
-    `<p class="env-note">${f.sample ? ENV.sampleNote : ENV.note}</p><div class="erows" hidden>${rows}</div></div>`
+  // T-1191 (T-1047 eye toggle removed): key names are shown by default — the page holds no value to hide.
+  return `<div class="dash-card env-card"><div class="env-h"><b>${escapeHtml(f.name)}</b><span class="env-dir">${escapeHtml(sampleWhere)}</span>` +
+    `${counts}</div>` +
+    `<p class="env-note">${f.sample ? ENV.sampleNote : ENV.note}</p>${envActions(f, where)}<div class="erows">${rows}</div></div>`
 }
 
 /** One current-version sidebar group per view: env = the last item (after 결정), its count = env file count (samples included). */
-function envGroup(env, emptyHead, machine) {
+function envGroup(env, emptyHead, machine, where) {
   const machineHtml = machineEnvBody(machine)
   if (!env || env.files.length === 0) {
     const body = `<div class="env-nofile"><b>${escapeHtml(emptyHead)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
     return { key: 'env', label: STORE_LABEL.env, count: 0, bodyHtml: body + machineHtml }
   }
-  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir)).join('\n') + machineHtml }
+  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir, where && { ...where, absDir: env.absDir })).join('\n') + machineHtml }
 }
 
 /** T-1109: the machine-scope section (~/.prdt/env/.env) — names, 설정됨 / 비어 있음, 제품 코드 값이 우선; none stored → the empty card. Absent `machine` (a single-file render) → nothing. */
@@ -2377,23 +2390,6 @@ function machineEnvBody(machine) {
     return `${head}<div class="env-nofile"><b>${ENV.machineEmptyHead}</b><span>${escapeHtml(ENV.machineEmptyDetail)}</span></div>`
   }
   return head + envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir)
-}
-
-/** Home's env block: per real env file (samples only when there is no real one) 설정됨 n · 비어 있음 m, the empty keys named, a link to the env item of the same version; no env file → one line. */
-function homeEnvBlock(env, prefix, noneText) {
-  const head = `<div class="cp-h">${STORE_LABEL.env}</div>`
-  const all = env ? env.files : []
-  const real = all.filter((f) => !f.sample)
-  const shown = real.length > 0 ? real : all
-  if (shown.length === 0) return `<div class="cp-block env-blk">${head}<p class="env-none">${noneText}</p></div>\n`
-  const rows = shown.map((f) => {
-    const set = envSetCount(f)
-    const empty = f.keys.filter((k) => !k.set)
-    const emptyHtml = empty.length === 0 ? '' : `<p class="env-empty"><span>${ENV.unset}</span>: ${empty.map((k) => `<code>${escapeHtml(k.name)}</code>`).join(' · ')}</p>`
-    return `<div class="env-file"><code>${escapeHtml(f.name)}</code><span class="env-c">${envPill(true)} ${set} · ${envPill(false)} ${f.keys.length - set}</span>` +
-      `<button type="button" class="env-go" data-open-store="home" data-open-group="${escapeHtml(prefix)}env">${escapeHtml(ENV.go)}</button></div>${emptyHtml}`
-  }).join('')
-  return `<div class="cp-block env-blk">${head}${rows}</div>\n`
 }
 
 // ---------- home: the in-progress version's workspace (T-666 slice 2a) ----------
@@ -2466,6 +2462,18 @@ function ticketButtonAttrs(id) {
   return `data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}" role="button" tabindex="0"`
 }
 
+/**
+ * T-1180: a scope row's name — the heading label up to its colon (a colon between digits is a clock time, never a
+ * split: 「05:20 …」), minus the trailing ticket refs `(T-…)` the PRD appends. Never shortened further; the full heading stays the tooltip.
+ */
+export function scopeItemName(label) {
+  const plain = String(label).replace(/`/g, '')
+  const m = /(?<!\d)[:：]|[:：](?!\d)/.exec(plain)
+  const head = (m ? plain.slice(0, m.index) : plain).trim()
+  const name = head.replace(/(?:\s*\(T-[^)]*\))+\s*$/, '').trim()
+  return name || head || plain.trim()
+}
+
 /** 스코프: one row per PRD item of the open section (label up to its colon; the full heading is the tooltip), then the 「PRD 항목 밖 티켓」 block (work tickets only; T-1046). */
 function homeScope(data, currentTickets) {
   const openItems = data.prd.openItems || []
@@ -2493,7 +2501,6 @@ function homeScope(data, currentTickets) {
   }
   const row = (label, title, tickets, extra = '', fix = 0) => {
     const sorted = [...tickets.filter((t) => t.frontmatter.status === 'done'), ...tickets.filter((t) => t.frontmatter.status !== 'done')]
-      .map((t) => t)
       .sort((x, y) => (x.frontmatter.status === 'done' ? 0 : 1) - (y.frontmatter.status === 'done' ? 0 : 1) || compareTicketIds(x.frontmatter.id, y.frontmatter.id))
     const done = tickets.filter((t) => t.frontmatter.status === 'done').length
     const sq = sorted
@@ -2502,19 +2509,39 @@ function homeScope(data, currentTickets) {
     const fixTag = fix > 0 ? `<span class="sc-fix" title="${escapeHtml(HOME.scopeFixTitle)}">${escapeHtml(HOME.scopeFixTag(fix))}</span>` : ''
     return `<div class="sc-row${extra}"><span class="sc-lab" title="${escapeHtml(title)}">${escapeHtml(label)}</span><span class="sc-sq">${sq}${fixTag}</span><span class="mono sc-n">${done}/${tickets.length}</span></div>`
   }
-  const rows = openItems.map((i) => {
-    const plain = i.label.replace(/`/g, '')
-    return row(plain.split(/[:：]/)[0].trim(), plain, byItem.get(i.key), '', fixCount.get(i.key) || 0)
-  })
+  const items = openItems.map((i) => ({ key: i.key, tickets: byItem.get(i.key), html: row(scopeItemName(i.label), i.label.replace(/`/g, ''), byItem.get(i.key), '', fixCount.get(i.key) || 0) }))
+  // T-1180: under their 합격선 lane (the one lane computation: prdt_lanes) — an item goes to the lane holding most of its tickets, ties to the earlier lane.
+  const lanes = Array.isArray(data.lanes) ? data.lanes : []
+  const groups = lanes.map((l) => ({ head: HOME.scopeLane(l.name), count: l.linked ? `${l.done}/${l.total}` : '', rows: [] }))
+  const loose = []
+  for (const it of items) {
+    const ids = it.tickets.map((t) => t.frontmatter.id)
+    let best = -1
+    let bestN = 0
+    lanes.forEach((l, i) => {
+      const n = ids.filter((id) => l.tickets.includes(id)).length
+      if (n > bestN) { best = i; bestN = n }
+    })
+    if (best >= 0) groups[best].rows.push(it.html)
+    else loose.push(it.html)
+  }
+  if (loose.length > 0 && groups.length > 0) groups.push({ head: HOME.scopeNoLane, count: '', rows: loose })
+  const grouped = groups.length > 0 ? groups.filter((g) => g.rows.length > 0 || g.head !== HOME.scopeNoLane) : []
+  const bodyRows = grouped.length > 0
+    ? grouped.map((g) => `<div class="sc-grp">${escapeHtml(g.head)}${g.count ? ` <span class="mono sc-n">${escapeHtml(g.count)}</span>` : ''}</div>${g.rows.join('')}`).join('')
+    : items.map((it) => it.html).join('')
   // T-1046: its own block under a divider; the row never disappears (0 shows 「없음」).
   const listKey = `${data.listPrefix || ''}${currentTicketBucketKey(data.tickets, data.currentVersion)}`
   const link = (text, store, key) => `<button type="button" class="sc-why-link" data-open-store="${store}" data-open-group="${escapeHtml(key)}">${escapeHtml(text)}</button>`
   const outRow = outOfScope.length > 0
     ? row(PROGRESS_OUT_OF_SCOPE_LABEL, PROGRESS_OUT_OF_SCOPE_LABEL, outOfScope, ' sc-out')
     : `<div class="sc-row sc-out"><span class="sc-lab">${escapeHtml(PROGRESS_OUT_OF_SCOPE_LABEL)}</span><span class="sc-sq"><span class="cp-empty">${escapeHtml(HOME.scopeOutEmpty)}</span></span><span class="mono sc-n">0</span></div>`
-  const defHtml = outOfScope.length > 0 ? `<p class="sc-why">${escapeHtml(HOME.scopeOutDef)}${malformed > 0 ? ` ${link(HOME.scopeMalformed(malformed), 'ticket', listKey)}` : ''}</p>` : ''
-  const noteHtml = decisions > 0 ? `<p class="sc-why">${escapeHtml(HOME.scopeDecisionNote(decisions))} ${link(HOME.scopeDecisionLink, 'home', `${data.listPrefix || ''}decision`)}</p>` : ''
-  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div>${rows.join('')}<div class="sc-outside">${outRow}${defHtml}${noteHtml}</div></div>`
+  // T-1180: one line — why outside · decisions left out · links.
+  const whyParts = []
+  if (outOfScope.length > 0) whyParts.push(`${escapeHtml(HOME.scopeOutDef)}${malformed > 0 ? ` ${link(HOME.scopeMalformed(malformed), 'ticket', listKey)}` : ''}`)
+  if (decisions > 0) whyParts.push(`${escapeHtml(HOME.scopeDecisionNote(decisions))} · ${link(HOME.scopeDecisionLink, 'home', `${data.listPrefix || ''}decision`)}`)
+  const whyHtml = whyParts.length > 0 ? `<p class="sc-why">${whyParts.join(' · ')}</p>` : ''
+  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div><div class="sc-rows">${bodyRows}<div class="sc-sep"></div>${outRow}</div>${whyHtml}</div>`
 }
 
 /** dec · req wait lists of `data.tickets`; the sidebar card (T-1165) and Home's wait block share this one call. */
@@ -2676,13 +2703,13 @@ function homeDependency(data, currentTickets) {
   return `<div class="cp-block">${head}${notice}${dependencyDiagram(graph, layoutHomeGraph(graph), dgId)}</div>`
 }
 
-function homeProgressBody(data, envHtml = '') {
+function homeProgressBody(data) {
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
 ${homeStageBar(currentTickets, data.poState?.stage || '?')}
 <div class="sc sc-grid">${homeWaits(data)}${homeScope(data, currentTickets)}</div>
-${envHtml}${homeDependency(data, currentTickets)}
+${homeDependency(data, currentTickets)}
 </div>`
 }
 
@@ -2699,12 +2726,12 @@ function homeLineGroups(data, v, views, repoRootHref) {
   // T-1108: an idle product has no open version, so its ticket pane lists every ticket it has (backlog + closed rounds).
   const homeTickets = idle ? [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))] : currentTickets
   const groups = [
-    { key: 'progress', label: HOME.working, bodyHtml: idle ? idleHomeHtml : `<div class="dash-grid">${homeProgressBody(ld, homeEnvBlock(envOfView(data, v), v.prefix, ENV.homeNoneLine))}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: idle ? idleHomeHtml : `<div class="dash-grid">${homeProgressBody(ld)}</div>` },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: idle ? lastClosedId(v) : v.currentVersion, bodyHtml: idle ? idleNotice(IDLE.prdHead(v.name), IDLE.prdDetail()) : prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: homeTickets.length, bodyHtml: ticketRowsTable(homeTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
-    envGroup(envOfView(data, v), ENV.emptyHead, v.line ? null : data.machineEnv),
+    envGroup(envOfView(data, v), ENV.emptyHead, v.line ? null : data.machineEnv, envWhere(data, v.line)),
   ]
   return { groups, defaultKey: 'progress' }
 }
@@ -2741,12 +2768,12 @@ function homeSection(data, repoRootHref) {
   const currentDecisions = currentDecisionPages(data.wiki, data.currentVersion)
   const decisionTickets = decisionTicketsOf(currentTickets)
   const groups = [
-    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data, homeEnvBlock(data.env, '', ENV.homeNone))}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
-    envGroup(data.env, ENV.homeNone, data.machineEnv),
+    envGroup(data.env, ENV.homeNone, data.machineEnv, envWhere(data, null)),
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
   const heading = `${STORE_LABEL.home} · ${data.currentVersion}`
@@ -2799,7 +2826,9 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .sidebar-foot { display: flex; align-items: flex-end; position: sticky; bottom: 0; margin: auto calc(-1 * var(--space-12)) 0; padding: var(--space-8) var(--space-12) var(--space-16); background: var(--bg-surface-on); border-top: 1px solid var(--border-item); }
 .foot-tool { height: 28px; display: flex; align-items: center; font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
 .rail-tool { display: none; }
-.sp { display: grid; gap: var(--space-6); margin: var(--space-8) 0 var(--space-12); padding: var(--space-10) var(--space-12); border: 1px solid var(--border-item); border-radius: var(--radius-8); background: var(--bg-surface-base); }
+.sp { cursor: pointer; display: grid; gap: var(--space-6); margin: var(--space-8) 0 var(--space-12); padding: var(--space-10) var(--space-12); border: 1px solid var(--border-item); border-radius: var(--radius-8); background: var(--bg-surface-base); }
+.sp:hover { border-color: var(--border-hover); }
+.sp:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .sp-top { display: flex; align-items: baseline; gap: var(--space-8); font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
 .sp-stage { font-family: var(--font-family); font-size: 10.5px; font-weight: 600; color: var(--text-info); background: var(--health-info-subtle); border: 1px solid var(--health-info); border-radius: var(--radius-4); padding: 1px 6px; }
 .sp-count { display: flex; align-items: baseline; gap: var(--space-6); font-family: var(--font-mono); color: var(--text-primary); }
@@ -2933,9 +2962,13 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .stage-sq.sq-done { background: var(--accent); border-color: var(--accent); }
 .sc { border-top: 1px solid var(--border-item); margin: var(--space-16) 0 0; padding: var(--space-16) 0 0; }
 .sc-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--space-24); }
-.sc-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: center; gap: var(--space-10); min-height: 20px; }
-.sc-lab { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sc-outside { margin-top: var(--space-12); padding-top: var(--space-10); border-top: 1px dashed var(--border-item); }
+.sc-rows { display: grid; grid-template-columns: fit-content(calc(100% - 140px)) minmax(72px, 1fr) auto; column-gap: var(--space-10); align-items: center; }
+.sc-row { display: contents; }
+.sc-lab { font-size: 12px; color: var(--text-secondary); padding: 3px 0; line-height: 1.45; overflow-wrap: anywhere; }
+.sc-sq, .sc-n { padding: 3px 0; }
+.sc-grp { grid-column: 1 / -1; font-size: 11px; font-weight: 600; color: var(--text-tertiary); margin: var(--space-10) 0 1px; }
+.sc-grp:first-child { margin-top: 0; }
+.sc-sep { grid-column: 1 / -1; border-top: 1px dashed var(--border-item); margin: var(--space-10) 0 var(--space-4); }
 .sc-out .sc-lab { color: var(--text-primary); font-weight: 600; }
 .sc-sq { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-width: 0; }
 .sc-n { font-size: 10.5px; color: var(--text-tertiary); }
@@ -3248,7 +3281,7 @@ details.v-fold[open] summary { color: var(--text-primary); }
 :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill:first-child, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note + h3.pill { margin-top: var(--space-16); }
 :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note { font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 var(--space-4); }
 @media (prefers-reduced-motion: reduce) { :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row td { transition: none; } }
-/* T-958: env screen + Home env block (approved screen set docs/artifacts/v1.13/define-screen-set.html #screen-env · home env-blk) */
+/* T-958: env screen (approved screen set docs/artifacts/v1.13/define-screen-set.html #screen-env; the Home env block left 진행 상황 in T-1191 / T-1179 C) */
 .nav-item.nav-dim:not(.active) span:first-child { color: var(--text-tertiary); }
 .env-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 4px; }
 .env-h b { font-family: var(--font-mono); font-size: 13px; }
@@ -3265,24 +3298,11 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .env-nofile b { color: var(--text-primary); font-size: 13px; }
 .env-scope { margin: 18px 0 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .tagw { font-family: var(--font-family); font-size: 10.5px; color: var(--text-tertiary); border: 1px solid var(--border-inline); border-radius: 100px; padding: 0 7px; margin-left: 8px; white-space: nowrap; }
-.env-file { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
-.env-file + .env-file, .env-empty + .env-file { margin-top: 8px; }
-.env-file code { font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); }
-.env-file .env-c { margin-left: 0; }
-.env-eye { background: none; border: 1px solid transparent; padding: 4px; min-width: 24px; min-height: 24px; justify-content: center; border-radius: 6px; cursor: pointer; color: var(--text-tertiary); display: inline-flex; align-items: center; margin-left: auto; }
-.env-c + .env-eye { margin-left: 0; }
-.env-eye:hover { background: var(--bg-state-hover); border-color: var(--border-hover); color: var(--text-primary); }
-.env-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.env-eye .eye-off, .env-eye[aria-expanded="true"] .eye-on { display: none; }
-.env-eye[aria-expanded="true"] .eye-off { display: inline-flex; }
-.env-eye .eye-on { display: inline-flex; }
-.erows[hidden] { display: none; }
 .env-card + .env-card { margin-top: 12px; }
-.env-go { margin-left: auto; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; background: none; border: none; padding: 0; }
-.env-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
-.env-empty { margin: 6px 0 0; font-size: 12px; color: var(--text-tertiary); line-height: 1.8; }
-.env-empty code { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); background: var(--bg-surface-on); border-radius: 4px; padding: 0 5px; }
-.env-none { margin: 0; font-size: 12px; color: var(--text-tertiary); }
+/* T-1191: a file card's open controls — link-styled, the same accent link look as .env-go had */
+.env-acts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 10px; }
+.env-act { color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; background: none; border: none; padding: 0; }
+.env-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 /* T-886: discipline screens (approved screen set docs/artifacts/v1.12/define-screen-set.html 「규율」) */
 a.dl { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 a.dl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
@@ -3333,7 +3353,6 @@ ${DISCIPLINE_LOAD_CSS}
   .dash-card { padding: var(--space-12); }
   .sc-grid { grid-template-columns: 1fr; }
   .sc-waits { border-right: none; padding-right: 0; }
-  .sc-row { grid-template-columns: 96px minmax(0, 1fr) auto; }
   .sb { flex-wrap: wrap; row-gap: var(--space-8); }
   .sp { grid-template-columns: auto 1fr; align-items: center; column-gap: var(--space-12); margin: var(--space-6) 0 var(--space-8); }
   .sp-count, .sp-top { grid-column: 1; }
@@ -3843,6 +3862,16 @@ ${PRD_READING_SCRIPT}
       return;
     }
 
+    // T-1180: the sidebar progress card opens the home store's 진행 상황 tab.
+    var cardBtn = ev.target.closest('[data-card-open]');
+    if (cardBtn) {
+      ev.preventDefault();
+      var homeSec = selectStore('home');
+      if (homeSec) selectGroup(homeSec, cardBtn.getAttribute('data-card-open'));
+      clearHashMarks();
+      return;
+    }
+
     var groupBtn = ev.target.closest('[data-group-select]');
     if (groupBtn) {
       ev.preventDefault();
@@ -3853,19 +3882,29 @@ ${PRD_READING_SCRIPT}
       return;
     }
 
-    // T-1047: the eye button shows / hides that env file's key list (names and set / empty only).
-    var eyeBtn = ev.target.closest('[data-env-eye]');
-    if (eyeBtn) {
+    // T-1191: 경로 복사 — the env file's path (never a value) to the clipboard.
+    var copyBtn = ev.target.closest('[data-env-copy]');
+    if (copyBtn) {
       ev.preventDefault();
-      var envCard = eyeBtn.closest('.env-card');
-      var envRows = envCard ? envCard.querySelector('.erows') : null;
-      if (!envRows) return;
-      var envOpen = eyeBtn.getAttribute('aria-expanded') !== 'true';
-      eyeBtn.setAttribute('aria-expanded', envOpen ? 'true' : 'false');
-      envRows.hidden = !envOpen;
-      var envLabel = eyeBtn.getAttribute(envOpen ? 'data-label-hide' : 'data-label-show');
-      eyeBtn.setAttribute('aria-label', envLabel);
-      eyeBtn.setAttribute('title', envLabel);
+      var copyText = copyBtn.getAttribute('data-env-copy');
+      var copyDone = function () {
+        var done = copyBtn.getAttribute('data-label-done');
+        copyBtn.setAttribute('title', done);
+        copyBtn.setAttribute('aria-label', done);
+      };
+      var copyFallback = function () {
+        var ta = document.createElement('textarea');
+        ta.value = copyText;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { if (document.execCommand('copy')) copyDone(); } catch (e) {}
+        document.body.removeChild(ta);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(copyText).then(copyDone, copyFallback);
+      else copyFallback();
       return;
     }
 
@@ -3940,6 +3979,7 @@ ${PRD_READING_SCRIPT}
   document.addEventListener('click', function (ev) { onClick(ev); syncUrl(false); });
 
   document.addEventListener('keydown', function (ev) {
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('[data-card-open]')) { ev.preventDefault(); onClick(ev); syncUrl(false); return; }
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('tr.detail-row[data-detail-kind], [role="button"][data-detail-kind]')) {
       ev.preventDefault();
       if (ev.target.getAttribute('data-detail-kind') === 'disc') discOrigin = null;

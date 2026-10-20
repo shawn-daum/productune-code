@@ -121,6 +121,11 @@ if [ -L "$HOME/.local/bin/prdt" ]; then
   esac
 fi
 
+# 3b. prdt:// URL scheme (T-1191) — unregister + remove the applet while bin/ still holds the script.
+if [ -f "$PRDT_HOME/bin/prdt-url-scheme.sh" ]; then
+  PRDT_HOME="$PRDT_HOME" bash "$PRDT_HOME/bin/prdt-url-scheme.sh" uninstall 2>&1 | sed 's/^/3b) /' || true
+fi
+
 # 4. home dir
 if [ "${1:-}" = "--purge" ]; then
   say "4) Purging $PRDT_HOME (including overrides/)"

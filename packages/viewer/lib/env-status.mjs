@@ -11,6 +11,7 @@
 // a quoted value read up to its closing quote (multi-line when the quote
 // does not close on its own line).
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -240,6 +241,11 @@ export function collectEnv(repoRoot, rel) {
   } catch {
     return { dir: rel, files: [] }
   }
+  // T-1191: the real folder, for the page's 경로 복사 · VS Code link (a path, never a value).
+  let absDir = null
+  try {
+    absDir = fs.realpathSync(abs)
+  } catch {}
   const read = []
   for (const name of names.sort()) {
     const keys = readEnvKeys(path.join(abs, name))
@@ -252,5 +258,19 @@ export function collectEnv(repoRoot, rel) {
     const own = new Set(f.keys.map((k) => k.name))
     for (const k of sampleKeys) if (!own.has(k)) f.keys.push({ name: k, set: false })
   }
-  return { dir: rel, files: [...read.filter((f) => !f.sample), ...read.filter((f) => f.sample)] }
+  return { dir: rel, absDir, files: [...read.filter((f) => !f.sample), ...read.filter((f) => f.sample)] }
+}
+
+/** T-1191: where VS Code is looked for — the two places a macOS app install lands. */
+export const VSCODE_APPS = ['/Applications/Visual Studio Code.app', path.join(os.homedir(), 'Applications', 'Visual Studio Code.app')]
+
+/** T-1191: whether VS Code is installed (the page then offers 「VS Code 로 열기」, its own `vscode://` scheme). */
+export function detectVsCode(candidates = VSCODE_APPS) {
+  return candidates.some((p) => {
+    try {
+      return fs.statSync(p).isDirectory()
+    } catch {
+      return false
+    }
+  })
 }
