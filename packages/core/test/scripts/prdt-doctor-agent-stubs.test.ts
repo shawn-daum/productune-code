@@ -22,7 +22,7 @@
  */
 
 import path from 'path'
-import { copyPrdtCli } from '../helpers/copy-prdt'
+import { copyPrdtCli, prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -49,7 +49,7 @@ const GIT_ENV = {
 
 /** The cap as the CLI declares it — one SoT, read rather than restated. */
 const CAP_BYTES = (() => {
-  const m = fs.readFileSync(REAL_PRDT_CLI, 'utf8').match(/"agent_stub_bytes":\s*(\d+)/)
+  const m = prdtSource(REAL_PRDT_CLI).match(/"agent_stub_bytes":\s*(\d+)/)
   if (!m) throw new Error('CAPS["agent_stub_bytes"] not found in scripts/prdt')
   return Number(m[1])
 })()
