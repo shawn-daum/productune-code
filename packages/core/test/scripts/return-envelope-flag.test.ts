@@ -398,7 +398,7 @@ describe.skipIf(!READY)('detection — what gets flagged', () => {
 
   test('the persona enum IS the CLI `PERSONAS` tuple — the vocabulary ticket `assignee` is already held to', () => {
     const pick = (file: string, name: string) => {
-      const m = fs.readFileSync(file, 'utf8').match(new RegExp(`^${name} = \\(([^)]*)\\)`, 'm'))
+      const m = fs.readFileSync(file === PRDT_CLI ? path.join(path.dirname(file), 'prdt_cli.py') : file, 'utf8').match(new RegExp(`^${name} = \\(([^)]*)\\)`, 'm'))
       expect(m, `${name} not found in ${file}`).toBeTruthy()
       return (m![1].match(/"[^"]+"/g) ?? []).map((x) => x.slice(1, -1))
     }

@@ -16,6 +16,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawn } from 'child_process'
@@ -97,7 +98,7 @@ function registerStop(name: string, cmd: string) {
 
 describe.skipIf(!PYTHON3)('prdt resource up|down|ls|register-stop (T-591/T-680)', () => {
   test('the CLI section never hardcodes a kill/shutdown verb or removes anything but its own marker file: the one subprocess call in it runs the resolved `cmd` variable, never a literal string', () => {
-    const src = fs.readFileSync(PRDT_CLI, 'utf-8')
+    const src = prdtSource(PRDT_CLI)
     const start = src.indexOf('# ── resource ownership markers (T-591/T-680)')
     const end = src.indexOf('# ── resident machine resources')
     expect(start).toBeGreaterThan(0)
@@ -297,7 +298,7 @@ describe.skipIf(!PYTHON3)('prdt resource up|down|ls|register-stop (T-591/T-680)'
   })
 
   test('the source carries no session-keyed or "local" default, and no comment claiming qa/habit.md skips --dispatch (T-644)', () => {
-    const src = fs.readFileSync(PRDT_CLI, 'utf-8')
+    const src = prdtSource(PRDT_CLI)
     expect(src).not.toMatch(/_resource_default_dispatch_id/)
     expect(src).not.toMatch(/qa\/habit\.md never passes/)
     expect(src).not.toMatch(/default is this session/)

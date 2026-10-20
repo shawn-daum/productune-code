@@ -11,6 +11,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import crypto from 'crypto'
@@ -353,7 +354,9 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
   })
 
   test('QA 4: doctor tracks prdt_lanes.py as a bin helper module', () => {
-    expect(fs.readFileSync(PRDT_CLI, 'utf8')).toMatch(/BIN_HELPER_MODULES = \([^)]*"prdt_lanes\.py"/)
+    expect(prdtSource(PRDT_CLI)).toMatch(/BIN_HELPER_MODULES = \([^)]*"prdt_lanes\.py"/)
+    // T-1170: and the CLI body the bin/prdt launcher loads
+    expect(prdtSource(PRDT_CLI)).toMatch(/BIN_HELPER_MODULES = \([^)]*"prdt_cli\.py"/)
   })
 
   test('statusline reads prdt schedule --json: it makes no meta-backup / update-state write', () => {
