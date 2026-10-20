@@ -9,6 +9,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawnSync } from 'child_process'
@@ -162,7 +163,7 @@ describe('shallow path: no git on the session start', () => {
   })
 
   test('the hook gate list mirrors LAYOUT_OWNED_TOPS in scripts/prdt', () => {
-    const cli = fs.readFileSync(PRDT_CLI, 'utf8')
+    const cli = prdtSource(PRDT_CLI)
     const py = /LAYOUT_OWNED_TOPS = \(([^)]*)\)/.exec(cli)![1].match(/"([^"]+)"/g)!.map((s) => s.slice(1, -1))
     const hook = fs.readFileSync(SESSION_HOOK, 'utf8')
     const sh = /for LP_N in ([^;]+); do/.exec(hook)![1].trim().split(/\s+/)
