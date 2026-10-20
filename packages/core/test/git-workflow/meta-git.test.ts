@@ -154,7 +154,7 @@ test('.return-flags.json is in BOTH exclude defaults, not one side (T-513)', () 
   expect(DEFAULT_META_EXCLUDE).toContain('.return-flags.json')
 
   const cliSrc = fs.readFileSync(
-    path.resolve(__dirname, '..', '..', 'scripts', 'prdt'),
+    path.resolve(__dirname, '..', '..', 'scripts', 'prdt_cli.py'),  // T-1170: the CLI body
     'utf-8',
   )
   const m = /META_EXCLUDE_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(cliSrc)
