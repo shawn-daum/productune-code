@@ -962,7 +962,7 @@ def lane_block(lanes, cap):
         pre = L("lane.finished", lanes="")
         for e in ents:
             lead = pre if first else ""
-            if cur and dw(lead + cur + " · " + e) > cap:
+            if cur and cap < dw(lead + cur + " · " + e):
                 out.append(({}, lead + cur))
                 first, cur = False, e
             else:
