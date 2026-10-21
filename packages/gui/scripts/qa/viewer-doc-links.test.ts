@@ -81,3 +81,52 @@ describe('buildDocPathTargets', () => {
     for (const key of t.values()) expect(Object.prototype.hasOwnProperty.call(anchors, key)).toBe(true)
   })
 })
+
+// T-1187: a path to an existing artifact file the manifest does not list (an unregistered mock)
+// links to the file itself, in prose and in a code span; a path to no file stays text.
+describe('existing artifact file outside the manifest', () => {
+  const FILE_BODY = [
+    'mock docs/artifacts/v1.10/mock.html here,',
+    '',
+    'span `docs/artifacts/v1.10/mock.html` and gone docs/artifacts/v1.10/gone.html and `docs/artifacts/v1.10/gone.html`',
+  ].join('\n')
+  const d: any = {
+    ...data,
+    tickets: {
+      included: [{ bucket: 'v1.10.0', rel: 'docs/tickets/v1.10.0/T-901.md', frontmatter: { id: 'T-901', slug: 's' }, body: FILE_BODY }],
+      omitted: [],
+    },
+    wiki: [],
+    artifacts: { entries: data.artifacts.entries, files: ['docs/artifacts/v1.10/notes.md', 'docs/artifacts/v1.10/mock.html'] },
+  }
+  const p = renderPage({ data: d, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+  const html: string = JSON.parse(p.match(/<script id="detail-data" type="application\/json">(.*?)<\/script>/s)![1]).ticket['T-901'].body
+
+  it('links prose and code span to the file href (new tab)', () => {
+    expect(html).toMatch(/<a href="[^"#][^"]*docs\/artifacts\/v1\.10\/mock\.html" target="_blank" rel="noopener">docs\/artifacts\/v1\.10\/mock\.html<\/a> here/)
+    expect(html).toMatch(/<code><a href="[^"#][^"]*mock\.html" target="_blank" rel="noopener">docs\/artifacts\/v1\.10\/mock\.html<\/a><\/code>/)
+  })
+  it('a missing file stays text', () => {
+    expect(html).toContain('gone docs/artifacts/v1.10/gone.html and')
+    expect(html).toContain('<code>docs/artifacts/v1.10/gone.html</code>')
+  })
+})
+
+describe('collectArtifacts files (T-1187)', () => {
+  it('lists unregistered files, skips symlinks', async () => {
+    const fs = await import('node:fs')
+    const os = await import('node:os')
+    const path = await import('node:path')
+    const { collectArtifacts } = await import('@productune/viewer/lib/collect.mjs')
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 't1187-'))
+    try {
+      fs.mkdirSync(path.join(root, 'docs/artifacts/v1.0'), { recursive: true })
+      fs.writeFileSync(path.join(root, 'docs/artifacts/v1.0/mock.html'), '<p>x</p>')
+      fs.writeFileSync(path.join(root, 'outside.txt'), 'x')
+      fs.symlinkSync(path.join(root, 'outside.txt'), path.join(root, 'docs/artifacts/v1.0/link.txt'))
+      expect(collectArtifacts(root).files).toEqual(['docs/artifacts/v1.0/mock.html'])
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
