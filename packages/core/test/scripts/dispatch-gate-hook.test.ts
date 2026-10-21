@@ -1956,3 +1956,56 @@ describe('T-1151: a user-started ticket needs the user\'s purpose and confirmati
     expect(d).toContain(CLAUSE_DISPATCH_ID)
   })
 })
+
+// T-1196: the gate never sets a model on an agent type whose DEFINITION pins one
+// (a haiku-pinned agent went up to sonnet, an opus-pinned one came down).
+describe('T-1196: SET ⑦ leaves a definition-pinned model alone', () => {
+  function agentsDir(files: Record<string, string>): string {
+    const cfg = tmp('prdt-t1196-cfg-')
+    fs.mkdirSync(path.join(cfg, 'agents'), { recursive: true })
+    for (const [n, body] of Object.entries(files)) fs.writeFileSync(path.join(cfg, 'agents', n), body)
+    return cfg
+  }
+  function runWith(o: EventOpts, cfg: string, cwd?: string): string {
+    const res = spawnSync('bash', [HOOK], { input: eventJson(o), encoding: 'utf8', cwd, env: { ...envFor().env, CLAUDE_CONFIG_DIR: cfg } })
+    expect(res.stderr).toBe('')
+    expect(res.status).toBe(0)
+    return res.stdout
+  }
+  const HAIKU = '---\nname: scout\ndescription: d\nmodel: haiku\n---\nbody\n'
+
+  test('haiku-pinned definition (user dir): no updatedInput — complete silence', () => {
+    const cfg = agentsDir({ 'scout.md': HAIKU })
+    expect(runWith({ cwd: makeProject(), subagentType: 'scout', prompt: 'x' }, cfg)).toBe('')
+  })
+
+  test('the type name falls back to the file basename; a project .claude/agents dir is read too', () => {
+    const cfg = agentsDir({})
+    const proj = makeProject()
+    fs.mkdirSync(path.join(proj, '.claude', 'agents'), { recursive: true })
+    fs.writeFileSync(path.join(proj, '.claude', 'agents', 'sweeper.md'), '---\nmodel: "opus"\n---\nbody\n')
+    expect(runWith({ cwd: proj, subagentType: 'sweeper', prompt: 'x' }, cfg, proj)).toBe('')
+  })
+
+  test('a pinned type is recorded at the default bucket, not at the tier it would have been set to', () => {
+    const cfg = agentsDir({ 'scout.md': HAIKU })
+    const proj = makeProject()
+    runWith({ cwd: proj, subagentType: 'scout', prompt: 'x' }, cfg)
+    const rows = fs.readFileSync(path.join(proj, '.prdt', 'schedule.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    expect(rows.map((r) => [r.persona, r.model])).toEqual([['scout', 'default']])
+  })
+
+  test('an unpinned (`inherit` or no model) definition still gets the tier; so does a type with no definition', () => {
+    const cfg = agentsDir({ 'a.md': '---\nname: lazy\nmodel: inherit\n---\n', 'b.md': '---\nname: plain\n---\n' })
+    for (const st of ['lazy', 'plain', 'Explore']) {
+      const o = JSON.parse(runWith({ cwd: makeProject(), subagentType: st, prompt: 'x' }, cfg)).hookSpecificOutput
+      expect(o.updatedInput.model).toBe('sonnet')
+    }
+  })
+
+  test('a pin on another type does not leak: Explore is still set', () => {
+    const cfg = agentsDir({ 'scout.md': HAIKU })
+    const o = JSON.parse(runWith({ cwd: makeProject(), subagentType: 'Explore', prompt: 'x' }, cfg)).hookSpecificOutput
+    expect(o.updatedInput.model).toBe('sonnet')
+  })
+})

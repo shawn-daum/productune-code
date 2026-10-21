@@ -186,15 +186,29 @@ except Exception:
 event = ev.get("hook_event_name") or "PostToolUse"
 tool = ev.get("tool_name") or ""
 tin = ev.get("tool_input") or {}
+# T-1196: a non-`prdt-` subagent (Explore · general-purpose · Plan · claude · a
+# fork) gets the in-flight marker at SubagentStart and the stamp + schedule stop
+# row at SubagentStop, so the gate's inflight_max / per-tier caps count it while
+# it runs. Nothing else is written for it (no sessions.json, no cost line, no
+# meta autosave beat). An event with no agent_type is a fork (its type is not
+# measured on this harness; `fork` is the subagent_type the PO names). The
+# Workflow tool's `workflow-subagent` is never counted: its spawn is outside the
+# gate and a Workflow fans out many workers.
+nonprdt = False
 if event in ("SubagentStop", "SubagentStart"):
     sub = str(ev.get("agent_type") or "")
+    if not sub.startswith("prdt-"):
+        if sub == "workflow-subagent":
+            sys.exit(0)
+        nonprdt = True
+        sub = sub or "fork"
 elif tool == "Agent":
     sub = str(tin.get("subagent_type") or "")
 else:
     sys.exit(0)
-if not sub.startswith("prdt-"):
+if not sub.startswith("prdt-") and not nonprdt:
     sys.exit(0)
-persona = sub[len("prdt-"):]
+persona = sub if nonprdt else sub[len("prdt-"):]
 
 # project root = meta root: walk the WHOLE ancestor chain from the event cwd and
 # take the OUTERMOST dir holding `.prdt/po-state.json` (T-484 — never the
@@ -245,7 +259,7 @@ now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 try:
     # SubagentStart (T-682 slice 3) is a marker-only event for this hook — it
     # is not a persona-turn beat, so it fires no autosave tick.
-    if event != "SubagentStart" and os.path.isfile(os.path.join(state_dir, "meta.git", "HEAD")):
+    if event != "SubagentStart" and not nonprdt and os.path.isfile(os.path.join(state_dir, "meta.git", "HEAD")):
         # TRUST (T-519 F5 — DECISION: accepted machine-local assumption, not
         # narrowed). This reads PRDT_REPO from ~/.prdt/prdt.env and spawns
         # <PRDT_REPO>/dist/bin/meta-cli.cjs detached (start_new_session). A worker
@@ -660,7 +674,7 @@ def marker_start(aid):
     """SubagentStart: write or revive the marker for `aid` (see LIFECYCLE)."""
     prior = marker_load(aid)
     data = {
-        "agent_id": aid, "persona": persona, "dispatch_id": None, "ticket_id": None,
+        "agent_id": aid, "persona": persona, "subagent_type": sub, "dispatch_id": None, "ticket_id": None,
         "tool_use_id": None, "model": None, "project_root": root, "since": now,
         "session_id": ev.get("session_id") if isinstance(ev.get("session_id"), str) else None,
         "transcript": agent_transcript_path(aid), "checkout": None,
@@ -823,7 +837,10 @@ def _reconcile(names):
             prompt = worker_first_prompt(data.get("transcript")) if isinstance(data.get("transcript"), str) else None
             if prompt is None:
                 continue
-            call = agent_call_by_prompt(data.get("parent_transcript"), "prdt-" + str(data.get("persona") or ""), prompt)
+            call = agent_call_by_prompt(
+                data.get("parent_transcript"),
+                data["subagent_type"] if isinstance(data.get("subagent_type"), str) and data["subagent_type"] else "prdt-" + str(data.get("persona") or ""),
+                prompt)
             if call is None:
                 continue
             ctx_obj = ctx_from_prompt(prompt)
@@ -987,6 +1004,26 @@ if event == "SubagentStart":
         marker_reconcile()
     except Exception:
         pass
+    try:
+        marker_prune()
+    except Exception:
+        pass
+    sys.exit(0)
+
+if nonprdt:
+    # T-1196: SubagentStop for a non-prdt worker — stamp the marker and append
+    # the schedule stop row, nothing else (no sessions.json · turns line).
+    aid = ev.get("agent_id")
+    try:
+        marker_reconcile()
+    except Exception:
+        pass
+    if isinstance(aid, str) and aid:
+        marker_stop(aid)
+        try:
+            schedule_stop(aid)
+        except Exception:
+            pass
     try:
         marker_prune()
     except Exception:
