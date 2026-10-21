@@ -198,7 +198,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     expect(r).toHaveLength(4)
     expect(r[0]).toContain(' | done lanes: A 1/1 · C 1/1 | working 0')
     expect(r[1]).toBe('lane: B  0/1 | next T-002(developer)')
-    expect(r[2]).toBe('lane: 자투리  1/1')
+    expect(r[2]).toBe('lane: 자투리  1/1 | working 0')
     expect(r[3]).toBe('decision 0 | request 0')
     expect(rows({ PRDT_LANG: 'ko' })[0]).toContain(' | 완료된 레인: A 1/1 · C 1/1 | 작업중 0')
   })
