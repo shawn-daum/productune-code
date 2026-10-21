@@ -949,27 +949,17 @@ def lane_text(lane, cap):
 
 
 def lane_block(lanes, cap):
-    """[(lane, text)] under one product row: R10 — every finished lane (gate
-    and 자투리 alike) on ONE `done: NAME d/t · …` row first, in table order;
-    then one row per other lane, 자투리 last. No row cap, no folding (R12)."""
-    done = [x for x in lanes if x.get("finished") is True]
-    out = []
-    if done:
-        ents = [clean(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}", cap=10**6) for x in done]
-        # F2 (T-1184 QA): never cut an entry — a row that would pass `cap` continues on the next row
-        cur = ""
-        first = True
-        pre = L("lane.finished", lanes="")
-        for e in ents:
-            lead = pre if first else ""
-            if cur and cap < dw(lead + cur + " · " + e):
-                out.append(({}, lead + cur))
-                first, cur = False, e
-            else:
-                cur = cur + " · " + e if cur else e
-        out.append(({}, (pre if first else "") + cur))
-    out.extend((x, lane_text(x, cap)) for x in lanes if x.get("finished") is not True)
-    return out
+    """[(lane, text)] under one product row: one row per unfinished lane and the
+    자투리 lane (finished or not), 자투리 last. A finished gate lane (done ==
+    total) leaves the rows — `finished_entries` puts it on the product row (T-1203).
+    No row cap, no folding (R12)."""
+    return [(x, lane_text(x, cap)) for x in lanes if x.get("finished") is not True or x.get("besteffort") is True]
+
+
+def finished_entries(lanes):
+    """T-1203: `NAME d/t` of every finished gate lane, table order."""
+    return [clean(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}", cap=10**6)
+            for x in lanes if x.get("finished") is True and x.get("besteffort") is not True]
 
 
 def lane_cap():
@@ -992,8 +982,10 @@ out_rows = []
 # failure (stale module, odd data) = no lane rows at all; the rest stays intact.
 try:
     lane_rows = [lane_block(lane_data.get(r["line"], []), lane_cap()) for r in shown]
+    fin_rows = [finished_entries(lane_data.get(r["line"], [])) for r in shown]
 except Exception:
     lane_rows = [[] for _ in shown]
+    fin_rows = [[] for _ in shown]
 
 # T-1147 / T-1184 R12: lane rows go right under their product row — every one of
 # them: no row cap and no folding for lanes (MAX_ROWS still folds product rows).
@@ -1005,11 +997,35 @@ for k, r in enumerate(shown):
     if r["vtotal"]:
         head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
     lane_txt = " ".join(t for _, t in lane_rows[k])
+    fin = fin_rows[k]
     ids = [tid for tid, _ in running if line_of(tid) == r["line"]
            and not re.search(r"(?<![\w-])" + re.escape(tid) + r"(?!\d)", lane_txt)]
     branch = L("branch", name=r["branch"]) if r["branch"] else ""
-    out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
-                                        " | ".join(head + [working_seg(ids, lim)]), branch)))
+    # T-1203: finished gate lanes ride the first line, after `총 티켓`, before `작업중`.
+    # F2: an entry is never cut — one that would pass the width goes to a
+    # continuation row under the product row (a lone over-wide entry stays whole).
+    sep_w = dw(" | " + branch) if branch else 0
+    take = len(fin)
+    while take:
+        probe = " | ".join(head + [L("lane.finished", lanes=" · ".join(fin[:take])), working_seg(ids, (1, 1, 0))])
+        if dw(probe) + sep_w <= LINE_CAP:
+            break
+        take -= 1
+    take = take or min(1, len(fin))
+    row_head = head + ([L("lane.finished", lanes=" · ".join(fin[:take]))] if take else [])
+    row = fit(lambda lim, rh=row_head, ids=ids: " | ".join(rh + [working_seg(ids, lim)]), branch)
+    if take and take < len(fin) or (take and dw(" | ".join(row_head)) + sep_w > LINE_CAP):
+        row = " | ".join(row_head + [working_seg(ids, (1, 1, 0))]) + (" | " + branch if branch else "")
+    out_rows.append((r["slug_ver"], row))
+    rest, cur = fin[take:], ""
+    for e in rest:
+        if cur and lane_cap() < dw(cur + " · " + e):
+            out_rows.append((None, cur))
+            cur = e
+        else:
+            cur = cur + " · " + e if cur else e
+    if cur:
+        out_rows.append((None, cur))
     out_rows.extend((None, t) for _, t in lane_rows[k])
 if len(shown) < len(rows):
     out_rows.append((None, L("lines", n=len(rows) - len(shown))))
