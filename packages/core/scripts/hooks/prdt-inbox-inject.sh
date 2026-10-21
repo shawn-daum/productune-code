@@ -29,7 +29,7 @@ EVENT_NAME="$(printf '%s' "$EVENT_JSON" | jq -r '.hook_event_name // "SessionSta
 [ "$EVENT_NAME" = "SessionStart" ] || exit 0
 [ -z "$EVENT_CWD" ] && EVENT_CWD="$PWD"
 
-CTX="$(python3 - "$INBOX" "$EVENT_CWD" <<'PY' 2>/dev/null
+CTX="$(python3 -I - "$INBOX" "$EVENT_CWD" <<'PY' 2>/dev/null
 import json, os, re, sys, unicodedata
 inbox, cwd = sys.argv[1], sys.argv[2]
 d = os.path.realpath(cwd)

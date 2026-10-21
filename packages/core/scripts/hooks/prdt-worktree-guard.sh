@@ -179,7 +179,7 @@ if [ "$route" = 0 ]; then
 fi
 command -v python3 >/dev/null 2>&1 || exit 0
 
-PRDT_EVENT_JSON="$EV" python3 - <<'PYEOF'
+PRDT_EVENT_JSON="$EV" python3 -I - <<'PYEOF'
 import hashlib, json, os, re, shlex, sys
 
 def out_open():

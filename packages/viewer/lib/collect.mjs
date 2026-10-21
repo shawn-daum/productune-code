@@ -680,13 +680,15 @@ export const INSTALL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.
  */
 export function collectLanes(repoRoot, line = null, { scriptsDir = path.join(INSTALL_ROOT, 'packages/core/scripts') } = {}) {
   if (!fs.existsSync(path.join(scriptsDir, 'prdt_lanes.py'))) return []
-  const code = 'import sys,json,prdt_lanes as m\nprint(json.dumps(m.lanes_for(sys.argv[1], sys.argv[2] or None), ensure_ascii=False))'
+  // -I: neither the cwd (the project root) nor PYTHONPATH reaches sys.path, so the sibling module is
+  // put there in code — a project-root prdt_lanes.py / json.py is never imported (T-1195).
+  const code = 'import sys,json\nsys.path.insert(0,sys.argv[3])\nimport prdt_lanes as m\nprint(json.dumps(m.lanes_for(sys.argv[1], sys.argv[2] or None), ensure_ascii=False))'
   try {
-    const r = spawnSync('python3', ['-c', code, repoRoot, line || ''], {
+    const r = spawnSync('python3', ['-I', '-c', code, repoRoot, line || '', scriptsDir], {
       encoding: 'utf8',
       timeout: 20000,
       cwd: repoRoot,
-      env: { ...process.env, PYTHONPATH: scriptsDir, PYTHONDONTWRITEBYTECODE: '1' },
+      env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
     })
     if (r.status !== 0) return []
     const lanes = JSON.parse(r.stdout)

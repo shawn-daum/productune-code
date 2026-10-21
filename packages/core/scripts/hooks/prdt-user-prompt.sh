@@ -52,7 +52,7 @@ esac
 # resolver hook next to this file — the mirror dir, so both come from one install.
 PRDT_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 export PRDT_HOOK_DIR
-printf '%s' "$EVENT_JSON" | python3 -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
+printf '%s' "$EVENT_JSON" | python3 -I -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
 exit 0
 # The heredoc below is never executed (`exit 0` above): it only keeps the python
 # body out of bash's parser, so `bash -n` still reads this file end to end.

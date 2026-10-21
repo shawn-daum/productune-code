@@ -196,7 +196,7 @@ if [ "$PART" = "1" ] && [ "$PERSONA" = "po" ] && [ "$EVENT_NAME" = "SessionStart
     BK_REPO="$(sed -n 's/^PRDT_REPO=//p' "$PRDT_HOME/prdt.env" 2>/dev/null | head -1 | tr -d '[:space:]')"
     BK_BRIDGE="$BK_REPO/dist/bin/meta-cli.cjs"
     if [ -n "$BK_REPO" ] && [ -f "$BK_BRIDGE" ] && command -v node >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
-      python3 - "$BK_BRIDGE" "$BK_ROOT" >/dev/null 2>&1 <<'PY' || true
+      python3 -I - "$BK_BRIDGE" "$BK_ROOT" >/dev/null 2>&1 <<'PY' || true
 import shutil, subprocess, sys
 node = shutil.which("node")
 if node:
@@ -233,7 +233,7 @@ if [ "$PART" = "1" ] && [ "$PERSONA" = "po" ] && [ "$EVENT_NAME" = "SessionStart
       && [ -d "$VE_NM/pretendard/dist/web/static/woff2" ] && VE_READY=1
   fi
   if [ -n "$VE_ROOT" ] && [ -z "$VE_READY" ] && [ -x "$VE_CLI" ] && command -v python3 >/dev/null 2>&1; then
-    python3 - "$VE_CLI" "$VE_ROOT" >/dev/null 2>&1 <<'PY' || true
+    python3 -I - "$VE_CLI" "$VE_ROOT" >/dev/null 2>&1 <<'PY' || true
 import subprocess, sys
 subprocess.Popen([sys.argv[1], "viewer", "--ensure"], cwd=sys.argv[2],
                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -362,7 +362,7 @@ quote_body() { # $1 file, $2 noun for the withheld notice
     printf '| %s\n' "($2 withheld: python3 is missing on this machine, so the quoting gutter cannot run — tell the user to install python3. The file is $(safe_path "$1") — nothing from it appears in this block.)"
     return 0
   fi
-  python3 -c "$PRDT_QUOTE_PY" "$1" "$2" && return 0
+  python3 -I -c "$PRDT_QUOTE_PY" "$1" "$2" && return 0
   printf '| %s\n' "($2 withheld: the quoting gutter failed to run, so the body is withheld rather than shown unquoted. The file is $(safe_path "$1").)"
 }
 
@@ -646,7 +646,7 @@ if 1 <= part <= min(len(parts), slots):
 '
 
 if [ -n "$PLAN_PERSONA" ]; then
-  python3 -c "$PRDT_PARTS_PY" plan "$PLAN_PERSONA" "prdt-$PLAN_PERSONA" 1 "$SLOTS" \
+  python3 -I -c "$PRDT_PARTS_PY" plan "$PLAN_PERSONA" "prdt-$PLAN_PERSONA" 1 "$SLOTS" \
     "$PRDT_INJECT_PART_BUDGET_BYTES" "$PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS" \
     "$DOCTRINE" "$CONTRACTS" "$DISC" "$PRDT_ONBOARD_RESERVE_BYTES"
   exit 0
@@ -679,7 +679,7 @@ if [ -n "$SELF_LOAD" ]; then
       | bash "$HOOK_DIR/$h" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)"
     [ -n "$BLK" ] && OV="${OV}${BLK}"$'\n\n'
   done
-  printf '%s' "$OV" | python3 -c "$PRDT_PARTS_PY" selfload "$PERSONA" "$AGENT_TYPE" "$PAGE" 1000000 \
+  printf '%s' "$OV" | python3 -I -c "$PRDT_PARTS_PY" selfload "$PERSONA" "$AGENT_TYPE" "$PAGE" 1000000 \
     "$PRDT_INJECT_PART_BUDGET_BYTES" "$PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS" \
     "$DOCTRINE" "$CONTRACTS" "$DISC" "$PRDT_ONBOARD_RESERVE_BYTES" \
     "$PRDT_SELF_LOAD_PAGE_BUDGET_BYTES" "$HOOK_DIR/prdt-session-start.sh"
@@ -791,7 +791,7 @@ $LP_OUT
   fi
 fi
 
-PAYLOAD="$(python3 -c "$PRDT_PARTS_PY" render "$PERSONA" "$AGENT_TYPE" "$PART" "$SLOTS" \
+PAYLOAD="$(python3 -I -c "$PRDT_PARTS_PY" render "$PERSONA" "$AGENT_TYPE" "$PART" "$SLOTS" \
   "$PRDT_INJECT_PART_BUDGET_BYTES" "$PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS" \
   "$DOCTRINE" "$CONTRACTS" "$DISC" "$PRDT_ONBOARD_RESERVE_BYTES")"
 [ -z "$PAYLOAD" ] && exit 0

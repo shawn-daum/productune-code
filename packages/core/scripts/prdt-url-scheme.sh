@@ -23,8 +23,8 @@ if [ "$(uname -s)" != Darwin ]; then
   exit 0
 fi
 LSREGISTER="$(command -v lsregister 2>/dev/null || echo /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister)"
-OWN_PRDT="$(python3 -c 'import os,pwd; print(os.path.realpath(os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".prdt")))')"
-HERE_PRDT="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$PRDT_HOME")"
+OWN_PRDT="$(python3 -I -c 'import os,pwd; print(os.path.realpath(os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".prdt")))')"
+HERE_PRDT="$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$PRDT_HOME")"
 REGISTER=false
 [ "$HERE_PRDT" = "$OWN_PRDT" ] && REGISTER=true
 
