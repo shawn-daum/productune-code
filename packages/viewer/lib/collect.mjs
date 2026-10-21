@@ -688,7 +688,7 @@ export function collectLanes(repoRoot, line = null, { scriptsDir = path.join(INS
       encoding: 'utf8',
       timeout: 20000,
       cwd: repoRoot,
-      env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+      env: process.env,
     })
     if (r.status !== 0) return []
     const lanes = JSON.parse(r.stdout)
