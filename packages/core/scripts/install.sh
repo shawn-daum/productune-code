@@ -57,7 +57,7 @@ die() { printf 'prdt-install: %s\n' "$*" >&2; exit 1; }
 # restriction; python3 is a hard dependency of this script (checked below), so this is
 # one line instead of a deepest-existing-ancestor walk in bash.
 resolve_path() {
-  python3 - "$1" <<'PYEOF'
+  python3 -I - "$1" <<'PYEOF'
 import os, sys
 print(os.path.realpath(sys.argv[1]))
 PYEOF
@@ -565,7 +565,7 @@ if [ ! -f "$ENV_FILE" ]; then
   chmod 600 "$ENV_FILE"
 else
   say "2) $ENV_FILE exists — updating PRDT_REPO only"
-  python3 - "$ENV_FILE" "$ROOT" <<'PYEOF'
+  python3 -I - "$ENV_FILE" "$ROOT" <<'PYEOF'
 import sys
 path, repo = sys.argv[1], sys.argv[2]
 lines = [l for l in open(path).read().splitlines() if not l.startswith("PRDT_REPO=")]
@@ -729,7 +729,7 @@ if [ "$REGISTER_STATUSLINE" = true ]; then
     || die "statusline registration failed (jq) — $SETTINGS left unchanged"
   mv "$TMP" "$SETTINGS"
   TMP=""
-  python3 - "$ENV_FILE" <<'PYEOF'
+  python3 -I - "$ENV_FILE" <<'PYEOF'
 import sys
 path = sys.argv[1]
 s = open(path).read().replace("PRDT_STATUSLINE_INSTALLED=false", "PRDT_STATUSLINE_INSTALLED=true")

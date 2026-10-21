@@ -39,7 +39,7 @@ jq -e '(.basenames | type) == "array" and (.basenames | length) > 0' "$MANIFEST"
 # Physical resolution — same primitive install.sh §0b uses (symlinks, `..`,
 # `//`, a trailing `/`, a relative path all collapse to one canonical string).
 resolve_path() {
-  python3 - "$1" <<'PYEOF'
+  python3 -I - "$1" <<'PYEOF'
 import os, sys
 print(os.path.realpath(sys.argv[1]))
 PYEOF

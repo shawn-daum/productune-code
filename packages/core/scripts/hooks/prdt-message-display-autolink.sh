@@ -40,7 +40,7 @@ case "$EVENT_JSON" in
   *) exit 0 ;;
 esac
 command -v python3 >/dev/null 2>&1 || exit 0
-printf '%s' "$EVENT_JSON" | python3 -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
+printf '%s' "$EVENT_JSON" | python3 -I -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
 exit 0
 : <<'PYEOF'
 # ---- python ----
