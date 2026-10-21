@@ -284,6 +284,25 @@
  * is running while the suite runs, its writes to the real userData are
  * indistinguishable from an escaped test launch, and the run goes red. That is
  * the correct direction to fail, and the failure text says so.
+ *
+ * ANOTHER SESSION'S `prdt` WRITE — a notice, not a failure (T-1134)
+ *
+ *   Other agent sessions on this machine run `prdt feedback record` etc. while a
+ *   suite runs, and that write turned three green runs red (2026-10-14). The
+ *   default above is NOT relaxed: unattributed drift still fails. The exception
+ *   is inverted — the WRITER proves itself. `prdt` (prdt_safe_fs.note_home_write,
+ *   called from the CLI's write primitives) appends {path, pid, start, parent
+ *   chain} to `~/.prdt/run/external-writes.jsonl` before every `~/.prdt` write.
+ *   A drift line becomes a notice only when such an entry names its path (or it
+ *   is that path's parent directory, or a directory that write created), was
+ *   stamped inside this run's window, carries no tripwire run id, and has a
+ *   complete parent chain that does NOT contain this run's root pid. A test that
+ *   calls `prdt` against the real home is a descendant of the root and fails.
+ *   Path ownership by any other route (shell, node, python, Edit tool) gets no
+ *   report and fails, as before. KNOWN BOUNDARY: a test process that detaches
+ *   from the run (reparented to launchd — the isolation rules refuse
+ *   `detached: true`) AND drops the run id, then calls `prdt`, or one that
+ *   forges a log line by hand, is read as another session.
  */
 
 'use strict'
@@ -658,6 +677,8 @@ function armTripwire(label) {
 
   const runId = `${Date.now()}-${process.pid}`
   const snap = snapshotRealHome()
+  // T-1134: the run's root process — every process of the run descends from it.
+  snap.rootPid = process.pid
   fs.mkdirSync(BASELINE_DIR, { recursive: true })
   sweepStaleBaselines()
   fs.writeFileSync(path.join(BASELINE_DIR, `${runId}.json`), JSON.stringify(snap))
@@ -761,7 +782,21 @@ function verifyTripwire(options = {}) {
       report: `\nT-450 TRIPWIRE FINGERPRINT INCOMPLETE: ${before.truncated ?? after.truncated}\n`,
     }
   }
-  const drift = diffSnapshots(before, after)
+  const allDrift = diffSnapshots(before, after)
+  // T-1134: the default stays T-450's — every drift fails. A drift line is moved
+  // to the notice only when a writer OUTSIDE this run reported that path in the
+  // machine's external-write log before writing it (see externalWritePaths()).
+  const reported = externalWritePaths(before)
+  const drift = []
+  const external = []
+  for (const d of allDrift) {
+    const isExternal = (l) => coveredByReport(l.split('\t')[0], reported, before)
+    const mine = { surface: d.surface, added: d.added.filter((l) => !isExternal(l)), removed: d.removed.filter((l) => !isExternal(l)) }
+    const theirs = { surface: d.surface, added: d.added.filter(isExternal), removed: d.removed.filter(isExternal) }
+    if (mine.added.length || mine.removed.length) drift.push(mine)
+    if (theirs.added.length || theirs.removed.length) external.push(theirs)
+  }
+  const notice = formatExternalNotice(external)
 
   if (consume) {
     // Persist the final state for the next run's warning, then drop the baseline.
@@ -774,16 +809,106 @@ function verifyTripwire(options = {}) {
     }
   }
 
-  if (drift.length === 0) return clean
-  return { ok: false, drift, report: formatDrift(drift) }
+  if (drift.length === 0) return { ...clean, notice, externalDrift: external }
+  return { ok: false, drift, report: formatDrift(drift) + notice, notice, externalDrift: external }
+}
+
+/**
+ * T-1134: the external-write log. `prdt` (packages/core/scripts/prdt_safe_fs.py,
+ * `note_home_write`) appends one JSON line per machine-home write, BEFORE the
+ * write, to `~/.prdt/run/external-writes.jsonl` — inside the excluded `run/`
+ * subtree, so the log itself is never drift. Read only here; never created.
+ */
+function externalWriteLogs() {
+  const run = path.join(realHome(), '.prdt', 'run')
+  return [path.join(run, 'external-writes.jsonl.1'), path.join(run, 'external-writes.jsonl')]
+}
+
+/** Slack before the baseline's `takenAt`, which is stamped at the END of the walk. */
+const REPORT_SLACK_MS = 5000
+
+/**
+ * The containment keys of every path a writer OUTSIDE this run reported during
+ * the run's window. An entry counts only when it PROVES it is outside:
+ *   - no `run` id (a writer inside any tripwire run does not report at all),
+ *   - a `complete` parent chain (it reached pid 1 — a truncated chain proves
+ *     nothing) that does not contain this run's root pid, nor is the root itself,
+ *   - stamped inside the window (not before the baseline walk began).
+ * Anything else — no log, a malformed line, an unprovable entry — earns nothing,
+ * and the drift stays a failure.
+ */
+function externalWritePaths(before) {
+  const rootPid = before.rootPid ?? Number(String(process.env.PRODUCTUNE_TRIPWIRE_RUN ?? '').split('-')[1])
+  const out = new Set()
+  if (!Number.isInteger(rootPid) || rootPid <= 1) return out
+  for (const log of externalWriteLogs()) {
+    let text
+    try {
+      text = fs.readFileSync(log, 'utf-8')
+    } catch {
+      continue
+    }
+    for (const line of text.split('\n')) {
+      let e
+      try {
+        e = JSON.parse(line)
+      } catch {
+        continue
+      }
+      if (!e || typeof e.path !== 'string' || !path.isAbsolute(e.path)) continue
+      if (e.run) continue
+      if (e.complete !== true || !Array.isArray(e.ancestors) || e.ancestors.length === 0) continue
+      if (e.pid === rootPid || e.ancestors.includes(rootPid)) continue
+      if (typeof e.ts !== 'number' || e.ts < before.takenAt - REPORT_SLACK_MS) continue
+      out.add(containmentKey(e.path, true))
+    }
+  }
+  return out
+}
+
+/**
+ * Is a drifted path covered by a report? Its own path was reported, or it is a
+ * directory on the way to a reported path whose line changed only because that
+ * write landed inside it: the reported path's DIRECT parent (an atomic rename's
+ * mtime bump), or an ancestor that did not exist at the baseline (created by
+ * that write's mkdir -p). Never a sibling, never a child of a reported path.
+ */
+function coveredByReport(p, reported, before) {
+  if (reported.size === 0) return false
+  const k = containmentKey(p, true)
+  if (reported.has(k)) return true
+  const existedBefore = before.detail.some((l) => l.startsWith(`${p}\t`) && !l.endsWith('\texists=false'))
+  for (const r of reported) {
+    if (path.dirname(r) === k) return true
+    if (!existedBefore && r.startsWith(k + path.sep)) return true
+  }
+  return false
+}
+
+/** T-1134: the notice for drift a writer outside this run reported. Empty when none. */
+function formatExternalNotice(external) {
+  const paths = external.flatMap((d) => [...d.added, ...d.removed].map((l) => l.split('\t')[0]))
+  if (paths.length === 0) return ''
+  return (
+    '\nT-450 notice: the real home changed during this run, written by a process OUTSIDE\n' +
+    'this run that reported the write (prdt external-write log) — another session. NOT a failure:\n' +
+    [...new Set(paths)].slice(0, 20).map((p) => `  ~ ${p}\n`).join('') +
+    (paths.length > 20 ? `  … ${paths.length - 20} more\n` : '') +
+    '\n'
+  )
 }
 
 /** `verifyTripwire()` as a throw, for callers whose runner reads an exception. */
 function assertTripwireClean(where, options = {}) {
   const result = verifyTripwire(options)
   if (result.ok) {
+    if (result.notice) process.stdout.write(result.notice)
     if (!tripwireDisabled() && (options.consume ?? true)) {
-      process.stdout.write(`T-450 real-home tripwire (${where}): real home unchanged across the run.\n`)
+      process.stdout.write(
+        result.notice
+          ? `T-450 real-home tripwire (${where}): real home unchanged by this run (the changes above were reported by other sessions).\n`
+          : `T-450 real-home tripwire (${where}): real home unchanged across the run.\n`,
+      )
     }
     return
   }
