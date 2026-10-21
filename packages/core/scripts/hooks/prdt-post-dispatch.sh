@@ -674,13 +674,17 @@ def marker_start(aid):
     """SubagentStart: write or revive the marker for `aid` (see LIFECYCLE)."""
     prior = marker_load(aid)
     data = {
-        "agent_id": aid, "persona": persona, "subagent_type": sub, "dispatch_id": None, "ticket_id": None,
+        "agent_id": aid, "persona": persona, "dispatch_id": None, "ticket_id": None,
         "tool_use_id": None, "model": None, "project_root": root, "since": now,
         "session_id": ev.get("session_id") if isinstance(ev.get("session_id"), str) else None,
         "transcript": agent_transcript_path(aid), "checkout": None,
         "pairing": None,
         "parent_transcript": ev.get("transcript_path") if isinstance(ev.get("transcript_path"), str) else None,
     }
+    if nonprdt:
+        # T-1196: subagent_type only on a non-prdt marker (a prdt-* marker keeps
+        # its pre-T-1196 key set; _reconcile falls back to "prdt-"+persona).
+        data["subagent_type"] = sub
     if prior:
         for k in ("dispatch_id", "ticket_id", "tool_use_id", "checkout", "pairing"):
             data[k] = prior.get(k) if isinstance(prior.get(k), str) else None
@@ -707,7 +711,11 @@ def marker_start(aid):
             break
     if not data["pairing"]:
         data["pairing"] = "unconfirmed"
-    if not data["ticket_id"]:
+    if nonprdt:
+        # T-1196: an Explore/fork carries no ticket — never the PO's current_task
+        # (it would show as working on it in statusline / `prdt schedule`).
+        data["ticket_id"] = None
+    elif not data["ticket_id"]:
         data["ticket_id"] = po_state_ticket()
     if data["model"] is None:
         data["model"] = "default"
@@ -851,6 +859,8 @@ def _reconcile(names):
             # therefore ALWAYS taken as-is (None included), never falling back
             # to a stale/FIFO-guessed ticket_id already sitting on the marker.
             data["dispatch_id"], data["ticket_id"] = ticket_from_ctx(ctx_obj)
+            if isinstance(data.get("subagent_type"), str) and data["subagent_type"]:
+                data["ticket_id"] = None  # T-1196: a non-prdt marker never carries a ticket
             data["checkout"] = checkout_from_ctx(ctx_obj)
             data["tool_use_id"], data["model"] = call[0], norm_model(call[1])
             data["pairing"] = "confirmed"

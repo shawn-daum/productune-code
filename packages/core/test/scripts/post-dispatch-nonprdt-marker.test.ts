@@ -64,6 +64,22 @@ describe('T-1196: non-prdt start marker and stop stamp', () => {
     expect(marker('fk1').stopped_at).toBeTruthy()
   })
 
+  test('carries no ticket_id even with po-state current_task set, and is still gate-countable', () => {
+    fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage: 'build', version: 'v1.14', current_task: { ticket_id: 'T-1196', slug: 'x' } }))
+    start('ex5', 'Explore')
+    expect(marker('ex5').ticket_id).toBeNull()
+    expect(marker('ex5').subagent_type).toBe('Explore')
+  })
+
+  test('a prdt-* marker has no subagent_type key and still takes po-state ticket_id', () => {
+    fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage: 'build', version: 'v1.14', current_task: { ticket_id: 'T-1196', slug: 'x' } }))
+    start('pd1', 'prdt-developer')
+    const m = marker('pd1')
+    expect(Object.prototype.hasOwnProperty.call(m, 'subagent_type')).toBe(false)
+    expect(m.persona).toBe('developer')
+    expect(m.ticket_id).toBe('T-1196')
+  })
+
   test('workflow-subagent is never counted', () => {
     start('wf1', 'workflow-subagent')
     expect(fs.existsSync(markerFile('wf1'))).toBe(false)
