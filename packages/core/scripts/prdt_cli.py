@@ -28,6 +28,7 @@ from prdt_lanes import (
     LANE_NAME_RE,
     LEGACY_ASSIGNEE_RE,
     LINE_NAME_RE,
+    lanes_for,
     PRD_H4_RE,
     PRD_ITEM_KEY_RE,
     PRD_ITEM_RE,
@@ -12242,26 +12243,47 @@ def ticket_graph_warnings(root, tickets):
     return warns
 
 
-def stage_signal_warnings(st, tickets, lines=()):
+def stage_signal_warnings(st, tickets, lines=(), root=None):
     """Stage-completion signal, plus the build-entry signal (T-430). Both are
     project-progress observations, not discipline↔execution mismatches.
-    `lines` = the added release lines, each judged on its own stage/version."""
+    `lines` = the added release lines, each judged on its own stage/version.
+    `root` (T-1205): where the build-stage gate is read from (`lanes_for`)."""
     if not st:
         return []
     warns = []
     for ln in lines:
         lstage, lver, _ = line_state(st, ln)
-        warns += _stage_signal_one(lstage, lver, tickets)
+        warns += _stage_signal_one(lstage, lver, tickets, root, ln)
     # line_state validates (T-1082 QA): a raw version could forge a doctor line.
-    return _stage_signal_one(st.get("stage"), line_state(st)[1], tickets) + warns
+    return _stage_signal_one(st.get("stage"), line_state(st)[1], tickets, root, None) + warns
 
 
-def _stage_signal_one(stage, version, tickets):
+def _build_gate_met(root, line, ver_tickets):
+    """T-1205: the build gate as `build-entry` §Gate met reads it — every 합격선 lane
+    finished (the one lane computation, `lanes_for`); no gate line → every ticket of
+    the version done/dropped (the entry slice is not recorded in a ticket, so the
+    version's tickets stand in for it)."""
+    gate = []
+    if root is not None:
+        try:
+            gate = [ln for ln in lanes_for(root, line) if not ln.get("besteffort")]
+        except Exception:
+            gate = []
+    if gate:
+        return all(ln["finished"] for ln in gate)
+    return not any(t["status"] == "open" for t in ver_tickets)
+
+
+def _stage_signal_one(stage, version, tickets, root=None, line=None):
     warns = []
     next_stage = {"build": "Ship", "ship": "Retro"}.get(stage)
     if next_stage and version:
         ver_tickets = [t for t in tickets.values() if t["version"] == version]
-        if ver_tickets and not any(t["status"] == "open" for t in ver_tickets):
+        if stage == "build":
+            if ver_tickets and _build_gate_met(root, line, ver_tickets):
+                warns.append(f"stage: {version} gate met at stage=build — "
+                             f"consider {next_stage} entry")
+        elif ver_tickets and not any(t["status"] == "open" for t in ver_tickets):
             warns.append(f"stage: {version} has no open tickets at stage={stage} — "
                          f"consider {next_stage} entry")
     # build-entry signal (T-430): stage=build but the version's ticket dir has
@@ -15546,7 +15568,7 @@ def cmd_doctor(_args):
         # created before the frame's landing date.
         ("ticket frame", FAMILY_PROJECT, lambda: ticket_frame_warnings(root, trows)),
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
-        ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root))),
+        ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root), root)),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
         *([("products", FAMILY_DE,
             lambda: line_config_warnings(root) + prd_line_layout_warnings(root, st))]
