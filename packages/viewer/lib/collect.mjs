@@ -133,7 +133,10 @@ export function readPoState(repoRoot) {
     if (!fs.existsSync(abs)) return readJson(abs)
     return { schema_version: 0, stage: '', version: '', current_task: null }
   }
-  return readJson(real)
+  const state = readJson(real)
+  // T-1168: `version` null / missing / non-string reads as '' (idle) — every consumer assumes a string.
+  if (state && typeof state === 'object' && typeof state.version !== 'string') state.version = ''
+  return state
 }
 
 // null when the file's real path leaves the repo (callers skip the entry).
@@ -581,7 +584,7 @@ export function collectArtifacts(repoRoot, layout = createDocsLayout(repoRoot)) 
   // NORMAL pre-manifest state, not an error) has no manifest.json on disk at
   // all; treat it as zero entries rather than throwing `readJson`'s ENOENT.
   const realManifest = containedFile(repoRoot, manifestPath)
-  if (!realManifest) return { entries: [] }
+  if (!realManifest) return { entries: [], files: collectArtifactFiles(repoRoot, artifactsRel) }
   const manifest = readJson(realManifest)
   const entries = []
   for (const fields of manifest.entries || []) {
@@ -611,7 +614,29 @@ export function collectArtifacts(repoRoot, layout = createDocsLayout(repoRoot)) 
       body,
     })
   }
-  return { entries }
+  return { entries, files: collectArtifactFiles(repoRoot, artifactsRel) }
+}
+
+// T-1187: every regular file under the artifacts dir, repo-relative — the paths a body may name
+// that the manifest does not list (an unregistered mock). Symlinks are skipped, so nothing outside
+// the repo is named; the render side links such a path as a plain file href, never inlined.
+function collectArtifactFiles(repoRoot, artifactsRel) {
+  const files = []
+  const walk = (rel) => {
+    let dirents
+    try {
+      dirents = fs.readdirSync(path.join(repoRoot, rel), { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const d of dirents) {
+      const child = `${rel}/${d.name}`
+      if (d.isDirectory()) walk(child)
+      else if (d.isFile()) files.push(child)
+    }
+  }
+  walk(artifactsRel)
+  return files.sort()
 }
 
 // T-883: the release notes — `code/docs/RELEASES.md`, one `## <version> —

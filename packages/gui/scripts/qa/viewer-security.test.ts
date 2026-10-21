@@ -771,7 +771,7 @@ describe('collect.mjs — T-713 fixtures', () => {
       fs.mkdirSync(path.join(repoRoot, 'docs/artifacts'), { recursive: true })
       // No manifest.json written at all.
       expect(() => collectArtifacts(repoRoot)).not.toThrow()
-      expect(collectArtifacts(repoRoot)).toEqual({ entries: [] })
+      expect(collectArtifacts(repoRoot)).toEqual({ entries: [], files: [] })
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true })
     }

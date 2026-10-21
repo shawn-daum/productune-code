@@ -415,6 +415,9 @@ const defaultTextRender = Renderer.prototype.text
 // T-1104: a To-Be path carries a `_shared/` or `<product>/` segment first.
 const DOC_PATH_RE = /(?<![\w./~-])(?<!\[\[)docs\/(?:_shared\/|[a-z0-9]+(?:-[a-z0-9]+)*\/)?(?:artifacts|wiki|prd|tickets|features)\/[\w./-]*\w/g
 let pageDocTargets = null
+// T-1187: existing files under the artifacts dir that no manifest row carries (`data.artifacts.files`
+// minus the anchor table); a body path naming one links to the file itself, like a markdown link.
+let pageDocFiles = null
 // T-1104: the layout of the project being rendered (null = legacy / single-product, as before).
 let pageDocsLayout = null
 // T-1165: the sidebar identity line · tool version · progress card, derived once per renderPage from `data` (see `pageIdentityOf`).
@@ -430,6 +433,31 @@ function docTargetKey(text) {
   return null
 }
 let pageTicketIds = null
+
+/**
+ * T-1187: the set of existing artifact files (repo-relative) the page may link by path.
+ * @param {object} data
+ * @returns {Set<string>}
+ */
+export function buildDocFileSet(data) {
+  return new Set(data?.artifacts?.files || [])
+}
+
+/** The file href for a body path that names an existing artifact file outside the anchor table, else null. */
+function docFileHref(text) {
+  if (!pageDocFiles || pageDocFiles.size === 0) return null
+  let key = pageDocFiles.has(text) ? text : null
+  if (key === null && pageDocsLayout && pageDocsLayout.layout === 'product') {
+    const to = pageDocsLayout.resolveRef(text)
+    if (to !== text && pageDocFiles.has(to)) key = to
+  }
+  if (key === null) return null
+  return resolveDocLink(key, '', linkContext.repoRootHref, pageViewerAbsPath, null)
+}
+
+function docFileAnchor(href, textHtml) {
+  return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener">${textHtml}</a>`
+}
 
 /**
  * path → the `#` key the page's anchor table routes it by. Same table as
@@ -492,10 +520,11 @@ function linkDocPathText(text, plain) {
   let last = 0
   let found = false
   for (let m = DOC_PATH_RE.exec(text); m !== null; m = DOC_PATH_RE.exec(text)) {
-    if (docTargetKey(m[0]) === null) continue
+    const fileHref = docTargetKey(m[0]) === null ? docFileHref(m[0]) : null
+    if (docTargetKey(m[0]) === null && fileHref === null) continue
     found = true
     if (m.index > last) out += plain(text.slice(last, m.index))
-    out += docPathAnchor(m[0], escapeHtml(m[0]))
+    out += fileHref === null ? docPathAnchor(m[0], escapeHtml(m[0])) : docFileAnchor(fileHref, escapeHtml(m[0]))
     last = m.index + m[0].length
   }
   if (!found) return null
@@ -538,6 +567,10 @@ hardenedRenderer.code = function (token) {
 }
 hardenedRenderer.codespan = function ({ text }) {
   if (linkContext.docs && docTargetKey(text) !== null) return `<code>${docPathAnchor(text, escapeHtml(text))}</code>`
+  if (linkContext.docs) {
+    const fileHref = docFileHref(text)
+    if (fileHref !== null) return `<code>${docFileAnchor(fileHref, escapeHtml(text))}</code>`
+  }
   const linked = linkContext.disc ? linkDisciplineCode(text, linkContext.disc) : null
   return linked ?? `<code>${escapeHtml(text)}</code>`
 }
@@ -826,7 +859,7 @@ function storeSection(key, { active = false, innerHtml }) {
 // "v1.10" before "v1.9"). One rule, two call sites (T-709 결정 1/2): the
 // ticket sidebar's per-bucket rows and the PRD store's closed-round rows.
 function versionNumericParts(id) {
-  return (id.match(/\d+/g) || []).map(Number)
+  return (String(id ?? '').match(/\d+/g) || []).map(Number)
 }
 function compareVersionIdsDesc(a, b) {
   const pa = versionNumericParts(a)
@@ -1152,9 +1185,10 @@ export const PAST_TICKET_GLOBAL = '__PRDT_VIEWER_DATA__'
  * loader takes a src from that map only.
  * @returns {Array<{ bucket: string, name: string, tickets: Record<string,{path:string,body:string}>, bodies: string[] }>}
  */
-export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [], line = null, docTargets = null, docsLayout = null } = {}) {
+export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [], line = null, docTargets = null, docFiles = null, docsLayout = null } = {}) {
   pageViewerAbsPath = viewerAbsPath
   pageDocsLayout = docsLayout
+  pageDocFiles = docFiles
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   pageDocTargets = docTargets
   pageTicketIds = ticketIdsOf(pageDocTargets)
@@ -4189,6 +4223,7 @@ export function renderPage({
   pageDocsLayout = data.docsLayout ?? null
   pageIdentity = pageIdentityOf(data)
   pageDocTargets = buildDocPathTargets(data, anchors)
+  pageDocFiles = buildDocFileSet(data)
   pageTicketIds = ticketIdsOf(pageDocTargets)
   const views = lineViews(data)
   const detailData = {
