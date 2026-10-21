@@ -16,6 +16,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { spawnSync } from 'child_process'
@@ -62,7 +63,7 @@ describe('message catalog', () => {
     expect(catalog.en['settings.viewer.auto-open.on']).toBe('From now on, files handed over by PO open automatically.')
   })
   test('the settings code carries no Hangul literal — every line is a catalog lookup', () => {
-    const src = fs.readFileSync(PRDT_CLI, 'utf8')
+    const src = prdtSource(PRDT_CLI)
     const start = src.indexOf('# ── settings (T-750)')
     const end = src.indexOf('# ── tickets / history')
     expect(start).toBeGreaterThan(0)

@@ -10,6 +10,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import crypto from 'crypto'
@@ -955,7 +956,7 @@ except SystemExit:
 
   test('T-1105: the marker is in BOTH meta exclude defaults and never tracked in the meta repo', () => {
     expect(DEFAULT_META_EXCLUDE).toContain('layout-apply.inprogress')
-    const m = /META_EXCLUDE_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(fs.readFileSync(PRDT_CLI, 'utf-8'))
+    const m = /META_EXCLUDE_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(prdtSource(PRDT_CLI))
     expect(m![1].split(',').map((x) => x.trim().replace(/^["']|["']$/g, ''))).toContain('layout-apply.inprogress')
     expect(fs.readFileSync(path.join(bare(), '.prdt', 'meta.git', 'info', 'exclude'), 'utf8')).toContain('layout-apply.inprogress')
   }, 300_000)
@@ -1194,7 +1195,7 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`
   }, 300_000)
 
   test('--undo never runs a meta reset of a commit (the source has no commit-moving git call in the undo path)', () => {
-    const src = fs.readFileSync(PRDT_CLI, 'utf8')
+    const src = prdtSource(PRDT_CLI)
     expect(src).not.toContain('_lay_undo_own_commit')
     const undoBody = src.slice(src.indexOf('def layout_undo('), src.indexOf('def cmd_layout('))
     expect(undoBody).not.toMatch(/"reset",\s*"-q",\s*"--(mixed|hard|soft)"/)

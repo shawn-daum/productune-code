@@ -180,7 +180,7 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     // re-breaking this test.
     expect(CONTRACTS).toMatch(/^## Secrets — .+\(EVERY persona, PO included\)$/m)
     expect(CONTRACTS).toContain('## Overrides — precedence and the non-overridable floor')
-    expect(CONTRACTS).toContain('- Carve-out: `~/.prdt/register` · `auto-open` · `plan-tier` · `dispatch-caps.json` (keys `register.*` · `viewer.auto-open` · `plan.tier` · `dispatch.*`) are PO-writable only via `prdt settings set|unset <key>`')
+    expect(annex('runtime-writes')).toContain('- Carve-out: `~/.prdt/register` · `auto-open` · `plan-tier` · `dispatch-caps.json` (keys `register.*` · `viewer.auto-open` · `plan.tier` · `dispatch.*`) are PO-writable only via `prdt settings set|unset <key>`')
     // T-613: re-pinned to the current wording. T-586 added the playbook-scoped
     // override path to this carve-out; the carve-out clause is floor text, so
     // the test follows contracts.md, never the reverse. Every path the line
@@ -193,11 +193,14 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
       '`~/.prdt/resource-stop.json`',
       '`~/.prdt/register` · `auto-open` · `plan-tier` · `dispatch-caps.json` (keys `register.*` · `viewer.auto-open` · `plan.tier` · `dispatch.*`)',
     ])
-      pin(CONTRACTS, p, {
-        file: 'discipline/contracts.md',
+      pin(annex('runtime-writes'), p, {
+        file: 'discipline/contracts/runtime-writes.md',
         protects: 'the PO-writable carve-out enumerates every writable path under the read-only runtime root; a path added or dropped changes the floor',
       })
-    for (const n of ANNEXES) expect(annex(n)).not.toMatch(/Secrets|Carve-out|non-overridable/)
+    // T-1174/T-1173: the carve-out clauses moved to the floor annex runtime-writes,
+    // which contracts §Overrides names as floor — the one annex allowed to hold them.
+    for (const n of ANNEXES.filter((x) => x !== 'runtime-writes')) expect(annex(n)).not.toMatch(/Secrets|Carve-out|non-overridable/)
+    expect(CONTRACTS).toContain('the read-only + carve-out clauses themselves (§Return envelope + `contracts/runtime-writes.md`)')
   })
 
   // This test's job is the compression gain from T-586/T-611, not the hard cap
@@ -209,11 +212,12 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
   // T-631) — QA named that class each time. Ceilings at what the tree now holds
   // instead: 77, not 76, because T-630 moved a voice kernel out of po/habit.md
   // into contracts §Language today, costing po habit 2 lines (58→56) and
-  // contracts 1 (76→77).
-  test('line room stays within what T-586/T-611/T-630 compressed it to (contracts ≤77, po habit ≤56) — hard caps enforced elsewhere', () => {
+  // contracts 1 (76→77). T-1185's approved lanes wording then added 1 line
+  // to po habit (56→57); hard cap stays 64.
+  test('line room stays within what T-586/T-611/T-630 compressed it to (contracts ≤77, po habit ≤57) — hard caps enforced elsewhere', () => {
     const lines = (s: string) => s.replace(/\n$/, '').split('\n').length
     expect(lines(CONTRACTS)).toBeLessThanOrEqual(77)
-    expect(lines(HABITS.po)).toBeLessThanOrEqual(56)
+    expect(lines(HABITS.po)).toBeLessThanOrEqual(57)
     expect(lines(HABITS.developer)).toBeLessThanOrEqual(40)
     expect(lines(HABITS.qa)).toBeLessThanOrEqual(40)
     expect(lines(HABITS.designer)).toBeLessThanOrEqual(40)

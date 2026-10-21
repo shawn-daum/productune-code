@@ -1,11 +1,22 @@
 // T-1147: `prdt` imports its sibling `prdt_lanes.py` (the one lane computation, shared with
-// the statusline), so a copy of the CLI into a fixture needs the module beside it — the
-// same pairing install.sh makes in ~/.prdt/bin.
+// the statusline); T-1170: `prdt` is a launcher whose CLI body is the sibling `prdt_cli.py`.
+// A copy of the CLI into a fixture needs both beside it — the same set install.sh makes in
+// ~/.prdt/bin.
 import fs from 'fs'
 import path from 'path'
 
+export const PRDT_SIBLINGS = ['prdt_cli.py', 'prdt_lanes.py', 'prdt_safe_fs.py'] // T-1134: prdt_cli imports prdt_safe_fs
+
 export function copyPrdtCli(src: string, dst: string): void {
   fs.copyFileSync(src, dst)
-  const lanes = path.join(path.dirname(src), 'prdt_lanes.py')
-  if (fs.existsSync(lanes)) fs.copyFileSync(lanes, path.join(path.dirname(dst), 'prdt_lanes.py'))
+  for (const m of PRDT_SIBLINGS) {
+    const from = path.join(path.dirname(src), m)
+    if (fs.existsSync(from)) fs.copyFileSync(from, path.join(path.dirname(dst), m))
+  }
+}
+
+/** T-1170: the CLI's source text (the body beside the `prdt` launcher), for tests that
+ *  assert on what the code says rather than what it does. */
+export function prdtSource(cli: string): string {
+  return fs.readFileSync(path.join(path.dirname(cli), 'prdt_cli.py'), 'utf8')
 }

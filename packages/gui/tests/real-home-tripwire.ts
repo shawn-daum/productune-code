@@ -51,6 +51,8 @@ export interface HomeSnapshot {
   detail: string[]
   /** Set when the entry budget ran out, i.e. the fingerprint is INCOMPLETE. */
   truncated?: string
+  /** T-1134: pid of the process that armed the run; every process of the run descends from it. */
+  rootPid?: number
 }
 
 export interface SurfaceDrift {
@@ -70,6 +72,9 @@ export interface VerifyResult {
   /** Empty when ok. */
   report: string
   drift: SurfaceDrift[]
+  /** T-1134: drift a writer outside this run reported in the external-write log. Never fails the run. */
+  notice?: string
+  externalDrift?: SurfaceDrift[]
 }
 
 export interface VerifyOptions {

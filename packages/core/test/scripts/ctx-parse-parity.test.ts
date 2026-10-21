@@ -24,7 +24,7 @@ const HOOKS = path.join(CORE_ROOT, 'scripts', 'hooks')
 const POST = path.join(HOOKS, 'prdt-post-dispatch.sh')
 const GUARD = path.join(HOOKS, 'prdt-worktree-guard.sh')
 const GATE = path.join(HOOKS, 'prdt-dispatch-gate.sh')
-const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
+const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt_cli.py')  // T-1170: source text lives in the CLI body
 
 function has(cmd: string, arg: string): boolean {
   try { execFileSync(cmd, [arg], { stdio: 'ignore' }); return true } catch { return false }
