@@ -136,8 +136,13 @@ function cliHooksBlock(home: string): any {
     SubagentStart: [
       { matcher: '^prdt-', hooks: disciplineEntry },
       { matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh')] },
+      // T-1196: non-prdt subagents / forks get the in-flight marker too.
+      { matcher: '^(?!prdt-)', hooks: [h('prdt-post-dispatch.sh')] },
     ],
-    SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh'), h('prdt-return-check.sh')] }],
+    SubagentStop: [
+      { matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh'), h('prdt-return-check.sh')] },
+      { matcher: '^(?!prdt-)', hooks: [h('prdt-post-dispatch.sh')] },
+    ],
     PostToolUse: [
       { matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] },
       { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-auto-open.sh')] },

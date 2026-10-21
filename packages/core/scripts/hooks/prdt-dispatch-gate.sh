@@ -407,8 +407,12 @@ def want_model:
 # T-1171: the tier this dispatch will actually run at — a non-prdt, non-fork
 # dispatch with no model runs at the tier the gate sets ($tier), so the
 # model_tier axis and the schedule row count it there, never under "default".
+def pinned_type:
+  ((.tool_input // {}).subagent_type // "") as $st
+  | ($st | type) == "string" and $st != "" and (($pinned | split("\n")) | index($st)) != null;
 def eff_model:
   if want_model != "default" then want_model
+  elif pinned_type then "default"
   elif (((.tool_input // {}).subagent_type // "") | type) == "string"
        and ((((.tool_input // {}).subagent_type // "") | test("^prdt-")) | not)
        and ((.tool_input // {}).subagent_type // "") != "fork"
@@ -530,7 +534,61 @@ def want_ticket:
 | "\(.applies)\t\(.model)\t\(.persona)\t\(.checkout)\t\(.ticket)\t\(.files)\n\(if .out == null then "" else (.out | tojson) end)"
 JQ
 
+# T-1196: agent types whose DEFINITION pins a model (frontmatter `model:` other
+# than empty / `inherit`), one name per line — read from the files the harness
+# reads: `.claude/agents/*.md` in the hook's cwd and every ancestor, and
+# `${CLAUDE_CONFIG_DIR:-~/.claude}/agents/*.md`. The type name is the
+# frontmatter `name:`, else the file's basename. Plugin-shipped agent
+# definitions are not scanned. SET ⑦ never touches a pinned type: the model the
+# gate would add overrides the definition's (haiku-pinned went up, opus-pinned
+# came down). Builtins only: no fork; any read failure leaves the type unpinned
+# (the pre-T-1196 behaviour).
+PINNED_TYPES=""
+_prdt_gate_pins() {
+  local dir f line n m in_fm k v first
+  for dir in "$@"; do
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*.md; do
+      [ -f "$f" ] || continue
+      n=""; m=""; in_fm=0; first=1
+      while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        if [ "$first" = 1 ]; then
+          first=0
+          [ "$line" = "---" ] || break
+          in_fm=1; continue
+        fi
+        [ "$line" = "---" ] && break
+        k="${line%%:*}"; v="${line#*:}"
+        [ "$k" = "$line" ] && continue
+        v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+        v="${v#[\"\']}"; v="${v%[\"\']}"
+        case "$k" in name) n="$v" ;; model) m="$v" ;; esac
+      done < "$f"
+      [ -n "$m" ] && [ "$m" != "inherit" ] || continue
+      if [ -z "$n" ]; then n="${f##*/}"; n="${n%.md}"; fi
+      PINNED_TYPES="$PINNED_TYPES$n"$'\n'
+    done
+  done
+}
+case "$EV" in
+  *'"subagent_type":"prdt-'*|*'"subagent_type": "prdt-'*) ;;   # a prdt dispatch is never model-set: skip the scan
+  *)
+  _pdirs=()
+  _d="$PWD"; _i=0
+  while [ -n "$_d" ] && [ "$_i" -lt 24 ]; do
+    _pdirs+=("$_d/.claude/agents")
+    [ "$_d" = "/" ] && break
+    _d="${_d%/*}"; [ -n "$_d" ] || _d="/"
+    _i=$((_i+1))
+  done
+  _pdirs+=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}/agents")
+  _prdt_gate_pins "${_pdirs[@]}"
+  ;;
+esac
+
 RAW="$(printf '%s' "$EV" | jq -r \
+  --arg pinned "$PINNED_TYPES" \
   --arg clause_ctx "$CLAUSE_CTX" \
   --arg clause_prd "$CLAUSE_PRD" \
   --arg clause_lang "$CLAUSE_LANG" \
