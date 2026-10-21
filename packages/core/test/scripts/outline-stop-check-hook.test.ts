@@ -170,5 +170,5 @@ test('the counts file keeps its newest 1000 rows (T-1081)', () => {
 
 test('a non-PO Stop leaves before python3 starts (fork-0 case filter)', () => {
   const src = fs.readFileSync(HOOK, 'utf8')
-  expect(src).toMatch(/"hook_event_name":"Stop"[\s\S]*?"prdt-po"[\s\S]*?exit 0[\s\S]*?python3 -c/)
+  expect(src).toMatch(/"hook_event_name":"Stop"[\s\S]*?"prdt-po"[\s\S]*?exit 0[\s\S]*?python3 -I -c/)
 })
