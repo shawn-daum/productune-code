@@ -5,7 +5,7 @@
 import fs from 'fs'
 import path from 'path'
 
-export const PRDT_SIBLINGS = ['prdt_cli.py', 'prdt_lanes.py']
+export const PRDT_SIBLINGS = ['prdt_cli.py', 'prdt_lanes.py', 'prdt_safe_fs.py'] // T-1134: prdt_cli imports prdt_safe_fs
 
 export function copyPrdtCli(src: string, dst: string): void {
   fs.copyFileSync(src, dst)

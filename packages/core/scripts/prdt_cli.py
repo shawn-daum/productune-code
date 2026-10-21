@@ -86,6 +86,7 @@ from prdt_lanes import (
     shared_docs_dir,
     split_line_id,
 )
+from prdt_safe_fs import note_home_write  # T-1134: self-report machine-home writes to the test tripwire
 
 STAGES = ("define", "build", "ship", "retro", "idle")
 WIKI_TYPES = ("decision", "fact", "learning", "feature", "retro", "term")
@@ -349,6 +350,7 @@ def atomic_write_text(path, text, mode=0o644, errors="strict"):
     helper, not eleven copies of the same three lines — this is exactly the
     recurring shape T-656 ratchets against."""
     path = Path(path)
+    note_home_write(path)
     before = _prior_text(path) if _docs_relevant(path) else None
     tmp = path.with_name(path.name + ".tmp")
     for attempt in (0, 1):
@@ -3475,6 +3477,7 @@ def _feedback_render(r):
 @contextlib.contextmanager
 def _feedback_lock():
     p = machine_wiki_root() / "feedback.md.lock"
+    note_home_write(p)
     p.parent.mkdir(parents=True, exist_ok=True)
     with open(p, "a") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
@@ -5956,6 +5959,7 @@ def state_write(root, path, text, mode=None, create_dirs=True, sync=False):
     directory after), so a crash never leaves the name zero-length. `root` itself is the
     caller's trust anchor."""
     rel = _state_rel(root, path)
+    note_home_write(Path(root) / rel)
     dfd = _state_dir_or_raise(root, rel, create_dirs)
     try:
         name = rel.name
@@ -6007,6 +6011,7 @@ def state_append(root, path, text, mode=0o666, create_dirs=True):
     O_NOFOLLOW, the file itself opened O_APPEND|O_NOFOLLOW (a link there fails
     with ELOOP, mapped to `StateLinkError`). An existing file keeps its mode."""
     rel = _state_rel(root, path)
+    note_home_write(Path(root) / rel)
     dfd = _state_dir_or_raise(root, rel, create_dirs)
     try:
         try:

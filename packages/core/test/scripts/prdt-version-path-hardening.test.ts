@@ -192,6 +192,9 @@ describe('installed_prdt_version reads a checkout root only from packages/core/s
     const lanes = fs.readFileSync(path.join(path.dirname(PRDT_CLI), 'prdt_lanes.py'), 'utf8')
     put(repo, 'a/b/c/prdt_lanes.py', lanes)
     put(repo, 'packages/core/scripts/prdt_lanes.py', lanes)
+    const safeFs = fs.readFileSync(path.join(path.dirname(PRDT_CLI), 'prdt_safe_fs.py'), 'utf8') // T-1134
+    put(repo, 'a/b/c/prdt_safe_fs.py', safeFs)
+    put(repo, 'packages/core/scripts/prdt_safe_fs.py', safeFs)
     const body = `print(json.dumps(m.installed_prdt_version()))`
     expect(py(body, [], path.join(repo, 'a/b/c/prdt'), home)).toBe(null)
     expect(py(body, [], path.join(repo, 'packages/core/scripts/prdt'), home)).toBe('v9.9.9')
