@@ -29,6 +29,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
+import { prdtSource } from '../helpers/copy-prdt'
 
 const PKG = path.resolve(__dirname, '..', '..')
 const LIVE = path.join(PKG, 'scripts', 'prdt')
@@ -187,7 +188,7 @@ describe('T-656 CLI write sites — a planted <target>.tmp symlink', () => {
   it('the table covers all 11 slice-B sites', () => {
     expect(ROWS).toHaveLength(11)
     for (const r of ROWS) {
-      expect(fs.readFileSync(LIVE, 'utf-8')).toMatch(new RegExp(`^def ${r.site}\\(`, 'm'))
+      expect(prdtSource(LIVE)).toMatch(new RegExp(`^def ${r.site}\\(`, 'm'))
     }
   })
 

@@ -46,7 +46,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { collectEnv, collectMachineEnv, homeEnvDir, lineEnvDir } from './env-status.mjs'
+import { spawnSync } from 'node:child_process'
+import { collectEnv, collectMachineEnv, detectVsCode, homeEnvDir, lineEnvDir } from './env-status.mjs'
 import { parseFrontmatter } from './frontmatter.mjs'
 // T-1104: the product-first docs layout (JS port of the CLI seam) — where each row is read from.
 import { createDocsLayout } from './docs-layout.mjs'
@@ -674,6 +675,31 @@ export function collectReleases(repoRoot) {
 // project without a code/ folder shows it too. '' when unreadable.
 export const INSTALL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 
+/**
+ * T-1180: the 합격선 lanes of one product — the ONE lane computation (`prdt_lanes.lanes_for`, the module
+ * `prdt schedule --json` and the statusline share), never a second copy here. Read-only; any failure
+ * (no python3, not a prdt project, bad PRD) is `[]`, which the scope block draws as no lanes.
+ * @returns {Array<{name: string, linked: boolean, done: number, total: number, tickets: string[]}>}
+ */
+export function collectLanes(repoRoot, line = null, { scriptsDir = path.join(INSTALL_ROOT, 'packages/core/scripts') } = {}) {
+  if (!fs.existsSync(path.join(scriptsDir, 'prdt_lanes.py'))) return []
+  const code = 'import sys,json,prdt_lanes as m\nprint(json.dumps(m.lanes_for(sys.argv[1], sys.argv[2] or None), ensure_ascii=False))'
+  try {
+    const r = spawnSync('python3', ['-c', code, repoRoot, line || ''], {
+      encoding: 'utf8',
+      timeout: 20000,
+      cwd: repoRoot,
+      env: { ...process.env, PYTHONPATH: scriptsDir, PYTHONDONTWRITEBYTECODE: '1' },
+    })
+    if (r.status !== 0) return []
+    const lanes = JSON.parse(r.stdout)
+    if (!Array.isArray(lanes)) return []
+    return lanes.map((l) => ({ name: String(l.name), linked: l.linked === true, done: Number(l.done) || 0, total: Number(l.total) || 0, tickets: Array.isArray(l.tickets) ? l.tickets.map(String) : [] }))
+  } catch {
+    return []
+  }
+}
+
 export function collectToolVersion(installRoot = INSTALL_ROOT) {
   try {
     const line = fs.readFileSync(path.join(installRoot, 'docs', 'RELEASES.md'), 'utf8').split('\n').find((l) => l.startsWith('## '))
@@ -836,6 +862,7 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
       version,
       prd: collectPrd(repoRoot, version, { line: name, lineNames, layout: lineLayout }),
       tickets: collectTickets(repoRoot, version, { line: name, layout: lineLayout }),
+      lanes: collectLanes(repoRoot, name),
       // T-958: key names + set/empty only (env-status.mjs).
       env: collectEnv(repoRoot, lineEnvDir(cfg, name)),
     }
@@ -849,6 +876,7 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
     docsLayout: layout,
     prd: collectPrd(repoRoot, currentVersion, { lineNames, layout }),
     tickets: collectTickets(repoRoot, currentVersion, { exclude: lineNames, layout }),
+    lanes: collectLanes(repoRoot),
     wiki: collectWiki(repoRoot, layout),
     features: collectFeatures(repoRoot, layout),
     featureTaxonomy: collectFeatureTaxonomy(repoRoot),
@@ -861,6 +889,18 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
     env: homeEnv,
     // T-1109: machine scope (~/.prdt/env/.env) — names and set/empty only.
     machineEnv: collectMachineEnv(process.env.PRDT_HOME || path.join(os.homedir(), '.prdt'), homeEnv),
+    // T-1191: the env cards' open links — the prdt link names the project root (realpath, what the
+    // URL handler checks), never a file path; VS Code's button shows only when it is installed.
+    projectRoot: realRootOrNull(repoRoot),
+    editors: { vscode: detectVsCode() },
+  }
+}
+
+function realRootOrNull(repoRoot) {
+  try {
+    return fs.realpathSync(repoRoot)
+  } catch {
+    return null
   }
 }
 

@@ -145,3 +145,93 @@ def append_line(root, parts, text, default_mode=0o600):
             os.close(fd)
     finally:
         os.close(dfd)
+
+
+# ── T-1134: self-reported machine-home writes ────────────────────────────────
+# The test suite's real-home tripwire (packages/gui/tests/real-home-tripwire.cjs)
+# fails a run on ANY drift of the machine home — except a drift whose writer
+# reported it here first, from a process the tripwire can prove is outside its
+# run. `note_home_write` is that report: one JSON line per write, appended to
+# `<tool home>/run/external-writes.jsonl` (the tooling-owned `run/` directory,
+# which the tripwire does not watch), BEFORE the write lands — so a report
+# without a write is harmless and a write without a report fails closed.
+#
+# Each line carries the writer's pid, its start time, its full parent chain
+# (complete = the chain reached pid 1) and `PRODUCTUNE_TRIPWIRE_RUN` when set.
+# A writer inside a test run (any run id, or the run's root pid among its
+# ancestors) never earns an exemption; such a writer is not reported at all
+# when its run id is set, which costs nothing and changes no verdict.
+
+EXTERNAL_WRITES_LOG = "external-writes.jsonl"
+_EXTERNAL_WRITES_MAX = 1 << 20  # rotated to `.1` past 1 MiB
+_PROC = None
+
+
+def tool_home():
+    """`$PRDT_HOME`, else `~/.prdt` — prdt_lanes.prdt_home() without pathlib."""
+    return os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+
+
+def _proc_identity():
+    """(start, ancestors, complete) of this process, computed once per process."""
+    global _PROC
+    if _PROC is not None:
+        return _PROC
+    start, chain, complete = None, [], False
+    try:
+        import subprocess
+        out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,lstart="], capture_output=True, text=True,
+                             timeout=5, env={**os.environ, "LC_ALL": "C"}).stdout
+        table = {}
+        for ln in out.splitlines():
+            parts = ln.split(None, 2)
+            if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+                table[int(parts[0])] = (int(parts[1]), parts[2].strip())
+        start = table.get(os.getpid(), (None, None))[1]
+        cur, seen = os.getppid(), set()
+        while cur not in seen:
+            seen.add(cur)
+            chain.append(cur)
+            if cur <= 1:
+                complete = True
+                break
+            if cur not in table:
+                break
+            cur = table[cur][0]
+    except Exception:
+        pass
+    _PROC = (start, chain, complete)
+    return _PROC
+
+
+def note_home_write(path, home=None):
+    """Report a coming write of `path` under the tool home (see the T-1134 block
+    above). Silent no-op outside the tool home, inside its `run/`, or on any
+    error — the report must never be what breaks a write."""
+    try:
+        import json
+        import time
+        base = os.path.realpath(home or tool_home())
+        target = os.path.realpath(os.path.abspath(os.fspath(path)))
+        run = os.path.join(base, "run")
+        if not target.startswith(base + os.sep) or target == run or target.startswith(run + os.sep):
+            return
+        if os.environ.get("PRODUCTUNE_TRIPWIRE_RUN"):
+            return  # a test run's own writer: never exempt, nothing to report
+        start, chain, complete = _proc_identity()
+        line = json.dumps({"ts": int(time.time() * 1000), "path": target, "pid": os.getpid(), "start": start,
+                           "ancestors": chain, "complete": complete, "writer": "prdt"}) + "\n"
+        os.makedirs(run, exist_ok=True)
+        log = os.path.join(run, EXTERNAL_WRITES_LOG)
+        try:
+            if os.lstat(log).st_size > _EXTERNAL_WRITES_MAX:
+                os.replace(log, log + ".1")
+        except FileNotFoundError:
+            pass
+        fd = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            os.write(fd, line.encode("utf-8"))
+        finally:
+            os.close(fd)
+    except Exception:
+        pass

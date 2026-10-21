@@ -22,6 +22,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { spawnSync } from 'child_process'
@@ -250,7 +251,7 @@ describe('T-601 shared-derived-state CLI guard', () => {
     const aidBody = aidLine[1].replace(/^\^/, '').replace(/\$$/, '')
     const bashKeyRe = new RegExp(`^${sidBody}\\.${aidBody}$`)
 
-    const prdtSrc = fs.readFileSync(PRDT_CLI, 'utf-8')
+    const prdtSrc = prdtSource(PRDT_CLI)
     const counterLine = prdtSrc.match(/_RUN_COUNTER_RE = re\.compile\(r'(.+)'\)/)
     if (!counterLine) throw new Error('_RUN_COUNTER_RE not found in scripts/prdt')
     const cliKeyRe = new RegExp(counterLine[1])

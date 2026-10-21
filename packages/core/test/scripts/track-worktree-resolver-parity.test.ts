@@ -35,14 +35,20 @@ const READY = hasBin('jq') && hasBin('python3')
 
 /** Control: the same script with the T-1112 boundary neutralized. */
 function unbounded(script: string): string {
-  const src = fs.readFileSync(script, 'utf8')
+  // T-1170: `prdt` is a launcher; the code to neutralize is its body, prdt_cli.py, beside it
+  const body = path.join(path.dirname(script), 'prdt_cli.py')
+  const isLauncher = path.basename(script) === 'prdt' && fs.existsSync(body)
+  const src = fs.readFileSync(isLauncher ? body : script, 'utf8')
   expect(src).toContain('"tracks"')
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1112-prefix-'))
-  const p = path.join(dir, path.basename(script))
+  const p = path.join(dir, path.basename(isLauncher ? body : script))
   const lanes = path.join(path.dirname(script), 'prdt_lanes.py')
   if (fs.existsSync(lanes)) fs.copyFileSync(lanes, path.join(dir, 'prdt_lanes.py'))
+  const safeFs = path.join(path.dirname(script), 'prdt_safe_fs.py') // T-1134
+  if (fs.existsSync(safeFs)) fs.copyFileSync(safeFs, path.join(dir, 'prdt_safe_fs.py'))
+  if (isLauncher) fs.copyFileSync(script, path.join(dir, 'prdt'))
   fs.writeFileSync(p, src.replaceAll('"tracks"', '"tracks-off"').replaceAll('name == "tracks-off"', 'name == "tracks-off"'), { mode: 0o755 })
-  return p
+  return isLauncher ? path.join(dir, 'prdt') : p
 }
 
 interface Fx { proj: string; wt: string; deep: string; wtOwn: string; home: string }

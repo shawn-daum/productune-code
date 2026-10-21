@@ -22,6 +22,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { writeTicketJumpPages, ticketJumpPages } from './lib/jump-pages.mjs'
+import { recordOpenRoot } from './lib/open-roots.mjs'
 import { generate, checkUpToDate, isPastTicketDataFileName, OUTPUT_PATH, REPO_ROOT } from './generate.mjs'
 
 function argValue(name) {
@@ -54,6 +55,8 @@ async function main() {
   }
 
   const { html, dataFiles, buildFile, ticketIds } = await generate({ repoRoot, outputPath })
+  // T-1191: the page's prdt:// env links open only a root our tooling recorded — this run is the record.
+  recordOpenRoot(repoRoot)
   if (process.argv.includes('--emit')) {
     const base = path.basename(outputPath)
     const prefix = base.replace(/\.html?$/i, '')
