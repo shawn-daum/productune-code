@@ -16733,6 +16733,29 @@ def layout_undo(root, state):
                          "prdt layout check 로 상태를 확인하고, 일부만 새 구조라고 나오면 PO 에게 알리세요.")
     prod = layout_product_name(root)
     docs = root / "docs"
+    # T-1212: the same link check `--apply` makes, plus every entry the walk below would move:
+    # a symlink is named and the run stops before anything moves
+    link = docs if os.path.islink(docs) else None
+    if link is None:
+        for base in (docs / prod, docs / DOCS_SHARED):
+            if base.is_symlink():
+                link = base
+                break
+            if not base.is_dir():
+                continue
+            for n in sorted(os.listdir(base)):
+                if (base / n).is_symlink():
+                    link = base / n
+                    break
+                if n == "wiki" and (base / n).is_dir():
+                    link = next((base / n / c for c in sorted(os.listdir(base / n)) if (base / n / c).is_symlink()), None)
+                    if link is not None:
+                        break
+            if link is not None:
+                break
+    if link is not None:
+        _lay_undo_refuse(f"{link.relative_to(root).as_posix()} 가 실제 폴더나 문서가 아니라 링크예요. docs 폴더는 그대로예요.",
+                         "링크를 실제 폴더로 바꾸거나 지운 뒤 prdt layout migrate --undo 를 다시 실행하세요.")
     tree = _lay_git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", "docs", ".prdt/config.json"])
     if tree.returncode != 0:     # read before anything moves: a failed read is a refusal, never a silent skip
         _lay_undo_refuse(f"meta git 의 변경 목록을 되돌릴 수 없어요 ({(tree.stderr or 'git ls-tree failed').strip().splitlines()[0]}). "

@@ -103,7 +103,8 @@ def _code_dir(root, cfg, line):
         if isinstance(e, dict) and e.get("name") == line:
             code = e.get("code")
             d = code.get("dir") if isinstance(code, dict) else None
-            if isinstance(d, str) and d.strip() and not os.path.isabs(d.strip()):
+            if isinstance(d, str) and d.strip() and not os.path.isabs(d.strip()) \
+                    and ".." not in re.split(r"[/\\]+", d.strip()):
                 return d.strip()
             return None
     return None

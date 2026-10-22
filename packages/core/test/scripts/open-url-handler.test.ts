@@ -33,7 +33,9 @@ beforeAll(() => {
   root = path.join(base, 'proj')
   prdtHome = path.join(base, 'prdt')
   write('proj/.prdt/po-state.json', '{}')
-  write('proj/.prdt/config.json', JSON.stringify({ lines: [{ name: 'arch', code: { dir: '../arch/code' } }] }))
+  write('proj/.prdt/config.json', JSON.stringify({ lines: [{ name: 'arch', code: { dir: '../arch/code' } },
+    { name: 'inner', code: { dir: 'sub/code' } }, { name: 'esc', code: { dir: 'sub/../../arch/code' } }] }))
+  write('proj/sub/code/.env', 'I=1\n')
   write('proj/code/.env.local', 'A=1\n')
   write('proj/code/.env.example', 'A=\n')
   write('proj/code/notes.txt', 'x\n')
@@ -58,10 +60,18 @@ beforeAll(() => {
 afterAll(() => fs.rmSync(base, { recursive: true, force: true }))
 
 describe('prdt_open_url.py — resolves only an env file in a prdt project code folder', () => {
-  test('home code folder and a line code folder that climbs out', () => {
+  test('home code folder and a line code folder', () => {
     expect(check(link({ root, file: '.env.local' }))).toMatchObject({ code: 0, out: path.join(root, 'code', '.env.local') })
     expect(check(link({ root, file: '.env.example' })).out).toBe(path.join(root, 'code', '.env.example'))
-    expect(check(link({ root, line: 'arch', file: '.env' })).out).toBe(path.join(base, 'arch', 'code', '.env'))
+    expect(check(link({ root, line: 'inner', file: '.env' })).out).toBe(path.join(root, 'sub', 'code', '.env'))
+  })
+
+  // T-1211/T-1212: the line= branch rejects `..` in code.dir exactly as the line-less branch does
+  test('a line code folder that climbs out with `..` is refused', () => {
+    const r = check(link({ root, line: 'arch', file: '.env' }))
+    expect(r.code).toBe(1)
+    expect(r.err).toContain('refused')
+    expect(check(link({ root, line: 'esc', file: '.env' })).code).toBe(1)
   })
 
   test.each([
