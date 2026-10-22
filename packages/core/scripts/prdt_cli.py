@@ -12258,20 +12258,68 @@ def stage_signal_warnings(st, tickets, lines=(), root=None):
     return _stage_signal_one(st.get("stage"), line_state(st)[1], tickets, root, None) + warns
 
 
-def _build_gate_met(root, line, ver_tickets):
-    """T-1205: the build gate as `build-entry` §Gate met reads it — every 합격선 lane
-    finished (the one lane computation, `lanes_for`); no gate line → every ticket of
-    the version done/dropped (the entry slice is not recorded in a ticket, so the
-    version's tickets stand in for it)."""
+def _build_entry_date(root, line, version):
+    """T-1205: the day of the stage write to build for `version` (YYYY-MM-DD), or None.
+    Source: the meta repo's history of `.prdt/po-state.json` — po-state itself keeps no
+    history, and the meta auto-save snapshot is the one record of stage writes today.
+    Newest-first over the commits touching po-state: the oldest commit of the newest
+    unbroken run reading (build, `version`) for this line; its committer date is the
+    write's day or later (a snapshot lands at or after the write). The newest snapshot
+    not reading (build, `version`) → None (the write is not recorded yet)."""
+    if root is None or not (meta_git_dir(root) / "HEAD").exists():
+        return None
+    try:
+        r = _meta_git(root, ["log", "--format=%H%x00%cI", "--", ".prdt/po-state.json"])
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    entry = None
+    for row in r.stdout.splitlines():
+        sha, _, date_iso = row.partition("\x00")
+        if not sha or len(date_iso) < 10:
+            break
+        try:
+            s = _meta_git(root, ["show", f"{sha}:.prdt/po-state.json"])
+            hist = json.loads(s.stdout) if s.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError, ValueError):
+            hist = None
+        stage, ver, _ = line_state(hist, line)
+        if stage != "build" or ver != version:
+            break
+        entry = date_iso[:10]
+    return entry
+
+
+def _build_gate_met(root, line, ver_tickets, version):
+    """T-1205: (met, note) — the build gate as `build-entry` §Gate met reads it.
+    Gate line present → every 합격선 lane finished (the one lane computation, `lanes_for`).
+    No gate line → the build-entry slice all done/dropped: the version's tickets created
+    on or before the stage write to build (`_build_entry_date`); tickets created later
+    are 자투리 and never hold the signal back. No record of that write (or no ticket
+    created by then) → every ticket of the version, and `note` says so when that
+    holds the signal back. A lane-read failure → not met, `note` names it (never
+    read as "no gate")."""
     gate = []
     if root is not None:
         try:
             gate = [ln for ln in lanes_for(root, line) if not ln.get("besteffort")]
-        except Exception:
-            gate = []
+        except Exception as e:
+            return False, (f"stage: {version} lane read failed ({type(e).__name__}: "
+                           f"{safe_label(str(e))}) — build gate unknown, Ship-entry signal not judged")
     if gate:
-        return all(ln["finished"] for ln in gate)
-    return not any(t["status"] == "open" for t in ver_tickets)
+        return all(ln["finished"] for ln in gate), None
+    entry = _build_entry_date(root, line, version)
+    if entry:
+        slice_ = [t for t in ver_tickets if not t.get("created") or str(t["created"])[:10] <= entry]
+        if slice_:
+            return not any(t["status"] == "open" for t in slice_), None
+        why = f"no {version} ticket created by the build write ({entry})"
+    else:
+        why = "no meta-git record of the stage write to build"
+    met = not any(t["status"] == "open" for t in ver_tickets)
+    return met, (None if met else f"stage: {version} build-entry slice unreadable ({why}) — "
+                 f"Ship-entry signal reads every {version} ticket")
 
 
 def _stage_signal_one(stage, version, tickets, root=None, line=None):
@@ -12280,9 +12328,13 @@ def _stage_signal_one(stage, version, tickets, root=None, line=None):
     if next_stage and version:
         ver_tickets = [t for t in tickets.values() if t["version"] == version]
         if stage == "build":
-            if ver_tickets and _build_gate_met(root, line, ver_tickets):
-                warns.append(f"stage: {version} gate met at stage=build — "
-                             f"consider {next_stage} entry")
+            if ver_tickets:
+                met, note = _build_gate_met(root, line, ver_tickets, version)
+                if met:
+                    warns.append(f"stage: {version} gate met at stage=build — "
+                                 f"consider {next_stage} entry")
+                if note:
+                    warns.append(note)
         elif ver_tickets and not any(t["status"] == "open" for t in ver_tickets):
             warns.append(f"stage: {version} has no open tickets at stage={stage} — "
                          f"consider {next_stage} entry")

@@ -1,7 +1,10 @@
 /**
  * prdt-doctor-stage-gate-signal.test.ts — T-1205: at stage=build the doctor's
  * Ship-entry signal reads the gate (every 합격선 lane finished; no gate line →
- * the version's tickets all done/dropped), not "open tickets at 0".
+ * the build-entry slice all done/dropped), not "open tickets at 0".
+ * The slice = version tickets created on or before the stage write to build,
+ * read from the meta repo's history of .prdt/po-state.json; no such record →
+ * every version ticket, said in doctor output.
  * Black-box over the REAL CLI. Other stages keep the open-tickets-0 rule.
  */
 
@@ -35,12 +38,12 @@ const GATE_B = 'docs/artifacts/v0.1/b.md'
 const rowA = `| **합격선** | **레인 A · \`${GATE_A}\` 가 있다** |`
 const rowB = `| **합격선** | **레인 B · \`${GATE_B}\` 가 있다** |`
 
-function writeTicket(version: string, id: string, fm: { status?: string; deps?: string; gate?: string } = {}) {
+function writeTicket(version: string, id: string, fm: { status?: string; deps?: string; gate?: string; created?: string } = {}) {
   const dir = path.join(projectDir, 'docs', 'tickets', version)
   fs.mkdirSync(dir, { recursive: true })
   const lines = ['---', `id: ${id}`, `slug: s-${id.toLowerCase()}`, 'type: impl', `status: ${fm.status ?? 'open'}`, 'assignee: developer']
   if (fm.deps) lines.push(`deps: ${fm.deps}`)
-  lines.push('created: 2026-10-15', '---', '', '## problem', '', fm.gate ? `Produces \`${fm.gate}\`.` : 'x', '', '## acceptance', '', '- x', '')
+  lines.push(`created: ${fm.created ?? '2026-10-15'}`, '---', '', '## problem', '', fm.gate ? `Produces \`${fm.gate}\`.` : 'x', '', '## acceptance', '', '- x', '')
   fs.writeFileSync(path.join(dir, `${id}.md`), lines.join('\n'))
 }
 
@@ -57,7 +60,18 @@ function setStage(stage: string) {
   fs.writeFileSync(p, JSON.stringify(st))
 }
 
+// Snapshot po-state into the meta repo the way the meta auto-save does, dated `day`.
+function commitMeta(day: string) {
+  const date = `${day}T12:00:00+09:00`
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
+    '--git-dir', path.join(projectDir, '.prdt', 'meta.git'), '--work-tree', projectDir,
+    'commit', '-q', '-m', 'meta auto-save', '--', '.prdt/po-state.json'],
+  { cwd: projectDir, env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date } })
+}
+
 const SIGNAL = /consider Ship entry/
+const FALLBACK_NOTE = /build-entry slice unreadable .* every v0\.1 ticket/
+const SCRIPTS = path.dirname(PRDT_CLI)
 
 beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-stage-gate-'))
@@ -97,14 +111,57 @@ describe.skipIf(!PYTHON3)('prdt doctor — build stage signal reads the gate (T-
     expect(run(['doctor'])).not.toMatch(SIGNAL)
   })
 
-  test('no gate line: fires when every version ticket is done/dropped, silent while one is open', () => {
+  test('no gate line: build-entry slice all done + an open 자투리 created after the build write → fires', () => {
+    writePrd([])
+    setStage('build')
+    commitMeta('2026-10-15')
+    writeTicket('v0.1', 'T-001', { status: 'done', created: '2026-10-15' })
+    writeTicket('v0.1', 'T-002', { status: 'dropped', created: '2026-10-14' })
+    writeTicket('v0.1', 'T-003', { status: 'open', created: '2026-10-16' }) // 자투리
+    const out = run(['doctor'])
+    expect(out).toMatch(SIGNAL)
+    expect(out).not.toMatch(FALLBACK_NOTE)
+  })
+
+  test('no gate line: a build-entry slice ticket still open → silent', () => {
+    writePrd([])
+    setStage('build')
+    commitMeta('2026-10-15')
+    writeTicket('v0.1', 'T-001', { status: 'open', created: '2026-10-15' })
+    writeTicket('v0.1', 'T-002', { status: 'done', created: '2026-10-16' })
+    expect(run(['doctor'])).not.toMatch(SIGNAL)
+  })
+
+  test('no gate line, no meta record of the build write: every version ticket, and doctor says so', () => {
     writePrd([])
     writeTicket('v0.1', 'T-001', { status: 'done' })
-    writeTicket('v0.1', 'T-002', { status: 'open' })
-    setStage('build')
-    expect(run(['doctor'])).not.toMatch(SIGNAL)
+    writeTicket('v0.1', 'T-002', { status: 'open', created: '2026-10-16' })
+    setStage('build') // po-state written, never snapshotted: meta history still reads define
+    const out = run(['doctor'])
+    expect(out).not.toMatch(SIGNAL)
+    expect(out).toMatch(FALLBACK_NOTE)
     writeTicket('v0.1', 'T-002', { status: 'dropped' })
     expect(run(['doctor'])).toMatch(SIGNAL)
+  })
+
+  test('a lane-read failure is a named warning, never read as "no gate"', () => {
+    writePrd([])
+    writeTicket('v0.1', 'T-001', { status: 'done' })
+    setStage('build')
+    const py = [
+      'import sys, json',
+      `sys.path.insert(0, ${JSON.stringify(SCRIPTS)})`,
+      'import prdt_cli as c',
+      'def boom(root, line=None): raise RuntimeError("lane boom")',
+      'c.lanes_for = boom',
+      'root = sys.argv[1]',
+      'st = json.load(open(root + "/.prdt/po-state.json"))',
+      'tickets = {"T-001": {"id": "T-001", "version": "v0.1", "status": "done", "created": "2026-10-15", "deps": []}}',
+      'print("\\n".join(c.stage_signal_warnings(st, tickets, (), root)))',
+    ].join('\n')
+    const out = execFileSync('python3', ['-c', py, projectDir], { encoding: 'utf-8', timeout: subprocessTimeout('cli') })
+    expect(out).toMatch(/stage: v0\.1 lane read failed \(RuntimeError: lane boom\)/)
+    expect(out).not.toMatch(SIGNAL)
   })
 
   test('ship stage unchanged: no open tickets fires, an open one is silent', () => {
