@@ -29,6 +29,7 @@ from prdt_lanes import (
     LEGACY_ASSIGNEE_RE,
     LINE_NAME_RE,
     lanes_for,
+    line_product,
     PRD_H4_RE,
     PRD_ITEM_KEY_RE,
     PRD_ITEM_RE,
@@ -3760,15 +3761,17 @@ def wiki_single_site_warnings(root, trows):
                 if any(t in text for t in subj_tokens) and any(t in text for t in claim_tokens):
                     warns.append(f"wiki-single-site: {rel_path}:{lineno} restates {slug} without citing it")
 
-    prd_path = docs_path(root, "prd") / "PRD.md"
-    if prd_path.is_file():
-        _scan(docs_rel(root, prd_path), _read_lines(prd_path))
+    for _prod, prd_dir in product_docs_dirs(root, "prd"):   # T-1214: every product's PRD
+        prd_path = prd_dir / "PRD.md"
+        if prd_path.is_file():
+            _scan(docs_rel(root, prd_path), _read_lines(prd_path))
 
     for design_path in docs_layer_chain(root, "design.md"):
         if design_path.is_file():
             _scan(docs_rel(root, design_path), _read_lines(design_path))
 
-    for features_dir in dict.fromkeys((docs_path(root, "features"), product_docs_dir(root) / "features")):
+    for features_dir in dict.fromkeys([docs_path(root, "features")]
+                                      + [d.parent / "features" for _p, d in product_docs_dirs(root, "prd")]):
         if features_dir.is_dir():
             for p in sorted(features_dir.glob("*.md")):
                 _scan(str(p.relative_to(root)), _read_lines(p))
@@ -7729,7 +7732,7 @@ def cmd_history(_args):
         "FROM tickets GROUP BY version ORDER BY version").fetchall()
     for v, total, done, opn, dropped in rows:
         _rp, _rv = split_line_id(v)
-        retro = (product_docs_dir(root, _rp) / "wiki" / f"retro--{_rv}.md"
+        retro = (product_docs_dir(root, line_product(root, _rp)) / "wiki" / f"retro--{_rv}.md"
                  if docs_layout(root) == "product" else root / "docs" / "wiki" / f"retro--{v}.md")
         print(f"{v:<10} {total} tickets · {done or 0} done · {opn or 0} open · {dropped or 0} dropped"
               + (f" · retro--{v}" if retro.exists() else ""))
@@ -11516,7 +11519,7 @@ def prd_line_layout_warnings(root, st):
     lines = project_line_names(root)
     if not lines:
         return []
-    prd_md = docs_path(root, "prd") / "PRD.md"
+    prd_md = docs_path(root, "prd", line_product(root)) / "PRD.md"
     try:
         text = prd_md.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -11748,7 +11751,8 @@ def prd_layout_warnings(root, st):
     round itself, whose section is the open one in PRD.md (or not yet written
     between close and Define)."""
     root = Path(root)
-    prd_dir = docs_path(root, "prd")
+    home = line_product(root)   # T-1214: this check judges the first product (`st` top level)
+    prd_dir = docs_path(root, "prd", home)
     prd_md = prd_dir / "PRD.md"
     vdir = prd_dir / "versions"
     warns = []
@@ -11930,7 +11934,7 @@ def prd_layout_warnings(root, st):
                          f"a section starts with `## {own}` on line 1")
 
     # Rounds with tickets and no PRD record — the gap the lump hid.
-    tdir = docs_path(root, "tickets")
+    tdir = docs_path(root, "tickets", home)
     if tdir.is_dir():
         current = {k for k in (_version_id_canon(v) for v in prd_section_ids) if k is not None}
         if open_key is not None:
@@ -12308,7 +12312,11 @@ def _build_gate_met(root, line, ver_tickets, version):
             return False, (f"stage: {version} lane read failed ({type(e).__name__}: "
                            f"{safe_label(str(e))}) — build gate unknown, Ship-entry signal not judged")
     if gate:
-        return all(ln["finished"] for ln in gate), None
+        # T-1214 (C2): a 합격선 lane with no gate ticket can never finish — name it.
+        unlinked = [safe_label(str(ln["name"])) for ln in gate if not ln.get("linked")]
+        note = (f"stage: {version} 합격선 lane {', '.join(unlinked)} not linked (no gate path, or no "
+                f"{version} ticket names it) — Ship-entry signal not raised until it links") if unlinked else None
+        return all(ln["finished"] for ln in gate), note
     entry = _build_entry_date(root, line, version)
     if entry:
         slice_ = [t for t in ver_tickets if not t.get("created") or str(t["created"])[:10] <= entry]
@@ -12434,7 +12442,8 @@ def version_set_from_disk(root, st):
             if k is not None and k not in ids:
                 ids[k] = v.strip()
 
-    vdir = docs_path(root, "prd") / "versions"
+    home = line_product(root)   # T-1214: the first product's set (`st` top level)
+    vdir = docs_path(root, "prd", home) / "versions"
     if vdir.is_dir():
         for f in sorted(vdir.glob("*.md")):
             if PRD_VERSION_FILE_RE.match(f.name):
@@ -12443,7 +12452,7 @@ def version_set_from_disk(root, st):
     if isinstance(pv, str) and pv.strip():
         add(pv)
     else:
-        prd_md = docs_path(root, "prd") / "PRD.md"
+        prd_md = docs_path(root, "prd", home) / "PRD.md"
         if prd_md.is_file():
             try:
                 text = prd_md.read_text(encoding="utf-8")
@@ -12452,7 +12461,7 @@ def version_set_from_disk(root, st):
             if text:
                 for v, _ in _prd_version_headings(text):
                     add(v)
-    tdir = docs_path(root, "tickets")
+    tdir = docs_path(root, "tickets", home)
     if tdir.is_dir():
         for d in sorted(tdir.iterdir()):
             if d.is_dir():
@@ -12792,8 +12801,8 @@ def _prd_item_keys_for_version(root, st, version_str):
     open_v, open_body = _prd_open_section(root, st, line)
     if open_v is not None and _version_id_canon(open_v) == vkey:
         return {k for _, k, _ in _prd_h4_items(open_body) if k}
-    vdir = docs_path(root, "prd") / "versions"
-    if line is not None:
+    vdir = docs_path(root, "prd", line_product(root, line)) / "versions"
+    if line is not None and docs_layout(root) != "product":
         vdir = vdir / line
     if vdir.is_dir():
         for f in sorted(vdir.glob("*.md")):
@@ -13134,12 +13143,11 @@ def _reversed_section_lines(text):
 def _prd_and_ticket_files(root):
     root = Path(root)
     out = []
-    prd_md = docs_path(root, "prd") / "PRD.md"
-    if prd_md.is_file():
-        out.append(prd_md)
-    vdir = docs_path(root, "prd") / "versions"
-    if vdir.is_dir():
-        out += sorted(vdir.glob("*.md"))
+    for _prod, prd_dir in product_docs_dirs(root, "prd"):   # T-1214: every product's PRD
+        if (prd_dir / "PRD.md").is_file():
+            out.append(prd_dir / "PRD.md")
+        if (prd_dir / "versions").is_dir():
+            out += sorted((prd_dir / "versions").glob("*.md"))
     for _prod, tdir in product_docs_dirs(root, "tickets"):
         if tdir.is_dir():
             out += sorted(tdir.rglob("T-*.md"))
@@ -14858,11 +14866,17 @@ def schedule_record(ev, now=None):
         row["cycle"] = sched["cycle"]
     append_schedule_row(root, row)
     warning = None
-    if sched.get("lanes"):
+    lanes = sched.get("lanes")
+    # T-1214: the lane warning reads the dispatched ticket's OWN product's lanes —
+    # a ticket of an added product is in no lane of the first product.
+    tline = split_line_id(tickets[ticket][0]["version"])[0] if ticket in tickets else None
+    if tline is not None and tline in project_line_names(root):
+        lanes = compute_schedule(root, tickets, line=tline).get("lanes")
+    if lanes:
         # T-1145 / R6: with lanes the critical-path deviation warning does not apply
         # (riders run beside the lanes by rule) — warn only when an out-of-lane ticket is
         # sent while a lane has something to do (`next`) and nothing running.
-        warning = _lane_gate_warning(sched["lanes"], ticket)
+        warning = _lane_gate_warning(lanes, ticket)
     elif cls == "deviated" and reason is None:
         sent = _safe_ids([ticket])[0]
         top_s = ", ".join(_safe_ids(top)) if top else "(none dispatchable)"
@@ -14980,7 +14994,11 @@ def schedule_report(root, version):
     writes at close — is never touched. Returns (path, row_count, bad_lines)."""
     rows, bad = read_schedule_log(root)
     block, n = schedule_report_text(rows, version)
-    p = artifacts_root(Path(root)) / version / "schedule-observation.md"
+    pref, bare = split_line_id(version)
+    if docs_layout(root) == "product":   # T-1214: `<p>/vX` → that product's artifacts folder
+        p = artifacts_root(Path(root), line_product(root, pref)) / bare / "schedule-observation.md"
+    else:
+        p = artifacts_root(Path(root)) / version / "schedule-observation.md"
     try:
         cur = p.read_text(encoding="utf-8")
     except OSError:
