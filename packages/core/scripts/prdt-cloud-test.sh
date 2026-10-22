@@ -195,7 +195,7 @@ fi
 
 TAIL=""
 if [ -n "$LOG" ] && [ -f "$LOG" ]; then
-  TAIL=$(tail -c 1500 "$LOG")
+  TAIL=$(tail -c 1500 "$LOG" | redact)
   tail -n 20 "$LOG" | redact | while IFS= read -r l; do echo "PRDT_PHASE $PHASE log| $l"; done
 fi
 [ "$STATUS" = ok ] && PHASE=""
