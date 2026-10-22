@@ -207,6 +207,29 @@ echo "gh: Not Found (HTTP 404)" >&2; exit 1
     git(repo, 'remote', 'remove', 'origin')
   })
 
+  test('T-1211: a record whose ref is not ci/T-NNN/<session> is never passed to push --delete — named instead', () => {
+    clean()
+    const origin = tmp('bad-origin')
+    git(origin, 'init', '-q', '--bare', '-b', 'main')
+    git(repo, 'remote', 'add', 'origin', origin)
+    git(repo, 'push', '-q', 'origin', 'HEAD:refs/heads/main')
+    git(repo, 'push', '-q', 'origin', 'HEAD:refs/heads/dev')
+    const st = path.join(repo, '.git', 'prdt-cloud', 'runs')
+    fs.mkdirSync(st, { recursive: true })
+    const bad = ['refs/heads/main', 'refs/heads/dev', 'refs/heads/ci/T-1/../main', 'refs/tags/v1', '-d', 'refs/heads/ci/T-1/a b']
+    bad.forEach((ref, i) => fs.writeFileSync(path.join(st, `bad${i}.json`), JSON.stringify({ ref, state: 'timeout' })))
+    const notes = py(`print(json.dumps(m._cloud_clean_leftovers(m.Path(${JSON.stringify(repo)}), "o/r")))`,
+      repo, { PATH: `${bin}:${process.env.PATH}` }) as string[]
+    expect(notes).toHaveLength(bad.length)
+    for (const ref of bad) expect(notes.join('\n')).toContain(ref)
+    expect(notes.join('\n')).toContain('not a ci/T-NNN ref')
+    const refs = git(origin, 'for-each-ref', '--format=%(refname)').split('\n')
+    expect(refs).toContain('refs/heads/main')
+    expect(refs).toContain('refs/heads/dev')
+    fs.rmSync(path.join(repo, '.git', 'prdt-cloud'), { recursive: true })
+    git(repo, 'remote', 'remove', 'origin')
+  })
+
   test('doctor names a carve-out-off record and an undeleted ref', () => {
     const st = path.join(repo, '.git', 'prdt-cloud')
     fs.mkdirSync(path.join(st, 'runs'), { recursive: true })
@@ -312,6 +335,22 @@ describe('result condenser', () => {
     ])
     const missing = JSON.parse(execFileSync('node', [CONDENSE, path.join(d, 'nope.json'), ''], { cwd: d, encoding: 'utf-8' }))
     expect(missing.status).toBe('error')
+  })
+})
+
+describe('T-1211 condenser redaction — failure messages and meta values', () => {
+  test('a token in a failure message or a log_tail value never reaches the output', () => {
+    const d = tmp('cond-red')
+    const fx = { numTotalTests: 1, numPassedTests: 0, numFailedTests: 1, testResults: [
+      { name: '/w/a.test.ts', status: 'failed', assertionResults: [{ fullName: 'x', status: 'failed',
+        failureMessages: ['clone https://u:ghp_FAKEfixture000@github.com/o/r failed\nAuthorization: token ghs_FAKEfixture222'] }] },
+      { name: '/w/b.test.ts', status: 'failed', message: 'github_pat_FAKEfixture333 leaked', assertionResults: [] },
+    ] }
+    fs.writeFileSync(path.join(d, 'v.json'), JSON.stringify(fx))
+    const raw = execFileSync('node', [CONDENSE, path.join(d, 'v.json'), '/w/', 'log_tail=https://user:ghp_FAKEfixture000@github.com x', 'reason=Bearer abcDEF123tok'],
+      { cwd: d, encoding: 'utf-8' })
+    for (const secret of ['ghp_FAKEfixture000', 'ghs_FAKEfixture222', 'github_pat_FAKEfixture333', 'abcDEF123tok']) expect(raw).not.toContain(secret)
+    expect(raw).toContain('***@github.com')
   })
 })
 
@@ -457,6 +496,7 @@ printf '{"numTotalTests":1,"numPassedTests":1,"numFailedTests":0,"testResults":[
     // a stand-in setup: the real one writes the user's global git config
     // FAKE_SETUP_STDIN: a step that reads stdin (a corepack download prompt) must see EOF at once
     put('.claude/cloud-setup.sh', 'echo "setup for $1"\n[ -n "${FAKE_SETUP_HANG-}" ] && sleep 120\n'
+      + '[ -n "${FAKE_SETUP_LEAK-}" ] && { echo "$FAKE_SETUP_LEAK"; exit 1; }\n'
       + 'if [ -n "${FAKE_SETUP_STDIN-}" ]; then read -r -t 4 x; rc=$?; echo "stdin_rc=$rc corepack_prompt=${COREPACK_ENABLE_DOWNLOAD_PROMPT-unset}"; [ $rc -gt 128 ] && exit 7; [ "${COREPACK_ENABLE_DOWNLOAD_PROMPT-}" = 0 ] || exit 8; fi\n'
       + 'exit 0\n')
     put('packages/core/node_modules/.bin/vitest', FAKE_VITEST, 0o755)
@@ -508,6 +548,18 @@ printf '{"numTotalTests":1,"numPassedTests":1,"numFailedTests":0,"testResults":[
     expect(result('cse_setup_hang')).toMatchObject({ status: 'error', phase: 'setup' })
     // the page shows the setup log, not only rc=124
     expect(r.stdout).toMatch(/^PRDT_PHASE setup log\| setup for prdt-test$/m)
+  })
+
+  test('T-1211: a failed setup log pushes a redacted log_tail — no token literal in the pushed result.json', () => {
+    const leak = 'fatal: unable to access https://user:ghp_FAKEfixture000@github.com/o/r.git/ with Authorization: Bearer abcDEF123tok glpat-FAKEfixture111'
+    const r = run('cse_leak', [], { FAKE_SETUP_LEAK: leak })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.stdout).toContain('***@github.com')
+    const raw = git(origin, 'show', 'refs/heads/ci/T-1126/cse_leak:result.json')
+    for (const secret of ['ghp_FAKEfixture000', 'user:ghp_', 'abcDEF123tok', 'glpat-FAKEfixture111']) expect(raw).not.toContain(secret)
+    const res = JSON.parse(raw)
+    expect(res).toMatchObject({ status: 'error', phase: 'setup' })
+    expect(res.log_tail).toContain('***@github.com')
   })
 
   test('a phase never waits on an inherited stdin, and corepack never prompts', () => {

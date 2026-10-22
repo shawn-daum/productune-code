@@ -19204,7 +19204,12 @@ def _cloud_ls_remote(code, ref):
     return "", None
 
 
+CLOUD_REF_RE = re.compile(r"^refs/heads/ci/T-\d+/[A-Za-z0-9._-]+$")
+
+
 def _cloud_delete_ref(code, ref):
+    if not (isinstance(ref, str) and CLOUD_REF_RE.match(ref)):
+        return False, f"not a ci/T-NNN ref: {str(ref)[:120]!r} — not deleted"
     r = _tgit(["push", "--delete", "--end-of-options", "origin", ref], code, timeout=120)
     return r.returncode == 0, (r.stderr.strip().splitlines() or [""])[-1][:200]
 
@@ -19252,6 +19257,11 @@ def _cloud_clean_leftovers(code, repo):
     for f in sorted(runs.glob("*.json")) if runs.is_dir() else []:
         rec = read_json(f)
         if not (isinstance(rec, dict) and rec.get("ref") and rec.get("state") not in ("deleted", "absent")):
+            continue
+        # T-1211: a record is data from inside .git — only a ci/T-NNN/<session> ref is ever
+        # fetched or deleted; anything else is named and left alone
+        if not (isinstance(rec["ref"], str) and CLOUD_REF_RE.match(rec["ref"])):
+            notes.append(f"leftover {str(rec['ref'])[:120]!r} of run {f.stem}: not a ci/T-NNN ref — not deleted")
             continue
         sha, err = _cloud_ls_remote(code, rec["ref"])
         if err:
