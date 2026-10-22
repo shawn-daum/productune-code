@@ -66,13 +66,19 @@ describe('prdt_open_url.py — resolves only an env file in a prdt project code 
     expect(check(link({ root, line: 'inner', file: '.env' })).out).toBe(path.join(root, 'sub', 'code', '.env'))
   })
 
-  // T-1211/T-1212: the line= branch rejects `..` in code.dir exactly as the line-less branch does
-  test('a line code folder that climbs out with `..` is refused', () => {
-    const r = check(link({ root, line: 'arch', file: '.env' }))
-    expect(r.code).toBe(1)
-    expect(r.err).toContain('refused')
-    expect(check(link({ root, line: 'esc', file: '.env' })).code).toBe(1)
+  // T-1212 (revised): config is trusted, so line= takes code.dir as configured, `..` included;
+  // the guard is which file opens — `.env` / `.env.*` directly under the resolved code dir
+  test('a line code folder that climbs out with `..` resolves to the sibling folder', () => {
+    expect(check(link({ root, line: 'arch', file: '.env' })).out).toBe(path.join(base, 'arch', 'code', '.env'))
+    expect(check(link({ root, line: 'esc', file: '.env' })).out).toBe(path.join(base, 'arch', 'code', '.env'))
   })
+
+  test.each(['../.env', '.env/../x', '.env/x', '..', '.env..x', 'notes.txt', '../notes.txt', '.env%2F..%2Fnotes.txt'])(
+    'line= with file=%s is refused', (file) => {
+      const r = check(link({ root, line: 'arch', file }))
+      expect(r.code).toBe(1)
+      expect(r.err).toContain('refused')
+    })
 
   test.each([
     ['a path in file', { file: '../code/.env.local' }],

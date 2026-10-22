@@ -103,8 +103,7 @@ def _code_dir(root, cfg, line):
         if isinstance(e, dict) and e.get("name") == line:
             code = e.get("code")
             d = code.get("dir") if isinstance(code, dict) else None
-            if isinstance(d, str) and d.strip() and not os.path.isabs(d.strip()) \
-                    and ".." not in re.split(r"[/\\]+", d.strip()):
+            if isinstance(d, str) and d.strip() and not os.path.isabs(d.strip()):
                 return d.strip()
             return None
     return None
@@ -133,7 +132,7 @@ def resolve(url):
         raise Refused("root is not a prdt project")
     if line and not LINE_RE.match(line):
         raise Refused("bad line name")
-    if not ENV_NAME_RE.match(name):
+    if not ENV_NAME_RE.match(name) or ".." in name:
         raise Refused("file is not an env file name")
     cfg = {}
     cfg_path = os.path.join(root, ".prdt", "config.json")
