@@ -18,6 +18,8 @@ import path from 'node:path'
 export const DOCS_SHARED = '_shared'
 export const PRODUCT_DOCS_KINDS = ['prd', 'tickets', 'artifacts', 'DEPLOY.md']
 // Same shape as the CLI's LINE_NAME_RE (`\Z` → `$`: no trailing-newline slack in JS).
+// T-1215: top-level docs/ names the layout owns — keep in lockstep with PRODUCT_RESERVED_NAMES in prdt_lanes.py.
+const PRODUCT_RESERVED_NAMES = ['prd', 'tickets', 'artifacts', 'wiki', 'features', 'archive', 'po', 'designer', 'developer', 'qa']
 const LINE_NAME_RE = /^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 const isDir = (p) => {
@@ -66,7 +68,8 @@ function normpath(p) {
 /** A config `slug` as the `docs/<kebab>/` folder name — the CLI's `product_dir_name` (what `prdt init` scaffolds). */
 export function productDirName(slug) {
   const k = String(slug ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-  return LINE_NAME_RE.test(k) ? k : 'product'
+  if (!LINE_NAME_RE.test(k)) return 'product'
+  return PRODUCT_RESERVED_NAMES.includes(k) ? `${k}-product` : k
 }
 
 /** "product" when `docs/_shared/` is a real dir, else "legacy". */
@@ -81,7 +84,7 @@ export function projectProducts(root) {
   const cfg = readJsonOrNull(path.join(root, '.prdt', 'config.json')) || {}
   const out = []
   const add = (n) => {
-    if (typeof n === 'string' && LINE_NAME_RE.test(n) && !out.includes(n)) out.push(n)
+    if (typeof n === 'string' && LINE_NAME_RE.test(n) && !PRODUCT_RESERVED_NAMES.includes(n) && !out.includes(n)) out.push(n)
   }
   const isObj = cfg && typeof cfg === 'object' && !Array.isArray(cfg)
   add(isObj && typeof cfg.slug === 'string' && cfg.slug ? productDirName(cfg.slug) : null)

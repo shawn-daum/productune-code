@@ -1286,7 +1286,7 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
 
 describe('T-1215 layout edge fixes', () => {
   test('C3: a layout-reserved slug gets a different product folder (init → new layout, not partial)', () => {
-    for (const slug of ['qa', 'prd', 'tickets', 'wiki', 'features', 'artifacts', 'po', 'designer', 'developer']) {
+    for (const slug of ['qa', 'archive', 'prd', 'tickets', 'wiki', 'features', 'artifacts', 'po', 'designer', 'developer']) {
       const root = path.join(tmp, `c3-${slug}`)
       fs.mkdirSync(root, { recursive: true })
       expect(prdt(root, ['init', '--json', '--slug', slug, '--yes']).code).toBe(0)

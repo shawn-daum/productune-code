@@ -501,7 +501,7 @@ export function collectLineNames(repoRoot) {
   const out = []
   for (const e of raw) {
     const name = e && typeof e === 'object' ? e.name : undefined
-    if (typeof name === 'string' && LINE_NAME_RE.test(name) && !out.includes(name) && name !== cfg.slug) out.push(name)
+    if (typeof name === 'string' && LINE_NAME_RE.test(name) && !['prd', 'tickets', 'artifacts', 'wiki', 'features', 'archive', 'po', 'designer', 'developer', 'qa'].includes(name) && !out.includes(name) && name !== cfg.slug) out.push(name)
   }
   return out
 }

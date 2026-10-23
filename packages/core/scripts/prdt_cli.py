@@ -28,6 +28,7 @@ from prdt_lanes import (
     LANE_NAME_RE,
     LEGACY_ASSIGNEE_RE,
     LINE_NAME_RE,
+    PRODUCT_RESERVED_NAMES,
     lanes_for,
     PRD_H4_RE,
     PRD_ITEM_KEY_RE,
@@ -11482,6 +11483,9 @@ def line_config_warnings(root):
         if not LINE_NAME_RE.match(name):
             warns.append(f"products: `{lab}` is not a legal product name — kebab-case, never `v<digit>…` "
                          f"or `backlog` (contracts/fixed-paths.md); ignored")
+        elif name in PRODUCT_RESERVED_NAMES:
+            warns.append(f"products: `{lab}` is a layout-reserved folder name ({', '.join(PRODUCT_RESERVED_NAMES)}) "
+                         f"— pick another name; ignored")
         elif name == slug:
             warns.append(f"products: `{lab}` is the project slug — the first product is never listed in "
                          f"`products`; ignored")
@@ -16854,7 +16858,10 @@ def cmd_layout(args):
         elif state == "old":
             print(f"docs 폴더가 예전 구조예요. 문서 {_lay_n(plan['total'])}개를 새 구조로 옮길 수 있어요.")
             print()
-            print("다음: prdt layout migrate 로 옮길 목록을 확인하세요.")
+            if project_lines(root):    # T-1215: migrate refuses a multi-product project — same as the session-start block
+                print("다음: 이 프로젝트는 제품 여럿을 써서 아직 옮길 수 없어요. PO 에게 알리세요.")
+            else:
+                print("다음: prdt layout migrate 로 옮길 목록을 확인하세요.")
         elif state == "new":
             print(f"docs 폴더가 이미 새 구조예요 (docs/{DOCS_SHARED} · docs/{prod}).")
         elif state == "partial":

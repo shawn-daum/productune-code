@@ -449,7 +449,8 @@ def project_lines(root):
     out, seen = [], set()
     for e in (raw if isinstance(raw, list) else []):
         name = e.get("name") if isinstance(e, dict) else None
-        if isinstance(name, str) and LINE_NAME_RE.match(name) and name not in seen and name != slug:
+        if (isinstance(name, str) and LINE_NAME_RE.match(name) and name not in PRODUCT_RESERVED_NAMES
+                and name not in seen and name != slug):
             seen.add(name)
             out.append(e)
     return out
