@@ -137,7 +137,7 @@ fi
 
 # ── 4. verify ──────────────────────────────────────────────────────────────────
 STEP="verify"; say "4) 검증"; fail_at verify
-python3 - "$SETTINGS" "$CLAUDE_DIR" <<'PYEOF'
+python3 -I - "$SETTINGS" "$CLAUDE_DIR" <<'PYEOF'
 import json, os, sys
 s = json.load(open(sys.argv[1]))
 cmds = [h.get("command","") for ev in s.get("hooks",{}).values() for m in ev for h in m.get("hooks",[])]

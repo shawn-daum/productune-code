@@ -289,6 +289,7 @@ function cliSandbox(opts: { fail?: boolean; sleep?: string; viewer?: boolean } =
       cwd: root, env: { ...env, ...extra }, input, encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
     })
+  fs.mkdirSync(path.join(root, "docs", "prd"), { recursive: true }) // T-1104: legacy fixture (As-Is docs before init)
   run(['init', '--json', '--slug', 'proj', '--yes'])
   const vdir = path.join(root, '.prdt', 'scratch', 'viewer')
   if (opts.viewer !== false) {

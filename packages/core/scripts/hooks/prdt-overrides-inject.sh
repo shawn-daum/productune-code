@@ -221,7 +221,7 @@ quote_body() { # $1 file, $2 noun for the withheld notice
     printf '| %s\n' "($2 withheld: python3 is missing on this machine, so the quoting gutter cannot run — tell the user to install python3. The file is $(safe_path "$1") — nothing from it appears in this block.)"
     return 0
   fi
-  python3 -c "$PRDT_QUOTE_PY" "$1" "$2" && return 0
+  python3 -I -c "$PRDT_QUOTE_PY" "$1" "$2" && return 0
   printf '| %s\n' "($2 withheld: the quoting gutter failed to run, so the body is withheld rather than shown unquoted. The file is $(safe_path "$1").)"
 }
 

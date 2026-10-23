@@ -73,6 +73,7 @@ beforeEach(() => {
   prdtHome = path.join(tmpRoot, 'home')
   fs.mkdirSync(projectDir, { recursive: true })
   fs.mkdirSync(prdtHome, { recursive: true })
+  fs.mkdirSync(path.join(projectDir, "docs", "prd"), { recursive: true }) // T-1104: legacy fixture (As-Is docs before init)
   const r = run(['init', '--json', '--slug', 'proj', '--yes'])
   expect(r.status).toBe(0)
   fs.rmSync(path.join(projectDir, 'docs', 'tickets'), { recursive: true, force: true })

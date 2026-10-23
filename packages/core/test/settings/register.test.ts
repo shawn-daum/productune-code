@@ -1,5 +1,5 @@
 /**
- * register.ts — T-586 the register object (audience · form · structure · address).
+ * register.ts — T-586 the register object (audience · form · structure · visual · address).
  *
  * Contract under test:
  * - Storage is USER-level `<home>/.prdt/register`, key=value per line — the
@@ -39,7 +39,7 @@ const write = (s: string) => { fs.mkdirSync(path.dirname(file()), { recursive: t
 describe('read — defaults, never an illegal value', () => {
   test('missing file → every default', () => {
     expect(readRegister(home)).toEqual(REGISTER_DEFAULTS)
-    expect(REGISTER_DEFAULTS).toEqual({ audience: 'planner', form: 'prose', structure: 'default', address: null })
+    expect(REGISTER_DEFAULTS).toEqual({ audience: 'planner', form: 'prose', structure: 'default', visual: 'judge', address: null })
   })
   test('empty file → every default', () => { write(''); expect(readRegister(home)).toEqual(REGISTER_DEFAULTS) })
   test('out-of-domain, unknown key, malformed line, off-shape address → defaults + one warning each', () => {
@@ -49,7 +49,7 @@ describe('read — defaults, never an illegal value', () => {
   })
   test('comments, whitespace, CRLF and last-wins duplicates', () => {
     const { values, warnings } = parseRegister('# taste\r\n audience = developer \r\naudience=planner\r\nform=outline\r\naddress=션님\r\n')
-    expect(values).toEqual({ audience: 'planner', form: 'outline', structure: 'default', address: '션님' })
+    expect(values).toEqual({ audience: 'planner', form: 'outline', structure: 'default', visual: 'judge', address: '션님' })
     expect(warnings).toEqual([])
   })
   test('the legacy ~/.prdt/audience-mode is ignored', () => {
@@ -120,12 +120,33 @@ describe('write — one key at a time, the rest of the file kept', () => {
     expect(fs.readFileSync(file(), 'utf8')).toBe('form=outline\n')
   })
   test('round-trips every legal enum value through read', () => {
-    for (const key of ['audience', 'form', 'structure'] as const) {
+    for (const key of ['audience', 'form', 'structure', 'visual'] as const) {
       for (const v of REGISTER_DOMAIN[key]) {
         writeRegisterKey(key, v, home)
         expect(readRegister(home)[key]).toBe(v)
       }
     }
+  })
+})
+
+describe('visual (T-1136) — judge | always-html | table-only, default judge, no body', () => {
+  test('absent → judge; set → stored as visual=<value>; unset → absent again → judge', () => {
+    expect(readRegister(home).visual).toBe('judge')
+    writeRegisterKey('form', 'outline', home)
+    writeRegisterKey('visual', 'always-html', home)
+    expect(fs.readFileSync(file(), 'utf8')).toBe('form=outline\nvisual=always-html\n')
+    expect(readRegister(home).visual).toBe('always-html')
+    writeRegisterKey('visual', 'table-only', home)
+    expect(fs.readFileSync(file(), 'utf8')).toBe('form=outline\nvisual=table-only\n')
+    writeRegisterKey('visual', null, home)
+    expect(fs.readFileSync(file(), 'utf8')).toBe('form=outline\n')
+    expect(readRegister(home).visual).toBe('judge')
+  })
+  test('out-of-domain → judge + a domain warning; illegal write refused', () => {
+    const { values, warnings } = parseRegister('visual=html\n')
+    expect(values.visual).toBe('judge')
+    expect(warnings).toEqual(['L1: visual= is outside its domain (judge|always-html|table-only) — resolved to the default `judge`'])
+    expect(() => writeRegisterKey('visual', 'html', home)).toThrow(/outside its domain/)
   })
 })
 
@@ -158,6 +179,7 @@ describe('the hook is the SoT — the TS domain copy is pinned to `--list`', () 
   test.skipIf(!hasJq())('what this module writes, the hook resolves identically (including an address)', () => {
     writeRegisterKey('form', 'outline', home)
     writeRegisterKey('structure', 'planner-tables', home)
+    writeRegisterKey('visual', 'table-only', home)
     writeRegisterKey('address', '션님', home)
     const r = JSON.parse(execFileSync('bash', [HOOK, '--resolve'], { input: '', encoding: 'utf8', env: { ...process.env, PRDT_HOME: path.join(home, '.prdt') } }))
     expect(r.values).toEqual(readRegister(home))

@@ -10,7 +10,7 @@ effort: medium
 ## Before
 - Read every file you'll touch. Understand the local idiom (naming, error handling, comment density) — your code should read like the surrounding code.
 - Logic / regression-prone area → write the failing test first (doctrine #3). UI glue → judgment.
-- UI work → open `docs/design.md` first; tokens/components are master. Missing token you need → `unresolved[]` for the Designer, don't invent one.
+- UI work → open the DS (`design.md`, both scopes) first; tokens/components are master. Missing token you need → `unresolved[]` for the Designer, don't invent one.
 
 ## During
 - Smallest change that meets acceptance (doctrine #1). No drive-by fixes — out-of-scope finds go to `unresolved[]`.
@@ -18,7 +18,7 @@ effort: medium
 - Mixed refactor+behavior work → split into separate commits (Tidy First); genuinely experimental direction → tell the PO a worktree trigger may apply instead of churning main.
 
 ## Self-verify (DoD, before every handback)
-- Build green · lint clean · typecheck clean · relevant tests green — run them, paste the outcome in `summary`.
+- Build green · lint clean · typecheck clean · relevant tests green — run them, paste the outcome in `summary` with each run's executed count; 0 executed, all skipped, or fewer than the cases you touched = not run — fix the flag · target · filter, rerun.
 - Run the project's format script if one exists before committing.
 - Walk the acceptance list yourself against the running thing — the QA exists to catch what you missed, not what you skipped.
 - One fail → fix in-loop; can't → `blocked` with the failing output, never a silent hand-off.

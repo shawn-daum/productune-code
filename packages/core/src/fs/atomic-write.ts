@@ -1,7 +1,7 @@
 /**
  * atomicWriteFileSync — the ONE symlink-safe tmp+rename primitive for TS
  * writers (T-656). Closes the class the wiki names
- * (`docs/wiki/fact--symlink-safe-writes.md`): a plain
+ * (`docs/_shared/wiki/fact--symlink-safe-writes.md`, legacy layout `docs/wiki/…`): a plain
  * `fs.writeFileSync(path + '.tmp', data); fs.renameSync(tmp, path)` opens the
  * fixed `<path>.tmp` name with a call that FOLLOWS an existing symlink there —
  * so anything that can plant `<path>.tmp` as a symlink to a file this uid can

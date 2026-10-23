@@ -240,6 +240,8 @@ interface HookRegistration {
 
 interface HookManifest {
   basenames: readonly string[]
+  /** T-1156: hooks removed from the roster: stripped from settings.json, never registered. */
+  retired?: readonly string[]
   registrations: readonly HookRegistration[]
 }
 
@@ -282,6 +284,16 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
   atomicWriteFileSync(settingsPath, JSON.stringify(settings, null, 2))
 }
 
+/** Same rule as install.sh §4 `cmdBasename`: strip one wrapping quote, take the last
+ *  path segment — identity is EXACT basename membership, never a substring match. */
+function hookCmdBasename(c: unknown): string {
+  if (typeof c !== 'string') return ''
+  let t = c
+  if (t.startsWith('"')) t = t.slice(1)
+  if (t.endsWith('"')) t = t.slice(0, -1)
+  return t.split('/').pop() ?? ''
+}
+
 /**
  * prdt branch (T-289): install exactly the 9 discipline hooks + statusline-prdt.sh,
  * producing the SAME settings.json registration install.sh §4/§6 writes —
@@ -314,6 +326,9 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
 export function installPrdtHooks(settingsPath: string, homeDir: string): void {
   const prdtHomeRaw = path.join(homeDir, '.prdt')
   const hooksDirRaw = path.join(prdtHomeRaw, 'hooks')
+  // T-1156: a retired hook's mirror copy goes even when the roster mirror is incomplete
+  // (install.sh §1 removes it unconditionally); never touches anything else.
+  for (const b of HOOK_MANIFEST.retired ?? []) fs.rmSync(path.join(hooksDirRaw, b), { force: true })
   const missing = PRDT_HOOK_BASENAMES.filter(b => !fs.existsSync(path.join(hooksDirRaw, b)))
   if (missing.length > 0) {
     console.warn(`[onboarding] prdt hook mirror incomplete (${missing.join(', ')} not in ${hooksDirRaw}) — run install.sh first; skipping hook registration`)
@@ -340,8 +355,8 @@ export function installPrdtHooks(settingsPath: string, homeDir: string): void {
   const statusline = `"${path.join(prdtHome, 'bin', 'statusline-prdt.sh')}"`
   const cmd = (c: string) => ({ type: 'command', command: c })
 
-  const isPrdtHook = (c: unknown): boolean =>
-    typeof c === 'string' && PRDT_HOOK_BASENAMES.some(b => c.includes(b))
+  const oursSet = new Set<string>([...PRDT_HOOK_BASENAMES, ...(HOOK_MANIFEST.retired ?? [])])
+  const isPrdtHook = (c: unknown): boolean => oursSet.has(hookCmdBasename(c))
   // Per-hook strip (mirrors install.sh §4's `strip`): drop only the prdt hook
   // COMMANDS from each entry, then drop any entry left empty — never the whole
   // entry on a single-hook match. A per-entry strip would (a) wipe audience +
@@ -431,7 +446,7 @@ function hasPrdtHooksRegistered(settingsPath: string): boolean {
       }
     }
   }
-  return PRDT_HOOK_BASENAMES.every((b) => commands.some((c) => c.includes(b)))
+  return PRDT_HOOK_BASENAMES.every((b) => commands.some((c) => hookCmdBasename(c) === b))
 }
 
 export interface PrdtHooksStatus {

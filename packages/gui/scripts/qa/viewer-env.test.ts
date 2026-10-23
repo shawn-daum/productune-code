@@ -8,7 +8,7 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { collectAll } from '@productune/viewer/lib/collect.mjs'
-import { envKeyStatus, collectEnv } from '@productune/viewer/lib/env-status.mjs'
+import { envKeyStatus, collectEnv, collectMachineEnv } from '@productune/viewer/lib/env-status.mjs'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
 import { generate } from '@productune/viewer/generate.mjs'
 
@@ -164,44 +164,56 @@ describe('env item + Home env block — several lines', () => {
 
   it('current-version sidebar: env is the last item of each line, counted by env files (samples included)', () => {
     const side = home().split('<nav class="sidebar">')[1].split('</nav>')[0]
-    expect(side).toMatch(/data-group-select="ntf-archive\/decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="ntf-archive\/env"[^>]*><span>env<\/span><span class="nav-item-count">2<\/span><\/button>\s*$/)
+    expect(side).toMatch(/data-group-select="ntf-archive\/decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="ntf-archive\/env"[^>]*><span>env<\/span><span class="nav-item-count">2<\/span><\/button>\s*(?:<div class="sidebar-foot">[\s\S]*?<\/div>\s*)?$/)
     expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*><span>env<\/span><span class="nav-item-count">0<\/span><\/button>\s*<div class="ls-h"><b>ntf-archive/)
   })
 
-  it('env pane: key names with 설정됨 / 비어 있음 only, the list collapsed behind an eye button — no value, length, edit or copy control', () => {
+  it('env pane: every file card shows its key names by default (samples too) — no eye toggle, no value, length or edit control', () => {
     const pane = envPane('ntf-archive/')
     expect(pane).toContain('<b>.env.local</b><span class="env-dir">../ntf-archive/code</span>')
     expect(pane).toContain('<div class="erow"><code>POSTGRES_URL</code><span class="est on">설정됨</span></div>')
     expect(pane).toContain('<div class="erow"><code>CRON_SECRET</code><span class="est off">비어 있음</span></div>')
     expect(pane).toContain('키 이름과 설정 여부만 보여요. 값은 이 화면에 없어요.')
-    // every file card: eye button collapsed + hidden key list
     const cards = pane.split('<div class="dash-card env-card">').slice(1)
     expect(cards).toHaveLength(2)
     for (const c of cards) {
-      expect(c).toMatch(/<button type="button" class="env-eye" data-env-eye aria-expanded="false" aria-label="키 목록 보기"/)
-      expect(c).toContain('<div class="erows" hidden>')
+      expect(c).toContain('<div class="erows">')
+      expect(c).not.toContain('hidden')
+      expect(c).not.toContain('data-env-eye')
     }
     // the sample card: key names, no set / empty count
     expect(cards[1]).toContain('<b>.env.example</b><span class="env-dir">견본 · 4개 키</span>')
     expect(cards[1]).toContain('견본 파일은 설정 여부를 세지 않아요.')
     expect(cards[1]).toContain('<div class="erow"><code>PM_INGEST_SECRET</code></div>')
-    expect(pane).not.toMatch(/len=|<input|<textarea|contenteditable|clipboard|copy/i)
+    expect(pane).not.toMatch(/len=|<input|<textarea|contenteditable/i)
+    expect(html).not.toContain('data-env-eye')
   })
 
-  it('T-1078: the eye button is a 24px target with a visible hover boundary', () => {
-    expect(html).toContain('.env-eye { background: none; border: 1px solid transparent; padding: 4px; min-width: 24px; min-height: 24px;')
-    expect(html).toContain('.env-eye:hover { background: var(--bg-state-hover); border-color: var(--border-hover);')
+  it('T-1191: per file card — 텍스트 편집기로 열기 (prdt link: project root + line + file name, never a path), VS Code 로 열기 only when VS Code is found, 경로 복사', () => {
+    const realRoot = fs.realpathSync(root)
+    const realFile = path.join(fs.realpathSync(path.join(base, 'ntf-archive/code')), '.env.local')
+    const noCode = render({ ...data, editors: { vscode: false } })
+    const cards = noCode.split(`data-group="ntf-archive/env">`)[1].split('<div class="view-pane')[0].split('<div class="dash-card env-card">').slice(1)
+    const q = (file: string) => `prdt://open-env?root=${encodeURIComponent(realRoot)}&amp;line=ntf-archive&amp;file=${encodeURIComponent(file)}`
+    expect(cards[0]).toContain(`<a class="env-act" href="${q('.env.local')}">텍스트 편집기로 열기</a>`)
+    expect(cards[1]).toContain(`<a class="env-act" href="${q('.env.example')}">텍스트 편집기로 열기</a>`)
+    expect(cards[0]).toContain(`<button type="button" class="env-act" data-env-copy="${realFile}" data-label-done="경로를 복사했어요">경로 복사</button>`)
+    // VS Code: the button follows data.editors.vscode
+    expect(noCode).not.toContain('vscode://')
+    const withCode = render({ ...data, editors: { vscode: true } })
+    const vs = withCode.split(`data-group="ntf-archive/env">`)[1].split('<div class="view-pane')[0]
+    expect(vs).toContain(`<a class="env-act" href="vscode://file${realFile.split('/').map(encodeURIComponent).join('/')}">VS Code 로 열기</a>`)
+    // the home line (no env file) and the machine card carry no open control
+    expect(envPane('')).not.toContain('env-act')
   })
 
-  it('the eye handler toggles aria-expanded and the hidden list per file', () => {
-    expect(html).toContain("ev.target.closest('[data-env-eye]')")
-    expect(html).toContain('envRows.hidden = !envOpen;')
-    expect(html).toContain('data-label-hide="키 목록 가리기"')
+  it('T-1191: the copy handler writes the path to the clipboard', () => {
+    expect(html).toContain("ev.target.closest('[data-env-copy]')")
   })
 
   it('a line without env files: the empty state names the folder and names searched', () => {
     const none = envPane('')
-    expect(none).toContain('이 줄에는 env 파일이 없어요.')
+    expect(none).toContain('이 제품에는 env 파일이 없어요.')
     expect(none).toContain('찾은 폴더: code · 찾은 이름: .env · .env.*')
     expect(none).not.toContain('—')
   })
@@ -211,18 +223,12 @@ describe('env item + Home env block — several lines', () => {
     expect(html).toContain("group = (cut === -1 ? '' : group.slice(0, cut + 1)) + 'env';")
   })
 
-  it('Home per line: counts, empty keys named, a link to the env item; no env file → one line', () => {
-    const archive = home().split('data-group="ntf-archive/progress">')[1].split('<div class="view-pane')[0]
-    expect(archive).toContain('<code>.env.local</code><span class="env-c"><span class="est on">설정됨</span> 2 · <span class="est off">비어 있음</span> 2</span>')
-    expect(archive).toContain('data-open-store="home" data-open-group="ntf-archive/env">env 보기</button>')
-    expect(archive).toContain('<p class="env-empty"><span>비어 있음</span>: <code>CRON_SECRET</code> · <code>PM_INGEST_SECRET</code></p>')
-    expect(archive).not.toContain('.env.example')
-    const homeLine = home().split('data-group="progress">')[1].split('<div class="view-pane')[0]
-    expect(homeLine).toContain('<p class="env-none">이 줄의 코드 폴더에 env 파일이 없어요.</p>')
-  })
-
-  it('the page script opens the named sidebar item from Home', () => {
-    expect(html).toContain("var openGroup = readBtn.getAttribute('data-open-group');")
+  it('T-1179 C: 진행 상황 carries no env block on any line', () => {
+    for (const g of ['ntf-archive/progress', 'progress']) {
+      const pane = home().split(`data-group="${g}">`)[1].split('<div class="view-pane')[0]
+      expect(pane).not.toContain('env-blk')
+      expect(pane).not.toContain('.env.local')
+    }
   })
 
   it('no sentinel value in the collected data or the page', () => {
@@ -242,22 +248,22 @@ describe('env item — single-line project', () => {
   })
   afterAll(() => fs.rmSync(root, { recursive: true, force: true }))
 
-  it('no section heads; env is the last sidebar item counting its one file; Home shows the block', () => {
+  it('no section heads; env is the last sidebar item counting its one file; 진행 상황 has no env block', () => {
     const html = render(collectAll(root, { disciplineRoot: root }))
     expect(html).not.toContain('id="store-env"')
     const home = html.split('id="store-home"')[1].split('</section>')[0]
     const side = home.split('<nav class="sidebar">')[1].split('</nav>')[0]
     expect(side).not.toContain('ls-h')
-    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*><span>env<\/span><span class="nav-item-count">1<\/span><\/button>\s*$/)
-    expect(home).toContain('data-open-store="home" data-open-group="env"')
-    expect(home).toContain('<p class="env-empty"><span>비어 있음</span>: <code>PUSH_CERT_PASSWORD</code></p>')
+    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*><span>env<\/span><span class="nav-item-count">1<\/span><\/button>\s*(?:<div class="sidebar-foot">[\s\S]*?<\/div>\s*)?$/)
+    expect(home).not.toContain('env-blk')
+    expect(home).toContain(`prdt://open-env?root=${encodeURIComponent(fs.realpathSync(root))}&amp;file=.env.local`)
     expect(html).not.toContain(SENTINEL)
   })
 
-  it('no env file → Home one-line notice', () => {
+  it('no env file → the env item names the folder searched', () => {
     fs.rmSync(path.join(root, 'code/.env.local'))
     const html = render(collectAll(root, { disciplineRoot: root }))
-    expect(html).toContain('<p class="env-none">코드 폴더에 env 파일이 없어요.</p>')
+    expect(html).not.toContain('env-none')
     expect(html).toContain('찾은 폴더: code · 찾은 이름: .env · .env.*')
   })
 
@@ -271,4 +277,103 @@ describe('env item — single-line project', () => {
     expect(html).not.toContain('J_LEAK_')
     for (const text of [html, buildFile.content, ...dataFiles.map((f: { content: string }) => f.content)]) expect(text).not.toContain(SENTINEL)
   }, 60_000)
+})
+
+// T-1109 (screens env-viewer): the machine-scope section — names, set/empty,
+// 「제품 코드 값이 우선」; never a value or length.
+describe('machine-scope env (T-1109)', () => {
+  let tmp: string
+  beforeAll(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1109-viewer-')) })
+  afterAll(() => { fs.rmSync(tmp, { recursive: true, force: true }) })
+  const productEnv = (text: string) => {
+    const root = fs.mkdtempSync(path.join(tmp, 'p-'))
+    write(root, '.env.local', text)
+    return collectEnv(root, '.')
+  }
+
+  it('names + set/empty; a non-empty product-code value wins, an empty one does not; no value in the data', () => {
+    const home = fs.mkdtempSync(path.join(tmp, 'h-'))
+    write(home, 'env/.env', `A='${SENTINEL}'\nB='${SENTINEL}'\nC=\nD='${SENTINEL}'\n`)
+    const m = collectMachineEnv(home, productEnv(`A=${SENTINEL}\nB=\nC=x\n`))
+    expect(m).toEqual({ dir: '~/.prdt/env', keys: [
+      { name: 'A', set: true, codeWins: true }, { name: 'B', set: true, codeWins: false },
+      { name: 'C', set: false, codeWins: false }, { name: 'D', set: true, codeWins: false },
+    ] })
+    expect(JSON.stringify(m)).not.toContain(SENTINEL)
+  })
+
+  it('T-1121 B: `# prdt:plain` directly above a key marks it plain (last occurrence decides); no marker = secret; no value in the data', () => {
+    const home = fs.mkdtempSync(path.join(tmp, 'h-'))
+    write(home, 'env/.env', `# prdt:plain\nA='${SENTINEL}'\nB='${SENTINEL}'\n# prdt:plain\n\nC='${SENTINEL}'\n# prdt:plain\nD='${SENTINEL}'\nD='${SENTINEL}'\n# prdt:plain\nE=\n`)
+    const m = collectMachineEnv(home, null)
+    expect(m.keys).toEqual([
+      { name: 'A', set: true, codeWins: false, plain: true }, { name: 'B', set: true, codeWins: false },
+      { name: 'C', set: true, codeWins: false }, { name: 'D', set: true, codeWins: false },
+      { name: 'E', set: false, codeWins: false },
+    ])
+    expect(JSON.stringify(m)).not.toContain(SENTINEL)
+  })
+
+  it('T-1121 B: a product-code env file never reads the marker', () => {
+    expect(productEnv(`# prdt:plain\nA=${SENTINEL}\n`)).toEqual({ dir: '.', absDir: expect.any(String), files: [{ name: '.env.local', sample: false, keys: [{ name: 'A', set: true }] }] })
+  })
+
+  it('page: a plain key carries the 보통 값 tag', () => {
+    const root = fs.mkdtempSync(path.join(tmp, 'plain-'))
+    write(root, '.prdt/config.json', JSON.stringify({ slug: 'shop' }))
+    write(root, '.prdt/po-state.json', PO_STATE())
+    write(root, 'docs/prd/PRD.md', '# PRD\n\n## v2.2 — round\n')
+    const home = fs.mkdtempSync(path.join(tmp, 'h-'))
+    write(home, 'env/.env', `# prdt:plain\nPORT='3000'\nAPPLE_TEAM_ID='${SENTINEL}'\n`)
+    const prev = process.env.PRDT_HOME
+    process.env.PRDT_HOME = home
+    try {
+      const html = render(collectAll(root, { disciplineRoot: root }))
+      expect(html).toContain('<code>PORT</code><span class="tagw">보통 값</span>')
+      expect(html).toContain('<code>APPLE_TEAM_ID</code><span class="est on">')
+      expect(html).not.toContain(SENTINEL)
+    } finally {
+      if (prev === undefined) delete process.env.PRDT_HOME
+      else process.env.PRDT_HOME = prev
+    }
+  })
+
+  it('no store, or a link at the store directory → no keys', () => {
+    const home = fs.mkdtempSync(path.join(tmp, 'h-'))
+    expect(collectMachineEnv(home, null).keys).toEqual([])
+    const real = fs.mkdtempSync(path.join(tmp, 'real-'))
+    write(real, '.env', `A='${SENTINEL}'\n`)
+    fs.symlinkSync(real, path.join(home, 'env'))
+    expect(collectMachineEnv(home, null).keys).toEqual([])
+  })
+
+  it('page: 기기 범위 card with the approved copy, none-stored empty card, no sentinel', () => {
+    const root = fs.mkdtempSync(path.join(tmp, 'single-'))
+    write(root, '.prdt/config.json', JSON.stringify({ slug: 'shop' }))
+    write(root, '.prdt/po-state.json', PO_STATE())
+    write(root, 'docs/prd/PRD.md', '# PRD\n\n## v2.2 — round\n')
+    write(root, 'code/.env.local', `GOOGLE_OIDC_CLIENT_ID=${SENTINEL}\n`)
+    const home = fs.mkdtempSync(path.join(tmp, 'h-'))
+    const prev = process.env.PRDT_HOME
+    process.env.PRDT_HOME = home
+    try {
+      const none = render(collectAll(root, { disciplineRoot: root }))
+      expect(none).toContain('기기 범위에 저장된 키가 없어요.')
+      expect(none).toContain('터미널에서 prdt env set &lt;KEY&gt; 로 저장하면 키 이름이 여기에 보여요.')
+      write(home, 'env/.env', `APPLE_TEAM_ID='${SENTINEL}'\nGOOGLE_OIDC_CLIENT_ID='${SENTINEL}'\nPUSH_CERT_PASSWORD=\n`)
+      const withKeys = render(collectAll(root, { disciplineRoot: root }))
+      expect(withKeys).toContain('<b>.env</b><span class="env-dir">~/.prdt/env</span>')
+      expect(withKeys).toContain('기기 범위')
+      expect(withKeys).toContain('<code>APPLE_TEAM_ID</code>')
+      expect(withKeys).toContain('<code>GOOGLE_OIDC_CLIENT_ID</code><span class="tagw">제품 코드 값이 우선</span>')
+      expect(withKeys).toContain('<code>PUSH_CERT_PASSWORD</code><span class="est off">비어 있음</span>')
+      expect(withKeys + none).not.toContain(SENTINEL)
+      // T-1191: the machine store is the user's own `prdt env set` — no open link on its card
+      const machineCard = withKeys.split('<div class="env-scope">')[1]
+      expect(machineCard).not.toContain('env-act')
+    } finally {
+      if (prev === undefined) delete process.env.PRDT_HOME
+      else process.env.PRDT_HOME = prev
+    }
+  })
 })

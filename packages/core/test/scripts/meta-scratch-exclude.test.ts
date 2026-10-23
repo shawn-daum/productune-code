@@ -25,6 +25,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -51,6 +52,8 @@ function runPrdt(args: string[]): string {
 }
 
 function runInit(): void {
+  // T-1104: a fixture about legacy behavior starts As-Is (docs/prd before init), so init keeps the legacy shape.
+  fs.mkdirSync(`${projectDir}/docs/prd`, { recursive: true })
   runPrdt(['init', '--json', '--slug', 'proj', '--yes'])
 }
 
@@ -117,7 +120,7 @@ describe.skipIf(!PYTHON3)('meta info/exclude — verification scratch never land
   })
 
   test('scratch/ and the three siblings are byte-parity across scripts/prdt and meta-git.ts', () => {
-    const pyText = fs.readFileSync(PRDT_CLI, 'utf-8')
+    const pyText = prdtSource(PRDT_CLI)
     const tsText = fs.readFileSync(
       path.join(CORE_ROOT, 'src', 'git-workflow', 'meta-git.ts'),
       'utf-8',

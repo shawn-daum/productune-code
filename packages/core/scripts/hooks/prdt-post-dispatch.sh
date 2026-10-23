@@ -116,9 +116,70 @@ for _d in "$_hd/../bin" "$_hd/.."; do
 done
 export PRDT_SAFE_DIR
 
-PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
+PRDT_EVENT_JSON="$EVENT_JSON" python3 -I - <<'PYEOF'
 import contextlib, fcntl, hashlib, json, os, re, shlex, shutil, subprocess, sys
 from datetime import datetime, timezone
+
+# T-1104: product-first docs layout (docs/artifacts/v1.14/product-first-docs-layout.html).
+# KEEP `project_products` / `tickets_homes` in lockstep with `project_products` /
+# `product_docs_dirs(root, "tickets")` in scripts/prdt (parity test:
+# test/scripts/product-first-shell-readers.test.ts). Layout = `docs/_shared/` is a
+# real dir; first product = config `slug`, then `products[].name`, then any
+# `docs/<kebab>/` holding `prd/` or `tickets/`. [] = legacy (docs/tickets).
+_PROD_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+
+
+def _product_dir_name(slug):
+    """config `slug` -> its `docs/<kebab>` folder name (same rule as `product_dir_name` in scripts/prdt)."""
+    if not isinstance(slug, str) or not slug:
+        return None
+    k = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")
+    if not _PROD_NAME_RE.match(k):
+        return "product"
+    # T-1215: layout-reserved names (PRODUCT_RESERVED_NAMES in prdt_lanes.py) get a suffix
+    return k + "-product" if k in ("prd", "tickets", "artifacts", "wiki", "features", "archive", "po", "designer", "developer", "qa") else k
+
+
+def project_products(root):
+    sh = os.path.join(root, "docs", "_shared")
+    if not os.path.isdir(sh) or os.path.islink(sh):
+        return []
+    try:
+        with open(os.path.join(root, ".prdt", "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    out = []
+
+    def add(n):
+        if isinstance(n, str) and _PROD_NAME_RE.match(n) and n not in out:
+            out.append(n)
+    add(_product_dir_name(cfg.get("slug")))
+    prods = cfg.get("products")
+    for e in (prods if isinstance(prods, list) else []):
+        add(e.get("name") if isinstance(e, dict) else None)
+    try:
+        names = sorted(os.listdir(os.path.join(root, "docs")))
+    except OSError:
+        names = []
+    for n in names:
+        d = os.path.join(root, "docs", n)
+        if os.path.isdir(d) and not os.path.islink(d) and not n.startswith(("_", ".")) \
+                and (os.path.isdir(os.path.join(d, "prd")) or os.path.isdir(os.path.join(d, "tickets"))):
+            add(n)
+    return out
+
+
+def tickets_homes(root):
+    """[(product|None, dir)] — every product's tickets dir, then the shared
+    backlog; legacy → [(None, docs/tickets)]."""
+    prods = project_products(root)
+    if not prods:
+        return [(None, os.path.join(root, "docs", "tickets"))]
+    return ([(p, os.path.join(root, "docs", p, "tickets")) for p in prods]
+            + [(None, os.path.join(root, "docs", "_shared", "tickets"))])
+
 
 try:
     ev = json.loads(os.environ.get("PRDT_EVENT_JSON", ""))
@@ -128,15 +189,29 @@ except Exception:
 event = ev.get("hook_event_name") or "PostToolUse"
 tool = ev.get("tool_name") or ""
 tin = ev.get("tool_input") or {}
+# T-1196: a non-`prdt-` subagent (Explore · general-purpose · Plan · claude · a
+# fork) gets the in-flight marker at SubagentStart and the stamp + schedule stop
+# row at SubagentStop, so the gate's inflight_max / per-tier caps count it while
+# it runs. Nothing else is written for it (no sessions.json, no cost line, no
+# meta autosave beat). An event with no agent_type is a fork (its type is not
+# measured on this harness; `fork` is the subagent_type the PO names). The
+# Workflow tool's `workflow-subagent` is never counted: its spawn is outside the
+# gate and a Workflow fans out many workers.
+nonprdt = False
 if event in ("SubagentStop", "SubagentStart"):
     sub = str(ev.get("agent_type") or "")
+    if not sub.startswith("prdt-"):
+        if sub == "workflow-subagent":
+            sys.exit(0)
+        nonprdt = True
+        sub = sub or "fork"
 elif tool == "Agent":
     sub = str(tin.get("subagent_type") or "")
 else:
     sys.exit(0)
-if not sub.startswith("prdt-"):
+if not sub.startswith("prdt-") and not nonprdt:
     sys.exit(0)
-persona = sub[len("prdt-"):]
+persona = sub if nonprdt else sub[len("prdt-"):]
 
 # project root = meta root: walk the WHOLE ancestor chain from the event cwd and
 # take the OUTERMOST dir holding `.prdt/po-state.json` (T-484 — never the
@@ -158,6 +233,12 @@ root = None
 while d and d != "/":
     if os.path.isfile(os.path.join(d, ".prdt", "po-state.json")):
         root = d
+    # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary
+    if (os.path.isfile(os.path.join(d, ".git")) and os.path.basename(os.path.dirname(d)) == "tracks"
+            and os.path.basename(d)[:2] == "T-" and os.path.basename(d)[2:7].isascii()
+            and os.path.basename(d)[2:].isdigit() and len(os.path.basename(d)) <= 7):
+        root = None
+        break
     up = os.path.dirname(d)
     if up == d:
         break
@@ -181,7 +262,7 @@ now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 try:
     # SubagentStart (T-682 slice 3) is a marker-only event for this hook — it
     # is not a persona-turn beat, so it fires no autosave tick.
-    if event != "SubagentStart" and os.path.isfile(os.path.join(state_dir, "meta.git", "HEAD")):
+    if event != "SubagentStart" and not nonprdt and os.path.isfile(os.path.join(state_dir, "meta.git", "HEAD")):
         # TRUST (T-519 F5 — DECISION: accepted machine-local assumption, not
         # narrowed). This reads PRDT_REPO from ~/.prdt/prdt.env and spawns
         # <PRDT_REPO>/dist/bin/meta-cli.cjs detached (start_new_session). A worker
@@ -431,15 +512,15 @@ def ticket_by_slug(slug):
     ticket slug, but carries no `T-NNN`, so every marker used to land with
     `ticket_id: null` and `prdt schedule` could not show in-flight rows. Same
     rule as `schedule_ticket_for_ctx` in scripts/prdt (the gate's schedule
-    record). A frontmatter-only line scan of docs/tickets/**/T-*.md, cached for
+    record). A frontmatter-only line scan of docs/tickets/**/T-*.md (product layout: every docs/PRODUCT/tickets), cached for
     this one hook run; any read failure is just no match."""
     global _SLUG_TICKETS
     if not (isinstance(slug, str) and slug.strip()):
         return None
     if _SLUG_TICKETS is None:
         _SLUG_TICKETS = {}
-        tdir = os.path.join(root, "docs", "tickets")
-        for dp, _dn, fns in os.walk(tdir):
+        walks = [t for _p, t in tickets_homes(root)]   # T-1104: docs/tickets or every product's
+        for dp, _dn, fns in (x for tdir in walks for x in os.walk(tdir)):
             for fn in fns:
                 if not (fn.startswith("T-") and fn.endswith(".md")):
                     continue
@@ -603,6 +684,10 @@ def marker_start(aid):
         "pairing": None,
         "parent_transcript": ev.get("transcript_path") if isinstance(ev.get("transcript_path"), str) else None,
     }
+    if nonprdt:
+        # T-1196: subagent_type only on a non-prdt marker (a prdt-* marker keeps
+        # its pre-T-1196 key set; _reconcile falls back to "prdt-"+persona).
+        data["subagent_type"] = sub
     if prior:
         for k in ("dispatch_id", "ticket_id", "tool_use_id", "checkout", "pairing"):
             data[k] = prior.get(k) if isinstance(prior.get(k), str) else None
@@ -629,7 +714,11 @@ def marker_start(aid):
             break
     if not data["pairing"]:
         data["pairing"] = "unconfirmed"
-    if not data["ticket_id"]:
+    if nonprdt:
+        # T-1196: an Explore/fork carries no ticket — never the PO's current_task
+        # (it would show as working on it in statusline / `prdt schedule`).
+        data["ticket_id"] = None
+    elif not data["ticket_id"]:
         data["ticket_id"] = po_state_ticket()
     if data["model"] is None:
         data["model"] = "default"
@@ -759,7 +848,10 @@ def _reconcile(names):
             prompt = worker_first_prompt(data.get("transcript")) if isinstance(data.get("transcript"), str) else None
             if prompt is None:
                 continue
-            call = agent_call_by_prompt(data.get("parent_transcript"), "prdt-" + str(data.get("persona") or ""), prompt)
+            call = agent_call_by_prompt(
+                data.get("parent_transcript"),
+                data["subagent_type"] if isinstance(data.get("subagent_type"), str) and data["subagent_type"] else "prdt-" + str(data.get("persona") or ""),
+                prompt)
             if call is None:
                 continue
             ctx_obj = ctx_from_prompt(prompt)
@@ -770,6 +862,8 @@ def _reconcile(names):
             # therefore ALWAYS taken as-is (None included), never falling back
             # to a stale/FIFO-guessed ticket_id already sitting on the marker.
             data["dispatch_id"], data["ticket_id"] = ticket_from_ctx(ctx_obj)
+            if isinstance(data.get("subagent_type"), str) and data["subagent_type"]:
+                data["ticket_id"] = None  # T-1196: a non-prdt marker never carries a ticket
             data["checkout"] = checkout_from_ctx(ctx_obj)
             data["tool_use_id"], data["model"] = call[0], norm_model(call[1])
             data["pairing"] = "confirmed"
@@ -923,6 +1017,26 @@ if event == "SubagentStart":
         marker_reconcile()
     except Exception:
         pass
+    try:
+        marker_prune()
+    except Exception:
+        pass
+    sys.exit(0)
+
+if nonprdt:
+    # T-1196: SubagentStop for a non-prdt worker — stamp the marker and append
+    # the schedule stop row, nothing else (no sessions.json · turns line).
+    aid = ev.get("agent_id")
+    try:
+        marker_reconcile()
+    except Exception:
+        pass
+    if isinstance(aid, str) and aid:
+        marker_stop(aid)
+        try:
+            schedule_stop(aid)
+        except Exception:
+            pass
     try:
         marker_prune()
     except Exception:

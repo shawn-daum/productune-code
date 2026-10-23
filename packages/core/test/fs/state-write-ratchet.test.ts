@@ -78,7 +78,8 @@ function scanRepo(): Record<string, number> {
   const add = (r: Record<string, number>) => { for (const [k, v] of Object.entries(r)) all[k] = (all[k] ?? 0) + v }
   const read = (p: string) => fs.readFileSync(p, 'utf8')
   const prdt = path.join(PKGS, 'core', 'scripts', 'prdt')
-  add(scanPython(rel(prdt), read(prdt)))
+  // T-1170: the CLI body lives in prdt_cli.py; its sites stay keyed under the `prdt` name (the launcher has none)
+  add(scanPython(rel(prdt), read(path.join(PKGS, 'core', 'scripts', 'prdt_cli.py'))))
   const scripts = path.join(PKGS, 'core', 'scripts')
   // hooks and the status line carry embedded Python — counted per file
   const shell = [...walk(path.join(scripts, 'hooks'), (f) => f.endsWith('.sh')), path.join(scripts, 'statusline-prdt.sh')]
@@ -122,6 +123,11 @@ const ALLOW: Record<string, number> = {
   'core/scripts/prdt::cmd_resource': 2,
   'core/scripts/prdt::_lume_resident_resources': 1,
   'core/scripts/prdt::write_canary_latch': 1,
+  'core/scripts/prdt::_machine_env_store': 1, // T-1109: ~/.prdt/env/.env (machine scope, 0600) — outside any project's .prdt/
+  'core/scripts/prdt::_env_write_all': 1, // T-1119: os.write of masked child output to our stdout/stderr fd — no file
+  'core/scripts/prdt::_env_run_masked': 1, // T-1119: os.write of relayed terminal input to the child's pty master — no file
+  // a log file opened as the child's stdout fd (Popen), not a text write
+  'core/scripts/prdt::cmd_test_cloud': 1,
   // lock files / exclusive creates with dir_fd + O_NOFOLLOW by design (index.db create, track and resource locks) and /dev/null opens
   'core/scripts/prdt::_index_db_prepare': 1,
   'core/scripts/prdt::_track_lock': 2,
@@ -134,13 +140,14 @@ const ALLOW: Record<string, number> = {
   'core/scripts/hooks/prdt-dispatch-gate.sh': 13,
   'core/scripts/hooks/prdt-identity-guard.sh': 3,
   'core/scripts/hooks/prdt-inbox-inject.sh': 1,
+  'core/scripts/hooks/prdt-message-display-autolink.sh': 2, // T-1143: embedded Python — the per-message fence stamp under $PRDT_HOME/run/message-display/ (home, never .prdt/): one `open(..., "w")` + the `os.unlink`-guarded save
   'core/scripts/hooks/prdt-overrides-inject.sh': 1,
   'core/scripts/hooks/prdt-post-dispatch.sh': 8,
   'core/scripts/hooks/prdt-question-check.sh': 2,
-  'core/scripts/hooks/prdt-return-check.sh': 7,
-  'core/scripts/hooks/prdt-secret-guard.sh': 2,
+  'core/scripts/hooks/prdt-return-check.sh': 8, // T-1173: +1 = append_inbox's leaf-O_NOFOLLOW os.open fallback (docs/_shared/wiki/inbox.md, never .prdt/), taken only when prdt_safe_fs.py is not installed — same shape as the existing fallback above it
+  'core/scripts/hooks/prdt-secret-guard.sh': 3, // T-1109: +1 = embedded Perl `length($n) > length($b)` in is_store_path — a comparison the SH_REDIR scan reads as a redirect, no write
   'core/scripts/hooks/prdt-session-start.sh': 4,
-  'core/scripts/hooks/prdt-user-prompt.sh': 7, // T-1081: +1 = cap_jsonl's trim of $PRDT_HOME/run/form-outline-counts.jsonl (home, never .prdt/)
+  'core/scripts/hooks/prdt-user-prompt.sh': 6, // T-1081: +1 = cap_jsonl's trim of $PRDT_HOME/run/form-outline-counts.jsonl (home, never .prdt/)
   'core/scripts/hooks/prdt-worktree-guard.sh': 1,
   'core/scripts/statusline-prdt.sh': 6,
   'core/src/git-workflow/meta-backup.ts': 2,
@@ -156,6 +163,8 @@ const ALLOW: Record<string, number> = {
   'core/src/settings/ui-settings.ts': 1,
   // viewer: doctrine copy into a fresh mkdtemp dir used as the throwaway PRDT_HOME for `--plan` (T-1050) — outside any project / state dir
   'viewer/lib/discipline-load.mjs': 1,
+  // viewer: appends a project realpath to $PRDT_HOME/run/open-roots (T-1191) — O_NOFOLLOW append under the user-home tooling dir, never a project's .prdt/
+  'viewer/lib/open-roots.mjs': 2,
   'gui/electron/chat-store.ts': 2,
   'gui/electron/claude-installer.ts': 1,
   'gui/electron/ipc/attachments.ts': 1,
@@ -168,7 +177,7 @@ const ALLOW: Record<string, number> = {
   'gui/electron/ipc/settings.ts': 1,
   'gui/electron/mechanical-write.ts': 1,
   'gui/electron/po-session-config.ts': 1,
-  'gui/electron/prdt-bootstrap.ts': 10,
+  'gui/electron/prdt-bootstrap.ts': 11, // +1 T-1191: prdt_open_url.py / prdt-url-scheme.sh copied into $PRDT_HOME/bin (home, not a project)
   'gui/electron/toolchain.ts': 4,
   'viewer/cli.mjs': 3,
 }

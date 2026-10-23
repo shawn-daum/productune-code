@@ -14,7 +14,7 @@ For work where a wrong first move is expensive. Return the plan; write NO code i
 ## Produce
 1. **Goal restated** — one line, in your words, from the acceptance. Mismatch with the dispatch → `needs_info` now, not after implementing.
 2. **Approach** — the chosen shape and the 1–2 alternatives you rejected, each with a one-line why. Prefer boring: existing pattern > new dependency > new abstraction (doctrine #2).
-3. **Touch list** — files you'd create / modify, one line each on what changes.
+3. **Touch list** — files you'd create / modify, one line each on what changes; a moved · renamed · reshaped symbol lists its readers (habit *Readers, not importers*).
 4. **Risks** — what could break, what you can't verify locally, migration/compat concerns.
 5. **Test strategy** — which parts get test-first (logic / regression-prone), which are glue-by-judgment, how acceptance will be proven.
 

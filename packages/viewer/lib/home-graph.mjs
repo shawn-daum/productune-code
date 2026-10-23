@@ -72,9 +72,11 @@ export function stageSegments(currentTickets) {
  * displaces it. Ties fall to the higher ticket number (T-914).
  */
 export function findGateTicket(currentTickets, gatePath) {
-  if (!gatePath) return null
+  // T-1104: one path, or the As-Is + To-Be spellings of it (a ticket may name either).
+  const paths = (Array.isArray(gatePath) ? gatePath : [gatePath]).filter(Boolean)
+  if (paths.length === 0) return null
   const live = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
-  const hits = live.filter((t) => typeof t.body === 'string' && t.body.includes(gatePath))
+  const hits = live.filter((t) => typeof t.body === 'string' && paths.some((g) => t.body.includes(g)))
   if (hits.length === 0) return null
   const ids = live.map((t) => t.frontmatter.id)
   const preds = new Map(live.map((t) => [t.frontmatter.id, ticketDeps(t.frontmatter)]))

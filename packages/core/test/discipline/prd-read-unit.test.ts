@@ -40,7 +40,7 @@ const bodyLineCount = (p: string) =>
 
 describe('contracts.md — prd_path is a fragment, not the whole file', () => {
   test('the [ctx] schema line carries the version fragment', () => {
-    expect(read(CONTRACTS)).toContain('"prd_path":"docs/prd/PRD.md#[<line>/]v<N>.<m>"')
+    expect(read(CONTRACTS)).toContain('"prd_path":"docs/<product>/prd/PRD.md#v<N>.<m>"')
   })
 
   // The regression this guards: any edit that drops the fragment back to the
@@ -54,7 +54,7 @@ describe('contracts.md — prd_path is a fragment, not the whole file', () => {
     // into the fixed-paths annex — contracts.md now only points at it.
     const row = read(FIXED_PATHS_ANNEX).split('\n').find((l) => l.startsWith('| PRD (working document + history) |'))
     expect(row).toBeDefined()
-    expect(row).toContain('`docs/prd/PRD.md#[<line>/]v<N>.<m>`')
+    expect(row).toContain('`docs/<product>/prd/PRD.md#v<N>.<m>`')
     expect(row).toContain('that ONE version section')
     // T-602: the working file is head + the open section and nothing else, so
     // reading the whole file IS the read unit — the old "never the whole file"
@@ -85,8 +85,8 @@ describe('contracts.md — PRD split: working document + one file per closed ver
   // closed version and no shared history file anywhere.
   test('the row names the per-version file and the byte-identical move', () => {
     const r = row()
-    expect(r).toContain('`docs/prd/PRD.md` = the standing head + the ONE open `## v<N>.<m>` section')
-    expect(r).toContain('MOVES its section byte-identical into `docs/prd/versions/[<line>/]v<N>.<m>.md`')
+    expect(r).toContain('`docs/<product>/prd/PRD.md` = the standing head + the ONE open `## v<N>.<m>` section')
+    expect(r).toContain('MOVES its section byte-identical into `docs/<product>/prd/versions/v<N>.<m>.md`')
     expect(r).toContain('never a copy')
     expect(r).not.toContain('never a per-version file')
     // No discipline text names the retired lump as the close target.
@@ -100,9 +100,9 @@ describe('contracts.md — PRD split: working document + one file per closed ver
   // `versions/v1.3.md` into a dispatch and be denied by the gate.
   test('the row gives the closed-section citation form and keeps it out of dispatch prd_path', () => {
     const r = row()
-    expect(r).toContain('cited `docs/prd/versions/[<line>/]v<N>.<m>.md`')
+    expect(r).toContain('cited `docs/<product>/prd/versions/v<N>.<m>.md`')
     expect(r).toContain('a form a dispatch `prd_path` never takes')
-    expect(read(CONTRACTS)).toContain('`[ctx].prd_path` = `docs/prd/PRD.md#[<line>/]v<N>.<m>`')
+    expect(read(CONTRACTS)).toContain('`[ctx].prd_path` = `docs/<product>/prd/PRD.md#v<N>.<m>`')
     expect(read(CONTRACTS)).not.toMatch(/"prd_path":"docs\/prd\/versions\//)
   })
 
@@ -123,9 +123,9 @@ describe('contracts.md — PRD split: working document + one file per closed ver
   test('the annex carries the close procedure and the candidate-path constraint', () => {
     const annex = read(FIXED_PATHS_ANNEX)
     expect(annex).toContain('## PRD — closing a `## v<N>.<m>` version section')
-    expect(annex).toContain('write it verbatim as the ENTIRE body of `docs/prd/versions/[<line>/]v<N>.<m>.md`')
-    expect(annex).toContain('No file under `docs/prd/versions/` is named `PRD.md`')
-    expect(annex).toContain('`docs/prd/PRD.md` · `docs/PRD.md` · `PRD.md`')
+    expect(annex).toContain('write it verbatim as the ENTIRE body of `docs/<product>/prd/versions/v<N>.<m>.md`')
+    expect(annex).toContain('No file under `prd/versions/` is named `PRD.md`')
+    expect(annex).toContain('`docs/<product>/prd/PRD.md` · `docs/prd/PRD.md` · `docs/PRD.md` · `PRD.md`')
     expect(annex).toMatch(/^when: .*closing a PRD `## v<N>\.<m>` version section/m)
   })
 
@@ -175,7 +175,7 @@ describe('contracts.md — docs/features is a registered fixed path', () => {
   const row = () =>
     read(FIXED_PATHS_ANNEX)
       .split('\n')
-      .find((l) => l.startsWith('|') && l.includes('`docs/features/<feature>.md`'))
+      .find((l) => l.startsWith('|') && l.includes('`docs/_shared/features/<feature>.md`'))
 
   test('the Fixed paths table registers docs/features/<feature>.md', () => {
     expect(row()).toBeDefined()
@@ -197,8 +197,8 @@ describe('contracts.md — docs/features is a registered fixed path', () => {
     const r = row()!
     expect(r).toContain('a grouping key, not a pointer')
     expect(r).toContain('a value with NO spec file is legal and the normal state')
-    expect(r).toContain('When `docs/features/<value>.md` EXISTS')
-    expect(r).toContain('read it FIRST, before touching that feature')
+    expect(r).toContain('When `features/<value>.md` EXISTS')
+    expect(r).toContain('read it FIRST')
     expect(r).toContain('history/lessons only, never the current spec')
   })
 
@@ -233,7 +233,7 @@ describe('contracts.md — docs/features is a registered fixed path', () => {
 describe('designer habit + prd-clarity playbook', () => {
   test('habit carries the feature-spec bullet with the three promotion tests', () => {
     const h = read(DESIGNER_HABIT)
-    expect(h).toContain('**Feature spec** is `docs/features/<feature>.md`')
+    expect(h).toContain('**Feature spec** is `docs/_shared/features/<feature>.md`')
     expect(h).toContain('three tests TOGETHER')
     expect(h).toContain('never delete an invalidated one')
   })

@@ -22,7 +22,7 @@ const ALL = ['prdt-po', ...WORKERS] as const
 // The budget doctor enforces — read from the CLI's CAPS (its basis is stated
 // there), not restated here: two copies of one number is the T-445 drift class.
 const STUB_CAP_BYTES = (() => {
-  const m = fs.readFileSync(path.join(CORE_ROOT, 'scripts', 'prdt'), 'utf8').match(/"agent_stub_bytes":\s*(\d+)/)
+  const m = fs.readFileSync(path.join(CORE_ROOT, 'scripts', 'prdt_cli.py'), 'utf8').match(/"agent_stub_bytes":\s*(\d+)/)
   if (!m) throw new Error('CAPS["agent_stub_bytes"] not found in scripts/prdt')
   return Number(m[1])
 })()
@@ -112,7 +112,7 @@ describe('agents/prdt-*.md are stubs over one hook-carried bootstrap (T-578)', (
     const RULE_LINE = /^- (?:\*\*)?(?:Turn|Dispatch) economy\b/
     const TERMS: Record<string, RegExp> = {
       po: /You yourself are not counted\./,
-      developer: /warns you at 40 API turns and denies every tool call at 60/,
+      developer: /governor warns, then denies every tool call/,
       qa: /never denied a tool call/,
       designer: /never denied a tool call/,
     }

@@ -92,7 +92,7 @@ case "$EVENT_JSON" in
 esac
 [ "${PRDT_QUESTION_CHECK:-off}" = "on" ] || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
-printf '%s' "$EVENT_JSON" | python3 -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
+printf '%s' "$EVENT_JSON" | python3 -I -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
 exit 0
 # The heredoc below is never executed (`exit 0` above): it only keeps the python
 # body out of bash's parser, so `bash -n` still reads this file end to end.
@@ -100,6 +100,67 @@ exit 0
 # ---- python ----
 import json, os, re, signal, stat, sys
 from datetime import datetime
+
+# T-1104: product-first docs layout (docs/artifacts/v1.14/product-first-docs-layout.html).
+# KEEP `project_products` / `tickets_homes` in lockstep with `project_products` /
+# `product_docs_dirs(root, "tickets")` in scripts/prdt (parity test:
+# test/scripts/product-first-shell-readers.test.ts). Layout = `docs/_shared/` is a
+# real dir; first product = config `slug`, then `products[].name`, then any
+# `docs/<kebab>/` holding `prd/` or `tickets/`. [] = legacy (docs/tickets).
+_PROD_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+
+
+def _product_dir_name(slug):
+    """config `slug` -> its `docs/<kebab>` folder name (same rule as `product_dir_name` in scripts/prdt)."""
+    if not isinstance(slug, str) or not slug:
+        return None
+    k = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")
+    if not _PROD_NAME_RE.match(k):
+        return "product"
+    # T-1215: layout-reserved names (PRODUCT_RESERVED_NAMES in prdt_lanes.py) get a suffix
+    return k + "-product" if k in ("prd", "tickets", "artifacts", "wiki", "features", "archive", "po", "designer", "developer", "qa") else k
+
+
+def project_products(root):
+    sh = os.path.join(root, "docs", "_shared")
+    if not os.path.isdir(sh) or os.path.islink(sh):
+        return []
+    try:
+        with open(os.path.join(root, ".prdt", "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    out = []
+
+    def add(n):
+        if isinstance(n, str) and _PROD_NAME_RE.match(n) and n not in out:
+            out.append(n)
+    add(_product_dir_name(cfg.get("slug")))
+    prods = cfg.get("products")
+    for e in (prods if isinstance(prods, list) else []):
+        add(e.get("name") if isinstance(e, dict) else None)
+    try:
+        names = sorted(os.listdir(os.path.join(root, "docs")))
+    except OSError:
+        names = []
+    for n in names:
+        d = os.path.join(root, "docs", n)
+        if os.path.isdir(d) and not os.path.islink(d) and not n.startswith(("_", ".")) \
+                and (os.path.isdir(os.path.join(d, "prd")) or os.path.isdir(os.path.join(d, "tickets"))):
+            add(n)
+    return out
+
+
+def tickets_homes(root):
+    """[(product|None, dir)] — every product's tickets dir, then the shared
+    backlog; legacy → [(None, docs/tickets)]."""
+    prods = project_products(root)
+    if not prods:
+        return [(None, os.path.join(root, "docs", "tickets"))]
+    return ([(p, os.path.join(root, "docs", p, "tickets")) for p in prods]
+            + [(None, os.path.join(root, "docs", "_shared", "tickets"))])
+
 
 # Wording confirmed by user (T-990 = A, 2026-10-06).
 # %s = the uncovered asks' line numbers ("3, 12").
@@ -118,7 +179,6 @@ RUN_BUDGET_S = 5
 # What counts as a citable record id, and where its files live (T-996 = C:
 # decisions later get their own `D-NNN` records — add "D" and its dir here).
 DECISION_ID_PREFIXES = ("T",)
-TICKET_DIRS = (os.path.join("docs", "tickets"),)
 _PFX = "|".join(re.escape(p) for p in DECISION_ID_PREFIXES)
 TICKET_ID_RE = re.compile(r"(?<![A-Za-z0-9])((?:%s)-\d{1,6})(?!\d)" % _PFX)
 TICKET_FILE_RE = re.compile(r"^(?:%s)-\d{1,6}\.md$" % _PFX)
@@ -191,6 +251,12 @@ def project_root(cwd):
     while d and d != "/":
         if os.path.isfile(os.path.join(d, ".prdt", "po-state.json")):
             root = d
+        # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary
+        if (os.path.isfile(os.path.join(d, ".git")) and os.path.basename(os.path.dirname(d)) == "tracks"
+                and os.path.basename(d)[:2] == "T-" and os.path.basename(d)[2:7].isascii()
+                and os.path.basename(d)[2:].isdigit() and len(os.path.basename(d)) <= 7):
+            root = None
+            break
         up = os.path.dirname(d)
         if up == d:
             break
@@ -284,11 +350,10 @@ def scan_transcript(path):
 
 def ticket_index(root):
     """({id: (type, status, assignee, mtime)}, {ids whose file was unreadable or
-    not a regular file}) over TICKET_DIRS (md is SoT); None when a tickets dir
+    not a regular file}) over tickets_homes (md is SoT); None when a tickets dir
     that exists cannot be listed (fail open)."""
     out, unknown, broken = {}, set(), []
-    for rel in TICKET_DIRS:
-        base = os.path.join(root, rel)
+    for _prod, base in tickets_homes(root):   # T-1104: docs/tickets or every product's
         if not os.path.lexists(base):
             continue
         if not os.path.isdir(base) or not os.access(base, os.R_OK | os.X_OK):

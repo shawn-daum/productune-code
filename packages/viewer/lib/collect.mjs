@@ -45,8 +45,12 @@ import { collectDisciplineLoad } from './discipline-load.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { collectEnv, homeEnvDir, lineEnvDir } from './env-status.mjs'
+import { fileURLToPath } from 'node:url'
+import { spawnSync } from 'node:child_process'
+import { collectEnv, collectMachineEnv, detectVsCode, homeEnvDir, lineEnvDir } from './env-status.mjs'
 import { parseFrontmatter } from './frontmatter.mjs'
+// T-1104: the product-first docs layout (JS port of the CLI seam) — where each row is read from.
+import { createDocsLayout } from './docs-layout.mjs'
 // T-713: reuse render.mjs's own numeric version-equality rule (contracts
 // §Fixed-paths "`v1` ≡ `v1.0.0`") rather than a second string-equality copy —
 // a ticket bucket directory spelled differently from po-state's own version
@@ -129,7 +133,10 @@ export function readPoState(repoRoot) {
     if (!fs.existsSync(abs)) return readJson(abs)
     return { schema_version: 0, stage: '', version: '', current_task: null }
   }
-  return readJson(real)
+  const state = readJson(real)
+  // T-1168: `version` null / missing / non-string reads as '' (idle) — every consumer assumes a string.
+  if (state && typeof state === 'object' && typeof state.version !== 'string') state.version = ''
+  return state
 }
 
 // null when the file's real path leaves the repo (callers skip the entry).
@@ -161,28 +168,43 @@ function ticketLite(doc) {
 /**
  * @returns {{ included: Array, omitted: Array<{bucket:string, count:number, bytes:number, tickets:Array, bodies:Record<string,string>}> }}
  */
-export function collectTickets(repoRoot, currentVersion, { line = null, exclude = [] } = {}) {
+export function collectTickets(repoRoot, currentVersion, { line = null, exclude = [], layout = createDocsLayout(repoRoot) } = {}) {
   // T-961: an added release line's tickets sit under `docs/tickets/<line>/`;
   // the home line's own read skips those line directories (`exclude`).
-  const ticketsRoot = path.join(repoRoot, 'docs/tickets', ...(line ? [line] : []))
+  // T-1104: in the product layout the roots are the product's `tickets/` and
+  // the shared backlog (`docs/_shared/tickets/`, which holds only `backlog/`
+  // for the home line); the same bucket name in both merges (product first).
+  const roots = layout.layout === 'product'
+    ? [layout.dir('tickets'), ...(line ? [] : [path.join(repoRoot, 'docs', '_shared', 'tickets')])]
+    : [layout.dir('tickets')]
   // T-746: a project with no ticket yet has no docs/tickets at all — zero
   // tickets, never an ENOENT that leaves the viewer ungenerated.
-  if (!containedDir(repoRoot, ticketsRoot)) return { included: [], omitted: [] }
-  const bucketDirs = fs
-    .readdirSync(ticketsRoot, { withFileTypes: true })
-    .filter((e) => (e.isDirectory() || e.isSymbolicLink()) && !exclude.includes(e.name) && containedDir(repoRoot, path.join(ticketsRoot, e.name)))
-    .map((e) => e.name)
-    .sort()
+  /** @type {Map<string, string[]>} bucket → bucket dirs (product first) */
+  const bucketDirsByName = new Map()
+  for (const r of roots) {
+    // T-1108: a product layout holds an added product's tickets in `docs/<product>/tickets/` itself, no `<line>/` level.
+    const ticketsRoot = path.join(r, ...(line && layout.layout !== 'product' ? [line] : []))
+    if (!containedDir(repoRoot, ticketsRoot)) continue
+    for (const e of fs.readdirSync(ticketsRoot, { withFileTypes: true })) {
+      if (!(e.isDirectory() || e.isSymbolicLink()) || exclude.includes(e.name)) continue
+      if (!containedDir(repoRoot, path.join(ticketsRoot, e.name))) continue
+      if (!bucketDirsByName.has(e.name)) bucketDirsByName.set(e.name, [])
+      bucketDirsByName.get(e.name).push(path.join(ticketsRoot, e.name))
+    }
+  }
+  const bucketNames = [...bucketDirsByName.keys()].sort()
 
   const included = []
   const omitted = []
-  for (const bucket of bucketDirs) {
-    const bucketDir = path.join(ticketsRoot, bucket)
-    const files = listContainedFiles(repoRoot, bucketDir, (n) => /^T-.+\.md$/.test(n))
+  for (const bucket of bucketNames) {
+    const files = []
+    for (const bucketDir of bucketDirsByName.get(bucket)) {
+      for (const f of listContainedFiles(repoRoot, bucketDir, (n) => /^T-.+\.md$/.test(n))) files.push(path.join(bucketDir, f))
+    }
     const isCurrent = sameVersion(bucket, currentVersion) || bucket === 'backlog'
     if (isCurrent) {
-      for (const f of files) {
-        const doc = withTicketId(readDoc(repoRoot, path.join(bucketDir, f)))
+      for (const filePath of files) {
+        const doc = withTicketId(readDoc(repoRoot, filePath))
         included.push({ bucket, ...doc })
       }
     } else if (files.length > 0) {
@@ -195,8 +217,7 @@ export function collectTickets(repoRoot, currentVersion, { line = null, exclude 
       let bytes = 0
       const tickets = []
       const bodies = {}
-      for (const f of files) {
-        const filePath = path.join(bucketDir, f)
+      for (const filePath of files) {
         const doc = withTicketId(readDoc(repoRoot, filePath))
         bytes += fs.statSync(containedFile(repoRoot, filePath)).size
         tickets.push(ticketLite(doc))
@@ -219,16 +240,31 @@ export function collectTickets(repoRoot, currentVersion, { line = null, exclude 
   return { included, omitted }
 }
 
-export function collectWiki(repoRoot) {
-  const dir = path.join(repoRoot, 'docs/wiki')
-  return listMarkdownFiles(repoRoot, dir)
-    .filter((f) => f !== 'index.md')
-    .map((f) => readDoc(repoRoot, path.join(dir, f)))
+/**
+ * T-1104 ② both layers read, product wins: the markdown files of one layered
+ * dir (`wiki` · `features`) — the product's first, then the shared ones a
+ * product file of the same name does not shadow. Legacy = the one dir.
+ */
+function collectLayered(repoRoot, layout, kind, skip = () => false) {
+  const seen = new Set()
+  const out = []
+  for (const dir of layout.layerDirs(kind)) {
+    for (const f of listMarkdownFiles(repoRoot, dir)) {
+      if (skip(f) || seen.has(f)) continue
+      seen.add(f)
+      out.push(readDoc(repoRoot, path.join(dir, f)))
+    }
+  }
+  // one dir keeps its own (sorted) order; two layers interleave by name
+  return layout.layout === 'product' ? out.sort((a, b) => (a.rel.split('/').pop() < b.rel.split('/').pop() ? -1 : 1)) : out
 }
 
-export function collectFeatures(repoRoot) {
-  const dir = path.join(repoRoot, 'docs/features')
-  return listMarkdownFiles(repoRoot, dir).map((f) => readDoc(repoRoot, path.join(dir, f)))
+export function collectWiki(repoRoot, layout = createDocsLayout(repoRoot)) {
+  return collectLayered(repoRoot, layout, 'wiki', (f) => f === 'index.md')
+}
+
+export function collectFeatures(repoRoot, layout = createDocsLayout(repoRoot)) {
+  return collectLayered(repoRoot, layout, 'features')
 }
 
 // T-882: the feature taxonomy the feature screen draws — `.prdt/config.json`
@@ -382,20 +418,31 @@ export function collectPrdGatePath(prdBody, currentVersion, line = null) {
   return ''
 }
 
-export function collectPrd(repoRoot, currentVersion, { line = null, lineNames = [] } = {}) {
+export function collectPrd(repoRoot, currentVersion, { line = null, lineNames = [], layout = createDocsLayout(repoRoot) } = {}) {
   // T-746: a project whose PRD is not written yet still gets a viewer (an
   // empty open section), never an ENOENT.
-  const prdPath = path.join(repoRoot, 'docs/prd/PRD.md')
-  const doc = readDoc(repoRoot, prdPath) ?? { rel: 'docs/prd/PRD.md', frontmatter: {}, body: '' }
+  // T-1104: the PRD dir is `docs/<product>/prd` in the product layout.
+  const prdRelDir = layout.relDir('prd')
+  // T-1108: a product layout gives an added product its own PRD file — no `## <line> v…` sections, no `versions/<line>/`.
+  if (layout.layout === 'product' && line) {
+    line = null
+    lineNames = []
+  }
+  const prdPath = path.join(repoRoot, prdRelDir, 'PRD.md')
+  const doc = readDoc(repoRoot, prdPath) ?? { rel: `${prdRelDir}/PRD.md`, frontmatter: {}, body: '' }
   // T-961: with release lines declared, each line reads the shared head plus
   // ITS OWN open section only (release-lines.md §3 read unit).
   const current = lineNames.length > 0 ? { ...doc, body: prdLineBody(doc.body, line, lineNames) } : doc
-  const versionsDir = path.join(repoRoot, 'docs/prd/versions', ...(line ? [line] : []))
+  const versionsDir = path.join(repoRoot, prdRelDir, 'versions', ...(line ? [line] : []))
   const closed = listMarkdownFiles(repoRoot, versionsDir).map((f) => {
-    const rel = `docs/prd/versions/${line ? `${line}/` : ''}${f}`
+    const rel = `${prdRelDir}/versions/${line ? `${line}/` : ''}${f}`
     return { rel, name: f, body: fs.readFileSync(containedFile(repoRoot, path.join(versionsDir, f)), 'utf8') }
   })
-  return { current, closed, openItems: collectPrdOpenItems(current.body, currentVersion, line), gatePath: collectPrdGatePath(current.body, currentVersion, line) }
+  const gatePath = collectPrdGatePath(current.body, currentVersion, line)
+  // T-1104: the PRD names the gate artifact as written (As-Is `docs/artifacts/…`);
+  // a ticket may name it either way, so the To-Be form rides beside it.
+  const gatePathAlt = gatePath ? layout.resolveRef(gatePath) : gatePath
+  return { current, closed, openItems: collectPrdOpenItems(current.body, currentVersion, line), gatePath, ...(gatePathAlt && gatePathAlt !== gatePath ? { gatePathAlt } : {}) }
 }
 
 function escapeRe(s) {
@@ -426,9 +473,18 @@ export function prdLineBody(body, line, lineNames) {
 }
 
 /**
- * T-961: the added release lines (`.prdt/config.json` `lines`), mirroring the
- * CLI's `project_lines`: entries whose `name` is a legal line name, unique and
- * not the slug, in declaration order. [] = a single-line project.
+ * The per-product entries of a config / po-state object: `products`, else the
+ * pre-v1.14 `lines` (T-1108 ⑦, the CLI's `_products_key`).
+ */
+export function productsOf(obj) {
+  if (!obj || typeof obj !== 'object') return undefined
+  return 'products' in obj || !('lines' in obj) ? obj.products : obj.lines
+}
+
+/**
+ * T-961 / T-1108: the added products (`.prdt/config.json` `products`), mirroring
+ * the CLI's `project_lines`: entries whose `name` is a legal product name,
+ * unique and not the slug, in declaration order. [] = a single-product project.
  */
 const LINE_NAME_RE = /^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$/
 export function collectLineNames(repoRoot) {
@@ -440,18 +496,20 @@ export function collectLineNames(repoRoot) {
   } catch {
     return []
   }
-  if (!cfg || !Array.isArray(cfg.lines)) return []
+  const raw = cfg ? productsOf(cfg) : null
+  if (!Array.isArray(raw)) return []
   const out = []
-  for (const e of cfg.lines) {
+  for (const e of raw) {
     const name = e && typeof e === 'object' ? e.name : undefined
-    if (typeof name === 'string' && LINE_NAME_RE.test(name) && !out.includes(name) && name !== cfg.slug) out.push(name)
+    if (typeof name === 'string' && LINE_NAME_RE.test(name) && !['prd', 'tickets', 'artifacts', 'wiki', 'features', 'archive', 'po', 'designer', 'developer', 'qa'].includes(name) && !out.includes(name) && name !== cfg.slug) out.push(name)
   }
   return out
 }
 
-/** T-961: `(stage, version)` of an added line from po-state `lines.<line>` (the CLI's `line_state`); version bare, '' when absent. */
+/** T-961 / T-1108: `(stage, version)` of an added product from po-state `products.<product>` (the CLI's `line_state`); version bare, '' when absent. */
 export function lineState(poState, line) {
-  const ls = poState && typeof poState.lines === 'object' && poState.lines ? poState.lines[line] : null
+  const all = productsOf(poState)
+  const ls = all && typeof all === 'object' ? all[line] : null
   if (!ls || typeof ls !== 'object') return { stage: '', version: '' }
   const v = typeof ls.version === 'string' ? ls.version.trim() : ''
   return { stage: typeof ls.stage === 'string' ? ls.stage : '', version: v }
@@ -469,8 +527,8 @@ const ARTIFACTS_ROOT_REL = 'docs/artifacts'
  * @param {string} bucket
  * @param {string} relPath
  */
-export function isContainedArtifactPath(repoRoot, bucket, relPath) {
-  const artifactsRoot = path.resolve(repoRoot, ARTIFACTS_ROOT_REL)
+export function isContainedArtifactPath(repoRoot, bucket, relPath, artifactsRootRel = ARTIFACTS_ROOT_REL) {
+  const artifactsRoot = path.resolve(repoRoot, artifactsRootRel)
   const resolved = path.resolve(artifactsRoot, bucket ?? '', relPath ?? '')
   if (resolved !== artifactsRoot && !resolved.startsWith(artifactsRoot + path.sep)) return false
   // T-711 slice 3 B3: the string check above is judged on the RAW bucket/path
@@ -517,14 +575,16 @@ export function isContainedArtifactPath(repoRoot, bucket, relPath) {
 /**
  * @returns {{ entries: Array<{fields:object, inlined:boolean, body?:string}> }}
  */
-export function collectArtifacts(repoRoot) {
-  const manifestPath = path.join(repoRoot, ARTIFACTS_ROOT_REL, 'manifest.json')
+export function collectArtifacts(repoRoot, layout = createDocsLayout(repoRoot)) {
+  // T-1104: `docs/<product>/artifacts` in the product layout.
+  const artifactsRel = layout.relDir('artifacts')
+  const manifestPath = path.join(repoRoot, artifactsRel, 'manifest.json')
   // T-713: a version with no artifacts yet (ARTIFACT.empty's own second line —
   // "버전이 열리면 이 버킷에 manifest.json 이 생겨요" — states this as the
   // NORMAL pre-manifest state, not an error) has no manifest.json on disk at
   // all; treat it as zero entries rather than throwing `readJson`'s ENOENT.
   const realManifest = containedFile(repoRoot, manifestPath)
-  if (!realManifest) return { entries: [] }
+  if (!realManifest) return { entries: [], files: collectArtifactFiles(repoRoot, artifactsRel) }
   const manifest = readJson(realManifest)
   const entries = []
   for (const fields of manifest.entries || []) {
@@ -533,8 +593,8 @@ export function collectArtifacts(repoRoot) {
     // refused wholesale — never inlined, never linked, never counted — rather
     // than building a fileHref that points at an arbitrary file on the
     // machine that ran `pnpm viewer`.
-    if (!isContainedArtifactPath(repoRoot, bucket, fields.path)) continue
-    const relFsPath = path.join(repoRoot, ARTIFACTS_ROOT_REL, bucket, fields.path)
+    if (!isContainedArtifactPath(repoRoot, bucket, fields.path, artifactsRel)) continue
+    const relFsPath = path.join(repoRoot, artifactsRel, bucket, fields.path)
     const isMd = fields.path.toLowerCase().endsWith('.md')
     let body
     let bytes
@@ -547,14 +607,36 @@ export function collectArtifacts(repoRoot) {
     }
     entries.push({
       fields,
-      diskRel: `${ARTIFACTS_ROOT_REL}/${bucket}/${fields.path}`,
+      diskRel: `${artifactsRel}/${bucket}/${fields.path}`,
       inlined: isMd && body !== undefined,
       bytes,
       unreadable,
       body,
     })
   }
-  return { entries }
+  return { entries, files: collectArtifactFiles(repoRoot, artifactsRel) }
+}
+
+// T-1187: every regular file under the artifacts dir, repo-relative — the paths a body may name
+// that the manifest does not list (an unregistered mock). Symlinks are skipped, so nothing outside
+// the repo is named; the render side links such a path as a plain file href, never inlined.
+function collectArtifactFiles(repoRoot, artifactsRel) {
+  const files = []
+  const walk = (rel) => {
+    let dirents
+    try {
+      dirents = fs.readdirSync(path.join(repoRoot, rel), { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const d of dirents) {
+      const child = `${rel}/${d.name}`
+      if (d.isDirectory()) walk(child)
+      else if (d.isFile()) files.push(child)
+    }
+  }
+  walk(artifactsRel)
+  return files.sort()
 }
 
 // T-883: the release notes — `code/docs/RELEASES.md`, one `## <version> —
@@ -606,6 +688,48 @@ export function collectReleases(repoRoot) {
     return parseReleases(fs.readFileSync(abs, 'utf8'))
   } catch {
     return []
+  }
+}
+
+// T-1165: the TOOL's version (sidebar bottom-left) — the installed package's own
+// docs/RELEASES.md, its first `## ` line's first token: the same source `prdt --version`
+// reads (installed_prdt_version). Never the project's `code/docs/RELEASES.md`, so a
+// project without a code/ folder shows it too. '' when unreadable.
+export const INSTALL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+
+/**
+ * T-1180: the 합격선 lanes of one product — the ONE lane computation (`prdt_lanes.lanes_for`, the module
+ * `prdt schedule --json` and the statusline share), never a second copy here. Read-only; any failure
+ * (no python3, not a prdt project, bad PRD) is `[]`, which the scope block draws as no lanes.
+ * @returns {Array<{name: string, linked: boolean, done: number, total: number, tickets: string[]}>}
+ */
+export function collectLanes(repoRoot, line = null, { scriptsDir = path.join(INSTALL_ROOT, 'packages/core/scripts') } = {}) {
+  if (!fs.existsSync(path.join(scriptsDir, 'prdt_lanes.py'))) return []
+  // -I: neither the cwd (the project root) nor PYTHONPATH reaches sys.path, so the sibling module is
+  // put there in code — a project-root prdt_lanes.py / json.py is never imported (T-1195).
+  const code = 'import sys,json\nsys.path.insert(0,sys.argv[3])\nimport prdt_lanes as m\nprint(json.dumps(m.lanes_for(sys.argv[1], sys.argv[2] or None), ensure_ascii=False))'
+  try {
+    const r = spawnSync('python3', ['-I', '-c', code, repoRoot, line || '', scriptsDir], {
+      encoding: 'utf8',
+      timeout: 20000,
+      cwd: repoRoot,
+      env: process.env,
+    })
+    if (r.status !== 0) return []
+    const lanes = JSON.parse(r.stdout)
+    if (!Array.isArray(lanes)) return []
+    return lanes.map((l) => ({ name: String(l.name), linked: l.linked === true, done: Number(l.done) || 0, total: Number(l.total) || 0, tickets: Array.isArray(l.tickets) ? l.tickets.map(String) : [] }))
+  } catch {
+    return []
+  }
+}
+
+export function collectToolVersion(installRoot = INSTALL_ROOT) {
+  try {
+    const line = fs.readFileSync(path.join(installRoot, 'docs', 'RELEASES.md'), 'utf8').split('\n').find((l) => l.startsWith('## '))
+    return line ? line.slice(3).trim().split(/\s+/)[0] : ''
+  } catch {
+    return ''
   }
 }
 
@@ -744,21 +868,25 @@ export function collectProjectSlug(repoRoot) {
 }
 
 /** Everything the generator needs, gathered once. */
-export function collectAll(repoRoot, { disciplineRoot } = {}) {
+export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
   const poState = readPoState(repoRoot)
   const currentVersion = poState.version
   const lineNames = collectLineNames(repoRoot)
   const cfg = readConfig(repoRoot)
+  const layout = createDocsLayout(repoRoot)
   // T-961: one entry per added release line; [] = single-line, every other
   // field exactly as before.
+  const homeEnv = collectEnv(repoRoot, homeEnvDir(repoRoot, cfg))
   const lines = lineNames.map((name) => {
     const { stage, version } = lineState(poState, name)
+    const lineLayout = layout.layout === 'product' ? createDocsLayout(repoRoot, name) : layout
     return {
       name,
       stage,
       version,
-      prd: collectPrd(repoRoot, version, { line: name, lineNames }),
-      tickets: collectTickets(repoRoot, version, { line: name }),
+      prd: collectPrd(repoRoot, version, { line: name, lineNames, layout: lineLayout }),
+      tickets: collectTickets(repoRoot, version, { line: name, layout: lineLayout }),
+      lanes: collectLanes(repoRoot, name),
       // T-958: key names + set/empty only (env-status.mjs).
       env: collectEnv(repoRoot, lineEnvDir(cfg, name)),
     }
@@ -768,17 +896,35 @@ export function collectAll(repoRoot, { disciplineRoot } = {}) {
     project: collectProjectSlug(repoRoot),
     currentVersion,
     lines,
-    prd: collectPrd(repoRoot, currentVersion, { lineNames }),
-    tickets: collectTickets(repoRoot, currentVersion, { exclude: lineNames }),
-    wiki: collectWiki(repoRoot),
-    features: collectFeatures(repoRoot),
+    // T-1104: how this project's docs/ is laid out — render maps As-Is paths and links through it.
+    docsLayout: layout,
+    prd: collectPrd(repoRoot, currentVersion, { lineNames, layout }),
+    tickets: collectTickets(repoRoot, currentVersion, { exclude: lineNames, layout }),
+    lanes: collectLanes(repoRoot),
+    wiki: collectWiki(repoRoot, layout),
+    features: collectFeatures(repoRoot, layout),
     featureTaxonomy: collectFeatureTaxonomy(repoRoot),
-    artifacts: collectArtifacts(repoRoot),
+    artifacts: collectArtifacts(repoRoot, layout),
     releases: collectReleases(repoRoot),
+    toolVersion: collectToolVersion(toolRoot),
     discipline: collectDiscipline(repoRoot, disciplineRoot === undefined ? undefined : { disciplineRoot }),
     // T-1050: the load diagram's facts (plan · annex when · menus · hook roster).
     disciplineLoad: collectDisciplineLoad(repoRoot, { disciplineRoot: disciplineRoot === undefined ? defaultDisciplineRoot() : disciplineRoot }),
-    env: collectEnv(repoRoot, homeEnvDir(repoRoot, cfg)),
+    env: homeEnv,
+    // T-1109: machine scope (~/.prdt/env/.env) — names and set/empty only.
+    machineEnv: collectMachineEnv(process.env.PRDT_HOME || path.join(os.homedir(), '.prdt'), homeEnv),
+    // T-1191: the env cards' open links — the prdt link names the project root (realpath, what the
+    // URL handler checks), never a file path; VS Code's button shows only when it is installed.
+    projectRoot: realRootOrNull(repoRoot),
+    editors: { vscode: detectVsCode() },
+  }
+}
+
+function realRootOrNull(repoRoot) {
+  try {
+    return fs.realpathSync(repoRoot)
+  } catch {
+    return null
   }
 }
 

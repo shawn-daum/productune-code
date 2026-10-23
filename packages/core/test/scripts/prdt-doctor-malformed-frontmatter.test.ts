@@ -251,7 +251,7 @@ out = []
 for shape, value in SHAPES.items():
     for field in FIELDS:
         fm = dict(GOOD); fm[field] = value
-        mod.parse_frontmatter = lambda p, fm=fm: (fm, 'body')
+        mod.parse_frontmatter = __import__('sys').modules['prdt_lanes'].parse_frontmatter = lambda p, fm=fm: (fm, 'body')
         con = sqlite3.connect(':memory:'); con.executescript(mod.SCHEMA)
         rec = {'shape': shape, 'field': field}
         try:
@@ -262,7 +262,7 @@ for shape, value in SHAPES.items():
         except BaseException as e:
             rec['raised'] = type(e).__name__ + ': ' + str(e)
         out.append(rec)
-mod.parse_frontmatter = real
+mod.parse_frontmatter = __import__('sys').modules['prdt_lanes'].parse_frontmatter = real
 print(json.dumps(out))
 `
 
@@ -389,7 +389,7 @@ out = []
 for shape, value in SHAPES.items():
     text = str(value)
     fm = dict((k, value) for k in KEYS)
-    mod.parse_frontmatter = lambda p, fm=fm: (dict(fm), 'body')
+    mod.parse_frontmatter = __import__('sys').modules['prdt_lanes'].parse_frontmatter = lambda p, fm=fm: (dict(fm), 'body')
     con = sqlite3.connect(':memory:')
     con.executescript(mod.SCHEMA)
     con.execute('CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(name, title, body)')
@@ -402,7 +402,7 @@ for shape, value in SHAPES.items():
                 out.append({'shape': shape, 'table': table, 'col': col,
                             'cell': None if cell is None else repr(cell),
                             'coerced': isinstance(cell, str) and text in cell})
-mod.parse_frontmatter = real
+mod.parse_frontmatter = __import__('sys').modules['prdt_lanes'].parse_frontmatter = real
 print(json.dumps(out))
 `
 

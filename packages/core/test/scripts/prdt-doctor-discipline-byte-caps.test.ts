@@ -19,6 +19,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -29,7 +30,7 @@ const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
 const REPO_DISCIPLINE = path.join(CORE_ROOT, 'discipline')
 const REPO_DOCTRINE = path.join(CORE_ROOT, 'doctrine.md')
-const CLI_SRC = fs.readFileSync(PRDT_CLI, 'utf8')
+const CLI_SRC = prdtSource(PRDT_CLI)
 
 function which(bin: string): string | null {
   try { return execFileSync('which', [bin], { encoding: 'utf8' }).trim() || null } catch { return null }

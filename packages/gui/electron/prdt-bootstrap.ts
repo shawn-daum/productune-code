@@ -138,6 +138,8 @@ function mirrorComplete(homeDir: string): boolean {
     path.join(prdt, 'bin', 'prdt'),
     path.join(prdt, 'bin', 'statusline-prdt.sh'),
     path.join(prdt, 'bin', 'prdt_safe_fs.py'),
+    path.join(prdt, 'bin', 'prdt_lanes.py'),
+    path.join(prdt, 'bin', 'prdt_cli.py'),
     path.join(prdt, 'doctrine.md'),
     path.join(prdt, 'discipline'),
     ...HOOK_BASENAMES.map((b) => path.join(prdt, 'hooks', b)),
@@ -171,7 +173,7 @@ export function decideBootstrap(paths: BootstrapPaths): BootstrapDecision {
 // ── Provision ─────────────────────────────────────────────────────────────────
 
 function payloadValid(payloadRoot: string): boolean {
-  return ['scripts/prdt', 'scripts/prdt-messages.json', 'scripts/statusline-prdt.sh', 'scripts/prdt_safe_fs.py', 'doctrine.md', 'discipline']
+  return ['scripts/prdt', 'scripts/prdt-messages.json', 'scripts/statusline-prdt.sh', 'scripts/prdt_safe_fs.py', 'scripts/prdt_lanes.py', 'scripts/prdt_cli.py', 'doctrine.md', 'discipline']
     .every((rel) => {
       try { return fs.existsSync(path.join(payloadRoot, rel)) } catch { return false }
     })
@@ -220,8 +222,31 @@ export function runBootstrap(paths: BootstrapPaths): BootstrapResult {
     const statusline = path.join(prdtHome, 'bin', 'statusline-prdt.sh')
     fs.copyFileSync(path.join(payloadRoot, 'scripts', 'statusline-prdt.sh'), statusline)
     fs.chmodSync(statusline, 0o755)
-    // T-906: the shared symlink-safe walk the statusline + hooks import (install.sh parity)
-    fs.copyFileSync(path.join(payloadRoot, 'scripts', 'prdt_safe_fs.py'), path.join(prdtHome, 'bin', 'prdt_safe_fs.py'))
+    // T-906: the shared symlink-safe walk the statusline + hooks import; T-1147: the lane computation
+    // `prdt` + the statusline import; T-1170: the CLI body bin/prdt (a launcher) loads (install.sh parity)
+    for (const m of ['prdt_safe_fs.py', 'prdt_lanes.py', 'prdt_cli.py']) {
+      fs.copyFileSync(path.join(payloadRoot, 'scripts', m), path.join(prdtHome, 'bin', m))
+    }
+
+    // T-1191: prdt:// URL scheme (install.sh §1a parity) — best-effort: a payload without it, a
+    // non-macOS host or a failed build leaves the viewer's 경로 복사 working; never fails provision.
+    // The script registers with LaunchServices only when prdtHome is the login user's own ~/.prdt.
+    const schemeSh = path.join(payloadRoot, 'scripts', 'prdt-url-scheme.sh')
+    const openPy = path.join(payloadRoot, 'scripts', 'prdt_open_url.py')
+    if (process.platform === 'darwin' && fs.existsSync(schemeSh) && fs.existsSync(openPy)) {
+      try {
+        for (const [src, name] of [[openPy, 'prdt_open_url.py'], [schemeSh, 'prdt-url-scheme.sh']] as const) {
+          const dst = path.join(prdtHome, 'bin', name)
+          fs.copyFileSync(src, dst)
+          fs.chmodSync(dst, 0o755)
+        }
+        execFileSync('bash', [path.join(prdtHome, 'bin', 'prdt-url-scheme.sh'), 'install'], {
+          env: { ...process.env, PRDT_HOME: prdtHome },
+          stdio: 'ignore',
+          timeout: 60_000,
+        })
+      } catch { /* best-effort — see above */ }
+    }
 
     // menus are derived — regenerate against the installed mirror (install.sh §1)
     execFileSync(binPrdt, ['menus'], {

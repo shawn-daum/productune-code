@@ -42,15 +42,21 @@ export const ENV = {
   note: '키 이름과 설정 여부만 보여요. 값은 이 화면에 없어요.',
   sample: '견본',
   noFile: 'env 파일 없음',
-  emptyHead: '이 줄에는 env 파일이 없어요.',
+  emptyHead: '이 제품에는 env 파일이 없어요.',
   emptyDetail: (dir) => `찾은 폴더: ${dir} · 찾은 이름: .env · .env.*`,
-  go: 'env 보기',
-  reveal: '키 목록 보기',
-  mask: '키 목록 가리기',
+  // T-1191: per file card (션님 확정 2026-10-19).
+  openEditor: '텍스트 편집기로 열기',
+  openVsCode: 'VS Code 로 열기',
+  copyPath: '경로 복사',
+  copied: '경로를 복사했어요',
   sampleKeys: (n) => `견본 · ${n}개 키`,
   sampleNote: '견본 파일은 설정 여부를 세지 않아요.',
   homeNone: '코드 폴더에 env 파일이 없어요.',
-  homeNoneLine: '이 줄의 코드 폴더에 env 파일이 없어요.',
+  machineScope: '기기 범위',
+  codeWins: '제품 코드 값이 우선',
+  plainValue: '보통 값',
+  machineEmptyHead: '기기 범위에 저장된 키가 없어요.',
+  machineEmptyDetail: '터미널에서 prdt env set <KEY> 로 저장하면 키 이름이 여기에 보여요.',
 }
 
 export const PAGE = {
@@ -67,6 +73,9 @@ export const HOME = {
   working: '진행 상황',
   // T-792: 홈의 이번 버전 결정 묶음 — 사용자 표현 "결정은 홈에 신설하자" 그대로.
   decision: '결정',
+  // T-1138: the 결정 bucket lists decision tickets (질문) and decision pages (기록) in one table.
+  decisionHeaders: ['구분', 'ID', '제목', '상태', '버전'],
+  decisionKind: { ticketOpen: '질문 · 열림', ticketDone: '질문 · 완료', ticketDropped: '질문 · 중단', page: '기록' },
   // T-881: the approved screen set's 「현재 버전」 screen (docs/artifacts/v1.12/
   // define-screen-set.html, home-progress · home-cases; T-796 outcome). The
   // matrix labels (담당 · 검수 · 전체) went with the matrix.
@@ -76,13 +85,17 @@ export const HOME = {
   stageDone: (done, total) => `티켓 완료 ${done}/${total}`,
   scope: '스코프',
   scopeSub: (n) => `이번 버전 PRD ${n}항목`,
-  // T-1046: the 「PRD 항목 밖 티켓」 block — one-line definition, then (only when any) the malformed count linking to the ticket list.
-  scopeOutDef: '어느 PRD 항목에도 묶이지 않은 작업 티켓이에요. 티켓의 prd_item 이 비어 있거나 열린 섹션 항목과 맞지 않아요.',
+  // T-1046 → T-1180: the 「PRD 항목 밖 티켓」 block's explainer is ONE line: why a ticket is outside · decisions left out (count) · link to them.
+  scopeOutDef: 'prd_item 이 비었거나 맞는 항목 없음',
   scopeOutEmpty: '없음',
   scopeMalformed: (n) => `형식이 틀린 티켓 ${n}건`,
-  // T-1046 (T-1051 = A): decision records are not scope work, so the count skips them; this note says how many.
-  scopeDecisionNote: (n) => `결정 기록 ${n}건은 항목에 묶지 않아 여기서 세지 않아요.`,
-  scopeDecisionLink: '결정 목록 보기',
+  scopeDecisionNote: (n) => `결정 ${n}건 제외`,
+  scopeDecisionLink: '결정 목록',
+  // T-1180: scope rows grouped under their 합격선 lane (gate row); items no lane's tickets reach sit under the last head.
+  scopeLane: (name) => `레인 ${name}`,
+  scopeNoLane: '레인에 묶이지 않은 항목',
+  // T-1184 (T-1180 QA): the lane head counts every ticket of the lane, an item row only its own — said once under the rows.
+  scopeLaneRule: '레인 숫자 = 그 레인 티켓 전체 · 항목 숫자 = 그 항목 티켓 · 항목은 티켓이 가장 많은 레인 아래',
   scopeFixTag: (n) => `형식 고치기 ${n}`,
   scopeFixTitle: '버전 없이 키만 적혀 있어요. <버전>#<키> 형식으로 고쳐 주세요.',
   waitDec: '내 결정 대기',
@@ -308,7 +321,7 @@ export const DISCIPLINE_LOAD = {
     'prdt-overrides-inject.sh': ['기기 override', 'all', '~/.prdt/overrides/<persona>.md (+ playbook override 목록)'],
     'prdt-project-overrides-inject.sh': ['프로젝트 override', 'all', '.prdt/overrides/<persona>.md'],
   },
-  poOnlyHooks: ['prdt-user-prompt.sh', 'prdt-question-check.sh', 'prdt-link-check.sh'],
+  poOnlyHooks: ['prdt-user-prompt.sh', 'prdt-question-check.sh'],
 }
 
 /** 「읽기」 칸 값 — 「용어 사전 · 5개」 · 「릴리즈 노트 · 18개」. */
@@ -337,6 +350,17 @@ export const ARTIFACT = {
 // zero-closed-round repo just has fewer rows, never an empty list to caption).
 export const PRD = {
   openLabelPrefix: '열린 섹션 · ',
+}
+
+// T-1108: a product with no open version / PRD section — strings verbatim from the approved
+// screen set (docs/artifacts/v1.14/define-screen-set.html #screen-home-products · #screen-side-products,
+// data-label home.idle.* · prd.idle.*). The product name, backlog count and last closed version fill the sample's slots.
+export const IDLE = {
+  homeHead: (name) => `${name} 는 지금 진행 중인 버전이 없어요.`,
+  homeDetail: (backlog) => `${backlog > 0 ? `backlog 티켓 ${backlog}건이 대기 중이에요. ` : ''}새 버전을 시작하면 이 화면에 진행 상황이 보여요.`,
+  prdHead: (name) => `${name} 는 진행 중인 PRD 섹션이 없어요.`,
+  prdDetail: (lastClosed) => `${lastClosed ? `완료한 ${lastClosed} 은 왼쪽 목록에서 볼 수 있어요. ` : ''}새 버전을 시작하면 진행 중인 섹션이 생겨요.`,
+  prdSideLabel: '진행 중인 섹션 없음',
 }
 
 // T-884 (T-860 / T-874): the open PRD's reading screen — outline, folds, 「결정할 것」 box,
@@ -408,6 +432,26 @@ export const HASH_NOTICE = {
   stale: '뷰어를 만든 뒤 옮겨지거나 지워졌어요. 홈으로 돌아왔어요.',
 }
 
+// T-1165 (mock docs/artifacts/v1.14/viewer-identity-progress.html, T-1129 · T-1161 = B): the sidebar's
+// identity line (top-left), the tool version (bottom-left) and the progress card. `stage` names are the
+// statusline's own Korean words (prdt-messages.json `statusline.stage.*`; pinned by viewer-identity-progress.test.ts).
+export const IDENTITY = {
+  idle: '쉬는 중',
+  tool: 'productune',
+  ticket: '티켓',
+  cardLabel: '버전 진행 요약',
+  ticketBar: (done, total) => `티켓 완료 ${done}/${total}`,
+  stage: { define: '기획', build: '개발', ship: '배포', retro: '회고', idle: '유휴' },
+  // hover tooltips, worded as the approved mock (T-1165)
+  idTitle: (project, version, stage) => `${project} = .prdt/config.json slug · ${version} = po-state.version · ${stage} = po-state.stage`,
+  idIdleTitle: (project) => `${project} = .prdt/config.json slug · 쉬는 중 = po-state.stage 가 idle 이거나 버전이 없을 때`,
+  cardTopTitle: (stageName, stage, done, total) => `${stageName} = po-state.stage(${stage})의 상태줄 표기 · ${done}/${total} = 이 버전 티켓 중 현재 단계에 속하는 티켓의 done / 전체 (상태줄 「단계: ${stageName} ${done}/${total}」, stageOfTicketType 규칙)`,
+  countTitle: '티켓 = 이 버전 폴더의 open + done 티켓 중 done / 전체 (dropped 제외, type 무관)',
+  decTitle: 'dec = open 이고 type: decision 인 티켓 수 (상태줄 결정사항)',
+  reqTitle: 'req = open · assignee: user · decision 아님 · 선행 티켓이 모두 닫힌 티켓 수 (상태줄 요청사항)',
+  toolTitle: '도구 이름 · 도구 버전 = 설치된 패키지 docs/RELEASES.md 맨 위 ## 줄 (prdt --version)',
+}
+
 // T-797 개정: the topstrip's light/dark toggle — its accessible name says
 // what pressing it does next (the page opens light by default).
 export const THEME_TOGGLE = {
@@ -419,7 +463,8 @@ export const THEME_TOGGLE = {
 // `headers` maps a column header (parenthetical dropped, lower-cased) to its
 // role; `facts` = the labelled rows in a card, [label, dt class].
 export const OPTION_CARD = {
-  headers: { 선택지: 'name', 결과: 'result', 예시: 'example', pros: 'pros', 장점: 'pros', cons: 'cons', 단점: 'cons', 'trade-off': 'tradeoff', recommend: 'rec' },
+  // a column whose header is not here still renders, labelled with its own header text (T-1132)
+  headers: { 선택지: 'name', 결과: 'result', 예시: 'example', 'to-be 예시': 'example', pros: 'pros', 장점: 'pros', cons: 'cons', 단점: 'cons', 'trade-off': 'tradeoff', recommend: 'rec', 권장: 'rec', 추천: 'rec', 권고: 'rec' },
   facts: { result: ['결과', ''], pros: ['장점', 'p'], cons: ['단점', 'c'], tradeoff: ['절충', ''] },
   example: '예시',
   recommended: '권고',
@@ -428,7 +473,8 @@ export const OPTION_CARD = {
   // a recommend cell with no recommendation in it
   noRec: /^(—|-|없음)$/,
   // the leading 「권고」 marker in a recommend cell, dropped to leave the reason
-  recPrefix: /^\*{0,2}권고\*{0,2}\s*[—–-]?\s*/,
+  // (and a leading ✅ an authored 권장 cell opens with)
+  recPrefix: /^(?:✅\s*)?(?:\*{0,2}권고\*{0,2}\s*[—–-]?\s*)?/,
   // which letter the answer picked, in the `## outcome` text: the PO's "= B" reading,
   // then a lone letter inside the verbatim quote, then "A 안"
   // the PO's normalized line comes first: `- 선택: B` (a letter, or a number for numbered options)

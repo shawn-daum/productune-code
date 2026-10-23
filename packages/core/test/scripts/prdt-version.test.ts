@@ -4,6 +4,7 @@
  * ~/.prdt/bin finds the repo through `PRDT_REPO` in prdt.env).
  */
 import path from 'path'
+import { copyPrdtCli } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawnSync } from 'child_process'
@@ -47,7 +48,7 @@ describe.skipIf(!which('python3'))('prdt --version', () => {
     const home = path.join(sandbox, 'home-core')
     fs.mkdirSync(path.join(home, 'bin'), { recursive: true })
     const copy = path.join(home, 'bin', 'prdt')
-    fs.copyFileSync(PRDT_CLI, copy)
+    copyPrdtCli(PRDT_CLI, copy)
     fs.writeFileSync(path.join(home, 'prdt.env'), `PRDT_REPO=${CORE_ROOT}\n`)
     const r = run(copy, { PRDT_HOME: home })
     expect(r.status).toBe(0)
@@ -58,7 +59,7 @@ describe.skipIf(!which('python3'))('prdt --version', () => {
     const home = path.join(sandbox, 'home')
     fs.mkdirSync(path.join(home, 'bin'), { recursive: true })
     const copy = path.join(home, 'bin', 'prdt')
-    fs.copyFileSync(PRDT_CLI, copy)
+    copyPrdtCli(PRDT_CLI, copy)
     fs.writeFileSync(path.join(home, 'prdt.env'), `PRDT_REPO=${REPO_ROOT}\n`)
     const r = run(copy, { PRDT_HOME: home })
     expect(r.status).toBe(0)
@@ -69,7 +70,7 @@ describe.skipIf(!which('python3'))('prdt --version', () => {
     const home = path.join(sandbox, 'bare')
     fs.mkdirSync(path.join(home, 'bin'), { recursive: true })
     const copy = path.join(home, 'bin', 'prdt')
-    fs.copyFileSync(PRDT_CLI, copy)
+    copyPrdtCli(PRDT_CLI, copy)
     const r = run(copy, { PRDT_HOME: home })
     expect(r.status).not.toBe(0)
     expect(r.stdout.trim()).toBe('')
