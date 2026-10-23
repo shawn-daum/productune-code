@@ -824,14 +824,21 @@ describe('env run', () => {
     expect(r.out).not.toContain(V_SECRET)
   })
 
-  test('T-1216 C5: inside a track worktree the project code folder is found — same precedence as at the root', () => {
-    seedStore(`APPLE_TEAM_ID='${V_TEAM}'\nGOOGLE_OIDC_CLIENT_SECRET='${V_SECRET}'\n`)
-    seedProduct(`GOOGLE_OIDC_CLIENT_SECRET=${V_CODE}\n`)
-    const wt = path.join(proj, 'tracks', 'T-1216')
+  // T-1216 (2nd round): inside a track the "code folder" is the track worktree's own top folder.
+  const mkTrack = (parent: string, id: string) => {
+    const wt = path.join(parent, 'tracks', id)
     fs.mkdirSync(path.join(wt, 'sub'), { recursive: true })
-    fs.writeFileSync(path.join(wt, '.git'), 'gitdir: /nonexistent/worktrees/T-1216\n')
+    fs.writeFileSync(path.join(wt, '.git'), 'gitdir: /nonexistent/worktrees/' + id + '\n')
+    return wt
+  }
+  const trackRun = (cwd: string) => run(['env', 'run', '--', ...PROBE], { cwd })
+
+  test('T-1216 C5: track with a committed .env — its key is the code value, subfolder too', () => {
+    seedStore(`APPLE_TEAM_ID='${V_TEAM}'\nGOOGLE_OIDC_CLIENT_SECRET='${V_SECRET}'\n`)
+    const wt = mkTrack(proj, 'T-1216')
+    fs.writeFileSync(path.join(wt, '.env'), `GOOGLE_OIDC_CLIENT_SECRET=${V_CODE}\n`)
     for (const cwd of [wt, path.join(wt, 'sub')]) {
-      const r = run(['env', 'run', '--', ...PROBE], { cwd })
+      const r = trackRun(cwd)
       expect(r.code).toBe(0)
       expect(r.out).toContain('기기 범위 키 1개를 넣어 ')
       expect(r.out).toContain('같은 이름 1개는 제품 코드 값을 써요.')
@@ -840,14 +847,31 @@ describe('env run', () => {
     }
   })
 
-  test('T-1216 C5: a track-shaped folder under a dir with no project marker finds no code folder', () => {
-    seedStore(`GOOGLE_OIDC_CLIENT_SECRET='${V_SECRET}'\n`)
-    const fake = path.join(sandbox, 'nomarker', 'tracks', 'T-1')
-    fs.mkdirSync(fake, { recursive: true })
-    fs.writeFileSync(path.join(fake, '.git'), 'gitdir: x\n')
-    fs.writeFileSync(path.join(sandbox, 'nomarker', '.env.local'), `GOOGLE_OIDC_CLIENT_SECRET=${V_CODE}\n`)
-    const r = run(['env', 'run', '--', ...PROBE], { cwd: fake })
+  test('T-1216 C5: track with no .env* injects every machine value, even if the project code folder has .env.local', () => {
+    seedStore(`APPLE_TEAM_ID='${V_TEAM}'\nGOOGLE_OIDC_CLIENT_SECRET='${V_SECRET}'\n`)
+    seedProduct(`GOOGLE_OIDC_CLIENT_SECRET=${V_CODE}\n`)
+    const wt = mkTrack(proj, 'T-1216')
+    const r = trackRun(wt)
+    expect(r.code).toBe(0)
+    expect(r.out).toContain('기기 범위 키 2개를 넣어 ')
     expect(r.out).not.toContain('같은 이름')
+    expect(r.out).toContain('ST=True')
+    expect(r.out).not.toContain(V_SECRET)
+  })
+
+  test('T-1216 C5: nested track with a marker planted in the outer track — the outer track is not a project; inner top folder rules', () => {
+    seedStore(`APPLE_TEAM_ID='${V_TEAM}'\nGOOGLE_OIDC_CLIENT_SECRET='${V_SECRET}'\n`)
+    const outer = mkTrack(proj, 'T-1216')
+    fs.mkdirSync(path.join(outer, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(outer, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage: 'build', version: 'v1.14', current_task: null }))
+    fs.writeFileSync(path.join(outer, '.env'), `GOOGLE_OIDC_CLIENT_SECRET=${V_CODE}\n`)
+    const inner = mkTrack(outer, 'T-2')
+    const r = trackRun(inner)
+    expect(r.out).toContain('기기 범위 키 2개를 넣어 ')
+    expect(r.out).not.toContain('같은 이름')
+    fs.writeFileSync(path.join(inner, '.env'), `GOOGLE_OIDC_CLIENT_SECRET=${V_CODE}\n`)
+    const r2 = trackRun(inner)
+    expect(r2.out).toContain('같은 이름 1개는 제품 코드 값을 써요.')
   })
 
   test('a missing command / unknown program fails with no process started', () => {
