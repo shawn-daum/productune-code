@@ -19,7 +19,7 @@ const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g
 const redact = (s) => String(s)
   .replace(/(:\/\/)[^/@\s]*@/g, '$1***@')
   .replace(/(gh[opusr]_|github_pat_|glpat-)[A-Za-z0-9_]+/g, '$1***')
-  .replace(/([Aa]uthorization|AUTHORIZATION)([:=]\s*).*/g, '$1$2***')
+  .replace(/([Aa]uthorization|AUTHORIZATION)([:=]\s*)[^\n]*/g, '$1$2***')
   .replace(/([Bb]earer|[Bb]asic)\s+[A-Za-z0-9._~+/=-]+/g, '$1 ***')
 const clip = (s) => {
   const t = redact(String(s ?? '').replace(ANSI, ''))
