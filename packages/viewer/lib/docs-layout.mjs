@@ -254,7 +254,15 @@ export function createDocsLayout(root, forProduct = null) {
     relDir: (kind) => rel(docsPath(root, kind, product)),
     /** Read-order chain of a layered dir: absolute dirs, product first, then _shared (legacy: one). */
     layerDirs: (kind) => (layout === 'product' ? [path.join(productDocsDir(root, product), kind), path.join(sharedDocsDir(root), kind)] : [path.join(root, 'docs', kind)]),
-    resolveRef: (r) => resolveDocsRef(root, r, product),
+    // T-1220: a path in a body that names no mappable product is text, not an error — unchanged (the callers' `to !== text` then skips it).
+    resolveRef: (r) => {
+      try {
+        return resolveDocsRef(root, r, product)
+      } catch (e) {
+        if (e instanceof DocsLayoutError) return r
+        throw e
+      }
+    },
     mapJoined: (j) => mapJoinedDocsPath(root, j, product),
     asIsRel: (r) => docsAsIsRel(root, r),
   }
