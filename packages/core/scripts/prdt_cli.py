@@ -18372,17 +18372,14 @@ def _machine_env_store(text, fail_head, fail_tail):
         _env_fail(f"{fail_head}: 기기 범위 env 저장소에 쓸 수 없어요 ({e.strerror or 'write error'}). {fail_tail}", 3)
 
 
-def _track_project_root(start=None):
-    """T-1216: the project a track worktree (`<project>/tracks/T-NNN`) was cut
-    from, found by shape + that project's own state file — for the one read
-    that must see the project's code folder from inside a track (env key
-    names). `find_project_root` stays None there (T-1112); a track whose
-    parent holds no `.prdt/po-state.json` yields None."""
+def _track_top(start=None):
+    """T-1216: the nearest track worktree top (`<project>/tracks/T-NNN`) above
+    cwd, or None. Inside a track the env "code folder" is this folder — where
+    the program's own loader reads. No project is derived from it (T-1112)."""
     d = Path(start or os.getcwd()).resolve()
     for p in (d, *d.parents):
         if _is_track_worktree(p):
-            proj = p.parent.parent
-            return proj if (proj / ".prdt" / "po-state.json").is_file() else None
+            return p
     return None
 
 
@@ -18391,10 +18388,15 @@ def _env_product_code_keys():
     `.env` / `.env.*` files at its top (samples excluded); (None, {}) outside a
     project or with no real file. A key is set when any file gives it a
     non-empty value."""
-    root = find_project_root() or _track_project_root()
-    if not root:
-        return None, {}
-    d = code_root(root)
+    root = find_project_root()
+    if root:
+        d = code_root(root)
+        pn = Path(root).name
+    else:
+        d = _track_top()
+        if not d:
+            return None, {}
+        pn = d.name
     keys = {}
     found = False
     try:
@@ -18412,7 +18414,7 @@ def _env_product_code_keys():
         found = True
         for k, ln in vals.items():
             keys[k] = keys.get(k, False) or ln > 0
-    return (Path(root).name, keys) if found else (None, {})
+    return (pn, keys) if found else (None, {})
 
 
 _ENV_NO_TTY = "저장 실패: 값을 숨겨서 받을 수 있는 터미널이 아니에요. 저장한 키가 없어요.\n다음: 터미널에서 직접 실행하세요."
