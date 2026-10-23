@@ -53,6 +53,8 @@ prdt history                # 버전별 티켓 집계 + retro 포인터
 prdt wordlist check <파일|->   # UX 문구 금지 목록 검사: 줄:칸: 낱말 → 대체어 (export --format json|lines = 제품 프롬프트용 목록)
 prdt settings [set <키> <값>|unset <키>]  # register.*·viewer.auto-open·plan.tier 등 기기 설정 한 곳 (prdt register set도 그대로 동작)
 prdt meta log|remote|split  # 메타 git 조작 (v1.2 — 아래 참고)
+prdt env check|set|unset|ls|run  # 기기 env 저장소 — 값은 화면·로그에 나오지 않고 이름·설정 여부만 보임
+prdt layout check|migrate   # docs 폴더 구조 점검 / 예전 구조 → 제품별 구조 이전 (migrate는 목록만, --apply가 있어야 실제로 옮김)
 prdt update                  # 설치판 → 새 버전 + 그 사이 릴리스 노트를 보여주고 1/2(update/skip)로 물은 뒤에만 pull+재설치
 ```
 
@@ -61,12 +63,15 @@ prdt update                  # 설치판 → 새 버전 + 그 사이 릴리스 �
 ```
 .prdt/                      # po-state.json · config.json · meta.git(메타 저장소) · index.db(파생)
 docs/
-├── prd/PRD.md              # PRD 작업 문서 = 상주 head + 열린 버전 섹션 하나 (경로 고정)
-│   └── versions/v<N>.<m>.md    # 닫힌 버전 섹션 — close 때 파일 하나로 물러남 (T-657)
-├── artifacts/<version>/<slug>.<ext>  # 사용자 리뷰 산출물, 버킷마다 root manifest.json 1개
-├── tickets/<version>/T-NNN.md   # ticket-lite (전역 id · 3값 status)
-│   └── backlog/            # backlog = version 없는 ticket (승격 = git mv)
-└── wiki/                   # decision-- · fact-- · learning-- · feature-- · term-- · retro--v*
+├── _shared/                # 프로젝트 공용 — design.md · features/ · wiki/ · tickets/backlog/
+│   └── wiki/               # decision-- · fact-- · learning-- · feature-- · term-- (inbox.md · log.md)
+└── <product>/              # 제품마다 하나 (첫 제품 = 프로젝트 slug)
+    ├── prd/PRD.md          # PRD 작업 문서 = 상주 head + 열린 버전 섹션 하나 (경로 고정)
+    │   └── versions/v<N>.<m>.md    # 닫힌 버전 섹션 — close 때 파일 하나로 물러남 (T-657)
+    ├── tickets/<version>/T-NNN.md  # ticket-lite (전역 id · 3값 status)
+    │   └── backlog/        # backlog = version 없는 ticket (승격 = git mv)
+    ├── artifacts/<version>/<slug>.<ext>  # 사용자 리뷰 산출물, 제품마다 manifest.json 1개
+    └── wiki/               # retro--v<N>.<m>.md
 ```
 
 ## 개발 (이 repo)
