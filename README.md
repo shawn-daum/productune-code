@@ -18,7 +18,7 @@
 
 lifecycle:  Define → Build → Ship → Retro → idle   (gate 없음 — PO 판단 + 진입 ritual)
 지식:       doctrine(철학) + contracts(공유 규율) + persona별 habit/playbook
-기억:       docs/wiki/ — inbox 1줄 append → Retro에서 큐레이션. SQLite FTS(한글) 검색
+기억:       docs/_shared/wiki/ — inbox 1줄 append → Retro에서 큐레이션. SQLite FTS(한글) 검색
 강제:       hook(주입·재주입·기록)만 기계, 나머지는 prdt doctor(non-blocking lint)
 ```
 
@@ -103,10 +103,11 @@ GUI 단독 명령: `pnpm --filter @productune/gui smoke`(playwright smoke),
 
 v1.2부터 한 워킹트리를 **두 git이 나눠 관리**한다(two-git / one-worktree):
 
-- **코드 repo**(이 저장소, `.git`) — 제품 코드만. `.gitignore`의
-  `# >>> prdt meta (managed) >>>` 블록(도구가 생성·갱신, 수동 편집 금지)이
-  메타 경로(`docs/prd`, `docs/tickets`, `docs/wiki`, `.prdt` 등)를 전부 ignore한다.
-- **메타 repo**(`.prdt/meta.git`) — PRD·티켓·위키 등 allowlist 경로만 추적.
+- **코드 repo**(이 저장소, 프로젝트 루트 아래 `code/`의 `.git`) — 제품 코드만. v1.3부터 물리 분리라
+  코드 repo의 `.gitignore`에 메타 경로를 막는 managed 블록은 없다(폐기됨) — 메타 워킹트리(프로젝트 루트)에
+  코드 `.gitignore`가 없어서 필요 없다.
+- **메타 repo**(`.prdt/meta.git`) — allowlist 경로만 추적한다: `.prdt`, `docs/_shared`, `docs/<product>`
+  (제품마다), `docs/design.md`·`docs/features`·`docs/wiki` 같은 예전 구조 경로 등. 코드 디렉터리는 제외.
   `prdt meta log|remote|split`으로 조작하며, 커밋은 PO가 자동으로 쌓는다.
 
 그래서 이 repo를 clone하면 `docs/` 메타 문서가 없는 게 정상이다 — 설계 문서·티켓·위키는
