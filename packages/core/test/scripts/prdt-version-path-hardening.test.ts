@@ -11,6 +11,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { spawnSync } from 'child_process'
@@ -121,7 +122,7 @@ describe('po-state version → ticket path (reviewer repro)', () => {
 })
 
 describe('doctor: po_state_warnings names a malformed version', () => {
-  test('top-level and lines.<line>.version, one line each; well-formed ids are silent', () => {
+  test('top-level and products.<name>.version, one line each; well-formed ids are silent', () => {
     const p = py(`print(json.dumps([
       m.po_state_warnings({"schema_version": 1, "stage": "build", "current_task": None,
         "version": "../../../escaped-home",
@@ -131,7 +132,7 @@ describe('doctor: po_state_warnings names a malformed version', () => {
       m.po_state_warnings({"schema_version": 1, "stage": "build", "current_task": None, "version": "v1\\nstate: forged"})]))`)
     expect(p[0]).toEqual([
       "state: version '../../../escaped-home' is not a version id (v<N>[.<m>[.<p>]] or backlog)",
-      "state: lines.arc.version '../../../../escaped' is not a version id (v<N>[.<m>[.<p>]] or backlog)",
+      "state: products.arc.version '../../../../escaped' is not a version id (v<N>[.<m>[.<p>]] or backlog)",
     ])
     expect(p[1]).toEqual([])
     expect(p[2]).toHaveLength(1)
@@ -147,7 +148,7 @@ print(json.dumps([m.project_line_names(root), m.line_config_warnings(root),
   m.split_line_id("arc\\n/v1"), bool(m.LINE_NAME_RE.match("backlog\\n"))]))`, [root])
     expect(p[0]).toEqual(['ok'])
     expect(p[1]).toHaveLength(1)
-    expect(p[1][0]).toContain('is not a legal line name')
+    expect(p[1][0]).toContain('is not a legal product name')
     expect(p[1][0]).not.toContain('\n')
     expect(p[2]).toEqual([null, 'arc\n/v1'])
     expect(p[3]).toBe(false)
@@ -186,6 +187,14 @@ describe('installed_prdt_version reads a checkout root only from packages/core/s
     const src = fs.readFileSync(PRDT_CLI, 'utf8')
     put(repo, 'a/b/c/prdt', src)
     put(repo, 'packages/core/scripts/prdt', src)
+    put(repo, 'a/b/c/prdt_cli.py', prdtSource(PRDT_CLI))
+    put(repo, 'packages/core/scripts/prdt_cli.py', prdtSource(PRDT_CLI))
+    const lanes = fs.readFileSync(path.join(path.dirname(PRDT_CLI), 'prdt_lanes.py'), 'utf8')
+    put(repo, 'a/b/c/prdt_lanes.py', lanes)
+    put(repo, 'packages/core/scripts/prdt_lanes.py', lanes)
+    const safeFs = fs.readFileSync(path.join(path.dirname(PRDT_CLI), 'prdt_safe_fs.py'), 'utf8') // T-1134
+    put(repo, 'a/b/c/prdt_safe_fs.py', safeFs)
+    put(repo, 'packages/core/scripts/prdt_safe_fs.py', safeFs)
     const body = `print(json.dumps(m.installed_prdt_version()))`
     expect(py(body, [], path.join(repo, 'a/b/c/prdt'), home)).toBe(null)
     expect(py(body, [], path.join(repo, 'packages/core/scripts/prdt'), home)).toBe('v9.9.9')
@@ -215,7 +224,7 @@ describe('QA round 2: Unicode digits are not version digits', () => {
     expect(p.slice(0, 5)).toEqual([null, [1], false, false, false])
     expect(p[5]).toEqual([
       "state: version 'v١' is not a version id (v<N>[.<m>[.<p>]] or backlog)",
-      "state: lines.arc.version 'v٢' is not a version id (v<N>[.<m>[.<p>]] or backlog)",
+      "state: products.arc.version 'v٢' is not a version id (v<N>[.<m>[.<p>]] or backlog)",
     ])
   }, T)
 })

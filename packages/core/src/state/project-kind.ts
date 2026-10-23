@@ -53,7 +53,7 @@ export function stateDir(projectDir: string): string {
 // v1.2 assumed one root: projectRoot == codeRoot == metaRoot. v1.3 introduces a
 // PHYSICAL split — code lives under `<projectRoot>/<code.dir>` while meta
 // (`docs/`·`.prdt/`·`briefs/`) stays at the project root (the meta git work-tree
-// is unchanged, so meta path STRINGS like `docs/prd/PRD.md` are stable). This is
+// is unchanged, so meta path STRINGS like `docs/<product>/prd/PRD.md` — legacy layout `docs/prd/PRD.md` — are stable). This is
 // the SINGLE resolution point every surface shares (CLI · hook · GUI):
 //   - projectRoot / metaRoot = where `.prdt/` (or legacy `.productune/`) lives.
 //   - codeRoot = `<projectRoot>/<config.code.dir>`, or projectRoot itself when

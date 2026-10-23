@@ -21,6 +21,7 @@
  */
 
 import path from 'path'
+import { copyPrdtCli, prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -69,6 +70,8 @@ function runPrdt(cli: string, args: string[], env: Record<string, string> = {}):
 }
 
 function runInit(): any {
+  // T-1104: a fixture about legacy behavior starts As-Is (docs/prd before init), so init keeps the legacy shape.
+  fs.mkdirSync(`${projectDir}/docs/prd`, { recursive: true })
   return JSON.parse(runPrdt(PRDT_CLI, ['init', '--json', '--slug', 'proj', '--yes']))
 }
 
@@ -304,7 +307,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — allowlist fixed-path parity vs core (
    * the "matching fixture" test below, because the fixture was a stale THIRD
    * copy of the list this suite exists to keep at two. */
   const PY_DEFAULT: string[] = (() => {
-    const m = /META_ALLOWLIST_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(fs.readFileSync(PRDT_CLI, 'utf-8'))
+    const m = /META_ALLOWLIST_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(prdtSource(PRDT_CLI))
     if (!m) throw new Error('META_ALLOWLIST_DEFAULT not found in the prdt CLI')
     const entries = m[1].split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
     if (entries.length < 5) throw new Error(`parsed a suspiciously short default: ${entries.join()}`)
@@ -318,7 +321,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — allowlist fixed-path parity vs core (
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-cli-copy-'))
     fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
     const cli = path.join(tmp, 'scripts', 'prdt')
-    fs.copyFileSync(PRDT_CLI, cli)
+    copyPrdtCli(PRDT_CLI, cli)
     fs.chmodSync(cli, 0o755)
     fs.mkdirSync(path.join(tmp, 'src', 'git-workflow'), { recursive: true })
     const body = entries.map((e) => `  '${e}',`).join('\n')
@@ -355,7 +358,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — allowlist fixed-path parity vs core (
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-cli-noTS-'))
     fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
     const cli = path.join(tmp, 'scripts', 'prdt')
-    fs.copyFileSync(PRDT_CLI, cli)
+    copyPrdtCli(PRDT_CLI, cli)
     fs.chmodSync(cli, 0o755)
     const out = doctor(cli)
     expect(out).not.toMatch(/allowlist default drift/)
@@ -372,7 +375,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — allowlist fixed-path parity vs core (
  */
 describe.skipIf(!PYTHON3)('prdt doctor — exclude-list fixed-path parity vs core (T-513)', () => {
   const PY_EXCLUDE: string[] = (() => {
-    const m = /META_EXCLUDE_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(fs.readFileSync(PRDT_CLI, 'utf-8'))
+    const m = /META_EXCLUDE_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(prdtSource(PRDT_CLI))
     if (!m) throw new Error('META_EXCLUDE_DEFAULT not found in the prdt CLI')
     const entries = m[1].split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
     if (entries.length < 5) throw new Error(`parsed a suspiciously short default: ${entries.join()}`)
@@ -385,7 +388,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — exclude-list fixed-path parity vs cor
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-cli-copy-excl-'))
     fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
     const cli = path.join(tmp, 'scripts', 'prdt')
-    fs.copyFileSync(PRDT_CLI, cli)
+    copyPrdtCli(PRDT_CLI, cli)
     fs.chmodSync(cli, 0o755)
     fs.mkdirSync(path.join(tmp, 'src', 'git-workflow'), { recursive: true })
     const body = entries.map((e) => `  '${e}',`).join('\n')
@@ -443,7 +446,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — exclude-list fixed-path parity vs cor
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-cli-noTS-excl-'))
     fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
     const cli = path.join(tmp, 'scripts', 'prdt')
-    fs.copyFileSync(PRDT_CLI, cli)
+    copyPrdtCli(PRDT_CLI, cli)
     fs.chmodSync(cli, 0o755)
     const out = doctor(cli)
     expect(out).not.toMatch(/exclude default drift/)

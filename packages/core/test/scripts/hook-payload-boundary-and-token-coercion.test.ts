@@ -157,44 +157,13 @@ describe('a legitimate po-state renders byte-identically to pre-T-471', () => {
       .toBe('[prdt state] stage=build · version=v1.6 · current_task=T-471(developer) · dec=none · req=none')
   })
 
-  // T-642: this test used to pin the stage-guard line's exact wording
-  // byte-for-byte (T-669 already shows why that breaks the tree for no
-  // reason — the prose was reworded, T-633/T-634, "deploy-shaped request …
-  // deploy belongs to ship" -> "confirm before acting: …", while the guard's
-  // actual behavior did not change). Third instance of the same class
-  // (T-613, T-639): pin the RULE, not the sentence carrying it. The rule the
-  // acceptance names is three properties — (a) tagged as a stage guard line,
-  // (b) names the turn's stage, (c) says ship entry precedes the deploy work
-  // — never the sentence's exact bytes.
-  function assertStageGuardShape(line: string, stage: string): void {
-    expect(line.startsWith('[prdt stage guard]')).toBe(true)
-    expect(line).toContain(`stage=${stage}`)
-    expect(line).toMatch(/ship entry[\s\S]*before[\s\S]*deploy/i)
-  }
-
-  test("stage-guard line: tagged, names the turn's stage, says ship entry precedes deploy", () => {
-    const ctx = stateContext(LEGIT, '배포 완료')
-    const lines = ctx.split('\n')
-    expect(lines).toHaveLength(2) // state line + one guard line
-    assertStageGuardShape(lines[1], LEGIT.stage)
-  })
-
-  // Not empty coverage: a fixture with exactly one property surgically
-  // removed (the other two left intact) makes that property's own check fail
-  // — proving the assertion function actually discriminates, not just passes
-  // whatever it's handed.
-  test('each property actually fails on a fixture that removes it', () => {
-    const ctx = stateContext(LEGIT, '배포 완료')
-    const guardLine = ctx.split('\n')[1]
-
-    const noTag = guardLine.replace('[prdt stage guard]', '[prdt something else]')
-    expect(() => assertStageGuardShape(noTag, LEGIT.stage)).toThrow()
-
-    const noStage = guardLine.replace(`stage=${LEGIT.stage}`, 'stage=???')
-    expect(() => assertStageGuardShape(noStage, LEGIT.stage)).toThrow()
-
-    const noOrder = guardLine.replace('ship entry', 'zzzzzzzzzz')
-    expect(() => assertStageGuardShape(noOrder, LEGIT.stage)).toThrow()
+  // T-1173: the prompt-wording stage-guard line (S30) is retired — a deploy is
+  // judged on the command run (prdt-worktree-guard.sh rule 3). A deploy-shaped
+  // prompt now renders the state line alone.
+  test('a deploy-shaped prompt adds no stage-guard line', () => {
+    const lines = stateContext(LEGIT, '배포 완료').split('\n')
+    expect(lines).toHaveLength(1)
+    expect(lines[0].startsWith('[prdt state]')).toBe(true)
   })
 
   test('absent fields keep today’s `?` placeholder (not a withheld notice)', () => {

@@ -247,8 +247,8 @@ function denyReason(o: EventOpts, r: RunEnv = {}): string {
 const CLAUSE_CTX =
   'One inline `[ctx]` JSON line opens every dispatch:\n' +
   '  `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},' +
-  '"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#[<line>/]v<N>.<m>"}`'
-const CLAUSE_PRD = '`[ctx].prd_path` = `docs/prd/PRD.md#[<line>/]v<N>.<m>`'
+  '"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/<product>/prd/PRD.md#v<N>.<m>"}`'
+const CLAUSE_PRD = '`[ctx].prd_path` = `docs/<product>/prd/PRD.md#v<N>.<m>`'
 const CLAUSE_LANG =
   'Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · ' +
   '`dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.'
@@ -315,10 +315,11 @@ describe('silence outside its scope', () => {
     }
   })
 
-  test('a non-prdt subagent_type is never judged', () => {
+  test('a non-prdt subagent_type is never judged on `[ctx]` (T-1171: it gets the resource cap and a model tier instead)', () => {
     const proj = makeProject()
     for (const st of ['general-purpose', 'Explore', 'fork', 'claude', 'prdtx-developer', '']) {
-      expect(run({ cwd: proj, subagentType: st, prompt: 'no ctx line' })).toBe('')
+      const out = run({ cwd: proj, subagentType: st, prompt: 'no ctx line', model: 'haiku' })
+      expect(out).toBe('')
     }
   })
 
@@ -408,11 +409,11 @@ describe('T-704: worker persona fork spawns are denied by caller identity (`agen
     }
   })
 
-  test('T-818: the PO (no `agent_type`, or `prdt-po`) spawning a non-fork subagent is unaffected', () => {
+  test('T-818: the PO (no `agent_type`, or `prdt-po`) spawning a non-fork subagent is not denied', () => {
     const proj = makeProject()
-    expect(run({ cwd: proj, subagentType: 'general-purpose', prompt: 'x' })).toBe('')
+    expect(run({ cwd: proj, subagentType: 'general-purpose', prompt: 'x', model: 'sonnet' })).toBe('')
     expect(
-      run({ cwd: proj, agentId: 'agent-po', agentType: 'prdt-po', subagentType: 'general-purpose', prompt: 'x' }),
+      run({ cwd: proj, agentId: 'agent-po', agentType: 'prdt-po', subagentType: 'general-purpose', prompt: 'x', model: 'sonnet' }),
     ).toBe('')
   })
 
@@ -593,6 +594,14 @@ describe('deny: `prd_path` shape', () => {
     ['docs/prd/PRD.md#android/v1.7.1', 'a patch version on an added line'],
     ['docs/prd/PRD.md#a/b/v1.7', 'two line prefixes'],
     ['docs/prd/prd.md#v1.7', 'wrong case'],
+    ['docs/proj/prd/PRD.md#v1.7.1', 'a patch version in the product layout'],
+    ['docs/proj/prd/PRD.md', 'the product layout with no version fragment'],
+    ['docs/proj/prd/PRD.md#line/v1.7', 'a line prefix in the product layout (the product folder is the line)'],
+    ['docs/_shared/prd/PRD.md#v1.7', 'the shared PRD is never a dispatch target'],
+    ['docs/Proj/prd/PRD.md#v1.7', 'an uppercase product name'],
+    ['docs/backlog/prd/PRD.md#v1.7', 'the reserved name `backlog` as a product'],
+    ['docs/v2/prd/PRD.md#v1.7', 'a product name shaped like a version'],
+    ['docs/a/b/prd/PRD.md#v1.7', 'two product segments'],
   ])('%s (%s) is denied', (prd_path) => {
     const reason = denyReason({ cwd: makeProject(), prompt: promptWith({ ...VALID_CTX, prd_path }) })
     expect(reason).toContain('`[ctx].prd_path` is malformed')
@@ -607,7 +616,7 @@ describe('deny: `prd_path` shape', () => {
     }
   })
 
-  test.each(['docs/prd/PRD.md#v1.7', 'docs/prd/PRD.md#v0.1', 'docs/prd/PRD.md#v12.34', 'docs/prd/PRD.md#ntf-archive/v1.2', 'docs/prd/PRD.md#android/v2.1'])(
+  test.each(['docs/prd/PRD.md#v1.7', 'docs/prd/PRD.md#v0.1', 'docs/prd/PRD.md#v12.34', 'docs/prd/PRD.md#ntf-archive/v1.2', 'docs/prd/PRD.md#android/v2.1', 'docs/proj/prd/PRD.md#v1.14', 'docs/ntf-archive/prd/PRD.md#v1.2'])(
     '%s passes', (prd_path) => {
       expect(run({ cwd: makeProject(), prompt: promptWith({ ...VALID_CTX, prd_path }) })).toBe('')
     })
@@ -934,9 +943,14 @@ describe('T-561: whitespace never silences the gate', () => {
     // The skip must not turn into "read anything that looks close enough": the
     // pretty payload has to reach the SAME scope decisions, including the ones
     // that end in silence.
+    // T-1171: a non-prdt dispatch is no longer silent (it gets a model tier),
+    // so "same decision" is asserted as equal output, compact vs pretty.
     const o: EventOpts = { cwd: makeProject(), prompt: 'no ctx line', subagentType: 'Explore' }
-    const res = spawnSync('bash', [HOOK], { input: JSON.stringify(eventObject(o), null, 2), encoding: 'utf8' })
-    expect(res.stdout).toBe('')
+    const env = envFor().env
+    const pretty = spawnSync('bash', [HOOK], { input: JSON.stringify(eventObject(o), null, 2), encoding: 'utf8', env })
+    const compact = spawnSync('bash', [HOOK], { input: JSON.stringify(eventObject(o)), encoding: 'utf8', env })
+    expect(pretty.stdout).not.toContain('DENIED')
+    expect(pretty.stdout).toBe(compact.stdout)
   })
 
   test('a pretty payload outside a prdt project is still total silence', () => {
@@ -1504,8 +1518,8 @@ describe('T-695: the machine resource cap', () => {
       expect(d).not.toContain('WAITING')
     })
 
-    test('a non-prdt subagent on an over-cap machine: silence', () => {
-      expect(run({ cwd: proj, subagentType: 'general-purpose', prompt: 'no ctx' }, { machine: full })).toBe('')
+    test('T-1171: a non-prdt subagent on an over-cap machine waits too — the machine is one machine', () => {
+      expect(denyReason({ cwd: proj, subagentType: 'general-purpose', prompt: 'no ctx', model: 'haiku' }, { machine: full })).toContain('WAITING')
     })
 
     test('prdt-designer and prdt-po are gated too — the machine is one machine', () => {
@@ -1519,5 +1533,479 @@ describe('T-695: the machine resource cap', () => {
     test('outside a prdt project on an over-cap machine: silence', () => {
       expect(run({ cwd: tmp('prdt-t695-bare-'), prompt: 'no ctx' }, { machine: full })).toBe('')
     })
+  })
+})
+
+// ── T-1171: built-in subagent types and the PO's fork pass the gate too ─────
+// Before T-1171 every non-`prdt-` `subagent_type` (Explore · general-purpose ·
+// Plan · claude-code-guide · claude · "" · fork) left the gate at the persona
+// check: no resource cap, no schedule row, and with no `model` it inherited the
+// session model (ntf-pm 2026-10-19: an Explore backlog sweep ran on opus). Now
+// it is NOT judged on `[ctx]` (it has none) but it passes the resource cap and
+// is recorded in `.prdt/schedule.jsonl`; with no `model` the gate SETS one tier
+// through PreToolUse `updatedInput` — no deny, no added text. A fork keeps the
+// parent's model (the harness ignores `model` on a fork), so it gets no tier.
+describe('T-1171: non-prdt subagent types and the PO fork pass the resource cap and the schedule record', () => {
+  const TIER = 'sonnet'
+  function out(o: EventOpts, r: RunEnv = {}): any {
+    const s = run(o, r)
+    return s === '' ? null : JSON.parse(s).hookSpecificOutput
+  }
+  function rows(proj: string): any[] {
+    const f = path.join(proj, '.prdt', 'schedule.jsonl')
+    return fs.existsSync(f) ? fs.readFileSync(f, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []
+  }
+
+  test('Explore with no model: the tier is set through updatedInput — every other field kept, no decision, no text', () => {
+    const proj = makeProject()
+    const o: EventOpts = { cwd: proj, subagentType: 'Explore', prompt: 'sweep the backlog for stale tickets' }
+    const h = out(o)
+    expect(h).not.toBeNull()
+    expect(h.hookEventName).toBe('PreToolUse')
+    expect(h.updatedInput).toEqual({ ...(eventObject(o).tool_input as object), model: TIER })
+    expect(h.permissionDecision).toBeUndefined()
+    expect(h.permissionDecisionReason).toBeUndefined()
+    expect(h.additionalContext).toBeUndefined()
+  })
+
+  test('Explore with an explicit model: left alone — complete silence', () => {
+    const proj = makeProject()
+    for (const model of ['haiku', 'sonnet', 'opus', 'fable']) {
+      expect(run({ cwd: proj, subagentType: 'Explore', prompt: 'x', model })).toBe('')
+    }
+  })
+
+  test('general-purpose, Plan, claude, an absent type: the same tier when no model is given', () => {
+    const proj = makeProject()
+    for (const st of ['general-purpose', 'Plan', 'claude-code-guide', 'claude', '']) {
+      const h = out({ cwd: proj, subagentType: st, prompt: 'x' })
+      expect(h.updatedInput.model).toBe(TIER)
+      expect(h.updatedInput.subagent_type).toBe(st)
+      expect(h.permissionDecision).toBeUndefined()
+    }
+  })
+
+  test('the PO fork: no tier (a fork keeps the parent model), silence under every cap', () => {
+    expect(run({ cwd: makeProject(), subagentType: 'fork', prompt: 'research this' })).toBe('')
+  })
+
+  test('over a cap: Explore and the PO fork wait like any no-suite dispatch, and no tier rides a deny', () => {
+    const proj = makeProject()
+    for (const st of ['Explore', 'fork', 'general-purpose']) {
+      const h = out({ cwd: proj, subagentType: st, prompt: 'x' }, { machine: { memp: MEMP_OK(9) } })
+      expect(h.permissionDecision).toBe('deny')
+      expect(h.permissionDecisionReason).toBe('[prdt dispatch gate] WAITING — not spawned (no-suite dispatch): free memory 9% / min 15%. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+      expect(h.updatedInput).toBeUndefined()
+    }
+    expect(rows(proj)).toEqual([])
+  })
+
+  test('the test-running caps (load, suites) do not hold a non-prdt dispatch — it runs no suite', () => {
+    const machine = { loadavg: '{ 51.80 40.00 30.00 }', ps: [PS_QUIET, VITEST_ROOT, VITEST_ROOT].join('\n') }
+    expect(run({ cwd: makeProject(), subagentType: 'fork', prompt: 'x' }, { machine })).toBe('')
+  })
+
+  test('the model-tier cap counts the tier the gate sets, not "default"', () => {
+    const home = tmp('prdt-t1171-home-')
+    fs.writeFileSync(path.join(home, 'dispatch-caps.json'), JSON.stringify({ inflight_sonnet_max: 0 }))
+    const dir = path.join(home, 'run', 'dispatches')
+    fs.mkdirSync(dir, { recursive: true })
+    const tdir = path.join(home, 'transcripts')
+    fs.mkdirSync(tdir, { recursive: true })
+    const t = path.join(tdir, 'agent-s1.jsonl')
+    fs.writeFileSync(t, '{"type":"assistant","message":{"model":"claude-sonnet-5","content":[]}}\n')
+    const since = new Date(Date.now() - 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+    fs.writeFileSync(path.join(dir, 's1.json'), JSON.stringify({ agent_id: 's1', persona: 'developer', since, pairing: 'confirmed', model: 'sonnet', transcript: t }))
+    const proj = makeProject()
+    const h = out({ cwd: proj, subagentType: 'Explore', prompt: 'x' }, { home })
+    expect(h.permissionDecision).toBe('deny')
+    expect(h.permissionDecisionReason).toContain('in-flight on tier "sonnet" 1 / cap 0')
+    expect(run({ cwd: proj, subagentType: 'Explore', prompt: 'x', model: 'haiku' }, { home })).toBe('')
+  })
+
+  test('each passed one leaves one schedule row: persona = its type, model = the tier it runs at, no ticket', () => {
+    const proj = makeProject()
+    run({ cwd: proj, subagentType: 'Explore', prompt: 'x' })
+    run({ cwd: proj, subagentType: 'Explore', prompt: 'x', model: 'haiku' })
+    run({ cwd: proj, subagentType: 'general-purpose', prompt: 'x' })
+    run({ cwd: proj, subagentType: 'fork', prompt: 'x' })
+    run({ cwd: proj, subagentType: '', prompt: 'x' })
+    const r = rows(proj)
+    expect(r.map((x) => [x.kind, x.persona, x.model, x.ticket, x.class])).toEqual([
+      ['dispatch', 'Explore', TIER, null, 'off-graph'],
+      ['dispatch', 'Explore', 'haiku', null, 'off-graph'],
+      ['dispatch', 'general-purpose', TIER, null, 'off-graph'],
+      ['dispatch', 'fork', 'default', null, 'off-graph'],
+      ['dispatch', 'general-purpose', TIER, null, 'off-graph'],
+    ])
+  })
+
+  test('a worker persona still cannot spawn one (T-704/T-818 deny first, no tier, no row)', () => {
+    const proj = makeProject()
+    const h = out({ cwd: proj, agentId: 'a1', agentType: 'prdt-developer', subagentType: 'Explore', prompt: 'x' })
+    expect(h.permissionDecision).toBe('deny')
+    expect(h.permissionDecisionReason).toContain('T-818')
+    expect(h.updatedInput).toBeUndefined()
+    expect(rows(proj)).toEqual([])
+  })
+
+  test('outside a prdt project: still total silence, no tier', () => {
+    expect(run({ cwd: tmp('prdt-t1171-bare-'), subagentType: 'Explore', prompt: 'x' })).toBe('')
+  })
+
+  test('a prdt-* dispatch with no model still gets no tier — prdt behavior unchanged', () => {
+    expect(run({ cwd: makeProject() })).toBe('')
+  })
+})
+
+// ── T-1151 / T-1189 / T-1190: a user-started ticket needs the user's purpose + confirmation ──
+// Decided by PLACE, never by words (T-1190 = B). The gate finds the dispatch's
+// ticket by `[ctx].slug` under the product's tickets dir named by `[ctx].prd_path`
+// and only judges a `prdt-designer` / `prdt-developer` dispatch on a
+// `type: design|impl` ticket. User-started = `## problem` holds a `*"…"*` or
+// `“…”` quote. It then needs, inside `## problem`, a `### 목적` (or `### why`)
+// heading with >=1 quote under it AND a `### 확인` (or `### confirm`) heading
+// with >=1 quote under it (any style `*"…"*` · `“…”` · `「…」`, any wording).
+// `### 확인 (바로 진행)` with a quote alone satisfies both (the go-ahead rule).
+describe('T-1151: a user-started ticket needs the user\'s purpose and confirmation, by place', () => {
+  const PRD14 = 'docs/productune/prd/PRD.md#v1.14'
+  const SLUG = 'viewer-home-progress-clutter'
+  const REL = 'docs/productune/tickets/v1.14/T-1179.md'
+
+  function ticket(fm: { id: string; slug: string; type?: string }, body: string): string {
+    return [
+      '---', `id: ${fm.id}`, `slug: ${fm.slug}`, `type: ${fm.type ?? 'design'}`, 'status: open',
+      'assignee: designer', 'created: 2026-10-19', '---', '', body,
+    ].join('\n')
+  }
+
+  function projWith(files: Record<string, string>): string {
+    const proj = makeProject()
+    for (const [rel, text] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(proj, rel)), { recursive: true })
+      fs.writeFileSync(path.join(proj, rel), text)
+    }
+    return proj
+  }
+
+  function dispatchOn(proj: string, slug: string, sub = 'prdt-designer', prd = PRD14) {
+    return decision({ cwd: proj, subagentType: sub, prompt: promptWith({ ...VALID_CTX, slug, prd_path: prd }) })
+  }
+
+  /** T-1179 body judged as a designer dispatch (or `type`). */
+  function judge(body: string, type = 'design') {
+    const proj = projWith({ [REL]: ticket({ id: 'T-1179', slug: SLUG, type }, body) })
+    return dispatchOn(proj, SLUG)
+  }
+  /** Lines added at the end of `## problem`. */
+  const inProblem = (base: string, ...lines: string[]) => base.replace('## related', `${lines.join('\n')}\n\n## related`)
+  /** Lines added under `## log` (outside `## problem`). */
+  const inLog = (base: string, ...lines: string[]) => `${base}${lines.join('\n')}\n`
+
+  // T-1179 as it stood when the PO dispatched the first mock (2026-10-19): the
+  // user's symptom quoted, the PO's own observations, no headings.
+  const T1179_AT_DISPATCH = [
+    '## problem', '',
+    '- 션님 *"ntf pm 뷰어인데 좀 어지러워 이거.. 그리고 여기 진행사항 기획~ 이렇게써있는 블록도 누르면 진행상황탭에 열렸으면해 gui처럼"* (2026-10-19, T-1111 빌드 관측 화면 8)',
+    '- PO 관찰 (캡처 1): 단계 띠의 define · build · ship · retro 이름이 위아래로 엇갈려 두 줄이다 · 「티켓 완료 0/0」 이 띠 오른쪽에 떠 있다.',
+    '', '## related', '', '## acceptance', '',
+    '- Mock of the home progress block, As-Is beside To-Be: stage strip on one line, scope item names readable.',
+    '- User confirms the mock before implementation.', '', '## log', '',
+  ].join('\n')
+  const WHY_H = '### 목적'
+  const WHY_Q = '- 션님 (PO 의 왜? 질문에 답): *"지금 어디까지 왔는지 한눈에 보려고"*'
+  const CONF_H = '### 확인'
+  const CONF_Q = '- PO read-back (문제 정의: 스코프 이름이 잘린다) → 션님 *"ㅇㅇ"*'
+  const withWhy = inProblem(T1179_AT_DISPATCH, WHY_H, '', WHY_Q)
+  const withConf = inProblem(T1179_AT_DISPATCH, CONF_H, '', CONF_Q)
+  const withBoth = inProblem(T1179_AT_DISPATCH, WHY_H, '', WHY_Q, '', CONF_H, '', CONF_Q)
+
+  test('T-1179 2026-10-19 sequence (symptom, no headings): the first mock dispatch is DENIED', () => {
+    const d = judge(T1179_AT_DISPATCH)
+    expect(d.deny).toBeTruthy()
+    expect(d.deny).toContain('T-1179')
+    expect(d.deny).toContain('[prdt dispatch gate]')
+  })
+
+  test('a denied dispatch writes no schedule row', () => {
+    const proj = projWith({ [REL]: ticket({ id: 'T-1179', slug: SLUG }, T1179_AT_DISPATCH) })
+    const before = fs.readdirSync(path.join(proj, '.prdt')).sort()
+    dispatchOn(proj, SLUG)
+    expect(fs.readdirSync(path.join(proj, '.prdt')).sort()).toEqual(before)
+  })
+
+  test('the same impl ticket denies a prdt-developer dispatch too', () => {
+    const proj = projWith({ [REL]: ticket({ id: 'T-1179', slug: SLUG, type: 'impl' }, T1179_AT_DISPATCH) })
+    expect(dispatchOn(proj, SLUG, 'prdt-developer').deny).toBeTruthy()
+  })
+
+  test('목적 + 확인 each with a quote passes', () => {
+    expect(judge(withBoth)).toEqual({})
+  })
+
+  test('either heading alone is denied, naming what is missing', () => {
+    const noConfirm = judge(withWhy).deny!
+    expect(noConfirm).toContain('confirmation')
+    expect(noConfirm).not.toContain('purpose')
+    const noWhy = judge(withConf).deny!
+    expect(noWhy).toContain('purpose')
+    expect(noWhy).not.toContain('confirmation')
+    const none = judge(T1179_AT_DISPATCH).deny!
+    expect(none).toContain('purpose')
+    expect(none).toContain('confirmation')
+  })
+
+  test('go-ahead: a quote under `### 확인 (바로 진행)` alone passes — "일단 시안 가져와봐"', () => {
+    for (const h of ['### 확인 (바로 진행)', '### 확인 (go-ahead)', '### confirm (just go)', '### 확인: 바로진행']) {
+      expect(judge(inProblem(T1179_AT_DISPATCH, h, '', '- 션님 *"일단 시안 가져와봐"* (2026-10-19)')), h).toEqual({})
+    }
+  })
+
+  test('the same go-ahead quote under an UNMARKED `### 확인` is denied (verdict purpose) — no word list', () => {
+    const d = judge(inProblem(T1179_AT_DISPATCH, CONF_H, '', '- 션님 *"일단 시안 가져와봐"*')).deny!
+    expect(d).toContain('purpose')
+    expect(d).not.toContain('confirmation')
+  })
+
+  test('a go-ahead heading with no quote under it is denied', () => {
+    expect(judge(inProblem(T1179_AT_DISPATCH, '### 확인 (바로 진행)', '', '- PO: 시안부터 가자고 하심')).deny).toBeTruthy()
+  })
+
+  test('every quote style counts under the headings: *"…"*, “…”, 「…」; wording is free', () => {
+    for (const q of ['- 션님 *"한눈에 보려고"*', '- 션님 “한눈에 보려고”', '- 션님 「한눈에 보려고」', '- 션님 「ㅇㅇ」']) {
+      expect(judge(inProblem(T1179_AT_DISPATCH, WHY_H, '', q, '', CONF_H, '', q)), q).toEqual({})
+    }
+  })
+
+  test('English headings: ### why + ### confirm', () => {
+    expect(judge(inProblem(T1179_AT_DISPATCH, '### why', '', WHY_Q, '', '### confirm', '', CONF_Q))).toEqual({})
+  })
+
+  test('heading label may carry a suffix; a quote anywhere under it (several lines, nested ####) counts', () => {
+    const body = inProblem(T1179_AT_DISPATCH, '### 목적 (션님 답, 2026-10-19)', '', '- PO 질문: 왜?', '', '#### 원문', '- 션님 *"한눈에"*',
+      '', '### 확인 — read-back 뒤', '', '- PO: 스코프 이름이 잘린다', '- 션님 「그거야」')
+    expect(judge(body)).toEqual({})
+  })
+
+  test('a request ticket (T-1189): the request alone is denied; 목적 + 확인 passes', () => {
+    const req = [
+      '## problem', '',
+      '- 션님 (2026-10-18, 원문): *"홈에 레인별 진행 막대를 넣으면좋겠따"*',
+      '', '## related', '', '## acceptance', '', '- Lane bars on home.', '',
+    ].join('\n')
+    expect(judge(req, 'impl').deny).toBeTruthy()
+    expect(judge(inProblem(req, '### 목적', '', '- 션님 *"레인이 어디서 막혔는지 보려고"*', '', '### 확인', '',
+      '- 션님 *"ㅇㅇ 그렇게 가자"*'), 'impl')).toEqual({})
+  })
+
+  describe('QA round-2 cases, decided by place (no word is read)', () => {
+    // Words that fooled the keyword gate, written where the user's reply is NOT filed.
+    const lines: [string, string][] = [
+      ['미확인', '- 션님 *"블록이 안 열려"* (미확인)'],
+      ['캡처로 확인', '- 션님 *"블록이 안 열려"* (캡처로 확인)'],
+      ['사용자 확인 전', '- PO read-back: 스코프 이름이 잘린다 — 사용자 확인 전. 션님 *"블록이 안 열려"*'],
+      ['T-1115 L18 shape', '- 관측 2: 문구 확인을 결정 티켓 없이 채팅으로 여러 턴 물음 → 사용자 *"또 결정사항에 안넣어놓고 한세월 묻고있지?"*'],
+      ['비동의 · unconfirmed', '- 션님 *"그건 아니지"* (비동의, unconfirmed)'],
+      ['go-ahead words in symptom text', '- 션님 *"그냥 해봐도 계속 깨져"*'],
+      ['바로 진행이 안돼', '- 션님 *"바로 진행이 안돼"*'],
+      ['the user quoting the rule', '- 션님 (원문): *"내가 일단 시안가져와봐하면 그대로하는거고."*'],
+      ['그래서 …', '- 션님 *"그래서 이거 왜 이래"*'],
+      ['확인해봐 inside a quote', '- 션님 *"확인해봐 이거 이상해"*'],
+      ['the PO claims a confirmation, no quote', '- 문제 정의 확인됨 (PO)'],
+      ['because-words in the symptom ("때문에")', '- 션님 *"이게 안 열리기 때문에 불편해"*'],
+      ['an agreement-looking quote in problem', '- 션님 *"ㅇㅇ 근데 이거 왜 이래"* · *"ㅇㅋ"*'],
+    ]
+    for (const [name, line] of lines) {
+      test(`${name}: in the problem body or in the log it is not a 목적 / 확인 record`, () => {
+        expect(judge(inProblem(T1179_AT_DISPATCH, line)).deny, `problem: ${line}`).toBeTruthy()
+        expect(judge(inLog(T1179_AT_DISPATCH, line)).deny, `log: ${line}`).toBeTruthy()
+        // the same line does not turn a 목적-only ticket into a passing one
+        expect(judge(inProblem(withWhy, line)).deny, `with 목적: ${line}`).toBeTruthy()
+      })
+    }
+
+    test('the same lines under the headings DO count — place decides, not wording', () => {
+      for (const [name, line] of lines.filter(([, l]) => l.includes('*"'))) {
+        expect(judge(inProblem(T1179_AT_DISPATCH, WHY_H, '', line, '', CONF_H, '', line)), name).toEqual({})
+      }
+    })
+
+    test('### 미확인 증상 is not the 확인 heading', () => {
+      expect(judge(inProblem(withWhy, '### 미확인 증상', '', '- 션님 *"블록이 안 열려"*')).deny).toBeTruthy()
+    })
+
+    test('### 확인된 문제 정의 is not the label either (the PO files under the exact label)', () => {
+      expect(judge(inProblem(withWhy, '### 확인된 문제 정의', '', '- 션님 *"그거 맞아"*')).deny).toBeTruthy()
+    })
+
+    test('the problem statement opening with ㅇㅇ / 네 / 그래 / ok is still only a symptom', () => {
+      for (const w of ['ㅇㅇ', '네', '그래', 'ok']) {
+        expect(judge(T1179_AT_DISPATCH.replace('*"ntf pm 뷰어인데', `*"${w} ntf pm 뷰어인데`)).deny, w).toBeTruthy()
+      }
+    })
+
+    test('headings outside `## problem` (log, acceptance, related) fill nothing', () => {
+      for (const sec of ['## log', '## acceptance', '## related']) {
+        const body = T1179_AT_DISPATCH.replace(sec, `${sec}\n\n${WHY_H}\n\n${WHY_Q}\n\n${CONF_H}\n\n${CONF_Q}\n`)
+        expect(judge(body).deny, sec).toBeTruthy()
+      }
+    })
+
+    test('a quote under a heading that comes after a `## ` boundary does not leak back', () => {
+      // 확인 filed in `## problem`, its quote placed after the next section opens
+      const body = T1179_AT_DISPATCH.replace('## related', `${WHY_H}\n\n${WHY_Q}\n\n${CONF_H}\n\n## related\n\n${CONF_Q}`)
+      expect(judge(body).deny).toBeTruthy()
+    })
+
+    test('a quote under a different ### heading between them does not count for the earlier one', () => {
+      const body = inProblem(T1179_AT_DISPATCH, WHY_H, '', WHY_Q, '', CONF_H, '', '- PO: read-back 보냄', '', '### 관측', '', CONF_Q)
+      expect(judge(body).deny).toBeTruthy()
+    })
+
+    test('an acceptance spec line (`User confirms the mock: *"OK"*`) is not a record', () => {
+      expect(judge(withWhy.replace('- User confirms the mock before implementation.', '- User confirms the mock: *"OK"*')).deny).toBeTruthy()
+    })
+
+    test('a code-fence or inline-code example is not a record', () => {
+      const fence = inProblem(withWhy, '```', CONF_H, '', CONF_Q, '```')
+      expect(judge(fence).deny).toBeTruthy()
+      const inline = inProblem(withWhy, CONF_H, '', '- example: `션님 *"ㅇㅇ"*` shape')
+      expect(judge(inline).deny).toBeTruthy()
+      const fencedBoth = inProblem(T1179_AT_DISPATCH, '```', WHY_H, WHY_Q, CONF_H, CONF_Q, '```')
+      expect(judge(fencedBoth).deny).toBeTruthy()
+    })
+
+    test('an empty quote (`*""*`) under a heading fills nothing', () => {
+      expect(judge(inProblem(withWhy, CONF_H, '', '- 션님 *""*')).deny).toBeTruthy()
+    })
+  })
+
+  test('not user-started (no user quote in problem) passes', () => {
+    const body = '## problem\n\n- QA fail row: the viewer crashes on an empty PRD.\n\n## acceptance\n\n- no crash\n'
+    const proj = projWith({ 'docs/productune/tickets/v1.14/T-2000.md': ticket({ id: 'T-2000', slug: 'po-found', type: 'impl' }, body) })
+    expect(dispatchOn(proj, 'po-found', 'prdt-developer')).toEqual({})
+  })
+
+  test('a PO label in 「…」 alone does not make a ticket user-started', () => {
+    const body = '## problem\n\n- 「티켓 완료 0/0」 이 띠 오른쪽에 떠 있다.\n\n## acceptance\n\n- fixed\n'
+    const proj = projWith({ 'docs/productune/tickets/v1.14/T-2003.md': ticket({ id: 'T-2003', slug: 'po-label', type: 'impl' }, body) })
+    expect(dispatchOn(proj, 'po-label', 'prdt-developer')).toEqual({})
+  })
+
+  test('only designer/developer dispatches on design/impl tickets are judged', () => {
+    const proj = projWith({
+      [REL]: ticket({ id: 'T-1179', slug: SLUG }, T1179_AT_DISPATCH),
+      'docs/productune/tickets/v1.14/T-2001.md': ticket({ id: 'T-2001', slug: 'a-decision', type: 'decision' }, T1179_AT_DISPATCH),
+      'docs/productune/tickets/v1.14/T-2002.md': ticket({ id: 'T-2002', slug: 'an-ops', type: 'ops' }, T1179_AT_DISPATCH),
+    })
+    expect(dispatchOn(proj, SLUG, 'prdt-qa')).toEqual({})
+    expect(dispatchOn(proj, SLUG, 'prdt-po')).toEqual({})
+    expect(dispatchOn(proj, 'a-decision')).toEqual({})
+    expect(dispatchOn(proj, 'an-ops', 'prdt-developer')).toEqual({})
+  })
+
+  test('a prompt naming the ticket id is judged the same (fast path); a wrong id falls back to the slug scan', () => {
+    const proj = projWith({ [REL]: ticket({ id: 'T-1179', slug: SLUG }, T1179_AT_DISPATCH),
+      'docs/productune/tickets/v1.14/T-2004.md': ticket({ id: 'T-2004', slug: 'other' }, '## problem\n\n- plain\n') })
+    for (const named of ['T-1179', 'T-2004', 'T-9999']) {
+      const prompt = `${ctxLine({ ...VALID_CTX, slug: SLUG, prd_path: PRD14 })}\n\nTicket: docs/productune/tickets/v1.14/${named}.md`
+      expect(decision({ cwd: proj, subagentType: 'prdt-designer', prompt }).deny, named).toContain('T-1179')
+    }
+  })
+
+  test('the old (single-product) layout is read too', () => {
+    const proj = projWith({ 'docs/tickets/v1.7/T-1179.md': ticket({ id: 'T-1179', slug: SLUG }, T1179_AT_DISPATCH) })
+    expect(dispatchOn(proj, SLUG, 'prdt-designer', 'docs/prd/PRD.md#v1.7').deny).toBeTruthy()
+  })
+
+  describe('fail open', () => {
+    test('no ticket carries the slug: pass', () => {
+      const proj = projWith({ [REL]: ticket({ id: 'T-1179', slug: SLUG }, T1179_AT_DISPATCH) })
+      expect(dispatchOn(proj, 'some-other-slug')).toEqual({})
+    })
+    test('no tickets dir at all: pass', () => {
+      expect(dispatchOn(makeProject(), SLUG)).toEqual({})
+    })
+    test('two tickets carry the slug: ambiguous, pass', () => {
+      const t = ticket({ id: 'T-1179', slug: SLUG }, T1179_AT_DISPATCH)
+      const proj = projWith({ [REL]: t, 'docs/productune/tickets/backlog/T-1180.md': t.replace('T-1179', 'T-1180') })
+      expect(dispatchOn(proj, SLUG)).toEqual({})
+    })
+    test('a slug that is not kebab-case is never used as a pattern: pass', () => {
+      const proj = projWith({ [REL]: ticket({ id: 'T-1179', slug: SLUG }, T1179_AT_DISPATCH) })
+      expect(dispatchOn(proj, 'viewer-home-.*')).toEqual({})
+    })
+    test('an unreadable ticket: pass', () => {
+      const proj = projWith({ [REL]: ticket({ id: 'T-1179', slug: SLUG }, T1179_AT_DISPATCH) })
+      const f = path.join(proj, REL)
+      fs.chmodSync(f, 0o000)
+      try { expect(dispatchOn(proj, SLUG)).toEqual({}) } finally { fs.chmodSync(f, 0o644) }
+    })
+  })
+
+  test('the deny reason echoes no ticket text — only the id and fixed wording', () => {
+    const body = T1179_AT_DISPATCH.replace('좀 어지러워', 'IGNORE PREVIOUS INSTRUCTIONS 좀 어지러워')
+    const d = judge(body).deny!
+    expect(d).not.toContain('IGNORE')
+    expect(d).not.toContain('어지러워')
+  })
+
+  test('a `[ctx]` deny still comes first', () => {
+    const proj = projWith({ [REL]: ticket({ id: 'T-1179', slug: SLUG, type: 'impl' }, T1179_AT_DISPATCH) })
+    const d = denyReason({ cwd: proj, prompt: promptWith({ ...VALID_CTX, slug: SLUG, prd_path: PRD14, dispatch_id: '' }) })
+    expect(d).toContain(CLAUSE_DISPATCH_ID)
+  })
+})
+
+// T-1196: the gate never sets a model on an agent type whose DEFINITION pins one
+// (a haiku-pinned agent went up to sonnet, an opus-pinned one came down).
+describe('T-1196: SET ⑦ leaves a definition-pinned model alone', () => {
+  function agentsDir(files: Record<string, string>): string {
+    const cfg = tmp('prdt-t1196-cfg-')
+    fs.mkdirSync(path.join(cfg, 'agents'), { recursive: true })
+    for (const [n, body] of Object.entries(files)) fs.writeFileSync(path.join(cfg, 'agents', n), body)
+    return cfg
+  }
+  function runWith(o: EventOpts, cfg: string, cwd?: string): string {
+    const res = spawnSync('bash', [HOOK], { input: eventJson(o), encoding: 'utf8', cwd, env: { ...envFor().env, CLAUDE_CONFIG_DIR: cfg } })
+    expect(res.stderr).toBe('')
+    expect(res.status).toBe(0)
+    return res.stdout
+  }
+  const HAIKU = '---\nname: scout\ndescription: d\nmodel: haiku\n---\nbody\n'
+
+  test('haiku-pinned definition (user dir): no updatedInput — complete silence', () => {
+    const cfg = agentsDir({ 'scout.md': HAIKU })
+    expect(runWith({ cwd: makeProject(), subagentType: 'scout', prompt: 'x' }, cfg)).toBe('')
+  })
+
+  test('the type name falls back to the file basename; a project .claude/agents dir is read too', () => {
+    const cfg = agentsDir({})
+    const proj = makeProject()
+    fs.mkdirSync(path.join(proj, '.claude', 'agents'), { recursive: true })
+    fs.writeFileSync(path.join(proj, '.claude', 'agents', 'sweeper.md'), '---\nmodel: "opus"\n---\nbody\n')
+    expect(runWith({ cwd: proj, subagentType: 'sweeper', prompt: 'x' }, cfg, proj)).toBe('')
+  })
+
+  test('a pinned type is recorded at the default bucket, not at the tier it would have been set to', () => {
+    const cfg = agentsDir({ 'scout.md': HAIKU })
+    const proj = makeProject()
+    runWith({ cwd: proj, subagentType: 'scout', prompt: 'x' }, cfg)
+    const rows = fs.readFileSync(path.join(proj, '.prdt', 'schedule.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    expect(rows.map((r) => [r.persona, r.model])).toEqual([['scout', 'default']])
+  })
+
+  test('an unpinned (`inherit` or no model) definition still gets the tier; so does a type with no definition', () => {
+    const cfg = agentsDir({ 'a.md': '---\nname: lazy\nmodel: inherit\n---\n', 'b.md': '---\nname: plain\n---\n' })
+    for (const st of ['lazy', 'plain', 'Explore']) {
+      const o = JSON.parse(runWith({ cwd: makeProject(), subagentType: st, prompt: 'x' }, cfg)).hookSpecificOutput
+      expect(o.updatedInput.model).toBe('sonnet')
+    }
+  })
+
+  test('a pin on another type does not leak: Explore is still set', () => {
+    const cfg = agentsDir({ 'scout.md': HAIKU })
+    const o = JSON.parse(runWith({ cwd: makeProject(), subagentType: 'Explore', prompt: 'x' }, cfg)).hookSpecificOutput
+    expect(o.updatedInput.model).toBe('sonnet')
   })
 })

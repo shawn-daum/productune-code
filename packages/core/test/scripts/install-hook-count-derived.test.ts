@@ -51,13 +51,14 @@ test('the roster is 30 hooks today — a canary on the number the user reads', (
   // Not the assertion that matters (the two above are), but the one that makes a
   // roster change visible in this file's diff as well as in the manifest's.
   // T-577: 12 + the eleven discipline part slots prdt-session-start-p2..p12.sh.
-  // T-677: +1, prdt-secret-guard.sh (PreToolUse, matcher Read|Bash).
+  // T-677: +1, prdt-secret-guard.sh (PreToolUse, matcher Read|Bash; T-1109 r4: + Write|Edit|MultiEdit|NotebookEdit).
   // T-779: +1, prdt-worktree-guard.sh (PreToolUse, matcher Edit|Write|MultiEdit|NotebookEdit|Bash).
   // T-479: +1, prdt-inbox-inject.sh (its own SessionStart startup|resume|clear entry).
   // T-985: +1, prdt-question-check.sh (Stop, matcher-less, PO only).
   // T-976: +1, prdt-identity-guard.sh (PreToolUse, matcher Bash|WebFetch|WebSearch|Write|Edit|MultiEdit|NotebookEdit).
   // T-977: +1, prdt-wordlist-check.sh (PostToolUse, matcher Write|Edit|MultiEdit, its own entry).
-  // T-899: +1, prdt-link-check.sh (Stop, matcher-less, its own entry, PO only).
+  // T-899: +1, prdt-link-check.sh; T-1156: -1, retired again (T-1143 links ids on screen).
+  // T-1143: +1, prdt-message-display-autolink.sh (MessageDisplay, matcher-less, its own entry).
   expect(rosterSize()).toBe(30)
 })
 

@@ -20,7 +20,7 @@ Model routing (T-391): the floor above is the per-change baseline. Cumulative sc
 
 ## Rules
 - Verify before reporting: a finding you can refute by reading one more file is noise. Read the surrounding code.
-- Advisory, not a gate: findings go to the PO — correctness → patch ticket now; reuse/simplify → backlog tickets (`docs/tickets/backlog/`), never silent drops.
+- Advisory, not a gate: findings go to the PO — correctness → patch ticket now; reuse/simplify → backlog tickets (`docs/<product>/tickets/backlog/`), never silent drops.
 - No invented nits; an empty review of a clean diff is a valid result, said plainly.
 
 ## Verdict

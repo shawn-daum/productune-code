@@ -24,7 +24,7 @@ const HOOKS = path.join(CORE_ROOT, 'scripts', 'hooks')
 const POST = path.join(HOOKS, 'prdt-post-dispatch.sh')
 const GUARD = path.join(HOOKS, 'prdt-worktree-guard.sh')
 const GATE = path.join(HOOKS, 'prdt-dispatch-gate.sh')
-const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
+const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt_cli.py')  // T-1170: source text lives in the CLI body
 
 function has(cmd: string, arg: string): boolean {
   try { execFileSync(cmd, [arg], { stdio: 'ignore' }); return true } catch { return false }
@@ -122,6 +122,10 @@ TICKET_TOKEN_RE = None
 src = open(sys.argv[1], encoding="utf-8").read()
 TICKET_TOKEN_RE = re.compile(re.search(r'^TICKET_TOKEN_RE = re\\.compile\\((r".*?")\\)$', src, re.M).group(1)[2:-1])
 _SLUG_TICKETS = None
+# T-1104: ticket_by_slug walks tickets_homes(root) — lift it and its product seam with it.
+_PROD_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\\Z)[a-z0-9]+(?:-[a-z0-9]+)*\\Z")
+exec(lift(sys.argv[1], "project_products"))
+exec(lift(sys.argv[1], "tickets_homes"))
 exec(lift(sys.argv[1], "ticket_by_slug"))
 exec(lift(sys.argv[1], "ticket_from_ctx"))
 import importlib.util, importlib.machinery

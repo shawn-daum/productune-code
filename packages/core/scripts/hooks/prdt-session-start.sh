@@ -150,6 +150,10 @@ find_proj() {
   d="${phys:-$1}"
   while [ -n "$d" ] && [ "$d" != "/" ]; do
     [ -f "$d/.prdt/po-state.json" ] && hit="$d"
+    # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary — never walk out of it
+    if [ -f "$d/.git" ] && [ "$(basename "$(dirname "$d")")" = "tracks" ]; then
+      case "${d##*/}" in T-[0-9]|T-[0-9][0-9]|T-[0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9][0-9]) hit=""; break ;; esac
+    fi
     up="$(dirname "$d")"
     [ "$up" = "$d" ] && break
     d="$up"
@@ -192,7 +196,7 @@ if [ "$PART" = "1" ] && [ "$PERSONA" = "po" ] && [ "$EVENT_NAME" = "SessionStart
     BK_REPO="$(sed -n 's/^PRDT_REPO=//p' "$PRDT_HOME/prdt.env" 2>/dev/null | head -1 | tr -d '[:space:]')"
     BK_BRIDGE="$BK_REPO/dist/bin/meta-cli.cjs"
     if [ -n "$BK_REPO" ] && [ -f "$BK_BRIDGE" ] && command -v node >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
-      python3 - "$BK_BRIDGE" "$BK_ROOT" >/dev/null 2>&1 <<'PY' || true
+      python3 -I - "$BK_BRIDGE" "$BK_ROOT" >/dev/null 2>&1 <<'PY' || true
 import shutil, subprocess, sys
 node = shutil.which("node")
 if node:
@@ -229,7 +233,7 @@ if [ "$PART" = "1" ] && [ "$PERSONA" = "po" ] && [ "$EVENT_NAME" = "SessionStart
       && [ -d "$VE_NM/pretendard/dist/web/static/woff2" ] && VE_READY=1
   fi
   if [ -n "$VE_ROOT" ] && [ -z "$VE_READY" ] && [ -x "$VE_CLI" ] && command -v python3 >/dev/null 2>&1; then
-    python3 - "$VE_CLI" "$VE_ROOT" >/dev/null 2>&1 <<'PY' || true
+    python3 -I - "$VE_CLI" "$VE_ROOT" >/dev/null 2>&1 <<'PY' || true
 import subprocess, sys
 subprocess.Popen([sys.argv[1], "viewer", "--ensure"], cwd=sys.argv[2],
                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -358,7 +362,7 @@ quote_body() { # $1 file, $2 noun for the withheld notice
     printf '| %s\n' "($2 withheld: python3 is missing on this machine, so the quoting gutter cannot run — tell the user to install python3. The file is $(safe_path "$1") — nothing from it appears in this block.)"
     return 0
   fi
-  python3 -c "$PRDT_QUOTE_PY" "$1" "$2" && return 0
+  python3 -I -c "$PRDT_QUOTE_PY" "$1" "$2" && return 0
   printf '| %s\n' "($2 withheld: the quoting gutter failed to run, so the body is withheld rather than shown unquoted. The file is $(safe_path "$1").)"
 }
 
@@ -642,7 +646,7 @@ if 1 <= part <= min(len(parts), slots):
 '
 
 if [ -n "$PLAN_PERSONA" ]; then
-  python3 -c "$PRDT_PARTS_PY" plan "$PLAN_PERSONA" "prdt-$PLAN_PERSONA" 1 "$SLOTS" \
+  python3 -I -c "$PRDT_PARTS_PY" plan "$PLAN_PERSONA" "prdt-$PLAN_PERSONA" 1 "$SLOTS" \
     "$PRDT_INJECT_PART_BUDGET_BYTES" "$PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS" \
     "$DOCTRINE" "$CONTRACTS" "$DISC" "$PRDT_ONBOARD_RESERVE_BYTES"
   exit 0
@@ -675,7 +679,7 @@ if [ -n "$SELF_LOAD" ]; then
       | bash "$HOOK_DIR/$h" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)"
     [ -n "$BLK" ] && OV="${OV}${BLK}"$'\n\n'
   done
-  printf '%s' "$OV" | python3 -c "$PRDT_PARTS_PY" selfload "$PERSONA" "$AGENT_TYPE" "$PAGE" 1000000 \
+  printf '%s' "$OV" | python3 -I -c "$PRDT_PARTS_PY" selfload "$PERSONA" "$AGENT_TYPE" "$PAGE" 1000000 \
     "$PRDT_INJECT_PART_BUDGET_BYTES" "$PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS" \
     "$DOCTRINE" "$CONTRACTS" "$DISC" "$PRDT_ONBOARD_RESERVE_BYTES" \
     "$PRDT_SELF_LOAD_PAGE_BUDGET_BYTES" "$HOOK_DIR/prdt-session-start.sh"
@@ -742,10 +746,56 @@ $(quote_body "$FLAG" "migration record")
   fi
 fi
 
-PAYLOAD="$(python3 -c "$PRDT_PARTS_PY" render "$PERSONA" "$AGENT_TYPE" "$PART" "$SLOTS" \
+# T-1105: the docs-layout proposal, PO SessionStart part 1 only (never SubagentStart
+# — a sub-agent or an in-flight dispatch never sees it; design ④ ⑥). The block rides
+# the same reserve as the onboarding block above: it is an EXTRA inside a constant,
+# never an input to the split, so the plan stays identical across the slots. The
+# text comes from `prdt layout check --session-start` (shallow, filesystem-only
+# state; copy = the approved `layout-start` screens), so this file holds no copy.
+# Cost gate: a project that is already in the new layout is recognised in pure bash
+# (stat calls, no process) and spawns nothing; only a project that MAY be old or
+# half-moved pays the one CLI process. The owned-names list below mirrors
+# LAYOUT_OWNED_TOPS in scripts/prdt — a test pins the two together.
+# A block that does not fit the reserve beside the onboarding block is dropped
+# whole (the next session proposes again), never allowed to push part 1 over budget.
+LAYOUT_BLOCK=""
+if [ "$PERSONA" = "po" ] && [ "$PART" = "1" ] && [ "$EVENT_NAME" = "SessionStart" ] \
+   && [ -z "$SELF_LOAD" ] && [ "${PRDT_LAYOUT_PROPOSAL:-1}" != "0" ]; then
+  LP_ROOT="${PROJ_PO:-$(find_proj "$EVENT_CWD")}"
+  LP_ASK=""
+  if [ -n "$LP_ROOT" ] && [ -f "$LP_ROOT/.prdt/config.json" ] && [ -d "$LP_ROOT/docs" ]; then
+    LP_ASK=1
+    if [ -d "$LP_ROOT/docs/_shared" ] && [ ! -L "$LP_ROOT/docs/_shared" ]; then
+      LP_ASK=""
+      for LP_N in tickets prd artifacts DEPLOY.md wiki features design.md po designer developer qa; do
+        if [ -e "$LP_ROOT/docs/$LP_N" ] || [ -L "$LP_ROOT/docs/$LP_N" ]; then LP_ASK=1; break; fi
+      done
+    fi
+    # a killed `--apply` leaves its in-progress marker (T-1105): even a tree that looks
+    # fully moved is half-done — one more stat, still no process
+    if [ -e "$LP_ROOT/.prdt/layout-apply.inprogress" ] || [ -L "$LP_ROOT/.prdt/layout-apply.inprogress" ]; then LP_ASK=1; fi
+  fi
+  LP_CLI="${PRDT_BIN:-$PRDT_HOME/bin/prdt}"
+  if [ -n "$LP_ASK" ] && [ -x "$LP_CLI" ]; then
+    LP_OUT="$(cd "$LP_ROOT" 2>/dev/null && "$LP_CLI" layout check --session-start 2>/dev/null)"
+    if [ -n "$LP_OUT" ]; then
+      LAYOUT_BLOCK="----- BEGIN LAYOUT PROPOSAL (this session) -----
+$LP_OUT
+----- END LAYOUT PROPOSAL -----
+
+"
+      if [ "$(printf '%s%s' "$ONBOARD" "$LAYOUT_BLOCK" | wc -c | tr -d ' ')" -gt "$PRDT_ONBOARD_RESERVE_BYTES" ]; then
+        LAYOUT_BLOCK=""
+      fi
+    fi
+  fi
+fi
+
+PAYLOAD="$(python3 -I -c "$PRDT_PARTS_PY" render "$PERSONA" "$AGENT_TYPE" "$PART" "$SLOTS" \
   "$PRDT_INJECT_PART_BUDGET_BYTES" "$PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS" \
   "$DOCTRINE" "$CONTRACTS" "$DISC" "$PRDT_ONBOARD_RESERVE_BYTES")"
 [ -z "$PAYLOAD" ] && exit 0
+ONBOARD="${ONBOARD}${LAYOUT_BLOCK}"
 if [ -n "$ONBOARD" ]; then
   # The one-shot block sits between the documents and the closing instruction,
   # inside the reserve the plan kept for it. Anchored on the LAST occurrence of

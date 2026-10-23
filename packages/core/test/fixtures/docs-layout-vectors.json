@@ -1,0 +1,800 @@
+{
+  "_doc": "T-1104 shared vectors: the CLI seam (packages/core/scripts/prdt) and its JS port (packages/viewer/lib/docs-layout.mjs) must give the same `expected` on the same tree + inputs. Regenerate expected from the CLI: DOCS_LAYOUT_VECTORS_WRITE=1 pnpm --filter @productune/gui exec vitest run scripts/qa/viewer-docs-layout.test.ts",
+  "trees": {
+    "legacy": {
+      "config": {
+        "slug": "alpha"
+      },
+      "files": [
+        "docs/prd/PRD.md",
+        "docs/prd/versions/v1.0.md",
+        "docs/wiki/x.md",
+        "docs/design.md",
+        "docs/tickets/v1.0/T-1.md"
+      ]
+    },
+    "product": {
+      "config": {
+        "slug": "alpha",
+        "products": [
+          {
+            "name": "beta"
+          },
+          {
+            "name": "v2bad"
+          },
+          {
+            "name": "beta"
+          }
+        ]
+      },
+      "files": [
+        "docs/_shared/design.md",
+        "docs/_shared/wiki/decision--a.md",
+        "docs/_shared/wiki/shared-only.md",
+        "docs/_shared/features/g.md",
+        "docs/_shared/features/f.md",
+        "docs/_shared/tickets/backlog/T-9.md",
+        "docs/alpha/prd/PRD.md",
+        "docs/alpha/prd/versions/v1.0.md",
+        "docs/alpha/tickets/v1.1/T-1.md",
+        "docs/alpha/wiki/shared-only.md",
+        "docs/alpha/wiki/retro--v1.0.md",
+        "docs/alpha/features/f.md",
+        "docs/alpha/artifacts/v1.1/a.md",
+        "docs/alpha/DEPLOY.md",
+        "docs/beta/tickets/v1.0/T-2.md",
+        "docs/gamma/prd/PRD.md",
+        "docs/Bad_Name/prd/PRD.md",
+        "docs/_hidden/prd/PRD.md",
+        "docs/loose/readme.md"
+      ]
+    },
+    "product-po-beta": {
+      "config": {
+        "slug": "alpha",
+        "products": [
+          {
+            "name": "beta"
+          }
+        ]
+      },
+      "poState": {
+        "current_task": {
+          "product": "beta"
+        }
+      },
+      "files": [
+        "docs/_shared/wiki/w.md",
+        "docs/alpha/prd/PRD.md",
+        "docs/beta/prd/PRD.md",
+        "docs/beta/wiki/w.md"
+      ]
+    },
+    "product-po-path": {
+      "config": {
+        "slug": "alpha"
+      },
+      "poState": {
+        "current_task": {
+          "path": "docs/gamma/tickets/v1.0/T-3.md"
+        }
+      },
+      "files": [
+        "docs/_shared/x.md",
+        "docs/alpha/prd/PRD.md",
+        "docs/gamma/tickets/v1.0/T-3.md"
+      ]
+    },
+    "product-noconfig": {
+      "files": [
+        "docs/_shared/x.md",
+        "docs/zeta/prd/PRD.md",
+        "docs/delta/tickets/v1.0/T-1.md"
+      ]
+    },
+    "product-noproduct": {
+      "files": [
+        "docs/_shared/design.md",
+        "docs/_shared/wiki/x.md"
+      ]
+    },
+    "product-slug-norm": {
+      "config": {
+        "slug": "Alpha-App"
+      },
+      "files": [
+        "docs/_shared/design.md",
+        "docs/alpha-app/prd/PRD.md",
+        "docs/alpha-app/tickets/v1.0/T-1.md"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "tree": "legacy",
+      "fn": "docsLayout",
+      "args": [],
+      "expected": "legacy"
+    },
+    {
+      "tree": "legacy",
+      "fn": "projectProducts",
+      "args": [],
+      "expected": []
+    },
+    {
+      "tree": "legacy",
+      "fn": "currentProduct",
+      "args": [],
+      "expected": null
+    },
+    {
+      "tree": "legacy",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/tickets/v1.0/T-1.md"
+      ],
+      "expected": "docs/tickets/v1.0/T-1.md"
+    },
+    {
+      "tree": "legacy",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/prd",
+        "../wiki/x.md"
+      ],
+      "expected": "docs/wiki/x.md"
+    },
+    {
+      "tree": "legacy",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/prd",
+        "../../../etc/passwd"
+      ],
+      "expected": null
+    },
+    {
+      "tree": "legacy",
+      "fn": "docsAsIsRel",
+      "args": [
+        "docs/prd/PRD.md"
+      ],
+      "expected": "docs/prd/PRD.md"
+    },
+    {
+      "tree": "legacy",
+      "fn": "docsLayerChain",
+      "args": [
+        "design.md"
+      ],
+      "expected": [
+        "docs/design.md"
+      ]
+    },
+    {
+      "tree": "legacy",
+      "fn": "docsLayerChain",
+      "args": [
+        "wiki/missing.md"
+      ],
+      "expected": []
+    },
+    {
+      "tree": "product",
+      "fn": "docsLayout",
+      "args": [],
+      "expected": "product"
+    },
+    {
+      "tree": "product",
+      "fn": "projectProducts",
+      "args": [],
+      "expected": [
+        "alpha",
+        "beta",
+        "gamma"
+      ]
+    },
+    {
+      "tree": "product",
+      "fn": "currentProduct",
+      "args": [],
+      "expected": "alpha"
+    },
+    {
+      "tree": "product",
+      "fn": "currentProduct",
+      "args": [
+        "docs/beta/tickets/v1.0/T-2.md#x"
+      ],
+      "expected": "beta"
+    },
+    {
+      "tree": "product",
+      "fn": "currentProduct",
+      "args": [
+        "docs/nope/x.md"
+      ],
+      "expected": "alpha"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/prd/PRD.md"
+      ],
+      "expected": "docs/alpha/prd/PRD.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/prd/versions/v1.0.md"
+      ],
+      "expected": "docs/alpha/prd/versions/v1.0.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/tickets/v1.1/T-1.md"
+      ],
+      "expected": "docs/alpha/tickets/v1.1/T-1.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/tickets/v1.0/T-2.md",
+        "beta"
+      ],
+      "expected": "docs/beta/tickets/v1.0/T-2.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/artifacts/v1.1/a.md"
+      ],
+      "expected": "docs/alpha/artifacts/v1.1/a.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/DEPLOY.md"
+      ],
+      "expected": "docs/alpha/DEPLOY.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/wiki/retro--v1.0.md"
+      ],
+      "expected": "docs/alpha/wiki/retro--v1.0.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/wiki/shared-only.md"
+      ],
+      "expected": "docs/alpha/wiki/shared-only.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/wiki/decision--a.md"
+      ],
+      "expected": "docs/_shared/wiki/decision--a.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/wiki/sub/deep.md"
+      ],
+      "expected": "docs/_shared/wiki/sub/deep.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/features/f.md"
+      ],
+      "expected": "docs/alpha/features/f.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/features/g.md"
+      ],
+      "expected": "docs/_shared/features/g.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/design.md"
+      ],
+      "expected": "docs/_shared/design.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/loose/readme.md"
+      ],
+      "expected": "docs/_shared/loose/readme.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/_shared/design.md"
+      ],
+      "expected": "docs/_shared/design.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/alpha/prd/PRD.md"
+      ],
+      "expected": "docs/alpha/prd/PRD.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs"
+      ],
+      "expected": "docs"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsRef",
+      "args": [
+        "src/docs/prd/PRD.md"
+      ],
+      "expected": "src/docs/prd/PRD.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd",
+        "../../design.md"
+      ],
+      "expected": "docs/_shared/design.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd",
+        "../wiki/decision--a.md"
+      ],
+      "expected": "docs/_shared/wiki/decision--a.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd",
+        "../wiki/shared-only.md#sec"
+      ],
+      "expected": "docs/alpha/wiki/shared-only.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd",
+        "../features/g.md"
+      ],
+      "expected": "docs/_shared/features/g.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd",
+        "../features/f.md"
+      ],
+      "expected": "docs/alpha/features/f.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd",
+        "./versions/v1.0.md"
+      ],
+      "expected": "docs/alpha/prd/versions/v1.0.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd",
+        "../tickets/v1.1/T-1.md"
+      ],
+      "expected": "docs/alpha/tickets/v1.1/T-1.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd",
+        "../missing/none.md"
+      ],
+      "expected": "docs/alpha/missing/none.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd/versions",
+        "../../../_shared/design.md"
+      ],
+      "expected": "docs/_shared/design.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd/versions",
+        "../../../../../x"
+      ],
+      "expected": null
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd",
+        "https://example.com/a"
+      ],
+      "expected": null
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd",
+        "#top"
+      ],
+      "expected": null
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd",
+        "/abs/path.md"
+      ],
+      "expected": null
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/prd",
+        "../tickets/v1.1/T-1.md"
+      ],
+      "expected": "docs/alpha/tickets/v1.1/T-1.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/prd",
+        "../wiki/shared-only.md"
+      ],
+      "expected": "docs/alpha/wiki/shared-only.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/prd",
+        "../design.md"
+      ],
+      "expected": "docs/_shared/design.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/beta/tickets/v1.0",
+        "../../../alpha/prd/PRD.md"
+      ],
+      "expected": "docs/alpha/prd/PRD.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "@ROOT/docs/alpha/prd",
+        "../../design.md"
+      ],
+      "expected": "docs/_shared/design.md"
+    },
+    {
+      "tree": "product",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/alpha/prd",
+        "sub/"
+      ],
+      "expected": "docs/alpha/prd/sub"
+    },
+    {
+      "tree": "product",
+      "fn": "docsAsIsRel",
+      "args": [
+        "docs/alpha/prd/PRD.md"
+      ],
+      "expected": "docs/prd/PRD.md"
+    },
+    {
+      "tree": "product",
+      "fn": "docsAsIsRel",
+      "args": [
+        "docs/_shared/design.md"
+      ],
+      "expected": "docs/design.md"
+    },
+    {
+      "tree": "product",
+      "fn": "docsAsIsRel",
+      "args": [
+        "docs/loose/readme.md"
+      ],
+      "expected": "docs/loose/readme.md"
+    },
+    {
+      "tree": "product",
+      "fn": "docsAsIsRel",
+      "args": [
+        "docs/gamma/prd/PRD.md"
+      ],
+      "expected": "docs/prd/PRD.md"
+    },
+    {
+      "tree": "product",
+      "fn": "docsLayerChain",
+      "args": [
+        "design.md"
+      ],
+      "expected": [
+        "docs/_shared/design.md"
+      ]
+    },
+    {
+      "tree": "product",
+      "fn": "docsLayerChain",
+      "args": [
+        "wiki/shared-only.md"
+      ],
+      "expected": [
+        "docs/alpha/wiki/shared-only.md",
+        "docs/_shared/wiki/shared-only.md"
+      ]
+    },
+    {
+      "tree": "product",
+      "fn": "docsLayerChain",
+      "args": [
+        "wiki/decision--a.md"
+      ],
+      "expected": [
+        "docs/_shared/wiki/decision--a.md"
+      ]
+    },
+    {
+      "tree": "product",
+      "fn": "docsLayerChain",
+      "args": [
+        "wiki/shared-only.md",
+        "beta"
+      ],
+      "expected": [
+        "docs/_shared/wiki/shared-only.md"
+      ]
+    },
+    {
+      "tree": "product",
+      "fn": "docsLayerChain",
+      "args": [
+        "features/f.md"
+      ],
+      "expected": [
+        "docs/alpha/features/f.md",
+        "docs/_shared/features/f.md"
+      ]
+    },
+    {
+      "tree": "product",
+      "fn": "docsLayerChain",
+      "args": [
+        "features/none.md"
+      ],
+      "expected": []
+    },
+    {
+      "tree": "product-po-beta",
+      "fn": "projectProducts",
+      "args": [],
+      "expected": [
+        "alpha",
+        "beta"
+      ]
+    },
+    {
+      "tree": "product-po-beta",
+      "fn": "currentProduct",
+      "args": [],
+      "expected": "beta"
+    },
+    {
+      "tree": "product-po-beta",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/prd/PRD.md"
+      ],
+      "expected": "docs/beta/prd/PRD.md"
+    },
+    {
+      "tree": "product-po-beta",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/wiki/w.md"
+      ],
+      "expected": "docs/beta/wiki/w.md"
+    },
+    {
+      "tree": "product-po-beta",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/wiki/w.md",
+        "alpha"
+      ],
+      "expected": "docs/_shared/wiki/w.md"
+    },
+    {
+      "tree": "product-po-path",
+      "fn": "currentProduct",
+      "args": [],
+      "expected": "gamma"
+    },
+    {
+      "tree": "product-po-path",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/tickets/v1.0/T-3.md"
+      ],
+      "expected": "docs/gamma/tickets/v1.0/T-3.md"
+    },
+    {
+      "tree": "product-noconfig",
+      "fn": "projectProducts",
+      "args": [],
+      "expected": [
+        "delta",
+        "zeta"
+      ]
+    },
+    {
+      "tree": "product-noconfig",
+      "fn": "currentProduct",
+      "args": [],
+      "expected": "delta"
+    },
+    {
+      "tree": "product-noconfig",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/tickets/v1.0/T-1.md"
+      ],
+      "expected": "docs/delta/tickets/v1.0/T-1.md"
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "projectProducts",
+      "args": [],
+      "expected": []
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "currentProduct",
+      "args": [],
+      "expected": null
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/tickets/v1.0/T-1.md"
+      ],
+      "expected": {
+        "error": "no-product"
+      }
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/prd/PRD.md"
+      ],
+      "expected": {
+        "error": "no-product"
+      }
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/wiki/retro--v1.0.md"
+      ],
+      "expected": {
+        "error": "no-product"
+      }
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/wiki/x.md"
+      ],
+      "expected": "docs/_shared/wiki/x.md"
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/design.md"
+      ],
+      "expected": "docs/_shared/design.md"
+    },
+    {
+      "tree": "product-noproduct",
+      "fn": "resolveDocsLink",
+      "args": [
+        "docs/wiki",
+        "../prd/PRD.md"
+      ],
+      "expected": {
+        "error": "no-product"
+      }
+    },
+    {
+      "tree": "product-slug-norm",
+      "fn": "projectProducts",
+      "args": [],
+      "expected": [
+        "alpha-app"
+      ]
+    },
+    {
+      "tree": "product-slug-norm",
+      "fn": "currentProduct",
+      "args": [],
+      "expected": "alpha-app"
+    },
+    {
+      "tree": "product-slug-norm",
+      "fn": "resolveDocsRef",
+      "args": [
+        "docs/tickets/v1.0/T-1.md"
+      ],
+      "expected": "docs/alpha-app/tickets/v1.0/T-1.md"
+    }
+  ]
+}

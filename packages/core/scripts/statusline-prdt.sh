@@ -18,12 +18,13 @@
 #   scripts/prdt (PRDT_LANG en*/ko* wins, else the device token `cli-lang`,
 #   default ko; OS LANG never read) — from the `statusline.*` keys of the
 #   sibling `prdt-messages.json`. The labels in this comment are the English forms.
-#   - One row per release line, home line (the project slug) first, then each
-#     line declared in `.prdt/config.json` `lines` (release-lines.md §6b).
+#   - One row per product, the first product (the project slug) first, then each
+#     product declared in `.prdt/config.json` `products` (T-1108; old `lines` still read).
 #   - The `dec … | req …` row is ALWAYS its own last row (`dec 0 | req 0` when
 #     empty), single-line and multi-line projects alike (T-988 = A, T-984
 #     reversed by the user 2026-10-06).
-#   - Never more than MAX_ROWS (17, measured on the user's machine) rows.
+#   - Never more than MAX_ROWS (17, measured on the user's machine) product rows; lane rows
+#     (T-1147) are never capped or folded (T-1184 R12).
 #   - `<stage> n/m` (T-923) = done/total of this version's tickets in the current
 #     stage, by the viewer's type rule; retro · idle → 0/0. No checklist record is read.
 #   - `<label> <version>` is ONE OSC 8 link to `.prdt/scratch/viewer/viewer.html`
@@ -72,6 +73,10 @@ PHYS="$(cd -P -- "$CWD" 2>/dev/null && pwd -P)"
 D="${PHYS:-$CWD}"; ROOT=""
 while [ -n "$D" ] && [ "$D" != "/" ]; do
   [ -f "$D/.prdt/po-state.json" ] && ROOT="$D"
+  # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary — never walk out of it
+  if [ -f "$D/.git" ] && [ "$(basename "$(dirname "$D")")" = "tracks" ]; then
+    case "${D##*/}" in T-[0-9]|T-[0-9][0-9]|T-[0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9][0-9]) ROOT=""; break ;; esac
+  fi
   UP="$(dirname "$D")"
   [ "$UP" = "$D" ] && break
   D="$UP"
@@ -79,10 +84,71 @@ done
 [ -z "$ROOT" ] && exit 0
 
 SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
-ROOT="$ROOT" SCRIPT_DIR="$SCRIPT_DIR" python3 - <<'PYEOF'
+ROOT="$ROOT" SCRIPT_DIR="$SCRIPT_DIR" python3 -I - <<'PYEOF'
 import json, os, re, sqlite3, stat, subprocess, sys, unicodedata
 from datetime import datetime, timezone
 from urllib.parse import quote
+
+# T-1104: product-first docs layout (docs/artifacts/v1.14/product-first-docs-layout.html).
+# KEEP `project_products` / `tickets_homes` in lockstep with `project_products` /
+# `product_docs_dirs(root, "tickets")` in scripts/prdt (parity test:
+# test/scripts/product-first-shell-readers.test.ts). Layout = `docs/_shared/` is a
+# real dir; first product = config `slug`, then `products[].name`, then any
+# `docs/<kebab>/` holding `prd/` or `tickets/`. [] = legacy (docs/tickets).
+_PROD_NAME_RE = re.compile(r"^(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+
+
+def _product_dir_name(slug):
+    """config `slug` -> its `docs/<kebab>` folder name (same rule as `product_dir_name` in scripts/prdt)."""
+    if not isinstance(slug, str) or not slug:
+        return None
+    k = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")
+    if not _PROD_NAME_RE.match(k):
+        return "product"
+    # T-1215: layout-reserved names (PRODUCT_RESERVED_NAMES in prdt_lanes.py) get a suffix
+    return k + "-product" if k in ("prd", "tickets", "artifacts", "wiki", "features", "archive", "po", "designer", "developer", "qa") else k
+
+
+def project_products(root):
+    sh = os.path.join(root, "docs", "_shared")
+    if not os.path.isdir(sh) or os.path.islink(sh):
+        return []
+    try:
+        with open(os.path.join(root, ".prdt", "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    out = []
+
+    def add(n):
+        if isinstance(n, str) and _PROD_NAME_RE.match(n) and n not in out:
+            out.append(n)
+    add(_product_dir_name(cfg.get("slug")))
+    prods = cfg.get("products")
+    for e in (prods if isinstance(prods, list) else []):
+        add(e.get("name") if isinstance(e, dict) else None)
+    try:
+        names = sorted(os.listdir(os.path.join(root, "docs")))
+    except OSError:
+        names = []
+    for n in names:
+        d = os.path.join(root, "docs", n)
+        if os.path.isdir(d) and not os.path.islink(d) and not n.startswith(("_", ".")) \
+                and (os.path.isdir(os.path.join(d, "prd")) or os.path.isdir(os.path.join(d, "tickets"))):
+            add(n)
+    return out
+
+
+def tickets_homes(root):
+    """[(product|None, dir)] — every product's tickets dir, then the shared
+    backlog; legacy → [(None, docs/tickets)]."""
+    prods = project_products(root)
+    if not prods:
+        return [(None, os.path.join(root, "docs", "tickets"))]
+    return ([(p, os.path.join(root, "docs", p, "tickets")) for p in prods]
+            + [(None, os.path.join(root, "docs", "_shared", "tickets"))])
+
 
 root = os.environ["ROOT"]
 try:  # T-906: the shared symlink-safe walk/writers, beside this script
@@ -201,11 +267,12 @@ def L(key, **kw):
 
 slug = clean(cfg_slug) or clean(os.path.basename(root)) or "?"
 
-# ── T-961: release lines (docs/artifacts/v1.13/release-lines.md §1 · §5 · §6b) ─
-# The home line is the project slug and reads po-state's top-level stage /
-# version; every added line is declared in `.prdt/config.json` `lines`
-# and reads `po-state.lines.<line>`, its tickets under `docs/tickets/<line>/`.
-# No `lines` → one row, the single-line project as before (plus T-984 layout).
+# ── T-961 / T-1108: products (pre-v1.14 name: release lines) ─
+# The first product is the project slug and reads po-state's top-level stage /
+# version; every added product is declared in `.prdt/config.json` `products`
+# and reads `po-state.products.<product>`, its tickets under `docs/<product>/tickets/`
+# (legacy layout: `docs/tickets/<product>/`). Old `lines` keys are still read.
+# No `products` → one row, the single-product project as before (plus T-984 layout).
 # KEEP LINE_NAME_RE and the declared-line filter in lockstep with
 # LINE_NAME_RE / project_lines in scripts/prdt.
 LINE_NAME_RE = re.compile(r"\A(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -237,7 +304,8 @@ cfg = cfg if isinstance(cfg, dict) else {}
 
 def declared_lines():
     """Added lines in declaration order — legal, unique, not the slug."""
-    raw = cfg.get("lines")
+    # T-1108 ⑦: `products`; the pre-v1.14 `lines` is still read.
+    raw = cfg.get("products") if "products" in cfg or "lines" not in cfg else cfg.get("lines")
     out, seen = [], set()
     for e in (raw if isinstance(raw, list) else []):
         name = e.get("name") if isinstance(e, dict) else None
@@ -308,7 +376,8 @@ def home_branch():
     return br
 
 
-st_lines = st.get("lines") if isinstance(st.get("lines"), dict) else {}
+_st_pk = "products" if "products" in st or "lines" not in st else "lines"
+st_lines = st.get(_st_pk) if isinstance(st.get(_st_pk), dict) else {}
 rows = [{"line": None, "label": slug, "st": st, "branch": home_branch()}]
 for e in declared_lines():
     ent = st_lines.get(e["name"])
@@ -337,6 +406,16 @@ req_deps = {}   # req candidate id -> its `deps` ids
 tid_status = {}  # every scanned ticket id -> status (any status)
 tid_line = {}  # ticket id -> the line whose folder holds it (None = home)
 tickets_root = os.path.join(root, "docs", "tickets")
+# T-1104: product layout — the home row (line None) reads the FIRST product's
+# `docs/<p>/tickets`, an added line `L` reads `docs/L/tickets`; legacy keeps
+# `docs/tickets[/<line>]` byte-for-byte. `ticket_prods[0]` = first product.
+ticket_prods = project_products(root)
+
+
+def tickets_base(line):
+    if not ticket_prods:
+        return tickets_root if line is None else os.path.join(tickets_root, line)
+    return os.path.join(root, "docs", ticket_prods[0] if line is None else line, "tickets")
 
 
 def _fm_deps(head):
@@ -398,7 +477,7 @@ def scan(base, row):
 
 
 for r in rows:
-    scan(tickets_root if r["line"] is None else os.path.join(tickets_root, r["line"]), r)
+    scan(tickets_base(r["line"]), r)
     r["stage"] = stage_seg(r["st"].get("stage"), r["sdone"], r["stotal"])
 
 
@@ -519,7 +598,10 @@ def dependents(con, tid):
     ver = row_by_line[line]["version"]
     if con is None or not ver:
         return []
-    prefix = f"docs/tickets/{line}/{ver}/%" if line else f"docs/tickets/{ver}/%"
+    if ticket_prods:   # T-1104: index paths look like docs/PRODUCT/tickets/VERSION/…
+        prefix = f"docs/{line or ticket_prods[0]}/tickets/{ver}/%"
+    else:
+        prefix = f"docs/tickets/{line}/{ver}/%" if line else f"docs/tickets/{ver}/%"
     try:
         rows_ = con.execute(
             "SELECT DISTINCT e.src FROM edges e JOIN tickets t ON t.id = e.src "
@@ -682,8 +764,59 @@ links = {}  # ticket_id -> resolved viewer link target (T-805), filled in as seg
             # strip the OSC 8 escape bytes as control characters, same as it
             # strips any other Cc/Cf/Zl/Zp — see the wrap step's own note).
 
+# ── T-1147 (v1.14 `lanes`): lane rows under a build-stage product row ─────────
+# The lane computation is `prdt_lanes.lanes_for` — the module `prdt schedule` itself
+# imports (T-1145, design R6), imported here, never re-implemented. A module import
+# keeps python's bytecode cache (spawning the 20k-line `prdt` recompiled it on every
+# render). Read-only: nothing is written. A missing/stale module or any failure = no
+# lane rows (degrade silently). Cost control: the read happens only for a product in
+# stage build while the project's PRD.md carries a `합격선` heading.
+
+
+def _prd_has_gate_table():
+    cands = [os.path.join(root, "docs", "prd", "PRD.md")]
+    cands += [os.path.join(root, "docs", p, "prd", "PRD.md") for p in ticket_prods]
+    for c in cands:
+        try:
+            # same heading test as prdt_lanes.LANE_HEADING_RE (T-1147 QA: the two must agree)
+            if any(re.match(r"^###\s+합격선(\s|$)", ln) for ln in open(c, encoding="utf-8", errors="replace").read().splitlines()):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def read_lanes():
+    """{line (None = home): [lane dict]} for each build-stage product; absent = no lane rows."""
+    want = [r["line"] for r in rows if token(r["st"].get("stage"), lambda v: v in STAGES) == "build"]
+    if not want or not _prd_has_gate_table():
+        return {}
+    try:
+        import prdt_lanes
+    except Exception:
+        return {}
+    out = {}
+    for ln in want:
+        try:
+            lanes = prdt_lanes.lanes_for(root, ln)
+        except Exception:
+            continue
+        lanes = [x for x in (lanes if isinstance(lanes, list) else []) if isinstance(x, dict)]
+        if lanes:
+            out[ln] = lanes
+    return out
+
+
+lane_data = read_lanes()
+
+
+def _ids(v):
+    return [t for t in (v if isinstance(v, list) else []) if isinstance(t, str) and TICKET_RE.match(t)]
+
+
+
 running = running_dispatches()
-idx = open_index_ro() if (running or dec or req) else None
+idx = open_index_ro() if (running or dec or req or lane_data) else None
 
 
 def fmt_group(ids, limit, succ_limit, with_persona=None):
@@ -756,6 +889,100 @@ def fit(build, tail=""):
     return cut + sep
 
 
+def lane_name(lane):
+    """R11: the 합격선 name whole (words included); the 자투리 lane's fixed label."""
+    return L("lane.besteffort") if lane.get("besteffort") is True else (clean(lane.get("name"), cap=10**6) or "?")
+
+
+def lane_text(lane, cap):
+    """R3 cells of ONE unfinished lane row (plain text; links wrap later):
+    `working` ids, then `next` = the head of the lane queue only (R12, shown
+    beside `working`), then blockers. `lane: NAME  d/t` is never cut; to fit
+    `cap` the working ids fold 3 → 2 → 1 + `+N` → persona off → ids as `+N` →
+    one blocker id + `+N` (kind kept) → `…` cut."""
+    head = L("lane", name=lane_name(lane)) + "  "
+    if not lane.get("linked"):
+        return head + L("lane.unlinked")
+    head += f"{int(lane.get('done') or 0)}/{int(lane.get('total') or 0)}"
+    work, nxt = _ids(lane.get("working")), _ids(lane.get("ready"))[:1]
+    work_owner = lane.get("working_owner") if isinstance(lane.get("working_owner"), dict) else {}
+    next_owner = lane.get("ready_owner") if isinstance(lane.get("ready_owner"), dict) else {}
+    blockers = [(b["id"], b["kind"]) for b in (lane.get("blockers") if isinstance(lane.get("blockers"), list) else [])
+                if isinstance(b, dict) and isinstance(b.get("id"), str) and TICKET_RE.match(b["id"])
+                and b.get("kind") in ("decision", "request")]
+    owners = {t: (personas.get(t) or ([work_owner[t]] if work_owner.get(t) in ASSIGNEES else [])) for t in work}
+    owners.update({t: ([next_owner[t]] if next_owner.get(t) in ASSIGNEES else []) for t in nxt})
+
+    def tag(t, persona):
+        links.setdefault(t, ticket_link_target(idx, t))
+        return t + ("(" + "+".join(persona_label(x) for x in owners[t]) + ")" if persona and owners[t] else "")
+
+    def cells(lim, persona, blk_lim):
+        out = [head]
+        if work:
+            shown, extra = collapse(work, lim) if lim is not None else ([], len(work))
+            bits = [tag(t, persona) for t in shown]
+            if extra:
+                bits.append(f"+{extra}")
+            out.append(L("lane.work") + " " + " ".join(bits))
+        if nxt:
+            out.append(L("lane.next") + " " + tag(nxt[0], persona))
+        if not work and not nxt and not blockers:
+            out.append(L("lane.work") + " 0")
+        if blockers:
+            shown, extra = collapse(blockers, blk_lim)
+            bits = []
+            for t, kind in shown:
+                links.setdefault(t, ticket_link_target(idx, t))
+                bits.append(f"{t}({L('decision' if kind == 'decision' else 'request')})")
+            if extra:
+                bits.append(f"+{extra}")
+            out.append(L("lane.blocker") + " " + " ".join(bits))
+        return " | ".join(out)
+
+    steps = [(n, True, 99) for n in (3, 2, 1)] + [(1, False, 99), (None, False, 99), (None, False, 1)]
+    cand = ""
+    for lim, persona, blk in steps:
+        cand = cells(lim, persona, blk)
+        if dw(cand) <= cap:
+            return cand
+    if dw(lane_name(lane)) > 40:   # T-1184 F2b: a long name is never cut, nor are the cells beside it — the row wraps
+        return cand
+    return head + cut_cols(cand[len(head):], max(cap - dw(head), 1))
+
+
+def lane_block(lanes, cap):
+    """[(lane, text)] under one product row: R10 — every finished lane (gate
+    and 자투리 alike) on ONE `done: NAME d/t · …` row first, in table order;
+    then one row per other lane, 자투리 last. No row cap, no folding (R12)."""
+    done = [x for x in lanes if x.get("finished") is True]
+    out = []
+    if done:
+        ents = [clean(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}", cap=10**6) for x in done]
+        # F2 (T-1184 QA): never cut an entry — a row that would pass `cap` continues on the next row
+        cur = ""
+        first = True
+        pre = L("lane.finished", lanes="")
+        for e in ents:
+            lead = pre if first else ""
+            if cur and cap < dw(lead + cur + " · " + e):
+                out.append(({}, lead + cur))
+                first, cur = False, e
+            else:
+                cur = cur + " · " + e if cur else e
+        out.append(({}, (pre if first else "") + cur))
+    out.extend((x, lane_text(x, cap)) for x in lanes if x.get("finished") is not True)
+    return out
+
+
+def lane_cap():
+    try:
+        cols = int(os.environ.get("COLUMNS", ""))
+    except ValueError:
+        cols = 0
+    return min(cols, LINE_CAP) if cols > 0 else LINE_CAP
+
+
 # T-984 layout (user-confirmed 2026-10-06):
 #   <label> <version> | stage: <stage> n/m | total tickets n/m | working … | branch: <b>   (T-1017)
 # One row per line, home first, then ALWAYS one `dec … | req …` row last
@@ -764,14 +991,29 @@ def fit(build, tail=""):
 line_budget = MAX_ROWS - 1
 shown = rows if len(rows) <= line_budget else rows[:line_budget - 1]
 out_rows = []
-for r in shown:
+# T-1147: parallel to `shown` — [(lane, text)] under each product row. Any lane
+# failure (stale module, odd data) = no lane rows at all; the rest stays intact.
+try:
+    lane_rows = [lane_block(lane_data.get(r["line"], []), lane_cap()) for r in shown]
+except Exception:
+    lane_rows = [[] for _ in shown]
+
+# T-1147 / T-1184 R12: lane rows go right under their product row — every one of
+# them: no row cap and no folding for lanes (MAX_ROWS still folds product rows).
+
+# product rows — a running dispatch stays on `working` unless a surviving lane row
+# of its product prints that id (the user must always see what is running)
+for k, r in enumerate(shown):
     head = [r["slug_ver"], r["stage"]]
     if r["vtotal"]:
         head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
-    ids = [tid for tid, _ in running if line_of(tid) == r["line"]]
+    lane_txt = " ".join(t for _, t in lane_rows[k])
+    ids = [tid for tid, _ in running if line_of(tid) == r["line"]
+           and not re.search(r"(?<![\w-])" + re.escape(tid) + r"(?!\d)", lane_txt)]
     branch = L("branch", name=r["branch"]) if r["branch"] else ""
     out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
                                         " | ".join(head + [working_seg(ids, lim)]), branch)))
+    out_rows.extend((None, t) for _, t in lane_rows[k])
 if len(shown) < len(rows):
     out_rows.append((None, L("lines", n=len(rows) - len(shown))))
 out_rows.append((None, action_row()))

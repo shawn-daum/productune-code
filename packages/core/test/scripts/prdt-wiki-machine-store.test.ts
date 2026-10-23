@@ -33,6 +33,7 @@ let machineHome: string
 function projectAt(name: string): string {
   const dir = path.join(sandbox, name)
   fs.mkdirSync(dir, { recursive: true })
+  fs.mkdirSync(path.join(dir, "docs", "prd"), { recursive: true }) // T-1104: legacy fixture (As-Is docs before init)
   execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', name, '--yes'], {
     cwd: dir, env: { ...process.env, PRDT_HOME: machineHome },
     encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
@@ -66,6 +67,11 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(sandbox, { recursive: true, force: true })
 })
+
+/** True when a hook source names the machine store in code — whole-line and trailing ` # ...` comments are not injection. */
+function injectsMachineStore(src: string): boolean {
+  return src.split('\n').some((l) => /\.prdt\/wiki|PRDT_HOME[^\n]*wiki/.test(/^\s*#/.test(l) ? '' : l.replace(/\s#\s.*$/, '')))
+}
 
 describe.skipIf(!PYTHON3)('prdt wiki — machine store (T-446)', () => {
   test('a machine page is findable from a project that does not contain it, tagged as machine scope', () => {
@@ -137,6 +143,15 @@ describe.skipIf(!PYTHON3)('prdt wiki — machine store (T-446)', () => {
     const injectors = fs.readdirSync(path.join(CORE_ROOT, 'scripts', 'hooks'))
       .filter((f) => f.endsWith('.sh'))
       .map((f) => fs.readFileSync(path.join(CORE_ROOT, 'scripts', 'hooks', f), 'utf-8'))
-    for (const src of injectors) expect(src).not.toMatch(/\.prdt\/wiki|PRDT_HOME[^\n]*wiki/)
+    for (const src of injectors) expect(injectsMachineStore(src)).toBe(false)
+  })
+
+  test('the pull-only scan ignores a comment naming the path but still catches a real injector', () => {
+    // T-1173: the worktree guard's DENY path names ~/.prdt/wiki in a comment; that is not injection.
+    expect(injectsMachineStore('# `rm -rf ~/.prdt/wiki` removes feedback.md too\n    # PRDT_HOME/wiki\n')).toBe(false)
+    expect(injectsMachineStore('return rp  # `rm -rf ~/.prdt/wiki` removes feedback.md too\n')).toBe(false)
+    expect(injectsMachineStore('echo ok\ncat "$HOME/.prdt/wiki/index.md"\n')).toBe(true)
+    expect(injectsMachineStore('body=$(cat "$PRDT_HOME/wiki/fact--x.md")  # inject\n')).toBe(true)
+    expect(injectsMachineStore('    return "~/.prdt/wiki"\n')).toBe(true)
   })
 })

@@ -30,6 +30,7 @@ import {
 import {
   metaRepoExists,
   commitMeta,
+  productLayoutAllowlist,
   type MetaCommitSkipReason,
 } from './meta-git'
 
@@ -55,27 +56,38 @@ export interface MetaAutosaveTickResult {
   detail?: string
 }
 
-/** List every ticket markdown file: docs/tickets/<version-dir>/*.md. */
-function listTicketFiles(projectDir: string): string[] {
-  const ticketsRoot = path.join(projectDir, 'docs', 'tickets')
-  let versionDirs: string[]
-  try {
-    versionDirs = fs
-      .readdirSync(ticketsRoot, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name)
-  } catch {
-    return []
-  }
+/**
+ * Every ticket directory that holds version dirs: `docs/tickets` (legacy
+ * layout), or — in the product-first layout (T-1104) — `docs/<product>/tickets`
+ * per product plus the shared backlog `docs/_shared/tickets`.
+ */
+function ticketRoots(projectDir: string): string[] {
+  const dirs = productLayoutAllowlist(projectDir)
+  if (dirs.length === 0) return [path.join(projectDir, 'docs', 'tickets')]
+  return dirs.map((d) => path.join(projectDir, d, 'tickets'))
+}
 
+/** List every ticket markdown file: <tickets root>/<version-dir>/*.md. */
+function listTicketFiles(projectDir: string): string[] {
   const files: string[] = []
-  for (const vd of versionDirs) {
+  for (const ticketsRoot of ticketRoots(projectDir)) {
+    let versionDirs: string[]
     try {
-      for (const entry of fs.readdirSync(path.join(ticketsRoot, vd))) {
-        if (entry.endsWith('.md')) files.push(path.join(ticketsRoot, vd, entry))
-      }
+      versionDirs = fs
+        .readdirSync(ticketsRoot, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name)
     } catch {
-      // unreadable version dir — skip
+      continue
+    }
+    for (const vd of versionDirs) {
+      try {
+        for (const entry of fs.readdirSync(path.join(ticketsRoot, vd))) {
+          if (entry.endsWith('.md')) files.push(path.join(ticketsRoot, vd, entry))
+        }
+      } catch {
+        // unreadable version dir — skip
+      }
     }
   }
   return files

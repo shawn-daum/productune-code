@@ -10,6 +10,7 @@
  */
 
 import path from 'path'
+import { copyPrdtCli } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawnSync } from 'child_process'
@@ -36,7 +37,7 @@ beforeAll(() => {
   fs.cpSync(CANON, path.join(prdtHome, 'discipline', 'wordlist'), { recursive: true })
   fs.mkdirSync(path.join(prdtHome, 'bin'), { recursive: true })
   fs.mkdirSync(path.join(prdtHome, 'hooks'), { recursive: true })
-  fs.copyFileSync(PRDT_CLI, path.join(prdtHome, 'bin', 'prdt'))
+  copyPrdtCli(PRDT_CLI, path.join(prdtHome, 'bin', 'prdt'))
   fs.copyFileSync(path.join(CORE_ROOT, 'scripts', 'prdt-messages.json'), path.join(prdtHome, 'bin', 'prdt-messages.json'))
   fs.copyFileSync(HOOK, path.join(prdtHome, 'hooks', 'prdt-wordlist-check.sh'))
   fs.chmodSync(path.join(prdtHome, 'bin', 'prdt'), 0o755)

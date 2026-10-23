@@ -143,6 +143,25 @@ function withFakeNpm(): string {
   return `${fakeNpmPathPrefix()}:${process.env.PATH ?? ''}`
 }
 
+// T-1225: install.sh's busy ceiling is a COUNTED loop (150 x `sleep 0.2`), so
+// its wall-clock is 150 x (sleep + per-iteration fork cost) — stretches past
+// the test timeout when the machine is loaded. A `sleep` shim that returns at
+// once keeps the real 150-iteration path (and the real message) but makes the
+// wait cost CPU only, never wall-clock. Used by the busy-line test alone; the
+// holder process is spawned from the test's own PATH, so it is unaffected.
+let noSleepDir: string | undefined
+function withFakeNpmNoSleep(): string {
+  if (noSleepDir === undefined) {
+    noSleepDir = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-lock-nosleep-'))
+    fs.writeFileSync(path.join(noSleepDir, 'sleep'), '#!/bin/sh\nexit 0\n')
+    fs.chmodSync(path.join(noSleepDir, 'sleep'), 0o755)
+  }
+  return `${noSleepDir}:${withFakeNpm()}`
+}
+afterAll(() => {
+  if (noSleepDir !== undefined) fs.rmSync(noSleepDir, { recursive: true, force: true })
+})
+
 /** SIGKILL a process and every descendant (bash install.sh → its backgrounded
  *  npm-run-build subshell → fake npm → its `sleep`), found by walking the
  *  host's `ps` parent links — same technique dispatch-gate-hook.test.ts uses
@@ -447,13 +466,13 @@ describe.skipIf(!hasJq())('T-732: abandoned build lock', () => {
     fs.mkdirSync(path.join(sbx.root, 'dist'), { recursive: true })
     fs.mkdirSync(lockPath)
     // A real, long-lived process standing in for another install's still-
-    // building npm child — outlives this test on purpose; reaped in finally.
-    const holder = spawn('sleep', ['40'], { stdio: 'ignore' })
+    // building npm child — outlives the install run; reaped in finally.
+    const holder = spawn('sleep', ['120'], { stdio: 'ignore' })
     await sleep(50)
     fs.writeFileSync(path.join(lockPath, 'pid'), String(holder.pid))
     try {
       const r = execFileSync('bash', [installSh(sbx)], {
-        env: installEnv(sbx, { PATH: withFakeNpm() }),
+        env: installEnv(sbx, { PATH: withFakeNpmNoSleep() }),
         encoding: 'utf8',
       })
       expect(r).toContain(`node bridge build lock (${lockPath}) busy 30s+`)

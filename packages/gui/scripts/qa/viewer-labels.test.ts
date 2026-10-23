@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
 import { generate } from '@productune/viewer/generate.mjs'
-import { META_ROOT, META_SKIP_REASON } from './meta-root'
+import { META_ROOT, META_SKIP_REASON, META_GENERATE_TIMEOUT_MS } from './meta-root'
 import { WIKI, FEATURE } from '@productune/viewer/lib/labels.mjs'
 import * as labels from '@productune/viewer/lib/labels.mjs'
 
@@ -45,7 +45,7 @@ let realHtml: string
 beforeAll(async () => {
   if (metaMissingReason) return
   ;({ html: realHtml } = await generate({ repoRoot: META_ROOT! }))
-}, 30000)
+}, META_GENERATE_TIMEOUT_MS)
 
 const RENDER_MJS_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../viewer/lib/render.mjs')
 

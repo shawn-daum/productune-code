@@ -57,7 +57,7 @@ die() { printf 'prdt-install: %s\n' "$*" >&2; exit 1; }
 # restriction; python3 is a hard dependency of this script (checked below), so this is
 # one line instead of a deepest-existing-ancestor walk in bash.
 resolve_path() {
-  python3 - "$1" <<'PYEOF'
+  python3 -I - "$1" <<'PYEOF'
 import os, sys
 print(os.path.realpath(sys.argv[1]))
 PYEOF
@@ -242,8 +242,20 @@ while IFS= read -r b; do
 done <<EOF
 $HOOK_BASENAMES
 EOF
+# T-1156: a hook retired from the roster leaves its old mirror copy behind; its
+# settings.json registration is swept in §4 by the same manifest `retired` list.
+while IFS= read -r b; do
+  [ -n "$b" ] || continue
+  rm -f "$PRDT_HOME/hooks/$b"
+done <<EOF
+$(jq -r '(.retired // [])[]' "$MANIFEST")
+EOF
 cp "$ROOT/scripts/prdt" "$PRDT_HOME/bin/prdt"
 cp "$ROOT/scripts/prdt-messages.json" "$PRDT_HOME/bin/prdt-messages.json"
+# T-1147: the lane computation `prdt` and the statusline both import; always beside bin/prdt.
+cp "$ROOT/scripts/prdt_lanes.py" "$PRDT_HOME/bin/prdt_lanes.py"
+# T-1170: bin/prdt is a launcher; the CLI body it loads (bytecode-cached) always sits beside it.
+cp "$ROOT/scripts/prdt_cli.py" "$PRDT_HOME/bin/prdt_cli.py"
 cp "$ROOT/scripts/statusline-prdt.sh" "$PRDT_HOME/bin/statusline-prdt.sh"
 # T-906: the shared symlink-safe walk/writers the statusline, prdt-auto-open.sh's
 # regen worker and the post-dispatch / return-check appends import; always
@@ -268,6 +280,18 @@ EOF
 # menus are derived — regenerate against the installed mirror
 PRDT_DISCIPLINE="$PRDT_HOME/discipline" "$PRDT_HOME/bin/prdt" menus >/dev/null
 say "   mirrored (discipline + doctrine + hooks + bin, menus regenerated)"
+
+# 1a. prdt:// URL scheme — T-1191: the viewer env card's 「텍스트 편집기로 열기」.
+#     A missing script (a synthetic test root) skips; a failure is one line and
+#     the install goes on (the card still has 경로 복사). The script registers
+#     with LaunchServices only when PRDT_HOME is the login user's own ~/.prdt.
+if [ -f "$ROOT/scripts/prdt_open_url.py" ] && [ -f "$ROOT/scripts/prdt-url-scheme.sh" ]; then
+  cp "$ROOT/scripts/prdt_open_url.py" "$PRDT_HOME/bin/prdt_open_url.py"
+  cp "$ROOT/scripts/prdt-url-scheme.sh" "$PRDT_HOME/bin/prdt-url-scheme.sh"
+  chmod +x "$PRDT_HOME/bin/prdt_open_url.py" "$PRDT_HOME/bin/prdt-url-scheme.sh"
+  PRDT_HOME="$PRDT_HOME" bash "$PRDT_HOME/bin/prdt-url-scheme.sh" install 2>&1 | sed 's/^/1a) /' \
+    || say "1a) url scheme NOT installed — 「텍스트 편집기로 열기」 will not open; 경로 복사 still works"
+fi
 
 # 1b. build the node bridge (dist/bin/meta-cli.cjs) — T-731.
 #     WHY: the bridge is a BUILD ARTIFACT of $ROOT/src (tsc + esbuild, per
@@ -541,7 +565,7 @@ if [ ! -f "$ENV_FILE" ]; then
   chmod 600 "$ENV_FILE"
 else
   say "2) $ENV_FILE exists — updating PRDT_REPO only"
-  python3 - "$ENV_FILE" "$ROOT" <<'PYEOF'
+  python3 -I - "$ENV_FILE" "$ROOT" <<'PYEOF'
 import sys
 path, repo = sys.argv[1], sys.argv[2]
 lines = [l for l in open(path).read().splitlines() if not l.startswith("PRDT_REPO=")]
@@ -603,7 +627,8 @@ jq --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
   # both write) or bare, so the wrapping quote is stripped before taking the
   # final path segment. This is the ONE predicate install.sh/uninstall.sh/
   # onboarding.ts now all use for "is this registration ours".
-  ($manifest[0].basenames) as $ours |
+  # T-1156: retired basenames count as ours for the strip (never re-registered).
+  ($manifest[0].basenames + ($manifest[0].retired // [])) as $ours |
   def cmdBasename($cmd): ($cmd // "")
     | (if startswith("\"") then .[1:] else . end)
     | (if endswith("\"") then .[:-1] else . end)
@@ -653,7 +678,7 @@ jq --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
 # even though the stale half's path text never matched this run's $PRDT_HOME.
 jq -e --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
   ($manifest[0].registrations) as $regs |
-  ($manifest[0].basenames) as $ours |
+  ($manifest[0].basenames + ($manifest[0].retired // [])) as $ours |
   def cmdBasename(cmd): (cmd // "")
     | (if startswith("\"") then .[1:] else . end)
     | (if endswith("\"") then .[:-1] else . end)
@@ -704,7 +729,7 @@ if [ "$REGISTER_STATUSLINE" = true ]; then
     || die "statusline registration failed (jq) — $SETTINGS left unchanged"
   mv "$TMP" "$SETTINGS"
   TMP=""
-  python3 - "$ENV_FILE" <<'PYEOF'
+  python3 -I - "$ENV_FILE" <<'PYEOF'
 import sys
 path = sys.argv[1]
 s = open(path).read().replace("PRDT_STATUSLINE_INSTALLED=false", "PRDT_STATUSLINE_INSTALLED=true")

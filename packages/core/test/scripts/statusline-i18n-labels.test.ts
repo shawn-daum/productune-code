@@ -106,7 +106,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     seedFull()
     const rows = run({}).split('\n')
     expect(rows).toEqual([
-      'proj v1.13 | 단계: 개발 1/3 | 총 티켓 1/4 | 작업중 T-2(개발자+QA) T-1(기획자)',
+      'proj v1.13 | 단계: 개발 1/3 | 총 티켓 1/4 | 작업중 T-2(developer+QA) T-1(designer)',
       '결정사항 T-3 | 요청사항 T-4',
     ])
   })
@@ -144,7 +144,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     marker('T-6', 'user', 50_000)
     execFileSync('git', ['init', '-q', '-b', 'dev'], { cwd: root })
     execFileSync('git', ['-c', 'user.email=u@test', '-c', 'user.name=u', 'commit', '-q', '--allow-empty', '-m', 'i'], { cwd: root })
-    expect(run({ PRDT_LANG: 'ko' }).split('\n')[0]).toBe('proj v1.13 | 단계: 개발 0/2 | 총 티켓 0/2 | 작업중 T-5(PO) T-6(사용자) | 브랜치: dev')
+    expect(run({ PRDT_LANG: 'ko' }).split('\n')[0]).toBe('proj v1.13 | 단계: 개발 0/2 | 총 티켓 0/2 | 작업중 T-5(PO) T-6(user) | 브랜치: dev')
     expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe('proj v1.13 | stage: build 0/2 | total tickets 0/2 | working T-5(po) T-6(user) | branch: dev')
   })
 
@@ -179,7 +179,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     expect(cols(en)).toBeLessThanOrEqual(200)
   })
 
-  test('folded rows: `+N 라인` (ko) / `+N lines` (en)', () => {
+  test('folded rows: `+N 제품` (ko) / `+N products` (en)', () => {
     const names = Array.from({ length: 20 }, (_, i) => `l${String(i).padStart(2, '0')}`)
     fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify({ slug: 'big', lines: names.map((name) => ({ name })) }))
     fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({
@@ -189,8 +189,8 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     const ko = run({ PRDT_LANG: 'ko' }).split('\n')
     const en = run({ PRDT_LANG: 'en' }).split('\n')
     expect(ko).toHaveLength(17)
-    expect(ko[15]).toBe('+6 라인')
-    expect(en[15]).toBe('+6 lines')
+    expect(ko[15]).toBe('+6 제품')
+    expect(en[15]).toBe('+6 products')
     expect(ko[16]).toBe('결정사항 0 | 요청사항 0')
   })
 

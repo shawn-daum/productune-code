@@ -23,7 +23,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { marked, Renderer, Tokenizer } from 'marked'
-import {
+import { IDLE,
   STORE_LABEL,
   COMMON,
   PAGE,
@@ -46,6 +46,7 @@ import {
   noGroupLabel,
   OPTION_CARD,
   ENV,
+  IDENTITY,
 } from './labels.mjs'
 import { mermaidBlock, hasMermaid, mermaidScript, MERMAID_CSS } from './mermaid.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
@@ -252,9 +253,10 @@ export function isHrefContained(href, { repoRootHref = DEFAULT_REPO_ROOT_HREF, r
  * @param {string} sourceDirRel
  * @param {string} repoRootHref
  * @param {string} [viewerAbsPath]
+ * @param {object|null} [docsLayout] `data.docsLayout` (lib/docs-layout.mjs `createDocsLayout`); null/legacy = as before
  * @returns {string|null}
  */
-export function resolveDocLink(href, sourceDirRel, repoRootHref, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH) {
+export function resolveDocLink(href, sourceDirRel, repoRootHref, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, docsLayout = null) {
   if (!href) return null
   if (/^(#|\/\/|\/)/.test(href)) return null
   if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return null
@@ -262,7 +264,10 @@ export function resolveDocLink(href, sourceDirRel, repoRootHref, viewerAbsPath =
   const pathPart = hashIdx === -1 ? href : href.slice(0, hashIdx)
   const hashPart = hashIdx === -1 ? '' : href.slice(hashIdx)
   if (!pathPart) return null
-  const resolved = path.posix.normalize(path.posix.join(sourceDirRel, pathPart))
+  let resolved = path.posix.normalize(path.posix.join(sourceDirRel, pathPart))
+  // T-1104 ③: a link written against the As-Is tree (a closed PRD) opens its To-Be file —
+  // product → _shared fallback, `docs/…` through the ref map (same rule as the CLI's resolve_docs_link).
+  if (docsLayout && docsLayout.layout === 'product' && !resolved.startsWith('..')) resolved = docsLayout.mapJoined(resolved)
   const candidate = safeEncodeURI(`${repoRootHref}/${resolved}${hashPart}`)
   return isHrefContained(candidate, { repoRootHref, viewerAbsPath }) ? candidate : null
 }
@@ -407,9 +412,52 @@ const defaultTextRender = Renderer.prototype.text
 // Never inside another link's text (`link` below switches it off), never in a
 // fenced block (not this renderer); an inline code span links only when the
 // whole span is one such path. A `[[wikilink]]` is left as it was.
-const DOC_PATH_RE = /(?<![\w./~-])(?<!\[\[)docs\/(?:artifacts|wiki|prd|tickets|features)\/[\w./-]*\w/g
+// T-1104: a To-Be path carries a `_shared/` or `<product>/` segment first.
+const DOC_PATH_RE = /(?<![\w./~-])(?<!\[\[)docs\/(?:_shared\/|[a-z0-9]+(?:-[a-z0-9]+)*\/)?(?:artifacts|wiki|prd|tickets|features)\/[\w./-]*\w/g
 let pageDocTargets = null
+// T-1187: existing files under the artifacts dir that no manifest row carries (`data.artifacts.files`
+// minus the anchor table); a body path naming one links to the file itself, like a markdown link.
+let pageDocFiles = null
+// T-1104: the layout of the project being rendered (null = legacy / single-product, as before).
+let pageDocsLayout = null
+// T-1165: the sidebar identity line · tool version · progress card, derived once per renderPage from `data` (see `pageIdentityOf`).
+let pageIdentity = null
+
+/** The anchor-table key a path written in a body names: itself, else (product layout) its To-Be form (③ As-Is paths in closed PRDs · tickets · wiki). */
+function docTargetKey(text) {
+  if (pageDocTargets.has(text)) return text
+  if (pageDocsLayout && pageDocsLayout.layout === 'product') {
+    const to = pageDocsLayout.resolveRef(text)
+    if (to !== text && pageDocTargets.has(to)) return to
+  }
+  return null
+}
 let pageTicketIds = null
+
+/**
+ * T-1187: the set of existing artifact files (repo-relative) the page may link by path.
+ * @param {object} data
+ * @returns {Set<string>}
+ */
+export function buildDocFileSet(data) {
+  return new Set(data?.artifacts?.files || [])
+}
+
+/** The file href for a body path that names an existing artifact file outside the anchor table, else null. */
+function docFileHref(text) {
+  if (!pageDocFiles || pageDocFiles.size === 0) return null
+  let key = pageDocFiles.has(text) ? text : null
+  if (key === null && pageDocsLayout && pageDocsLayout.layout === 'product') {
+    const to = pageDocsLayout.resolveRef(text)
+    if (to !== text && pageDocFiles.has(to)) key = to
+  }
+  if (key === null) return null
+  return resolveDocLink(key, '', linkContext.repoRootHref, pageViewerAbsPath, null)
+}
+
+function docFileAnchor(href, textHtml) {
+  return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener">${textHtml}</a>`
+}
 
 /**
  * path → the `#` key the page's anchor table routes it by. Same table as
@@ -434,7 +482,7 @@ export function buildDocPathTargets(data, anchors = buildAnchors(data)) {
 }
 
 function docPathAnchor(rel, textHtml) {
-  return `<a href="#${escapeHtml(pageDocTargets.get(rel))}">${textHtml}</a>`
+  return `<a href="#${escapeHtml(pageDocTargets.get(docTargetKey(rel)))}">${textHtml}</a>`
 }
 
 // T-1066: a ticket id (T-NNN · T-PATCH-NNN · T-P4-NNN) in running text links to
@@ -472,10 +520,11 @@ function linkDocPathText(text, plain) {
   let last = 0
   let found = false
   for (let m = DOC_PATH_RE.exec(text); m !== null; m = DOC_PATH_RE.exec(text)) {
-    if (!pageDocTargets.has(m[0])) continue
+    const fileHref = docTargetKey(m[0]) === null ? docFileHref(m[0]) : null
+    if (docTargetKey(m[0]) === null && fileHref === null) continue
     found = true
     if (m.index > last) out += plain(text.slice(last, m.index))
-    out += docPathAnchor(m[0], escapeHtml(m[0]))
+    out += fileHref === null ? docPathAnchor(m[0], escapeHtml(m[0])) : docFileAnchor(fileHref, escapeHtml(m[0]))
     last = m.index + m[0].length
   }
   if (!found) return null
@@ -517,7 +566,11 @@ hardenedRenderer.code = function (token) {
   return defaultCodeRender.call(this, token)
 }
 hardenedRenderer.codespan = function ({ text }) {
-  if (linkContext.docs && pageDocTargets.has(text)) return `<code>${docPathAnchor(text, escapeHtml(text))}</code>`
+  if (linkContext.docs && docTargetKey(text) !== null) return `<code>${docPathAnchor(text, escapeHtml(text))}</code>`
+  if (linkContext.docs) {
+    const fileHref = docFileHref(text)
+    if (fileHref !== null) return `<code>${docFileAnchor(fileHref, escapeHtml(text))}</code>`
+  }
   const linked = linkContext.disc ? linkDisciplineCode(text, linkContext.disc) : null
   return linked ?? `<code>${escapeHtml(text)}</code>`
 }
@@ -533,7 +586,7 @@ hardenedRenderer.link = function ({ href, title, tokens }) {
   linkContext.disc = outerDisc
   linkContext.docs = outerDocs
   linkContext.ids = outerIds
-  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath)
+  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath, pageDocsLayout)
   if (rewritten !== null) {
     const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
     return `<a href="${escapeHtml(rewritten)}" target="_blank" rel="noopener"${titleAttr}>${text}</a>`
@@ -564,7 +617,7 @@ hardenedRenderer.link = function ({ href, title, tokens }) {
 hardenedRenderer.image = function ({ href, title, text, tokens }) {
   const altSource = tokens ? this.parser.parseInline(tokens, this.parser.textRenderer) : text
   const alt = escapeHtml(altSource)
-  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath)
+  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref, pageViewerAbsPath, pageDocsLayout)
   if (rewritten === null) return alt
   const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
   return `<img src="${escapeHtml(rewritten)}" alt="${alt}"${titleAttr}>`
@@ -609,9 +662,15 @@ function decisionChosen(body) {
 const inlineMd = (text) => marked.parseInline(text, { gfm: true, renderer: hardenedRenderer, tokenizer: strictDelTokenizer })
 
 function renderOptionCards(token, parser) {
-  const cols = token.header.map((h) => OPTION_CARD.headers[h.text.replace(/\s*\(.*$/, '').trim().toLowerCase()] || null)
+  // unmapped columns keep their index as `extra` and render under their own header (T-1132)
+  // (a second column of an already-mapped kind too)
+  const cols = token.header.map((h) => OPTION_CARD.headers[h.text.replace(/\s*\(.*$/, '').trim().toLowerCase()] || 'extra')
+    .map((kind, i, all) => (all.indexOf(kind) === i ? kind : 'extra'))
   if (!cols.includes('name')) return null
-  const cards = token.rows.map((row) => {
+  // a row with every cell empty (the `tickets new` scaffold's blank rows) draws no card
+  const rows = token.rows.filter((row) => row.some((c) => c.text.trim() !== ''))
+  if (rows.length === 0) return ''
+  const cards = rows.map((row) => {
     const cell = (kind) => { const i = cols.indexOf(kind); return i < 0 ? null : row[i] }
     const nameCell = cell('name')
     const nameText = nameCell ? nameCell.text.trim() : ''
@@ -636,10 +695,11 @@ function renderOptionCards(token, parser) {
       html += `<div class="opt-ex"><div class="opt-lab">${OPTION_CARD.example}</div>${body}</div>`
     }
     let facts = ''
-    for (const kind of ['result', 'pros', 'cons', 'tradeoff']) {
-      const c = cell(kind)
+    const factCols = cols.map((kind, i) => [kind, i]).filter(([kind]) => kind === 'extra' || kind in OPTION_CARD.facts)
+    for (const [kind, i] of factCols) {
+      const c = row[i]
       if (!c || !c.text.trim()) continue
-      const [label, cls] = OPTION_CARD.facts[kind]
+      const [label, cls] = kind === 'extra' ? [parser.parseInline(token.header[i].tokens), 'x'] : OPTION_CARD.facts[kind]
       facts += `<dt${cls ? ` class="${cls}"` : ''}>${label}</dt><dd>${parser.parseInline(c.tokens)}</dd>`
     }
     if (facts) html += `<dl class="opt-facts">${facts}</dl>`
@@ -715,9 +775,6 @@ const STORE_ICON_PATHS = {
   artifact:
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
 }
-// T-1047: lucide Eye / EyeOff, the same icons the GUI env pane's reveal toggle uses.
-const EYE_ICON_PATH = '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>'
-const EYE_OFF_ICON_PATH = '<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>'
 const CLOSE_ICON_PATH = '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
 const MOON_ICON_PATH = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'
 const SUN_ICON_PATH = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'
@@ -736,6 +793,49 @@ function svgIcon(pathMarkup, size = 20) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${pathMarkup}</svg>`
 }
 
+/**
+ * T-1165: what the sidebar's three identity parts show, all from data the page already has — the
+ * statusline's own sources: project = config slug, version · stage = po-state, stage done/total =
+ * `stageSegments` (the viewer's `stageOfTicketType` rule, statusline-stage-parity), ticket done/total
+ * = `versionProgressCounts`, dec · req = `waitLists`, tool version = the installed package's RELEASES.md top `##` line (`prdt --version`).
+ * An idle product (stage idle, or no version) shows 「쉬는 중」 and no card.
+ */
+export function pageIdentityOf(data) {
+  const stage = data.poState?.stage || ''
+  const version = data.currentVersion || ''
+  const project = data.project || IDENTITY.tool
+  const toolVersion = data.toolVersion || ''
+  const idle = stage === 'idle' || !version
+  if (idle) return { project, version, stage, idle, toolVersion, card: null }
+  const currentTickets = currentVersionTickets(data.tickets, version)
+  const seg = stageSegments(currentTickets).find((x) => x.stage === stage)
+  const stageDone = seg ? seg.tickets.filter((t) => t.done).length : 0
+  const stageTotal = seg ? seg.tickets.length : 0
+  const { done, total } = versionProgressCounts(currentTickets)
+  const { dec, req } = homeWaitLists(data)
+  return { project, version, stage, idle, toolVersion, card: { stage, stageDone, stageTotal, done, total, dec: dec.length, req: req.length } }
+}
+
+function sidebarIdentityHtml(id) {
+  const run = id.idle
+    ? `<span class="sid-sep">·</span> <span class="sid-st">${escapeHtml(IDENTITY.idle)}</span>`
+    : `<span class="sid-sep">·</span> <span class="sid-v">${escapeHtml(id.version)}</span> <span class="sid-st">${escapeHtml(id.stage)}</span>`
+  const idTitle = id.idle ? IDENTITY.idIdleTitle(id.project) : IDENTITY.idTitle(id.project, id.version, id.stage)
+  return `<div class="sidebar-id" title="${escapeHtml(idTitle)}"><b>${escapeHtml(id.project)}</b> ${run}</div>`
+}
+
+/** T-1180: the card opens the home store's 진행 상황 tab (`key` = that group's key, line-prefixed on a multi-line page) — a button for mouse and keyboard, like the tab link above it. */
+function sidebarCardHtml(c, key = 'progress') {
+  if (!c) return ''
+  const pct = c.total > 0 ? Math.round((c.done / c.total) * 1000) / 10 : 0
+  const stageName = IDENTITY.stage[c.stage] || c.stage
+  return `<div class="sp" role="button" tabindex="0" data-card-open="${escapeHtml(key)}" aria-label="${IDENTITY.cardLabel}"><div class="sp-top" title="${escapeHtml(IDENTITY.cardTopTitle(stageName, c.stage, c.stageDone, c.stageTotal))}"><span class="sp-stage">${escapeHtml(stageName)}</span><span>${c.stageDone}/${c.stageTotal}</span></div><div class="sp-count" title="${escapeHtml(IDENTITY.countTitle)}"><small>${IDENTITY.ticket}</small> <b>${c.done}</b><span class="sp-of">/${c.total}</span></div><div class="sp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.done}" aria-label="${IDENTITY.ticketBar(c.done, c.total)}"><i style="width:${pct}%"></i></div><div class="sp-wait"><span title="${escapeHtml(IDENTITY.decTitle)}">dec <b>${c.dec}</b></span><span>·</span><span title="${escapeHtml(IDENTITY.reqTitle)}">req <b>${c.req}</b></span></div></div>`
+}
+
+function toolVersionText(id) {
+  return id.toolVersion ? `${IDENTITY.tool} ${id.toolVersion}` : ''
+}
+
 function activityBar(activeStore) {
   const buttons = STORE_ORDER.map((key) => {
     const active = key === activeStore ? ' active' : ''
@@ -744,7 +844,8 @@ function activityBar(activeStore) {
   // T-806: the toggle sits at the rail's bottom, below every store button —
   // the rail is the one element unchanged across Home, every store tab, and
   // any item open (see the .activity-theme-toggle CSS comment).
-  return `<nav class="activity">\n${buttons}\n${themeToggleButton()}\n</nav>`
+  const tool = pageIdentity ? toolVersionText(pageIdentity) : ''
+  return `<nav class="activity">\n${buttons}\n${themeToggleButton()}\n${tool ? `<span class="rail-tool">${escapeHtml(tool)}</span>` : ''}\n</nav>`
 }
 
 /** Wraps `innerHtml` (a frame-main-col's full content, sidebar included) into one activity-bar-addressable store section. */
@@ -758,7 +859,7 @@ function storeSection(key, { active = false, innerHtml }) {
 // "v1.10" before "v1.9"). One rule, two call sites (T-709 결정 1/2): the
 // ticket sidebar's per-bucket rows and the PRD store's closed-round rows.
 function versionNumericParts(id) {
-  return (id.match(/\d+/g) || []).map(Number)
+  return (String(id ?? '').match(/\d+/g) || []).map(Number)
 }
 function compareVersionIdsDesc(a, b) {
   const pa = versionNumericParts(a)
@@ -794,6 +895,41 @@ function currentVersionTickets(tickets, currentVersion) {
 /** Home's decision group (T-792): `decision--*` wiki pages whose `version:` is the current version. One function, so the `#id` anchor table names only the rows Home draws. */
 function currentDecisionPages(pages, currentVersion) {
   return pages.filter((p) => p.rel.split('/').pop().startsWith('decision--') && p.frontmatter.version && sameVersion(String(p.frontmatter.version), currentVersion))
+}
+
+/** T-1138: the current version's `type: decision` tickets — the 질문 rows of Home's decision group. */
+function decisionTicketsOf(tickets) {
+  return tickets.filter((t) => t.frontmatter.type === 'decision')
+}
+
+/** T-1138: Home's decision group body — 질문 (decision tickets, open first) then 기록 (decision pages). No decision ticket → the pages-only table, unchanged. */
+function decisionRowsTable(tickets, pages) {
+  if (tickets.length === 0) return wikiRowsTable(pages)
+  const isOpen = (t) => t.frontmatter.status === 'open'
+  const ordered = [...sortNewestFirst(tickets.filter(isOpen), (x) => x.frontmatter.created, (x) => x.frontmatter.id || x.rel), ...sortNewestFirst(tickets.filter((t) => !isOpen(t)), (x) => x.frontmatter.created, (x) => x.frontmatter.id || x.rel)]
+  const K = HOME.decisionKind
+  let html = `<div class="table-wrap"><table><thead><tr>${HOME.decisionHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
+  for (const t of ordered) {
+    const fm = t.frontmatter
+    const id = fm.id || t.rel
+    html += `<tr class="detail-row" data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}">`
+    html += `<td><span class="pill pill-type">${escapeHtml(isOpen(t) ? K.ticketOpen : fm.status === 'dropped' ? K.ticketDropped : K.ticketDone)}</span></td>`
+    html += `<td class="id-col">${escapeHtml(id)}</td>`
+    html += `<td>${escapeHtml(fm.slug || id)}</td>`
+    html += `<td><span class="pill pill-status-${statusPillClass(fm.status)}">${escapeHtml(ticketStatusText(fm.status))}</span></td>`
+    html += `<td class="num-col">${escapeHtml(t.bucket || '—')}</td></tr>\n`
+  }
+  for (const p of pages) {
+    const fm = p.frontmatter
+    const id = p.rel.split('/').pop()
+    html += `<tr class="detail-row" data-detail-kind="wiki" data-detail-id="${escapeHtml(id)}">`
+    html += `<td><span class="pill pill-type">${escapeHtml(K.page)}</span></td>`
+    html += `<td class="id-col">${escapeHtml(id)}</td>`
+    html += `<td>${escapeHtml(fm.title || id)}</td>`
+    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(wikiFeatureStatusText(fm.status))}</span></td>`
+    html += `<td class="num-col">${escapeHtml(fm.version || '—')}</td></tr>\n`
+  }
+  return html + '</tbody></table></div>\n'
 }
 
 /** Home's artifact group — the literal bucket match home has always used (T-713 scope note in `homeSection`); shared with the anchor table (T-792). */
@@ -944,7 +1080,8 @@ function ticketStoreInner(tickets, currentVersion) {
   })
 }
 
-function ticketGroups(tickets, currentVersion) {
+function ticketGroups(tickets, currentVersion, idle = false) {
+  // T-1108: idle changes labels only — an idle product keeps backlog + every closed bucket; its retained version is a closed bucket (no `· 현재`), backlog leads and is the default.
   const currentTickets = currentVersionTickets(tickets, currentVersion)
   const backlogTickets = tickets.included.filter((t) => t.bucket === 'backlog')
   const currentBucketKey = currentTicketBucketKey(tickets, currentVersion)
@@ -955,14 +1092,21 @@ function ticketGroups(tickets, currentVersion) {
   // than the current version — T-709 결정 1), never pinned to array index 0
   // structurally. Only `backlog` (not a version at all) sits outside this
   // sort, pinned last.
-  const versionBuckets = [currentBucketKey, ...tickets.omitted.map((o) => o.bucket)].sort(compareVersionIdsDesc)
+  const versionBuckets = [...(idle && currentTickets.length === 0 ? [] : [currentBucketKey]), ...tickets.omitted.map((o) => o.bucket)].sort(compareVersionIdsDesc)
 
+  const backlogGroup = {
+    key: 'backlog',
+    label: TICKET.backlogLabel,
+    count: backlogTickets.length,
+    bodyHtml: countBadge(TICKET.backlogLabel, backlogTickets.length, TICKET.countUnit) + ticketRowsTable(backlogTickets),
+  }
   const groups = [
+    ...(idle ? [backlogGroup] : []),
     ...versionBuckets.map((bucket) => {
       if (bucket === currentBucketKey) {
         return {
           key: currentBucketKey,
-          label: `${currentVersion} · ${TICKET.currentTag}`,
+          label: idle ? currentVersion : `${currentVersion} · ${TICKET.currentTag}`,
           count: currentTickets.length,
           bodyHtml: countBadge(currentVersion, currentTickets.length, TICKET.countUnit) + ticketRowsTable(currentTickets),
         }
@@ -975,14 +1119,9 @@ function ticketGroups(tickets, currentVersion) {
         bodyHtml: countBadge(o.bucket, o.tickets.length, TICKET.countUnit) + ticketRowsTable(o.tickets),
       }
     }),
-    {
-      key: 'backlog',
-      label: TICKET.backlogLabel,
-      count: backlogTickets.length,
-      bodyHtml: countBadge(TICKET.backlogLabel, backlogTickets.length, TICKET.countUnit) + ticketRowsTable(backlogTickets),
-    },
+    ...(idle ? [] : [backlogGroup]),
   ]
-  return { groups, defaultKey: currentBucketKey }
+  return { groups, defaultKey: idle ? 'backlog' : currentBucketKey }
 }
 
 /**
@@ -1046,8 +1185,10 @@ export const PAST_TICKET_GLOBAL = '__PRDT_VIEWER_DATA__'
  * loader takes a src from that map only.
  * @returns {Array<{ bucket: string, name: string, tickets: Record<string,{path:string,body:string}>, bodies: string[] }>}
  */
-export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [], line = null, docTargets = null } = {}) {
+export function pastTicketDataFiles(tickets, { repoRootHref = DEFAULT_REPO_ROOT_HREF, viewerAbsPath = DEFAULT_VIEWER_ABS_PATH, prefix = 'viewer', discipline = [], line = null, docTargets = null, docFiles = null, docsLayout = null } = {}) {
   pageViewerAbsPath = viewerAbsPath
+  pageDocsLayout = docsLayout
+  pageDocFiles = docFiles
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   pageDocTargets = docTargets
   pageTicketIds = ticketIdsOf(pageDocTargets)
@@ -1086,7 +1227,7 @@ export function pastTicketDataContent(bucket, payload) {
 
 function ticketSection(tickets, currentVersion, views = []) {
   if (views.length > 0) {
-    const groups = lineSectioned(views, (v) => ticketGroups(v.tickets, v.currentVersion))
+    const groups = lineSectioned(views, (v) => ticketGroups(v.tickets, v.currentVersion, isIdleView(v)))
     return storeSection('ticket', { innerHtml: groupedStore({ sidebarSubLabel: TICKET.sidebarLabel, crumbLabel: TICKET.sidebarLabel, groups, noGroupUnit: TICKET.countUnit, defaultKey: groups.defaultKey }) })
   }
   return storeSection('ticket', { innerHtml: ticketStoreInner(tickets, currentVersion) })
@@ -1105,20 +1246,35 @@ export const LINE_SECTIONED_STORES = ['home', 'prd', 'ticket', 'feature', 'artif
  */
 export function lineViews(data) {
   if (!Array.isArray(data.lines) || data.lines.length === 0) return []
-  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd }
+  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes }
   return [
     home,
-    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd })),
+    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes })),
   ]
 }
 
+/** T-1108: an idle added product (no open version) — its last closed version, '' when none closed yet. */
+function lastClosedId(v) {
+  return [...v.prd.closed].map((c) => c.name.replace(/\.md$/, '')).sort(compareVersionIdsDesc)[0] || ''
+}
+
+/** T-1108: the version whose artifacts · decisions an idle product still lists — the retained po-state version, else its last closed one. */
+function idleVersion(v) {
+  return v.currentVersion || lastClosedId(v)
+}
+
+function isIdleView(v) {
+  // T-1108: idle = the product's po-state stage, not a missing version (prdt keeps the version after close).
+  return v.stage === 'idle' && Boolean(v.name)
+}
+
 function lineHead(v) {
-  return `${v.name} ${v.currentVersion}`.trim()
+  return `${v.name} ${isIdleView(v) ? lastClosedId(v) : v.currentVersion}`.trim()
 }
 
 /** `data` with tickets · PRD · version · stage scoped to one line. */
 function lineData(data, v) {
-  return { ...data, tickets: v.tickets, prd: v.prd, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
+  return { ...data, tickets: v.tickets, prd: v.prd, lanes: v.lanes, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
 }
 
 /** Flattens per-line `{groups, defaultKey}` into one group list: keys prefixed `<line>/` (home line bare), the first group of each line carrying the section head. `defaultKey` = the home line's default. */
@@ -1177,6 +1333,8 @@ function allLineTickets(data) {
 function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey, topHtml = '', alwaysButtons = false }) {
   const singleGroup = groups.length === 1 && !alwaysButtons
   const defaultIndex = defaultKey === undefined ? 0 : Math.max(0, groups.findIndex((g) => g.key === defaultKey))
+  const identity = pageIdentity
+  let cardPlaced = false
   const sidebarButtons = singleGroup
     ? `<div class="nav-item" style="color:var(--text-tertiary); font-style:italic;">${escapeHtml(noGroupLabel(groups[0].count ?? 0, noGroupUnit))}</div>`
     : groups
@@ -1195,13 +1353,19 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', d
           const head = g.head ? `<div class="ls-h"><b>${escapeHtml(g.head.label)}</b><span class="ls-st">${escapeHtml(g.head.stage || '')}</span></div>\n` : ''
           const crumbAttr = g.crumb ? ` data-crumb="${escapeHtml(g.crumb)}"` : ''
           const dim = g.dim ? ' nav-dim' : ''
-          return `${head}<button type="button" class="nav-item nav-item-clickable${dim}${active}" data-group-select="${escapeHtml(g.key)}"${crumbAttr}><span>${escapeHtml(g.label)}</span>${countHtml}</button>`
+          // T-1165: the progress card sits right under the home store's 진행 상황 item.
+          const card = g.key === 'progress' && !cardPlaced ? ((cardPlaced = true), sidebarCardHtml(identity?.card, g.key)) : ''
+          return `${head}<button type="button" class="nav-item nav-item-clickable${dim}${active}" data-group-select="${escapeHtml(g.key)}"${crumbAttr}><span>${escapeHtml(g.label)}</span>${countHtml}</button>${card}`
         })
         .join('\n')
+  // T-1165: a store without a 진행 상황 item (every store but home) puts the card under its title.
+  const tool = identity ? toolVersionText(identity) : ''
   const sidebar = `<nav class="sidebar">
-<div class="sidebar-title">productune</div>
+${identity ? sidebarIdentityHtml(identity) : '<div class="sidebar-title">productune</div>'}
 <div class="sidebar-sub">${escapeHtml(sidebarSubLabel)}</div>
+${!cardPlaced && !groups.some((g) => g.key === 'progress') ? sidebarCardHtml(identity?.card) : ''}
 ${sidebarButtons}
+${tool ? `<div class="sidebar-foot"><span class="foot-tool" title="${escapeHtml(IDENTITY.toolTitle)}">${escapeHtml(tool)}</span></div>` : ''}
 </nav>`
 
   const panes = groups
@@ -1878,7 +2042,8 @@ function featuresSection(data) {
 function prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix, line = null }) {
   // T-884: the open PRD is the reading screen (outline · folds · 「결정할 것」 box · What cards).
   // `idPrefix` keeps ids unique when the same body sits in two panes (PRD store and home).
-  const sourceDir = 'docs/prd'
+  // T-1104: the PRD's own dir — `docs/prd`, or `docs/<product>/prd` in the product layout.
+  const sourceDir = prd.current?.rel ? path.posix.dirname(prd.current.rel) : 'docs/prd'
   const inlineMd = (t) => md(t, sourceDir, repoRootHref, { discipline: true }).replace(/^<p>/, '').replace(/<\/p>\s*$/, '')
   return renderPrdReading({
     body: prd.current.body,
@@ -1907,15 +2072,34 @@ function prdStoreInner(prd, currentVersion, repoRootHref, tickets) {
   return groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups: prdGroups(prd, currentVersion, repoRootHref, tickets) })
 }
 
-function prdGroups(prd, currentVersion, repoRootHref, tickets, line = null) {
+/**
+ * A closed round's relative links were written while the section lived in PRD.md,
+ * i.e. against its `prd/` dir (`docs/prd` · `docs/<p>/prd`) — not against
+ * `prd/versions/[<line>/]` where the file sits now (T-1104 ③).
+ */
+function closedRoundBaseDir(rel) {
+  const i = rel.indexOf('/versions/')
+  return i === -1 ? path.dirname(rel) : rel.slice(0, i)
+}
+
+/** T-1108: the approved idle-product body — a head line and one detail line, no open version / PRD section to show. */
+function idleNotice(head, detail) {
+  // Inline style, not TEMPLATE_CSS: a single-product page stays byte-identical (the feature store's `.fd-empty` rule is scoped to it).
+  return `<div class="fd-empty" style="margin:0 0 var(--space-16);font-size:12.5px;line-height:1.65;color:var(--text-secondary);background:var(--bg-surface-on);padding:var(--space-8) var(--space-12);border-radius:var(--radius-4)"><b>${escapeHtml(head)}</b> <span>${escapeHtml(detail)}</span></div>`
+}
+
+function prdGroups(prd, currentVersion, repoRootHref, tickets, line = null, name = '', idle = false) {
   const closedRounds = [...prd.closed].sort((a, b) =>
     compareVersionIdsDesc(a.name.replace(/\.md$/, ''), b.name.replace(/\.md$/, '')),
   )
+  const openGroup = idle
+    ? { key: 'open', label: IDLE.prdSideLabel, bodyHtml: idleNotice(IDLE.prdHead(name), IDLE.prdDetail(closedRounds[0]?.name.replace(/\.md$/, ''))) }
+    : { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix: line ? `prd-${line}` : 'prd', line }) }
   const groups = [
-    { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref, { tickets, currentVersion, idPrefix: line ? `prd-${line}` : 'prd', line }) },
+    openGroup,
     ...closedRounds.map((c) => {
       const id = c.name.replace(/\.md$/, '')
-      return { key: id, label: id, bodyHtml: `<div class="v-body">${md(c.body, path.dirname(c.rel), repoRootHref, { discipline: true })}</div>` }
+      return { key: id, label: id, bodyHtml: `<div class="v-body">${md(c.body, closedRoundBaseDir(c.rel), repoRootHref, { discipline: true })}</div>` }
     }),
   ]
   return groups
@@ -1923,7 +2107,7 @@ function prdGroups(prd, currentVersion, repoRootHref, tickets, line = null) {
 
 function prdSection(prd, currentVersion, repoRootHref, tickets, views = []) {
   if (views.length > 0) {
-    const groups = lineSectioned(views, (v) => ({ groups: prdGroups(v.prd, v.currentVersion, repoRootHref, v.tickets, v.line) }))
+    const groups = lineSectioned(views, (v) => ({ groups: prdGroups(v.prd, v.currentVersion, repoRootHref, v.tickets, v.line, v.name, isIdleView(v)) }))
     return storeSection('prd', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups }) })
   }
   return storeSection('prd', { innerHtml: prdStoreInner(prd, currentVersion, repoRootHref, tickets) })
@@ -2049,7 +2233,8 @@ export function buildAnchors(data) {
     put(file.replace(/\.md$/, ''), entry)
     put(p.rel, entry)
   }
-  put('docs/prd/PRD.md', { s: 'home', g: 'prd' })
+  // T-1104: keyed by the real path (To-Be in the product layout) = the CLI's viewer_anchor.
+  put(data.prd?.current?.rel || 'docs/prd/PRD.md', { s: 'home', g: 'prd' })
   put('PRD', { s: 'home', g: 'prd' })
   for (const e of currentArtifactEntries(data.artifacts, data.currentVersion)) {
     const f = e.fields
@@ -2183,6 +2368,11 @@ function envOfView(data, v) {
   return l ? l.env : null
 }
 
+/** T-1191: what a file card's open links need besides the file — project root, line, VS Code found. */
+function envWhere(data, line) {
+  return data.projectRoot ? { root: data.projectRoot, line: line || null, vscode: !!(data.editors && data.editors.vscode) } : null
+}
+
 function envPill(set) {
   return `<span class="est ${set ? 'on' : 'off'}">${set ? ENV.set : ENV.unset}</span>`
 }
@@ -2191,44 +2381,49 @@ function envSetCount(f) {
   return f.keys.filter((k) => k.set).length
 }
 
-function envFileBody(f, dir) {
+/** T-1191: a file card's open controls. The prdt link carries the project root, the line and the
+ *  file NAME only — the URL handler (packages/core/scripts/prdt_open_url.py) rebuilds the path from
+ *  that project's own config, so a link can name nothing but an env file in a code folder. */
+function envActions(f, where) {
+  if (!where || !where.root || !where.absDir) return ''
+  const q = [`root=${encodeURIComponent(where.root)}`, ...(where.line ? [`line=${encodeURIComponent(where.line)}`] : []), `file=${encodeURIComponent(f.name)}`].join('&')
+  const abs = `${where.absDir}/${f.name}`
+  const vscode = where.vscode ? `<a class="env-act" href="${escapeHtml(`vscode://file${abs.split('/').map(encodeURIComponent).join('/')}`)}">${ENV.openVsCode}</a>` : ''
+  return `<div class="env-acts"><a class="env-act" href="${escapeHtml(`prdt://open-env?${q}`)}">${ENV.openEditor}</a>${vscode}` +
+    `<button type="button" class="env-act" data-env-copy="${escapeHtml(abs)}" data-label-done="${ENV.copied}">${ENV.copyPath}</button></div>`
+}
+
+function envFileBody(f, dir, where) {
   const set = envSetCount(f)
   // A sample file counts no set / empty (every key reads empty by design): names only.
-  const rows = f.keys.map((k) => `<div class="erow"><code>${escapeHtml(k.name)}</code>${f.sample ? '' : envPill(k.set)}</div>`).join('')
-  const where = f.sample ? ENV.sampleKeys(f.keys.length) : dir || ''
+  const tags = (k) => (k.codeWins ? `<span class="tagw">${ENV.codeWins}</span>` : '') + (k.plain ? `<span class="tagw">${ENV.plainValue}</span>` : '')
+  const rows = f.keys.map((k) => `<div class="erow">${tags(k) ? `<span><code>${escapeHtml(k.name)}</code>${tags(k)}</span>` : `<code>${escapeHtml(k.name)}</code>`}${f.sample ? '' : envPill(k.set)}</div>`).join('')
+  const sampleWhere = f.sample ? ENV.sampleKeys(f.keys.length) : dir || ''
   const counts = f.sample ? '' : `<span class="env-c">${envPill(true)} ${set} ${envPill(false)} ${f.keys.length - set}</span>`
-  // T-1047: the key list is collapsed until the eye button reveals it (state per file card).
-  const eye = `<button type="button" class="env-eye" data-env-eye aria-expanded="false" aria-label="${ENV.reveal}" title="${ENV.reveal}" data-label-show="${ENV.reveal}" data-label-hide="${ENV.mask}">` +
-    `<span class="eye-on">${svgIcon(EYE_ICON_PATH, 14)}</span><span class="eye-off">${svgIcon(EYE_OFF_ICON_PATH, 14)}</span></button>`
-  return `<div class="dash-card env-card"><div class="env-h"><b>${escapeHtml(f.name)}</b><span class="env-dir">${escapeHtml(where)}</span>` +
-    `${counts}${eye}</div>` +
-    `<p class="env-note">${f.sample ? ENV.sampleNote : ENV.note}</p><div class="erows" hidden>${rows}</div></div>`
+  // T-1191 (T-1047 eye toggle removed): key names are shown by default — the page holds no value to hide.
+  return `<div class="dash-card env-card"><div class="env-h"><b>${escapeHtml(f.name)}</b><span class="env-dir">${escapeHtml(sampleWhere)}</span>` +
+    `${counts}</div>` +
+    `<p class="env-note">${f.sample ? ENV.sampleNote : ENV.note}</p>${envActions(f, where)}<div class="erows">${rows}</div></div>`
 }
 
 /** One current-version sidebar group per view: env = the last item (after 결정), its count = env file count (samples included). */
-function envGroup(env, emptyHead) {
+function envGroup(env, emptyHead, machine, where) {
+  const machineHtml = machineEnvBody(machine)
   if (!env || env.files.length === 0) {
     const body = `<div class="env-nofile"><b>${escapeHtml(emptyHead)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
-    return { key: 'env', label: STORE_LABEL.env, count: 0, bodyHtml: body }
+    return { key: 'env', label: STORE_LABEL.env, count: 0, bodyHtml: body + machineHtml }
   }
-  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir)).join('\n') }
+  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir, where && { ...where, absDir: env.absDir })).join('\n') + machineHtml }
 }
 
-/** Home's env block: per real env file (samples only when there is no real one) 설정됨 n · 비어 있음 m, the empty keys named, a link to the env item of the same version; no env file → one line. */
-function homeEnvBlock(env, prefix, noneText) {
-  const head = `<div class="cp-h">${STORE_LABEL.env}</div>`
-  const all = env ? env.files : []
-  const real = all.filter((f) => !f.sample)
-  const shown = real.length > 0 ? real : all
-  if (shown.length === 0) return `<div class="cp-block env-blk">${head}<p class="env-none">${noneText}</p></div>\n`
-  const rows = shown.map((f) => {
-    const set = envSetCount(f)
-    const empty = f.keys.filter((k) => !k.set)
-    const emptyHtml = empty.length === 0 ? '' : `<p class="env-empty"><span>${ENV.unset}</span>: ${empty.map((k) => `<code>${escapeHtml(k.name)}</code>`).join(' · ')}</p>`
-    return `<div class="env-file"><code>${escapeHtml(f.name)}</code><span class="env-c">${envPill(true)} ${set} · ${envPill(false)} ${f.keys.length - set}</span>` +
-      `<button type="button" class="env-go" data-open-store="home" data-open-group="${escapeHtml(prefix)}env">${escapeHtml(ENV.go)}</button></div>${emptyHtml}`
-  }).join('')
-  return `<div class="cp-block env-blk">${head}${rows}</div>\n`
+/** T-1109: the machine-scope section (~/.prdt/env/.env) — names, 설정됨 / 비어 있음, 제품 코드 값이 우선; none stored → the empty card. Absent `machine` (a single-file render) → nothing. */
+function machineEnvBody(machine) {
+  if (!machine) return ''
+  const head = `<div class="env-scope">${ENV.machineScope}</div>`
+  if (machine.keys.length === 0) {
+    return `${head}<div class="env-nofile"><b>${ENV.machineEmptyHead}</b><span>${escapeHtml(ENV.machineEmptyDetail)}</span></div>`
+  }
+  return head + envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir)
 }
 
 // ---------- home: the in-progress version's workspace (T-666 slice 2a) ----------
@@ -2301,6 +2496,18 @@ function ticketButtonAttrs(id) {
   return `data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}" role="button" tabindex="0"`
 }
 
+/**
+ * T-1180: a scope row's name — the heading label up to its colon (a colon between digits is a clock time, never a
+ * split: 「05:20 …」), minus the trailing ticket refs `(T-…)` the PRD appends. Never shortened further; the full heading stays the tooltip.
+ */
+export function scopeItemName(label) {
+  const plain = String(label).replace(/`/g, '')
+  const m = /(?<!\d)[:：]|[:：](?!\d)/.exec(plain)
+  const head = (m ? plain.slice(0, m.index) : plain).trim()
+  const name = head.replace(/(?:\s*\(T-[^)]*\))+\s*$/, '').trim()
+  return name || head || plain.trim()
+}
+
 /** 스코프: one row per PRD item of the open section (label up to its colon; the full heading is the tooltip), then the 「PRD 항목 밖 티켓」 block (work tickets only; T-1046). */
 function homeScope(data, currentTickets) {
   const openItems = data.prd.openItems || []
@@ -2328,7 +2535,6 @@ function homeScope(data, currentTickets) {
   }
   const row = (label, title, tickets, extra = '', fix = 0) => {
     const sorted = [...tickets.filter((t) => t.frontmatter.status === 'done'), ...tickets.filter((t) => t.frontmatter.status !== 'done')]
-      .map((t) => t)
       .sort((x, y) => (x.frontmatter.status === 'done' ? 0 : 1) - (y.frontmatter.status === 'done' ? 0 : 1) || compareTicketIds(x.frontmatter.id, y.frontmatter.id))
     const done = tickets.filter((t) => t.frontmatter.status === 'done').length
     const sq = sorted
@@ -2337,25 +2543,52 @@ function homeScope(data, currentTickets) {
     const fixTag = fix > 0 ? `<span class="sc-fix" title="${escapeHtml(HOME.scopeFixTitle)}">${escapeHtml(HOME.scopeFixTag(fix))}</span>` : ''
     return `<div class="sc-row${extra}"><span class="sc-lab" title="${escapeHtml(title)}">${escapeHtml(label)}</span><span class="sc-sq">${sq}${fixTag}</span><span class="mono sc-n">${done}/${tickets.length}</span></div>`
   }
-  const rows = openItems.map((i) => {
-    const plain = i.label.replace(/`/g, '')
-    return row(plain.split(/[:：]/)[0].trim(), plain, byItem.get(i.key), '', fixCount.get(i.key) || 0)
-  })
+  const items = openItems.map((i) => ({ key: i.key, tickets: byItem.get(i.key), html: row(scopeItemName(i.label), i.label.replace(/`/g, ''), byItem.get(i.key), '', fixCount.get(i.key) || 0) }))
+  // T-1180: under their 합격선 lane (the one lane computation: prdt_lanes) — an item goes to the lane holding most of its tickets, ties to the earlier lane.
+  // T-1184: prdt_lanes now returns the 자투리 lane too (last), so it counts like any lane; an item no lane reaches stays lane-less.
+  const lanes = Array.isArray(data.lanes) ? data.lanes : []
+  const groups = lanes.map((l) => ({ head: HOME.scopeLane(l.name), count: l.linked ? `${l.done}/${l.total}` : '', rows: [] }))
+  const loose = []
+  for (const it of items) {
+    const ids = it.tickets.map((t) => t.frontmatter.id)
+    let best = -1
+    let bestN = 0
+    lanes.forEach((l, i) => {
+      const n = ids.filter((id) => l.tickets.includes(id)).length
+      if (n > bestN) { best = i; bestN = n }
+    })
+    if (best >= 0) groups[best].rows.push(it.html)
+    else loose.push(it.html)
+  }
+  if (loose.length > 0 && groups.length > 0) groups.push({ head: HOME.scopeNoLane, count: '', rows: loose })
+  const grouped = groups.length > 0 ? groups.filter((g) => g.rows.length > 0 || g.head !== HOME.scopeNoLane) : []
+  const bodyRows = grouped.length > 0
+    ? grouped.map((g) => `<div class="sc-grp">${escapeHtml(g.head)}${g.count ? ` <span class="mono sc-n">${escapeHtml(g.count)}</span>` : ''}</div>${g.rows.join('')}`).join('')
+    : items.map((it) => it.html).join('')
   // T-1046: its own block under a divider; the row never disappears (0 shows 「없음」).
   const listKey = `${data.listPrefix || ''}${currentTicketBucketKey(data.tickets, data.currentVersion)}`
   const link = (text, store, key) => `<button type="button" class="sc-why-link" data-open-store="${store}" data-open-group="${escapeHtml(key)}">${escapeHtml(text)}</button>`
   const outRow = outOfScope.length > 0
     ? row(PROGRESS_OUT_OF_SCOPE_LABEL, PROGRESS_OUT_OF_SCOPE_LABEL, outOfScope, ' sc-out')
     : `<div class="sc-row sc-out"><span class="sc-lab">${escapeHtml(PROGRESS_OUT_OF_SCOPE_LABEL)}</span><span class="sc-sq"><span class="cp-empty">${escapeHtml(HOME.scopeOutEmpty)}</span></span><span class="mono sc-n">0</span></div>`
-  const defHtml = outOfScope.length > 0 ? `<p class="sc-why">${escapeHtml(HOME.scopeOutDef)}${malformed > 0 ? ` ${link(HOME.scopeMalformed(malformed), 'ticket', listKey)}` : ''}</p>` : ''
-  const noteHtml = decisions > 0 ? `<p class="sc-why">${escapeHtml(HOME.scopeDecisionNote(decisions))} ${link(HOME.scopeDecisionLink, 'home', `${data.listPrefix || ''}decision`)}</p>` : ''
-  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div>${rows.join('')}<div class="sc-outside">${outRow}${defHtml}${noteHtml}</div></div>`
+  // T-1180: one line — why outside · decisions left out · links.
+  const whyParts = []
+  if (outOfScope.length > 0) whyParts.push(`${escapeHtml(HOME.scopeOutDef)}${malformed > 0 ? ` ${link(HOME.scopeMalformed(malformed), 'ticket', listKey)}` : ''}`)
+  if (decisions > 0) whyParts.push(`${escapeHtml(HOME.scopeDecisionNote(decisions))} · ${link(HOME.scopeDecisionLink, 'home', `${data.listPrefix || ''}decision`)}`)
+  const whyHtml = whyParts.length > 0 ? `<p class="sc-why">${whyParts.join(' · ')}</p>` : ''
+  const ruleHtml = grouped.length > 0 ? `<p class="sc-why">${escapeHtml(HOME.scopeLaneRule)}</p>` : ''
+  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div><div class="sc-rows">${bodyRows}<div class="sc-sep"></div>${outRow}</div>${ruleHtml}${whyHtml}</div>`
+}
+
+/** dec · req wait lists of `data.tickets`; the sidebar card (T-1165) and Home's wait block share this one call. */
+function homeWaitLists(data) {
+  // T-961: a blocking dep may be an open ticket in another line's folder — blockers are read across every line.
+  const all = (data.allLineTickets || allLineTickets(data)).flatMap(allTicketRows)
+  return waitLists(allTicketRows(data.tickets), all)
 }
 
 function homeWaits(data) {
-  // T-961: a blocking dep may be an open ticket in another line's folder — blockers are read across every line.
-  const all = (data.allLineTickets || [data.tickets]).flatMap(allTicketRows)
-  const { dec, req } = waitLists(allTicketRows(data.tickets), all)
+  const { dec, req } = homeWaitLists(data)
   const block = (label, list, empty) =>
     `<div><div class="cp-h">${label} <span class="mono cp-n">${list.length}</span></div>` +
     (list.length === 0
@@ -2495,7 +2728,7 @@ function dependencyDiagram(graph, layout, DG_ID = 'home-dg') {
 
 function homeDependency(data, currentTickets) {
   const dgId = data.dgId || DG_ID
-  const graph = buildHomeGraph({ tickets: currentTickets, gatePath: data.prd.gatePath || '' })
+  const graph = buildHomeGraph({ tickets: currentTickets, gatePath: data.prd.gatePathAlt ? [data.prd.gatePath, data.prd.gatePathAlt] : data.prd.gatePath || '' })
   const drawable = graph.connected && graph.spine.size > 0
   const stage = data.poState?.stage
   const sub = !graph.connected && stage === 'define' && graph.nodes.length > 0 ? ` <span class="cp-sub">${HOME.beforeBuild}</span>` : ''
@@ -2506,13 +2739,13 @@ function homeDependency(data, currentTickets) {
   return `<div class="cp-block">${head}${notice}${dependencyDiagram(graph, layoutHomeGraph(graph), dgId)}</div>`
 }
 
-function homeProgressBody(data, envHtml = '') {
+function homeProgressBody(data) {
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
 ${homeStageBar(currentTickets, data.poState?.stage || '?')}
 <div class="sc sc-grid">${homeWaits(data)}${homeScope(data, currentTickets)}</div>
-${envHtml}${homeDependency(data, currentTickets)}
+${homeDependency(data, currentTickets)}
 </div>`
 }
 
@@ -2520,28 +2753,40 @@ ${envHtml}${homeDependency(data, currentTickets)}
 function homeLineGroups(data, v, views, repoRootHref) {
   const ld = lineData(data, v)
   const currentTickets = currentVersionTickets(v.tickets, v.currentVersion)
-  const cur = `${v.prefix}${v.currentVersion}`
+  const idle = isIdleView(v)
+  const cur = `${v.prefix}${idle ? idleVersion(v) : v.currentVersion}`
   const currentArtifacts = lineArtifactEntries(data.artifacts, v, views).filter((e) => e.fields.bucket === cur)
   const currentDecisions = lineDecisionPages(data.wiki, v)
+  const decisionTickets = decisionTicketsOf(idle ? homeTickets_(v) : currentTickets)
+  const idleHomeHtml = idle ? idleNotice(IDLE.homeHead(v.name), IDLE.homeDetail(v.tickets.included.filter((t) => t.bucket === 'backlog').length)) : ''
+  // T-1108: an idle product has no open version, so its ticket pane lists every ticket it has (backlog + closed rounds).
+  const homeTickets = idle ? [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))] : currentTickets
   const groups = [
-    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(ld, homeEnvBlock(envOfView(data, v), v.prefix, ENV.homeNoneLine))}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: idle ? idleHomeHtml : `<div class="dash-grid">${homeProgressBody(ld)}</div>` },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
-    { key: 'prd', label: STORE_LABEL.prd, count: v.currentVersion, bodyHtml: prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
-    { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
-    { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
-    envGroup(envOfView(data, v), ENV.emptyHead),
+    { key: 'prd', label: STORE_LABEL.prd, count: idle ? lastClosedId(v) : v.currentVersion, bodyHtml: idle ? idleNotice(IDLE.prdHead(v.name), IDLE.prdDetail()) : prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
+    { key: 'ticket', label: STORE_LABEL.ticket, count: homeTickets.length, bodyHtml: ticketRowsTable(homeTickets) },
+    { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
+    envGroup(envOfView(data, v), ENV.emptyHead, v.line ? null : data.machineEnv, envWhere(data, v.line)),
   ]
   return { groups, defaultKey: 'progress' }
 }
 
+/** T-1138: an idle product's decision tickets = those of the version its decision pages use (`idleVersion`). */
+function homeTickets_(v) {
+  const version = idleVersion(v)
+  return [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))].filter((t) => t.bucket !== 'backlog' && sameVersion(t.bucket, version))
+}
+
 /** A decision page's `version:` is `<line>/<v>` for an added line, bare for the home line (release-lines.md one-line rule). */
 function lineDecisionPages(pages, v) {
+  const version = isIdleView(v) ? idleVersion(v) : v.currentVersion
   return pages.filter((p) => {
     if (!p.rel.split('/').pop().startsWith('decision--') || !p.frontmatter.version) return false
     const raw = String(p.frontmatter.version)
     const slash = raw.indexOf('/')
     const line = slash === -1 ? null : raw.slice(0, slash)
-    return line === v.line && sameVersion(slash === -1 ? raw : raw.slice(slash + 1), v.currentVersion)
+    return line === v.line && sameVersion(slash === -1 ? raw : raw.slice(slash + 1), version)
   })
 }
 
@@ -2557,13 +2802,14 @@ function homeSection(data, repoRootHref) {
   // po-state's version string is a latent bug class out of this scope.
   const currentArtifacts = currentArtifactEntries(data.artifacts, data.currentVersion)
   const currentDecisions = currentDecisionPages(data.wiki, data.currentVersion)
+  const decisionTickets = decisionTicketsOf(currentTickets)
   const groups = [
-    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data, homeEnvBlock(data.env, '', ENV.homeNone))}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
-    { key: 'decision', label: HOME.decision, count: currentDecisions.length, bodyHtml: wikiRowsTable(currentDecisions) },
-    envGroup(data.env, ENV.homeNone),
+    { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
+    envGroup(data.env, ENV.homeNone, data.machineEnv, envWhere(data, null)),
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
   const heading = `${STORE_LABEL.home} · ${data.currentVersion}`
@@ -2606,6 +2852,29 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   padding: var(--space-16) var(--space-12); overflow-y: auto;
 }
 .sidebar-title { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-quaternary); margin: 0 0 var(--space-4); }
+/* T-1165 (mock viewer-identity-progress.html, existing tokens only): identity line top-left, progress card, tool version bottom-left. */
+.sidebar { display: flex; flex-direction: column; padding-bottom: 0; }
+.sidebar > * { flex-shrink: 0; }
+.sidebar-id { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-6); margin: 0 0 var(--space-4); }
+.sidebar-id b { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
+.sidebar-id .sid-sep, .sidebar-id .sid-v { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.sidebar-id .sid-st { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--text-primary); }
+.sidebar-foot { display: flex; align-items: flex-end; position: sticky; bottom: 0; margin: auto calc(-1 * var(--space-12)) 0; padding: var(--space-8) var(--space-12) var(--space-16); background: var(--bg-surface-on); border-top: 1px solid var(--border-item); }
+.foot-tool { height: 28px; display: flex; align-items: center; font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.rail-tool { display: none; }
+.sp { cursor: pointer; display: grid; gap: var(--space-6); margin: var(--space-8) 0 var(--space-12); padding: var(--space-10) var(--space-12); border: 1px solid var(--border-item); border-radius: var(--radius-8); background: var(--bg-surface-base); }
+.sp:hover { border-color: var(--border-hover); }
+.sp:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.sp-top { display: flex; align-items: baseline; gap: var(--space-8); font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.sp-stage { font-family: var(--font-family); font-size: 10.5px; font-weight: 600; color: var(--text-info); background: var(--health-info-subtle); border: 1px solid var(--health-info); border-radius: var(--radius-4); padding: 1px 6px; }
+.sp-count { display: flex; align-items: baseline; gap: var(--space-6); font-family: var(--font-mono); color: var(--text-primary); }
+.sp-count small { font-family: var(--font-family); font-size: 11px; color: var(--text-secondary); }
+.sp-count b { font-size: 17px; font-weight: 600; }
+.sp-of { font-size: 12px; color: var(--text-tertiary); }
+.sp-bar { height: 5px; border-radius: var(--radius-100); background: var(--bg-interaction-neutral); overflow: hidden; }
+.sp-bar i { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-100); }
+.sp-wait { display: flex; gap: var(--space-6); font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.sp-wait b { font-weight: 600; color: var(--text-secondary); }
 .sidebar-sub { font-size: 15px; font-weight: 600; color: var(--text-primary); margin: 0 0 var(--space-16); }
 .nav-item {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-8);
@@ -2729,9 +2998,13 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .stage-sq.sq-done { background: var(--accent); border-color: var(--accent); }
 .sc { border-top: 1px solid var(--border-item); margin: var(--space-16) 0 0; padding: var(--space-16) 0 0; }
 .sc-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--space-24); }
-.sc-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: center; gap: var(--space-10); min-height: 20px; }
-.sc-lab { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sc-outside { margin-top: var(--space-12); padding-top: var(--space-10); border-top: 1px dashed var(--border-item); }
+.sc-rows { display: grid; grid-template-columns: fit-content(calc(100% - 140px)) minmax(72px, 1fr) auto; column-gap: var(--space-10); align-items: center; }
+.sc-row { display: contents; }
+.sc-lab { font-size: 12px; color: var(--text-secondary); padding: 3px 0; line-height: 1.45; word-break: keep-all; overflow-wrap: anywhere; }
+.sc-sq, .sc-n { padding: 3px 0; }
+.sc-grp { grid-column: 1 / -1; font-size: 11px; font-weight: 600; color: var(--text-tertiary); word-break: keep-all; overflow-wrap: break-word; margin: var(--space-10) 0 1px; }
+.sc-grp:first-child { margin-top: 0; }
+.sc-sep { grid-column: 1 / -1; border-top: 1px dashed var(--border-item); margin: var(--space-10) 0 var(--space-4); }
 .sc-out .sc-lab { color: var(--text-primary); font-weight: 600; }
 .sc-sq { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-width: 0; }
 .sc-n { font-size: 10.5px; color: var(--text-tertiary); }
@@ -2743,7 +3016,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .cp-sub { font-weight: 400; color: var(--text-tertiary); font-size: 11.5px; }
 .cp-n { font-size: 10.5px; color: var(--text-quaternary); font-weight: 400; }
 .sc-fix { font-size: 10.5px; color: var(--text-tertiary); border: 1px dashed var(--border-item); border-radius: 8px; padding: 0 6px; margin-left: var(--space-4); }
-.sc-why { font-size: 11.5px; color: var(--text-tertiary); margin: var(--space-8) 0 0; }
+.sc-why { font-size: 11.5px; color: var(--text-tertiary); word-break: keep-all; overflow-wrap: break-word; margin: var(--space-8) 0 0; }
 .sc-why-link { font: inherit; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
 .cp-empty { font-size: 11.5px; color: var(--text-tertiary); margin: var(--space-4) 0 0; }
 .cp-wlist { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
@@ -2887,10 +3160,11 @@ table.v-omitted th, table.v-artifacts th { color: var(--text-secondary); border-
 .opt-lab { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; color: var(--text-tertiary); margin-bottom: var(--space-4); }
 pre.opt-sk { margin: 0; padding: var(--space-10) var(--space-12); background: var(--bg-base); border-radius: var(--radius-4); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-primary); }
 .opt-ex-text { font-size: 13px; }
-.opt-facts { display: grid; grid-template-columns: 40px 1fr; gap: var(--space-6) var(--space-12); margin: var(--space-12) 0 0; font-size: 13px; }
+.opt-facts { display: grid; grid-template-columns: minmax(40px, max-content) 1fr; gap: var(--space-6) var(--space-12); margin: var(--space-12) 0 0; font-size: 13px; }
 .opt-facts dt { font-weight: 700; color: var(--text-tertiary); font-size: 12px; padding-top: 1px; }
 .opt-facts dt.p { color: var(--status-done); }
 .opt-facts dt.c { color: var(--status-review); }
+.opt-facts dt.x { max-width: 10em; overflow-wrap: anywhere; }
 .opt-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .opt-why { margin-top: var(--space-10); padding-top: var(--space-8); border-top: 1px dashed var(--border-inline); font-size: 12.5px; color: var(--text-secondary); }
 .opt-why b { color: var(--accent); margin-right: var(--space-6); }
@@ -3043,7 +3317,7 @@ details.v-fold[open] summary { color: var(--text-primary); }
 :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill:first-child, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note + h3.pill { margin-top: var(--space-16); }
 :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note { font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 var(--space-4); }
 @media (prefers-reduced-motion: reduce) { :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row td { transition: none; } }
-/* T-958: env screen + Home env block (approved screen set docs/artifacts/v1.13/define-screen-set.html #screen-env · home env-blk) */
+/* T-958: env screen (approved screen set docs/artifacts/v1.13/define-screen-set.html #screen-env; the Home env block left 진행 상황 in T-1191 / T-1179 C) */
 .nav-item.nav-dim:not(.active) span:first-child { color: var(--text-tertiary); }
 .env-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 4px; }
 .env-h b { font-family: var(--font-mono); font-size: 13px; }
@@ -3058,24 +3332,13 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .est.off { color: var(--text-tertiary); border-style: dashed; }
 .env-nofile { display: flex; flex-direction: column; gap: 4px; padding: 18px; border: 1px dashed var(--border-inline); border-radius: 10px; color: var(--text-tertiary); font-size: 12.5px; }
 .env-nofile b { color: var(--text-primary); font-size: 13px; }
-.env-file { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; }
-.env-file + .env-file, .env-empty + .env-file { margin-top: 8px; }
-.env-file code { font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); }
-.env-file .env-c { margin-left: 0; }
-.env-eye { background: none; border: 1px solid transparent; padding: 4px; min-width: 24px; min-height: 24px; justify-content: center; border-radius: 6px; cursor: pointer; color: var(--text-tertiary); display: inline-flex; align-items: center; margin-left: auto; }
-.env-c + .env-eye { margin-left: 0; }
-.env-eye:hover { background: var(--bg-state-hover); border-color: var(--border-hover); color: var(--text-primary); }
-.env-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.env-eye .eye-off, .env-eye[aria-expanded="true"] .eye-on { display: none; }
-.env-eye[aria-expanded="true"] .eye-off { display: inline-flex; }
-.env-eye .eye-on { display: inline-flex; }
-.erows[hidden] { display: none; }
+.env-scope { margin: 18px 0 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.tagw { font-family: var(--font-family); font-size: 10.5px; color: var(--text-tertiary); border: 1px solid var(--border-inline); border-radius: 100px; padding: 0 7px; margin-left: 8px; white-space: nowrap; }
 .env-card + .env-card { margin-top: 12px; }
-.env-go { margin-left: auto; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; background: none; border: none; padding: 0; }
-.env-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
-.env-empty { margin: 6px 0 0; font-size: 12px; color: var(--text-tertiary); line-height: 1.8; }
-.env-empty code { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); background: var(--bg-surface-on); border-radius: 4px; padding: 0 5px; }
-.env-none { margin: 0; font-size: 12px; color: var(--text-tertiary); }
+/* T-1191: a file card's open controls — link-styled, the same accent link look as .env-go had */
+.env-acts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 10px; }
+.env-act { color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; background: none; border: none; padding: 0; }
+.env-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 /* T-886: discipline screens (approved screen set docs/artifacts/v1.12/define-screen-set.html 「규율」) */
 a.dl { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 a.dl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
@@ -3110,6 +3373,28 @@ a.dl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; bord
 .store-section[data-store="disc"] .sidebar .nav-item:not(.nav-item-clickable) { cursor: default; }
 ${PRD_READING_CSS}
 ${DISCIPLINE_LOAD_CSS}
+/* phone width: the viewer has no phone layout today — minimum stacking so the three new parts fit (mock ① 폭 · 폰 390) */
+@media (max-width: 700px) {
+  .app-shell { flex-direction: column; overflow: auto; }
+  .store-section.active { flex-direction: column; flex: 0 0 auto; }
+  .activity { flex-direction: row; flex-wrap: wrap; width: auto; flex: 0 0 auto; padding: var(--space-6) var(--space-8); gap: var(--space-4); border-right: none; border-bottom: 1px solid var(--border-item); align-items: center; }
+  .activity-theme-toggle { margin: 0; }
+  .rail-tool { display: flex; align-items: center; flex: 0 0 auto; padding-left: var(--space-6); font-family: var(--font-mono); font-size: 10.5px; color: var(--text-tertiary); white-space: nowrap; }
+  .sidebar { width: auto; flex: 0 0 auto; max-height: 360px; border-right: none; border-bottom: 1px solid var(--border-item); }
+  .sidebar-foot { display: none; }
+  .frame-main-col { flex: 0 0 auto; min-height: 420px; overflow: visible; width: 100%; }
+  .main-inner { min-width: 0; }
+  .table-wrap { overflow-x: auto; }
+  .frame-body { padding: var(--space-16) var(--space-12); overflow: visible; }
+  .dash-card { padding: var(--space-12); }
+  .sc-grid { grid-template-columns: 1fr; }
+  .sc-waits { border-right: none; padding-right: 0; }
+  .sb { flex-wrap: wrap; row-gap: var(--space-8); }
+  .sp { grid-template-columns: auto 1fr; align-items: center; column-gap: var(--space-12); margin: var(--space-6) 0 var(--space-8); }
+  .sp-count, .sp-top { grid-column: 1; }
+  .sp-wait, .sp-bar { grid-column: 2; }
+  .sp-wait { justify-content: flex-end; }
+}
 `
 
 /**
@@ -3159,8 +3444,10 @@ const INTERACTION_SCRIPT = `
   function own(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
   function pastTicketRef(fields) {
     var parts = String(fields.path || '').split('/');
-    if (parts[0] !== 'docs' || parts[1] !== 'tickets' || !own(PAST, parts[2])) return null;
-    return { key: parts[2], src: PAST[parts[2]] };
+    // T-1104: As-Is docs/tickets/<bucket>, or To-Be docs/<product or _shared>/tickets/<bucket>.
+    var i = parts[1] === 'tickets' ? 2 : parts[2] === 'tickets' ? 3 : -1;
+    if (parts[0] !== 'docs' || i < 0 || !own(PAST, parts[i])) return null;
+    return { key: parts[i], src: PAST[parts[i]] };
   }
   function pastSettled(ref) { return PAST_LOADS[ref.key] === 'done' || PAST_LOADS[ref.key] === 'failed'; }
   // The page's embedded font subset covers the page; a data file brings the
@@ -3611,6 +3898,16 @@ ${PRD_READING_SCRIPT}
       return;
     }
 
+    // T-1180: the sidebar progress card opens the home store's 진행 상황 tab.
+    var cardBtn = ev.target.closest('[data-card-open]');
+    if (cardBtn) {
+      ev.preventDefault();
+      var homeSec = selectStore('home');
+      if (homeSec) selectGroup(homeSec, cardBtn.getAttribute('data-card-open'));
+      clearHashMarks();
+      return;
+    }
+
     var groupBtn = ev.target.closest('[data-group-select]');
     if (groupBtn) {
       ev.preventDefault();
@@ -3621,19 +3918,29 @@ ${PRD_READING_SCRIPT}
       return;
     }
 
-    // T-1047: the eye button shows / hides that env file's key list (names and set / empty only).
-    var eyeBtn = ev.target.closest('[data-env-eye]');
-    if (eyeBtn) {
+    // T-1191: 경로 복사 — the env file's path (never a value) to the clipboard.
+    var copyBtn = ev.target.closest('[data-env-copy]');
+    if (copyBtn) {
       ev.preventDefault();
-      var envCard = eyeBtn.closest('.env-card');
-      var envRows = envCard ? envCard.querySelector('.erows') : null;
-      if (!envRows) return;
-      var envOpen = eyeBtn.getAttribute('aria-expanded') !== 'true';
-      eyeBtn.setAttribute('aria-expanded', envOpen ? 'true' : 'false');
-      envRows.hidden = !envOpen;
-      var envLabel = eyeBtn.getAttribute(envOpen ? 'data-label-hide' : 'data-label-show');
-      eyeBtn.setAttribute('aria-label', envLabel);
-      eyeBtn.setAttribute('title', envLabel);
+      var copyText = copyBtn.getAttribute('data-env-copy');
+      var copyDone = function () {
+        var done = copyBtn.getAttribute('data-label-done');
+        copyBtn.setAttribute('title', done);
+        copyBtn.setAttribute('aria-label', done);
+      };
+      var copyFallback = function () {
+        var ta = document.createElement('textarea');
+        ta.value = copyText;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { if (document.execCommand('copy')) copyDone(); } catch (e) {}
+        document.body.removeChild(ta);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(copyText).then(copyDone, copyFallback);
+      else copyFallback();
       return;
     }
 
@@ -3708,6 +4015,7 @@ ${PRD_READING_SCRIPT}
   document.addEventListener('click', function (ev) { onClick(ev); syncUrl(false); });
 
   document.addEventListener('keydown', function (ev) {
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('[data-card-open]')) { ev.preventDefault(); onClick(ev); syncUrl(false); return; }
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('tr.detail-row[data-detail-kind], [role="button"][data-detail-kind]')) {
       ev.preventDefault();
       if (ev.target.getAttribute('data-detail-kind') === 'disc') discOrigin = null;
@@ -3912,7 +4220,10 @@ export function renderPage({
   const discipline = data.discipline || []
   pageDisciplineIndex = buildDisciplineIndex(discipline)
   const anchors = buildAnchors(data)
+  pageDocsLayout = data.docsLayout ?? null
+  pageIdentity = pageIdentityOf(data)
   pageDocTargets = buildDocPathTargets(data, anchors)
+  pageDocFiles = buildDocFileSet(data)
   pageTicketIds = ticketIdsOf(pageDocTargets)
   const views = lineViews(data)
   const detailData = {

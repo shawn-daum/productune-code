@@ -64,6 +64,7 @@ beforeEach(() => {
   fs.mkdirSync(path.join(machineHome, 'wiki'), { recursive: true })
   proj = path.join(sandbox, 'proj')
   fs.mkdirSync(proj, { recursive: true })
+  fs.mkdirSync(path.join(proj, "docs", "prd"), { recursive: true }) // T-1104: legacy fixture (As-Is docs before init)
   execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
     cwd: proj, env: { ...process.env, PRDT_HOME: machineHome },
     encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),

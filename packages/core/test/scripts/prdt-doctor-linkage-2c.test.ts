@@ -26,6 +26,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -226,7 +227,7 @@ describe('T-674 slice 2c — edges table, `prdt index rebuild`', () => {
     // Same idiom as prdt-index-slice-wipe.test.ts's open_db guard: read the
     // source directly rather than the derived behaviour, so a future second
     // writer is caught even if no fixture happens to disagree with it yet.
-    const src = fs.readFileSync(PRDT_CLI, 'utf-8')
+    const src = prdtSource(PRDT_CLI)
     const fnStart = src.indexOf('def rebuild_edges')
     expect(fnStart).toBeGreaterThan(-1)
     const fnBody = src.slice(fnStart, src.indexOf('\n\n\n', fnStart))

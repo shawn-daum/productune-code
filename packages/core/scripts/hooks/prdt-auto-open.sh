@@ -168,6 +168,10 @@ find_proj() {
   d="${phys:-$1}"
   while [ -n "$d" ] && [ "$d" != "/" ]; do
     [ -f "$d/.prdt/po-state.json" ] && hit="$d"
+    # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary — never walk out of it
+    if [ -f "$d/.git" ] && [ "$(basename "$(dirname "$d")")" = "tracks" ]; then
+      case "${d##*/}" in T-[0-9]|T-[0-9][0-9]|T-[0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9][0-9]) hit=""; break ;; esac
+    fi
     up="$(dirname "$d")"
     [ "$up" = "$d" ] && break
     d="$up"
@@ -224,7 +228,7 @@ schedule_viewer_regen_root() {
   for d in "$hook_dir/../bin" "$hook_dir/.."; do
     [ -f "$d/prdt_safe_fs.py" ] && { safe_dir="$(cd -P -- "$d" 2>/dev/null && pwd -P)"; break; }
   done
-  python3 - "$root" "$prdt_cli" "$safe_dir" >/dev/null 2>&1 <<'PY'
+  python3 -I - "$root" "$prdt_cli" "$safe_dir" >/dev/null 2>&1 <<'PY'
 import subprocess, sys
 
 root, cli, safe_dir = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -316,7 +320,7 @@ finally:
     os.close(vfd)
 '''
 
-subprocess.Popen([sys.executable, "-c", WORKER, root, cli, safe_dir],
+subprocess.Popen([sys.executable, "-I", "-c", WORKER, root, cli, safe_dir],
                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                   start_new_session=True)
 PY
@@ -333,6 +337,15 @@ if [ "${1:-}" = "--regen" ]; then
   [ -n "${2:-}" ] && [ -d "$2" ] && schedule_viewer_regen_root "$(find_proj "$2" 2>/dev/null)"
   exit 0
 fi
+
+# T-1219: the printed `[label](file://<target>)` carries a percent-encoded path
+# (space · Hangul · `)` never raw); readers decode it back before any `-f` test
+# or `open`. Backslashes are escaped first so `%b` only ever expands our `\xHH`.
+url_decode() {
+  local s="${1//\\/\\\\}"
+  s="${s//%/\\x}"
+  printf '%b' "$s"
+}
 
 OPEN_MODE=""
 if [ "${1:-}" = "--open" ]; then
@@ -407,7 +420,7 @@ if [ -z "$OPEN_MODE" ] && [ "$TOOL_NAME" = "Bash" ]; then
       STDOUT="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_response.stdout // ""' 2>/dev/null)"
       printf '%s\n' "$STDOUT" | while IFS= read -r LINE; do
         FP="$(printf '%s' "$LINE" | sed -n 's/^\[[^]]*\](file:\/\/\(.*\))$/\1/p')"
-        [ -n "$FP" ] && bash "$0" --open "$FP"
+        [ -n "$FP" ] && bash "$0" --open "$(url_decode "$FP")"
       done
     fi
   fi
@@ -486,6 +499,10 @@ if [ -z "$OPEN_MODE" ]; then
     */docs/prd/PRD.md|*/docs/features/*.md|*/docs/artifacts/*.md) VIEWER_DOC="yes" ;;
     */docs/wiki/*/*) ;;
     */docs/wiki/*.md) VIEWER_DOC="yes" ;;
+    # T-1104: product-first layout — `docs/<product>/{prd,artifacts,features,wiki}`
+    # and the shared `docs/_shared/{prd,features,wiki}` (same document set).
+    */docs/*/wiki/*/*) ;;
+    */docs/*/prd/PRD.md|*/docs/*/features/*.md|*/docs/*/artifacts/*.md|*/docs/*/wiki/*.md) VIEWER_DOC="yes" ;;
   esac
 fi
 if [ -n "$VIEWER_DOC" ]; then
@@ -493,7 +510,7 @@ if [ -n "$VIEWER_DOC" ]; then
   [ -x "$PRDT_CLI" ] || PRDT_CLI="$(command -v prdt 2>/dev/null)"
   if [ -n "$PRDT_CLI" ]; then
     LINK="$(cd "$(dirname -- "$FILE_PATH")" 2>/dev/null && "$PRDT_CLI" viewer --no-open "$FILE_PATH" 2>/dev/null | head -1)"
-    JUMP="$(printf '%s' "$LINK" | sed -n 's/^\[[^]]*\](file:\/\/\(.*\))$/\1/p')"
+    JUMP="$(url_decode "$(printf '%s' "$LINK" | sed -n 's/^\[[^]]*\](file:\/\/\(.*\))$/\1/p')")"
     case "$JUMP" in
       */.prdt/scratch/viewer/at/*.html) [ -f "$JUMP" ] && { OPEN_PATH="$JUMP"; ACTION="open"; } ;;
     esac

@@ -121,7 +121,9 @@ describe.skipIf(!PYTHON3)('prdt init — meta split (T-365 / T-377)', () => {
     const tracked = git([...metaGitArgs(), 'ls-files']).split('\n')
     expect(tracked).toContain('.prdt/config.json')
     expect(tracked).toContain('.prdt/po-state.json')
-    expect(tracked).toContain('docs/wiki/inbox.md')
+    // T-1104: a fresh init scaffolds the product-first shape (docs/_shared + docs/<slug>)
+    expect(tracked).toContain('docs/_shared/wiki/inbox.md')
+    expect(tracked).not.toContain('docs/wiki/inbox.md')
     expect(tracked).not.toContain('.prdt/index.db') // derived stays out
     expect(git([...metaGitArgs(), 'log', '--format=%s'])).toBe('initial meta snapshot (prdt init)')
   })

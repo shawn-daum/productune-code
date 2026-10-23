@@ -33,6 +33,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -465,7 +466,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — missing / truncated / symlinked count
   test("doctor's witness prefix is the one the hook actually writes", () => {
     const hook = fs.readFileSync(path.join(CORE_ROOT, 'scripts', 'hooks', GOVERNOR), 'utf8')
     expect(hook).toContain('WIT="$RUN/.hw-$SID.$AID"')
-    const cli = fs.readFileSync(PRDT_CLI, 'utf8')
+    const cli = prdtSource(PRDT_CLI)
     expect(cli).toContain('".hw-"')
   })
 })

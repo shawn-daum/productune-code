@@ -33,6 +33,7 @@
  */
 
 import path from 'path'
+import { prdtSource } from '../helpers/copy-prdt'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
@@ -115,6 +116,7 @@ const MACHINE_PROBE = 'sandbox isolation rule that belongs to this machine'
 
 function seedProject() {
   fs.mkdirSync(projectDir, { recursive: true })
+  fs.mkdirSync(`${projectDir}/docs/prd`, { recursive: true }) // T-1104: legacy fixture
   runPrdt(['init', '--json', '--slug', 'proj', '--yes'])
   const wiki = path.join(projectDir, 'docs', 'wiki')
   writePage(wiki, 'decision--isolation', { title: 'isolation decision', type: 'decision' }, PROJECT_PROBE)
@@ -231,7 +233,7 @@ describe.skipIf(!PYTHON3)('derived index — one command never empties another c
     // one reindex_*. With no `rebuild` argument to pass, a caller that wants a
     // fresh file has to go through `rebuild_index`, which fills tickets + wiki +
     // machine or nothing at all.
-    const src = fs.readFileSync(PRDT_CLI, 'utf-8')
+    const src = prdtSource(PRDT_CLI)
     expect(src).not.toMatch(/open_db\([^)]*rebuild/)
     const rebuildBody = src.slice(src.indexOf('def rebuild_index'))
       .slice(0, src.slice(src.indexOf('def rebuild_index')).indexOf('\n\n\n'))

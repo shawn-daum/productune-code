@@ -39,7 +39,7 @@ jq -e '(.basenames | type) == "array" and (.basenames | length) > 0' "$MANIFEST"
 # Physical resolution — same primitive install.sh §0b uses (symlinks, `..`,
 # `//`, a trailing `/`, a relative path all collapse to one canonical string).
 resolve_path() {
-  python3 - "$1" <<'PYEOF'
+  python3 -I - "$1" <<'PYEOF'
 import os, sys
 print(os.path.realpath(sys.argv[1]))
 PYEOF
@@ -68,7 +68,7 @@ if [ -f "$SETTINGS" ]; then
   say "1) Removing prdt hooks/statusline from $SETTINGS"
   TMP="$(mktemp "$SETTINGS.XXXXXX")"
   jq --arg sl "$PRDT_HOME/bin/statusline-prdt.sh" --slurpfile manifest "$MANIFEST" '
-    ($manifest[0].basenames) as $ours |
+    ($manifest[0].basenames + ($manifest[0].retired // [])) as $ours |
     def cmdBasename($cmd): ($cmd // "")
       | (if startswith("\"") then .[1:] else . end)
       | (if endswith("\"") then .[:-1] else . end)
@@ -88,7 +88,7 @@ if [ -f "$SETTINGS" ]; then
   # about to delete — a stale spelling would have passed the old prefix check
   # vacuously without ever being removed).
   jq -e --slurpfile manifest "$MANIFEST" '
-    ($manifest[0].basenames) as $ours |
+    ($manifest[0].basenames + ($manifest[0].retired // [])) as $ours |
     def cmdBasename(cmd): (cmd // "")
       | (if startswith("\"") then .[1:] else . end)
       | (if endswith("\"") then .[:-1] else . end)
@@ -119,6 +119,11 @@ if [ -L "$HOME/.local/bin/prdt" ]; then
   case "$(resolve_path "$LINK_TARGET")" in
     "$PRDT_HOME"/*) rm -f "$HOME/.local/bin/prdt"; say "3) Removed ~/.local/bin/prdt" ;;
   esac
+fi
+
+# 3b. prdt:// URL scheme (T-1191) — unregister + remove the applet while bin/ still holds the script.
+if [ -f "$PRDT_HOME/bin/prdt-url-scheme.sh" ]; then
+  PRDT_HOME="$PRDT_HOME" bash "$PRDT_HOME/bin/prdt-url-scheme.sh" uninstall 2>&1 | sed 's/^/3b) /' || true
 fi
 
 # 4. home dir

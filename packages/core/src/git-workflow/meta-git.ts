@@ -98,6 +98,11 @@ export const DEFAULT_META_ALLOWLIST: string[] = [
  * appended per-project at init when the project is split (PRD history §v1.3 설계 결정 3)
  * so the code tree never shows up in the meta `git status`.
  *
+ * `layout-apply.inprogress` (T-1105): the half-move marker `prdt layout migrate
+ * --apply` plants for its own run; a beat after a kill must not commit it (commitMeta
+ * also skips while it stands). No inline comments inside the array below: the
+ * python parity lint reads it line by line.
+ *
  * `scratch/` (T-648): qa/habit.md directs verification screenshots and ad-hoc
  * harness files to `.prdt/scratch/`. `.prdt` is allowlisted wholesale above, so
  * without this entry every screenshot became a permanent meta commit — pushed
@@ -154,6 +159,7 @@ export const DEFAULT_META_EXCLUDE: string[] = [
   'po.lock',
   'gui-bootstrap.json',
   'update-state.json',
+  'layout-apply.inprogress',
 ]
 
 const META_GIT_IDENTITY = { name: 'prdt', email: 'prdt@localhost' }
@@ -518,10 +524,42 @@ function readConfig(projectDir: string): Record<string, any> {
 export function readMetaAllowlist(projectDir: string): string[] {
   const cfg = readConfig(projectDir)
   const list = cfg?.meta?.allowlist
+  const base = [...DEFAULT_META_ALLOWLIST, ...productLayoutAllowlist(projectDir)]
   if (Array.isArray(list) && list.every((e) => typeof e === 'string')) {
-    return [...new Set([...DEFAULT_META_ALLOWLIST, ...list])]
+    return [...new Set([...base, ...list])]
   }
-  return [...DEFAULT_META_ALLOWLIST]
+  return [...new Set(base)]
+}
+
+/**
+ * T-1104 — the product-first docs layout (`docs/_shared/` present) adds
+ * `docs/_shared` + `docs/<product>` per product to the defaults; the legacy
+ * layout adds nothing. Products: config `slug`, config `products[].name`, then
+ * any `docs/<kebab>/` holding `prd/` or `tickets/` — the same derivation as the
+ * CLI's `project_products` (scripts/prdt).
+ */
+export function productLayoutAllowlist(projectDir: string): string[] {
+  const docs = path.join(projectDir, 'docs')
+  const isDir = (p: string): boolean => {
+    try { return fs.lstatSync(p).isDirectory() } catch { return false }
+  }
+  if (!isDir(path.join(docs, '_shared'))) return []
+  const re = /^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$/
+  const names: string[] = []
+  const add = (n: unknown): void => {
+    if (typeof n === 'string' && re.test(n) && !names.includes(n)) names.push(n)
+  }
+  const cfg = readConfig(projectDir) as { slug?: unknown; products?: unknown } | null
+  add(cfg?.slug)
+  if (Array.isArray(cfg?.products)) for (const e of cfg.products) add((e as { name?: unknown })?.name)
+  let entries: string[] = []
+  try { entries = fs.readdirSync(docs).sort() } catch { entries = [] }
+  for (const d of entries) {
+    if (d.startsWith('_') || d.startsWith('.')) continue
+    const dp = path.join(docs, d)
+    if (isDir(dp) && (isDir(path.join(dp, 'prd')) || isDir(path.join(dp, 'tickets')))) add(d)
+  }
+  return ['docs/_shared', ...names.map((n) => `docs/${n}`)]
 }
 
 /**
@@ -671,6 +709,8 @@ export type MetaCommitSkipReason =
   | 'manager-error'
   /** T-848: `metaGitTrustProblem` refused the repo; `detail` is the refusal text. */
   | 'meta-untrusted'
+  /** T-1105: a killed/running `prdt layout migrate --apply` left its marker — a beat would commit the half-move and break --undo's HEAD guard. */
+  | 'layout-apply-in-progress'
 
 export interface MetaCommitResult {
   committed: boolean
@@ -775,6 +815,11 @@ export async function commitMeta(
   if (!metaRepoExists(projectDir)) {
     return { committed: false, skipReason: 'meta-repo-missing' }
   }
+  // T-1105: lstat, so a planted link counts as present too (same reading as the CLI).
+  try {
+    fs.lstatSync(path.join(projectDir, '.prdt', 'layout-apply.inprogress'))
+    return { committed: false, skipReason: 'layout-apply-in-progress' }
+  } catch { /* absent → proceed */ }
   const problem = metaGitTrustProblem(projectDir)
   if (problem) return { committed: false, skipReason: 'meta-untrusted', detail: metaGitRefusal(problem) }
 
