@@ -6498,7 +6498,7 @@ def cmd_viewer(args):
         viewer, problem = viewer_generate(root)
         if viewer is None:
             sys.exit(f"prdt viewer: 뷰어를 만들지 못했어요 — {problem}")
-        print(f"[viewer](file://{viewer})")
+        print(f"[viewer](file://{file_url_path(viewer)})")
         return
     for line in viewer_links(root, args.targets):
         print(line)
