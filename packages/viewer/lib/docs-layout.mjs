@@ -233,6 +233,15 @@ export function docsAsIsRel(root, rel) {
   return rel
 }
 
+function unmappable(fallback, fn) {
+  try {
+    return fn()
+  } catch (e) {
+    if (e instanceof DocsLayoutError) return fallback
+    throw e
+  }
+}
+
 /**
  * Bound view of one repo's layout for the collector and the renderer. Products
  * and the layout are fixed at creation (one generation = one disk snapshot).
@@ -254,16 +263,10 @@ export function createDocsLayout(root, forProduct = null) {
     relDir: (kind) => rel(docsPath(root, kind, product)),
     /** Read-order chain of a layered dir: absolute dirs, product first, then _shared (legacy: one). */
     layerDirs: (kind) => (layout === 'product' ? [path.join(productDocsDir(root, product), kind), path.join(sharedDocsDir(root), kind)] : [path.join(root, 'docs', kind)]),
-    // T-1220: a path in a body that names no mappable product is text, not an error — unchanged (the callers' `to !== text` then skips it).
-    resolveRef: (r) => {
-      try {
-        return resolveDocsRef(root, r, product)
-      } catch (e) {
-        if (e instanceof DocsLayoutError) return r
-        throw e
-      }
-    },
-    mapJoined: (j) => mapJoinedDocsPath(root, j, product),
+    // T-1220: a path in a body that names no mappable product is text, not an error — returned unchanged
+    // (callers then see no anchor / no file and render it literally). Every method reaching resolveDocsRef goes through it.
+    resolveRef: (r) => unmappable(r, () => resolveDocsRef(root, r, product)),
+    mapJoined: (j) => unmappable(j, () => mapJoinedDocsPath(root, j, product)),
     asIsRel: (r) => docsAsIsRel(root, r),
   }
 }
