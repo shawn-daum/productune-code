@@ -5558,7 +5558,7 @@ def cmd_tickets_new(args, root):
     if (Path(root) / VIEWER_REL / "viewer.html").is_file():
         print(viewer_links(root, [tid], labels={tid: str(path.resolve())})[0])
     else:
-        print(f"[{tid}](file://{path.resolve()})")
+        print(f"[{tid}](file://{file_url_path(path.resolve())})")
 
 
 def split_ticket_header_body(text):
@@ -6363,6 +6363,14 @@ def viewer_jump(viewer_html, key):
     return page
 
 
+def file_url_path(p):
+    """T-1219: a path as the `file://` target of a markdown link — percent-encoded
+    (`/` kept), so `)` `(` `[` `]` space and Hangul in a folder name never end the
+    link early or open a second one."""
+    import urllib.parse
+    return urllib.parse.quote(str(p), safe="/")
+
+
 def viewer_links(root, targets, labels=None):
     """Resolve each target to a paste-ready `[label](file://…)` line: a viewer
     link at the item when the viewer shows it, the file itself otherwise (and
@@ -6393,7 +6401,7 @@ def viewer_links(root, targets, labels=None):
             dest = Path(labels.get(t) or t)
             dest = dest if dest.is_absolute() else (Path.cwd() / dest).resolve()
             label = t
-        lines.append(f"[{label}](file://{dest})")
+        lines.append(f"[{label}](file://{file_url_path(dest)})")
     return lines
 
 

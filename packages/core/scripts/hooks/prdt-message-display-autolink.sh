@@ -178,7 +178,7 @@ def rewrite_line(line, known, dest_of):
         if tid not in known or inside(labels, a) or inside(dests, a):
             continue
         out.append(line[last:a])
-        out.append("[%s](file://%s)" % (tid, dest_of(tid)))
+        out.append("[%s](file://%s)" % (tid, __import__("urllib.parse").parse.quote(dest_of(tid), safe="/")))
         last = b
     out.append(line[last:])
     return "".join(out)
