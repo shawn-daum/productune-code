@@ -338,6 +338,15 @@ if [ "${1:-}" = "--regen" ]; then
   exit 0
 fi
 
+# T-1219: the printed `[label](file://<target>)` carries a percent-encoded path
+# (space · Hangul · `)` never raw); readers decode it back before any `-f` test
+# or `open`. Backslashes are escaped first so `%b` only ever expands our `\xHH`.
+url_decode() {
+  local s="${1//\\/\\\\}"
+  s="${s//%/\\x}"
+  printf '%b' "$s"
+}
+
 OPEN_MODE=""
 if [ "${1:-}" = "--open" ]; then
   OPEN_MODE="yes"
@@ -411,7 +420,7 @@ if [ -z "$OPEN_MODE" ] && [ "$TOOL_NAME" = "Bash" ]; then
       STDOUT="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_response.stdout // ""' 2>/dev/null)"
       printf '%s\n' "$STDOUT" | while IFS= read -r LINE; do
         FP="$(printf '%s' "$LINE" | sed -n 's/^\[[^]]*\](file:\/\/\(.*\))$/\1/p')"
-        [ -n "$FP" ] && bash "$0" --open "$FP"
+        [ -n "$FP" ] && bash "$0" --open "$(url_decode "$FP")"
       done
     fi
   fi
@@ -501,7 +510,7 @@ if [ -n "$VIEWER_DOC" ]; then
   [ -x "$PRDT_CLI" ] || PRDT_CLI="$(command -v prdt 2>/dev/null)"
   if [ -n "$PRDT_CLI" ]; then
     LINK="$(cd "$(dirname -- "$FILE_PATH")" 2>/dev/null && "$PRDT_CLI" viewer --no-open "$FILE_PATH" 2>/dev/null | head -1)"
-    JUMP="$(printf '%s' "$LINK" | sed -n 's/^\[[^]]*\](file:\/\/\(.*\))$/\1/p')"
+    JUMP="$(url_decode "$(printf '%s' "$LINK" | sed -n 's/^\[[^]]*\](file:\/\/\(.*\))$/\1/p')")"
     case "$JUMP" in
       */.prdt/scratch/viewer/at/*.html) [ -f "$JUMP" ] && { OPEN_PATH="$JUMP"; ACTION="open"; } ;;
     esac

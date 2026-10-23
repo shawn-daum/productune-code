@@ -379,3 +379,36 @@ describe('CLI — links are printed only; the CLI never opens by itself (T-794)'
     expect(readLog(s.log)).toBe('')
   }, 60000)
 })
+
+// T-1219: the printed link target is percent-encoded; both hook readers (the
+// Bash relay `--open` hand-off and the Write-mode JUMP line) decode it back
+// before the `-f` test and `open`.
+describe('hook — encoded file:// targets decode back (T-1219)', () => {
+  const enc = (p: string) => p.split('/').map((x) => encodeURIComponent(x).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())).join('/')
+  for (const name of ['my proj', '문서 (a)[b]']) {
+    test.skipIf(!hasJq())(`Bash relay opens a printed link under "${name}"`, () => {
+      const s = sandbox()
+      const d = path.join(s.dir, name)
+      fs.mkdirSync(d, { recursive: true })
+      const f = path.join(d, 'T-001.html')
+      fs.writeFileSync(f, 'x')
+      execFileSync('bash', [HOOK], { env: s.env, input: writeBashEvent('prdt tickets --link T-001', `[T-001](file://${enc(f)})\n`) })
+      expect(readLog(s.log)).toBe(f)
+    })
+
+    test.skipIf(!hasJq())(`Write-mode JUMP line opens the forwarding page under "${name}"`, () => {
+      const s = sandbox()
+      const root = path.join(s.dir, name, 'proj')
+      fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
+      fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), '{"schema_version":1,"stage":"build","version":"v1.0","current_task":null}')
+      const file = path.join(root, 'docs', 'wiki', 'fact--x.md')
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, 'x')
+      const jump = path.join(root, '.prdt', 'scratch', 'viewer', 'at', 'stub.html')
+      const stub = path.join(s.dir, 'prdt-enc')
+      fs.writeFileSync(stub, `#!/usr/bin/env bash\nmkdir -p "${path.dirname(jump)}"\necho x > "${jump}"\necho "[x](file://${enc(jump)})"\n`, { mode: 0o755 })
+      execFileSync('bash', [HOOK], { input: writeEvent(file), env: { ...s.env, PRDT_BIN: stub } })
+      expect(readLog(s.log)).toBe(jump)
+    })
+  }
+})
