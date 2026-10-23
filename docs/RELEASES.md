@@ -9,7 +9,7 @@ Version-by-version release notes for this project.
 > - Optional ` — <title> (YYYY-MM-DD)` after the version token.
 > - Body, in this order, each group a plain label line + one blank line + `- ` items:
 >   `요약` (exactly one line per lane, saying what that lane changed for the user) ·
->   one group per lane, named by the lane, same order as the summary, listing that
+>   one group per lane, headed by what that lane changed for the user, same order as the summary, listing that
 >   lane's user-visible work · `큰 버그 수정` · `알려진 한계`. Omit an empty group.
 >   `알려진 한계` only for a security limit.
 > - Lanes are the version's PRD 합격선 lanes (`prdt schedule`). Work in the 자투리 lane
