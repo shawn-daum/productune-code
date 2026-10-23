@@ -39,10 +39,18 @@ set -m  # every background phase job gets its own process group (stopped as a wh
 TICKET=""; SHA=""; SESSION=""; RUNNER_SHA=""; SHARD=""; FILES=(); EXCLUDES=()
 SETUP_TO=180; INSTALL_TO=600; TEST_TO=1200
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-# redact: user:token@ in URLs, GitHub/GitLab token literals, auth header values
+# redact: user:token@ in URLs, GitHub/GitLab/Anthropic/OpenAI/AWS/Slack/npm key literals, auth header
+# values (also on the next line). T-1221: the same rules, in the same order, as redact() in
+# prdt-cloud-condense.mjs; LC_ALL=C so [[:space:]] is ASCII whitespace only, as in the JS copy.
 redact() {
-  sed -E -e 's#(://)[^/@[:space:]]*@#\1***@#g' \
+  LC_ALL=C sed -E -e '/[Aa]uthorization[:=][[:space:]]*$/{$!N;}' \
+    -e 's#(://)[^/@[:space:]]*@#\1***@#g' \
     -e 's#(gh[opusr]_|github_pat_|glpat-)[A-Za-z0-9_]+#\1***#g' \
+    -e 's#(sk-ant-)[A-Za-z0-9_-]+#\1***#g' \
+    -e 's#(^|[^A-Za-z0-9_-])(sk-)[A-Za-z0-9_-]{8,}#\1\2***#g' \
+    -e 's#(AKIA)[0-9A-Z]{16}#\1***#g' \
+    -e 's#(xox[abpr]-)[A-Za-z0-9-]+#\1***#g' \
+    -e 's#(npm_)[A-Za-z0-9]{20,}#\1***#g' \
     -e 's#([Aa]uthorization|AUTHORIZATION)([:=][[:space:]]*).*#\1\2***#' \
     -e 's#([Bb]earer|[Bb]asic)[[:space:]]+[A-Za-z0-9._~+/=-]+#\1 ***#g'
 }

@@ -14,13 +14,21 @@ const MAX_FAILURES = 400
 const [, , file, prefix = '', ...pairs] = process.argv
 
 const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g
-// T-1211: the same rules as redact() in prdt-cloud-test.sh (per line) — a credential value
-// never reaches the pushed result.json, whatever field carries it.
+// T-1211 / T-1221: the same rules, in the same order, as redact() in prdt-cloud-test.sh (which
+// runs sed under LC_ALL=C: whitespace is ASCII only) — a credential value never reaches the
+// pushed result.json, whatever field carries it. Shell is per line; the one cross-line rule is
+// an Authorization header whose value is on the next line.
+const WS = ' \\t\\r\\n\\f\\v'
 const redact = (s) => String(s)
-  .replace(/(:\/\/)[^/@\s]*@/g, '$1***@')
+  .replace(new RegExp(`(:\\/\\/)[^/@${WS}]*@`, 'g'), '$1***@')
   .replace(/(gh[opusr]_|github_pat_|glpat-)[A-Za-z0-9_]+/g, '$1***')
-  .replace(/([Aa]uthorization|AUTHORIZATION)([:=]\s*)[^\n]*/g, '$1$2***')
-  .replace(/([Bb]earer|[Bb]asic)\s+[A-Za-z0-9._~+/=-]+/g, '$1 ***')
+  .replace(/(sk-ant-)[A-Za-z0-9_-]+/g, '$1***')
+  .replace(/(^|[^A-Za-z0-9_-])(sk-)[A-Za-z0-9_-]{8,}/g, '$1$2***')
+  .replace(/(AKIA)[0-9A-Z]{16}/g, '$1***')
+  .replace(/(xox[abpr]-)[A-Za-z0-9-]+/g, '$1***')
+  .replace(/(npm_)[A-Za-z0-9]{20,}/g, '$1***')
+  .replace(new RegExp(`([Aa]uthorization|AUTHORIZATION)([:=][ \\t\\r\\f\\v]*\\n?[ \\t\\r\\f\\v]*)[^\\n]*`, 'g'), '$1$2***')
+  .replace(new RegExp(`([Bb]earer|[Bb]asic)[${WS}]+[A-Za-z0-9._~+/=-]+`, 'g'), '$1 ***')
 const clip = (s) => {
   const t = redact(String(s ?? '').replace(ANSI, ''))
   return t.length > MAX_MESSAGE ? t.slice(0, MAX_MESSAGE) + '…' : t
