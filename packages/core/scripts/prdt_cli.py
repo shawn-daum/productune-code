@@ -28,6 +28,7 @@ from prdt_lanes import (
     LANE_NAME_RE,
     LEGACY_ASSIGNEE_RE,
     LINE_NAME_RE,
+    PRODUCT_RESERVED_NAMES,
     lanes_for,
     line_product,
     PRD_H4_RE,
@@ -5561,7 +5562,7 @@ def cmd_tickets_new(args, root):
     if (Path(root) / VIEWER_REL / "viewer.html").is_file():
         print(viewer_links(root, [tid], labels={tid: str(path.resolve())})[0])
     else:
-        print(f"[{tid}](file://{path.resolve()})")
+        print(f"[{tid}](file://{file_url_path(path.resolve())})")
 
 
 def split_ticket_header_body(text):
@@ -6366,6 +6367,14 @@ def viewer_jump(viewer_html, key):
     return page
 
 
+def file_url_path(p):
+    """T-1219: a path as the `file://` target of a markdown link — percent-encoded
+    (`/` kept), so `)` `(` `[` `]` space and Hangul in a folder name never end the
+    link early or open a second one."""
+    import urllib.parse
+    return urllib.parse.quote(str(p), safe="/")
+
+
 def viewer_links(root, targets, labels=None):
     """Resolve each target to a paste-ready `[label](file://…)` line: a viewer
     link at the item when the viewer shows it, the file itself otherwise (and
@@ -6396,7 +6405,7 @@ def viewer_links(root, targets, labels=None):
             dest = Path(labels.get(t) or t)
             dest = dest if dest.is_absolute() else (Path.cwd() / dest).resolve()
             label = t
-        lines.append(f"[{label}](file://{dest})")
+        lines.append(f"[{label}](file://{file_url_path(dest)})")
     return lines
 
 
@@ -6493,7 +6502,7 @@ def cmd_viewer(args):
         viewer, problem = viewer_generate(root)
         if viewer is None:
             sys.exit(f"prdt viewer: 뷰어를 만들지 못했어요 — {problem}")
-        print(f"[viewer](file://{viewer})")
+        print(f"[viewer](file://{file_url_path(viewer)})")
         return
     for line in viewer_links(root, args.targets):
         print(line)
@@ -11485,6 +11494,9 @@ def line_config_warnings(root):
         if not LINE_NAME_RE.match(name):
             warns.append(f"products: `{lab}` is not a legal product name — kebab-case, never `v<digit>…` "
                          f"or `backlog` (contracts/fixed-paths.md); ignored")
+        elif name in PRODUCT_RESERVED_NAMES:
+            warns.append(f"products: `{lab}` is a layout-reserved folder name ({', '.join(PRODUCT_RESERVED_NAMES)}) "
+                         f"— pick another name; ignored")
         elif name == slug:
             warns.append(f"products: `{lab}` is the project slug — the first product is never listed in "
                          f"`products`; ignored")
@@ -16200,6 +16212,8 @@ def layout_session_start_block(root):
         pdir = Path(root) / "docs" / prod
         if pdir.is_dir() and not pdir.is_symlink() and not os.path.lexists(Path(root) / "docs" / DOCS_SHARED):
             state = layout_state(root, deep=True)
+    if state == "old" and project_lines(root):
+        return ""     # T-1215: `layout migrate` refuses a multi-product project — no proposal it cannot run
     if state == "old":
         n = _lay_n(layout_plan(root)["total"])
         return (
@@ -16467,6 +16481,12 @@ def layout_apply(root, plan):
                 created_dirs += list(reversed(chain))   # shallow first; rollback walks it backwards
                 _lay_rename(root / u["src"], root / u["dst"])
                 moved.append(u)
+            # T-1215: after the renames (a kill mid-move keeps the shapes the half-move checks read) —
+            # nothing may have moved into `_shared`, yet its presence is what reads as the new layout
+            shared = root / "docs" / DOCS_SHARED
+            if not os.path.lexists(shared):
+                os.makedirs(shared)
+                created_dirs.append(shared)
             for t in tracked:
                 new = _lay_remap(t, units)
                 if new:
@@ -16889,7 +16909,10 @@ def cmd_layout(args):
         elif state == "old":
             print(f"docs 폴더가 예전 구조예요. 문서 {_lay_n(plan['total'])}개를 새 구조로 옮길 수 있어요.")
             print()
-            print("다음: prdt layout migrate 로 옮길 목록을 확인하세요.")
+            if project_lines(root):    # T-1215: migrate refuses a multi-product project — same as the session-start block
+                print("다음: 이 프로젝트는 제품 여럿을 써서 아직 옮길 수 없어요. PO 에게 알리세요.")
+            else:
+                print("다음: prdt layout migrate 로 옮길 목록을 확인하세요.")
         elif state == "new":
             print(f"docs 폴더가 이미 새 구조예요 (docs/{DOCS_SHARED} · docs/{prod}).")
         elif state == "partial":
