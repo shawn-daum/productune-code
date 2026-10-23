@@ -222,7 +222,9 @@ const AS_IS_DOC_DIRS = ['prd', 'tickets', 'artifacts', 'wiki']
  */
 export function productDirName(slug) {
   const k = String(slug ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-  return /^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$/.test(k) ? k : 'product'
+  if (!/^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$/.test(k)) return 'product'
+  // T-1215: layout-reserved names (PRODUCT_RESERVED_NAMES in prdt_lanes.py) get a suffix
+  return ['prd', 'tickets', 'artifacts', 'wiki', 'features', 'archive', 'po', 'designer', 'developer', 'qa'].includes(k) ? `${k}-product` : k
 }
 
 /**
