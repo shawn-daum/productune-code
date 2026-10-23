@@ -365,6 +365,53 @@ describe('T-1211 condenser redaction — CR / U+2028 end no line early', () => {
   })
 })
 
+describe('T-1221 redaction — one input table through the shell copy and the JS copy', () => {
+  // fake values only; each secret must be absent from both outputs and both outputs must be equal
+  const TABLE: Array<{ name: string; input: string; secrets: string[] }> = [
+    { name: 'sk-ant key', input: 'key=sk-ant-api03-FAKEfixtureAAAA0000 end', secrets: ['FAKEfixtureAAAA0000'] },
+    { name: 'sk key', input: 'OPENAI sk-FAKEfixtureBBBB1111 end', secrets: ['FAKEfixtureBBBB1111'] },
+    { name: 'sk-proj key', input: 'sk-proj-FAKEfixture_CCCC-2222', secrets: ['FAKEfixture_CCCC-2222'] },
+    { name: 'word ending in sk- is left alone', input: 'task-runner-fixture and risk-assessment-fixture', secrets: [] },
+    { name: 'AWS access key id', input: 'id AKIAFAKEFIXTURE000000 x', secrets: ['AKIAFAKEFIXTURE000000'] },
+    { name: 'slack token', input: 'xoxb-FAKE-fixture-3333 xoxp-FAKE4444 xoxa-FAKE5555 xoxr-FAKE6666', secrets: ['FAKE-fixture-3333', 'FAKE4444', 'FAKE5555', 'FAKE6666'] },
+    { name: 'npm token', input: '//registry/:_authToken=npm_FAKEfixture0123456789abcdefABCD', secrets: ['FAKEfixture0123456789abcdefABCD'] },
+    { name: 'npm_config env name is left alone', input: 'npm_config_registry=x', secrets: [] },
+    { name: 'github token', input: 'ghp_FAKEfixture777 glpat-FAKEfixture888', secrets: ['FAKEfixture777', 'FAKEfixture888'] },
+    { name: 'URL userinfo', input: 'https://user:FAKEpw999@host/x', secrets: ['FAKEpw999'] },
+    { name: 'Authorization same line', input: 'Authorization: token FAKEtok111 more', secrets: ['FAKEtok111'] },
+    { name: 'Authorization value on the next line', input: 'Authorization:\n  FAKEnextline222\nafter', secrets: ['FAKEnextline222'] },
+    { name: 'Authorization CRLF then value', input: 'Authorization:\r\nFAKEcrlf333\nafter', secrets: ['FAKEcrlf333'] },
+    { name: 'Bearer', input: 'Bearer FAKEbearer444.x', secrets: ['FAKEbearer444'] },
+    { name: 'NBSP in URL userinfo', input: 'https://user name:FAKEnbsp555@host/x', secrets: ['FAKEnbsp555'] },
+  ]
+  const shellRedact = (input: string, lc?: string) => {
+    const r = spawnSync('bash', ['-c', `eval "$(sed -n '/^redact() {/,/^}/p' "${RUNNER}")"; redact`],
+      { input: input + '\n', encoding: 'utf-8', env: { ...process.env, ...(lc ? { LC_ALL: lc } : {}) } })
+    expect(r.status).toBe(0)
+    return r.stdout.replace(/\n$/, '')
+  }
+  const jsRedact = (input: string) => {
+    const d = tmp('red-js')
+    fs.writeFileSync(path.join(d, 'v.json'), JSON.stringify({ numTotalTests: 0, testResults: [] }))
+    const raw = execFileSync('node', [CONDENSE, path.join(d, 'v.json'), '', `log_tail=${input}`], { cwd: d, encoding: 'utf-8' })
+    return JSON.parse(raw).log_tail as string
+  }
+  for (const lc of ['C', 'en_US.UTF-8', undefined]) {
+    for (const row of TABLE) {
+      test(`${row.name} [LC_ALL=${lc ?? 'inherited'}]`, () => {
+        const sh = shellRedact(row.input, lc)
+        const js = jsRedact(row.input)
+        for (const secret of row.secrets) {
+          expect(sh).not.toContain(secret)
+          expect(js).not.toContain(secret)
+        }
+        expect(sh).toBe(js)
+        if (!row.secrets.length) expect(sh).toBe(row.input)
+      })
+    }
+  }
+})
+
 describe('runner push — one parentless result.json commit to ci/<T-NNN>/<session> only', () => {
   let work: string
   let origin: string
