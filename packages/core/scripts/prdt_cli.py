@@ -16736,6 +16736,8 @@ def layout_undo(root, state):
     # T-1212: the same link check `--apply` makes, plus every entry the walk below would move:
     # a symlink is named and the run stops before anything moves
     link = docs if os.path.islink(docs) else None
+    if link is None and (docs / "wiki").is_symlink():     # destination parent of the wiki moves
+        link = docs / "wiki"
     if link is None:
         for base in (docs / prod, docs / DOCS_SHARED):
             if base.is_symlink():

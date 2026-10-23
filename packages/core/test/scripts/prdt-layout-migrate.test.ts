@@ -800,6 +800,21 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
     expect(fs.existsSync(path.join(real, 'DEPLOY.md'))).toBe(false)
   }, 300_000)
 
+  test('--undo stops when the destination parent docs/wiki is a symlink (note.md never lands outside)', () => {
+    const root = legacy()
+    expect(killAfterFirstRename(root).code).toBe(137)
+    const outside = path.join(tmp, `outside${++seq}`)
+    fs.mkdirSync(outside)
+    fs.renameSync(path.join(root, 'docs/wiki'), path.join(tmp, `oldwiki${seq}`))
+    fs.symlinkSync(outside, path.join(root, 'docs/wiki'))
+    write(path.join(root, 'docs/proj/wiki/note.md'), 'n\n')
+    const undo = prdt(root, ['layout', 'migrate', '--undo'])
+    expect(undo.code).not.toBe(0)
+    expect(undo.out).toContain('docs/wiki')
+    expect(fs.readdirSync(outside)).toEqual([])
+    expect(fs.existsSync(path.join(root, 'docs/proj/wiki/note.md'))).toBe(true)
+  }, 300_000)
+
   test('a docs/<product>/ folder with no deleted old path stays "old" (the name-clash refusal still applies)', () => {
     const root = legacy()
     write(path.join(root, 'docs/proj/note.md'), 'x\n')
