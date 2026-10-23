@@ -18372,12 +18372,26 @@ def _machine_env_store(text, fail_head, fail_tail):
         _env_fail(f"{fail_head}: 기기 범위 env 저장소에 쓸 수 없어요 ({e.strerror or 'write error'}). {fail_tail}", 3)
 
 
+def _track_project_root(start=None):
+    """T-1216: the project a track worktree (`<project>/tracks/T-NNN`) was cut
+    from, found by shape + that project's own state file — for the one read
+    that must see the project's code folder from inside a track (env key
+    names). `find_project_root` stays None there (T-1112); a track whose
+    parent holds no `.prdt/po-state.json` yields None."""
+    d = Path(start or os.getcwd()).resolve()
+    for p in (d, *d.parents):
+        if _is_track_worktree(p):
+            proj = p.parent.parent
+            return proj if (proj / ".prdt" / "po-state.json").is_file() else None
+    return None
+
+
 def _env_product_code_keys():
     """(product name, {KEY: set?}) of the current project's code folder — real
     `.env` / `.env.*` files at its top (samples excluded); (None, {}) outside a
     project or with no real file. A key is set when any file gives it a
     non-empty value."""
-    root = find_project_root()
+    root = find_project_root() or _track_project_root()
     if not root:
         return None, {}
     d = code_root(root)
