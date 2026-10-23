@@ -132,7 +132,7 @@ def resolve(url):
         raise Refused("root is not a prdt project")
     if line and not LINE_RE.match(line):
         raise Refused("bad line name")
-    if not ENV_NAME_RE.match(name):
+    if not ENV_NAME_RE.match(name) or ".." in name:
         raise Refused("file is not an env file name")
     cfg = {}
     cfg_path = os.path.join(root, ".prdt", "config.json")

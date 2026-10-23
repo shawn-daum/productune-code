@@ -33,7 +33,9 @@ beforeAll(() => {
   root = path.join(base, 'proj')
   prdtHome = path.join(base, 'prdt')
   write('proj/.prdt/po-state.json', '{}')
-  write('proj/.prdt/config.json', JSON.stringify({ lines: [{ name: 'arch', code: { dir: '../arch/code' } }] }))
+  write('proj/.prdt/config.json', JSON.stringify({ lines: [{ name: 'arch', code: { dir: '../arch/code' } },
+    { name: 'inner', code: { dir: 'sub/code' } }, { name: 'esc', code: { dir: 'sub/../../arch/code' } }] }))
+  write('proj/sub/code/.env', 'I=1\n')
   write('proj/code/.env.local', 'A=1\n')
   write('proj/code/.env.example', 'A=\n')
   write('proj/code/notes.txt', 'x\n')
@@ -58,11 +60,25 @@ beforeAll(() => {
 afterAll(() => fs.rmSync(base, { recursive: true, force: true }))
 
 describe('prdt_open_url.py — resolves only an env file in a prdt project code folder', () => {
-  test('home code folder and a line code folder that climbs out', () => {
+  test('home code folder and a line code folder', () => {
     expect(check(link({ root, file: '.env.local' }))).toMatchObject({ code: 0, out: path.join(root, 'code', '.env.local') })
     expect(check(link({ root, file: '.env.example' })).out).toBe(path.join(root, 'code', '.env.example'))
-    expect(check(link({ root, line: 'arch', file: '.env' })).out).toBe(path.join(base, 'arch', 'code', '.env'))
+    expect(check(link({ root, line: 'inner', file: '.env' })).out).toBe(path.join(root, 'sub', 'code', '.env'))
   })
+
+  // T-1212 (revised): config is trusted, so line= takes code.dir as configured, `..` included;
+  // the guard is which file opens — `.env` / `.env.*` directly under the resolved code dir
+  test('a line code folder that climbs out with `..` resolves to the sibling folder', () => {
+    expect(check(link({ root, line: 'arch', file: '.env' })).out).toBe(path.join(base, 'arch', 'code', '.env'))
+    expect(check(link({ root, line: 'esc', file: '.env' })).out).toBe(path.join(base, 'arch', 'code', '.env'))
+  })
+
+  test.each(['../.env', '.env/../x', '.env/x', '..', '.env..x', 'notes.txt', '../notes.txt', '.env%2F..%2Fnotes.txt'])(
+    'line= with file=%s is refused', (file) => {
+      const r = check(link({ root, line: 'arch', file }))
+      expect(r.code).toBe(1)
+      expect(r.err).toContain('refused')
+    })
 
   test.each([
     ['a path in file', { file: '../code/.env.local' }],
