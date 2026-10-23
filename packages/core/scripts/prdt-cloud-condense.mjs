@@ -28,7 +28,7 @@ const redact = (s) => String(s)
   .replace(/(xox[abpr]-)[A-Za-z0-9-]+/g, '$1***')
   .replace(/(npm_)[A-Za-z0-9]{20,}/g, '$1***')
   .replace(new RegExp(`([Aa]uthorization|AUTHORIZATION)([:=][ \\t\\r\\f\\v]*\\n?[ \\t\\r\\f\\v]*)[^\\n]*`, 'g'), '$1$2***')
-  .replace(new RegExp(`([Bb]earer|[Bb]asic)[^A-Za-z0-9._~+/=\\n-]+[A-Za-z0-9._~+/=-]+`, 'g'), '$1 ***')
+  .replace(new RegExp(`([Bb]earer|[Bb]asic)(?:[ \\t\\r\\f\\v\\u00a0\\u2000-\\u200a\\u202f\\u205f\\u3000])+[A-Za-z0-9._~+/=-]+`, 'g'), '$1 ***')
 const clip = (s) => {
   const t = redact(String(s ?? '').replace(ANSI, ''))
   return t.length > MAX_MESSAGE ? t.slice(0, MAX_MESSAGE) + '…' : t

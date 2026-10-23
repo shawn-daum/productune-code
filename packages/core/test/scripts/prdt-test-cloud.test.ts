@@ -391,6 +391,14 @@ describe('T-1221 redaction — one input table through the shell copy and the JS
     { name: 'Bearer then NBSP', input: 'Bearer FAKE_bearer_nbsp', secrets: ['FAKE_bearer_nbsp'] },
     { name: 'Bearer then U+2003', input: 'Bearer FAKE_bearer_emsp', secrets: ['FAKE_bearer_emsp'] },
     { name: 'Basic then U+2003', input: 'Basic FAKE_basic_emsp', secrets: ['FAKE_basic_emsp'] },
+    { name: 'Korean after Basic is left alone', input: 'Basic 인증 실패: token abc', secrets: [] },
+    { name: 'Korean after Bearer is left alone', input: 'Bearer 토큰이 만료됨 (expired) 다시 시도', secrets: [] },
+    { name: 'Basic colon is left alone', input: 'Basic: 2', secrets: [] },
+    { name: 'basic comma is left alone', input: 'basic, expected 5 to be 6', secrets: [] },
+    { name: 'Bearer quoted is left alone', input: 'Bearer "x" y', secrets: [] },
+    { name: 'Bearer then U+3000', input: 'Bearer　FAKE_bearer_ideo', secrets: ['FAKE_bearer_ideo'] },
+    { name: 'Bearer then U+200A', input: 'Bearer FAKE_bearer_hair', secrets: ['FAKE_bearer_hair'] },
+    { name: 'Bearer then space NBSP space', input: 'Bearer   FAKE_bearer_mix', secrets: ['FAKE_bearer_mix'] },
     { name: 'NBSP in URL userinfo', input: 'https://user name:FAKEnbsp555@host/x', secrets: ['FAKEnbsp555'] },
   ]
   const shellRedact = (input: string, lc?: string) => {
