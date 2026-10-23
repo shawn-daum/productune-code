@@ -60,7 +60,10 @@ def _product_dir_name(slug):
     if not isinstance(slug, str) or not slug:
         return None
     k = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")
-    return k if _PROD_NAME_RE.match(k) else "product"
+    if not _PROD_NAME_RE.match(k):
+        return "product"
+    # T-1215: layout-reserved names (PRODUCT_RESERVED_NAMES in prdt_lanes.py) get a suffix
+    return k + "-product" if k in ("prd", "tickets", "artifacts", "wiki", "features", "archive", "po", "designer", "developer", "qa") else k
 
 
 def project_products(root):
@@ -178,7 +181,7 @@ def rewrite_line(line, known, dest_of):
         if tid not in known or inside(labels, a) or inside(dests, a):
             continue
         out.append(line[last:a])
-        out.append("[%s](file://%s)" % (tid, dest_of(tid)))
+        out.append("[%s](file://%s)" % (tid, __import__("urllib.parse").parse.quote(dest_of(tid), safe="/")))
         last = b
     out.append(line[last:])
     return "".join(out)
