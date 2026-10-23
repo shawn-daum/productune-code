@@ -382,6 +382,15 @@ describe('T-1221 redaction — one input table through the shell copy and the JS
     { name: 'Authorization value on the next line', input: 'Authorization:\n  FAKEnextline222\nafter', secrets: ['FAKEnextline222'] },
     { name: 'Authorization CRLF then value', input: 'Authorization:\r\nFAKEcrlf333\nafter', secrets: ['FAKEcrlf333'] },
     { name: 'Bearer', input: 'Bearer FAKEbearer444.x', secrets: ['FAKEbearer444'] },
+    { name: 'AUTHORIZATION value on the next line', input: 'AUTHORIZATION:\nFAKE_UPPER_NEXT\nafter', secrets: ['FAKE_UPPER_NEXT'] },
+    { name: 'lowercase authorization value on the next line', input: 'authorization=\nFAKE_LOWER_NEXT', secrets: ['FAKE_LOWER_NEXT'] },
+    { name: 'AUTHORIZATION same line', input: 'AUTHORIZATION: FAKE_UPPER_SAME', secrets: ['FAKE_UPPER_SAME'] },
+    { name: 'lowercase bearer', input: 'bearer FAKE_lower_bearer', secrets: ['FAKE_lower_bearer'] },
+    { name: 'Basic', input: 'Basic FAKEbasic666=', secrets: ['FAKEbasic666'] },
+    { name: 'lowercase basic', input: 'basic FAKE_lower_basic', secrets: ['FAKE_lower_basic'] },
+    { name: 'Bearer then NBSP', input: 'Bearer FAKE_bearer_nbsp', secrets: ['FAKE_bearer_nbsp'] },
+    { name: 'Bearer then U+2003', input: 'Bearer FAKE_bearer_emsp', secrets: ['FAKE_bearer_emsp'] },
+    { name: 'Basic then U+2003', input: 'Basic FAKE_basic_emsp', secrets: ['FAKE_basic_emsp'] },
     { name: 'NBSP in URL userinfo', input: 'https://user name:FAKEnbsp555@host/x', secrets: ['FAKEnbsp555'] },
   ]
   const shellRedact = (input: string, lc?: string) => {

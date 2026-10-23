@@ -41,9 +41,10 @@ SETUP_TO=180; INSTALL_TO=600; TEST_TO=1200
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 # redact: user:token@ in URLs, GitHub/GitLab/Anthropic/OpenAI/AWS/Slack/npm key literals, auth header
 # values (also on the next line). T-1221: the same rules, in the same order, as redact() in
-# prdt-cloud-condense.mjs; LC_ALL=C so [[:space:]] is ASCII whitespace only, as in the JS copy.
+# prdt-cloud-condense.mjs; Bearer/Basic take any run of non-token characters (NBSP, U+2003 …) before
+# the value. Only constructs identical on BSD and GNU sed (see T-1221). LC_ALL=C so [[:space:]] is ASCII whitespace only, as in the JS copy.
 redact() {
-  LC_ALL=C sed -E -e '/[Aa]uthorization[:=][[:space:]]*$/{$!N;}' \
+  LC_ALL=C sed -E -e '/([Aa]uthorization|AUTHORIZATION)[:=][[:space:]]*$/{$!N;}' \
     -e 's#(://)[^/@[:space:]]*@#\1***@#g' \
     -e 's#(gh[opusr]_|github_pat_|glpat-)[A-Za-z0-9_]+#\1***#g' \
     -e 's#(sk-ant-)[A-Za-z0-9_-]+#\1***#g' \
@@ -52,7 +53,7 @@ redact() {
     -e 's#(xox[abpr]-)[A-Za-z0-9-]+#\1***#g' \
     -e 's#(npm_)[A-Za-z0-9]{20,}#\1***#g' \
     -e 's#([Aa]uthorization|AUTHORIZATION)([:=][[:space:]]*).*#\1\2***#' \
-    -e 's#([Bb]earer|[Bb]asic)[[:space:]]+[A-Za-z0-9._~+/=-]+#\1 ***#g'
+    -e 's#([Bb]earer|[Bb]asic)[^A-Za-z0-9._~+/=-]+[A-Za-z0-9._~+/=-]+#\1 ***#g'
 }
 refuse() { echo "prdt-cloud-test: $1 — nothing pushed" >&2; exit 2; }
 while [ $# -gt 0 ]; do
