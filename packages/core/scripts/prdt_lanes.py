@@ -262,6 +262,17 @@ def product_docs_dir(root, product=None):
     return root / "docs" / (product or current_product(root) or DOCS_SHARED)
 
 
+def line_product(root, line=None):
+    """T-1214: the product folder a per-product READER computes for — `line`
+    (an added product), else the first product. Never `current_product`: what
+    po-state is focused on does not change which product a computation is about.
+    None in the legacy layout (`product_docs_dir` ignores it there)."""
+    prods = project_products(root)
+    if not prods:
+        return None
+    return line or prods[0]
+
+
 def shared_docs_dir(root):
     """`docs/_shared/` (product layout) or `docs/` (legacy)."""
     root = Path(root)
@@ -594,14 +605,18 @@ def _prd_open_section(root, st, line=None):
     (T-657's own posture: `prd_layout_warnings` is the check that judges the
     tree shape itself)."""
     root = Path(root)
-    prd_md = docs_path(root, "prd") / "PRD.md"
+    product = line_product(root, line)
+    prd_md = docs_path(root, "prd", product) / "PRD.md"
     try:
         text = prd_md.read_text(encoding="utf-8")
     except OSError:
         return None, []
     lines = _md_structural_lines(text)
     all_heads = _prd_line_headings(text, project_line_names(root))
-    heads = [(v, ln) for l, v, ln in all_heads if l == line]
+    # T-1214: product layout = one PRD.md per product, its sections headed `## v…`;
+    # legacy = one shared PRD.md, an added line's sections headed `## <line> v…`.
+    own = (None, line) if product else (line,)
+    heads = [(v, ln) for l, v, ln in all_heads if l in own]
     if not heads:
         return None, []
     st = _line_st(st, line)
@@ -855,7 +870,7 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
         if gpath:
             alt = gpath
             try:
-                alt = resolve_docs_ref(root, gpath, line) or gpath
+                alt = resolve_docs_ref(root, gpath, line_product(root, line)) or gpath
             except Exception:
                 pass
             gate = _lane_find_gate_ticket(tickets, version, [gpath, alt], body)
