@@ -337,4 +337,13 @@ m._lay_git = fake`)
     expect(ctx).toContain(HALF)
     expect(ctx).not.toContain('목록 보기')
   })
+
+  test('T-1215 C7: an old layout with added products gets no proposal (migrate would refuse)', () => {
+    const root = project(OLD)
+    fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify({ slug: 'proj', products: [{ name: 'mobile' }] }) + '\n')
+    expect(runHook(root)).not.toContain('pre-product docs layout')
+    const legacyKey = project(OLD)
+    fs.writeFileSync(path.join(legacyKey, '.prdt', 'config.json'), JSON.stringify({ slug: 'proj', lines: [{ name: 'mobile' }] }) + '\n')
+    expect(runHook(legacyKey)).not.toContain('pre-product docs layout')
+  })
 })

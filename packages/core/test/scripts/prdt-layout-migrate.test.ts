@@ -1283,3 +1283,33 @@ m.cmd_layout(argparse.Namespace(action="migrate", apply=True, json=False))`)
     expectRestored(root, before, head, cfg)
   }, 300_000)
 })
+
+describe('T-1215 layout edge fixes', () => {
+  test('C3: a layout-reserved slug gets a different product folder (init → new layout, not partial)', () => {
+    for (const slug of ['qa', 'prd', 'tickets', 'wiki', 'features', 'artifacts', 'po', 'designer', 'developer']) {
+      const root = path.join(tmp, `c3-${slug}`)
+      fs.mkdirSync(root, { recursive: true })
+      expect(prdt(root, ['init', '--json', '--slug', slug, '--yes']).code).toBe(0)
+      expect(fs.existsSync(path.join(root, 'docs', `${slug}-product`))).toBe(true)
+      expect(fs.existsSync(path.join(root, 'docs', slug))).toBe(false)
+      expect(prdt(root, ['layout', 'check']).code).toBe(0)
+    }
+  }, 120_000)
+
+  test('C4: --apply creates docs/_shared even when nothing moves into it', () => {
+    const root = path.join(tmp, 'c4')
+    fs.mkdirSync(path.join(root, 'docs', 'prd'), { recursive: true })
+    expect(prdt(root, ['init', '--json', '--slug', 'proj', '--yes']).code).toBe(0)
+    write(path.join(root, 'docs/prd/PRD.md'), '# PRD\n\n## v0.1\n')
+    ticket(path.join(root, 'docs/tickets/v0.1/T-001.md'), 'T-001')
+    for (const e of fs.readdirSync(path.join(root, 'docs'))) {
+      if (!['prd', 'tickets'].includes(e)) fs.rmSync(path.join(root, 'docs', e), { recursive: true, force: true })
+    }
+    git(root, ['add', '-A', '-f', '--', 'docs', '.prdt/config.json'])
+    git(root, ['commit', '-qm', 'seed'])
+    const r = prdt(root, ['layout', 'migrate', '--apply'])
+    expect(r.code).toBe(0)
+    expect(fs.existsSync(path.join(root, 'docs', '_shared'))).toBe(true)
+    expect(prdt(root, ['layout', 'check']).code).toBe(0)
+  }, 120_000)
+})
