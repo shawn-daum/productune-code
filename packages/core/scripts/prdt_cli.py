@@ -16182,6 +16182,8 @@ def layout_session_start_block(root):
         pdir = Path(root) / "docs" / prod
         if pdir.is_dir() and not pdir.is_symlink() and not os.path.lexists(Path(root) / "docs" / DOCS_SHARED):
             state = layout_state(root, deep=True)
+    if state == "old" and project_lines(root):
+        return ""     # T-1215: `layout migrate` refuses a multi-product project — no proposal it cannot run
     if state == "old":
         n = _lay_n(layout_plan(root)["total"])
         return (
@@ -16449,6 +16451,12 @@ def layout_apply(root, plan):
                 created_dirs += list(reversed(chain))   # shallow first; rollback walks it backwards
                 _lay_rename(root / u["src"], root / u["dst"])
                 moved.append(u)
+            # T-1215: after the renames (a kill mid-move keeps the shapes the half-move checks read) —
+            # nothing may have moved into `_shared`, yet its presence is what reads as the new layout
+            shared = root / "docs" / DOCS_SHARED
+            if not os.path.lexists(shared):
+                os.makedirs(shared)
+                created_dirs.append(shared)
             for t in tracked:
                 new = _lay_remap(t, units)
                 if new:

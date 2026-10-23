@@ -393,12 +393,21 @@ def _scan_ticket_dir(root, tdir, lines, prefix):
         yield row, p, problems
 
 
+# T-1215: top-level `docs/` names the layout owns — a product folder never takes one
+# (`docs/qa/` beside `docs/_shared/` read as a half-moved layout). KEEP the five
+# `_product_dir_name` copies (statusline · hooks) in lockstep with this tuple.
+PRODUCT_RESERVED_NAMES = ("prd", "tickets", "artifacts", "wiki", "features", "archive", "po", "designer", "developer", "qa")
+
+
 def product_dir_name(slug):
     """A config `slug` as the `docs/<kebab>/` folder name (first product, T-1104):
     lower-case, runs of non-[a-z0-9] → one hyphen; a result that is not a legal
-    product name (empty · `v<digit>…` · `backlog`) → `product`."""
+    product name (empty · `v<digit>…` · `backlog`) → `product`; a layout-reserved
+    name (`PRODUCT_RESERVED_NAMES`) → `<name>-product`."""
     k = re.sub(r"[^a-z0-9]+", "-", str(slug or "").lower()).strip("-")
-    return k if LINE_NAME_RE.match(k) else "product"
+    if not LINE_NAME_RE.match(k):
+        return "product"
+    return f"{k}-product" if k in PRODUCT_RESERVED_NAMES else k
 
 
 VERSION_ID_RE = re.compile(r"^v\d+(?:\.\d+){0,2}$", re.ASCII)
