@@ -195,7 +195,7 @@ fi
 
 TAIL=""
 if [ -n "$LOG" ] && [ -f "$LOG" ]; then
-  TAIL=$(tail -c 1500 "$LOG" | redact)
+  TAIL=$(redact < "$LOG" | tail -c 1500)   # redact the whole log first: a cut inside a token must not leak its tail
   tail -n 20 "$LOG" | redact | while IFS= read -r l; do echo "PRDT_PHASE $PHASE log| $l"; done
 fi
 [ "$STATUS" = ok ] && PHASE=""

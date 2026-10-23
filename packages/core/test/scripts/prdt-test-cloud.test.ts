@@ -354,6 +354,17 @@ describe('T-1211 condenser redaction — failure messages and meta values', () =
   })
 })
 
+describe('T-1211 condenser redaction — CR / U+2028 end no line early', () => {
+  test('Authorization value is redacted past \\r and U+2028', () => {
+    const d = tmp('cond-cr')
+    fs.writeFileSync(path.join(d, 'v.json'), JSON.stringify({ numTotalTests: 0, testResults: [] }))
+    for (const sep of ['\r', '\u2028', '\u2029']) {
+      const raw = execFileSync('node', [CONDENSE, path.join(d, 'v.json'), '', `log_tail=header Authorization: X${sep}later=FAKEAFTERCR`], { cwd: d, encoding: 'utf-8' })
+      expect(raw).not.toContain('FAKEAFTERCR')
+    }
+  })
+})
+
 describe('runner push — one parentless result.json commit to ci/<T-NNN>/<session> only', () => {
   let work: string
   let origin: string
@@ -560,6 +571,19 @@ printf '{"numTotalTests":1,"numPassedTests":1,"numFailedTests":0,"testResults":[
     const res = JSON.parse(raw)
     expect(res).toMatchObject({ status: 'error', phase: 'setup' })
     expect(res.log_tail).toContain('***@github.com')
+  })
+
+  test('T-1211: a token straddling the 1500-byte cut is redacted before truncation', () => {
+    const tok = 'ghp_FAKEtokenLONGSECRET0123456789abcdef'
+    const bear = 'Bearer ' + 'B'.repeat(40)
+    // each secret starts 21 bytes before the 1500-byte cut (the log ends in a newline)
+    const leak = (cut: string) => 'x'.repeat(30) + ' ' + cut + ' ' + 'y'.repeat(1500 - (cut.length - 21) - 2)
+    for (const [name, cut, frags] of [['a', tok, ['ET0123456789abcdef', 'SECRET0123']], ['b', bear, ['BBBBBBBB']]] as const) {
+      const r = run(`cse_straddle_${name}`, [], { FAKE_SETUP_LEAK: leak(cut) })
+      expect(r.status, r.stderr).toBe(0)
+      const raw = git(origin, 'show', `refs/heads/ci/T-1126/cse_straddle_${name}:result.json`)
+      for (const frag of frags) expect(raw).not.toContain(frag)
+    }
   })
 
   test('a phase never waits on an inherited stdin, and corepack never prompts', () => {
