@@ -7,48 +7,62 @@ Version-by-version release notes for this project.
 >   git tag (`v1.4`), the first token after `## `. The updater and the viewer split
 >   sections on this line, so keep it verbatim. It is the only `#` line in a section.
 > - Optional ` — <title> (YYYY-MM-DD)` after the version token.
-> - Body: plain group labels `추가` · `변경` · `수정` · `알려진 한계`, each followed by one
->   blank line and `- ` items. Omit an empty group. `알려진 한계` only for a security limit.
+> - Body, in this order, each group a plain label line + one blank line + `- ` items:
+>   `요약` (exactly one line per lane, saying what that lane changed for the user) ·
+>   one group per lane, named by the lane, same order as the summary, listing that
+>   lane's user-visible work · `큰 버그 수정` · `알려진 한계`. Omit an empty group.
+>   `알려진 한계` only for a security limit.
+> - Lanes are the version's PRD 합격선 lanes (`prdt schedule`). Work in the 자투리 lane
+>   goes under the lane it serves, or is dropped if minor.
+> - Bugs: minor fixes are omitted. List only a fix a user noticed or that guarded data
+>   or secrets.
 > - One line per item: what changed, as the user sees it. No `###`, no bold, no backticks,
 >   no reasons, no ticket ids, no commands for the reader to type.
-> - When: written at release time, in the same change that cuts the `v*` tag.
+> - When: written at release time, in the same change that cuts the `v*` tag. Show the
+>   section to the user and get confirmation before committing it.
+> - Group headings and summary prefixes name what the lane changed for the user, never
+>   the lane's internal name.
+> - Every line is checked against the closed tickets' outcome lines, not the PRD To-Be.
 > - Everything above the first `## ` line is preamble and is ignored by the parser.
 
-## v1.14 — 제품이 먼저인 문서 배치 · 기기 env · 클라우드 테스트 · 레인 (2026-10-23)
+## v1.14 — 제품이 먼저인 문서 배치 · 기기 env · 레인 (2026-10-23)
 
-추가
+요약
 
-- 문서 배치: 제품이 하나여도 문서가 공유 폴더와 제품 폴더로 나뉘고, 모든 제품이 같은 깊이에 있어요
-- 위키 · override · 디자인 · 기능 · env 키가 어느 층에 살고 어떤 순서로 읽히는지 한 표로 정해졌어요
-- 옛 배치 프로젝트는 옮길 목록을 미리 보고, 확인한 뒤 한 번에 옮겨요. 옮긴 것은 되돌릴 수 있어요
-- 세션을 시작할 때 옛 배치를 찾으면 옮기기를 제안해요
+- 문서 폴더를 제품별로 나눔 · 기기 env: 제품이 하나여도 문서가 제품 폴더 아래 같은 깊이로 놓이고, 기기 env 와 뷰어 · 상태줄이 제품 여럿을 줄마다 보여 줘요
+- 레인으로 일하기: 합격선마다 레인 하나가 대화 턴과 따로 이어서 돌고, 요청은 PO 가 어느 레인에 둘지 권해요
+- 실행 속도 · 안전: prdt 실행이 빨라지고, 다른 세션이나 현재 폴더의 파일에 휘둘리던 곳이 막혔어요
+
+문서 폴더를 제품별로 나눔 · 기기 env
+
+- 문서가 공유 폴더와 제품 폴더로 나뉘고, 어느 층에 무엇이 살고 어떤 순서로 읽히는지 한 표로 정해졌어요
+- 예전 구조 프로젝트는 세션을 시작할 때 옮기기를 제안받고, 옮길 목록을 미리 본 뒤 한 번에 옮겨요. 되돌릴 수도 있어요
 - ntf-archive 가 ntf-pm 프로젝트의 한 줄이 되어, 상태줄과 뷰어 홈이 줄마다 한 행을 보여요
 - 기기 env: env 값과 사용자 정보를 기기에 한 번 저장하고, 프로젝트는 키 이름으로 가져다 써요
-- 비밀값 가리기: 출력에 나온 비밀값은 가려지고, 흔한 키 형식도 함께 가려져요
-- 클라우드 테스트: 맥 전용이 아닌 테스트는 클라우드 세션에서 돌고, 결과는 결과 브랜치로 돌아와요
-- 레인: 합격선마다 레인 하나가 PO 의 대화 턴과 따로 이어서 돌고, 레인 밖 일은 의미 묶음으로 레인을 받거나 「자투리」 로 가요
-- 상태줄 build 단계에 제품마다 레인 행이 보여요
-- 뷰어 왼쪽 위에 프로젝트 · 버전 · 단계가, 왼쪽 아래 토글 옆에 도구 이름과 버전이 보여요
-- 뷰어 사이드바 진행 상황 아래 카드가 단계 순번 · 티켓 진행 · 기다리는 결정 · 사용자 작업을 보여요
-- 기본 제공 작업자와 fork 발주도 발주 검사(모델 등급 · 자원 한도)를 받아요
-- 진행 신호: 합격선이 충족되면 상태 점검이 Ship 진입을 권해요
+- 출력에 나온 비밀값과 흔한 키 형식이 가려져요
+- 뷰어 왼쪽 위에 프로젝트 · 버전 · 단계가, 왼쪽 아래에 도구 이름과 버전이 보여요
+- 뷰어 사이드바 진행 카드가 단계 순번 · 티켓 진행 · 기다리는 결정 · 사용자 작업을 보여요
 
-변경
+레인으로 일하기
 
+- 합격선마다 레인 하나가 PO 의 대화 턴과 따로 이어서 돌아요
 - 일정 계산이 합격선마다 레인 하나를 계산하고, PO 몫 티켓도 넣어요
-- 링크 검사 알림이 사용자 화면의 오류가 아니라 PO 에게만 가는 조용한 지시로 바뀌었어요
-- 풀스크린에서 마우스 보고가 입력창에 쌓이지 않도록 실행기가 마우스 설정을 줘요. 사용자가 정한 값은 덮지 않아요
-- 제품이 여럿인 프로젝트의 PRD · 레인 · 합격선 읽기가 제품별로 나뉘어요
-- track 안에서는 그 track 최상위 폴더의 env 파일 값만 제품 코드 값으로 써요
-- 예약어와 겹치는 폴더 이름은 제품 이름 뒤에 접미를 붙여 피해요
+- 레인 밖 요청은 PO 가 다음 버전 · 이번 버전 자투리 · 새 레인 중 하나를 권해요
+- 상태줄 build 단계에 제품마다 레인 행이 보여요
+- 기본 제공 작업자와 fork 발주도 발주 검사(모델 등급 · 자원 한도)를 받아요
+- 합격선이 충족되면 상태 점검이 Ship 진입을 권해요
 
-수정
+실행 속도 · 안전
 
-- 티켓 번호 링크가 공백 · 한글 · 퍼센트가 든 경로에서 깨지던 문제
-- 뷰어가 잘못된 문서 경로를 만나면 생성이 멈추던 문제
+- prdt 실행이 빨라졌어요. 버전 확인이 약 0.19초에서 약 0.08초로 줄었어요
+- 다른 세션이 기기 폴더에 쓰는 일로 테스트가 실패 처리돼 넣기를 다시 돌리던 일이 없어져요
+- 현재 폴더에 같은 이름의 파일이 있어도 상태줄 · 훅 · 뷰어가 그 파일을 실행하지 않아요
+- 티켓 새로 만들기가 버전 · 백로그 · 미리보기 지정대로 동작해요
+
+큰 버그 수정
+
 - 옮기기 되돌리기가 링크 파일을 따라 밖으로 새던 문제
-- 클라우드 테스트 결과 메시지에 비밀값이 남던 문제
-- 티켓 새로 만들기가 버전 · 백로그 · 미리보기 지정을 무시하던 문제
+- 뷰어가 잘못된 문서 경로를 만나면 생성이 멈추던 문제
 
 알려진 한계
 
