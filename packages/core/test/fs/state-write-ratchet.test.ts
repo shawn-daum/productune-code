@@ -160,7 +160,7 @@ const ALLOW: Record<string, number> = {
   'core/scripts/hooks/prdt-audience-inject.sh': 2,
   'core/scripts/hooks/prdt-auto-open.sh': 1,
   'core/scripts/hooks/prdt-call-governor.sh': 6,
-  'core/scripts/hooks/prdt-dispatch-gate.sh': 6, // T-1280: -6 = quoted-text `>` (prose, jq strings) no longer counted; T-1283: -1 = a `<…>` in a `#` comment tail
+  'core/scripts/hooks/prdt-dispatch-gate.sh': 7, // T-1248: +1 = the waiting record `: > $PRDT_HOME/run/dispatch-gate/waiting/<slug>` (tooling-owned run/, mtime is the datum); T-1280: -6 = quoted-text `>` (prose, jq strings) no longer counted; T-1283: -1 = a `<…>` in a `#` comment tail
   'core/scripts/hooks/prdt-identity-guard.sh': 2,
   'core/scripts/hooks/prdt-inbox-inject.sh': 1,
   'core/scripts/hooks/prdt-message-display-autolink.sh': 2, // T-1143: embedded Python — the per-message fence stamp under $PRDT_HOME/run/message-display/ (home, never .prdt/): one `open(..., "w")` + the `os.unlink`-guarded save
