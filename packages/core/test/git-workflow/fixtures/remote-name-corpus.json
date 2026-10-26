@@ -1,0 +1,4 @@
+["backup","origin","my-backup","my-backup.2","nas.home","team/backup","a/b/c","a.b","é백업","x@y","a@",
+ "@","@{","a@{b","x..y","a.","a.lock/b","a/b.lock","a.lock",".a","a/.b","/","//","/a","a/","a//b",
+ "bad^ref","a~1","a?b","a*b","a[b","a\\b","a b","a\tb","a\u007fb","a:b","-f","--force","",
+ "a b","a b","a　b","a﻿b","a\u0085b","a​b"]
