@@ -105,17 +105,24 @@ describe.skipIf(!READY)('prdt settings — list', () => {
       env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: 'en', LC_ALL: 'ja_JP.UTF-8' },
     })
     const value = () => JSON.parse(run('settings', '--json').stdout).find((e: any) => e.key === 'user.lang').value
-    expect(value()).toBe('ja')
+    // T-1291: nothing stored → the screen shows what the hook uses (no check), never the device language
+    expect(value()).toBeNull()
+    expect(run('settings').stdout).toContain('none (no check)')
     expect(run('settings', 'set', 'user.lang', 'ko').status).toBe(0)
     expect(read('user-lang')).toBe('ko\n')
     expect(value()).toBe('ko')
-    for (const bad of ['KO', 'ko-KR', 'korean', 'xx', 'yes']) {
+    for (const bad of ['ko-KR', 'xx', 'yes']) {
       expect(run('settings', 'set', 'user.lang', bad).status).toBe(1)
       expect(read('user-lang')).toBe('ko\n')
     }
+    // the same names and case the onboarding prompt takes
+    for (const [ans, code] of [['KO', 'ko'], ['Korean', 'ko'], ['English', 'en'], ['EN', 'en']]) {
+      expect(run('settings', 'set', 'user.lang', ans).status).toBe(0)
+      expect(read('user-lang')).toBe(code + '\n')
+    }
     expect(run('settings', 'unset', 'user.lang').status).toBe(0)
     expect(read('user-lang')).toBeNull()
-    expect(value()).toBe('ja')
+    expect(value()).toBeNull()
   })
   test('onboarding asks user.lang once: device language as default, a non-code answer keeps it (T-1116)', () => {
     const ask = (answer: string) => spawnSync('python3', ['-c',
@@ -374,6 +381,15 @@ describe.skipIf(!READY)('prdt settings — priority.projects (T-1247)', () => {
     const rows = JSON.parse(prdt('en', 'settings', '--json').out)
     expect(rows.find((x: any) => x.key === 'priority.projects').value).toBe('productune')
   })
+  test('trailing and double commas are dropped, a commas-only value is refused (T-1291)', () => {
+    seedProjects('a', 'b')
+    const r = prdt('en', 'settings', 'set', 'priority.projects', 'a,,b,')
+    expect(r.status, r.err).toBe(0)
+    expect(read('priority-projects')).toBe('a,b\n')
+    const bad = prdt('en', 'settings', 'set', 'priority.projects', ',,')
+    expect(bad.status).toBe(1)
+    expect(read('priority-projects')).toBe('a,b\n')
+  })
   test('unset removes the file', () => {
     seedProjects('a')
     expect(prdt('en', 'settings', 'set', 'priority.projects', 'a').status).toBe(0)
@@ -399,7 +415,7 @@ describe.skipIf(!READY)('prdt settings — priority.projects (T-1247)', () => {
   test('empty value and empty segment are refused, nothing written', () => {
     seedProjects('a')
     expect(prdt('en', 'settings', 'set', 'priority.projects', '  ').status).toBe(1)
-    expect(prdt('en', 'settings', 'set', 'priority.projects', 'a,').status).toBe(1)
+    expect(prdt('en', 'settings', 'set', 'priority.projects', ',').status).toBe(1)
     expect(read('priority-projects')).toBeNull()
   })
   test('known projects also come from dispatch markers', () => {

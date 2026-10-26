@@ -81,6 +81,7 @@ from prdt_lanes import (
     product_docs_dir,
     product_docs_dirs,
     project_line_names,
+    gate_lines,
     project_lines,
     project_products,
     read_json,
@@ -5242,10 +5243,11 @@ def device_lang():
     return None
 
 
-def user_lang():
-    """T-1116: the stored chat language (`~/.prdt/user-lang`), else the device language."""
+def stored_user_lang():
+    """The chat language the hooks read (`~/.prdt/user-lang`); None when nothing valid is stored.
+    The device language is only the onboarding default — no hook falls back to it (T-1281)."""
     v = _read_token("user-lang")
-    return v if USER_LANG_RE.match(v) else device_lang()
+    return v if USER_LANG_RE.match(v) else None
 
 
 # Language names a user may type (non-ASCII as escapes: the settings code holds no literal).
@@ -5388,12 +5390,14 @@ def _known_project_slugs():
 
 
 def _priority_names(value):
-    return [n.strip() for n in value.split(",")]
+    return [n for n in (x.strip() for x in value.split(",")) if n]
 
 
 def _priority_refuse(value):
     """(catalog key, fields) for the first failing set check, else None."""
     names = _priority_names(value)
+    if not names:
+        return "settings.error.empty", {"key": "priority.projects"}
     known = _known_project_slugs()
     unknown = [n for n in names if n not in known]
     if unknown:
@@ -5456,9 +5460,10 @@ def settings_entries(droot):
     entries.append({
         "key": "user.lang", "kind": "text", "domain": None,
         "shape": "a language code: " + ", ".join(sorted(USER_LANG_CODES)),
-        "check": lambda v: None if v in USER_LANG_CODES else "shape",
-        "get": user_lang,
-        "put": lambda v: _write_token("user-lang", v),
+        "check": lambda v: None if lang_answer_code(v) else "shape",
+        "get": stored_user_lang,
+        "none_key": "settings.value.none.user.lang",
+        "put": lambda v: _write_token("user-lang", v if v is None else lang_answer_code(v)),
     })
     entries.append({
         "key": "priority.projects", "kind": "text", "domain": None,
@@ -5492,7 +5497,7 @@ def cmd_settings(args):
     if entries is None:
         sys.exit(msg(m, "settings.error.resolver"))
     none = msg(m, "settings.value.none")
-    shown = lambda v: none if v is None else v
+    shown = lambda v, e=None: (msg(m, e["none_key"]) if e and e.get("none_key") else none) if v is None else v
     action = args.action or "list"
     rest = list(args.rest or [])
     if action not in ("list", "set", "unset"):
@@ -5503,7 +5508,7 @@ def cmd_settings(args):
     if action == "list":
         if rest:
             sys.exit(msg(m, "settings.error.usage"))
-        rows = [(e["key"], shown(e["get"]()), msg(m, f"settings.list.desc.{e['key']}")) for e in entries]
+        rows = [(e["key"], shown(e["get"](), e), msg(m, f"settings.list.desc.{e['key']}")) for e in entries]
         if args.json:
             print(json.dumps([{"key": e["key"], "value": e["get"](), "domain": e.get("domain"),
                                "shape": e.get("shape")} for e in entries], ensure_ascii=False))
@@ -5523,10 +5528,10 @@ def cmd_settings(args):
     entry = next((e for e in entries if e["key"] == key), None)
     if entry is None:
         sys.exit(msg(m, "settings.error.badkey", key=key, keys=", ".join(e["key"] for e in entries)))
-    current = shown(entry["get"]())
+    current = shown(entry["get"](), entry)
     if action == "unset":
         entry["put"](None)
-        print(msg(m, "settings.change.unset", key=key, value=shown(entry["get"]())))
+        print(msg(m, "settings.change.unset", key=key, value=shown(entry["get"](), entry)))
         return
     value = _ascii_strip(rest[1])
     if not value:
@@ -5542,7 +5547,7 @@ def cmd_settings(args):
     if refuse:
         sys.exit(msg(m, refuse[0], **refuse[1]))
     entry["put"](value)
-    now = shown(entry["get"]())
+    now = shown(entry["get"](), entry)
     if entry.get("report"):
         for line in entry["report"](m, key, current, now):
             print(line)
@@ -6943,7 +6948,7 @@ DECISION_KEYS = ("why", "how", "module", "what")
 _DEC_KEY_HEAD_RE = re.compile(r"^###\s+(?:(\S+)\s+)?(why|how|module|what)\s*$", re.I)
 _DEC_INLINE_RE = re.compile(r"(?<![\w#`])(why|how|module|what)\s*[:：]\s*(.+?)(?=\s+(?:why|how|module|what)\s*[:：]|$)", re.I)
 _DEC_QUOTE_RE = re.compile(r"「([^」]+)」|\*[\"“]([^*]+?)[\"”]\*")
-_DEC_USER_LINE_RE = re.compile(r"^\s*[-*]?\s*(?:\d{4}-\d{2}-\d{2}\s+)?(?:사용자|션님|user)\b", re.I)
+_DEC_USER_LINE_RE = re.compile(r"^\s*[-*]?\s*(?:\d{4}-\d{2}-\d{2}\s+)?(?:사용자|user)\b", re.I)
 _DEC_REVERSED_RE = re.compile(r"뒤집|overturn|supersede", re.I)
 _DEC_LOG_LINE_RE = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2})\s*(.*)$")
 _DEC_LIMIT = 10
@@ -7169,7 +7174,7 @@ def _dec_kinds(module):
     return [k.strip() for k in re.split(r"\s+·\s+|[,;]", module or "") if k.strip()]
 
 
-def _dec_line(rec):
+def _dec_line(rec, quote_label="원문"):
     if rec["kind"] == "term":
         return rec["line"]
     it = _dec_pick_item(rec)
@@ -7184,7 +7189,7 @@ def _dec_line(rec):
     parts.append(f"what: {what}")
     q = (rec.get("quote") if rec["kind"] == "log" else it.get("quote")) or rec.get("quote")
     if q:
-        parts.append(f"원문 「{_dec_clip(q, 80)}」")
+        parts.append(f"{quote_label} 「{_dec_clip(q, 80)}」")
     if rec.get("reversed_by"):
         parts.append(f"→ {rec['reversed_by']}")
     return " · ".join(parts)
@@ -7231,7 +7236,8 @@ def cmd_decisions(args):
             print("  followed: none")
         return
     recs.sort(key=_dec_sort_key, reverse=True)
-    lines = [_dec_line(r) for r in recs[:_DEC_LIMIT]]
+    quote_label = msg(load_messages(), "decisions.quote.label")
+    lines = [_dec_line(r, quote_label) for r in recs[:_DEC_LIMIT]]
     lines += [r["line"] for r in _dec_term_records(root, _dec_matcher(words))]
     if not lines:
         print("no recorded decision")
@@ -14982,7 +14988,7 @@ def _track_closes_lane(root, tid):
         row = tickets.get(tid, (None, None))[0]
         if row is None or row["type"] != "impl" or row["status"] != "open":
             return False, ""
-        for line in (project_line_names(root) or [None]):
+        for line in gate_lines(root):
             for lane in lanes_for(root, line):
                 if lane.get("besteffort") or tid not in lane["tickets"]:
                     continue
@@ -15539,7 +15545,7 @@ def _read_paused(root):
 
 def _project_gate_lane_names(root):
     names = []
-    for line in [None] + list(project_line_names(root)):
+    for line in gate_lines(root):
         for ln in compute_schedule(root, line=line).get("lanes") or []:
             if not ln.get("besteffort") and ln["name"] not in names:
                 names.append(ln["name"])
