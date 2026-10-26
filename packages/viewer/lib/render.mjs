@@ -987,6 +987,11 @@ function ticketRolePill(assignee) {
 // `sortTable` reorders the rows in place. `kind` 'num' compares numbers,
 // 'text' compares text with numeric-aware collation (T-999 < T-1000).
 /** The number inside a ticket id ("T-1006" → 1006); 0 when there is none. */
+/** T-1276: a ticket's displayed name — its `title`, else its `slug`, else `fallback`. */
+function ticketName(fm, fallback = '') {
+  return fm.title || fm.slug || fallback
+}
+
 function ticketNum(id) {
   const m = /(\d+)/.exec(String(id || ''))
   return m ? Number(m[1]) : 0
@@ -1030,7 +1035,7 @@ function ticketRowsTable(tickets) {
     const id = fm.id || t.rel
     html += `<tr class="detail-row" data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}" data-tie="${ticketNum(id)}">`
     html += sortTd(id, escapeHtml(id), 'id-col')
-    html += sortTd(fm.slug || '', escapeHtml(fm.slug || ''))
+    html += sortTd(ticketName(fm), escapeHtml(ticketName(fm)))
     html += sortTd(fm.type || '', `<span class="pill pill-type">${escapeHtml(fm.type || '')}</span>`)
     html += sortTd(ticketStatusText(fm.status), `<span class="pill pill-status-${statusPillClass(fm.status)}">${escapeHtml(ticketStatusText(fm.status))}</span>`)
     html += sortTd(fm.assignee || '', ticketRolePill(fm.assignee))
@@ -1141,7 +1146,7 @@ function ticketDetailEntries(tickets, repoRootHref, lineTickets = []) {
     const fm = t.frontmatter
     const id = fm.id || t.rel
     entries[id] = {
-      title: fm.slug || id,
+      title: ticketName(fm, id),
       type: fm.type || '',
       status: ticketStatusText(fm.status || ''),
       assignee: fm.assignee || '',
@@ -1155,7 +1160,7 @@ function ticketDetailEntries(tickets, repoRootHref, lineTickets = []) {
       const fm = t.frontmatter
       const id = fm.id || t.rel
       entries[id] = {
-        title: fm.slug || id,
+        title: ticketName(fm, id),
         type: fm.type || '',
         status: ticketStatusText(fm.status || ''),
         assignee: fm.assignee || '',
@@ -1900,7 +1905,7 @@ function featureEvidence(e, anchors) {
     .map((t) => {
       const id = String(t.fm.id || '')
       const mark = t.fm.status === 'open' || t.fm.status === 'dropped' ? `(${FEATURE.ticketStatus[t.fm.status]})` : ''
-      return `${ticketIdLinks(escapeHtml(id), anchors)}${escapeHtml(mark)} ${escapeHtml(t.fm.slug || '')}`.trim()
+      return `${ticketIdLinks(escapeHtml(id), anchors)}${escapeHtml(mark)} ${escapeHtml(ticketName(t.fm))}`.trim()
     })
     .join(' · ')
 }
@@ -2604,7 +2609,7 @@ function homeWaits(data) {
     (list.length === 0
       ? `<p class="cp-empty">${empty}</p>`
       : `<div class="cp-wlist">${list
-          .map((fm) => `<button type="button" class="cp-went" data-detail-kind="ticket" data-detail-id="${escapeHtml(fm.id)}"><span class="mono cp-wid">${escapeHtml(fm.id)}</span><span class="cp-wslug">${escapeHtml(fm.slug || '')}</span>${ticketRolePill(fm.assignee)}</button>`)
+          .map((fm) => `<button type="button" class="cp-went" data-detail-kind="ticket" data-detail-id="${escapeHtml(fm.id)}"><span class="mono cp-wid">${escapeHtml(fm.id)}</span><span class="cp-wslug">${escapeHtml(ticketName(fm))}</span>${ticketRolePill(fm.assignee)}</button>`)
           .join('')}</div>`) +
     '</div>'
   return `<div class="sc-waits">${block(HOME.waitDec, dec, HOME.waitDecEmpty)}${block(HOME.waitReq, req, HOME.waitReqEmpty)}</div>`
@@ -2713,10 +2718,10 @@ function dependencyDiagram(graph, layout, DG_ID = 'home-dg') {
       }
       const idText = `${n.id}${n.done ? ' ✓' : ''}`
       return (
-        `<g class="dg-a dg-btn" ${ticketButtonAttrs(n.id)} aria-label="${escapeHtml(HOME.nodeOpen(n.id))}"><title>${escapeHtml(`${n.id} ${n.slug}`.trim())}</title>` +
+        `<g class="dg-a dg-btn" ${ticketButtonAttrs(n.id)} aria-label="${escapeHtml(HOME.nodeOpen(n.id))}"><title>${escapeHtml(`${n.id} ${n.name}`.trim())}</title>` +
         `<g class="${cls}"><rect class="dg-box" height="${NODE_H}" rx="8" width="${NODE_W}" x="${n.x}" y="${n.y}"></rect>` +
         `<text class="dg-id" x="${n.x + 8}" y="${n.y + 14}">${escapeHtml(idText)}</text>` +
-        `<text class="dg-t" x="${n.x + 8}" y="${n.y + 31}">${escapeHtml(fitText(n.slug, NODE_W - 16))}</text>` +
+        `<text class="dg-t" x="${n.x + 8}" y="${n.y + 31}">${escapeHtml(fitText(n.name, NODE_W - 16))}</text>` +
         `${diagramRole(n.assignee, n.x, n.y)}</g>${chips.join('')}</g>`
       )
     })
