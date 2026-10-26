@@ -47,11 +47,13 @@ import { IDLE,
   OPTION_CARD,
   ENV,
   IDENTITY,
+  setViewerLang,
+  lang as viewerLang,
 } from './labels.mjs'
 import { mermaidBlock, hasMermaid, mermaidScript, MERMAID_CSS } from './mermaid.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
 import { HOME_STAGES, stageSegments, buildHomeGraph, layoutHomeGraph, waitLists, compareTicketIds, NODE_W, NODE_H } from './home-graph.mjs'
-import { disciplineLoadCard, DISCIPLINE_LOAD_CSS, DISCIPLINE_LOAD_SCRIPT } from './discipline-load.mjs'
+import { disciplineLoadCard, DISCIPLINE_LOAD_CSS, disciplineLoadScript } from './discipline-load.mjs'
 import { renderPrdReading, openDecisionTickets, PRD_READING_CSS, PRD_READING_SCRIPT } from './prd-reading.mjs'
 
 function escapeHtml(str) {
@@ -2325,7 +2327,7 @@ const INFO_ICON_SVG =
   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>'
 
 /** docs/design.md §8.4 Banner (no side stripe, T-756) — hidden until the page is opened at an `#id` it cannot show; the script fills in the id and the text. */
-const HASH_NOTICE_HTML = `<div class="notice" id="hash-notice" role="status" hidden>
+const hashNoticeHtml = () => `<div class="notice" id="hash-notice" role="status" hidden>
 <span class="notice-icon">${INFO_ICON_SVG}</span>
 <span class="notice-body"><b class="js-notice-id"></b>: <span class="js-notice-text"></span></span>
 <button type="button" class="notice-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 13)}</button>
@@ -2833,7 +2835,7 @@ function homeSection(data, repoRootHref) {
   const views = lineViews(data)
   if (views.length > 0) {
     const groups = lineSectioned(views, (v) => homeLineGroups(data, v, views, repoRootHref))
-    return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups, defaultKey: groups.defaultKey, topHtml: HASH_NOTICE_HTML }) })
+    return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups, defaultKey: groups.defaultKey, topHtml: hashNoticeHtml() }) })
   }
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   // T-713 scope note: `e.fields.bucket` matching stays literal (never
@@ -2852,7 +2854,7 @@ function homeSection(data, repoRootHref) {
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
   const heading = `${STORE_LABEL.home} · ${data.currentVersion}`
-  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: heading, crumbLabel: heading, groups, topHtml: HASH_NOTICE_HTML }) })
+  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: heading, crumbLabel: heading, groups, topHtml: hashNoticeHtml() }) })
 }
 
 export const TEMPLATE_CSS = `
@@ -3480,7 +3482,7 @@ export function buildFileContent(id) {
   return `window.${BUILD_GLOBAL} = ${JSON.stringify(String(id))};\n`
 }
 
-const INTERACTION_SCRIPT = `
+const interactionScript = () => `
 (function () {
   var DETAIL_DATA = JSON.parse(document.getElementById('detail-data').textContent);
   var DETAIL_FIELD_LABELS = ${JSON.stringify(DETAIL_FIELD_LABELS)};
@@ -4161,7 +4163,7 @@ ${PRD_READING_SCRIPT}
       document.head.appendChild(probe);
     }, ${VIEWER_AUTO_REFRESH_MS});
   }
-${DISCIPLINE_LOAD_SCRIPT}
+${disciplineLoadScript()}
 })();
 `
 
@@ -4188,15 +4190,11 @@ ${DISCIPLINE_LOAD_SCRIPT}
 // choice never flashes light first. Light unless the stored value is 'dark'.
 const THEME_HEAD_SCRIPT = `(function(){var t=null;try{t=localStorage.getItem(${JSON.stringify(THEME_STORAGE_PREFIX)}+location.pathname)}catch(e){}document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light')})();`
 const THEME_HEAD_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(THEME_HEAD_SCRIPT, 'utf8').digest('base64')
-const INTERACTION_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT, 'utf8').digest('base64')
 // T-961: a multi-line page resolves an added line's past ticket
 // (docs/tickets/<line>/<v>/T-n.md) to its own data file key `<line>--<v>`; a
-// single-line page keeps INTERACTION_SCRIPT, byte for byte.
+// single-line page keeps the interaction script, byte for byte.
 const PAST_REF_RE = /(function pastTicketRef\(fields\) \{\n\s*var parts = [^\n]*;)/
 const PAST_REF_LINE = '\n    ' + ['if', '(parts.length', '===', '5)', 'parts.splice(2,', '2,', "parts[2]", '+', "'--'", '+', 'parts[3]);'].join(' ')
-const INTERACTION_SCRIPT_LINES = INTERACTION_SCRIPT.replace(PAST_REF_RE, (head) => head + PAST_REF_LINE)
-if (INTERACTION_SCRIPT_LINES === INTERACTION_SCRIPT) throw new Error('T-961: pastTicketRef text drifted from PAST_REF_RE')
-const INTERACTION_SCRIPT_LINES_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT_LINES, 'utf8').digest('base64')
 // T-961: emitted only on a page with several release lines — a single-line
 // page's CSS, scripts and CSP stay byte-identical.
 const LINES_CSS = `
@@ -4210,21 +4208,42 @@ const LINES_CSS = `
 const LINES_SCRIPT = `(function(){function sync(){document.querySelectorAll('.store-section').forEach(function(s){var b=s.querySelector('.nav-item-clickable.active[data-crumb]');var l=s.querySelector('.js-group-label');if(b&&l)l.textContent=b.getAttribute('data-crumb');});}function later(){setTimeout(sync,0);}document.addEventListener('click',later);document.addEventListener('keydown',later);window.addEventListener('hashchange',later);later();})();`
 const LINES_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(LINES_SCRIPT, 'utf8').digest('base64')
 
-const CSP_CONTENT = [
-  "default-src 'none'",
-  // T-885 (T-876 = D): 'strict-dynamic' lets the hash-trusted interaction
-  // script add a past-version data file's <script src>; a parser-inserted or
-  // innerHTML-inserted script (a document body) still never runs.
-  `script-src 'sha256-${THEME_HEAD_SCRIPT_SHA256_BASE64}' 'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`,
-  "style-src 'unsafe-inline'",
-  "img-src 'self' data:",
-  // T-1010: only the side panel's sandboxed artifact iframe (a contained file:// href) loads a frame.
-  "frame-src file:",
-  "font-src data:",
-  "base-uri 'none'",
-  "form-action 'none'",
-].join('; ')
-const CSP_CONTENT_LINES = CSP_CONTENT.replace(`'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}'`, `'sha256-${INTERACTION_SCRIPT_LINES_SHA256_BASE64}'`).replace("'strict-dynamic'", `'sha256-${LINES_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`)
+/**
+ * T-1277: the interaction script carries the page's labels (JSON-embedded at generation), so the script, its
+ * multi-line variant and the CSP hashes are built once per language — never at module load.
+ */
+const scriptBundles = new Map()
+function scriptBundle(lang) {
+  let b = scriptBundles.get(lang)
+  if (b) return b
+  const sha = (t) => crypto.createHash('sha256').update(t, 'utf8').digest('base64')
+  const interaction = interactionScript()
+  const interactionLines = interaction.replace(PAST_REF_RE, (head) => head + PAST_REF_LINE)
+  if (interactionLines === interaction) throw new Error('T-961: pastTicketRef text drifted from PAST_REF_RE')
+  const interactionSha = sha(interaction)
+  const csp = [
+    "default-src 'none'",
+    // T-885 (T-876 = D): 'strict-dynamic' lets the hash-trusted interaction
+    // script add a past-version data file's <script src>; a parser-inserted or
+    // innerHTML-inserted script (a document body) still never runs.
+    `script-src 'sha256-${THEME_HEAD_SCRIPT_SHA256_BASE64}' 'sha256-${interactionSha}' 'strict-dynamic'`,
+    "style-src 'unsafe-inline'",
+    "img-src 'self' data:",
+    // T-1010: only the side panel's sandboxed artifact iframe (a contained file:// href) loads a frame.
+    "frame-src file:",
+    "font-src data:",
+    "base-uri 'none'",
+    "form-action 'none'",
+  ].join('; ')
+  b = {
+    interaction,
+    interactionLines,
+    csp,
+    cspLines: csp.replace(`'sha256-${interactionSha}'`, `'sha256-${sha(interactionLines)}'`).replace("'strict-dynamic'", `'sha256-${LINES_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`),
+  }
+  scriptBundles.set(lang, b)
+  return b
+}
 
 /**
  * Embeds `obj` as a same-document JSON blob. Escapes EVERY `<` as `<`
@@ -4273,6 +4292,9 @@ export function renderPage({
   // bodies never sit in this page, so the page itself cannot tell.
   pastMermaid = false,
 }) {
+  // T-1277: the chrome language is the project's user_lang (data.userLang, collect.mjs); unset or unknown → ko.
+  setViewerLang(data.userLang)
+  const bundle = scriptBundle(viewerLang)
   pageViewerAbsPath = viewerAbsPath
   const pageTitle = escapeHtml(pageTitleText(data.project))
   const discipline = data.discipline || []
@@ -4317,11 +4339,11 @@ ${discSection(discipline, data.disciplineLoad || null)}`
   const detailScript = detailDataScript(detailData)
   // T-1049 (T-1056 = A): mermaid ships only on a page that carries a diagram block.
   const mm = pastMermaid || hasMermaid(bodyHtml, detailScript) ? mermaidScript() : null
-  const csp = views.length > 0 ? CSP_CONTENT_LINES : CSP_CONTENT
+  const csp = views.length > 0 ? bundle.cspLines : bundle.csp
   const cspMeta = mm ? csp.replace("'strict-dynamic'", `'sha256-${mm.sha256}' 'strict-dynamic'`) : csp
 
   return `<!doctype html>
-<html lang="ko">
+<html lang="${viewerLang}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${cspMeta}">
@@ -4340,7 +4362,7 @@ ${emitRootThemeCss(dark, light)}${views.length > 0 ? LINES_CSS : ''}${mm ? MERMA
 ${bodyHtml}
 </div>
 ${detailScript}
-<script>${views.length > 0 ? INTERACTION_SCRIPT_LINES : INTERACTION_SCRIPT}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}${mm ? `\n<script>${mm.script}</script>` : ''}
+<script>${views.length > 0 ? bundle.interactionLines : bundle.interaction}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}${mm ? `\n<script>${mm.script}</script>` : ''}
 </body>
 </html>
 `
