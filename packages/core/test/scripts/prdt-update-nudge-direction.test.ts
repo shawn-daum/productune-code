@@ -795,18 +795,47 @@ describe.skipIf(!PYTHON3)('T-785 F3 / code review #1 · skip_update_nudge (main(
    * project-less fixture, but `main()` decides skip_update_nudge and (when
    * applicable) calls `maybe_prompt_update` BEFORE that dispatch, so the
    * assertion under test is already settled by then. */
+  // T-1231: the tty prompt is an arrow menu that flushes type-ahead (a reflexive Enter must not
+  // install), so the answer is sent only once the menu is drawn: Down + Enter = skip. Exits when
+  // the child does; a child that never draws a menu is simply reaped.
+  const TTY_DRIVER = `
+import os, pty, sys, select, time
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+buf, sent, end = b"", False, time.time() + 40
+while time.time() < end:
+    if select.select([fd], [], [], 0.1)[0]:
+        try:
+            d = os.read(fd, 4096)
+        except OSError:
+            break
+        if not d:
+            break
+        buf += d
+        if not sent and "❯".encode() in buf:
+            time.sleep(0.2)
+            os.write(fd, b"\\x1b[B\\r")
+            sent = True
+    elif os.waitpid(pid, os.WNOHANG)[0]:
+        sys.exit(0)
+try:
+    os.waitpid(pid, 0)
+except ChildProcessError:
+    pass
+`
+
   function runCli(args: string[], home: string, tty = true): void {
     // T-1100: the nudge only fires for a tty run, so the default drives the CLI under a
-    // real pty (pty.spawn gives the child a tty on stdin AND stdout); the answer "2" is
+    // real pty (pty.spawn gives the child a tty on stdin AND stdout); the answer Down+Enter is
     // fed on the parent's stdin so a prompt, if one appears, ends in skip.
     const cmd = tty
-      ? ['python3', '-c', 'import pty,sys; pty.spawn(sys.argv[1:])', 'python3', PRDT_CLI, ...args]
+      ? ['python3', '-c', TTY_DRIVER, 'python3', PRDT_CLI, ...args]
       : ['python3', PRDT_CLI, ...args]
     spawnSync(cmd[0], cmd.slice(1), {
       encoding: 'utf-8',
       cwd: tmpRoot,
-      input: '2\n',
-      timeout: subprocessTimeout('cli'),
+            timeout: subprocessTimeout('cli'),
       env: {
         ...process.env, HOME: home,
         PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')),

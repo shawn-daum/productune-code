@@ -81,6 +81,12 @@ function makeFixture(): void {
     PRDT_HOME: path.join(home, '.prdt'),
     PRDT_DISCIPLINE: path.join(CORE_ROOT, 'discipline'),
     PATH: `${binDir}:${process.env.PATH}`,
+    // T-1228: the two other machine-state inputs doctor judges. The bridge verdict is
+    // about a REAL checkout's dist-vs-src mtimes (flips with any build/edit/land run,
+    // and its line embeds the paths); the meta-backup tick/lag reads a latch + remote.
+    // Same kill-switches the sibling doctor tests set (T-1064/T-1074).
+    PRDT_BRIDGE_CHECK: '0',
+    PRDT_META_BACKUP: '0',
   }
   projectRoot = path.join(sandbox, 'proj')
   fs.mkdirSync(path.join(projectRoot, '.prdt'), { recursive: true })
@@ -268,6 +274,48 @@ describe.skipIf(!CAN_RUN)('severity and blast radius', () => {
     expect(added).toHaveLength(1)
     expect(added[0]).toContain('duplicate id T-101')
     expect(after.filter(l => !added.includes(l))).toEqual(before)
+  })
+})
+
+describe.skipIf(!CAN_RUN)('machine-state independence (T-1228)', () => {
+  /** A checkout PRDT_REPO points at (via $PRDT_HOME/prdt.env, where doctor reads it)
+   *  whose built bridge is either older or newer than its source. Doctor's
+   *  meta-cli bridge check judges exactly this and prints a `⚠ discipline: meta-cli
+   *  bridge STALE — <paths>` line when dist predates src — on the REAL machine that
+   *  state flips whenever a build or an edit lands in a checkout mid-run (a land run,
+   *  another session), so it can flip BETWEEN the two doctor runs the blast-radius
+   *  test diffs. Here the flip is made by hand, deterministically. */
+  function bridgeState(state: 'stale' | 'fresh'): void {
+    const repo = path.join(sandbox, 'fake-core')
+    fs.mkdirSync(path.join(repo, 'src', 'bin'), { recursive: true })
+    fs.mkdirSync(path.join(repo, 'dist', 'bin'), { recursive: true })
+    fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true })
+    fs.writeFileSync(path.join(repo, 'scripts', 'prdt'), '')   // what makes it a prdt checkout to doctor
+    const src = path.join(repo, 'src', 'bin', 'meta-cli.ts')
+    const dist = path.join(repo, 'dist', 'bin', 'meta-cli.cjs')
+    fs.writeFileSync(src, '//\n'); fs.writeFileSync(dist, '//\n')
+    const old = new Date(Date.now() - 3600_000), now = new Date()
+    fs.utimesSync(src, state === 'stale' ? now : old, state === 'stale' ? now : old)
+    fs.utimesSync(dist, state === 'stale' ? old : now, state === 'stale' ? old : now)
+    fs.mkdirSync(env.PRDT_HOME as string, { recursive: true })
+    fs.writeFileSync(path.join(env.PRDT_HOME as string, 'prdt.env'), `PRDT_REPO=${repo}\n`)
+  }
+
+  test('a bridge that flips stale -> fresh between the two runs does not move the diff', () => {
+    ticket('v1.1', 'T-101', 'T-101')
+    prdRecord('v1.1')
+    prdRecord('v1.2')
+    bridgeState('stale')
+    const before = doctorOut().split('\n').filter(l => l.startsWith('⚠ '))
+    ticket('v1.2', 'T-101', 'T-101')
+    bridgeState('fresh')
+    const after = doctorOut().split('\n').filter(l => l.startsWith('⚠ '))
+    const added = after.filter(l => !before.includes(l))
+    expect(added).toHaveLength(1)
+    expect(added[0]).toContain('duplicate id T-101')
+    expect(after.filter(l => !added.includes(l))).toEqual(before)
+    // the neighbour set never carried the bridge verdict at all
+    expect([...before, ...after].some(l => l.includes('meta-cli bridge'))).toBe(false)
   })
 })
 
