@@ -11702,8 +11702,8 @@ def feature_taxonomy_warnings(cfg, vocab):
 
 
 # T-1049 (T-1055 = A): the surface keys a guide `ux[].at` may name — `<surface>.<part>` or a bare
-# `<surface>`. The viewer draws the same four surfaces (FEATURE.surfaces in
-# packages/viewer/lib/labels.mjs); a test keeps the two lists equal.
+# `<surface>`. The viewer draws the same four surfaces (`surfaces` in
+# packages/viewer/lib/labels-<lang>.mjs); a test keeps the lists equal.
 SURFACE_KEYS = {
     "terminal": ("chat", "hook"),
     "statusline": ("stage", "ticket"),

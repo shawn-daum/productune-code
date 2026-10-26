@@ -201,10 +201,13 @@ describe.skipIf(!CAN_RUN)('prdt doctor — feature taxonomy (T-882)', () => {
     const py = prdtSource(PRDT_CLI)
     const block = /SURFACE_KEYS = \{([\s\S]*?)\n\}/.exec(py)![1]
     const doctor = [...block.matchAll(/"(\w+)": \(([^)]*)\)/g)].map(m => [m[1], [...m[2].matchAll(/"(\w+)"/g)].map(x => x[1])])
-    const labels = fs.readFileSync(path.resolve(__dirname, '../../../viewer/lib/labels.mjs'), 'utf8')
-    const viewer = [...labels.matchAll(/\{ key: '(\w+)', name: '[^']*', parts: \[([^\]]*(?:\][^\]]*)*?)\] \}/g)]
-      .map(m => [m[1], [...m[2].matchAll(/\['(\w+)',/g)].map(x => x[1])])
-    expect(viewer.length).toBe(4)
-    expect(doctor).toEqual(viewer)
+    // T-1277 split the viewer's strings per language (labels-<lang>.mjs); both draw the same keys
+    for (const lang of ['ko', 'en']) {
+      const labels = fs.readFileSync(path.resolve(__dirname, `../../../viewer/lib/labels-${lang}.mjs`), 'utf8')
+      const viewer = [...labels.matchAll(/\{ key: '(\w+)', name: '[^']*', parts: \[([^\]]*(?:\][^\]]*)*?)\] \}/g)]
+        .map(m => [m[1], [...m[2].matchAll(/\['(\w+)',/g)].map(x => x[1])])
+      expect(viewer.length, lang).toBe(4)
+      expect(doctor, lang).toEqual(viewer)
+    }
   })
 })
