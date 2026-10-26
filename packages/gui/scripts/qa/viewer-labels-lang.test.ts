@@ -111,3 +111,11 @@ describe('rendered page', () => {
     }
   })
 })
+
+describe('decision fold cell names (QA d-v115-t1259-qa2)', () => {
+  it('the name column grows to its text (30% cap) and breaks between words, not per character', () => {
+    const html = build()
+    expect(html).toMatch(/\.dv-kv \{[^}]*grid-template-columns: fit-content\(30%\) minmax\(0, 1fr\);/)
+    expect(html).toMatch(/\.dv-kv b \{[^}]*min-width: 44px;[^}]*word-break: keep-all;[^}]*overflow-wrap: break-word;/)
+  })
+})
