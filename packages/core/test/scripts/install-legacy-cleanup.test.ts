@@ -110,9 +110,11 @@ test.skipIf(!hasJq())('install.sh strips deleted legacy pdt-* hooks + legacy sta
   //    (T-985 prdt-question-check.sh), so no legacy command and no foreign entry remains there.
   const stopCmds = allCommands({ hooks: { Stop: s.hooks?.Stop ?? [] } })
   // T-1022: plus prdt-user-prompt.sh, the PO form=outline reply check, as its own Stop entry.
-  expect(stopCmds).toHaveLength(2)
+  // T-1272: plus prdt-lane-check.sh, the PO idle gate lane check, between the two.
+  expect(stopCmds).toHaveLength(3)
   expect(stopCmds[0]).toContain('prdt-question-check.sh')
-  expect(stopCmds[1]).toContain('prdt-user-prompt.sh')
+  expect(stopCmds[1]).toContain('prdt-lane-check.sh')
+  expect(stopCmds[2]).toContain('prdt-user-prompt.sh')
   expect(stopCmds.some((c) => LEGACY_BASENAMES.some((b) => c.includes(b)))).toBe(false)
 })
 

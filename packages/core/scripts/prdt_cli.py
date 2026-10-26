@@ -2656,6 +2656,7 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     if interactive and sys.stdin.isatty():
         slug = input(f"project slug [{slug}]: ").strip() or slug
         version = prompt_version(version)
+        ask_user_lang_once()
     prdt.mkdir(exist_ok=True)
     # Field-preserving config write (T-365): a partial project may already
     # carry config.json (e.g. meta.allowlist) — merge, never rebuild from
@@ -5195,6 +5196,52 @@ def _read_token(name):
         return ""
 
 
+USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
+
+
+def _lang_primary(tag):
+    """'ko-KR' · 'ko_KR.UTF-8' · 'ko' → 'ko'; None when `tag` opens with no 2-3 letter subtag."""
+    m = re.match(r"\s*([A-Za-z]{2,3})(?:[-_.@]|\s*\Z)", tag) if isinstance(tag, str) else None
+    return m.group(1).lower() if m else None
+
+
+def device_lang():
+    """The OS language: macOS AppleLanguages[0] (global preferences plist), else
+    LC_ALL · LC_MESSAGES · LANG. None when none of them names a language.
+    KEEP in lockstep with `device_lang` in hooks/prdt-user-prompt.sh (T-1116)."""
+    try:
+        import plistlib
+        p = Path.home() / "Library" / "Preferences" / ".GlobalPreferences.plist"
+        with open(p, "rb") as f:
+            langs = plistlib.load(f).get("AppleLanguages")
+        if isinstance(langs, list) and langs and _lang_primary(langs[0]):
+            return _lang_primary(langs[0])
+    except Exception:
+        pass
+    for k in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        v = _lang_primary(os.environ.get(k) or "")
+        if v:
+            return v
+    return None
+
+
+def user_lang():
+    """T-1116: the stored chat language (`~/.prdt/user-lang`), else the device language."""
+    v = _read_token("user-lang")
+    return v if USER_LANG_RE.match(v) else device_lang()
+
+
+def ask_user_lang_once():
+    """T-1116 onboarding: ask the chat language once per machine — only while
+    `~/.prdt/user-lang` holds no valid value; the device language is the default
+    answer. An answer that is not a language code keeps the device language."""
+    if USER_LANG_RE.match(_read_token("user-lang")):
+        return
+    default = device_lang() or "en"
+    ans = _ascii_strip(input(f"chat language for PO replies (ko, en, ja …) [{default}]: ")).lower()
+    _write_token("user-lang", ans if USER_LANG_RE.match(ans) else default)
+
+
 def _write_token(name, value):
     path = _token_file(name)
     if value is None:
@@ -5359,6 +5406,15 @@ def settings_entries(droot):
         "check": lambda v: None if v in CLI_LANG_DOMAIN else "domain",
         "get": lambda: "en" if _read_token("cli-lang") == "en" else "ko",
         "put": lambda v: _write_token("cli-lang", v),
+    })
+    # T-1116: the user's chat language — machine-level, asked once (`prdt init`),
+    # read by the PO hooks; never collected → the device language.
+    entries.append({
+        "key": "user.lang", "kind": "text", "domain": None,
+        "shape": "a language code of 2-3 lowercase letters (ko, en, ja)",
+        "check": lambda v: None if USER_LANG_RE.match(v) else "shape",
+        "get": user_lang,
+        "put": lambda v: _write_token("user-lang", v),
     })
     entries.append({
         "key": "priority.projects", "kind": "text", "domain": None,
@@ -14902,14 +14958,207 @@ def cmd_dispatch_caps(args):
     os.execvpe("bash", ["bash", str(hook)], {**os.environ, "PRDT_GATE_CAPS_REPORT": "1", "PRDT_HOME": str(prdt_home())})
 
 
+# T-1272: one axis line of the gate's caps report — `OVER  <name>: …`, `ok    <name>: …`,
+# `?     <name>: unmeasured` (prdt-dispatch-gate.sh `$axes_text`).
+_CAPS_AXIS_RE = re.compile(r"^(OVER|ok|\?)\s+(.+?): ")
+
+
+def _dispatch_caps_over():
+    """{axis name: True when over its cap} from one gate report-mode run — the gate's
+    own measurement, never re-derived; an unmeasured axis never blocks (gate rule),
+    so it reads as not over. None when the gate could not run or printed no axis."""
+    hook = _gate_hook_path()
+    if hook is None:
+        return None
+    try:
+        out = subprocess.run(["bash", str(hook)], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                             timeout=60, env={**os.environ, "PRDT_GATE_CAPS_REPORT": "1",
+                                              "PRDT_HOME": str(prdt_home())}).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    axes, last = {}, None
+    _SUITE_APPLIES.clear()
+    for ln in out.splitlines():
+        m = _CAPS_AXIS_RE.match(ln)
+        if m:
+            last = m.group(2)
+            axes[last] = m.group(1) == "OVER"
+        elif last is not None and ln.strip().startswith("applies to:") and "developer" in ln:
+            _SUITE_APPLIES.add(last)   # the gate's own `suite: true` axes (load · suites)
+    return axes or None
+
+
+_SUITE_APPLIES = set()   # T-1272: axis names the last caps report said apply to developer/qa only
+
+
+# T-1272: per-project run state, tooling-owned under `<PRDT_HOME>/run/` (contracts/runtime-writes.md:
+# `run/` is tooling-owned, a new file under it needs no carve-out) — keyed by the sha256 of the
+# physical project root, first 16 hex (the same key shape the track records use).
+# prdt-lane-check.sh computes the same key.
+def _lane_run_key(root):
+    return hashlib.sha256(os.path.realpath(str(root)).encode("utf-8")).hexdigest()[:16]
+
+
+def _lanes_paused_path(root):
+    return prdt_home() / "run" / "lanes-paused" / f"{_lane_run_key(root)}.json"
+
+
+def _lane_wait_dir(root):
+    return prdt_home() / "run" / "lane-waits" / _lane_run_key(root)
+
+
+def _read_paused(root):
+    """{"all": bool, "lanes": [name]} or None when nothing is paused."""
+    try:
+        d = json.loads(_lanes_paused_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(d, dict) or (not d.get("all") and not d.get("lanes")):
+        return None
+    return {"all": bool(d.get("all")), "lanes": [x for x in d.get("lanes") or [] if isinstance(x, str)]}
+
+
+def _project_gate_lane_names(root):
+    names = []
+    for line in [None] + list(project_line_names(root)):
+        for ln in compute_schedule(root, line=line).get("lanes") or []:
+            if not ln.get("besteffort") and ln["name"] not in names:
+                names.append(ln["name"])
+    return names
+
+
+def _resolve_lane_args(root, wanted):
+    """A lane is named by its whole name or its first word (`L1` → `L1 결정/질문`)."""
+    known = _project_gate_lane_names(root)
+    out = []
+    for w in wanted:
+        hit = [n for n in known if n == w or (n.split() or [n])[0] == w]
+        if not hit:
+            sys.exit(f"prdt lanes: no gate lane named {safe_label(w)} — known: "
+                     + (", ".join(safe_label(n) for n in known) or "none"))
+        out += [n for n in hit if n not in out]
+    return out, known
+
+
+def cmd_lanes(args):
+    """`prdt lanes pause|resume [<lane>…]` (T-1272) — the user's stop as a recorded state, not a
+    guess from transcript text. The PO runs it the turn the user says stop / go. No lane named =
+    every lane. Read by prdt-lane-check.sh; `prdt schedule` lists what is paused."""
+    if args.action not in ("pause", "resume"):
+        sys.exit("usage: prdt lanes pause [<lane>…] | prdt lanes resume [<lane>…]")
+    root = require_root()
+    path = _lanes_paused_path(root)
+    cur = _read_paused(root) or {"all": False, "lanes": []}
+    named, known = _resolve_lane_args(root, args.lanes) if args.lanes else ([], [])
+    if args.action == "pause":
+        if not named:
+            cur = {"all": True, "lanes": []}
+        elif not cur["all"]:
+            cur["lanes"] += [n for n in named if n not in cur["lanes"]]
+    else:
+        if not named:
+            cur = {"all": False, "lanes": []}
+        elif cur["all"]:
+            cur = {"all": False, "lanes": [n for n in known if n not in named]}
+        else:
+            cur["lanes"] = [n for n in cur["lanes"] if n not in named]
+    if not cur["all"] and not cur["lanes"]:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        print("prdt lanes: nothing paused")
+        return
+    home = prdt_home()
+    home.mkdir(parents=True, exist_ok=True)
+    state_write(home, path, json.dumps({"project_root": os.path.realpath(str(root)), "all": cur["all"],
+                                        "lanes": cur["lanes"], "since": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                                       ensure_ascii=False))   # T-908: link-refusing under PRDT_HOME
+    print("prdt lanes: paused " + ("every lane" if cur["all"] else ", ".join(safe_label(n) for n in cur["lanes"])))
+
+
+def _print_paused(root):
+    p = _read_paused(root)
+    if p:
+        print("paused lanes: " + ("every lane" if p["all"] else ", ".join(safe_label(n) for n in p["lanes"]))
+              + " — `prdt lanes resume` re-enables")
+
+
+def _register_wait_marker(root):
+    """This wait's own marker: `<PRDT_HOME>/run/lane-waits/<project key>/<pid>.json`, removed on exit
+    (a SIGTERM too); prdt-lane-check.sh counts only a live marker of ITS project."""
+    import atexit, signal
+    d = _lane_wait_dir(root)
+    f = d / f"{os.getpid()}.json"
+    try:
+        home = prdt_home()
+        home.mkdir(parents=True, exist_ok=True)
+        state_write(home, f, json.dumps({"pid": os.getpid(), "project_root": os.path.realpath(str(root))}))   # T-908
+    except (OSError, StateLinkError):
+        return
+
+    def _rm(*_):
+        for x, rm in ((f, os.unlink), (d, os.rmdir)):
+            try:
+                rm(x)
+            except OSError:
+                pass
+    atexit.register(_rm)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+
+
+def cmd_dispatch_wait(args):
+    """`prdt dispatch wait [--timeout S] [--interval S]` (T-1272) — blocks until every
+    gate cap over at start (the caps that denied) clears, then exits 0 naming them.
+    Meant for the PO's Bash `run_in_background`: its exit re-invokes the PO.
+    `--persona <p>` (T-1272): only the axes that apply to that persona (developer/qa: all;
+    designer/po: not CPU load or full test suites); default = all.
+    `--timeout` passed first → exit 2. Writes only its own marker (`run/lane-waits/`), removed on exit."""
+    interval = max(1.0, float(args.interval))
+    root = find_project_root()
+    if root:
+        _register_wait_marker(root)
+    deadline = None if args.timeout is None else time.monotonic() + max(0.0, float(args.timeout))
+    axes = _dispatch_caps_over()
+    if axes is None:
+        sys.exit("prdt dispatch wait: the dispatch gate's caps could not be measured "
+                 "(`prdt dispatch caps` shows why)")
+    persona = getattr(args, "persona", None)
+    suite_work = persona in (None, "developer", "qa")   # load · suites apply to developer/qa only (gate T-1004)
+    applies = lambda n: suite_work or n not in _SUITE_APPLIES   # noqa: E731
+    waiting = [n for n, over in axes.items() if over and applies(n)]
+    if not waiting:
+        print("prdt dispatch wait: no dispatch cap is over — dispatch now")
+        return
+    print("prdt dispatch wait: waiting for " + ", ".join(waiting), flush=True)
+    cleared = []
+    while True:
+        for n in list(waiting):
+            if not axes.get(n, False):
+                waiting.remove(n)
+                cleared.append(n)
+        if not waiting:
+            print("prdt dispatch wait: cleared " + ", ".join(cleared) + " — re-dispatch now")
+            return
+        if deadline is not None and time.monotonic() >= deadline:
+            print("prdt dispatch wait: timeout — still over: " + ", ".join(waiting)
+                  + (" · cleared: " + ", ".join(cleared) if cleared else ""))
+            sys.exit(2)
+        time.sleep(interval if deadline is None else max(0.0, min(interval, deadline - time.monotonic())))
+        axes = _dispatch_caps_over() or axes
+
+
 def cmd_dispatch(args):
     """`prdt dispatch ls [--json] [--all]` — markers under
     `<PRDT_HOME>/run/dispatches/` across every project, each with the state the
     dispatch gate assigns it. Default hides `stopped` markers; `--all` shows them."""
     if args.action == "caps":
         return cmd_dispatch_caps(args)
+    if args.action == "wait":
+        return cmd_dispatch_wait(args)
     if args.action != "ls":
-        sys.exit("usage: prdt dispatch ls [--json] [--all] | prdt dispatch caps")
+        sys.exit("usage: prdt dispatch ls [--json] [--all] | prdt dispatch caps | "
+                 "prdt dispatch wait [--persona P] [--timeout S] [--interval S]")
     d = prdt_home() / "run" / "dispatches"
     now = datetime.now(timezone.utc)
     rows, unreadable = [], []
@@ -14995,7 +15244,9 @@ def cmd_schedule(args):
             if s["cycle"] is not None:
                 sys.exit(1)
             return
-        if _render_schedule(s):
+        bad = _render_schedule(s)
+        _print_paused(root)
+        if bad:
             sys.exit(1)
         return
     # Several lines and no --line: every line's schedule, home line first.
@@ -15004,6 +15255,7 @@ def cmd_schedule(args):
         if i:
             print()
         bad = _render_schedule(compute_schedule(root, line=ln)) or bad
+    _print_paused(root)
     if bad:
         sys.exit(1)
 
@@ -20749,11 +21001,23 @@ def main():
     p = sub.add_parser("dispatch", help="in-flight dispatch markers, every project (T-695): "
                                         "ls [--json] [--all] — each marker with the state the dispatch gate "
                                         "gives it (live · phantom · stale · stopped); caps — every gate axis "
-                                        "with value · cap · source · remedy (T-893); read-only")
-    p.add_argument("action", choices=("ls", "caps"))
+                                        "with value · cap · source · remedy (T-893); wait — block until "
+                                        "every cap over now clears, exit 0 naming them (T-1272); read-only")
+    p.add_argument("action", choices=("ls", "caps", "wait"))
     p.add_argument("--json", action="store_true", help="machine-readable output")
     p.add_argument("--all", action="store_true", help="include stopped markers")
+    p.add_argument("--timeout", type=float, default=None,
+                   help="wait: give up after this many seconds, exit 2 (default: no limit)")
+    p.add_argument("--interval", type=float, default=30.0, help="wait: seconds between measurements (default 30)")
+    p.add_argument("--persona", choices=("po", "designer", "developer", "qa"), default=None,
+                   help="wait: only the axes that apply to this persona's dispatch (default: all)")
     p.set_defaults(fn=cmd_dispatch)
+    p = sub.add_parser("lanes", help="the user's stop as a recorded state (T-1272): pause [<lane>…] · resume "
+                                     "[<lane>…] — no lane named = every lane; prdt-lane-check.sh reads it, "
+                                     "`prdt schedule` lists what is paused")
+    p.add_argument("action", choices=("pause", "resume"))
+    p.add_argument("lanes", nargs="*", help="lane names (`L1` or the whole name); none = every lane")
+    p.set_defaults(fn=cmd_lanes)
     p = sub.add_parser("schedule", help="next dispatch order by critical path (T-772): open tickets of the "
                                         "current version ranked by slack (critical path first), then "
                                         "blocked-count, PRD H4 order, id — edges from `deps` only, every "
