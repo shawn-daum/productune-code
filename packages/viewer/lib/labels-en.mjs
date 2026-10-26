@@ -47,7 +47,7 @@ const HOME = {
   working: 'Progress',
   decision: 'Decisions',
   decisionHeaders: ['Kind', 'ID', 'Title', 'Status', 'Version'],
-  decisionView: { why: 'Why', how: 'How', what: 'Answer', question: 'Question', recommend: 'Recommended', missing: 'Not recorded', answer: (a) => `Answer ${a}`, waiting: 'Waiting', pages: 'Records', note: 'Select a row to unfold why · how · answer.' },
+  decisionView: { why: 'Why', how: 'How', what: 'Answer', question: 'Question', recommend: 'Recommended', missing: 'Not recorded', missingWhy: 'Not recorded (closed before the why field existed)', closed: 'Closed', answer: (a) => `Answer ${a}`, waiting: 'Waiting', pages: 'Records', note: 'Select a row to unfold why · how · answer.' },
   decisionKind: { ticketOpen: 'Question · open', ticketDone: 'Question · done', ticketDropped: 'Question · dropped', page: 'Record' },
   here: 'now',
   stageTickets: (n) => `Tickets ${n}`,
