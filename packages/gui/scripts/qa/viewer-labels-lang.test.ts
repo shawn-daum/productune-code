@@ -119,3 +119,11 @@ describe('decision fold cell names (QA d-v115-t1259-qa2)', () => {
     expect(html).toMatch(/\.dv-kv b \{[^}]*min-width: 44px;[^}]*word-break: keep-all;[^}]*overflow-wrap: break-word;/)
   })
 })
+
+describe('ticket title column at phone width (QA d-v115-t1277-qa1)', () => {
+  it('the ticket table keeps a floor width on its title column', () => {
+    const html = build()
+    expect(html).toContain('<table class="sortable tk-table">')
+    expect(html).toMatch(/\.tk-table td:nth-child\(2\) \{[^}]*min-width: 180px;[^}]*word-break: keep-all;/)
+  })
+})
