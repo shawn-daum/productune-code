@@ -5258,6 +5258,56 @@ def _dispatch_cap_put(key, text):
     atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", mode=0o644)
 
 
+# T-1247: `priority.projects` — project slugs, first listed goes first. Known
+# projects = slugs of the roots tooling already saw on this machine (no registry):
+# run/open-roots lines + run/dispatches/*.json `project_root` + the cwd project.
+def _known_project_slugs():
+    roots = set()
+    try:
+        for ln in (prdt_home() / "run" / "open-roots").read_text(encoding="utf-8", errors="replace").split("\n"):
+            if ln.strip():
+                roots.add(ln.strip())
+    except OSError:
+        pass
+    d = prdt_home() / "run" / "dispatches"
+    if d.is_dir():
+        for f in d.glob("*.json"):
+            try:
+                pr = (json.loads(f.read_text(encoding="utf-8")) or {}).get("project_root")
+            except Exception:
+                continue
+            if isinstance(pr, str) and pr:
+                roots.add(pr)
+    cwd_root = find_project_root()
+    if cwd_root:
+        roots.add(str(cwd_root))
+    slugs = {project_slug(r) for r in roots}
+    return sorted(x for x in slugs if x)
+
+
+def _priority_names(value):
+    return [n.strip() for n in value.split(",")]
+
+
+def _priority_refuse(value):
+    """(catalog key, fields) for the first failing set check, else None."""
+    names = _priority_names(value)
+    known = _known_project_slugs()
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        return "settings.error.priority.unknown", {"names": ", ".join(unknown), "known": " · ".join(known)}
+    for i, n in enumerate(names):
+        if n in names[:i]:
+            return "settings.error.priority.duplicate", {"name": n}
+    return None
+
+
+def _priority_report(m, key, before, now):
+    order = " · ".join(f"{i} {n}" for i, n in enumerate(now.split(","), 1))
+    return [msg(m, "settings.priority.after", key=key, before=before, now=now),
+            msg(m, "settings.priority.order", order=order)]
+
+
 def settings_entries(droot):
     """Every machine setting: key · kind (enum|text) · domain/shape · get() ·
     put(value or None to reset). None when the register resolver is absent."""
@@ -5298,6 +5348,13 @@ def settings_entries(droot):
         "check": lambda v: None if v in CLI_LANG_DOMAIN else "domain",
         "get": lambda: "en" if _read_token("cli-lang") == "en" else "ko",
         "put": lambda v: _write_token("cli-lang", v),
+    })
+    entries.append({
+        "key": "priority.projects", "kind": "text", "domain": None,
+        "shape": "comma-separated project slugs",
+        "check": lambda v: None, "refuse": _priority_refuse, "report": _priority_report,
+        "get": lambda: _read_token("priority-projects") or None,
+        "put": lambda v: _write_token("priority-projects", v if v is None else ",".join(_priority_names(v))),
     })
     for ck in DISPATCH_CAP_KEYS:
         entries.append({
@@ -5370,8 +5427,15 @@ def cmd_settings(args):
     if bad:
         sys.exit(msg(m, "settings.error.badshape", key=key, value=value, current=current,
                      shape=entry.get("shape") or ""))
+    refuse = entry.get("refuse") and entry["refuse"](value)
+    if refuse:
+        sys.exit(msg(m, refuse[0], **refuse[1]))
     entry["put"](value)
     now = shown(entry["get"]())
+    if entry.get("report"):
+        for line in entry["report"](m, key, current, now):
+            print(line)
+        return
     polished = f"settings.{key}.{now}"
     print(msg(m, polished) if polished in m else msg(m, "settings.change.done", key=key, value=now))
 
