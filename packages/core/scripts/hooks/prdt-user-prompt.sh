@@ -417,12 +417,11 @@ def reply_hot_line():
     return REPLY_HOT_LINE.replace("--lang <user_lang> ", "")
 
 
-# T-1116: the final-reply language check (Stop, PO only). PENDING inject-edit:
-# new hook-injected wording, drafted by prdt-developer — the designer's inject-edit
-# owns the final text. %s = the stored language code.
+# T-1116: the final-reply language check (Stop, PO only). Wording settled under
+# the discipline-wording module (T-1245). %s = the stored language code.
 LANG_CHECK_NOTICE = (
-    "[prdt lang check] the reply above is not in lang=%s. Send it again now in that "
-    "language; code, paths, ids and quoted text stay as written."
+    "[prdt lang check] reply above is not in lang=%s. Send it again now in that "
+    "language; code, paths, ids, quoted text unchanged."
 )
 # Which script a language's prose is written in. A language not listed here (a
 # Latin-script language other than English, or Japanese/Chinese whose unspaced
