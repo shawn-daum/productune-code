@@ -184,6 +184,7 @@ const ALLOW: Record<string, number> = {
   'core/src/settings/plan-tier.ts': 1,
   'core/src/settings/register.ts': 1,
   'core/src/settings/ui-settings.ts': 1,
+  'core/src/settings/user-lang.ts': 1, // T-1281: atomic write of ~/.prdt/user-lang (machine-level, like plan-tier) — never a project's .prdt/ state
   // viewer: doctrine copy into a fresh mkdtemp dir used as the throwaway PRDT_HOME for `--plan` (T-1050) — outside any project / state dir
   'viewer/lib/discipline-load.mjs': 1,
   // viewer: appends a project realpath to $PRDT_HOME/run/open-roots (T-1191) — O_NOFOLLOW append under the user-home tooling dir, never a project's .prdt/

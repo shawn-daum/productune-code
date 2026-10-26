@@ -125,7 +125,7 @@ describe.skipIf(!READY)('prdt settings — list', () => {
     })
     const first = ask('').stdout
     expect(first).toContain('[ko]')
-    expect(first).toContain('대화할 언어') // the ko catalog line, not a hard-coded string
+    expect(first).toContain('대화 언어') // the ko catalog line, not a hard-coded string
     expect(read('user-lang')).toBe('ko\n')
     expect(ask('en').stdout).toBe('') // already stored → no question
     expect(read('user-lang')).toBe('ko\n')
