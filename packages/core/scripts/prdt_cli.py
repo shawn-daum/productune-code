@@ -14904,10 +14904,11 @@ def cmd_lanes(args):
             pass
         print("prdt lanes: nothing paused")
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, json.dumps({"project_root": os.path.realpath(str(root)), "all": cur["all"],
+    home = prdt_home()
+    home.mkdir(parents=True, exist_ok=True)
+    state_write(home, path, json.dumps({"project_root": os.path.realpath(str(root)), "all": cur["all"],
                                         "lanes": cur["lanes"], "since": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
-                                       ensure_ascii=False))
+                                       ensure_ascii=False))   # T-908: link-refusing under PRDT_HOME
     print("prdt lanes: paused " + ("every lane" if cur["all"] else ", ".join(safe_label(n) for n in cur["lanes"])))
 
 
@@ -14925,9 +14926,10 @@ def _register_wait_marker(root):
     d = _lane_wait_dir(root)
     f = d / f"{os.getpid()}.json"
     try:
-        d.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(f, json.dumps({"pid": os.getpid(), "project_root": os.path.realpath(str(root))}))
-    except OSError:
+        home = prdt_home()
+        home.mkdir(parents=True, exist_ok=True)
+        state_write(home, f, json.dumps({"pid": os.getpid(), "project_root": os.path.realpath(str(root))}))   # T-908
+    except (OSError, StateLinkError):
         return
 
     def _rm(*_):

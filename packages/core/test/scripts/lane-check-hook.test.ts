@@ -139,6 +139,13 @@ describe('prdt-lane-check.sh', () => {
     expect(runHook(p)).toBe('')
   })
 
+  test('a live wait with options before the action word counts too', () => {
+    const p = makeProject(BASE)
+    stubPs(p.bin, '/usr/bin/python3 /Users/x/.prdt/bin/prdt dispatch --interval 1 wait\n')
+    waitMarker(p.home, p.proj, process.pid)
+    expect(runHook(p)).toBe('')
+  })
+
   test('a wait marker whose pid is dead, or whose command line is not a wait, counts for nothing', () => {
     const p = makeProject(BASE)
     stubPs(p.bin, WAIT_PS)

@@ -69,7 +69,7 @@ LANE_CHECK_REASON = (
 )
 LIST_CAP = 5
 RUN_BUDGET_S = 5
-WAIT_RE = re.compile(r"(?:^|[\s/])prdt\s+dispatch\s+wait(?:\s|$)")
+WAIT_RE = re.compile(r"(?:^|[\s/])prdt\s+dispatch(?:\s+--?[\w-]+(?:[= ]\S+)?)*\s+wait(?:\s|$)")
 
 
 def read_event():
