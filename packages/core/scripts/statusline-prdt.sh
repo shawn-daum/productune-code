@@ -349,8 +349,8 @@ def deployed_cell(row):
     return L("deployed", dep=dep, dev=dev)
 
 
-def home_cells(row):
-    return [c for c in (priority_cell(), deployed_cell(row)) if c]
+def home_cells():
+    return [c for c in (priority_cell(),) if c]
 
 # ── T-961 / T-1108: products (pre-v1.14 name: release lines) ─
 # The first product is the project slug and reads po-state's top-level stage /
@@ -473,6 +473,10 @@ for r in rows:
     # T-922: `<label> <version>` opens the row (one OSC 8 link, see wrap_slug);
     # version is omitted only when po-state carries none.
     r["slug_ver"] = f"{r['label']} {r['version']}" if r["version"] else r["label"]
+    # T-1252: a differing deployed record turns the version cell itself into `<label> 배포 vX · 개발 vY`
+    _dc = deployed_cell(r)
+    if _dc:
+        r["slug_ver"] = f"{r['label']} {_dc}"
     r["branch"] = clean(r["branch"])
     r["vdone"] = r["vtotal"] = 0
     r["sdone"], r["stotal"] = {}, {}
@@ -1089,7 +1093,7 @@ except Exception:
 # product rows — a running dispatch stays on `working` unless a surviving lane row
 # of its product prints that id (the user must always see what is running)
 for k, r in enumerate(shown):
-    head = [r["slug_ver"]] + (home_cells(r) if r["line"] is None else [c for c in (deployed_cell(r),) if c]) + [r["stage"]]
+    head = [r["slug_ver"]] + (home_cells() if r["line"] is None else []) + [r["stage"]]
     if r["vtotal"]:
         head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
     lane_txt = " ".join(t for _, t in lane_rows[k])

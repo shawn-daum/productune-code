@@ -14,7 +14,7 @@ const STATUSLINE_SH = path.resolve(__dirname, '..', '..', 'scripts', 'statusline
 let python = true
 try { execFileSync('which', ['python3']) } catch { python = false }
 
-type Opts = { deploy?: string | null; lang?: 'ko' | 'en'; version?: string; second?: string | null }
+type Opts = { deploy?: string | null; lang?: 'ko' | 'en'; version?: string; second?: string | null; priority?: string }
 
 function run(o: Opts = {}): string {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1252-')))
@@ -33,6 +33,7 @@ function run(o: Opts = {}): string {
     fs.mkdirSync(path.join(root, 'docs', 'beta', 'tickets'), { recursive: true })
     fs.writeFileSync(path.join(root, 'docs', 'beta', 'DEPLOY.md'), o.second)
   }
+  if (o.priority) fs.writeFileSync(path.join(home, 'priority-projects'), o.priority + '\n')
   return execFileSync('bash', [STATUSLINE_SH], {
     input: JSON.stringify({ workspace: { current_dir: root } }), encoding: 'utf8',
     env: { ...process.env, PRDT_LANG: o.lang ?? 'ko', PRDT_HOME: home },
@@ -44,17 +45,22 @@ describe.skipIf(!python)('statusline deployed cell (T-1252)', () => {
   const base = run()
   test('differs → cell after the version cell (ko)', () => {
     expect(run({ deploy: fm('deployed: {version: v9.7, at: 2026-10-23, ref: v9.7}') }).split('\n')[0])
-      .toMatch(/^alpha v9\.8 \| 배포 v9\.7 · 개발 v9\.8 \| /)
+      .toMatch(/^alpha 배포 v9\.7 · 개발 v9\.8 \| /)
   })
   test('english label', () => {
     expect(run({ lang: 'en', deploy: fm('deployed: {version: v9.7, at: 2026-10-23, ref: v9.7}') }).split('\n')[0])
-      .toContain('alpha v9.8 | deployed v9.7 · dev v9.8 | ')
+      .toContain('alpha deployed v9.7 · dev v9.8 | ')
   })
   test('ntf-pm shapes: patch-level and short-hash ref', () => {
     expect(run({ version: 'v1.3', deploy: fm('deployed: {version: v1.2.2, at: 2026-09-07, ref: 921da1d}') }))
       .toContain('배포 v1.2.2 · 개발 v1.3')
     expect(run({ version: 'v1.3', deploy: fm('deployed: {version: v1.2, at: 2026-10-21, ref: 5ec4dcc}') }))
       .toContain('배포 v1.2 · 개발 v1.3')
+  })
+  test('with priority cell: version cell becomes the pair, priority follows', () => {
+    const o = run({ deploy: fm('deployed: {version: v9.7, at: x, ref: y}'), priority: 'alpha,beta' })
+    expect(o.split('\n')[0]).toMatch(/^alpha 배포 v9\.7 · 개발 v9\.8 \| 우선 1\/2 \| /)
+    expect(o).not.toContain('alpha v9.8')
   })
   test('block form is read', () => {
     expect(run({ deploy: fm('deployed:\n  version: v9.1\n  at: 2026-01-01') })).toContain('배포 v9.1 · 개발 v9.8')
@@ -74,7 +80,7 @@ describe.skipIf(!python)('statusline deployed cell (T-1252)', () => {
   })
   test('second product reads its own DEPLOY.md; the first stays unchanged', () => {
     const out = run({ second: fm('deployed: {version: v2.0, at: 2026-10-01, ref: r}') }).split('\n')
-    expect(out.find((l) => l.startsWith('beta '))).toMatch(/^beta v2\.1 \| 배포 v2\.0 · 개발 v2\.1 \| /)
-    expect(out.find((l) => l.startsWith('alpha '))).not.toContain('배포')
+    expect(out.find((l) => l.startsWith('beta '))).toMatch(/^beta 배포 v2\.0 · 개발 v2\.1 \| /)
+    expect(out.find((l) => l.startsWith('alpha '))).toMatch(/^alpha v9\.8 \| /)
   })
 })
