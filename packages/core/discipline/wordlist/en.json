@@ -1,15 +1,19 @@
 {
   "lang": "en",
-  "schema": 1,
+  "schema": 2,
   "entries": [
     {
-      "word": "em dash (—)",
-      "pattern": "—|&mdash;|&#8212;|&#x2014;",
-      "replace": [
+      "concept": "em dash (—)",
+      "say": [
         "comma",
         "colon",
         "parentheses",
         "a new sentence"
+      ],
+      "avoid": [
+        {
+          "pattern": "—|&mdash;|&#8212;|&#x2014;"
+        }
       ],
       "except_line": [
         "^## (?:[a-z0-9]+(?:-[a-z0-9]+)* )?v\\d+(?:\\.\\d+){0,2} — ",
@@ -17,190 +21,278 @@
       ]
     },
     {
-      "word": "delve",
-      "pattern": "\\bdelv(e|es|ed|ing)\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "delve",
+      "say": [
         "look at",
         "examine"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bdelv(e|es|ed|ing)\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "leverage",
-      "pattern": "\\bleverag(e|es|ed|ing)\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "leverage",
+      "say": [
         "use"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bleverag(e|es|ed|ing)\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "utilize",
-      "pattern": "\\butili[sz](e|es|ed|ing|ation)\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "utilize",
+      "say": [
         "use"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\butili[sz](e|es|ed|ing|ation)\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "seamless",
-      "pattern": "\\bseamless(ly)?\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "seamless",
+      "say": [
         "without extra steps",
         "(drop it)"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bseamless(ly)?\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "robust",
-      "pattern": "\\brobust(ly|ness)?\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "robust",
+      "say": [
         "name the property (e.g. retries 3 times)"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\brobust(ly|ness)?\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "streamline",
-      "pattern": "\\bstreamlin(e|es|ed|ing)\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "streamline",
+      "say": [
         "simplify",
         "shorten"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bstreamlin(e|es|ed|ing)\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "empower",
-      "pattern": "\\bempower(s|ed|ing|ment)?\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "empower",
+      "say": [
         "let",
         "allow"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bempower(s|ed|ing|ment)?\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "elevate",
-      "pattern": "\\belevat(e|es|ed|ing)\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "elevate",
+      "say": [
         "improve",
         "raise"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\belevat(e|es|ed|ing)\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "embark",
-      "pattern": "\\bembark(s|ed|ing)?\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "embark",
+      "say": [
         "start"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bembark(s|ed|ing)?\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "unlock",
-      "pattern": "\\bunlock(s|ed|ing)?\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "unlock",
+      "say": [
         "enable",
         "let"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bunlock(s|ed|ing)?\\b",
+          "flags": "i"
+        }
       ],
       "note": "fine for a literal lock or credential"
     },
     {
-      "word": "tapestry",
-      "pattern": "\\btapestr(y|ies)\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "tapestry",
+      "say": [
         "(name the parts)"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\btapestr(y|ies)\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "testament to",
-      "pattern": "\\btestament to\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "testament to",
+      "say": [
         "shows"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\btestament to\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "game-changer",
-      "pattern": "\\bgame[- ]chang(er|ers|ing)\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "game-changer",
+      "say": [
         "(name the effect and its size)"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bgame[- ]chang(er|ers|ing)\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "cutting-edge",
-      "pattern": "\\bcutting[- ]edge\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "cutting-edge",
+      "say": [
         "new",
         "(name the technique)"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bcutting[- ]edge\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "realm",
-      "pattern": "\\brealms?\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "realm",
+      "say": [
         "area",
         "field"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\brealms?\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "holistic",
-      "pattern": "\\bholistic(ally)?\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "holistic",
+      "say": [
         "complete",
         "whole"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bholistic(ally)?\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "synergy",
-      "pattern": "\\bsynerg(y|ies|istic)\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "synergy",
+      "say": [
         "(name what combines and the result)"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bsynerg(y|ies|istic)\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "pivotal",
-      "pattern": "\\bpivotal\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "pivotal",
+      "say": [
         "key",
         "important"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bpivotal\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "meticulous",
-      "pattern": "\\bmeticulous(ly)?\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "meticulous",
+      "say": [
         "careful"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bmeticulous(ly)?\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "underscore (verb)",
-      "pattern": "\\bunderscor(es|ed|ing)\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "underscore (verb)",
+      "say": [
         "shows"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bunderscor(es|ed|ing)\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "it's worth noting",
-      "pattern": "\\b(it'?s|it is) worth noting\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "it's worth noting",
+      "say": [
         "(drop it, state the fact)"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\b(it'?s|it is) worth noting\\b",
+          "flags": "i"
+        }
       ]
     },
     {
-      "word": "in today's fast-paced",
-      "pattern": "\\bin today'?s (fast-paced|digital|ever-changing)\\b",
-      "flags": "i",
-      "replace": [
+      "concept": "in today's fast-paced",
+      "say": [
         "(drop it)"
+      ],
+      "avoid": [
+        {
+          "pattern": "\\bin today'?s (fast-paced|digital|ever-changing)\\b",
+          "flags": "i"
+        }
       ]
     }
   ]
