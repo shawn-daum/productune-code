@@ -187,7 +187,7 @@ def idle_lanes(pl, root):
 
 def cap(items):
     shown = ", ".join(items[:LIST_CAP])
-    return shown + (", +%d more" % (len(items) - LIST_CAP) if len(items) > LIST_CAP else "")
+    return shown + (", +%d more" % (len(items) - LIST_CAP) if LIST_CAP < len(items) else "")
 
 
 def main():
@@ -215,7 +215,7 @@ def main():
     if not idle or wait_running(root):
         return
     parts = ["%s: %s" % (n, cap(ids)) for n, ids in idle]
-    lanes = " · ".join(parts[:LIST_CAP]) + (" · +%d more" % (len(parts) - LIST_CAP) if len(parts) > LIST_CAP else "")
+    lanes = " · ".join(parts[:LIST_CAP]) + (" · +%d more" % (len(parts) - LIST_CAP) if LIST_CAP < len(parts) else "")
     sys.stdout.write(json.dumps({"decision": "block", "reason": LANE_CHECK_REASON % lanes}, ensure_ascii=False))
 
 

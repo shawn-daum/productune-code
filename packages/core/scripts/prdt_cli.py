@@ -147,6 +147,17 @@ TICKET_OPTIONS_TABLE_SCAFFOLD = (
     "| | | | | |\n"
     "| | | | | |\n"
 )
+# T-1258 (L1 I2, user approval T-1245): a `decision` ticket's `outcome` carries
+# four `###` keys — why (the fork's cause) · how (the principle the chosen answer
+# follows) · module (the shared principle/term group) · what (the act it ends in).
+# `###`, so the H2 frame in `fmt_ticket_body` is untouched; `new` scaffolds them,
+# doctor warns (advisory) on a decision closed after TICKET_DECISION_OUTCOME_LANDING_DATE
+# whose `outcome` lacks any. A scaffold of bare headings is NOT a filled outcome.
+TICKET_DECISION_OUTCOME_KEYS = ("why", "how", "module", "what")
+TICKET_DECISION_OUTCOME_LANDING_DATE = "2026-10-26"
+TICKET_DECISION_OUTCOME_SCAFFOLD = "".join(f"### {k}\n\n" for k in TICKET_DECISION_OUTCOME_KEYS)
+_DECISION_OUTCOME_HEADING_RE = re.compile(
+    r"^### (%s)[ \t]*$" % "|".join(TICKET_DECISION_OUTCOME_KEYS), re.M)
 
 
 
@@ -2645,6 +2656,7 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     if interactive and sys.stdin.isatty():
         slug = input(f"project slug [{slug}]: ").strip() or slug
         version = prompt_version(version)
+        ask_user_lang_once()
     prdt.mkdir(exist_ok=True)
     # Field-preserving config write (T-365): a partial project may already
     # carry config.json (e.g. meta.allowlist) — merge, never rebuild from
@@ -5184,6 +5196,52 @@ def _read_token(name):
         return ""
 
 
+USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
+
+
+def _lang_primary(tag):
+    """'ko-KR' · 'ko_KR.UTF-8' · 'ko' → 'ko'; None when `tag` opens with no 2-3 letter subtag."""
+    m = re.match(r"\s*([A-Za-z]{2,3})(?:[-_.@]|\s*\Z)", tag) if isinstance(tag, str) else None
+    return m.group(1).lower() if m else None
+
+
+def device_lang():
+    """The OS language: macOS AppleLanguages[0] (global preferences plist), else
+    LC_ALL · LC_MESSAGES · LANG. None when none of them names a language.
+    KEEP in lockstep with `device_lang` in hooks/prdt-user-prompt.sh (T-1116)."""
+    try:
+        import plistlib
+        p = Path.home() / "Library" / "Preferences" / ".GlobalPreferences.plist"
+        with open(p, "rb") as f:
+            langs = plistlib.load(f).get("AppleLanguages")
+        if isinstance(langs, list) and langs and _lang_primary(langs[0]):
+            return _lang_primary(langs[0])
+    except Exception:
+        pass
+    for k in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        v = _lang_primary(os.environ.get(k) or "")
+        if v:
+            return v
+    return None
+
+
+def user_lang():
+    """T-1116: the stored chat language (`~/.prdt/user-lang`), else the device language."""
+    v = _read_token("user-lang")
+    return v if USER_LANG_RE.match(v) else device_lang()
+
+
+def ask_user_lang_once():
+    """T-1116 onboarding: ask the chat language once per machine — only while
+    `~/.prdt/user-lang` holds no valid value; the device language is the default
+    answer. An answer that is not a language code keeps the device language."""
+    if USER_LANG_RE.match(_read_token("user-lang")):
+        return
+    default = device_lang() or "en"
+    ans = _ascii_strip(input(f"chat language for PO replies (ko, en, ja …) [{default}]: ")).lower()
+    _write_token("user-lang", ans if USER_LANG_RE.match(ans) else default)
+
+
 def _write_token(name, value):
     path = _token_file(name)
     if value is None:
@@ -5349,6 +5407,15 @@ def settings_entries(droot):
         "get": lambda: "en" if _read_token("cli-lang") == "en" else "ko",
         "put": lambda v: _write_token("cli-lang", v),
     })
+    # T-1116: the user's chat language — machine-level, asked once (`prdt init`),
+    # read by the PO hooks; never collected → the device language.
+    entries.append({
+        "key": "user.lang", "kind": "text", "domain": None,
+        "shape": "a language code of 2-3 lowercase letters (ko, en, ja)",
+        "check": lambda v: None if USER_LANG_RE.match(v) else "shape",
+        "get": user_lang,
+        "put": lambda v: _write_token("user-lang", v),
+    })
     entries.append({
         "key": "priority.projects", "kind": "text", "domain": None,
         "shape": "comma-separated project slugs",
@@ -5503,7 +5570,7 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # `tickets new`'s frontmatter-key order (contracts §Tickets): id · slug · type ·
 # status · assignee · feature? · prd_item? · deps? · created · closed? — a
 # fresh ticket never carries `closed`.
-TICKET_FRONTMATTER_ORDER = ("id", "slug", "type", "status", "assignee", "feature",
+TICKET_FRONTMATTER_ORDER = ("id", "slug", "title", "type", "status", "assignee", "feature",
                             "prd_item", "deps", "created")
 
 
@@ -5534,6 +5601,12 @@ def cmd_tickets_new(args, root):
     if not args.slug or not SLUG_RE.match(args.slug):
         sys.exit("prdt tickets new: --slug is required and must be kebab-case (a-z0-9, hyphen-separated)")
     ttype = args.type
+    # T-1276: `title` is optional free text in the project's user_lang — any
+    # language, never matched against a script or wordlist; only the
+    # frontmatter's one-line shape is enforced.
+    title = (getattr(args, "title", None) or "").strip() or None
+    if title and any(c in title for c in "\r\n"):
+        sys.exit("prdt tickets new: --title must be a single line")
     tid = next_ticket_id(root)
     line = getattr(args, "line", None)
     # T-1084: an explicit placement. `--backlog` → backlog/; `--version [<product>/]vX.Y`
@@ -5570,7 +5643,7 @@ def cmd_tickets_new(args, root):
     # `type: decision` forces `assignee: user` (contracts §Tickets) — never a
     # CLI choice, the same way the frame itself is never a per-ticket choice.
     assignee = "user" if ttype == "decision" else (args.assignee or "po")
-    fm = {"id": tid, "slug": args.slug, "type": ttype, "status": "open", "assignee": assignee,
+    fm = {"id": tid, "slug": args.slug, "title": title, "type": ttype, "status": "open", "assignee": assignee,
           "feature": args.feature, "prd_item": args.prd_item,
           "deps": "[" + ", ".join(args.deps) + "]" if args.deps else None,
           # The MACHINE's local date, not UTC (T-685 fix — PO-observed at
@@ -5591,6 +5664,8 @@ def cmd_tickets_new(args, root):
     def _section(k):
         if k == "options" and ttype == "decision":
             return f"## options\n\n{TICKET_OPTIONS_TABLE_SCAFFOLD}\n"
+        if k == "outcome" and ttype == "decision":
+            return f"## outcome\n\n{TICKET_DECISION_OUTCOME_SCAFFOLD}"
         return f"## {k}\n\n"
     body = "".join(_section(k) for k in body_keys)
     text = "\n".join(fm_lines) + "\n\n" + body
@@ -5732,7 +5807,10 @@ def fmt_ticket_body(body, ttype, status):
             violations.append("type: decision requires `options` with a `recommend` cell")
         elif "recommend" not in opts.lower():
             violations.append("`options` is missing a `recommend` cell (required for type: decision)")
-    if status == "done" and not "".join(key_content.get("outcome", [])).strip():
+    # T-1258: a `decision` scaffold's bare `### why|how|module|what` lines are
+    # structure, not content — they never satisfy "done requires outcome".
+    outcome_text = _DECISION_OUTCOME_HEADING_RE.sub("", "".join(key_content.get("outcome", [])))
+    if status == "done" and not outcome_text.strip():
         violations.append("status: done requires `outcome`")
 
     new_body = preamble + "".join(
@@ -6602,7 +6680,7 @@ def cmd_tickets(args):
             print(links[tid] if tid in hit else f"{tid} (not found)")
         return
     q, params = ("SELECT id, slug, type, status, assignee, version, deps, "
-                 "(SELECT also FROM ticket_also WHERE ticket_also.id = tickets.id) AS also FROM tickets"), []
+                 "(SELECT also FROM ticket_also WHERE ticket_also.id = tickets.id) AS also, path FROM tickets"), []
     conds = []
     if args.backlog:
         conds.append("(version = 'backlog' OR version LIKE '%/backlog')")
@@ -6641,7 +6719,9 @@ def cmd_tickets(args):
         also = json.loads(r[7] or "[]")
         if also:
             dep_s += f" also={','.join(also)}"
-        print(f"{r[0]} [{r[3]:>7}] {r[2]:<6} {r[5]:<8} {r[1] or ''} → {r[4] or '-'}{dep_s}")
+        # T-1276: a ticket's name is its `title` when it has one, else its slug.
+        name = (parse_frontmatter(root / r[8])[0].get("title") if r[8] else None) or r[1] or ""
+        print(f"{r[0]} [{r[3]:>7}] {r[2]:<6} {r[5]:<8} {name} → {r[4] or '-'}{dep_s}")
     if not rows:
         print("(no tickets)")
 
@@ -11765,6 +11845,35 @@ def ticket_frame_warnings(root, tickets):
     return Advisory(warns)
 
 
+def decision_outcome_key_warnings(root, tickets):
+    """T-1258 (L1 I2): advisory — a `type: decision` ticket closed (`status: done`)
+    and created on/after TICKET_DECISION_OUTCOME_LANDING_DATE whose `outcome`
+    lacks any of `### why` · `### how` · `### module` · `### what`. Older
+    decisions and open ones are silent; never verdict-changing (a decision is
+    a record a person completes, not a discipline↔execution mismatch)."""
+    warns = []
+    for r in sorted(tickets, key=lambda r: r["id"]):
+        if r.get("type") != "decision" or r.get("status") != "done":
+            continue
+        created_raw = r.get("created")
+        if not (isinstance(created_raw, str) and TICKET_CREATED_DATE_RE.match(created_raw)) \
+                or created_raw < TICKET_DECISION_OUTCOME_LANDING_DATE:
+            continue
+        try:
+            text = (root / r["path"]).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        _header, body = split_ticket_header_body(text)
+        outcome = "".join(fmt_ticket_body(body, "decision", "done")[0]
+                          .split("## outcome\n", 1)[1:2]).split("\n## ", 1)[0]
+        have = set(_DECISION_OUTCOME_HEADING_RE.findall(outcome))
+        missing = [k for k in TICKET_DECISION_OUTCOME_KEYS if k not in have]
+        if missing:
+            warns.append(f"decision outcome: {r['id']} ({r['path']}): `outcome` lacks "
+                         + " · ".join(f"### {k}" for k in missing))
+    return Advisory(warns)
+
+
 # ── doctor: PRD layout — one file per closed version (T-657) ──────────────────
 #
 # ONE definition of a version id, and both readers use it: this regex and the
@@ -16379,6 +16488,8 @@ def cmd_doctor(_args):
         # away, not a discipline↔execution mismatch); silent on any ticket
         # created before the frame's landing date.
         ("ticket frame", FAMILY_PROJECT, lambda: ticket_frame_warnings(root, trows)),
+        # T-1258: advisory — a decision closed after landing without outcome ### why/how/module/what.
+        ("decision outcome keys", FAMILY_PROJECT, lambda: decision_outcome_key_warnings(root, trows)),
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
         ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root), root)),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
@@ -18567,6 +18678,55 @@ def _wordlist_str_list(v):
     return None
 
 
+# T-1263 — three shapes that load fine but break later: a numbered backreference
+# (`\1`, `(?(1)…)`) changes meaning once `avoid` items are joined as
+# `(?:p1)|(?:p2)` for `export`; an inline global flag (`(?i)`) is not at the start
+# of the joined pattern, so `export` cannot compile it; a malformed `cases` makes
+# the case runner raise. Each is refused at load (project list: warning + entry
+# skipped, same as every other bad entry).
+_WORDLIST_BACKREF_RE = re.compile(r"(?<!\\)(?:\\\\)*(?:\\[1-9]|\(\?\([0-9]+\))")
+_WORDLIST_INLINE_FLAG_RE = re.compile(r"(?<!\\)(?:\\\\)*\(\?[aiLmsux]+(?:-[imsx]+)?\)")
+
+
+def _wordlist_check_joined(pairs):
+    """ValueError when several `avoid` items cannot be joined into one export pattern."""
+    if len(pairs) < 2:
+        return
+    for i, (pt, _) in enumerate(pairs, 1):
+        if _WORDLIST_BACKREF_RE.search(pt):
+            raise ValueError(f"`avoid` item {i} uses a numbered backreference; across joined `avoid` items its number changes (use one item, or a named group)")
+        if _WORDLIST_INLINE_FLAG_RE.search(pt):
+            raise ValueError(f"`avoid` item {i} has an inline global flag such as (?i); use `flags` (the joined export pattern cannot carry it)")
+    try:
+        for pt, _ in pairs:
+            re.compile(pt)
+    except re.error:
+        return   # reported per item as a bad pattern
+    try:
+        re.compile("|".join(f"(?:{pt})" for pt, _ in pairs))
+    except re.error as ex:
+        raise ValueError(f"`avoid` items cannot be joined into one export pattern: {ex}")
+
+
+def _wordlist_check_cases(cases):
+    """ValueError unless `cases` is absent or {hit?: [case…], miss?: [case…]}, a
+    case being {text: str, kind?: md|html, n?: int ≥ 1 (hit only)}."""
+    if cases is None:
+        return
+    if not isinstance(cases, dict) or not set(cases) <= {"hit", "miss"}:
+        raise ValueError("`cases` is an object with only `hit` and `miss` lists")
+    for group, items in cases.items():
+        if not isinstance(items, list):
+            raise ValueError(f"`cases.{group}` is a list")
+        for c in items:
+            if not isinstance(c, dict) or not set(c) <= {"text", "kind", "n"} or not isinstance(c.get("text"), str) or not c["text"]:
+                raise ValueError(f"every `cases.{group}` item is an object with a `text` string (and optional `kind`, `n`)")
+            if "kind" in c and c["kind"] not in ("md", "html"):
+                raise ValueError(f"`cases.{group}` `kind` is md or html")
+            if "n" in c and (group != "hit" or isinstance(c["n"], bool) or not isinstance(c["n"], int) or c["n"] < 1):
+                raise ValueError("`n` is an integer ≥ 1 and only on a `hit` case")
+
+
 def _wordlist_normalize(e):
     """One raw entry (schema 1 or 2, told apart per entry) → the internal entry,
     or raises ValueError(reason). The internal entry keeps the schema-1 keys
@@ -18590,6 +18750,8 @@ def _wordlist_normalize(e):
         scope = e.get("scope")
         if scope is not None and not (isinstance(scope, list) and scope and all(x in WORDLIST_SCOPE_NAMES for x in scope)):
             raise ValueError(f"`scope` lists only {' · '.join(WORDLIST_SCOPE_NAMES)}")
+        _wordlist_check_joined(pairs)
+        _wordlist_check_cases(e.get("cases"))
         out = {"word": word}
         flagset = {f for _, f in pairs}
         if len(pairs) == 1:
@@ -20664,6 +20826,7 @@ def main():
                         "worker's run never opens regardless")
     p.add_argument("--type", choices=TICKET_TYPES, help="new: the ticket's `type` (required)")
     p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
+    p.add_argument("--title", help="new: optional human title (`title:`), free text in the project's user_lang (T-1276)")
     p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value ([<product>/]v<N>.<m>#<key>)")
     p.add_argument("--product", "--line", dest="line", metavar="PRODUCT",
                    help="new: an added product (.prdt/config.json `products`) — the ticket "

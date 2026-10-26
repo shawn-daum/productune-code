@@ -267,6 +267,91 @@ def L(key, **kw):
 
 slug = clean(cfg_slug) or clean(os.path.basename(root)) or "?"
 
+
+# ── T-1249: first-line cells after the version cell ─────────────────────────
+# Each helper returns a display string or "" (= no cell). `home_cells()` is the
+# one place first-line cells are listed, in print order (T-1252 adds its own).
+def priority_cell():
+    """`우선 n/m` — this project's rank in the machine's `priority.projects`
+    (comma-separated slugs in `$PRDT_HOME/priority-projects`). Only with 2+
+    listed names and this project's explicit config slug among them."""
+    home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+    try:
+        raw = "".join(open(os.path.join(home, "priority-projects"), encoding="utf-8", errors="replace").read().split())
+    except OSError:
+        return ""
+    names = [n for n in raw.split(",") if n]
+    if len(names) < 2 or not isinstance(cfg_slug, str) or cfg_slug not in names:
+        return ""
+    return L("priority", n=names.index(cfg_slug) + 1, m=len(names))
+
+
+def _vkey(v):
+    """`v1` == `v1.0` == `v1.0.0` — version id as a 3-int tuple, or None off-shape."""
+    if not (isinstance(v, str) and VERSION_RE.match(v)):
+        return None
+    n = [int(x) for x in v[1:].split(".")]
+    return tuple(n + [0] * (3 - len(n)))
+
+
+def _deployed_version(row):
+    """The `deployed.version` of this row's product (T-1186 record), or None.
+    Reads `docs/<product>/DEPLOY.md` frontmatter only — the one-line flow
+    `deployed: {version: v1.2, at: ..., ref: ...}` and the block form. No record,
+    no file, a symlink, or an off-shape value all read as None (never raised)."""
+    prods = project_products(root)
+    if prods:
+        path = os.path.join(root, "docs", row["line"] or prods[0], "DEPLOY.md")
+    elif row["line"] is None:
+        path = os.path.join(root, "docs", "DEPLOY.md")
+    else:
+        return None
+    try:
+        if os.path.islink(path) or not os.path.isfile(path):
+            return None
+        with open(path, encoding="utf-8", errors="replace") as f:
+            head = f.read(65536).split("\n")
+    except OSError:
+        return None
+    if not head or head[0].strip() != "---":
+        return None
+    block = False
+    for ln in head[1:]:
+        if ln.strip() == "---":
+            return None
+        if block:
+            m = re.match(r"\A\s+version\s*:\s*(.*?)\s*\Z", ln)
+            if m:
+                return m.group(1).strip("\"'")
+            if ln.strip() and not ln[:1].isspace():
+                return None
+            continue
+        m = re.match(r"\Adeployed\s*:\s*(.*?)\s*\Z", ln)
+        if not m:
+            continue
+        if not m.group(1):
+            block = True
+            continue
+        m2 = re.search(r"[{,]\s*version\s*:\s*([^,}\s]+)", m.group(1))
+        return m2.group(1).strip("\"'") if m2 else None
+    return None
+
+
+def deployed_cell(row):
+    """`배포 vX · 개발 vY` — only when this product has a readable deployed
+    record that differs from the dev version its row shows (T-1252)."""
+    dev = row.get("version")
+    if not _vkey(dev):
+        return ""
+    dep = _deployed_version(row)
+    if not _vkey(dep) or _vkey(dep) == _vkey(dev):
+        return ""
+    return L("deployed", dep=dep, dev=dev)
+
+
+def home_cells():
+    return [c for c in (priority_cell(),) if c]
+
 # ── T-961 / T-1108: products (pre-v1.14 name: release lines) ─
 # The first product is the project slug and reads po-state's top-level stage /
 # version; every added product is declared in `.prdt/config.json` `products`
@@ -388,6 +473,10 @@ for r in rows:
     # T-922: `<label> <version>` opens the row (one OSC 8 link, see wrap_slug);
     # version is omitted only when po-state carries none.
     r["slug_ver"] = f"{r['label']} {r['version']}" if r["version"] else r["label"]
+    # T-1252: a differing deployed record turns the version cell itself into `<label> 배포 vX · 개발 vY`
+    _dc = deployed_cell(r)
+    if _dc:
+        r["slug_ver"] = f"{r['label']} {_dc}"
     r["branch"] = clean(r["branch"])
     r["vdone"] = r["vtotal"] = 0
     r["sdone"], r["stotal"] = {}, {}
@@ -1004,7 +1093,7 @@ except Exception:
 # product rows — a running dispatch stays on `working` unless a surviving lane row
 # of its product prints that id (the user must always see what is running)
 for k, r in enumerate(shown):
-    head = [r["slug_ver"], r["stage"]]
+    head = [r["slug_ver"]] + (home_cells() if r["line"] is None else []) + [r["stage"]]
     if r["vtotal"]:
         head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
     lane_txt = " ".join(t for _, t in lane_rows[k])
