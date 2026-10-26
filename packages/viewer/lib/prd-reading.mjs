@@ -168,7 +168,7 @@ export function openDecisionTickets(tickets) {
   const all = [...(tickets?.included ?? []), ...(tickets?.omitted ?? []).flatMap((b) => b.tickets ?? [])]
   return all
     .filter((t) => t.frontmatter?.type === 'decision' && t.frontmatter?.status === 'open' && t.frontmatter?.id)
-    .map((t) => ({ id: String(t.frontmatter.id), slug: String(t.frontmatter.slug || t.frontmatter.id), assignee: String(t.frontmatter.assignee || '') }))
+    .map((t) => ({ id: String(t.frontmatter.id), name: String(t.frontmatter.title || t.frontmatter.slug || t.frontmatter.id), assignee: String(t.frontmatter.assignee || '') }))
     .sort(ticketOrder)
 }
 
@@ -282,7 +282,7 @@ function tagTables(html) {
  * @param {object} args
  * @param {string} args.body PRD.md body (standing head + the open `## v<N>.<m>`)
  * @param {string} args.currentVersion
- * @param {{id:string,slug:string,assignee:string}[]} args.decisionTickets
+ * @param {{id:string,name:string,assignee:string}[]} args.decisionTickets
  * @param {string} args.idPrefix unique per rendered copy (the same PRD can sit in two panes)
  * @param {{md:(t:string)=>string, inline:(t:string)=>string, esc:(s:string)=>string, sameVersion:(a:string,b:string)=>boolean, ticketPill:(assignee:string)=>string}} args.deps
  */
@@ -414,7 +414,7 @@ export function renderPrdReading({ body, currentVersion, decisionTickets, idPref
   const qButton = (q) =>
     `<button type="button" class="pr-dent" data-oq="${esc(`${idPrefix}-oq-${q.n}`)}" data-oq-sec="${esc(questionsSecId)}"><span class="n">${q.n}</span><span>${esc(q.text)}</span><span class="go">${esc(L.goToPrd)}</span></button>`
   const tButton = (t) =>
-    `<button type="button" class="pr-dent" data-detail-kind="ticket" data-detail-id="${esc(t.id)}"><span class="n">${esc(t.id)}</span><span>${esc(t.slug)}</span><span style="margin-left:auto">${ticketPill(t.assignee)}</span></button>`
+    `<button type="button" class="pr-dent" data-detail-kind="ticket" data-detail-id="${esc(t.id)}"><span class="n">${esc(t.id)}</span><span>${esc(t.name)}</span><span style="margin-left:auto">${ticketPill(t.assignee)}</span></button>`
   let box = `<div class="pr-decide-h">${esc(L.decideHeading)} <span class="ol-badge mono">${decideN}</span></div>`
   if (decideN === 0 && questions.review.length === 0) {
     box += `<p class="pr-none">${esc(L.noDecide)}</p>`
