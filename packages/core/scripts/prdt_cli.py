@@ -18184,16 +18184,30 @@ def _env_parse_values(p):
 # BCP-47 language under discipline/wordlist/ (mirrored to ~/.prdt with the rest
 # of discipline/), extended per project by `.prdt/wordlist/<lang>.json` (same
 # schema; an entry whose `word` matches a canon entry replaces it, any other is
-# appended — canon is never edited). Checked by `prdt wordlist check` and, at
+# appended — canon is never edited). T-1262: schema 2 (`concept` · `say` ·
+# `avoid[]` · `except_line` · `scope` · `cases`) is read alongside schema 1, per
+# entry; `concept` is the merge key `word` was. Checked by `prdt wordlist check` and, at
 # write time, by prdt-wordlist-check.sh (PostToolUse Write|Edit|MultiEdit) on the
 # UX-writing surfaces below. `prdt wordlist export` is the import path for a
 # product's runtime LLM prompts (patterns are kept to the Python/JS regex
 # common subset; `flags` is "i" or absent).
-WORDLIST_SURFACE_RES = (
-    re.compile(r"^docs/artifacts/.+\.(?:html?|md)$"),
-    re.compile(r"^docs/prd/PRD\.md$"),
-    re.compile(r"^docs/tickets/.+\.md$"),
+WORDLIST_SURFACES = (
+    ("artifacts", re.compile(r"^docs/artifacts/.+\.(?:html?|md)$")),
+    ("prd", re.compile(r"^docs/prd/PRD\.md$")),
+    ("ticket-body", re.compile(r"^docs/tickets/.+\.md$")),
 )
+WORDLIST_SURFACE_RES = tuple(rx for _, rx in WORDLIST_SURFACES)
+# contracts §Language surface names an entry's `scope` may list; `user-chat` has
+# no path (`prdt wordlist check --surface user-chat`).
+WORDLIST_SCOPE_NAMES = ("user-chat", "prd", "artifacts", "ticket-body")
+
+
+def wordlist_surface_of(as_is_rel):
+    """Surface name of a docs path (As-Is layout), or None."""
+    for name, rx in WORDLIST_SURFACES:
+        if rx.match(as_is_rel):
+            return name
+    return None
 _WORDLIST_HTML_SKIP = {"script", "style", "code", "pre", "del", "s", "template", "noscript"}
 _WORDLIST_HTML_ATTRS_RE = re.compile(r"""(?<![\w-])(?:title|alt|placeholder|aria-label)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
 _WORDLIST_HOOK_MAX_LINES = 15
@@ -18237,14 +18251,76 @@ def _wordlist_project_file(root, lang):
     return Path(root) / ".prdt" / "wordlist" / f"{lang}.json" if root else None
 
 
-def wordlist_entries(lang, root=None, warnings=None):
-    """Canon list for `lang` merged with the project's local one (by `word`).
-    Each returned entry carries its compiled `_re` and `_except` regexes.
+def _wordlist_str_list(v):
+    if isinstance(v, str):
+        return [v]
+    if isinstance(v, list) and v and all(isinstance(x, str) and x for x in v):
+        return list(v)
+    return None
+
+
+def _wordlist_normalize(e):
+    """One raw entry (schema 1 or 2, told apart per entry) → the internal entry,
+    or raises ValueError(reason). The internal entry keeps the schema-1 keys
+    (`word` `pattern` `flags` `replace` `except_line` `note`) in the order a
+    schema-1 file has them, so `export` is schema 1 whichever schema it read;
+    `_avoid` = [(pattern, flags)], `_scope`, `_cases` are internal."""
+    if not isinstance(e, dict):
+        raise ValueError("entry is not an object")
+    if "concept" in e:
+        word = e["concept"]
+        replace = _wordlist_str_list(e.get("say"))
+        avoid = e.get("avoid")
+        if not isinstance(word, str) or not word or replace is None or not isinstance(avoid, list) or not avoid:
+            raise ValueError("a schema 2 entry needs `concept`, `say` and a non-empty `avoid[]`")
+        pairs = []
+        for a in avoid:
+            if not isinstance(a, dict) or not isinstance(a.get("pattern"), str) or not a["pattern"] \
+                    or not isinstance(a.get("flags") or "", str):
+                raise ValueError("every `avoid` item needs a `pattern` string")
+            pairs.append((a["pattern"], a.get("flags") or ""))
+        scope = e.get("scope")
+        if scope is not None and not (isinstance(scope, list) and scope and all(x in WORDLIST_SCOPE_NAMES for x in scope)):
+            raise ValueError(f"`scope` lists only {' · '.join(WORDLIST_SCOPE_NAMES)}")
+        out = {"word": word}
+        flagset = {f for _, f in pairs}
+        if len(pairs) == 1:
+            out["pattern"] = pairs[0][0]
+        else:
+            out["pattern"] = "|".join(f"(?:{pt})" for pt, _ in pairs)
+        if len(flagset) == 1 and "" not in flagset:
+            out["flags"] = next(iter(flagset))
+        elif len(flagset) > 1:
+            out["_mixed_flags"] = True
+        out["replace"] = replace
+        for k in ("except_line", "note"):
+            if k in e:
+                out[k] = e[k]
+        out["_avoid"] = pairs
+        out["_scope"] = scope
+        out["_cases"] = e.get("cases")
+        return out
+    if not isinstance(e.get("word"), str) or not e.get("replace"):
+        raise ValueError("every entry needs `word` and `replace` (schema 1) or `concept`, `say` and `avoid[]` (schema 2)")
+    out = dict(e)
+    out["_avoid"] = [(e.get("pattern") or re.escape(e["word"]), e.get("flags") or "")]
+    out["_scope"] = None
+    out["_cases"] = None
+    return out
+
+
+def wordlist_entries(lang, root=None, warnings=None, surface=None):
+    """Canon list for `lang` merged with the project's local one (by `word`,
+    which is `concept` in schema 2). Each returned entry carries its compiled
+    `_res` and `_except` regexes. With a `surface`, an entry whose `scope` does
+    not list it is left out (no `scope` = every surface).
     With a `warnings` list, a broken PROJECT file or entry is reported there and
     skipped (canon still applies); without one it raises WordlistError.
     A `lang` that is not BCP-47-shaped always raises (T-1080: no path use)."""
     if not wordlist_lang_ok(lang):
         raise WordlistError(f"prdt wordlist: {one_line(repr(lang))} is not a BCP-47 language tag (e.g. ko, en, zh-Hant)")
+    if surface is not None and surface not in WORDLIST_SCOPE_NAMES:
+        raise WordlistError(f"prdt wordlist: {one_line(repr(surface))} is not a surface ({' · '.join(WORDLIST_SCOPE_NAMES)})")
     merged, order = {}, []
     sources = []
     canon = wordlist_canon_dir()
@@ -18262,23 +18338,25 @@ def wordlist_entries(lang, root=None, warnings=None):
             warnings.append(f"{ex} (project list skipped, canon list still applied)")
             continue
         for e in raw:
-            if not isinstance(e, dict) or not isinstance(e.get("word"), str) or not e.get("replace"):
-                msg = f"prdt wordlist: {src}: every entry needs `word` and `replace` ({e!r})"
+            try:
+                n = _wordlist_normalize(e)
+            except ValueError as ex:
+                msg = f"prdt wordlist: {src}: {ex} ({e!r})"
                 if warnings is None or src != proj:
                     raise WordlistError(msg)
                 warnings.append(msg + " (entry skipped)")
                 continue
-            w = e["word"]
+            w = n["word"]
             if w not in merged:
                 order.append(w)
-            merged[w] = dict(e, _src=str(src))
+            merged[w] = dict(n, _src=str(src))
     out = []
     for w in order:
         e = merged[w]
         if isinstance(e["replace"], str):
             e["replace"] = [e["replace"]]
         try:
-            e["_re"] = re.compile(e.get("pattern") or re.escape(w), re.I if "i" in (e.get("flags") or "") else 0)
+            e["_res"] = [re.compile(pt, re.I if "i" in fl else 0) for pt, fl in e["_avoid"]]
             e["_except"] = [re.compile(x) for x in (e.get("except_line") or [])]
         except re.error as ex:
             msg = f"prdt wordlist: {e['_src']}: entry {w!r}: bad pattern: {ex}"
@@ -18286,8 +18364,27 @@ def wordlist_entries(lang, root=None, warnings=None):
                 raise WordlistError(msg)
             warnings.append(msg + " (entry skipped)")
             continue
+        if surface is not None and e["_scope"] is not None and surface not in e["_scope"]:
+            continue
         out.append(e)
     return out
+
+
+def wordlist_run_cases(entry):
+    """Run one schema-2 entry's `cases` against that entry alone; [] = all pass,
+    else one line per failed case. `hit` cases must give `n` (default 1) hits,
+    `miss` cases none; a case without `kind` runs as md and as html."""
+    failures = []
+    cases = entry.get("_cases") or {}
+    for group in ("hit", "miss"):
+        for c in cases.get(group) or []:
+            kinds = [c["kind"]] if c.get("kind") in ("md", "html") else ["md", "html"]
+            want = int(c.get("n", 1)) if group == "hit" else 0
+            for kind in kinds:
+                got = len(wordlist_scan(c["text"], [entry], kind))
+                if got != want:
+                    failures.append(f"{entry['word']}: {group} case {c['text']!r} ({kind}): expected {want} hit(s), got {got}")
+    return failures
 
 
 def wordlist_langs(root=None):
@@ -18461,9 +18558,10 @@ def wordlist_scan(text, entries, kind="md", warnings=None):
                 raw = raw_lines[i] if i < len(raw_lines) else line
                 if any(x.search(raw) for x in e["_except"]):
                     continue
-                for m in e["_re"].finditer(line):
-                    if m.group(0).strip():
-                        part.append((i + 1, m.start(), m.end(), m.group(0), e))
+                for rx in e["_res"]:
+                    for m in rx.finditer(line):
+                        if m.group(0).strip():
+                            part.append((i + 1, m.start(), m.end(), m.group(0), e))
         except _WordlistTimeout:
             part = []
             if warnings is not None:
@@ -18513,9 +18611,9 @@ def _wordlist_repl(replace):
     return " · ".join(one_line(r) for r in replace)
 
 
-def wordlist_check_text(text, name, lang_arg, root, warnings=None):
+def wordlist_check_text(text, name, lang_arg, root, warnings=None, surface=None):
     lang = lang_arg or wordlist_detect_lang(text, root)
-    entries = wordlist_entries(lang, root, warnings)
+    entries = wordlist_entries(lang, root, warnings, surface)
     return lang, wordlist_scan(text, entries, _wordlist_kind(name), warnings)
 
 
@@ -18554,10 +18652,11 @@ def _wordlist_hook(root_hint):
             return
         rel = f.resolve().relative_to(root).as_posix()
         as_is = docs_as_is_rel(root, rel)   # T-1104: To-Be docs/<p>/X · docs/_shared/X match the As-Is surfaces
-        if not any(rx.match(as_is) for rx in WORDLIST_SURFACE_RES):
+        surface = wordlist_surface_of(as_is)
+        if not surface:
             return
         warns = []
-        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns)
+        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns, surface)
     except Exception:
         return
     if not hits and not warns:
@@ -18583,7 +18682,11 @@ def cmd_wordlist(args):
     try:
         if args.action == "export":
             lang = args.lang or "ko"
-            entries = wordlist_entries(lang, root)
+            entries = wordlist_entries(lang, root, None, args.surface)
+            for e in entries:
+                if e.get("_mixed_flags"):
+                    raise WordlistError(f"prdt wordlist: entry {one_line(e['word'])!r} ({e['_src']}) has `avoid` items with different `flags`; "
+                                        "export carries one `flags` per entry")
             if not entries:
                 print(f"prdt wordlist: no list for {lang!r} (have: {one_line(', '.join(wordlist_langs(root))) or 'none'})", file=sys.stderr)
                 sys.exit(3)
@@ -18608,7 +18711,7 @@ def cmd_wordlist(args):
                     print(f"prdt wordlist check: cannot read {name}: {e}", file=sys.stderr)
                     sys.exit(3)
             warns = []
-            lang, hits = wordlist_check_text(text, shown, args.lang, root, warns)
+            lang, hits = wordlist_check_text(text, shown, args.lang, root, warns, args.surface)
             for w in warns:
                 print(one_line(w), file=sys.stderr)
             report.append({"path": shown, "lang": lang, "hits": hits})
@@ -20480,6 +20583,8 @@ def main():
     p.add_argument("--lang", default=None, help="BCP-47 list key (default: project wordlist.lang, else the text's script)")
     p.add_argument("--json", action="store_true")
     p.add_argument("--format", choices=("json", "lines"), default="json")
+    p.add_argument("--surface", default=None, help="contracts §Language surface (user-chat|prd|artifacts|ticket-body): "
+                                                   "only the entries whose `scope` lists it (default: every entry)")
     p.set_defaults(fn=cmd_wordlist)
     # `prdt settings -h`/`--help`: argparse's own subparser help is English
     # and bypasses the message catalog (T-750 QA grill) — answer from the
