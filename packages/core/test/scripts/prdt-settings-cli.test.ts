@@ -136,6 +136,44 @@ describe.skipIf(!READY)('prdt settings — list', () => {
     ask('en')
     expect(read('user-lang')).toBe('en\n')
   })
+  test('onboarding maps a language name to its code, re-asks once on an unknown answer, stores nothing if still unknown (T-1281)', () => {
+    const ask = (...answers: string[]) => spawnSync('python3', ['-c',
+      'import sys; sys.path.insert(0, sys.argv[1]); import prdt_cli as p; p.ask_user_lang_once()', path.dirname(PRDT_CLI)], {
+      input: answers.join('\n') + '\n', encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, PRDT_LANG: 'en', LC_ALL: 'en_US.UTF-8' },
+    })
+    for (const [name, code] of [['한국어', 'ko'], ['Korean', 'ko'], ['日本語', 'ja']]) {
+      ask(name)
+      expect(read('user-lang'), name).toBe(code + '\n')
+      fs.rmSync(file('user-lang'))
+    }
+    const retry = ask('klingon!', 'ja')
+    expect(retry.stdout).toContain('language name') // the one-line reason (en catalog)
+    expect(read('user-lang')).toBe('ja\n')
+    fs.rmSync(file('user-lang'))
+    ask('klingon!', 'zzzz!')
+    expect(read('user-lang')).toBeNull() // never a value the user did not choose
+    ask('') // a bare Enter accepts the device default shown
+    expect(read('user-lang')).toBe('en\n')
+  })
+  test('Ctrl-C at the language question stops prdt update: nothing stored, nothing installed (T-1281)', () => {
+    const script = [
+      'import sys, builtins; sys.path.insert(0, sys.argv[1]); import prdt_cli as p',
+      'p.sys.stdin.isatty = lambda: True; p.sys.stdout.isatty = lambda: True',
+      'def boom(*a): raise KeyboardInterrupt',
+      'builtins.input = boom',
+      'p._run_pull_install = lambda *a, **k: print("INSTALLED")',
+      'p.cmd_update(None)',
+    ].join('\n')
+    const r = spawnSync('python3', ['-c', script, path.dirname(PRDT_CLI)], {
+      encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, PRDT_LANG: 'en', LC_ALL: 'en_US.UTF-8' },
+    })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.stdout).toContain('Cancelled')
+    expect(r.stdout).not.toContain('INSTALLED')
+    expect(read('user-lang')).toBeNull()
+  })
   test('ko table matches the approved screen', () => {
     fs.writeFileSync(file('register'), 'audience=developer\nform=outline\nstructure=planner-tables\n')
     fs.writeFileSync(file('auto-open'), 'off\n')

@@ -176,3 +176,12 @@ test('a non-PO Stop leaves before python3 starts (fork-0 case filter)', () => {
   const src = fs.readFileSync(HOOK, 'utf8')
   expect(src).toMatch(/"hook_event_name":"Stop"[\s\S]*?"prdt-po"[\s\S]*?exit 0[\s\S]*?python3 -I -c/)
 })
+
+test('no stored chat language: the reply line drops --lang even when the device language is known (T-1281)', () => {
+  const sb = sandbox(PROSE)
+  fs.rmSync(path.join(sb.root, 'home', 'user-lang'))
+  const ev = { session_id: 's', hook_event_name: 'PostToolUse', agent_type: 'prdt-po', cwd: sb.proj, tool_name: 'Bash' }
+  const out = execFileSync('bash', [sb.hook], { input: JSON.stringify(ev), encoding: 'utf8', timeout: 20_000,
+    env: { ...process.env, HOME: sb.root, PRDT_HOME: path.join(sb.root, 'home'), LC_ALL: 'en_US.UTF-8' } })
+  expect(JSON.parse(out).hookSpecificOutput.additionalContext).toBe(REPLY.replace('--lang ko ', ''))
+})

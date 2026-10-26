@@ -5,7 +5,7 @@ import os from 'os'
 import { execFile, spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
-import { setUiLanguage, setAudienceMode, setUserLang, atomicWriteFileSync, stateWriteFileSync } from '@productune/core'
+import { setUiLanguage, setAudienceMode, setUserLangIfUnset, getUserLang, atomicWriteFileSync, stateWriteFileSync } from '@productune/core'
 import type { UiLanguage, AudienceMode } from '@productune/core'
 import { withLoginShellPath, resetLoginShellPathCache } from '../surface-runner'
 import { installClaudeCli, resolveClaudeCli } from '../claude-installer'
@@ -635,6 +635,9 @@ export function register(): void {
     return { ok: errors.length === 0, removed, errors }
   })
 
+  // T-1281: the stored chat language (null → the wizard asks).
+  ipcMain.handle('onboarding:getChatLanguage', () => getUserLang())
+
   ipcMain.handle('onboarding:checkEnv', () => {
     const envPath = path.join(os.homedir(), '.productune', 'productune.env')
     return fs.existsSync(envPath)
@@ -678,7 +681,7 @@ export function register(): void {
       // 5. T-1281: the chat language the user chose (the PO reply language check's
       //    SoT). Not asked / off-shape → nothing stored, the device language stays.
       if (typeof opts.chatLanguage === 'string') {
-        setUserLang(opts.chatLanguage)
+        setUserLangIfUnset(opts.chatLanguage) // never overwrites a stored value
       }
 
       return { ok: true, prewarm: prewarm.state satisfies PrewarmState }

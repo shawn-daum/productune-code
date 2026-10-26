@@ -21,3 +21,19 @@ export function setUserLang(code: string, homeDir: string = os.homedir()): boole
   atomicWriteFileSync(userLangPath(homeDir), code + '\n')
   return true
 }
+
+/** The stored chat language, or null when the file is missing or holds no valid code. */
+export function getUserLang(homeDir: string = os.homedir()): string | null {
+  try {
+    const v = fs.readFileSync(userLangPath(homeDir), 'utf8').replace(/\s+/g, '')
+    return USER_LANG_RE.test(v) ? v : null
+  } catch {
+    return null
+  }
+}
+
+/** Onboarding write: never replaces a stored valid value. True when it wrote. */
+export function setUserLangIfUnset(code: string, homeDir: string = os.homedir()): boolean {
+  if (getUserLang(homeDir) !== null) return false
+  return setUserLang(code, homeDir)
+}

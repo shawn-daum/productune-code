@@ -7,6 +7,7 @@ import { body, footer, stepLabel, stepIntro, btnReset, btnPrimary } from './styl
 interface Step0Props {
   uiLang: UiLang
   chatLang: UiLang
+  askChat: boolean
   onSelectChatLang: (lng: UiLang) => void
   resetFeedback: boolean
   onSelectLang: (lng: UiLang) => void
@@ -14,7 +15,7 @@ interface Step0Props {
   onNext: () => void
 }
 
-export default function Step0_Language({ uiLang, chatLang, onSelectChatLang, resetFeedback, onSelectLang, onReset, onNext }: Step0Props) {
+export default function Step0_Language({ uiLang, chatLang, askChat, onSelectChatLang, resetFeedback, onSelectLang, onReset, onNext }: Step0Props) {
   const { t } = useTranslation()
   return (
     <>
@@ -39,6 +40,7 @@ export default function Step0_Language({ uiLang, chatLang, onSelectChatLang, res
             tech=""
           />
         </div>
+        {askChat && <>
         <div style={{ ...stepIntro, marginTop: 16 }}>
           {t('onboarding.step0.chatDescription')}
         </div>
@@ -58,6 +60,7 @@ export default function Step0_Language({ uiLang, chatLang, onSelectChatLang, res
             tech=""
           />
         </div>
+        </>}
       </div>
       <div style={footer}>
         {resetFeedback ? (
