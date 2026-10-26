@@ -174,7 +174,8 @@ function cliHooksBlock(home: string): any {
       .map(r => ({ ...(r.matcher !== undefined ? { matcher: r.matcher } : {}), hooks: r.hooks.map(h) })),
     // T-985: the PO's unticketed-question check — matcher-less, Stop takes none.
     // T-1022: prdt-user-prompt.sh's own second Stop entry (the PO form=outline reply check).
-    Stop: [{ hooks: [h('prdt-question-check.sh')] }, { hooks: [h('prdt-user-prompt.sh')] }],
+    // T-1272: the PO's idle gate lane check — its own matcher-less entry after question-check.
+    Stop: [{ hooks: [h('prdt-question-check.sh')] }, { hooks: [h('prdt-lane-check.sh')] }, { hooks: [h('prdt-user-prompt.sh')] }],
     // T-1143: prdt-message-display-autolink.sh, the only MessageDisplay entry — matcher-less (the event takes none).
     MessageDisplay: [{ hooks: [h('prdt-message-display-autolink.sh')] }],
   }
