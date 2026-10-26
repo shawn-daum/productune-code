@@ -7438,7 +7438,16 @@ def cmd_update(_args):
     if not target_sha:
         sys.exit(msg(m, "update.error.offline"))
 
-    if _prompt_update_choice(m, installed or "?", new_version, sections) != "update":
+    choice = _prompt_update_choice(m, installed or "?", new_version, sections)
+    if choice == "skip":
+        # T-1231: "skip — don't ask again today" must hold: stamp the same daily
+        # slot the run-time nudge spends, so today's next prdt run stays quiet.
+        st = read_json(_update_state_path()) or {}
+        st["last_check"] = _local_day()
+        st["last_check_basis"] = "local"
+        st["known_update"] = {"new": _strip_control_chars(new_version)}
+        _write_update_state(st)
+    if choice != "update":
         return
 
     _run_pull_install(repo, target_sha=target_sha)
@@ -8018,8 +8027,15 @@ def _render_update_notes(m, installed, new_version, sections, numbered=True):
 def _read_menu_key(fd):
     """One key off the raw tty fd: "up" | "down" | "enter" | "esc" | "eof" |
     "other". A lone ESC (no byte follows within 50ms) is Esc; `ESC [ A` / `ESC O A`
-    are the arrows; any other escape sequence is consumed whole and is "other"."""
+    are the arrows. A truncated or over-long escape sequence never blocks: every
+    follow-up byte is waited for 50ms (timeout = Esc), parameter bytes are capped
+    at 16, and a control byte inside a sequence aborts it (ESC = Esc, else the
+    key is ignored)."""
     import select
+
+    def more():
+        return bool(select.select([fd], [], [], 0.05)[0])
+
     b = os.read(fd, 1)
     if not b:
         return "eof"
@@ -8029,32 +8045,49 @@ def _read_menu_key(fd):
         return "eof"
     if b != b"\x1b":
         return "other"
-    if not select.select([fd], [], [], 0.05)[0]:
+    if not more():
         return "esc"
     nxt = os.read(fd, 1)
     if nxt not in (b"[", b"O"):
         return "other"
-    final = b""
-    while True:                        # CSI params run until a final byte 0x40-0x7e
+    for _ in range(16):                # CSI: params/intermediates 0x20-0x3f, then a final byte 0x40-0x7e
+        if not more():
+            return "esc"               # truncated sequence
         c = os.read(fd, 1)
         if not c:
             return "eof"
         if 0x40 <= c[0] <= 0x7e:
-            final = c
+            return {b"A": "up", b"B": "down"}.get(c, "other")
+        if not 0x20 <= c[0] <= 0x3f:
+            return "esc" if c == b"\x1b" else "other"
+    return "other"                     # over-long: ignore
+
+
+def _clip(s, width):
+    """`s` cut to at most `width` display columns (CJK counts 2)."""
+    out, used = "", 0
+    for ch in s:
+        w = _display_width(ch)
+        if used + w > width:
             break
-    return {b"A": "up", b"B": "down"}.get(final, "other")
+        out += ch
+        used += w
+    return out
 
 
 def _arrow_menu(m, items, hint_key):
     """T-1231: arrow / Enter / Esc selection on a real terminal. `items`:
     [(label_key, desc_key), ...]; the first cursor sits on item 0 (user T-1238:
     reverses T-749's number-only prompt). Returns the chosen index, or None for
-    Esc / Ctrl-D / EOF. Returns the sentinel "unsupported" when the terminal
-    can't enter cbreak mode (stdin is not a real tty, termios missing) so the
-    caller falls back to the number prompt. Ctrl-C raises KeyboardInterrupt
-    after the terminal is restored. Stdlib only (termios/tty)."""
+    Esc / Ctrl-D / EOF (the guide line is erased first). Returns "unsupported"
+    when the terminal can't enter cbreak mode (stdin is not a real tty, termios
+    missing) so the caller falls back to the number prompt. Ctrl-C raises
+    KeyboardInterrupt after the terminal is restored. SIGTERM / SIGHUP restore
+    the terminal and cursor, then die by the signal; SIGTSTP restores, stops,
+    and re-enters on resume. Each row is clipped to the terminal width so a
+    redraw always moves up exactly len(rows)+1 physical rows. Stdlib only."""
     try:
-        import termios, tty
+        import signal, termios, tty
         fd = sys.stdin.fileno()
         saved = termios.tcgetattr(fd)
     except Exception:                  # no termios, no fileno, or not a tty (pipe behind an isatty shim)
@@ -8069,25 +8102,63 @@ def _arrow_menu(m, items, hint_key):
 
     def draw():
         nonlocal first
+        width = max(shutil.get_terminal_size((80, 24)).columns - 1, 1)   # never touch the last column: no wrap
         if not first:
             out.write(f"\x1b[{len(rows) + 1}A\r")   # back up over the items + hint
         first = False
         for i, (label, desc) in enumerate(rows):
-            on = i == cur
-            head = f"{bold}❯ {label}{off}" if on else f"  {label}"
-            out.write(f"\x1b[2K{head}   {dim}{desc}{off}\n")
-        out.write(f"\x1b[2K{dim}{hint}{off}\n")
+            head = _clip(("❯ " if i == cur else "  ") + label, width)
+            room = width - _display_width(head) - 3
+            tail = f"   {dim}{_clip(desc, room)}{off}" if room > 0 else ""
+            head = f"{bold}{head}{off}" if i == cur else head
+            out.write(f"\x1b[2K{head}{tail}\n")
+        out.write(f"\x1b[2K{dim}{_clip(hint, width)}{off}\n")
         out.flush()
 
-    try:
+    def enter():
         tty.setcbreak(fd)
         out.write("\x1b[?25l")         # hide the caret while the menu is up
+        out.flush()
+
+    def restore(now=False):
+        try:
+            out.write("\x1b[?25h")
+            out.flush()
+        except Exception:
+            pass
+        try:
+            termios.tcsetattr(fd, termios.TCSANOW if now else termios.TCSADRAIN, saved)
+        except Exception:                # TCSANOW in signal handlers: a drain can block behind an unread pty
+            pass
+
+    def on_die(signum, _frame):
+        restore(now=True)
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    def on_stop(signum, _frame):
+        restore(now=True)
+        signal.signal(signal.SIGTSTP, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGTSTP)      # stops here; continues on SIGCONT
+        signal.signal(signal.SIGTSTP, on_stop)
+        enter()
+        draw()
+
+    old = {}
+    try:
+        for sig, h in ((signal.SIGTERM, on_die), (signal.SIGHUP, on_die), (signal.SIGTSTP, on_stop)):
+            old[sig] = signal.signal(sig, h)
+    except ValueError:                 # not the main thread — no handlers, terminal still restored on normal exits
+        pass
+    try:
+        enter()
         draw()
         while True:
             key = _read_menu_key(fd)
             if key == "enter":
                 return cur
             if key in ("esc", "eof"):
+                out.write("\x1b[1A\r\x1b[2K")   # Esc state: the guide line goes away
                 return None
             if key == "up":
                 cur = (cur - 1) % len(rows)
@@ -8097,9 +8168,9 @@ def _arrow_menu(m, items, hint_key):
                 continue
             draw()
     finally:
-        out.write("\x1b[?25h")
-        out.flush()
-        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        restore()
+        for sig, h in old.items():
+            signal.signal(sig, h)
 
 
 def _prompt_update_choice(m, installed, new_version, sections):

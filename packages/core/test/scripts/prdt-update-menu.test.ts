@@ -117,8 +117,8 @@ function makeMismatchedUpstreamCase(): { origin: string; clone: string } {
 
 
 const DRIVER = `
-import os, pty, sys, json, select, time
-clone, home, keys_json, cli = sys.argv[1:5]
+import os, pty, sys, json, select, time, signal, termios
+clone, home, keys_json, cli, cols = sys.argv[1:6]
 keys = json.loads(keys_json)
 child_code = (
   "import importlib.util, importlib.machinery\\n"
@@ -129,9 +129,11 @@ child_code = (
 pid, fd = pty.fork()
 if pid == 0:
     os.environ["HOME"] = home
+    os.environ["COLUMNS"] = cols
     os.environ.pop("NO_COLOR", None)
     os.execvp("python3", ["python3", "-c", child_code])
 buf = b""
+extra = {}
 def pump(until, timeout=15):
     global buf
     end = time.time() + timeout
@@ -146,10 +148,19 @@ def pump(until, timeout=15):
                 return
             buf += d
 for k in keys:
-    pump(b"Esc")                       # menu drawn (hint line)
+    pump("❯".encode())
     time.sleep(0.15)
-    os.write(fd, k.encode())
-    time.sleep(0.15)
+    if isinstance(k, dict):
+        os.kill(pid, getattr(signal, "SIG" + k["sig"]))
+        time.sleep(0.4)
+        try:
+            lf = termios.tcgetattr(fd)[3]
+            extra["canon_echo"] = bool(lf & (termios.ICANON | termios.ECHO) == (termios.ICANON | termios.ECHO))
+        except Exception:
+            extra["canon_echo"] = None
+    else:
+        os.write(fd, k.encode())
+        time.sleep(0.15)
 end = time.time() + 15
 while time.time() < end:
     r, _, _ = select.select([fd], [], [], 0.1)
@@ -166,17 +177,19 @@ while time.time() < end:
         if done:
             break
 _, st = os.waitpid(pid, 0)
-print(json.dumps({"out": buf.decode("utf-8", "replace"), "status": os.waitstatus_to_exitcode(st)}))
+print(json.dumps({"out": buf.decode("utf-8", "replace"), "status": os.waitstatus_to_exitcode(st), **extra}))
 `
 
-function runPty(clone: string, keys: string[]): { out: string; status: number } {
+type Key = string | { sig: 'TERM' | 'HUP' }
+
+function runPty(clone: string, keys: Key[], cols = 120): { out: string; status: number; home: string; canon_echo?: boolean | null } {
   const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
   fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
   fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
-  const raw = execFileSync('python3', ['-c', DRIVER, clone, home, JSON.stringify(keys), PRDT_CLI], {
+  const raw = execFileSync('python3', ['-c', DRIVER, clone, home, JSON.stringify(keys), PRDT_CLI, String(cols)], {
     encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
   })
-  return JSON.parse(raw.trim().split('\n').pop() as string)
+  return { ...JSON.parse(raw.trim().split('\n').pop() as string), home }
 }
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
@@ -229,7 +242,7 @@ describe.skipIf(!PYTHON3)('T-1231 · prdt update arrow menu on a real tty', () =
   test('Esc installs nothing and prints update.cancelled', () => {
     const { clone, before } = pending()
     const { out } = runPty(clone, ['\x1b'])
-    expect(strip(out)).toContain('취소했어요 — 아무것도 설치하지 않았어요.')
+    expect(strip(out)).toContain('취소했어요. 아무것도 설치하지 않았어요.')
     expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before)
     expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(false)
   })
@@ -241,5 +254,53 @@ describe.skipIf(!PYTHON3)('T-1231 · prdt update arrow menu on a real tty', () =
     expect(plain).not.toContain('업데이트 완료')
     expect(plain).toContain('취소했어요')
     expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before)
+  })
+
+  test('Esc erases the guide line, then prints the approved cancel text', () => {
+    const { clone } = pending()
+    const { out } = runPty(clone, ['\x1b'])
+    expect(out).toContain('\x1b[1A\r\x1b[2K\x1b[?25h')
+    expect(out.indexOf('\x1b[1A\r\x1b[2K')).toBeLessThan(out.indexOf('취소했어요. 아무것도 설치하지 않았어요.'))
+  })
+
+  test.each(['TERM', 'HUP'] as const)('SIG%s while the menu is up restores the cursor and tty modes', (sig) => {
+    const { clone, before } = pending()
+    const r = runPty(clone, [{ sig }])
+    expect(r.out).toContain('\x1b[?25h')
+    expect(r.status).toBeLessThan(0) // died by the signal, not swallowed
+    if (r.canon_echo !== null && r.canon_echo !== undefined) expect(r.canon_echo).toBe(true)
+    expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before)
+  })
+
+  test('skip from `prdt update` stamps today so the nudge will not ask again', () => {
+    const { clone } = pending()
+    const { home } = runPty(clone, [DOWN, '\r'])
+    const st = JSON.parse(fs.readFileSync(path.join(home, '.prdt', 'update-state.json'), 'utf8'))
+    expect(st.last_check).toMatch(/^\d{4}-\d\d-\d\d$/)
+    expect(st.last_check_basis).toBe('local')
+    expect(st.known_update).toEqual({ new: 'v1.6' })
+  })
+
+  test('narrow terminal (30 cols): every redrawn row fits one physical row', () => {
+    const { clone } = pending()
+    const { out } = runPty(clone, [DOWN, UP, DOWN, '\x1b'], 30)
+    const width = (t: string) => [...t].reduce((n, c) => n + (c.codePointAt(0)! >= 0x1100 && !'❯↑↓·'.includes(c) ? 2 : 1), 0)
+    const rows = out.split('\n').filter((l) => l.includes('\x1b[2K') && !l.includes('취소했어요')).map((l) => strip(l).replace(/\r/g, ''))
+    expect(rows.length).toBeGreaterThan(0)
+    for (const r of rows) expect(width(r)).toBeLessThanOrEqual(29)
+    expect(out).toContain('\x1b[3A') // redraw backs up exactly items + hint
+    expect(out).not.toMatch(/\x1b\[[4-9]A/)
+  })
+
+  test('truncated / over-long CSI never hangs', () => {
+    const a = pending()
+    expect(strip(runPty(a.clone, ['\x1b[']).out)).toContain('취소했어요') // timeout → Esc
+    const b = pending()
+    const r = runPty(b.clone, ['\x1b[\r', '\x1b'])                       // control byte aborts; Enter ignored
+    expect(strip(r.out)).toContain('취소했어요')
+    expect(git(b.clone, 'rev-parse', 'HEAD').trim()).toBe(b.before)
+    const c = pending()
+    expect(strip(runPty(c.clone, ['\x1b[' + '1'.repeat(40), '\x1b']).out)).toContain('취소했어요')
+    expect(fs.existsSync(path.join(c.clone, '.install-ran'))).toBe(false)
   })
 })
