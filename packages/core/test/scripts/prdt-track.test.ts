@@ -850,6 +850,25 @@ describe('T-1268: land runs the relevant test set by default', () => {
     })
   })
 
+  test('a package with a build script is built before its tests when src/ changed, and not when only tests changed', () => {
+    ticket('T-1')
+    commit(wt(), 'pkg/package.json', '{"scripts":{"build":"tsc","test":"vitest run"}}\n', 'chore: pkg build script')
+    editA()
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('build (pkg: src/ changed)')
+    expect(r.out.indexOf('build (pkg')).toBeLessThan(r.out.indexOf('relevant tests (pkg)'))
+  })
+
+  test('a tests-only change builds nothing', () => {
+    ticket('T-1')
+    commit(wt(), 'pkg/package.json', '{"scripts":{"build":"tsc","test":"vitest run"}}\n', 'chore: pkg build script')
+    commit(wt(), 'pkg/test/a.test.ts', "import { a } from '../src/a'\n// tweak\n", 'test: a (T-1)')
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).not.toContain('build (pkg')
+  })
+
   test('an empty relevant set says so and lands', () => {
     ticket('T-1')
     commit(wt(), 'notes.md', 'x\n', 'docs: notes (T-1)')
