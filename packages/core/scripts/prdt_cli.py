@@ -6811,6 +6811,311 @@ def run_claude_then_restore(cmd, env=None):
     sys.exit(rc)
 
 
+# ── decisions find (T-1257, design decision-question-design §3) ──────────────
+# The lookup the PO runs before asking the user anything: closed decision
+# tickets · wiki `decision--*` pages · user-quoted `log.md` lines, one line each.
+# Read-only; a candidate list, never a verdict (the PO judges the match).
+DECISION_KEYS = ("why", "how", "module", "what")
+_DEC_KEY_HEAD_RE = re.compile(r"^###\s+(?:(\S+)\s+)?(why|how|module|what)\s*$", re.I)
+_DEC_INLINE_RE = re.compile(r"(?<![\w#`])(why|how|module|what)\s*[:：]\s*(.+?)(?=\s+(?:why|how|module|what)\s*[:：]|$)", re.I)
+_DEC_QUOTE_RE = re.compile(r"「([^」]+)」|\*[\"“]([^*]+?)[\"”]\*")
+_DEC_USER_LINE_RE = re.compile(r"^\s*[-*]?\s*(?:\d{4}-\d{2}-\d{2}\s+)?(?:사용자|션님|user)\b", re.I)
+_DEC_REVERSED_RE = re.compile(r"뒤집|overturn|supersede", re.I)
+_DEC_LOG_LINE_RE = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2})\s*(.*)$")
+_DEC_LIMIT = 10
+_DEC_FIELD_MAX = 110
+
+
+def _dec_quotes(text):
+    return [(a or b).strip() for a, b in _DEC_QUOTE_RE.findall(text)]
+
+
+def _dec_clip(s, n=_DEC_FIELD_MAX):
+    s = re.sub(r"\s+", " ", s or "").strip().rstrip(".")
+    return s if len(s) <= n else s[: n - 1].rstrip() + "…"
+
+
+def _dec_section(body, name):
+    """Text of one `## name` section of a ticket/page body ('' when absent)."""
+    m = re.search(r"^##\s+%s\s*$" % re.escape(name), body, re.M | re.I)
+    if not m:
+        return ""
+    rest = body[m.end():]
+    n = re.search(r"^##\s", rest, re.M)
+    return rest[: n.start()] if n else rest
+
+
+def _dec_items(text):
+    """Outcome-shaped text → list of {label, why, how, module, what, quote, text}.
+    `### why|how|module|what` headings (optional leading item label such as `①`)
+    are the design-D6 keys; any other `###` heading starts a labelled item whose
+    bullets may carry inline `what: … how: …`. Text with no `###` is one item."""
+    blocks, cur = [], {"label": "", "head": None, "lines": []}
+    for ln in text.splitlines():
+        if ln.startswith("### "):
+            blocks.append(cur)
+            cur = {"label": ln[4:].strip(), "head": ln.strip(), "lines": []}
+        else:
+            cur["lines"].append(ln)
+    blocks.append(cur)
+    items, byl = [], {}
+
+    def item(label):
+        if label not in byl:
+            byl[label] = {"label": label, "text": "", "quote": ""}
+            items.append(byl[label])
+        return byl[label]
+
+    for b in blocks:
+        body = "\n".join(b["lines"]).strip()
+        m = _DEC_KEY_HEAD_RE.match(b["head"] or "")
+        if m:
+            it = item(m.group(1) or "")
+            it.setdefault(m.group(2).lower(), _dec_clip(re.sub(r"^[-*]\s*", "", body.splitlines()[0]) if body else ""))
+            it["text"] += "\n" + (b["head"] or "") + "\n" + body
+            continue
+        it = item(b["label"])
+        it["text"] += "\n" + (b["head"] or "") + "\n" + body
+        for ln in b["lines"]:
+            if _DEC_USER_LINE_RE.match(ln):
+                q = _dec_quotes(ln)
+                if q:
+                    it["quote"] = q[0]
+            for k, v in _DEC_INLINE_RE.findall(ln):
+                it.setdefault(k.lower(), _dec_clip(v))
+    return [i for i in items if i["text"].strip()]
+
+
+def _dec_user_quote(text):
+    q = ""
+    for ln in text.splitlines():
+        if _DEC_USER_LINE_RE.match(ln):
+            qs = _dec_quotes(ln)
+            if qs:
+                q = qs[0]
+    return q
+
+
+def _dec_matcher(words):
+    pats = []
+    for w in words:
+        w = w.strip()
+        if not w:
+            continue
+        # ASCII words match whole-word (so `land` does not hit `landing`); other
+        # scripts match as a substring (Korean has no word boundary to respect).
+        pats.append(re.compile(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(w), re.I)
+                    if w.isascii() else re.compile(re.escape(w), re.I))
+    return pats
+
+
+def _dec_hits(pats, text):
+    return sum(1 for p in pats if p.search(text))
+
+
+def _dec_sort_key(rec):
+    m = re.search(r"(\d+)$", rec["id"])
+    return (rec["date"] or "", int(m.group(1)) if m else 0)
+
+
+def _dec_term_records(root, pats):
+    """Term-dictionary entries (concept → say). Read only from schema-2 files —
+    canon discipline/wordlist/*.json and the project's .prdt/wordlist/*.json; a
+    schema-1 file (or none) contributes nothing and prints nothing (T-1262)."""
+    dirs = []
+    try:
+        cd = wordlist_canon_dir()
+        if cd:
+            dirs.append(Path(cd))
+    except Exception:
+        pass
+    dirs.append(Path(root) / ".prdt" / "wordlist")
+    out, seen = [], set()
+    for d in dirs:
+        for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict) or data.get("schema") != 2 or not isinstance(data.get("entries"), list):
+                continue
+            for e in data["entries"]:
+                if not isinstance(e, dict) or not isinstance(e.get("concept"), str):
+                    continue
+                say = e.get("say") if isinstance(e.get("say"), list) else []
+                hay = " ".join([e["concept"], *[str(s) for s in say]])
+                if pats and not _dec_hits(pats, hay):
+                    continue
+                key = (e["concept"], f.stem)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"id": f"term:{f.stem}", "date": "", "status": "term", "kind": "term",
+                            "line": f"term: {_dec_clip(e['concept'])} → {_dec_clip(' / '.join(str(s) for s in say))}"})
+    return out
+
+
+def decisions_collect(root, words, feature=None):
+    """[(record)] — every candidate, unsorted, unlimited. record = {id, date,
+    status, kind, items[{why,how,module,what,quote}], reversed_by, hits}."""
+    pats = _dec_matcher(words)
+    recs = []
+    for row, p, _ in scan_tickets(root) or []:
+        if feature and row.get("feature") != feature:
+            continue
+        try:
+            text = Path(p).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        fm, body = parse_frontmatter_text(text)
+        outcome, log = _dec_section(body, "outcome"), _dec_section(body, "log")
+        is_dec = row["type"] == "decision" or bool(_dec_user_quote(outcome + "\n" + log))
+        if not is_dec or (pats and not _dec_hits(pats, text)):
+            continue
+        items = _dec_items(outcome)
+        quote = _dec_user_quote(outcome) or _dec_user_quote(log)
+        rev = ""
+        for ln in log.splitlines():
+            if _DEC_REVERSED_RE.search(ln):
+                ids = [i for i in re.findall(r"T-\d+", ln) if i != row["id"]]
+                if ids:
+                    rev = ids[0]
+        recs.append({"id": row["id"], "date": row["closed"] or row["created"] or "",
+                     "status": row["status"] or "-", "kind": "ticket", "items": items,
+                     "quote": quote, "slug": row["slug"], "reversed_by": rev, "text": text})
+    wdirs = [shared_docs_dir(root) / "wiki"] + [d for _, d in product_docs_dirs(root, "wiki")]
+    seen = set()
+    for wd in wdirs:
+        if not wd.is_dir() or wd in seen:
+            continue
+        seen.add(wd)
+        for p in sorted(wd.glob("decision--*.md")):
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            fm, body = parse_frontmatter_text(text)
+            if feature and fm.get("feature") != feature:
+                continue
+            if pats and not _dec_hits(pats, text):
+                continue
+            st = str(fm.get("status") or "-")
+            qs = _dec_quotes(body)
+            recs.append({"id": p.stem, "date": str(fm.get("date") or fm.get("closed") or fm.get("created") or ""),
+                         "status": st, "kind": "wiki", "items": _dec_items(body),
+                         "quote": qs[0] if qs else "", "slug": str(fm.get("title") or p.stem),
+                         "reversed_by": "superseded" if st == "superseded" else "", "text": text})
+    if not feature:
+        lp = shared_docs_dir(root) / "wiki" / "log.md"
+        if lp.is_file():
+            try:
+                lines = lp.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                lines = []
+            for n, ln in enumerate(lines, 1):
+                m = _DEC_LOG_LINE_RE.match(ln)
+                if not m:
+                    continue
+                qs = _dec_quotes(m.group(2))
+                if not qs or (pats and not _dec_hits(pats, ln)):
+                    continue
+                its = _dec_items(m.group(2))
+                recs.append({"id": f"log.md:{n}", "date": m.group(1), "status": "log", "kind": "log",
+                             "items": its, "quote": qs[0], "slug": m.group(2), "reversed_by": "", "text": ln})
+    for r in recs:
+        r["pats"] = pats
+    return recs
+
+
+def _dec_pick_item(rec):
+    """The item of a record that the line speaks for: most word hits, ties →
+    the first one that carries keys or an answer."""
+    pats = rec.get("pats") or []
+    best, score = None, -1
+    for it in rec["items"]:
+        s = _dec_hits(pats, it["text"]) if pats else 0
+        keyed = any(it.get(k) for k in DECISION_KEYS) or it.get("quote")
+        s = s * 2 + (1 if keyed else 0)
+        if s > score:
+            best, score = it, s
+    return best or {}
+
+
+def _dec_kinds(module):
+    return [k.strip() for k in re.split(r"\s+·\s+|[,;]", module or "") if k.strip()]
+
+
+def _dec_line(rec):
+    if rec["kind"] == "term":
+        return rec["line"]
+    it = _dec_pick_item(rec)
+    what = it.get("what") or (_dec_clip(rec["slug"]) if rec["kind"] != "log" else _dec_clip(rec["slug"]))
+    parts = [rec["id"] + (f" {it['label']}" if it.get("label") and rec["kind"] == "ticket" and not _DEC_KEY_HEAD_RE.match("### " + it["label"]) else ""),
+             rec["date"] or "-", rec["status"],
+             f"why: {it.get('why') or 'none'}"]
+    if it.get("how"):
+        parts.append(f"how: {it['how']}")
+    if it.get("module"):
+        parts.append(f"module: {it['module']}")
+    parts.append(f"what: {what}")
+    q = (rec.get("quote") if rec["kind"] == "log" else it.get("quote")) or rec.get("quote")
+    if q:
+        parts.append(f"원문 「{_dec_clip(q, 80)}」")
+    if rec.get("reversed_by"):
+        parts.append(f"→ {rec['reversed_by']}")
+    return " · ".join(parts)
+
+
+def cmd_decisions(args):
+    """`prdt decisions find <words…> [--feature F] [--module [KIND]]` (T-1257)."""
+    root = require_root()
+    if args.action != "find":
+        sys.exit("prdt decisions: only `find` exists")
+    words = args.words or []
+    module = args.module
+    if not words and module is None:
+        sys.exit("prdt decisions find: give at least one word (or --module [KIND])")
+    recs = decisions_collect(root, words, args.feature)
+    if module is not None:
+        keyed = []
+        for r in recs:
+            for it in r["items"]:
+                if it.get("module"):
+                    keyed.append((r, it))
+        if not module:
+            counts = {}
+            for _, it in keyed:
+                for k in _dec_kinds(it["module"]):
+                    counts[k] = counts.get(k, 0) + 1
+            if not counts:
+                print("no module kinds recorded")
+                return
+            for k, n in sorted(counts.items()):
+                print(f"module: {k} · {n} item{'s' if n != 1 else ''}")
+            return
+        want = module.strip().lower()
+        hit = sorted([(r, it) for r, it in keyed if want in [k.lower() for k in _dec_kinds(it["module"])]],
+                     key=lambda ri: _dec_sort_key(ri[0]))
+        if not hit:
+            print(f"no recorded decision for module: {module}")
+            return
+        r0, i0 = hit[0]
+        print(f"module: {module} · principle: {i0.get('how') or 'none'} · set by {r0['id']} · {r0['date'] or '-'}")
+        for r, it in hit[1:] + ([hit[0]] if False else []):
+            print(f"  followed: {r['id']} · {r['date'] or '-'} · {r['status']} · what: {it.get('what') or _dec_clip(r['slug'])}")
+        if len(hit) == 1:
+            print("  followed: none")
+        return
+    recs.sort(key=_dec_sort_key, reverse=True)
+    lines = [_dec_line(r) for r in recs[:_DEC_LIMIT]]
+    lines += [r["line"] for r in _dec_term_records(root, _dec_matcher(words))]
+    if not lines:
+        print("no recorded decision")
+        return
+    print("\n".join(lines))
+
+
+
 def cmd_po(args):
     """Launch the PO conversation (thin exec over Claude Code)."""
     root = find_project_root()
@@ -17991,16 +18296,30 @@ def _env_parse_values(p):
 # BCP-47 language under discipline/wordlist/ (mirrored to ~/.prdt with the rest
 # of discipline/), extended per project by `.prdt/wordlist/<lang>.json` (same
 # schema; an entry whose `word` matches a canon entry replaces it, any other is
-# appended — canon is never edited). Checked by `prdt wordlist check` and, at
+# appended — canon is never edited). T-1262: schema 2 (`concept` · `say` ·
+# `avoid[]` · `except_line` · `scope` · `cases`) is read alongside schema 1, per
+# entry; `concept` is the merge key `word` was. Checked by `prdt wordlist check` and, at
 # write time, by prdt-wordlist-check.sh (PostToolUse Write|Edit|MultiEdit) on the
 # UX-writing surfaces below. `prdt wordlist export` is the import path for a
 # product's runtime LLM prompts (patterns are kept to the Python/JS regex
 # common subset; `flags` is "i" or absent).
-WORDLIST_SURFACE_RES = (
-    re.compile(r"^docs/artifacts/.+\.(?:html?|md)$"),
-    re.compile(r"^docs/prd/PRD\.md$"),
-    re.compile(r"^docs/tickets/.+\.md$"),
+WORDLIST_SURFACES = (
+    ("artifacts", re.compile(r"^docs/artifacts/.+\.(?:html?|md)$")),
+    ("prd", re.compile(r"^docs/prd/PRD\.md$")),
+    ("ticket-body", re.compile(r"^docs/tickets/.+\.md$")),
 )
+WORDLIST_SURFACE_RES = tuple(rx for _, rx in WORDLIST_SURFACES)
+# contracts §Language surface names an entry's `scope` may list; `user-chat` has
+# no path (`prdt wordlist check --surface user-chat`).
+WORDLIST_SCOPE_NAMES = ("user-chat", "prd", "artifacts", "ticket-body")
+
+
+def wordlist_surface_of(as_is_rel):
+    """Surface name of a docs path (As-Is layout), or None."""
+    for name, rx in WORDLIST_SURFACES:
+        if rx.match(as_is_rel):
+            return name
+    return None
 _WORDLIST_HTML_SKIP = {"script", "style", "code", "pre", "del", "s", "template", "noscript"}
 _WORDLIST_HTML_ATTRS_RE = re.compile(r"""(?<![\w-])(?:title|alt|placeholder|aria-label)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
 _WORDLIST_HOOK_MAX_LINES = 15
@@ -18044,14 +18363,76 @@ def _wordlist_project_file(root, lang):
     return Path(root) / ".prdt" / "wordlist" / f"{lang}.json" if root else None
 
 
-def wordlist_entries(lang, root=None, warnings=None):
-    """Canon list for `lang` merged with the project's local one (by `word`).
-    Each returned entry carries its compiled `_re` and `_except` regexes.
+def _wordlist_str_list(v):
+    if isinstance(v, str):
+        return [v]
+    if isinstance(v, list) and v and all(isinstance(x, str) and x for x in v):
+        return list(v)
+    return None
+
+
+def _wordlist_normalize(e):
+    """One raw entry (schema 1 or 2, told apart per entry) → the internal entry,
+    or raises ValueError(reason). The internal entry keeps the schema-1 keys
+    (`word` `pattern` `flags` `replace` `except_line` `note`) in the order a
+    schema-1 file has them, so `export` is schema 1 whichever schema it read;
+    `_avoid` = [(pattern, flags)], `_scope`, `_cases` are internal."""
+    if not isinstance(e, dict):
+        raise ValueError("entry is not an object")
+    if "concept" in e:
+        word = e["concept"]
+        replace = _wordlist_str_list(e.get("say"))
+        avoid = e.get("avoid")
+        if not isinstance(word, str) or not word or replace is None or not isinstance(avoid, list) or not avoid:
+            raise ValueError("a schema 2 entry needs `concept`, `say` and a non-empty `avoid[]`")
+        pairs = []
+        for a in avoid:
+            if not isinstance(a, dict) or not isinstance(a.get("pattern"), str) or not a["pattern"] \
+                    or not isinstance(a.get("flags") or "", str):
+                raise ValueError("every `avoid` item needs a `pattern` string")
+            pairs.append((a["pattern"], a.get("flags") or ""))
+        scope = e.get("scope")
+        if scope is not None and not (isinstance(scope, list) and scope and all(x in WORDLIST_SCOPE_NAMES for x in scope)):
+            raise ValueError(f"`scope` lists only {' · '.join(WORDLIST_SCOPE_NAMES)}")
+        out = {"word": word}
+        flagset = {f for _, f in pairs}
+        if len(pairs) == 1:
+            out["pattern"] = pairs[0][0]
+        else:
+            out["pattern"] = "|".join(f"(?:{pt})" for pt, _ in pairs)
+        if len(flagset) == 1 and "" not in flagset:
+            out["flags"] = next(iter(flagset))
+        elif len(flagset) > 1:
+            out["_mixed_flags"] = True
+        out["replace"] = replace
+        for k in ("except_line", "note"):
+            if k in e:
+                out[k] = e[k]
+        out["_avoid"] = pairs
+        out["_scope"] = scope
+        out["_cases"] = e.get("cases")
+        return out
+    if not isinstance(e.get("word"), str) or not e.get("replace"):
+        raise ValueError("every entry needs `word` and `replace` (schema 1) or `concept`, `say` and `avoid[]` (schema 2)")
+    out = dict(e)
+    out["_avoid"] = [(e.get("pattern") or re.escape(e["word"]), e.get("flags") or "")]
+    out["_scope"] = None
+    out["_cases"] = None
+    return out
+
+
+def wordlist_entries(lang, root=None, warnings=None, surface=None):
+    """Canon list for `lang` merged with the project's local one (by `word`,
+    which is `concept` in schema 2). Each returned entry carries its compiled
+    `_res` and `_except` regexes. With a `surface`, an entry whose `scope` does
+    not list it is left out (no `scope` = every surface).
     With a `warnings` list, a broken PROJECT file or entry is reported there and
     skipped (canon still applies); without one it raises WordlistError.
     A `lang` that is not BCP-47-shaped always raises (T-1080: no path use)."""
     if not wordlist_lang_ok(lang):
         raise WordlistError(f"prdt wordlist: {one_line(repr(lang))} is not a BCP-47 language tag (e.g. ko, en, zh-Hant)")
+    if surface is not None and surface not in WORDLIST_SCOPE_NAMES:
+        raise WordlistError(f"prdt wordlist: {one_line(repr(surface))} is not a surface ({' · '.join(WORDLIST_SCOPE_NAMES)})")
     merged, order = {}, []
     sources = []
     canon = wordlist_canon_dir()
@@ -18069,23 +18450,25 @@ def wordlist_entries(lang, root=None, warnings=None):
             warnings.append(f"{ex} (project list skipped, canon list still applied)")
             continue
         for e in raw:
-            if not isinstance(e, dict) or not isinstance(e.get("word"), str) or not e.get("replace"):
-                msg = f"prdt wordlist: {src}: every entry needs `word` and `replace` ({e!r})"
+            try:
+                n = _wordlist_normalize(e)
+            except ValueError as ex:
+                msg = f"prdt wordlist: {src}: {ex} ({e!r})"
                 if warnings is None or src != proj:
                     raise WordlistError(msg)
                 warnings.append(msg + " (entry skipped)")
                 continue
-            w = e["word"]
+            w = n["word"]
             if w not in merged:
                 order.append(w)
-            merged[w] = dict(e, _src=str(src))
+            merged[w] = dict(n, _src=str(src))
     out = []
     for w in order:
         e = merged[w]
         if isinstance(e["replace"], str):
             e["replace"] = [e["replace"]]
         try:
-            e["_re"] = re.compile(e.get("pattern") or re.escape(w), re.I if "i" in (e.get("flags") or "") else 0)
+            e["_res"] = [re.compile(pt, re.I if "i" in fl else 0) for pt, fl in e["_avoid"]]
             e["_except"] = [re.compile(x) for x in (e.get("except_line") or [])]
         except re.error as ex:
             msg = f"prdt wordlist: {e['_src']}: entry {w!r}: bad pattern: {ex}"
@@ -18093,8 +18476,27 @@ def wordlist_entries(lang, root=None, warnings=None):
                 raise WordlistError(msg)
             warnings.append(msg + " (entry skipped)")
             continue
+        if surface is not None and e["_scope"] is not None and surface not in e["_scope"]:
+            continue
         out.append(e)
     return out
+
+
+def wordlist_run_cases(entry):
+    """Run one schema-2 entry's `cases` against that entry alone; [] = all pass,
+    else one line per failed case. `hit` cases must give `n` (default 1) hits,
+    `miss` cases none; a case without `kind` runs as md and as html."""
+    failures = []
+    cases = entry.get("_cases") or {}
+    for group in ("hit", "miss"):
+        for c in cases.get(group) or []:
+            kinds = [c["kind"]] if c.get("kind") in ("md", "html") else ["md", "html"]
+            want = int(c.get("n", 1)) if group == "hit" else 0
+            for kind in kinds:
+                got = len(wordlist_scan(c["text"], [entry], kind))
+                if got != want:
+                    failures.append(f"{entry['word']}: {group} case {c['text']!r} ({kind}): expected {want} hit(s), got {got}")
+    return failures
 
 
 def wordlist_langs(root=None):
@@ -18268,9 +18670,10 @@ def wordlist_scan(text, entries, kind="md", warnings=None):
                 raw = raw_lines[i] if i < len(raw_lines) else line
                 if any(x.search(raw) for x in e["_except"]):
                     continue
-                for m in e["_re"].finditer(line):
-                    if m.group(0).strip():
-                        part.append((i + 1, m.start(), m.end(), m.group(0), e))
+                for rx in e["_res"]:
+                    for m in rx.finditer(line):
+                        if m.group(0).strip():
+                            part.append((i + 1, m.start(), m.end(), m.group(0), e))
         except _WordlistTimeout:
             part = []
             if warnings is not None:
@@ -18320,9 +18723,9 @@ def _wordlist_repl(replace):
     return " · ".join(one_line(r) for r in replace)
 
 
-def wordlist_check_text(text, name, lang_arg, root, warnings=None):
+def wordlist_check_text(text, name, lang_arg, root, warnings=None, surface=None):
     lang = lang_arg or wordlist_detect_lang(text, root)
-    entries = wordlist_entries(lang, root, warnings)
+    entries = wordlist_entries(lang, root, warnings, surface)
     return lang, wordlist_scan(text, entries, _wordlist_kind(name), warnings)
 
 
@@ -18361,10 +18764,11 @@ def _wordlist_hook(root_hint):
             return
         rel = f.resolve().relative_to(root).as_posix()
         as_is = docs_as_is_rel(root, rel)   # T-1104: To-Be docs/<p>/X · docs/_shared/X match the As-Is surfaces
-        if not any(rx.match(as_is) for rx in WORDLIST_SURFACE_RES):
+        surface = wordlist_surface_of(as_is)
+        if not surface:
             return
         warns = []
-        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns)
+        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns, surface)
     except Exception:
         return
     if not hits and not warns:
@@ -18390,7 +18794,11 @@ def cmd_wordlist(args):
     try:
         if args.action == "export":
             lang = args.lang or "ko"
-            entries = wordlist_entries(lang, root)
+            entries = wordlist_entries(lang, root, None, args.surface)
+            for e in entries:
+                if e.get("_mixed_flags"):
+                    raise WordlistError(f"prdt wordlist: entry {one_line(e['word'])!r} ({e['_src']}) has `avoid` items with different `flags`; "
+                                        "export carries one `flags` per entry")
             if not entries:
                 print(f"prdt wordlist: no list for {lang!r} (have: {one_line(', '.join(wordlist_langs(root))) or 'none'})", file=sys.stderr)
                 sys.exit(3)
@@ -18415,7 +18823,7 @@ def cmd_wordlist(args):
                     print(f"prdt wordlist check: cannot read {name}: {e}", file=sys.stderr)
                     sys.exit(3)
             warns = []
-            lang, hits = wordlist_check_text(text, shown, args.lang, root, warns)
+            lang, hits = wordlist_check_text(text, shown, args.lang, root, warns, args.surface)
             for w in warns:
                 print(one_line(w), file=sys.stderr)
             report.append({"path": shown, "lang": lang, "hits": hits})
@@ -20070,6 +20478,15 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="fmt: print the diff, write nothing · new: print the would-be path and "
                                                        "frontmatter, write nothing (T-1084)")
     p.set_defaults(fn=cmd_tickets)
+    p = sub.add_parser("decisions", help="find <words…> [--feature F] [--module [KIND]] (T-1257): the recorded decisions "
+                                         "(decision tickets · wiki decision pages · user-quoted log.md lines) that match, "
+                                         "one line each — run before asking the user anything")
+    p.add_argument("action", choices=("find",))
+    p.add_argument("words", nargs="*", metavar="WORD")
+    p.add_argument("--feature", default=None, help="find: only tickets of this `feature`")
+    p.add_argument("--module", nargs="?", const="", default=None, metavar="KIND",
+                   help="find: KIND's principle and the items that followed it; bare = the kinds recorded")
+    p.set_defaults(fn=cmd_decisions)
     p = sub.add_parser("artifacts", help="sync (write the ONE docs/artifacts/manifest.json from disk) "
                                          "| check (report artifacts the bucket rule cannot place, and a "
                                          "manifest.json inside a bucket; exit 1 on findings) "
@@ -20289,6 +20706,8 @@ def main():
     p.add_argument("--lang", default=None, help="BCP-47 list key (default: project wordlist.lang, else the text's script)")
     p.add_argument("--json", action="store_true")
     p.add_argument("--format", choices=("json", "lines"), default="json")
+    p.add_argument("--surface", default=None, help="contracts §Language surface (user-chat|prd|artifacts|ticket-body): "
+                                                   "only the entries whose `scope` lists it (default: every entry)")
     p.set_defaults(fn=cmd_wordlist)
     # `prdt settings -h`/`--help`: argparse's own subparser help is English
     # and bypasses the message catalog (T-750 QA grill) — answer from the
