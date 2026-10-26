@@ -85,6 +85,16 @@ function readVersion(projectDir: string): string {
   return st.version
 }
 
+/** T-1295: a stored chat language in a per-case PRDT_HOME, so the tty `prdt init`
+ * asks only slug and version — the language question (T-1116/T-1281) stays out of
+ * the scripted keystrokes. Returns the expect line that exports it. */
+function pinnedLang(projectDir: string): string {
+  const home = path.join(path.dirname(projectDir), 'prdt-home')
+  fs.mkdirSync(home, { recursive: true })
+  fs.writeFileSync(path.join(home, 'user-lang'), 'ko\n')
+  return `set env(PRDT_HOME) "${home}"`
+}
+
 function mkProject(prefix: string): string {
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
   const projectDir = path.join(sandbox, 'proj')
@@ -100,6 +110,7 @@ describe.skipIf(!hasExpect() || !PYTHON3)('prdt init — first-version prompt (T
     fs.writeFileSync(exp, `
 set timeout 10
 set env(PATH) "${pathVal}"
+${pinnedLang(projectDir)}
 spawn python3 "${PRDT_CLI}" init
 ${mustSee('project slug')}
 send "\\r"
@@ -119,6 +130,7 @@ expect eof
 set timeout 10
 set stty_init "rows 40 columns 100"
 set env(PATH) "${pathVal}"
+${pinnedLang(projectDir)}
 spawn python3 "${PRDT_CLI}" init
 ${mustSee('project slug')}
 send "\\r"
@@ -142,6 +154,7 @@ expect eof
 set timeout 10
 set stty_init "rows 40 columns 100"
 set env(PATH) "${pathVal}"
+${pinnedLang(projectDir)}
 spawn python3 "${PRDT_CLI}" init
 ${mustSee('project slug')}
 send "\\r"
@@ -169,6 +182,7 @@ expect eof
 set timeout 10
 set stty_init "rows 40 columns 100"
 set env(PATH) "${pathVal}"
+${pinnedLang(projectDir)}
 spawn python3 "${PRDT_CLI}" init
 ${mustSee('project slug')}
 send "\\r"

@@ -733,6 +733,12 @@ if [ -n "$WANT_TICKET" ]; then
 fi
 else   # T-893 report mode: no dispatch to judge
   GATE=""; WANT_MODEL="default"; WANT_PERSONA=""; WANT_CO=""; WANT_FILES=""; DIR=""; SID=""
+  # T-1290: `prdt dispatch wait --persona developer|qa` hands its persona and project root, so the
+  # T-1248 priority yield is computed for THAT dispatch kind (a bare report has neither and shows
+  # only the machine axes). Report mode judges and writes nothing either way.
+  case "${PRDT_GATE_PERSONA:-}" in developer|qa)
+    case "${PRDT_GATE_PROJECT_ROOT:-}" in /*) WANT_PERSONA="$PRDT_GATE_PERSONA"; DIR="$PRDT_GATE_PROJECT_ROOT" ;; esac ;;
+  esac
 fi
 
 # ── T-695: machine resource cap ───────────────────────────────────────────────
@@ -1065,7 +1071,14 @@ prio_slug_of() {   # dir → explicit config slug of the nearest project up-walk
     fi
     d="${d%/*}"
   done
+  # T-1294: a slug names a file under run/ — charset + length like the CLI's
+  # safe_label; anything else is treated as no slug (never a path piece).
+  case "$s" in *[!A-Za-z0-9._-]*|"."|"..") s="" ;; esac
+  [ "${#s}" -le 60 ] || s=""
   printf '%s' "$s"
+}
+prio_label() {   # T-1294: repo-sourced name on a gate line — charset + 60-char clip (CLI safe_label)
+  printf '%s' "$1" | LC_ALL=C tr -c 'A-Za-z0-9._-' '_' | cut -c1-60
 }
 
 PRIO_NAMES="[]"; PRIO_ME=""; PRIO_RUN="[]"; PRIO_WAIT="[]"; PRIO_ACTIVE=""
@@ -1302,7 +1315,7 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
           + " Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`."
           + (if $note == "" then "" else "\n" + $note end)) | tojson end) as $deny
 | ($axes | map(
-     "\(if .over then "OVER " elif .ok then "ok   " else "?    " end) \(.name): \(if .ok then "\(.val) / \(.cap)" else "unmeasured" end)"
+     "\(if .over or ($yield != null and .k == "suites") then "OVER " elif .ok then "ok   " else "?    " end) \(.name): \(if .ok then "\(.val) / \(.cap)" else "unmeasured" end)"
      + "\n       applies to: \(if .suite // false then "developer, qa dispatches (test-running work)" else "every dispatch" end)"
      + "\n       cap key: \(.key) (\(.src)) · source: \(.how)"
      + "\n       to free: \(.free)"
@@ -1323,7 +1336,7 @@ RES="$(jq -rn \
   --arg want_persona "$WANT_PERSONA" --arg want_co "$WANT_CO" --arg proj_root "$PROJ_ROOT" --arg code_abs "$CODE_ABS" \
   --arg want_files "$WANT_FILES" --arg code_rel "$CODE_REL" --argjson allow "$META_ALLOW" \
   --argjson prio_names "$PRIO_NAMES" --argjson prio_run "$PRIO_RUN" --argjson prio_wait "$PRIO_WAIT" \
-  --arg prio_me "$PRIO_ME" --arg prio_me_name "${PRIO_ME:-${PROJ_ROOT##*/}}" \
+  --arg prio_me "$PRIO_ME" --arg prio_me_name "${PRIO_ME:-$(prio_label "${PROJ_ROOT##*/}")}" \
   --arg txt_held "$PRIO_TXT_HELD" --arg txt_claimed "$PRIO_TXT_CLAIMED" --arg txt_after "$PRIO_TXT_AFTER" \
   --arg txt_after_unlisted "$PRIO_TXT_AFTER_UNLISTED" --arg txt_next "$PRIO_TXT_NEXT" \
   "$RPROG" 2>/dev/null)"
@@ -1398,7 +1411,10 @@ prio_listed() { [ -n "$PRIO_ACTIVE" ] && [ -n "$WANT_PERSONA" ] && [ -n "$PRIO_M
   && case "$PRIO_NAMES" in *"\"$PRIO_ME\""*) true ;; *) false ;; esac; }
 if [ -n "$DENY" ]; then
   if [ -n "$PRIO_HELD" ] && prio_listed; then
-    { mkdir -p "$PRIO_WDIR" && : > "$PRIO_WDIR/$PRIO_ME"; } 2>/dev/null
+    # T-1294: never follow a symlink (same `[ -L ]` pattern as prdt-call-governor.sh).
+    if [ ! -L "${PRIO_WDIR%/*}" ] && [ ! -L "$PRIO_WDIR" ] && [ ! -L "$PRIO_WDIR/$PRIO_ME" ]; then
+      { mkdir -p "$PRIO_WDIR" && : > "$PRIO_WDIR/$PRIO_ME"; } 2>/dev/null
+    fi
   fi
   printf '%s\n' "$DENY"
   exit 0
