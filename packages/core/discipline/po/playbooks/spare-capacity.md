@@ -19,7 +19,7 @@ Default, never a judgment call: a gate lane with a `next`/`ready` row and nothin
 
 ## Stop — only these, only that lane
 - Lane head needs the user — an open `type: decision` (결정사항) or `assignee: user` (요청사항) blocker, or a Triage confirm (§Never crossed) → that lane waits; every other lane keeps filling.
-- User's explicit stop ("퇴근", "기록만") → no new dispatch on the lanes it names, every lane when it names none; a return arriving is recorded only (ticket `## log` · inbox), no next dispatch; their next work request resumes.
+- User's explicit stop ("퇴근", "기록만", "추가로 보내진 말자") → that turn, Bash `prdt lanes pause [<lane>…]` — the lanes it names, every lane when it names none; the lane-check hook reads only this record, never chat. Paused lane: no new dispatch; a return arriving is recorded only (ticket `## log` · inbox), no next dispatch. Their next work request → `prdt lanes resume [<lane>…]`, then fill.
 - Nothing else stops a lane: a side request · a question to the user on another lane · a running land or suite · QA on another ticket.
 
 ## Pull — the 자투리 loop
