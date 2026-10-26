@@ -1246,10 +1246,10 @@ export const LINE_SECTIONED_STORES = ['home', 'prd', 'ticket', 'feature', 'artif
  */
 export function lineViews(data) {
   if (!Array.isArray(data.lines) || data.lines.length === 0) return []
-  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes }
+  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes, deployed: data.deployed || null }
   return [
     home,
-    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes })),
+    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes, deployed: l.deployed || null })),
   ]
 }
 
@@ -1272,9 +1272,19 @@ function lineHead(v) {
   return `${v.name} ${isIdleView(v) ? lastClosedId(v) : v.currentVersion}`.trim()
 }
 
+/**
+ * T-1253: the 「제품 줄」 table of the progress header — one row per product (deployed · dev · stage), the selected one marked;
+ * [] on a single-product page. An idle product's dev cell reads 「열린 버전 없음」.
+ */
+function productRowsOf(data, selected) {
+  const views = lineViews(data)
+  if (views.length === 0) return []
+  return views.map((v) => ({ name: v.name, deployed: v.deployed ? v.deployed.version : '', dev: isIdleView(v) || !v.currentVersion ? '' : v.currentVersion, stage: v.stage, selected: v === selected || (v.line === selected.line) }))
+}
+
 /** `data` with tickets · PRD · version · stage scoped to one line. */
 function lineData(data, v) {
-  return { ...data, tickets: v.tickets, prd: v.prd, lanes: v.lanes, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
+  return { ...data, tickets: v.tickets, prd: v.prd, lanes: v.lanes, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, project: v.name || data.project, deployed: v.deployed || null, productRows: productRowsOf(data, v), listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
 }
 
 /** Flattens per-line `{groups, defaultKey}` into one group list: keys prefixed `<line>/` (home line bare), the first group of each line carrying the section head. `defaultKey` = the home line's default. */
@@ -2739,10 +2749,34 @@ function homeDependency(data, currentTickets) {
   return `<div class="cp-block">${head}${notice}${dependencyDiagram(graph, layoutHomeGraph(graph), dgId)}</div>`
 }
 
+/**
+ * T-1253: the card's first block — product · 배포 · 개발 (+ date · ref, or the no-record hint), and on a multi-product
+ * page the 제품 줄 table. Read only; values come from `data.deployed` (DEPLOY.md frontmatter) and the po-state version.
+ */
+function homeDeployHead(data) {
+  const V = HOME.vh
+  const dep = data.deployed || null
+  const dev = data.poState?.stage === 'idle' ? '' : data.currentVersion || ''
+  const devHtml = dev ? `<b class="vh-v">${escapeHtml(dev)}</b>` : `<span class="vh-none">${V.noOpen}</span>`
+  const depHtml = dep ? `<b class="vh-v">${escapeHtml(dep.version)}</b>` : `<span class="vh-none">${V.none}</span>`
+  const meta = dep ? V.meta(dep.at, dep.ref) : ''
+  const name = data.project || ''
+  const head = `<div class="vh"><span class="vh-n">${escapeHtml(name || IDENTITY.tool)}</span><span class="vh-k">${V.dep}</span> ${depHtml}<span class="vh-d"><span class="vh-k">${V.dev}</span> ${devHtml}</span>${meta ? `<span class="vh-m">${escapeHtml(meta)}</span>` : ''}</div>${dep ? '' : `<p class="vh-hint">${V.hint}</p>`}`
+  const rows = data.productRows || []
+  if (rows.length === 0) return head
+  const cell = (v, none) => (v ? `<td class="ver">${escapeHtml(v)}</td>` : `<td class="ver vh-nocell">${none}</td>`)
+  const body = rows
+    .map((r) => `<tr class="${r.selected ? 'sel' : ''}"><td class="ln">${escapeHtml(r.name)}</td>${cell(r.deployed, V.none)}${cell(r.dev, V.noOpen)}<td class="stage">${escapeHtml(IDENTITY.stage[r.stage] || r.stage || '')}</td></tr>`)
+    .join('')
+  const th = V.linesHeaders.map((h) => `<th>${h}</th>`).join('')
+  return `${head}<hr class="vh-sep"><div class="vh-lines"><div class="vh-lines-h">${V.linesHead}<small>${rows.length}</small></div><table class="vh-table"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div><hr class="vh-sep">`
+}
+
 function homeProgressBody(data) {
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
+${homeDeployHead(data)}
 ${homeStageBar(currentTickets, data.poState?.stage || '?')}
 <div class="sc sc-grid">${homeWaits(data)}${homeScope(data, currentTickets)}</div>
 ${homeDependency(data, currentTickets)}
@@ -2979,6 +3013,25 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
    (docs/artifacts/v1.12/define-screen-set.html, home-progress + home-cases). ---------- */
 .dash-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
 .dash-card { border: 1px solid var(--border-item); border-radius: var(--radius-12); background: var(--bg-surface-base); padding: var(--space-20); }
+/* T-1253: progress header (screen set v1.15 viewer-head) — existing tokens only. */
+.vh { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 var(--space-12); }
+.vh-n { font-size: 15px; font-weight: 700; }
+.vh-k { font-size: 11px; color: var(--text-tertiary); }
+.vh-v { font-family: var(--font-mono); font-size: 13px; font-weight: 700; }
+.vh-d { margin-left: 2px; }
+.vh-none { font-size: 12px; color: var(--text-tertiary); border: 1px dashed var(--border-item); border-radius: 100px; padding: 0 8px; }
+.vh-m { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.vh-hint { margin: -4px 0 var(--space-12); font-size: 12px; color: var(--text-tertiary); }
+.vh-sep { border: none; border-top: 1px solid var(--border-item); margin: 14px 0; }
+.vh-lines-h { font-size: 12px; font-weight: 600; margin-bottom: var(--space-8); }
+.vh-lines-h small { margin-left: 6px; color: var(--text-tertiary); font-weight: 400; }
+.vh-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.vh-table th { font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-align: left; padding: 0 8px 6px; border-bottom: 1px solid var(--border-item); }
+.vh-table td { padding: 8px; border-bottom: 1px solid var(--border-item); vertical-align: middle; }
+.vh-table td.ver { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); }
+.vh-table td.vh-nocell { font-family: var(--font-family); color: var(--text-tertiary); }
+.vh-table td.ln { font-weight: 600; }
+.vh-table tr.sel td { background: var(--accent-subtle); }
 .dash-card-title { font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-tertiary); margin: 0 0 var(--space-12); display: flex; align-items: center; gap: var(--space-8); }
 .sb { display: flex; align-items: center; gap: 0; margin: var(--space-4) 0 var(--space-4); flex-wrap: nowrap; min-width: 0; max-width: 100%; }
 .sb-tick { width: 2px; height: 34px; background: var(--text-secondary); border-radius: 1px; margin-right: var(--space-6); flex: 0 0 auto; }
