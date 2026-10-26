@@ -186,6 +186,7 @@ function runPty(clone: string, keys: Key[], cols = 120): { out: string; status: 
   const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
   fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
   fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
+  fs.writeFileSync(path.join(home, '.prdt', 'user-lang'), 'ko\n') // T-1281: a stored chat language → cmd_update asks nothing first
   const raw = execFileSync('python3', ['-c', DRIVER, clone, home, JSON.stringify(keys), PRDT_CLI, String(cols)], {
     encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
   })

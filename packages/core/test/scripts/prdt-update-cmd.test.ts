@@ -126,6 +126,7 @@ function runCmdUpdate(clone: string, opts: { tty: boolean; stdinAnswer?: string 
   const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
   fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
   fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
+  fs.writeFileSync(path.join(home, '.prdt', 'user-lang'), 'ko\n') // T-1281: a stored chat language → cmd_update asks nothing first
   const ttyShim = opts.tty
     ? `
 class Tty:
@@ -282,6 +283,7 @@ describe.skipIf(!PYTHON3)('T-749 · prdt update — nothing installs before the 
     const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
     fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
     fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
+    fs.writeFileSync(path.join(home, '.prdt', 'user-lang'), 'ko\n') // T-1281: a stored chat language → cmd_update asks nothing first
     const script = `
 import importlib.util, importlib.machinery, sys, io, builtins
 loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})

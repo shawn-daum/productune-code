@@ -124,6 +124,12 @@ print(json.dumps(${expr}))
 
 const aheadOf = (clone: string) => py(`m.remote_ahead(${JSON.stringify(clone)})`)
 
+// T-1281: a stored chat language, so a tty `cmd_update` asks nothing before the update menu
+function pinnedPrdtHome(): string {
+  const d = fs.mkdtempSync(path.join(tmpRoot, 'prdthome-'))
+  fs.writeFileSync(path.join(d, 'user-lang'), 'ko\n')
+  return d
+}
 beforeEach(() => { tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-nudge-'))) })
 afterEach(() => { fs.rmSync(tmpRoot, { recursive: true, force: true }) })
 
@@ -703,7 +709,7 @@ m.cmd_update(None)   # stdin/stdout are real pipes here -> not a tty, hits cmd_u
 `
     const r = spawnSync('python3', ['-c', script], {
       encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
-      env: { ...process.env, HOME: home, PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')), CI: '' },
+      env: { ...process.env, HOME: home, PRDT_HOME: pinnedPrdtHome(), CI: '' },
     })
     expect(r.status).toBe(0)
     expect(HAS_RAW_CONTROL.test(r.stdout)).toBe(false)
@@ -734,7 +740,7 @@ m.maybe_prompt_update("status")
 `
     const out = execFileSync('python3', ['-c', script], {
       encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
-      env: { ...process.env, HOME: home, PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')), CI: '' },
+      env: { ...process.env, HOME: home, PRDT_HOME: pinnedPrdtHome(), CI: '' },
     })
     expect(out).toContain('EXECV_CALLED')
     expect(HAS_RAW_CONTROL.test(out)).toBe(false)
@@ -762,7 +768,7 @@ m.cmd_update(None)
 `
     const out2 = execFileSync('python3', ['-c', script2], {
       encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
-      env: { ...process.env, HOME: home2, PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')), CI: '' },
+      env: { ...process.env, HOME: home2, PRDT_HOME: pinnedPrdtHome(), CI: '' },
     })
     expect(HAS_RAW_CONTROL.test(out2)).toBe(false)
     expect(out2).toContain('v1.6[31m')
@@ -838,7 +844,7 @@ except ChildProcessError:
             timeout: subprocessTimeout('cli'),
       env: {
         ...process.env, HOME: home,
-        PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')),
+        PRDT_HOME: pinnedPrdtHome(),
         CI: '', PRDT_META_BACKUP: '0',
       },
     })
