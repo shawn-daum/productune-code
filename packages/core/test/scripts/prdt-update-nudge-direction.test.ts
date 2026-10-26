@@ -27,6 +27,10 @@ import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
+// T-1100: remote_ahead's git calls cap at 2 s; under machine load that returns None.
+// Child processes inherit this load-scaled budget (default stays 2 s in production).
+process.env.PRDT_REMOTE_AHEAD_TIMEOUT_S = String(subprocessTimeout('quick') / 1000)
+
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
 
