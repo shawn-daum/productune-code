@@ -701,11 +701,10 @@ describe.each(['sleep', 'dubious'] as const)('T-1278 — a git that cannot answe
     const prevPath = process.env.PATH
     process.env.PATH = `${stub.dir}${path.delimiter}${prevPath}`
     try {
-      const t0 = Date.now()
       const res = await metaBackupTick(projectDir, { now: new Date('2026-09-11T02:00:00Z') })
       expect(res).toMatchObject({ attempted: true, pushed: true })
       expect(res.reason).not.toBe('remote-name-invalid')
-      expect(Date.now() - t0).toBeLessThan(5_000)
+      // no wall-clock bound (load-dependent); the stub-never-called assertion below is the real check
     } finally {
       process.env.PATH = prevPath
     }
@@ -752,4 +751,52 @@ test('T-1278 — other failure latches are not cleared by the name check', async
   const res = await metaBackupTick(projectDir, { now: new Date('2026-10-26T04:26:00Z') })
   expect(res.reason).toBe('backoff')
   expect(readMetaBackupState(projectDir)).toMatchObject({ last_ok: false, last_error: 'ssh: connection refused' })
+})
+
+test('T-1278 R2 — a push failure whose stderr says "not a legal remote name" is never cleared as a false name latch', async () => {
+  const backup = makeBare('backup')
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
+  expect((await metaBackupTick(projectDir, { now: new Date('2026-10-26T04:11:00Z') })).pushed).toBe(true)
+  const hook = path.join(backup, 'hooks', 'pre-receive')
+  fs.writeFileSync(hook, '#!/bin/sh\necho "refs/heads/main is not a legal remote name here" >&2\nexit 1\n', { mode: 0o755 })
+  await metaCommit('ahead of remote')
+  const first = await metaBackupTick(projectDir, { now: new Date('2026-10-27T02:00:00Z') })
+  expect(first).toMatchObject({ attempted: true, pushed: false })
+  const failed = readMetaBackupState(projectDir)
+  expect(failed.last_ok).toBe(false)
+  expect(failed.last_reason).toBeUndefined()
+  expect(failed.last_error).toContain('not a legal remote name')
+  const second = await metaBackupTick(projectDir, { now: new Date('2026-10-27T02:01:00Z') })
+  expect(second).toMatchObject({ attempted: false, pushed: false, reason: 'backoff' })
+  expect(readMetaBackupState(projectDir)).toMatchObject({ last_ok: false, last_error: failed.last_error })
+})
+
+test('T-1278 — a name refusal written by tooling carries last_reason and clears once the name is legal', async () => {
+  const backup = makeBare('backup')
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
+  expect((await metaBackupTick(projectDir, { now: new Date('2026-10-26T04:11:00Z') })).pushed).toBe(true)
+  const okState = readMetaBackupState(projectDir)
+  fs.writeFileSync(
+    metaBackupStatePath(projectDir),
+    JSON.stringify({ ...okState, last_attempt_at: '2026-10-26T04:25:00.000Z', last_ok: false, last_error: 'whatever', last_reason: 'remote-name-invalid' }),
+  )
+  await metaBackupTick(projectDir, { now: new Date('2026-10-26T04:26:00Z') })
+  const after = readMetaBackupState(projectDir)
+  expect(after.last_ok).toBe(true)
+  expect(after.last_reason).toBeUndefined()
+})
+
+test('T-1278 — the legacy fallback is a full-string match: a longer last_error containing the phrase is kept', async () => {
+  const backup = makeBare('backup')
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
+  expect((await metaBackupTick(projectDir, { now: new Date('2026-10-26T04:11:00Z') })).pushed).toBe(true)
+  const okState = readMetaBackupState(projectDir)
+  const err = 'meta.backup_remote "backup" is not a legal remote name — refused | extra'
+  fs.writeFileSync(
+    metaBackupStatePath(projectDir),
+    JSON.stringify({ ...okState, last_attempt_at: '2026-10-26T04:25:00.000Z', last_ok: false, last_error: err }),
+  )
+  await metaCommit('ahead of remote')
+  await metaBackupTick(projectDir, { now: new Date('2026-10-26T04:26:00Z') })
+  expect(readMetaBackupState(projectDir)).toMatchObject({ last_ok: false, last_error: err })
 })

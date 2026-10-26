@@ -97,6 +97,8 @@ export interface MetaBackupState {
   last_ok?: boolean
   /** First lines of git's error on the last failed attempt. */
   last_error?: string
+  /** Machine reason code written by tooling itself (never derived from git output). */
+  last_reason?: 'remote-name-invalid'
 }
 
 export type BackupSkipReason =
@@ -286,8 +288,12 @@ export function isLegalRemoteName(name: string): boolean {
   return true
 }
 
-/** The failure text of the name refusal — also how a stale latch of it is recognised. */
+/** The failure text of the name refusal. */
 const REMOTE_NAME_INVALID_MARK = 'is not a legal remote name'
+
+function remoteNameRefusalText(remote: string): string {
+  return `meta.backup_remote ${JSON.stringify(remote)} ${REMOTE_NAME_INVALID_MARK} — refused`
+}
 
 export async function isValidRemoteName(name: string): Promise<boolean> {
   return isLegalRemoteName(name)
@@ -371,17 +377,21 @@ function trimError(err: unknown): string {
 /** Failure record: keeps the last SUCCESS fields, overwrites the attempt fields. */
 function recordFailure(
   projectDir: string,
-  f: { remote: string; branch?: string; attemptAt: string; error: string },
+  f: { remote: string; branch?: string; attemptAt: string; error: string; reason?: 'remote-name-invalid' },
 ): void {
   const prev = readMetaBackupState(projectDir)
-  writeMetaBackupState(projectDir, {
+  const next: MetaBackupState = {
     ...prev,
     remote: f.remote,
     ...(f.branch ? { branch: f.branch } : {}),
     last_attempt_at: f.attemptAt,
     last_ok: false,
     last_error: f.error,
-  })
+  }
+  // The reason code is tooling-written only; every other failure drops a stale one.
+  if (f.reason) next.last_reason = f.reason
+  else delete next.last_reason
+  writeMetaBackupState(projectDir, next)
 }
 
 // ── The tick ──────────────────────────────────────────────────────────────────
@@ -404,8 +414,8 @@ export async function metaBackupTick(
   // Refused BEFORE any git call on the meta repo: config may pick a registered
   // remote by name, never smuggle a flag or a refspec into the push argv.
   if (!(await isValidRemoteName(remote))) {
-    const error = `meta.backup_remote ${JSON.stringify(remote)} ${REMOTE_NAME_INVALID_MARK} — refused`
-    recordFailure(projectDir, { remote, attemptAt: now.toISOString(), error })
+    const error = remoteNameRefusalText(remote)
+    recordFailure(projectDir, { remote, attemptAt: now.toISOString(), error, reason: 'remote-name-invalid' })
     return { attempted: false, pushed: false, reason: 'remote-name-invalid', remote, error }
   }
   // T-1278: the name passes now, so a standing name-refusal latch is a false
@@ -414,9 +424,16 @@ export async function metaBackupTick(
   // failure latches are untouched.
   {
     const prev = readMetaBackupState(projectDir)
-    if (prev.last_ok === false && typeof prev.last_error === 'string' && prev.last_error.includes(REMOTE_NAME_INVALID_MARK)) {
+    // Keyed on the reason code tooling wrote; the only fallback is a pre-code
+    // latch whose last_error is EXACTLY the old refusal text for this remote
+    // (full-string match, no code present).
+    const falseNameLatch =
+      prev.last_reason === 'remote-name-invalid' ||
+      (prev.last_reason === undefined && prev.last_error === remoteNameRefusalText(remote))
+    if (prev.last_ok === false && falseNameLatch) {
       const cleared: MetaBackupState = { ...prev, last_ok: true }
       delete cleared.last_error
+      delete cleared.last_reason
       writeMetaBackupState(projectDir, cleared)
     }
   }
@@ -495,6 +512,7 @@ export async function metaBackupTick(
         // tracking ref), so no extra field is needed for that distinction.
         const cleared: MetaBackupState = { ...state, last_ok: true }
         delete cleared.last_error
+        delete cleared.last_reason
         writeMetaBackupState(projectDir, cleared)
       }
       return { attempted: false, pushed: false, reason: decision.reason, remote, branch, ahead }
