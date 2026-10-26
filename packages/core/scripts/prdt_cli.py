@@ -7267,7 +7267,20 @@ def _git_repo(repo, *a):
     return subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True)
 
 
-def _remote_target_sha(code_root, timeout=2):
+def _remote_git_timeout(timeout=None):
+    """T-1100: the git network-call cap of the update-nudge readers (`remote_ahead`,
+    `releases_pending_between`, `_remote_target_sha`). Default 2 s; an explicit
+    argument wins; `PRDT_REMOTE_AHEAD_TIMEOUT_S` overrides the default (tests under load)."""
+    if timeout is not None:
+        return timeout
+    try:
+        v = float(os.environ.get("PRDT_REMOTE_AHEAD_TIMEOUT_S") or 2)
+    except ValueError:
+        return 2
+    return v if v > 0 else 2
+
+
+def _remote_target_sha(code_root, timeout=None):
     """Full SHA of `origin/<current-branch>` — the exact ref `remote_ahead` /
     `releases_pending_between` already read to compute
     the version + notes an update prompt shows. `_run_pull_install` pulls to
@@ -7279,6 +7292,7 @@ def _remote_target_sha(code_root, timeout=2):
     fetched `origin/<branch>`. Its first 7 characters are also the "new
     version" label of the no-release-notes prompt (T-749b). None on any failure —
     caller degrades the same way `ahead is None` does."""
+    timeout = _remote_git_timeout(timeout)
     try:
         branch = subprocess.run(["git", "-C", str(code_root), "rev-parse", "--abbrev-ref", "HEAD"],
                                  capture_output=True, text=True, timeout=timeout).stdout.strip()
@@ -7767,7 +7781,7 @@ def readme_stale_at_tag_warnings(root):
     return []
 
 
-def releases_pending_between(code_root, installed_version, timeout=2):
+def releases_pending_between(code_root, installed_version, timeout=None):
     """(new_version, [(version, section_text), ...]) — every REMOTE RELEASES.md
     section strictly above `installed_version`, newest first; `new_version` is
     the newest of those. `(None, [])` on any fetch failure or when nothing
@@ -7779,6 +7793,7 @@ def releases_pending_between(code_root, installed_version, timeout=2):
     pre-update local one). `installed_version` unparseable/None → every
     parseable remote section qualifies (mirrors `_newer_version`'s "unreadable
     local leaves nothing to compare against" posture)."""
+    timeout = _remote_git_timeout(timeout)
     def g(*a, t=timeout):
         return subprocess.run(["git", "-C", str(code_root), *a],
                               capture_output=True, text=True, timeout=t)
@@ -7808,7 +7823,7 @@ def releases_pending_between(code_root, installed_version, timeout=2):
     return out[0][0], out
 
 
-def remote_ahead(code_root, timeout=2):
+def remote_ahead(code_root, timeout=None):
     """True only when `origin/<current-branch>` is STRICTLY AHEAD of local HEAD —
     i.e. local HEAD is an ancestor of the remote tip and the two differ, which is
     exactly the case `cmd_update`'s `pull --ff-only` can satisfy. False when equal,
@@ -7823,6 +7838,7 @@ def remote_ahead(code_root, timeout=2):
     on the dirty tree or fast-forwards to a no-op, so only `skip` ends it. The
     nudge exists to offer an update that can be taken; a non-fast-forwardable
     difference is not one."""
+    timeout = _remote_git_timeout(timeout)
     def g(*a, t=timeout):
         return subprocess.run(["git", "-C", str(code_root), *a],
                               capture_output=True, text=True, timeout=t)
