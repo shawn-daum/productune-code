@@ -14583,6 +14583,31 @@ def _track_stem_re(path):
     return re.compile(r"(?<![\w-])" + re.escape(stem) + r"(?![\w-])")
 
 
+# Directory scanners (T-1268): a test that lists a SOURCE directory (readdir / walk / glob) is reached by no
+# import and no name, so a change there lands green. A land whose diff touches a package ALWAYS runs that
+# package's declared scanner tests, whatever the derivation found — the list lives in this one file, kept
+# honest by test/scripts/directory-scanner-list.test.ts. Shape: {"packages": {<pkg dir, repo-relative>:
+# {"scans": [paths whose change triggers the list], "tests": [<pkg>-relative test files], "exempt": {...}}}}.
+TRACK_SCANNER_LIST = "packages/core/config/directory-scanners.json"
+
+
+def _track_scanner_list(wt):
+    """{pkg dir: {"scans": [...], "tests": [...]}} read from the merged tree; {} when the tree declares none."""
+    f = Path(wt) / TRACK_SCANNER_LIST
+    if not f.is_file():
+        return {}
+    d = read_json(f)
+    pk = d.get("packages") if isinstance(d, dict) else None
+    if not isinstance(pk, dict):
+        _track_die(f"{TRACK_SCANNER_LIST} is unreadable (no `packages` object) — nothing was merged")
+    out = {}
+    for k, v in pk.items():
+        if not (isinstance(v, dict) and isinstance(v.get("scans"), list) and isinstance(v.get("tests"), list)):
+            _track_die(f"{TRACK_SCANNER_LIST}: entry {k} needs `scans` and `tests` lists — nothing was merged")
+        out[k] = {"scans": [str(x).strip("/") for x in v["scans"]], "tests": [str(x) for x in v["tests"]]}
+    return out
+
+
 def _track_pkg_extra_steps(pkg):
     """Commands the package's own `test` script runs besides vitest (`vitest run && node test/x.mjs`)."""
     pj = read_json(Path(pkg) / "package.json")
@@ -14593,11 +14618,14 @@ def _track_pkg_extra_steps(pkg):
 
 
 def _track_relevant_set(wt, base_sha, changed):
-    """([(pkg, vbin, [files])], covered, counts, has_pkgs, fallback) — the union per vitest package.
-    `fallback` = {pkg: [changed files whose reach into that package's tests is unknown]}: those packages
-    run their whole test command."""
+    """([(pkg, vbin, [files], extras_due)], covered, counts, has_pkgs, fallback) — the union per vitest package.
+    A package the diff touches always carries its declared directory-scanner tests (TRACK_SCANNER_LIST) in
+    `files`, and `extras_due` = a file under the package changed, so its extra test steps run even when
+    `files` is empty. `fallback` = {pkg: [changed files whose reach into that package's tests is unknown]}:
+    those packages run their whole test command."""
     pkgs = _track_vitest_pkgs(wt)
-    plan, named_any, tot, fallback = [], set(), {"changed_tests": 0, "importers": 0, "naming": 0}, {}
+    scanners = _track_scanner_list(wt)
+    plan, named_any, tot, fallback = [], set(), {"changed_tests": 0, "importers": 0, "naming": 0, "scanners": 0}, {}
     names = {c: _track_names_of(c) for c in changed}
     stems = {c: _track_stem_re(c) for c in changed}
     for pkg in pkgs:
@@ -14633,12 +14661,26 @@ def _track_relevant_set(wt, base_sha, changed):
         if unknown:
             fallback[pkg] = unknown
         importers = rel_hits - own
-        files = sorted((own | rel_hits | naming) & set(alltests))
+        derived = (own | rel_hits | naming) & set(alltests)
+        pkg_rel = pkg.relative_to(wt).as_posix() if pkg != Path(wt) else "."
+        under = lambda c, d: d == "." or c == d or c.startswith(d + "/")
+        always = set()
+        sc = scanners.get(pkg_rel)
+        if sc and any(under(c, d) for c in changed for d in sc["scans"]):
+            for t in sc["tests"]:
+                hit = [a for a in alltests if Path(a).resolve() == (pkg / t).resolve()]
+                if not hit:
+                    _track_die(f"{TRACK_SCANNER_LIST} lists {pkg_rel}/{t}, which is not a test of that package — "
+                               f"nothing was merged; fix the list on the track")
+                always.add(hit[0])
+        extras_due = any(under(c, pkg_rel) for c in changed)
+        files = sorted(derived | always)
         tot["changed_tests"] += len(own)
         tot["importers"] += len(importers - naming)
         tot["naming"] += len(naming - own - rel_hits)
-        if files or unknown:
-            plan.append((pkg, vbin, files))
+        tot["scanners"] += len(always - derived)
+        if files or unknown or extras_due:
+            plan.append((pkg, vbin, files, extras_due))
     covered = {c for c in changed if c in named_any}
     return plan, covered, tot, bool(pkgs), fallback
 
@@ -14749,29 +14791,36 @@ def cmd_track_land(args):
                 print(lane_note)
             chg = [x for x in _tgit(["diff", "--name-only", old, "HEAD"], wt).stdout.splitlines() if x]
             plan, covered, tot, _, fallback = _track_relevant_set(wt, old, chg)
-            n = sum(len(f) for _p, _v, f in plan)
+            n = sum(len(f) for _p, _v, f, _e in plan)
             if not plan:
                 print(f"relevant tests: none — {len(chg)} changed file(s) against {base}, no test imports "
-                      f"or names them; landing without a test run")
+                      f"or names them and no package changed; landing without a test run")
                 rc, ran = 0, "no relevant tests"
             else:
-                print(f"relevant tests: {n} file(s) in {len(plan)} package(s) — {tot['changed_tests']} changed, "
-                      f"{tot['importers']} importing, {tot['naming']} naming a changed file; "
-                      f"{len(chg)} changed file(s) against {base}", flush=True)
-                for pkg, _v, files in plan:
+                if n:
+                    print(f"relevant tests: {n} file(s) in {len(plan)} package(s) — {tot['changed_tests']} changed, "
+                          f"{tot['importers']} importing, {tot['naming']} naming a changed file"
+                          f"{', ' + str(tot['scanners']) + ' always-run directory scanner(s)' if tot['scanners'] else ''}; "
+                          f"{len(chg)} changed file(s) against {base}", flush=True)
+                else:
+                    print(f"relevant tests: none by import or name — {len(chg)} changed file(s) against {base}; "
+                          f"the package's extra test steps still run", flush=True)
+                for pkg, _v, files, _e in plan:
                     for f in files:
                         print(f"  {pkg.relative_to(wt) if pkg != wt else '.'}: {Path(f).relative_to(pkg)}")
                 rc = 0
-                for pkg, vbin, files in plan:
+                for pkg, vbin, files, extras_due in plan:
                     label = pkg.relative_to(wt) if pkg != wt else "."
                     if pkg in fallback:
                         print(f"whole package {label}: {', '.join(fallback[pkg][:3])}"
                               f"{' …' if len(fallback[pkg]) > 3 else ''} sits in a directory a test reads "
                               f"by listing, with no declared mapping — running the package's whole test command", flush=True)
                         steps = [" ".join([shlex.quote(vbin), "run"])]
-                    else:
+                    elif files:
                         steps = [" ".join([shlex.quote(vbin), "run", *(shlex.quote(str(Path(f).relative_to(pkg))) for f in files)])]
-                    for cmd in steps + _track_pkg_extra_steps(pkg):
+                    else:
+                        steps = []      # no file selected: a bare `vitest run` would be the whole suite
+                    for cmd in steps + (_track_pkg_extra_steps(pkg) if (extras_due or files or pkg in fallback) else []):
                         rc = _track_run(cmd, pkg, f"relevant tests ({label})")
                         if rc != 0:
                             break
