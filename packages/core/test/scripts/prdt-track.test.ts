@@ -901,6 +901,20 @@ describe('T-1268: land runs the relevant test set by default', () => {
     expect(r.out).toContain('dev fast-forwarded')
   })
 
+  test('multi-product project: the home product\'s last lane land runs the whole suite (T-1291)', () => {
+    ticket('T-0', { status: 'done' })
+    ticket('T-1', { gate: 'docs/artifacts/g.md', deps: '[T-0]' })
+    // product layout: home product `x` owns docs/x/, an added product `extra` owns none
+    fs.mkdirSync(path.join(proj, 'docs', '_shared'), { recursive: true })
+    fs.mkdirSync(path.join(proj, 'docs', 'x'), { recursive: true })
+    for (const d of ['tickets', 'prd']) fs.renameSync(path.join(proj, 'docs', d), path.join(proj, 'docs', 'x', d))
+    fs.writeFileSync(path.join(proj, '.prdt', 'config.json'), JSON.stringify({ slug: 'x', code: { dir: 'code' }, track: { setup: 'true' }, products: [{ name: 'extra' }] }))
+    editA()
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('whole suite: closes lane A): pnpm test')
+  })
+
   test('a land that leaves another open impl ticket in the lane is not lane-closing', () => {
     ticket('T-0')
     ticket('T-1', { gate: 'docs/artifacts/g.md', deps: '[T-0]' })

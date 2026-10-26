@@ -166,7 +166,7 @@ def wait_running(root):
 def idle_lanes(pl, root):
     st = pl.read_json(os.path.join(root, ".prdt", "po-state.json")) or {}
     out = []
-    for line in [None] + list(pl.project_line_names(root)):
+    for line in pl.gate_lines(root):
         if pl.line_state(st, line)[0] != "build":
             continue
         s = pl.compute_schedule(root, line=line)
