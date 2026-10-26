@@ -5210,6 +5210,10 @@ def _read_token(name):
 
 
 USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
+# T-1281: the codes a user may CHOOSE (onboarding answer · `settings set user.lang`);
+# reading a stored value stays shape-only (USER_LANG_RE). Pinned list: the languages
+# the catalogs/wordlists cover plus common ISO 639-1 codes.
+USER_LANG_CODES = frozenset("ko en ja zh es fr de pt ru it ar hi vi th id tr nl pl sv uk he fa".split())
 
 
 def _lang_primary(tag):
@@ -5258,7 +5262,7 @@ def lang_answer_code(ans):
     a = _ascii_strip(ans).lower()
     if a in LANG_NAMES:
         return LANG_NAMES[a]
-    return a if USER_LANG_RE.match(a) else None
+    return a if a in USER_LANG_CODES else None
 
 
 def ask_user_lang_once():
@@ -5270,7 +5274,8 @@ def ask_user_lang_once():
     if USER_LANG_RE.match(_read_token("user-lang")):
         return
     m = load_messages()
-    default = device_lang() or "en"
+    default = device_lang()
+    default = default if default in USER_LANG_CODES else "en"
     for attempt in range(2):
         if attempt:
             print(msg(m, "lang.ask.retry"))
@@ -5450,8 +5455,8 @@ def settings_entries(droot):
     # read by the PO hooks; never collected → the device language.
     entries.append({
         "key": "user.lang", "kind": "text", "domain": None,
-        "shape": "a language code of 2-3 lowercase letters (ko, en, ja)",
-        "check": lambda v: None if USER_LANG_RE.match(v) else "shape",
+        "shape": "a language code: " + ", ".join(sorted(USER_LANG_CODES)),
+        "check": lambda v: None if v in USER_LANG_CODES else "shape",
         "get": user_lang,
         "put": lambda v: _write_token("user-lang", v),
     })
