@@ -1,14 +1,18 @@
 {
   "lang": "ja",
-  "schema": 1,
+  "schema": 2,
   "entries": [
     {
-      "word": "em dash (—)",
-      "pattern": "—|――|&mdash;|&#8212;|&#x2014;",
-      "replace": [
+      "concept": "em dash (—)",
+      "say": [
         "：",
         "括弧",
         "文を分ける"
+      ],
+      "avoid": [
+        {
+          "pattern": "—|――|&mdash;|&#8212;|&#x2014;"
+        }
       ],
       "except_line": [
         "^## (?:[a-z0-9]+(?:-[a-z0-9]+)* )?v\\d+(?:\\.\\d+){0,2} — ",
@@ -16,61 +20,93 @@
       ]
     },
     {
-      "word": "することができます",
-      "pattern": "することができ",
-      "replace": [
+      "concept": "することができます",
+      "say": [
         "できます"
+      ],
+      "avoid": [
+        {
+          "pattern": "することができ"
+        }
       ]
     },
     {
-      "word": "活用する",
-      "pattern": "活用",
-      "replace": [
+      "concept": "活用する",
+      "say": [
         "使う"
+      ],
+      "avoid": [
+        {
+          "pattern": "活用"
+        }
       ]
     },
     {
-      "word": "シームレス",
-      "pattern": "シームレス",
-      "replace": [
+      "concept": "シームレス",
+      "say": [
         "追加の操作なしで",
         "（削除）"
+      ],
+      "avoid": [
+        {
+          "pattern": "シームレス"
+        }
       ]
     },
     {
-      "word": "包括的",
-      "pattern": "包括的",
-      "replace": [
+      "concept": "包括的",
+      "say": [
         "すべての",
         "全体の"
+      ],
+      "avoid": [
+        {
+          "pattern": "包括的"
+        }
       ]
     },
     {
-      "word": "革新的",
-      "pattern": "革新的",
-      "replace": [
+      "concept": "革新的",
+      "say": [
         "（何がどう変わるかを書く）"
+      ],
+      "avoid": [
+        {
+          "pattern": "革新的"
+        }
       ]
     },
     {
-      "word": "と言えるでしょう",
-      "pattern": "と言えるでしょう",
-      "replace": [
+      "concept": "と言えるでしょう",
+      "say": [
         "です"
+      ],
+      "avoid": [
+        {
+          "pattern": "と言えるでしょう"
+        }
       ]
     },
     {
-      "word": "まさに",
-      "pattern": "まさに",
-      "replace": [
+      "concept": "まさに",
+      "say": [
         "（削除）"
+      ],
+      "avoid": [
+        {
+          "pattern": "まさに"
+        }
       ]
     },
     {
-      "word": "寄り添う",
-      "pattern": "寄り添",
-      "replace": [
+      "concept": "寄り添う",
+      "say": [
         "（何をするかを書く）"
+      ],
+      "avoid": [
+        {
+          "pattern": "寄り添"
+        }
       ]
     }
   ]
