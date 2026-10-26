@@ -370,31 +370,9 @@ def form_outline_blank_violations(text):
 
 # ── T-1116: the user's chat language ─────────────────────────────────────────
 # Stored once per machine (`prdt settings set user.lang <code>`, asked at
-# `prdt init`) in `$PRDT_HOME/user-lang`; never collected → the device language.
-# KEEP `device_lang` / `user_lang` in lockstep with the same names in scripts/prdt_cli.py.
+# `prdt init`) in `$PRDT_HOME/user-lang`; never collected → no
+# language is assumed (T-1281: the device language never judges a reply or picks `--lang`).
 USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
-
-
-def _lang_primary(tag):
-    m = re.match(r"\s*([A-Za-z]{2,3})(?:[-_.@]|\s*\Z)", tag) if isinstance(tag, str) else None
-    return m.group(1).lower() if m else None
-
-
-def device_lang():
-    try:
-        import plistlib
-        p = os.path.join(os.path.expanduser("~"), "Library", "Preferences", ".GlobalPreferences.plist")
-        with open(p, "rb") as f:
-            langs = plistlib.load(f).get("AppleLanguages")
-        if isinstance(langs, list) and langs and _lang_primary(langs[0]):
-            return _lang_primary(langs[0])
-    except Exception:
-        pass
-    for k in ("LC_ALL", "LC_MESSAGES", "LANG"):
-        v = _lang_primary(os.environ.get(k) or "")
-        if v:
-            return v
-    return None
 
 
 def stored_user_lang():
@@ -408,15 +386,13 @@ def stored_user_lang():
     return v if USER_LANG_RE.match(v) else None
 
 
-def user_lang():
-    return stored_user_lang() or device_lang()
 
 
 def reply_hot_line():
     """REPLY_HOT_LINE with its `<user_lang>` placeholder resolved to the stored
     value (T-1116); no language known → the `--lang` flag is dropped
     (`prdt wordlist check -` then reads the project's wordlist.lang)."""
-    lang = user_lang()
+    lang = stored_user_lang()  # T-1281: stored only; none → the project's wordlist.lang
     if lang:
         return REPLY_HOT_LINE.replace("<user_lang>", lang)
     return REPLY_HOT_LINE.replace("--lang <user_lang> ", "")

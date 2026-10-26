@@ -5244,15 +5244,41 @@ def user_lang():
     return v if USER_LANG_RE.match(v) else device_lang()
 
 
+# Language names a user may type (non-ASCII as escapes: the settings code holds no literal).
+LANG_NAMES = {
+    "ko": "ko", "korean": "ko", "\ud55c\uad6d\uc5b4": "ko", "\ud55c\uae00": "ko", "\ud55c\uad6d\ub9d0": "ko",
+    "en": "en", "english": "en", "\uc601\uc5b4": "en", "\uc601\ubb38": "en",
+    "ja": "ja", "japanese": "ja", "\u65e5\u672c\u8a9e": "ja", "\uc77c\ubcf8\uc5b4": "ja", "\u306b\u307b\u3093\u3054": "ja",
+    "zh": "zh", "chinese": "zh", "\u4e2d\u6587": "zh", "\uc911\uad6d\uc5b4": "zh",
+}
+
+
+def lang_answer_code(ans):
+    """An answer → a language code (a code itself, or a common language name); None when neither."""
+    a = _ascii_strip(ans).lower()
+    if a in LANG_NAMES:
+        return LANG_NAMES[a]
+    return a if USER_LANG_RE.match(a) else None
+
+
 def ask_user_lang_once():
     """T-1116 onboarding: ask the chat language once per machine — only while
-    `~/.prdt/user-lang` holds no valid value; the device language is the default
-    answer. An answer that is not a language code keeps the device language."""
+    `~/.prdt/user-lang` holds no valid value. A bare Enter accepts the device
+    language shown as the default; a language name maps to its code; any other
+    answer is re-asked once with a one-line reason, then nothing is stored
+    (T-1281: never a value the user did not choose). KeyboardInterrupt propagates."""
     if USER_LANG_RE.match(_read_token("user-lang")):
         return
+    m = load_messages()
     default = device_lang() or "en"
-    ans = _ascii_strip(input(msg(load_messages(), "lang.ask.prompt", default=default))).lower()
-    _write_token("user-lang", ans if USER_LANG_RE.match(ans) else default)
+    for attempt in range(2):
+        if attempt:
+            print(msg(m, "lang.ask.retry"))
+        raw = input(msg(m, "lang.ask.prompt", default=default))
+        code = default if not _ascii_strip(raw) else lang_answer_code(raw)
+        if code:
+            _write_token("user-lang", code)
+            return
 
 
 def _write_token(name, value):
@@ -7398,8 +7424,12 @@ def cmd_update(_args):
         # asked once here (no-op once a valid `user-lang` is stored).
         try:
             ask_user_lang_once()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             print()
+        except KeyboardInterrupt:
+            print()
+            print(msg(m, "update.cancelled"))
+            return
     repo = _resolve_prdt_repo()
     code_root = git_toplevel(repo)
     if code_root is None:

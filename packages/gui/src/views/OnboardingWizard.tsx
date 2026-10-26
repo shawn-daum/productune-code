@@ -27,6 +27,13 @@ export default function OnboardingWizard({ onDone }: Props) {
     typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('ko') ? 'ko' : 'en',
   )
 
+  // T-1281: a stored chat language is kept — the question is not shown, nothing is written.
+  const [chatLangStored, setChatLangStored] = useState(false)
+  useEffect(() => {
+    const api = (window as any).api
+    Promise.resolve(api?.getChatLanguage?.()).then((v: string | null | undefined) => { if (v) setChatLangStored(true) }).catch(() => {})
+  }, [])
+
   // Step 1 — Audience mode (T-326). Default = planner (PRD v1.5): the north-star
   // participant is a non-developer planner; developers opt in explicitly.
   const [audienceMode, setAudienceMode] = useState<AudienceMode>('planner')
@@ -99,7 +106,7 @@ export default function OnboardingWizard({ onDone }: Props) {
     setCompleteError('')
     // codex폐기 (T-PATCH-235): 엔진은 항상 claude — 리터럴 인라인.
     // T-326: audienceMode rides along — persisted per-user (~/.prdt/register, `audience` key).
-    const completeOpts: Record<string, unknown> = { engine: 'claude', uiLanguage: uiLang, audienceMode, chatLanguage: chatLang }
+    const completeOpts: Record<string, unknown> = { engine: 'claude', uiLanguage: uiLang, audienceMode, ...(chatLangStored ? {} : { chatLanguage: chatLang }) }
     // T-PATCH-213: guard deref — .catch traps only promise rejection.
     const api = (window as any).api
     if (!api?.completeOnboarding) { setCompleting(false); return }
@@ -193,6 +200,7 @@ export default function OnboardingWizard({ onDone }: Props) {
           <Step0_Language
             uiLang={uiLang}
             chatLang={chatLang}
+            askChat={!chatLangStored}
             onSelectChatLang={setChatLang}
             resetFeedback={resetFeedback}
             onSelectLang={handleSelectLang}
