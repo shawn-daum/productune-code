@@ -147,6 +147,17 @@ TICKET_OPTIONS_TABLE_SCAFFOLD = (
     "| | | | | |\n"
     "| | | | | |\n"
 )
+# T-1258 (L1 I2, user approval T-1245): a `decision` ticket's `outcome` carries
+# four `###` keys — why (the fork's cause) · how (the principle the chosen answer
+# follows) · module (the shared principle/term group) · what (the act it ends in).
+# `###`, so the H2 frame in `fmt_ticket_body` is untouched; `new` scaffolds them,
+# doctor warns (advisory) on a decision closed after TICKET_DECISION_OUTCOME_LANDING_DATE
+# whose `outcome` lacks any. A scaffold of bare headings is NOT a filled outcome.
+TICKET_DECISION_OUTCOME_KEYS = ("why", "how", "module", "what")
+TICKET_DECISION_OUTCOME_LANDING_DATE = "2026-10-26"
+TICKET_DECISION_OUTCOME_SCAFFOLD = "".join(f"### {k}\n\n" for k in TICKET_DECISION_OUTCOME_KEYS)
+_DECISION_OUTCOME_HEADING_RE = re.compile(
+    r"^### (%s)[ \t]*$" % "|".join(TICKET_DECISION_OUTCOME_KEYS), re.M)
 
 
 
@@ -5591,6 +5602,8 @@ def cmd_tickets_new(args, root):
     def _section(k):
         if k == "options" and ttype == "decision":
             return f"## options\n\n{TICKET_OPTIONS_TABLE_SCAFFOLD}\n"
+        if k == "outcome" and ttype == "decision":
+            return f"## outcome\n\n{TICKET_DECISION_OUTCOME_SCAFFOLD}"
         return f"## {k}\n\n"
     body = "".join(_section(k) for k in body_keys)
     text = "\n".join(fm_lines) + "\n\n" + body
@@ -5732,7 +5745,10 @@ def fmt_ticket_body(body, ttype, status):
             violations.append("type: decision requires `options` with a `recommend` cell")
         elif "recommend" not in opts.lower():
             violations.append("`options` is missing a `recommend` cell (required for type: decision)")
-    if status == "done" and not "".join(key_content.get("outcome", [])).strip():
+    # T-1258: a `decision` scaffold's bare `### why|how|module|what` lines are
+    # structure, not content — they never satisfy "done requires outcome".
+    outcome_text = _DECISION_OUTCOME_HEADING_RE.sub("", "".join(key_content.get("outcome", [])))
+    if status == "done" and not outcome_text.strip():
         violations.append("status: done requires `outcome`")
 
     new_body = preamble + "".join(
@@ -11460,6 +11476,35 @@ def ticket_frame_warnings(root, tickets):
     return Advisory(warns)
 
 
+def decision_outcome_key_warnings(root, tickets):
+    """T-1258 (L1 I2): advisory — a `type: decision` ticket closed (`status: done`)
+    and created on/after TICKET_DECISION_OUTCOME_LANDING_DATE whose `outcome`
+    lacks any of `### why` · `### how` · `### module` · `### what`. Older
+    decisions and open ones are silent; never verdict-changing (a decision is
+    a record a person completes, not a discipline↔execution mismatch)."""
+    warns = []
+    for r in sorted(tickets, key=lambda r: r["id"]):
+        if r.get("type") != "decision" or r.get("status") != "done":
+            continue
+        created_raw = r.get("created")
+        if not (isinstance(created_raw, str) and TICKET_CREATED_DATE_RE.match(created_raw)) \
+                or created_raw < TICKET_DECISION_OUTCOME_LANDING_DATE:
+            continue
+        try:
+            text = (root / r["path"]).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        _header, body = split_ticket_header_body(text)
+        outcome = "".join(fmt_ticket_body(body, "decision", "done")[0]
+                          .split("## outcome\n", 1)[1:2]).split("\n## ", 1)[0]
+        have = set(_DECISION_OUTCOME_HEADING_RE.findall(outcome))
+        missing = [k for k in TICKET_DECISION_OUTCOME_KEYS if k not in have]
+        if missing:
+            warns.append(f"decision outcome: {r['id']} ({r['path']}): `outcome` lacks "
+                         + " · ".join(f"### {k}" for k in missing))
+    return Advisory(warns)
+
+
 # ── doctor: PRD layout — one file per closed version (T-657) ──────────────────
 #
 # ONE definition of a version id, and both readers use it: this regex and the
@@ -15766,6 +15811,8 @@ def cmd_doctor(_args):
         # away, not a discipline↔execution mismatch); silent on any ticket
         # created before the frame's landing date.
         ("ticket frame", FAMILY_PROJECT, lambda: ticket_frame_warnings(root, trows)),
+        # T-1258: advisory — a decision closed after landing without outcome ### why/how/module/what.
+        ("decision outcome keys", FAMILY_PROJECT, lambda: decision_outcome_key_warnings(root, trows)),
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
         ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root), root)),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
