@@ -41,10 +41,15 @@ afterEach(() => { fs.rmSync(prdtHome, { recursive: true, force: true }) })
 function prdt(lang: 'ko' | 'en', ...args: string[]) {
   const r = spawnSync('python3', [PRDT_CLI, ...args], {
     cwd: prdtHome, encoding: 'utf8', timeout: subprocessTimeout('cli'),
-    env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: lang },
+    env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: lang, PRDT_RESOLVER_TIMEOUT_S: RESOLVER_TIMEOUT_S },
   })
   return { status: r.status, out: r.stdout, err: r.stderr }
 }
+// T-1274: every `prdt settings|register|dispatch` call asks the register resolver (a bash+jq
+// hook, ~1 s idle) under a 10 s subprocess timeout whose expiry reads as "resolver not found"
+// — the 「prdt-audience-inject.sh 를 찾지 못했어요」 failure under load. The CLI takes its budget
+// from PRDT_RESOLVER_TIMEOUT_S; the run's load-scaled hook budget (T-1244) feeds it.
+const RESOLVER_TIMEOUT_S = String(Math.ceil(subprocessTimeout('hook') / 1000))
 const file = (name: string) => path.join(prdtHome, name)
 const read = (name: string) => (fs.existsSync(file(name)) ? fs.readFileSync(file(name), 'utf8') : null)
 const CAP_KEYS = ['load_ratio', 'mem_free_pct_min', 'inflight_max', 'suites_max', 'vms_max', 'inflight_sonnet_max', 'inflight_opus_max', 'inflight_haiku_max', 'inflight_fable_max', 'inflight_default_max'].map((k) => `dispatch.${k}`)
@@ -89,7 +94,7 @@ describe.skipIf(!READY)('prdt settings — list', () => {
     // no PRDT_LANG in this spawn: cli_lang() falls back to the persisted token
     const r = spawnSync('python3', [PRDT_CLI, 'settings', 'set', 'viewer.auto-open', 'on'], {
       cwd: prdtHome, encoding: 'utf8', timeout: subprocessTimeout('cli'),
-      env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: '' },
+      env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: '', PRDT_RESOLVER_TIMEOUT_S: RESOLVER_TIMEOUT_S },
     })
     expect(r.stdout.trim()).toBe('From now on, files handed over by PO open automatically.')
     // PRDT_LANG=ko still wins over the persisted en
