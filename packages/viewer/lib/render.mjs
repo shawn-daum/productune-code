@@ -917,16 +917,33 @@ export function decisionRecord(body) {
     const t = m ? m[1].replace(/^\s*-\s+/gm, '').trim() : ''
     return t || null
   }
-  // a ticket answering several questions (`### ①` …) has no single answer: the row says how many
-  const parts = [...outcome.matchAll(/^### (.+?)[ \t]*$/gm)].map((m) => m[1].trim()).filter((h) => !['why', 'how', 'module', 'what'].includes(h))
-  const letter = parts.length === 0 ? decisionChosen(text) : null
+  // the row's short answer: the first clause of the decided answer (`A. 구현 T-1268.` → `A`)
+  const clause = (t) => {
+    if (!t) return null
+    const line = t.split('\n')[0].trim()
+    const m = /^(.+?)(?:\.(?:\s|$)|:\s)/.exec(line)
+    const c = (m ? m[1] : line).trim()
+    return c.length > 30 ? `${c.slice(0, 29)}…` : c || null
+  }
+  // a ticket answering several questions (`### ①` …): one entry per heading — its decided `what:` text, else its last verbatim reply
+  const heads = [...outcome.matchAll(/^### (.+?)[ \t]*$/gm)].filter((m) => !['why', 'how', 'module', 'what'].includes(m[1].trim()))
+  const parts = heads.map((m, i) => {
+    const end = i + 1 < heads.length ? heads[i + 1].index : outcome.length
+    const chunk = outcome.slice(m.index + m[0].length, end)
+    const w = /^-\s*what:\s*(.+?)(?=\s+how:|\s+module:|$)/m.exec(chunk)
+    const qs = [...chunk.matchAll(/\*"([^"\n]+)"\*/g)].map((x) => x[1].trim())
+    return { label: m[1].trim(), what: w ? w[1].trim() : qs.length ? qs[qs.length - 1] : null }
+  })
+  const what = sub('what')
   const quotes = [...outcome.matchAll(/\*"([^"\n]+)"\*/g)].map((m) => m[1].trim())
   const quote = quotes.length ? quotes[quotes.length - 1] : ''
-  const answer = parts.length > 0 ? `${parts.length}건` : letter ? letter : quote.length > 36 ? `${quote.slice(0, 35)}…` : quote
+  // no recorded `what`: the picked option letter, else a short verbatim reply (never a cut-off long one)
+  const fallback = decisionChosen(text) ?? (quote.length <= 12 ? quote : null)
+  const answer = parts.length > 0 ? `${parts.length}건` : clause(what) ?? fallback
   const problem = /^## problem[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(text)
   const firstProblem = problem ? (/^\s*-\s+(.+)$/m.exec(problem[1]) || [])[1] ?? null : null
   const rec = /^-\s*추천:\s*(.+)$/m.exec(text)
-  return { why: sub('why'), how: sub('how'), what: sub('what'), answer: answer || null, question: firstProblem, recommend: rec ? rec[1].trim() : null }
+  return { why: sub('why'), how: sub('how'), what, parts, answer: answer || null, question: firstProblem, recommend: rec ? rec[1].trim() : null }
 }
 
 /** T-1259: the one 「줄」 of the decision screen — id · title · status · answer, folding to 이유 · 방식 · 답. */
@@ -941,8 +958,10 @@ function decisionViewRow(t) {
   const who = open ? fm.assignee || '' : rec.answer ? V.answer(rec.answer) : ''
   const body = open
     ? kv(V.question, rec.question) + kv(V.recommend, rec.recommend)
-    : kv(V.why, rec.why) + kv(V.how, rec.how) + kv(V.what, rec.what)
-  return `<div class="dv-row${open ? ' dv-wait' : ''}" data-dv-id="${escapeHtml(id)}" tabindex="0" role="button" aria-expanded="false"><div class="dv-top"><span class="tid">${escapeHtml(id)}</span><span class="tt">${escapeHtml(fm.slug || id)}</span><span class="tst${fm.status === 'done' ? ' done' : ''}">${escapeHtml(status)}</span><span class="who">${escapeHtml(who)}</span></div><div class="dv-body">${body}</div></div>\n`
+    : rec.parts.length > 0
+      ? rec.parts.map((p) => kv(p.label, p.what)).join('')
+      : kv(V.why, rec.why) + kv(V.how, rec.how) + kv(V.what, rec.what)
+  return `<div class="dv-row${open ? ' dv-wait' : ''}" data-dv-id="${escapeHtml(id)}" tabindex="0" role="button" aria-expanded="false"><div class="dv-top"><span class="tid">${escapeHtml(id)}</span><span class="tt">${escapeHtml(fm.title || fm.slug || id)}</span><span class="tst${fm.status === 'done' ? ' done' : ''}">${escapeHtml(status)}</span><span class="who">${escapeHtml(who)}</span></div><div class="dv-body">${body}</div></div>\n`
 }
 
 /** T-1138 → T-1259: Home's decision group body — decision tickets as expandable rows (open first), then 기록 (decision pages) in the table. */
@@ -2833,7 +2852,7 @@ function homeLineGroups(data, v, views, repoRootHref) {
 /** T-1138: an idle product's decision tickets = those of the version its decision pages use (`idleVersion`). */
 function homeTickets_(v) {
   const version = idleVersion(v)
-  return [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))].filter((t) => t.bucket !== 'backlog' && sameVersion(t.bucket, version))
+  return [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t, ...(t.frontmatter?.type === 'decision' && o.bodies && t.rel in o.bodies ? { body: o.bodies[t.rel] } : {}) })))].filter((t) => t.bucket !== 'backlog' && sameVersion(t.bucket, version))
 }
 
 /** A decision page's `version:` is `<line>/<v>` for an added line, bare for the home line (release-lines.md one-line rule). */
