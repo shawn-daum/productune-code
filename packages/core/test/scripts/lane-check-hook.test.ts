@@ -276,6 +276,34 @@ echo "       applies to: developer, qa dispatches (test-running work)"
     expect(snapshot(home)).toEqual(before)
   })
 
+  test('T-1290: --persona developer keeps waiting while the gate yields for that persona + project root', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1290w-')))
+    roots.push(root)
+    const home = path.join(root, 'home')
+    const proj = path.join(root, 'proj')
+    fs.mkdirSync(path.join(proj, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(proj, '.prdt', 'po-state.json'), JSON.stringify({ stage: 'build', version: 'v0.1' }))
+    fs.mkdirSync(path.join(home, 'hooks'), { recursive: true })
+    // the stub gate yields (suites OVER) only when the wait hands it the persona and this project's root, as the real gate does
+    fs.writeFileSync(path.join(home, 'hooks', 'prdt-dispatch-gate.sh'), `#!/bin/bash
+echo "ok    CPU load ratio: 1 / cap 2.5"
+echo "       applies to: developer, qa dispatches (test-running work)"
+n=$(cat "${root}/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${root}/n"
+if [ "$PRDT_GATE_PERSONA" = developer ] && [ "$PRDT_GATE_PROJECT_ROOT" = "${proj}" ] && [ $n -le 3 ]; then echo "OVER  running full test suites: 1 / cap 1"; else echo "ok    running full test suites: 0 / cap 1"; fi
+echo "       applies to: developer, qa dispatches (test-running work)"
+`)
+    const run = (args: string[]) => spawnSync('python3', [PRDT_CLI, 'dispatch', 'wait', ...args], { cwd: proj, encoding: 'utf8',
+      timeout: subprocessTimeout('cli') * 2, env: { ...process.env, PRDT_HOME: home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0' } })
+    const r = run(['--persona', 'developer', '--interval', '1'])
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.stdout).toContain('waiting for running full test suites')
+    expect(r.stdout).toContain('cleared running full test suites')
+    expect(Number(fs.readFileSync(path.join(root, 'n'), 'utf8'))).toBe(4)
+    // no persona: legacy behavior, no yield asked
+    fs.writeFileSync(path.join(root, 'n'), '0')
+    expect(run(['--interval', '1']).stdout).toContain('no dispatch cap is over')
+  })
+
   test('--timeout exits non-zero naming what is still over', () => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1272w-')))
     roots.push(root)

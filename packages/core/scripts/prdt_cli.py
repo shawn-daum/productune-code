@@ -15482,17 +15482,24 @@ def cmd_dispatch_caps(args):
 _CAPS_AXIS_RE = re.compile(r"^(OVER|ok|\?)\s+(.+?): ")
 
 
-def _dispatch_caps_over():
+def _dispatch_caps_over(persona=None, project_root=None):
     """{axis name: True when over its cap} from one gate report-mode run — the gate's
     own measurement, never re-derived; an unmeasured axis never blocks (gate rule),
-    so it reads as not over. None when the gate could not run or printed no axis."""
+    so it reads as not over. None when the gate could not run or printed no axis.
+    T-1290: `persona` (developer/qa) + `project_root` make the gate count the T-1248
+    priority yield for that dispatch kind as OVER on the suites axis."""
     hook = _gate_hook_path()
     if hook is None:
         return None
     try:
+        env = {**os.environ, "PRDT_GATE_CAPS_REPORT": "1", "PRDT_HOME": str(prdt_home())}
+        env.pop("PRDT_GATE_PERSONA", None)
+        env.pop("PRDT_GATE_PROJECT_ROOT", None)
+        if persona in ("developer", "qa") and project_root:
+            env["PRDT_GATE_PERSONA"] = persona
+            env["PRDT_GATE_PROJECT_ROOT"] = os.path.realpath(str(project_root))
         out = subprocess.run(["bash", str(hook)], stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                             timeout=60, env={**os.environ, "PRDT_GATE_CAPS_REPORT": "1",
-                                              "PRDT_HOME": str(prdt_home())}).stdout
+                             timeout=60, env=env).stdout
     except (OSError, subprocess.SubprocessError):
         return None
     axes, last = {}, None
@@ -15638,11 +15645,12 @@ def cmd_dispatch_wait(args):
     if root:
         _register_wait_marker(root)
     deadline = None if args.timeout is None else time.monotonic() + max(0.0, float(args.timeout))
-    axes = _dispatch_caps_over()
+    persona = getattr(args, "persona", None)
+    measure = lambda: _dispatch_caps_over(persona, root)   # noqa: E731  T-1290: the yield needs persona + root
+    axes = measure()
     if axes is None:
         sys.exit("prdt dispatch wait: the dispatch gate's caps could not be measured "
                  "(`prdt dispatch caps` shows why)")
-    persona = getattr(args, "persona", None)
     suite_work = persona in (None, "developer", "qa")   # load · suites apply to developer/qa only (gate T-1004)
     applies = lambda n: suite_work or n not in _SUITE_APPLIES   # noqa: E731
     waiting = [n for n, over in axes.items() if over and applies(n)]
@@ -15664,7 +15672,7 @@ def cmd_dispatch_wait(args):
                   + (" · cleared: " + ", ".join(cleared) if cleared else ""))
             sys.exit(2)
         time.sleep(interval if deadline is None else max(0.0, min(interval, deadline - time.monotonic())))
-        axes = _dispatch_caps_over() or axes
+        axes = measure() or axes
 
 
 def cmd_dispatch(args):

@@ -222,8 +222,8 @@ function run(o: EventOpts, r: RunEnv = {}): string {
 
 /** T-893: `PRDT_GATE_CAPS_REPORT=1` — the same measurement code, every axis printed
  *  (what `prdt dispatch caps` shows); no event, no judgment. */
-function report(r: RunEnv = {}): string {
-  const res = spawnSync('bash', [HOOK], { input: '', encoding: 'utf8', env: { ...envFor(r).env, PRDT_GATE_CAPS_REPORT: '1' } })
+function report(r: RunEnv = {}, extra: NodeJS.ProcessEnv = {}): string {
+  const res = spawnSync('bash', [HOOK], { input: '', encoding: 'utf8', env: { ...envFor(r).env, PRDT_GATE_CAPS_REPORT: '1', ...extra } })
   expect(res.stderr).toBe('')
   expect(res.status).toBe(0)
   return res.stdout
@@ -2101,6 +2101,19 @@ describe('T-1248: priority slot order', () => {
     fs.writeFileSync(path.join(wdir(home), 'productune'), '')
     fs.writeFileSync(path.join(wdir(home), 'naro-proto'), '')
     expect(report({ home })).toContain('next in line: naro-proto (priority 1), then productune (priority 2)')
+  })
+
+  test('T-1290: report mode with persona + project root shows the yield as OVER on the suites axis; without them it does not', () => {
+    const home = homeWith('naro-proto,productune')
+    const m = suiteIn(hi)
+    const suitesLine = (t: string) => t.split('\n').find((l) => /running full test suites/.test(l))!
+    expect(suitesLine(report({ machine: m, home }))).toMatch(/^ok /)
+    const asLo = { PRDT_GATE_PERSONA: 'developer', PRDT_GATE_PROJECT_ROOT: lo }
+    expect(suitesLine(report({ machine: m, home }, asLo))).toMatch(/^OVER /)
+    expect(suitesLine(report({ machine: m, home }, { ...asLo, PRDT_GATE_PROJECT_ROOT: hi }))).toMatch(/^ok /)
+    expect(suitesLine(report({ machine: m, home }, { ...asLo, PRDT_GATE_PERSONA: 'designer' }))).toMatch(/^ok /)
+    // report mode never writes a waiting record
+    expect(fs.existsSync(path.join(wdir(home), 'productune'))).toBe(false)
   })
 
   test('a designer dispatch is not held by the slot order', () => {
