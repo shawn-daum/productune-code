@@ -1074,7 +1074,7 @@ function ticketRowsTable(tickets) {
   if (tickets.length === 0) {
     return `<p class="v-note">${TICKET.empty}</p>`
   }
-  let html = `<div class="table-wrap"><table class="sortable">${sortableThead(TICKET.tableHeaders, ['text', 'text', 'text', 'text', 'text', 'text'], 5)}<tbody>\n`
+  let html = `<div class="table-wrap"><table class="sortable tk-table">${sortableThead(TICKET.tableHeaders, ['text', 'text', 'text', 'text', 'text', 'text'], 5)}<tbody>\n`
   for (const t of sortNewestFirst(tickets, (x) => x.frontmatter.created, (x) => x.frontmatter.id || x.rel)) {
     const fm = t.frontmatter
     const id = fm.id || t.rel
@@ -3223,6 +3223,8 @@ th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--text-second
 .dv-wait .tst { color: var(--health-warn); }
 .dv-body { display: none; margin: 8px 4px 4px 4px; padding: 10px 12px; background: var(--bg-surface-on); border-radius: 8px; font-size: 12.5px; line-height: 1.6; }
 .dv-row.open .dv-body { display: block; }
+/* T-1277 (QA d-v115-t1277-qa1): the ticket title column no longer takes its width from a long header, so it keeps a floor — at phone width the table scrolls sideways instead of one glyph a line. */
+.tk-table td:nth-child(2) { min-width: 180px; word-break: keep-all; overflow-wrap: break-word; }
 /* T-1277 (QA d-v115-t1259-qa2): a long cell name (「⑤ ⑥ ⑧ (모듈: 규율 문구 기준)」) takes up to 30% of the row and wraps between words, never one character a line. */
 .dv-kv { display: grid; grid-template-columns: fit-content(30%) minmax(0, 1fr); gap: 10px; padding: 2px 0; }
 .dv-kv b { min-width: 44px; font-size: 11px; color: var(--text-tertiary); font-weight: 600; padding-top: 2px; word-break: keep-all; overflow-wrap: break-word; }
