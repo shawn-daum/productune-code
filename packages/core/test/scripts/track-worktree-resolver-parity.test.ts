@@ -28,7 +28,7 @@ const USER_PROMPT = path.join(HOOKS, 'prdt-user-prompt.sh')
 const POST_DISPATCH = path.join(HOOKS, 'prdt-post-dispatch.sh')
 const STATUSLINE = path.join(CORE_ROOT, 'scripts', 'statusline-prdt.sh')
 const OTHER_TWINS = ['prdt-auto-open.sh', 'prdt-inbox-inject.sh',
-  'prdt-return-check.sh', 'prdt-question-check.sh'].map((n) => path.join(HOOKS, n))
+  'prdt-return-check.sh', 'prdt-question-check.sh', 'prdt-lane-check.sh'].map((n) => path.join(HOOKS, n))
 
 const hasBin = (bin: string) => { try { execFileSync('command', ['-v', bin], { stdio: 'ignore', shell: '/bin/bash' }); return true } catch { return false } }
 const READY = hasBin('jq') && hasBin('python3')
