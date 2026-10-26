@@ -8045,21 +8045,22 @@ def _render_update_notes(m, installed, new_version, sections, numbered=True):
     run through `_strip_control_chars` first; the box's own drawing (the
     rule, the catalog strings) is trusted local text and untouched."""
     rule = "─" * 64
-    print(f"\n{rule}")
+    print(rule)
     print(f"  {msg(m, 'update.version-line', installed=installed, new=_strip_control_chars(new_version))}")
     print(rule)
     if not sections:
         # T-749b: origin ahead in git but no qualifying RELEASES.md section —
         # still show the box and still ask, just with no notes to print.
         print(f"  {msg(m, 'update.no-notes')}")
-    for _version, text in sections:
+    for idx, (_version, text) in enumerate(sections):
         lines = text.splitlines()
         header = _strip_control_chars(lines[0][3:].strip() if lines else _version)
+        if idx:
+            print()                    # one blank line between sections, none before the closing rule
         print(f"  {header}")
         for line in lines[1:]:
             line = _strip_control_chars(line)
             print(f"    {line}" if line.strip() else "")
-        print()
     print(rule)
     if numbered:                       # T-1231: the arrow menu draws its own two lines
         print(f"  {msg(m, 'update.choice1')}")
@@ -11702,8 +11703,8 @@ def feature_taxonomy_warnings(cfg, vocab):
 
 
 # T-1049 (T-1055 = A): the surface keys a guide `ux[].at` may name — `<surface>.<part>` or a bare
-# `<surface>`. The viewer draws the same four surfaces (FEATURE.surfaces in
-# packages/viewer/lib/labels.mjs); a test keeps the two lists equal.
+# `<surface>`. The viewer draws the same four surfaces (`surfaces` in
+# packages/viewer/lib/labels-<lang>.mjs); a test keeps the lists equal.
 SURFACE_KEYS = {
     "terminal": ("chat", "hook"),
     "statusline": ("stage", "ticket"),
