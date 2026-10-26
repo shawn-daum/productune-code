@@ -758,6 +758,26 @@ describe('T-1268: land runs the relevant test set by default', () => {
     expect(r.out).toContain('relevant tests (2 file(s)) green')
   })
 
+  test('a bare stem without extension names the file (basename, extension optional)', () => {
+    ticket('T-1')
+    commit(wt(), 'pkg/test/s.test.ts', "// uses the widget_tool helper\n", 'test: s')
+    commit(wt(), 'lib/widget_tool.py', 'x = 1\n', 'feat: widget (T-1)')
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('pkg: test/s.test.ts')
+    expect(ran().trim()).toBe('test/s.test.ts')
+  })
+
+  test("the package's own test script extras (after vitest run) still run when the package is selected", () => {
+    ticket('T-1')
+    commit(wt(), 'pkg/package.json', '{"scripts":{"test":"vitest run && echo EXTRA-STEP >> \\"$SHIM_LOG\\""}}\n', 'chore: pkg scripts')
+    editA()
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(ran()).toContain('test/a.test.ts')
+    expect(ran()).toContain('EXTRA-STEP')
+  })
+
   test('an empty relevant set says so and lands', () => {
     ticket('T-1')
     commit(wt(), 'notes.md', 'x\n', 'docs: notes (T-1)')

@@ -7,7 +7,7 @@ md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
 # T-1170: this is the CLI body; the `prdt` launcher beside it runs it from the bytecode cache
 # in the launcher's own namespace (`__file__` / `__name__` are the launcher's). Never run it directly.
-import argparse, contextlib, difflib, errno, fcntl, hashlib, json, math, os, re, shlex, shutil, sqlite3, stat, statistics, subprocess, sys, unicodedata
+import argparse, contextlib, difflib, errno, fcntl, fnmatch, hashlib, json, math, os, re, shlex, shutil, sqlite3, stat, statistics, subprocess, sys, unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -14114,6 +14114,32 @@ def _track_vitest_list(vbin, pkg, extra):
     return [x["file"] for x in rows if isinstance(x, dict) and isinstance(x.get("file"), str)]
 
 
+# A changed path may reach a test in ways its text never spells: a wrapper the test execs, or a
+# directory the test reads by readdir + pattern. This declared map (repo-relative glob → extra
+# naming strings / test files) sits beside the derivation. A file under a DECLARED directory that
+# no entry maps and no test names falls back to the package's whole test command.
+#   names  — substrings that make a test text count as naming the changed file
+#   tests  — test files (path suffix) that always join the set
+TRACK_RELEVANT_ALIASES = (
+    # the CLI runs through the `scripts/prdt` wrapper: 100+ tests exec it, none names prdt_cli.py
+    {"glob": "packages/core/scripts/prdt_cli.py", "names": ("'scripts', 'prdt'", '"scripts", "prdt"', "scripts/prdt'"), "tests": ()},
+    # session-start p<N>.sh parts: read by readdir + /^prdt-session-start-p\d+\.sh$/
+    {"glob": "packages/core/scripts/hooks/prdt-session-start-p*.sh", "names": (), "tests": ("test/scripts/session-start-parts.test.ts",)},
+    # contract annexes: readdir over discipline/contracts
+    {"glob": "packages/core/discipline/contracts/*.md", "names": (), "tests": ("test/discipline/contracts-annexes.test.ts",)},
+    # agent stubs: readdir over agents/*.md
+    {"glob": "packages/core/agents/*.md", "names": (), "tests": ("test/agents-stubs.test.ts",)},
+    # register bodies: readdir over discipline/register
+    {"glob": "packages/core/discipline/register/*.md", "names": (), "tests": ("test/scripts/audience-inject-hook.test.ts",)},
+)
+# Directories some test reads by readdir: a change here that nothing above (or any test's text) reaches
+# is treated as unknown reach — the package's whole command runs.
+TRACK_READ_DIRS = (
+    "packages/core/scripts/hooks/", "packages/core/discipline/contracts/",
+    "packages/core/agents/", "packages/core/discipline/register/",
+)
+
+
 def _track_names_of(path):
     """Strings a test text may use to NAME a changed file: its basename, its repo path, and the
     last two path.join pieces quoted (`'scripts', 'prdt'` — extension optional on the last)."""
@@ -14125,14 +14151,41 @@ def _track_names_of(path):
         for last in {base, stem}:
             names.add(f"'{parts[-2]}', '{last}'")
             names.add(f'"{parts[-2]}", "{last}"')
+    for al in TRACK_RELEVANT_ALIASES:
+        if fnmatch.fnmatchcase(path, al["glob"]):
+            names.update(al["names"])
     return names
 
 
+def _track_stem_re(path):
+    """The bare stem (basename without extension) as a whole word: `prdt_cli` in `prdt_cli.py`,
+    `definition-of-done` in a test's 'definition-of-done'. None for a stem with no extension to drop."""
+    base = path.split("/")[-1]
+    if "." not in base.lstrip("."):
+        return None
+    stem = base.rsplit(".", 1)[0]
+    if len(stem) < 5:     # `a` · `cli` · `app` read as ordinary words — those still match by basename + extension
+        return None
+    return re.compile(r"(?<![\w-])" + re.escape(stem) + r"(?![\w-])")
+
+
+def _track_pkg_extra_steps(pkg):
+    """Commands the package's own `test` script runs besides vitest (`vitest run && node test/x.mjs`)."""
+    pj = read_json(Path(pkg) / "package.json")
+    t = pj.get("scripts", {}).get("test") if isinstance(pj, dict) and isinstance(pj.get("scripts"), dict) else None
+    if not isinstance(t, str):
+        return []
+    return [seg.strip() for seg in t.split("&&") if seg.strip() and not re.match(r"vitest(\s|$)", seg.strip())]
+
+
 def _track_relevant_set(wt, base_sha, changed):
-    """([(pkg, vbin, [files])], untested_changed, counts) — the union per vitest package."""
+    """([(pkg, vbin, [files])], covered, counts, has_pkgs, fallback) — the union per vitest package.
+    `fallback` = {pkg: [changed files whose reach into that package's tests is unknown]}: those packages
+    run their whole test command."""
     pkgs = _track_vitest_pkgs(wt)
-    plan, named_any, tot = [], set(), {"changed_tests": 0, "importers": 0, "naming": 0}
+    plan, named_any, tot, fallback = [], set(), {"changed_tests": 0, "importers": 0, "naming": 0}, {}
     names = {c: _track_names_of(c) for c in changed}
+    stems = {c: _track_stem_re(c) for c in changed}
     for pkg in pkgs:
         vbin = _track_vitest_bin(pkg, wt)
         if vbin is None:
@@ -14141,25 +14194,39 @@ def _track_relevant_set(wt, base_sha, changed):
         changed_abs = {str((Path(wt) / c).resolve()) for c in changed}
         rel_hits = set(_track_vitest_list(vbin, pkg, ["--changed", base_sha]))
         own = {t for t in alltests if str(Path(t).resolve()) in changed_abs}
-        naming = set()
+        naming, named_here = set(), set()
         for t in alltests:
             try:
                 text = Path(t).read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             for c, ns in names.items():
-                if any(n in text for n in ns):
+                if any(n in text for n in ns) or (stems[c] is not None and stems[c].search(text)):
                     naming.add(t)
-                    named_any.add(c)
+                    named_here.add(c)
+        named_any |= named_here
+        mapped = set()
+        for c in changed:
+            for al in TRACK_RELEVANT_ALIASES:
+                if fnmatch.fnmatchcase(c, al["glob"]):
+                    mapped.add(c)
+                    for suf in al["tests"]:
+                        naming.update(t for t in alltests if Path(t).as_posix().endswith("/" + suf))
+        named_any |= mapped
+        unknown = [c for c in changed if c not in named_here and c not in mapped
+                   and any(c.startswith(d) for d in TRACK_READ_DIRS)
+                   and str((Path(wt) / c).resolve()).startswith(str(Path(pkg).resolve()) + os.sep)]
+        if unknown:
+            fallback[pkg] = unknown
         importers = rel_hits - own
         files = sorted((own | rel_hits | naming) & set(alltests))
         tot["changed_tests"] += len(own)
         tot["importers"] += len(importers - naming)
         tot["naming"] += len(naming - own - rel_hits)
-        if files:
+        if files or unknown:
             plan.append((pkg, vbin, files))
     covered = {c for c in changed if c in named_any}
-    return plan, covered, tot, bool(pkgs)
+    return plan, covered, tot, bool(pkgs), fallback
 
 
 def _track_closes_lane(root, tid):
@@ -14267,7 +14334,7 @@ def cmd_track_land(args):
             if lane_note:
                 print(lane_note)
             chg = [x for x in _tgit(["diff", "--name-only", old, "HEAD"], wt).stdout.splitlines() if x]
-            plan, covered, tot, _ = _track_relevant_set(wt, old, chg)
+            plan, covered, tot, _, fallback = _track_relevant_set(wt, old, chg)
             n = sum(len(f) for _p, _v, f in plan)
             if not plan:
                 print(f"relevant tests: none — {len(chg)} changed file(s) against {base}, no test imports "
@@ -14282,8 +14349,18 @@ def cmd_track_land(args):
                         print(f"  {pkg.relative_to(wt) if pkg != wt else '.'}: {Path(f).relative_to(pkg)}")
                 rc = 0
                 for pkg, vbin, files in plan:
-                    rc = _track_run(" ".join([shlex.quote(vbin), "run", *(shlex.quote(str(Path(f).relative_to(pkg))) for f in files)]),
-                                    pkg, f"relevant tests ({pkg.relative_to(wt) if pkg != wt else '.'})")
+                    label = pkg.relative_to(wt) if pkg != wt else "."
+                    if pkg in fallback:
+                        print(f"whole package {label}: {', '.join(fallback[pkg][:3])}"
+                              f"{' …' if len(fallback[pkg]) > 3 else ''} sits in a directory a test reads "
+                              f"by listing, with no declared mapping — running the package's whole test command", flush=True)
+                        steps = [" ".join([shlex.quote(vbin), "run"])]
+                    else:
+                        steps = [" ".join([shlex.quote(vbin), "run", *(shlex.quote(str(Path(f).relative_to(pkg))) for f in files)])]
+                    for cmd in steps + _track_pkg_extra_steps(pkg):
+                        rc = _track_run(cmd, pkg, f"relevant tests ({label})")
+                        if rc != 0:
+                            break
                     if rc != 0:
                         break
                 ran = f"relevant tests ({n} file(s))"
