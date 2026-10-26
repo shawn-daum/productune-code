@@ -48,7 +48,7 @@ function prdt(lang: 'ko' | 'en', ...args: string[]) {
 const file = (name: string) => path.join(prdtHome, name)
 const read = (name: string) => (fs.existsSync(file(name)) ? fs.readFileSync(file(name), 'utf8') : null)
 const CAP_KEYS = ['load_ratio', 'mem_free_pct_min', 'inflight_max', 'suites_max', 'vms_max', 'inflight_sonnet_max', 'inflight_opus_max', 'inflight_haiku_max', 'inflight_fable_max', 'inflight_default_max'].map((k) => `dispatch.${k}`)
-const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.visual', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang', ...CAP_KEYS]
+const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.visual', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang', 'priority.projects', ...CAP_KEYS]
 
 describe('message catalog', () => {
   test('ko and en carry the same keys, none empty', () => {
@@ -261,5 +261,73 @@ describe.skipIf(!READY)('prdt settings — dispatch cap keys (T-896)', () => {
     expect(r.status, r.err).toBe(0)
     for (const w of ['CPU load ratio', 'free memory', 'in-flight dispatches:', 'running full test suites', 'resident VMs', 'tier "sonnet"', 'to free:', 'cap key: suites_max (default)', 'prdt settings set dispatch.<key> <number>'])
       expect(r.out).toContain(w)
+  })
+})
+
+describe.skipIf(!READY)('prdt settings — priority.projects (T-1247)', () => {
+  // known projects = slugs of roots in run/open-roots (sandbox PRDT_HOME only)
+  function seedProjects(...slugs: string[]) {
+    const roots = slugs.map((slug) => {
+      const root = path.join(prdtHome, 'projects', slug)
+      fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
+      fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), '{}')
+      fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify({ slug }))
+      return root
+    })
+    fs.mkdirSync(path.join(prdtHome, 'run'), { recursive: true })
+    fs.writeFileSync(path.join(prdtHome, 'run', 'open-roots'), roots.join('\n') + '\n')
+  }
+  test('set stores the token file and prints the order (ko + en)', () => {
+    seedProjects('naro-proto', 'productune', 'ntf-pm')
+    const r = prdt('ko', 'settings', 'set', 'priority.projects', 'naro-proto,productune,ntf-pm')
+    expect(r.status, r.err).toBe(0)
+    expect(read('priority-projects')).toBe('naro-proto,productune,ntf-pm\n')
+    expect(r.out.trim().split('\n')).toEqual([
+      'priority.projects: (설정 안 됨) → naro-proto,productune,ntf-pm',
+      '순서: 1 naro-proto · 2 productune · 3 ntf-pm. 목록에 없는 프로젝트는 그 뒤에서 같은 순위예요',
+    ])
+    const e = prdt('en', 'settings', 'set', 'priority.projects', 'productune')
+    expect(e.status, e.err).toBe(0)
+    expect(e.out).toContain('priority.projects: naro-proto,productune,ntf-pm → productune')
+    expect(read('priority-projects')).toBe('productune\n')
+    const rows = JSON.parse(prdt('en', 'settings', '--json').out)
+    expect(rows.find((x: any) => x.key === 'priority.projects').value).toBe('productune')
+  })
+  test('unset removes the file', () => {
+    seedProjects('a')
+    expect(prdt('en', 'settings', 'set', 'priority.projects', 'a').status).toBe(0)
+    expect(prdt('en', 'settings', 'unset', 'priority.projects').status).toBe(0)
+    expect(read('priority-projects')).toBeNull()
+  })
+  test('unknown name changes nothing, exits non-zero, lists known projects', () => {
+    seedProjects('a', 'b')
+    fs.writeFileSync(file('priority-projects'), 'a\n')
+    const r = prdt('ko', 'settings', 'set', 'priority.projects', 'b,zzz')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('zzz 은 이 기기에서 아는 프로젝트가 아니에요. 아무것도 바꾸지 않았어요.')
+    expect(r.err).toContain('아는 프로젝트: a · b')
+    expect(read('priority-projects')).toBe('a\n')
+  })
+  test('duplicate name changes nothing and exits non-zero', () => {
+    seedProjects('a', 'b')
+    const r = prdt('ko', 'settings', 'set', 'priority.projects', 'a,b,a')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('a 이 두 번 있어요. 아무것도 바꾸지 않았어요.')
+    expect(read('priority-projects')).toBeNull()
+  })
+  test('empty value and empty segment are refused, nothing written', () => {
+    seedProjects('a')
+    expect(prdt('en', 'settings', 'set', 'priority.projects', '  ').status).toBe(1)
+    expect(prdt('en', 'settings', 'set', 'priority.projects', 'a,').status).toBe(1)
+    expect(read('priority-projects')).toBeNull()
+  })
+  test('known projects also come from dispatch markers', () => {
+    seedProjects('a')
+    const root = path.join(prdtHome, 'projects', 'm')
+    fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify({ slug: 'm' }))
+    fs.mkdirSync(path.join(prdtHome, 'run', 'dispatches'), { recursive: true })
+    fs.writeFileSync(path.join(prdtHome, 'run', 'dispatches', 'x.json'), JSON.stringify({ project_root: root }))
+    expect(prdt('en', 'settings', 'set', 'priority.projects', 'm,a').status).toBe(0)
   })
 })
