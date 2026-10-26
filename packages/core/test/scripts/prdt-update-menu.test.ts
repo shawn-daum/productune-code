@@ -207,6 +207,15 @@ describe.skipIf(!PYTHON3)('T-1231 · prdt update arrow menu on a real tty', () =
     return { origin, clone, before: git(clone, 'rev-parse', 'HEAD').trim() }
   }
 
+  test('box has no blank line before the first rule nor between the notes and the closing rule (define-screen-set update-menu)', () => {
+    const { clone } = pending()
+    const lines = strip(runPty(clone, ['\x1b']).out).replace(/\r/g, '').split('\n')
+    const rules = lines.map((l, i) => (/^─{64}$/.test(l) ? i : -1)).filter((i) => i >= 0)
+    expect(rules.length).toBeGreaterThanOrEqual(3)
+    expect(rules[0] === 0 || lines[rules[0] - 1].trim() !== '').toBe(true)
+    expect(lines[rules[2] - 1].trim()).not.toBe('')
+  })
+
   test('menu is drawn: two items with descriptions, a guide line, no number prompt; first cursor on 업데이트', () => {
     const { clone } = pending()
     const { out } = runPty(clone, ['\x1b'])
