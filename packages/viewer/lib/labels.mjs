@@ -75,6 +75,8 @@ export const HOME = {
   decision: '결정',
   // T-1138: the 결정 bucket lists decision tickets (질문) and decision pages (기록) in one table.
   decisionHeaders: ['구분', 'ID', '제목', '상태', '버전'],
+  // T-1259 (screen decision-view): a decision ticket row = id · title · status · answer; the fold shows 이유 · 방식 · 답, 「기록 없음」 where the ticket has none.
+  decisionView: { why: '이유', how: '방식', what: '답', question: '질문', recommend: '추천', missing: '기록 없음', answer: (a) => `답 ${a}`, waiting: '기다리는 중', pages: '기록', note: '줄을 누르면 이유 · 방식 · 답이 펼쳐져요.' },
   decisionKind: { ticketOpen: '질문 · 열림', ticketDone: '질문 · 완료', ticketDropped: '질문 · 중단', page: '기록' },
   // T-881: the approved screen set's 「현재 버전」 screen (docs/artifacts/v1.12/
   // define-screen-set.html, home-progress · home-cases; T-796 outcome). The
