@@ -14,6 +14,7 @@
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
+import { createHash } from 'crypto'
 import { spawnSync } from 'child_process'
 import { test, expect, describe, afterEach } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
@@ -61,11 +62,25 @@ function stubPs(bin: string, lines: string) {
   fs.chmodSync(p, 0o755)
 }
 
+/** A transcript the hook must never read for a stop: prompts, isMeta hand-backs, questions. */
 function transcript(root: string, prompt: string) {
   const p = path.join(root, 'transcript.jsonl')
   fs.writeFileSync(p, JSON.stringify({ type: 'user', isSidechain: false, message: { role: 'user', content: prompt } }) + '\n'
+    + JSON.stringify({ type: 'user', isSidechain: false, isMeta: true, message: { role: 'user', content: 'worker hand-back: stop filling' } }) + '\n'
     + JSON.stringify({ type: 'assistant', isSidechain: false, message: { content: [{ type: 'text', text: 'ok' }] } }) + '\n')
   return p
+}
+
+const cli = (p: { proj: string; home: string }, args: string[]) =>
+  spawnSync('python3', [PRDT_CLI, ...args], { cwd: p.proj, encoding: 'utf8', timeout: subprocessTimeout('cli') * 2,
+    env: { ...process.env, PRDT_HOME: p.home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0' } })
+
+/** A wait marker for a project root, as `prdt dispatch wait` writes it. */
+function waitMarker(home: string, projRoot: string, pid: number) {
+  const key = createHash('sha256').update(fs.realpathSync(projRoot)).digest('hex').slice(0, 16)
+  const d = path.join(home, 'run', 'lane-waits', key)
+  fs.mkdirSync(d, { recursive: true })
+  fs.writeFileSync(path.join(d, `${pid}.json`), JSON.stringify({ pid, project_root: fs.realpathSync(projRoot) }))
 }
 
 function runHook(p: { proj: string; home: string; bin: string; root: string }, opts: { active?: boolean; agent?: string; prompt?: string; env?: Record<string, string> } = {}) {
@@ -113,18 +128,75 @@ describe('prdt-lane-check.sh', () => {
     expect(runHook(p)).toBe('')
   })
 
-  test('a denied dispatch with a running `prdt dispatch wait` counts as in flight', () => {
+  const WAIT_PS = '/usr/bin/python3 /Users/x/.prdt/bin/prdt dispatch wait --interval 30\n'
+
+  test('a running wait of THIS project counts as in flight; another project\'s wait does not', () => {
     const p = makeProject(BASE)
-    stubPs(p.bin, '/usr/bin/python3 /Users/x/.prdt/bin/prdt dispatch wait --interval 30\n')
+    stubPs(p.bin, WAIT_PS)
+    waitMarker(p.home, os.tmpdir(), process.pid)  // another project's key
+    expect(JSON.parse(runHook(p)).decision).toBe('block')
+    waitMarker(p.home, p.proj, process.pid)
     expect(runHook(p)).toBe('')
   })
 
-  test('user stop: none named → every lane passes; a named lane → only that lane passes', () => {
+  test('a wait marker whose pid is dead, or whose command line is not a wait, counts for nothing', () => {
     const p = makeProject(BASE)
-    expect(runHook(p, { prompt: '오늘은 퇴근, 기록만 해줘' })).toBe('')
-    const j = JSON.parse(runHook(p, { prompt: 'L1 은 멈춰' }))
+    stubPs(p.bin, WAIT_PS)
+    waitMarker(p.home, p.proj, 2147483000)
+    expect(JSON.parse(runHook(p)).decision).toBe('block')
+    stubPs(p.bin, '/bin/sleep 100\n')
+    waitMarker(p.home, p.proj, process.pid)
+    expect(JSON.parse(runHook(p)).decision).toBe('block')
+  })
+
+  test('prdt lanes pause: no lane named → every lane passes; resume re-enables', () => {
+    const p = makeProject(BASE)
+    expect(cli(p, ['lanes', 'pause']).status).toBe(0)
+    expect(runHook(p)).toBe('')
+    expect(cli(p, ['schedule']).stdout).toContain('paused lanes: every lane')
+    expect(cli(p, ['lanes', 'resume']).status).toBe(0)
+    expect(JSON.parse(runHook(p)).decision).toBe('block')
+    expect(cli(p, ['schedule']).stdout).not.toContain('paused lanes')
+  })
+
+  test('prdt lanes pause L1: only that lane passes; resume L1 re-enables it; unknown lane refused', () => {
+    const p = makeProject(BASE)
+    expect(cli(p, ['lanes', 'pause', 'L1']).status).toBe(0)
+    const j = JSON.parse(runHook(p))
     expect(j.reason).not.toContain('L1 결정/질문:')
     expect(j.reason).toContain('L2: T-010')
+    expect(cli(p, ['schedule']).stdout).toContain('paused lanes: L1 결정/질문')
+    expect(cli(p, ['lanes', 'pause', 'L9']).status).not.toBe(0)
+    expect(cli(p, ['lanes', 'resume', 'L1']).status).toBe(0)
+    expect(JSON.parse(runHook(p)).reason).toContain('L1 결정/질문: T-002')
+  })
+
+  test('pause all then resume L1: every other lane stays paused', () => {
+    const p = makeProject(BASE)
+    cli(p, ['lanes', 'pause'])
+    cli(p, ['lanes', 'resume', 'L1'])
+    const j = JSON.parse(runHook(p))
+    expect(j.reason).toContain('L1 결정/질문: T-002')
+    expect(j.reason).not.toContain('L2:')
+  })
+
+  test('transcript text decides nothing: stop words, an isMeta hand-back, a question after pause', () => {
+    const p = makeProject(BASE)
+    expect(JSON.parse(runHook(p, { prompt: '오늘은 퇴근, 기록만 해줘 stop filling' })).decision).toBe('block')
+    cli(p, ['lanes', 'pause', 'L1'])
+    const j = JSON.parse(runHook(p, { prompt: '지금 상태 어때? 계속 발주해도 돼?' }))
+    expect(j.reason).not.toContain('L1 결정/질문:')
+    expect(j.reason).toContain('L2: T-010')
+  })
+
+  test('pause state is per project', () => {
+    const a = makeProject(BASE)
+    const b = makeProject(BASE)
+    // same PRDT_HOME for both
+    const run = (x: typeof a) => runHook({ ...x, home: a.home })
+    cli({ proj: a.proj, home: a.home }, ['lanes', 'pause'])
+    expect(run(a)).toBe('')
+    expect(JSON.parse(run(b)).decision).toBe('block')
   })
 
   test('an open user decision at the lane head passes that lane', () => {
@@ -161,9 +233,13 @@ describe('prdt dispatch wait', () => {
 n=$(cat "${counter}" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${counter}"
 echo "[prdt dispatch gate] caps — measured now"
 if [ $n -le ${overUntil} ]; then echo "OVER  CPU load ratio: 3 / cap 2.5"; else echo "ok    CPU load ratio: 1 / cap 2.5"; fi
+echo "       applies to: developer, qa dispatches (test-running work)"
 if [ $n -le 1 ]; then echo "OVER  in-flight dispatches: 6 / cap 5"; else echo "ok    in-flight dispatches: 4 / cap 5"; fi
+echo "       applies to: every dispatch"
 echo "ok    free memory: 40% of 36 GB / min 15%"
+echo "       applies to: every dispatch"
 echo "?     running full test suites: unmeasured"
+echo "       applies to: developer, qa dispatches (test-running work)"
 `)
     return g
   }
@@ -214,5 +290,38 @@ echo "?     running full test suites: unmeasured"
     const r = runWait(root, home, ['--interval', '1'])
     expect(r.status).toBe(0)
     expect(r.stdout).toContain('no dispatch cap is over')
+  })
+
+  test('--persona designer ignores CPU load; developer and default wait on it', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1272w-')))
+    roots.push(root)
+    const home = path.join(root, 'home')
+    const counter = path.join(root, 'n')
+    fs.writeFileSync(counter, '5')   // in-flight already clear; load stays over
+    stubGate(home, counter, 1000)
+    const d = runWait(root, home, ['--persona', 'designer', '--interval', '1'])
+    expect(d.status, d.stderr).toBe(0)
+    expect(d.stdout).toContain('no dispatch cap is over')
+    for (const extra of [['--persona', 'developer'], []]) {
+      const r = runWait(root, home, [...extra, '--interval', '1', '--timeout', '2'])
+      expect(r.status).toBe(2)
+      expect(r.stdout).toContain('still over: CPU load ratio')
+    }
+  })
+
+  test('a wait in a project writes its own marker under run/lane-waits and removes it on exit', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1272w-')))
+    roots.push(root)
+    const home = path.join(root, 'home')
+    const proj = path.join(root, 'proj')
+    fs.mkdirSync(path.join(proj, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(proj, '.prdt', 'po-state.json'), JSON.stringify({ stage: 'build', version: 'v0.1' }))
+    fs.writeFileSync(path.join(root, 'n'), '5')
+    stubGate(home, path.join(root, 'n'), 1000)
+    const r = spawnSync('python3', [PRDT_CLI, 'dispatch', 'wait', '--interval', '1', '--timeout', '2'], { cwd: proj, encoding: 'utf8',
+      timeout: subprocessTimeout('cli') * 2, env: { ...process.env, PRDT_HOME: home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0' } })
+    expect(r.status).toBe(2)
+    const left = path.join(home, 'run', 'lane-waits')
+    expect(fs.existsSync(left) ? fs.readdirSync(left) : []).toEqual([])
   })
 })
