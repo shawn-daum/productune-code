@@ -123,7 +123,9 @@ describe.skipIf(!READY)('prdt settings — list', () => {
       input: answer + '\n', encoding: 'utf8', timeout: subprocessTimeout('cli'),
       env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, LC_ALL: 'ko_KR.UTF-8' },
     })
-    expect(ask('').stdout).toContain('[ko]')
+    const first = ask('').stdout
+    expect(first).toContain('[ko]')
+    expect(first).toContain('대화할 언어') // the ko catalog line, not a hard-coded string
     expect(read('user-lang')).toBe('ko\n')
     expect(ask('en').stdout).toBe('') // already stored → no question
     expect(read('user-lang')).toBe('ko\n')

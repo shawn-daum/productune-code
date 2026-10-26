@@ -21,6 +21,12 @@ export default function OnboardingWizard({ onDone }: Props) {
   // Step 0 — Language
   const [uiLang, setUiLang] = useState<UiLang>('en')
 
+  // T-1281: chat language (PO reply language) — asked beside the UI language;
+  // default = the device language when it is one of the two offered, else en.
+  const [chatLang, setChatLang] = useState<UiLang>(
+    typeof navigator !== 'undefined' && navigator.language?.toLowerCase().startsWith('ko') ? 'ko' : 'en',
+  )
+
   // Step 1 — Audience mode (T-326). Default = planner (PRD v1.5): the north-star
   // participant is a non-developer planner; developers opt in explicitly.
   const [audienceMode, setAudienceMode] = useState<AudienceMode>('planner')
@@ -93,7 +99,7 @@ export default function OnboardingWizard({ onDone }: Props) {
     setCompleteError('')
     // codex폐기 (T-PATCH-235): 엔진은 항상 claude — 리터럴 인라인.
     // T-326: audienceMode rides along — persisted per-user (~/.prdt/register, `audience` key).
-    const completeOpts: Record<string, unknown> = { engine: 'claude', uiLanguage: uiLang, audienceMode }
+    const completeOpts: Record<string, unknown> = { engine: 'claude', uiLanguage: uiLang, audienceMode, chatLanguage: chatLang }
     // T-PATCH-213: guard deref — .catch traps only promise rejection.
     const api = (window as any).api
     if (!api?.completeOnboarding) { setCompleting(false); return }
@@ -186,6 +192,8 @@ export default function OnboardingWizard({ onDone }: Props) {
         {step === 0 && (
           <Step0_Language
             uiLang={uiLang}
+            chatLang={chatLang}
+            onSelectChatLang={setChatLang}
             resetFeedback={resetFeedback}
             onSelectLang={handleSelectLang}
             onReset={handleReset}

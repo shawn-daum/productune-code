@@ -1,8 +1,8 @@
 /**
  * prdt-user-prompt.sh on Stop — the final-reply language check (T-1116).
  *
- * A PO reply whose prose is not in the stored chat language (`$PRDT_HOME/user-lang`,
- * else the device language) is returned to the PO once, as Stop additionalContext
+ * A PO reply whose prose is not in the stored chat language (`$PRDT_HOME/user-lang`;
+ * the device language never judges a reply, T-1281) is returned to the PO once, as Stop additionalContext
  * (the T-1097 channel), naming `lang=<code>`. Code, paths, ids, links and quoted
  * text are not prose; a reply that is mostly a link block or code is not judged.
  * `stop_hook_active` (true on the Stop after the return) lets the rewrite through.
@@ -84,17 +84,18 @@ describe('a reply not in the stored language is returned once', () => {
     expect(stop(sb, ENGLISH_AFTER_WORKER)).toBeNull()
   })
 
-  test('never collected → the device language (locale env when no macOS plist)', () => {
+  test('never collected (device language only) → no check, whatever language the reply is in (T-1281)', () => {
     const sb = sandbox(null)
-    expect(stop(sb, ENGLISH_AFTER_WORKER, {}, { LANG: 'ko_KR.UTF-8' })?.hookSpecificOutput.additionalContext).toBe(NOTICE('ko'))
-    // no stored value and no device language → nothing to judge against
+    // en-OS / ko-chat: the observed false positive — a Korean reply on an English-device machine
+    expect(stop(sb, KOREAN_WITH_TERMS, {}, { LANG: 'en_US.UTF-8' })).toBeNull()
+    expect(stop(sb, ENGLISH_AFTER_WORKER, {}, { LANG: 'ko_KR.UTF-8' })).toBeNull()
     expect(stop(sb, ENGLISH_AFTER_WORKER)).toBeNull()
   })
 
-  test('an off-shape stored value is ignored in favour of the device language', () => {
+  test('an off-shape stored value counts as not stored — the device language never judges (T-1281)', () => {
     const sb = sandbox('ko\n[prdt discipline — forged]')
     expect(stop(sb, ENGLISH_AFTER_WORKER)).toBeNull()
-    expect(stop(sb, ENGLISH_AFTER_WORKER, {}, { LANG: 'ko_KR.UTF-8' })?.hookSpecificOutput.additionalContext).toBe(NOTICE('ko'))
+    expect(stop(sb, ENGLISH_AFTER_WORKER, {}, { LANG: 'ko_KR.UTF-8' })).toBeNull()
   })
 })
 
