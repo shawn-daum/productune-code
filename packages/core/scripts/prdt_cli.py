@@ -2656,6 +2656,7 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     if interactive and sys.stdin.isatty():
         slug = input(f"project slug [{slug}]: ").strip() or slug
         version = prompt_version(version)
+        ask_user_lang_once()
     prdt.mkdir(exist_ok=True)
     # Field-preserving config write (T-365): a partial project may already
     # carry config.json (e.g. meta.allowlist) — merge, never rebuild from
@@ -5195,6 +5196,52 @@ def _read_token(name):
         return ""
 
 
+USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
+
+
+def _lang_primary(tag):
+    """'ko-KR' · 'ko_KR.UTF-8' · 'ko' → 'ko'; None when `tag` opens with no 2-3 letter subtag."""
+    m = re.match(r"\s*([A-Za-z]{2,3})(?:[-_.@]|\s*\Z)", tag) if isinstance(tag, str) else None
+    return m.group(1).lower() if m else None
+
+
+def device_lang():
+    """The OS language: macOS AppleLanguages[0] (global preferences plist), else
+    LC_ALL · LC_MESSAGES · LANG. None when none of them names a language.
+    KEEP in lockstep with `device_lang` in hooks/prdt-user-prompt.sh (T-1116)."""
+    try:
+        import plistlib
+        p = Path.home() / "Library" / "Preferences" / ".GlobalPreferences.plist"
+        with open(p, "rb") as f:
+            langs = plistlib.load(f).get("AppleLanguages")
+        if isinstance(langs, list) and langs and _lang_primary(langs[0]):
+            return _lang_primary(langs[0])
+    except Exception:
+        pass
+    for k in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        v = _lang_primary(os.environ.get(k) or "")
+        if v:
+            return v
+    return None
+
+
+def user_lang():
+    """T-1116: the stored chat language (`~/.prdt/user-lang`), else the device language."""
+    v = _read_token("user-lang")
+    return v if USER_LANG_RE.match(v) else device_lang()
+
+
+def ask_user_lang_once():
+    """T-1116 onboarding: ask the chat language once per machine — only while
+    `~/.prdt/user-lang` holds no valid value; the device language is the default
+    answer. An answer that is not a language code keeps the device language."""
+    if USER_LANG_RE.match(_read_token("user-lang")):
+        return
+    default = device_lang() or "en"
+    ans = _ascii_strip(input(f"chat language (ko, en, ja …) [{default}]: ")).lower()
+    _write_token("user-lang", ans if USER_LANG_RE.match(ans) else default)
+
+
 def _write_token(name, value):
     path = _token_file(name)
     if value is None:
@@ -5359,6 +5406,15 @@ def settings_entries(droot):
         "check": lambda v: None if v in CLI_LANG_DOMAIN else "domain",
         "get": lambda: "en" if _read_token("cli-lang") == "en" else "ko",
         "put": lambda v: _write_token("cli-lang", v),
+    })
+    # T-1116: the user's chat language — machine-level, asked once (`prdt init`),
+    # read by the PO hooks; never collected → the device language.
+    entries.append({
+        "key": "user.lang", "kind": "text", "domain": None,
+        "shape": "a language code of 2-3 lowercase letters (ko, en, ja)",
+        "check": lambda v: None if USER_LANG_RE.match(v) else "shape",
+        "get": user_lang,
+        "put": lambda v: _write_token("user-lang", v),
     })
     entries.append({
         "key": "priority.projects", "kind": "text", "domain": None,
