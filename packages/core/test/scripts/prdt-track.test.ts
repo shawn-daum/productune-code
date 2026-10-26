@@ -735,6 +735,7 @@ describe('T-1268: land runs the relevant test set by default', () => {
     commit(code, 'pkg/test/a.test.ts', "import { a } from '../src/a'\n", 'test: a')
     commit(code, 'pkg/test/b.test.ts', "import { b } from '../src/b'\n", 'test: b')
     commit(code, 'pkg/test/n.test.ts', "// names tool.sh\n", 'test: n')
+    commit(code, 'pkg/test/scan.test.ts', "// lists src/ by readdir\n", 'test: scan')
     cli('track', 'open', 'T-1')
     const bin = path.join(wt(), 'pkg', 'node_modules', '.bin')
     fs.mkdirSync(bin, { recursive: true })
@@ -776,6 +777,77 @@ describe('T-1268: land runs the relevant test set by default', () => {
     expect(r.status, r.err).toBe(0)
     expect(ran()).toContain('test/a.test.ts')
     expect(ran()).toContain('EXTRA-STEP')
+  })
+
+  // T-1268 (QA d-v115-t1268-qa2): a test that lists a source directory is reached by no import and no
+  // name — a land whose diff touches the package always runs the declared scanner list, and the
+  // package's extra steps, even when the derived set is empty.
+  describe('directory scanners always run when a land touches their package', () => {
+    const LIST = 'packages/core/config/directory-scanners.json'
+    const declare = (tests: string[], scans = ['pkg', 'other']) => {
+      commit(wt(), LIST, JSON.stringify({ packages: { pkg: { scans, tests, exempt: {} } } }) + '\n', 'chore: scanner list')
+    }
+
+    test('a change no import or name reaches (pkg/src/c.ts) still runs the listed scanner test', () => {
+      ticket('T-1')
+      declare(['test/scan.test.ts'])
+      commit(wt(), 'pkg/src/c.ts', 'export const c = 1\n', 'feat: c (T-1)')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toMatch(/relevant tests: 1 file\(s\) in 1 package\(s\) — .*1 always-run directory scanner/)
+      expect(ran().trim()).toBe('test/scan.test.ts')
+    })
+
+    test('a change under another path the package scans (other/) runs it too; a change outside every scanned path does not', () => {
+      ticket('T-1')
+      declare(['test/scan.test.ts'])
+      commit(wt(), 'other/x.txt', 'x\n', 'feat: x (T-1)')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(ran().trim()).toBe('test/scan.test.ts')
+    })
+
+    test('a diff outside every scanned path leaves the scanner list alone', () => {
+      ticket('T-1')
+      declare(['test/scan.test.ts'], ['pkg-elsewhere'])
+      commit(wt(), 'notes.md', 'x\n', 'docs: notes (T-1)')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(ran()).toBe('')
+    })
+
+    test('the package extra steps run when only an unreached file under the package changes — and no bare `vitest run`', () => {
+      ticket('T-1')
+      commit(wt(), 'pkg/package.json', '{"scripts":{"test":"vitest run && echo EXTRA-STEP >> \\"$SHIM_LOG\\""}}\n', 'chore: pkg scripts')
+      commit(wt(), 'pkg/notes.txt', 'x\n', 'docs: notes (T-1)')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toContain('the package\'s extra test steps still run')
+      expect(ran().trim()).toBe('EXTRA-STEP')
+    })
+
+    test('a listed scanner test that is not a test of the package refuses the land before anything merges', () => {
+      ticket('T-1')
+      declare(['test/gone.test.ts'])
+      commit(wt(), 'pkg/src/c.ts', 'export const c = 1\n', 'feat: c (T-1)')
+      const before = git(code, 'rev-parse', 'dev')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status).not.toBe(0)
+      expect(r.err).toContain('which is not a test of that package')
+      expect(git(code, 'rev-parse', 'dev')).toBe(before)
+    })
+
+    test('a red scanner test refuses the land', () => {
+      ticket('T-1')
+      fs.writeFileSync(path.join(wt(), 'pkg', 'node_modules', '.bin', 'vitest'), `#!/bin/sh\n${SHIM.replace('run) shift; echo "$@" >> "$SHIM_LOG";;', 'run) exit 1;;')}\n`)
+      declare(['test/scan.test.ts'])
+      commit(wt(), 'pkg/src/c.ts', 'export const c = 1\n', 'feat: c (T-1)')
+      const before = git(code, 'rev-parse', 'dev')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status).not.toBe(0)
+      expect(r.err).toContain('tests failed on the merged tree')
+      expect(git(code, 'rev-parse', 'dev')).toBe(before)
+    })
   })
 
   test('an empty relevant set says so and lands', () => {
