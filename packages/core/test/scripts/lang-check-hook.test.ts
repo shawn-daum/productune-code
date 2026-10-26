@@ -54,7 +54,7 @@ function stop(sb: Sb, reply: string, extra: Record<string, unknown> = {}, env: R
 }
 
 const NOTICE = (lang: string) =>
-  `[prdt lang check] the reply above is not in lang=${lang}. Send it again now in that language; code, paths, ids and quoted text stay as written.`
+  `[prdt lang check] reply above is not in lang=${lang}. Send it again now in that language; code, paths, ids, quoted text unchanged.`
 
 // The observed shape (T-1116 §problem): an English answer right after a worker's English return.
 const ENGLISH_AFTER_WORKER =

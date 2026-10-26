@@ -171,11 +171,11 @@ QUESTION_CHECK_REASON = (
     "again%s, opening with one line that the question now has its ticket — the user may already have "
     "read this one."
 )
-# T-1116, PENDING inject-edit: the language clause that goes after "send the reply
-# again" (designer draft #3, docs/productune/artifacts/v1.14/chat-lang-inject-lines.md:
-# " in lang=%s", %s = the stored chat language). Empty until that wording is
-# approved — the reason is then byte-identical to the T-990 text above.
-QUESTION_CHECK_LANG_CLAUSE = ""
+# T-1116: the language clause that goes after "send the reply again" (wording settled
+# under the discipline-wording module, T-1245). %s = the stored chat language; the
+# clause is empty when no language is known, so the reason is then byte-identical
+# to the T-990 text above.
+QUESTION_CHECK_LANG_CLAUSE = " in lang=%s"
 
 # KEEP `device_lang` / `user_lang` in lockstep with prdt-user-prompt.sh (T-1116).
 USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")

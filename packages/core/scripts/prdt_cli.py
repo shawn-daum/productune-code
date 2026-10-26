@@ -5238,7 +5238,7 @@ def ask_user_lang_once():
     if USER_LANG_RE.match(_read_token("user-lang")):
         return
     default = device_lang() or "en"
-    ans = _ascii_strip(input(f"chat language (ko, en, ja …) [{default}]: ")).lower()
+    ans = _ascii_strip(input(f"chat language for PO replies (ko, en, ja …) [{default}]: ")).lower()
     _write_token("user-lang", ans if USER_LANG_RE.match(ans) else default)
 
 
