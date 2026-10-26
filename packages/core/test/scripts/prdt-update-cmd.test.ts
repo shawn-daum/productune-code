@@ -159,7 +159,7 @@ describe.skipIf(!PYTHON3)('T-749 · prdt update — nothing installs before the 
     const { clone } = makeRemoteAndClone()
     const before = git(clone, 'rev-parse', 'HEAD').trim()
     const out = runCmdUpdate(clone, { tty: true, stdinAnswer: '1\n' }) // even a "1" answer must never be reached
-    expect(out.trim()).toBe('지금 버전이 최신이에요 (v1.5) — 업데이트할 것이 없어요.')
+    expect(out.trim()).toBe('지금 버전이 최신이에요 (v1.5). 업데이트할 것이 없어요.')
     expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before)
     // T-749b: GUI settings (settings.ts:192,220) and both READMEs point at
     // `prdt update` always re-running install.sh to refresh the mirror/menu,
@@ -323,7 +323,7 @@ print("AFTER_CMD_UPDATE")
     const before = git(clone, 'rev-parse', 'HEAD').trim()
     advanceOriginBranch(origin, 'main', ['v1.6', 'v1.5']) // @{upstream} now strictly ahead; origin/dev untouched
     const out = runCmdUpdate(clone, { tty: true, stdinAnswer: '1\n' }) // must never be reached either way
-    expect(out.trim()).toBe('지금 버전이 최신이에요 (v1.5) — 업데이트할 것이 없어요.')
+    expect(out.trim()).toBe('지금 버전이 최신이에요 (v1.5). 업데이트할 것이 없어요.')
     expect(git(clone, 'rev-parse', 'HEAD').trim()).toBe(before) // nothing pulled from origin/main
     expect(fs.readFileSync(path.join(clone, 'docs', 'RELEASES.md'), 'utf-8')).not.toContain('v1.6')
     expect(fs.existsSync(path.join(clone, '.install-ran'))).toBe(true) // mirror refresh still ran

@@ -7411,8 +7411,8 @@ def cmd_update(_args):
 
     T-749: 묻지 않고 바로 pull+install 하던 as-is를 고친다 — 설치된 버전 → 새
     버전과 그 사이 RELEASES.md 노트를 먼저 보여주고 `1. update`/`2. skip` 을
-    번호 입력으로 물은 뒤에야 pull 한다(`_prompt_update_choice`; 화살표 선택이
-    아니다 — 그 선택의 재현된 결함은 이 함수 바로 아래 주석 참고).
+    물은 뒤에야 pull 한다(`_prompt_update_choice`; T-1231: 터미널이면
+    화살표 · Enter · Esc 메뉴, 아니면 번호 입력).
 
     T-749b (QA grill finding #2): T-749 위 문단의 "묻고서만 pull" 규칙을 새
     RELEASES.md 섹션이 없는 두 경우까지 잘못 확대해, 그 두 경우엔 pull도
@@ -7480,7 +7480,16 @@ def cmd_update(_args):
     if not target_sha:
         sys.exit(msg(m, "update.error.offline"))
 
-    if _prompt_update_choice(m, installed or "?", new_version, sections) != "update":
+    choice = _prompt_update_choice(m, installed or "?", new_version, sections)
+    if choice == "skip":
+        # T-1231: "skip — don't ask again today" must hold: stamp the same daily
+        # slot the run-time nudge spends, so today's next prdt run stays quiet.
+        st = read_json(_update_state_path()) or {}
+        st["last_check"] = _local_day()
+        st["last_check_basis"] = "local"
+        st["known_update"] = {"new": _strip_control_chars(new_version)}
+        _write_update_state(st)
+    if choice != "update":
         return
 
     _run_pull_install(repo, target_sha=target_sha)
@@ -8019,7 +8028,7 @@ def _strip_control_chars(s):
     return _CONTROL_CHAR_RE.sub("", s or "")
 
 
-def _render_update_notes(m, installed, new_version, sections):
+def _render_update_notes(m, installed, new_version, sections, numbered=True):
     """The version+notes box both `cmd_update` and the run-time nudge show
     (T-749). Rules-only frame (no right border) — sidesteps CJK double-width
     misalignment that a boxed layout would get wrong; each section's own body
@@ -8052,29 +8061,198 @@ def _render_update_notes(m, installed, new_version, sections):
             print(f"    {line}" if line.strip() else "")
         print()
     print(rule)
-    print(f"  {msg(m, 'update.choice1')}")
-    print(f"  {msg(m, 'update.choice2')}")
+    if numbered:                       # T-1231: the arrow menu draws its own two lines
+        print(f"  {msg(m, 'update.choice1')}")
+        print(f"  {msg(m, 'update.choice2')}")
+
+
+def _read_menu_key(fd):
+    """One key off the raw tty fd: "up" | "down" | "enter" | "esc" | "eof" |
+    "other". A lone ESC (no byte follows within 50ms) is Esc; `ESC [ A` / `ESC O A`
+    are the arrows. A truncated or over-long escape sequence never blocks: every
+    follow-up byte is waited for 50ms (timeout = Esc), parameter bytes are capped
+    at 16, and a control byte inside a sequence aborts it (ESC = Esc, else the
+    key is ignored)."""
+    import select
+
+    def more():
+        return bool(select.select([fd], [], [], 0.05)[0])
+
+    b = os.read(fd, 1)
+    if not b:
+        return "eof"
+    if b in (b"\r", b"\n"):
+        return "enter"
+    if b == b"\x04":
+        return "eof"
+    if b != b"\x1b":
+        return "other"
+    if not more():
+        return "esc"
+    nxt = os.read(fd, 1)
+    if nxt not in (b"[", b"O"):
+        return "other"
+    for _ in range(16):                # CSI: params/intermediates 0x20-0x3f, then a final byte 0x40-0x7e
+        if not more():
+            return "esc"               # truncated sequence
+        c = os.read(fd, 1)
+        if not c:
+            return "eof"
+        if 0x40 <= c[0] <= 0x7e:
+            return {b"A": "up", b"B": "down"}.get(c, "other")
+        if not 0x20 <= c[0] <= 0x3f:
+            return "esc" if c == b"\x1b" else "other"
+    return "other"                     # over-long: ignore
+
+
+def _clip(s, width):
+    """`s` cut to at most `width` display columns (CJK counts 2)."""
+    out, used = "", 0
+    for ch in s:
+        w = _display_width(ch)
+        if used + w > width:
+            break
+        out += ch
+        used += w
+    return out
+
+
+def _arrow_menu(m, items, hint_key):
+    """T-1231: arrow / Enter / Esc selection on a real terminal. `items`:
+    [(label_key, desc_key), ...]; the first cursor sits on item 0 (user T-1238:
+    reverses T-749's number-only prompt). Returns the chosen index, or None for
+    Esc / Ctrl-D / EOF (the guide line is erased first). Returns "unsupported"
+    when the terminal can't enter cbreak mode (stdin is not a real tty, termios
+    missing) so the caller falls back to the number prompt. Ctrl-C raises
+    KeyboardInterrupt after the terminal is restored. SIGTERM / SIGHUP restore
+    the terminal and cursor, then die by the signal; SIGTSTP restores, stops,
+    and re-enters on resume. Each row is clipped to the terminal width so a
+    redraw always moves up exactly len(rows)+1 physical rows. Stdlib only."""
+    try:
+        import signal, termios, tty
+        fd = sys.stdin.fileno()
+        saved = termios.tcgetattr(fd)
+    except Exception:                  # no termios, no fileno, or not a tty (pipe behind an isatty shim)
+        return "unsupported"
+    rows = [(msg(m, lk), msg(m, dk)) for lk, dk in items]
+    hint = msg(m, hint_key)
+    color = not os.environ.get("NO_COLOR")
+    bold, dim, off = ("\x1b[1m", "\x1b[2m", "\x1b[0m") if color else ("", "", "")
+    out = sys.stdout
+    cur = 0
+    first = True
+
+    def draw():
+        nonlocal first
+        width = max(shutil.get_terminal_size((80, 24)).columns - 1, 1)   # never touch the last column: no wrap
+        if not first:
+            out.write(f"\x1b[{len(rows) + 1}A\r")   # back up over the items + hint
+        first = False
+        for i, (label, desc) in enumerate(rows):
+            head = _clip(("❯ " if i == cur else "  ") + label, width)
+            room = width - _display_width(head) - 3
+            tail = f"   {dim}{_clip(desc, room)}{off}" if room > 0 else ""
+            head = f"{bold}{head}{off}" if i == cur else head
+            out.write(f"\x1b[2K{head}{tail}\n")
+        out.write(f"\x1b[2K{dim}{_clip(hint, width)}{off}\n")
+        out.flush()
+
+    def enter():
+        tty.setcbreak(fd)
+        out.write("\x1b[?25l")         # hide the caret while the menu is up
+        out.flush()
+
+    def restore(now=False):
+        try:
+            out.write("\x1b[?25h")
+            out.flush()
+        except Exception:
+            pass
+        try:
+            termios.tcsetattr(fd, termios.TCSANOW if now else termios.TCSADRAIN, saved)
+        except Exception:                # TCSANOW in signal handlers: a drain can block behind an unread pty
+            pass
+
+    def on_die(signum, _frame):
+        restore(now=True)
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    def on_stop(signum, _frame):
+        restore(now=True)
+        signal.signal(signal.SIGTSTP, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGTSTP)      # stops here; continues on SIGCONT
+        signal.signal(signal.SIGTSTP, on_stop)
+        enter()
+        draw()
+
+    old = {}
+    try:
+        for sig, h in ((signal.SIGTERM, on_die), (signal.SIGHUP, on_die), (signal.SIGTSTP, on_stop)):
+            old[sig] = signal.signal(sig, h)
+    except ValueError:                 # not the main thread — no handlers, terminal still restored on normal exits
+        pass
+    try:
+        enter()
+        draw()
+        while True:
+            key = _read_menu_key(fd)
+            if key == "enter":
+                return cur
+            if key in ("esc", "eof"):
+                out.write("\x1b[1A\r\x1b[2K")   # Esc state: the guide line goes away
+                return None
+            if key == "up":
+                cur = (cur - 1) % len(rows)
+            elif key == "down":
+                cur = (cur + 1) % len(rows)
+            else:
+                continue
+            draw()
+    finally:
+        restore()
+        for sig, h in old.items():
+            signal.signal(sig, h)
 
 
 def _prompt_update_choice(m, installed, new_version, sections):
-    """Render the version+notes box and collect a plain `1`/`2` answer — never
-    an arrow-key select. T-749 reproduced gum/fzf's arrow-select confirming its
-    PRE-HIGHLIGHTED first option (the destructive "update now") on a single bare
-    Enter with zero navigation — see the design-comment block above
-    `maybe_prompt_update` for the repro. A typed digit has no default to fall
-    into: a bare Enter (or anything else) just re-prompts. Returns "update",
-    "skip", or "cancel" — never None.
+    """Render the version+notes box and ask: update or skip. On a real terminal
+    (T-1231) that is an arrow / Enter / Esc menu with the cursor first on
+    "update"; Esc installs nothing (`update.cancelled`). Anything else (pipe,
+    `isatty()` shim with no real tty) keeps the T-749 plain `1`/`2` number
+    prompt. Returns "update", "skip", or "cancel" — never None.
 
-    T-749b (QA grill findings #3/#4): EOF on stdin reads as "skip" (never
-    installs) same as before, but now prints a fresh-line newline first — the
-    terminal never echoes one for Ctrl-D itself, so the next message used to
-    run on directly after the prompt text with no line break. Ctrl-C
-    (KeyboardInterrupt) is caught here too — it used to propagate all the way
-    out of `main()` as an uncaught traceback and, on the run-time nudge path,
-    take the ORIGINAL command down with it; caught here it prints one fresh
-    line + one catalog message and returns "cancel", never installs, and lets
-    both callers fall through normally."""
-    _render_update_notes(m, installed, new_version, sections)
+    T-749 (why the number prompt exists): gum/fzf's arrow-select confirmed its
+    PRE-HIGHLIGHTED first option on a single bare Enter. T-1231 brings the arrow
+    menu back on user decision T-1238 row 1 (first cursor on update), so a bare
+    Enter on a terminal now installs by design; the number path has no default:
+    a bare Enter (or anything else) just re-prompts.
+
+    T-749b (QA grill findings #3/#4), number path: EOF on stdin reads as "skip"
+    (never installs) with a fresh-line newline first; Ctrl-C (KeyboardInterrupt)
+    is caught — one fresh line + one catalog message, returns "cancel", never
+    installs, both callers fall through normally. The menu path treats Ctrl-C
+    the same way."""
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if interactive:
+        _render_update_notes(m, installed, new_version, sections, numbered=False)
+        try:
+            picked = _arrow_menu(
+                m, [("update.item.go", "update.item.go.d"), ("update.item.skip", "update.item.skip.d")],
+                "update.hint")
+        except KeyboardInterrupt:
+            print()
+            print(msg(m, "update.cancelled"))
+            return "cancel"
+        if picked != "unsupported":
+            if picked is None:
+                print(msg(m, "update.cancelled"))
+                return "cancel"
+            return "update" if picked == 0 else "skip"
+        print(f"  {msg(m, 'update.choice1')}")      # no real tty behind the isatty(): number prompt
+        print(f"  {msg(m, 'update.choice2')}")
+    else:
+        _render_update_notes(m, installed, new_version, sections)
     while True:
         try:
             raw = input(msg(m, "update.prompt")).strip()
