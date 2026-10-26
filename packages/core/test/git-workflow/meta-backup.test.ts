@@ -37,6 +37,7 @@ import {
   metaBackupStatePath,
   metaBackupRemoteName,
   isValidRemoteName,
+  isLegalRemoteName,
   acquireBackupLock,
   releaseBackupLock,
   BACKUP_RETRY_BACKOFF_MS,
@@ -630,5 +631,25 @@ test('T-848 S4: a link planted at the backup state file is refused — victim un
     expect(fs.lstatSync(metaBackupStatePath(projectDir)).isSymbolicLink()).toBe(true)
   } finally {
     fs.rmSync(victimDir, { recursive: true, force: true })
+  }
+})
+
+test('T-1278 — remote-name check is in-process: agrees with git check-ref-format on a corpus, never stricter by accident', () => {
+  const corpus = [
+    'backup', 'origin', 'my-backup', 'nas.home', 'team/backup', 'a/b/c', 'a.b', 'é백업', 'x@y', 'a@',
+    '@', '@{', 'a@{b', 'x..y', 'a.', '.a', 'a/.b', 'a/b.lock', 'a.lock', 'a.lock/b', '/a', 'a/', 'a//b',
+    'bad^ref', 'a~1', 'a?b', 'a*b', 'a[b', 'a\\b', 'a b', 'a\tb', 'a\x7fb', 'a:b', '-f', '--force', '',
+  ]
+  for (const name of corpus) {
+    let git = true
+    if (!name || name.startsWith('-') || /[:\s]/.test(name)) git = false
+    else {
+      try {
+        execFileSync('git', ['check-ref-format', '--allow-onelevel', name], { stdio: 'ignore' })
+      } catch {
+        git = false
+      }
+    }
+    expect(isLegalRemoteName(name), JSON.stringify(name)).toBe(git)
   }
 })

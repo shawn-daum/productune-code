@@ -1480,6 +1480,19 @@ def meta_git_refusal(prob):
               "repository. Check it, remove it, then run `prdt doctor`.")
 
 
+def _legal_remote_name(name):
+    """In-process mirror of git `check-ref-format --allow-onelevel` (and of core's
+    isLegalRemoteName, meta-backup.ts) — no subprocess, so load or a trust refusal
+    can never report a legal name as illegal (T-1278). At least as strict as git."""
+    if not name or name.startswith("-") or name == "@" or ".." in name or "@{" in name:
+        return False
+    if name.endswith(".") or name.startswith("/") or name.endswith("/"):
+        return False
+    if any(ord(c) <= 0x20 or ord(c) == 0x7f or c in "~^:?*[\\" for c in name):
+        return False
+    return all(c and not c.startswith(".") and not c.endswith(".lock") for c in name.split("/"))
+
+
 def _meta_git(root, args):
     prob = meta_git_trust_problem(root)
     if prob:
@@ -1567,8 +1580,7 @@ def meta_backup_lag_warnings(root):
     # tick (it has nothing to push to), a flag-/refspec-shaped one is refused by
     # the tick — either way doctor says so here, latch or no latch.
     auto = _meta_backup_remote_name(root)
-    if auto.startswith("-") or any(c in auto for c in ":\t \n") or \
-            _meta_git(root, ["check-ref-format", "--allow-onelevel", auto]).returncode != 0:
+    if not _legal_remote_name(auto):
         warns.append(f"meta: `meta.backup_remote` = {auto!r} is not a legal remote name — the automatic backup "
                      f"refuses it; set .prdt/config.json meta.backup_remote to one of: {', '.join(remotes)}")
     elif auto not in remotes:
