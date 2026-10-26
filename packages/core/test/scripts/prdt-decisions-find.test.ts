@@ -86,18 +86,34 @@ describe('prdt decisions find', () => {
     expect(line).toBe('T-10 · 2026-10-01 · done · why: 정본이 둘이면 어긋난다 · how: 한 곳에만 적는다 · module: discipline wording · what: 배포 정본 = DEPLOY.md · 원문 「추천대로」')
   })
 
-  test('the quote label comes from the catalog (ko 원문 · en quote) and a hard-coded address name is not a user marker (T-1291)', () => {
+  test('the quote label comes from the catalog (ko 원문 · en quote) (T-1291)', () => {
     const run = (lang: string) => execFileSync('python3', [PRDT_CLI, 'decisions', 'find', 'Frobnicator'], {
       cwd: projectDir, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'), env: { ...process.env, PRDT_LANG: lang },
     }).split('\n').find((l) => l.startsWith('T-12'))!
     expect(run('ko')).toContain('원문 「b」')
     expect(run('en')).toContain('quote 「b」')
     expect(run('en')).not.toContain('원문')
-    write('docs/tickets/v1.0/T-19.md', ['---', 'id: T-19', 'slug: fixture-t-19', 'type: decision', 'status: done', 'assignee: user', 'created: 2026-10-20', '---', '',
+  })
+
+  test('the register address is a user marker; another address is not (T-1291)', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-dec-home-'))
+    const T = 'docs/tickets/v1.0/T-19.md'
+    write(T, ['---', 'id: T-19', 'slug: fixture-t-19', 'type: decision', 'status: done', 'assignee: user', 'created: 2026-10-20', '---', '',
       '## problem', '', '- Frobnicator', '', '## acceptance', '', '- x', '', '## outcome', '', '- 션님 (원문): *"x"*', ''].join('\n'))
-    const out = execFileSync('python3', [PRDT_CLI, 'decisions', 'find', 'Frobnicator'], { cwd: projectDir, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli') })
-    expect(out.split('\n').find((l) => l.startsWith('T-19')) ?? '').not.toContain('「x」')
-    fs.rmSync(path.join(projectDir, 'docs/tickets/v1.0/T-19.md'))
+    const t19 = (address: string) => {
+      fs.writeFileSync(path.join(home, 'register'), `address=${address}\n`)
+      return execFileSync('python3', [PRDT_CLI, 'decisions', 'find', 'Frobnicator'], {
+        cwd: projectDir, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'), env: { ...process.env, PRDT_HOME: home },
+      }).split('\n').find((l) => l.startsWith('T-19')) ?? ''
+    }
+    try {
+      expect(t19('션님')).toContain('「x」')
+      expect(t19('Shawn')).not.toContain('「x」')
+      write(T, fs.readFileSync(path.join(projectDir, T), 'utf8').replace('션님 (원문)', 'Shawn (원문)'))
+      expect(t19('Shawn')).toContain('「x」')
+    } finally {
+      fs.rmSync(path.join(projectDir, T), { force: true }); fs.rmSync(home, { recursive: true, force: true })
+    }
   })
 
   test('a decision without the keys prints why: none', () => {

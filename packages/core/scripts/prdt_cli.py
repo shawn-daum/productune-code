@@ -6948,7 +6948,24 @@ DECISION_KEYS = ("why", "how", "module", "what")
 _DEC_KEY_HEAD_RE = re.compile(r"^###\s+(?:(\S+)\s+)?(why|how|module|what)\s*$", re.I)
 _DEC_INLINE_RE = re.compile(r"(?<![\w#`])(why|how|module|what)\s*[:：]\s*(.+?)(?=\s+(?:why|how|module|what)\s*[:：]|$)", re.I)
 _DEC_QUOTE_RE = re.compile(r"「([^」]+)」|\*[\"“]([^*]+?)[\"”]\*")
-_DEC_USER_LINE_RE = re.compile(r"^\s*[-*]?\s*(?:\d{4}-\d{2}-\d{2}\s+)?(?:사용자|user)\b", re.I)
+def _register_address():
+    """This machine's register `address` (the name the PO calls the user), '' when unset."""
+    try:
+        text = (prdt_home() / "register").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    val = ""
+    for ln in text.splitlines():
+        k, sep, v = ln.partition("=")
+        if sep and k.strip() == "address":
+            val = v.strip()
+    return val
+
+
+def _dec_user_line_re():
+    """A user-quote line opens with a marker: 사용자 · user · this machine's register address."""
+    names = ["사용자", "user"] + ([re.escape(a)] if (a := _register_address()) else [])
+    return re.compile(r"^\s*[-*]?\s*(?:\d{4}-\d{2}-\d{2}\s+)?(?:%s)(?![\w])" % "|".join(names), re.I)
 _DEC_REVERSED_RE = re.compile(r"뒤집|overturn|supersede", re.I)
 _DEC_LOG_LINE_RE = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2})\s*(.*)$")
 _DEC_LIMIT = 10
@@ -6988,6 +7005,7 @@ def _dec_items(text):
             cur["lines"].append(ln)
     blocks.append(cur)
     items, byl = [], {}
+    user_re = _dec_user_line_re()
 
     def item(label):
         if label not in byl:
@@ -7006,7 +7024,7 @@ def _dec_items(text):
         it = item(b["label"])
         it["text"] += "\n" + (b["head"] or "") + "\n" + body
         for ln in b["lines"]:
-            if _DEC_USER_LINE_RE.match(ln):
+            if user_re.match(ln):
                 q = _dec_quotes(ln)
                 if q:
                     it["quote"] = q[0]
@@ -7017,8 +7035,9 @@ def _dec_items(text):
 
 def _dec_user_quote(text):
     q = ""
+    user_re = _dec_user_line_re()
     for ln in text.splitlines():
-        if _DEC_USER_LINE_RE.match(ln):
+        if user_re.match(ln):
             qs = _dec_quotes(ln)
             if qs:
                 q = qs[0]
