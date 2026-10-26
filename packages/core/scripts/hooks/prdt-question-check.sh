@@ -70,12 +70,10 @@
 # the turn start (so a decision ticket changed earlier in a very long turn may
 # not exempt it — the stated limit).
 #
-# DEFAULT OFF (T-1001 = B). The check ships switched off until decisions get
-# their own `D-NNN` records (T-996 = C): blocking today would make every PO open
-# a heavy `type: decision` ticket for each small confirm. `PRDT_QUESTION_CHECK=on`
-# in the hook's environment turns it on (tests, dogfooding); any other value or
-# none = off. The slice that lands `prdt decisions` and adds "D" to
-# DECISION_ID_PREFIXES flips this default (docs/artifacts/v1.13/decision-records-plan.md).
+# DEFAULT ON (T-1260; user approval T-1245 1, reverses T-996/T-1001/T-1003).
+# Decision tickets stay, and a PO ask with no open decision ticket blocks once.
+# `PRDT_QUESTION_CHECK=off` in the hook's environment disables it; any other
+# value or none = on.
 #
 # THE EVENT REACHES PYTHON ON STDIN, NEVER THROUGH AN ENVIRONMENT VARIABLE
 # (T-688 개정 1: a large `last_assistant_message` in execve's environment hits
@@ -90,7 +88,7 @@ case "$EVENT_JSON" in
   *'"prdt-po"'*) ;;
   *) exit 0 ;;
 esac
-[ "${PRDT_QUESTION_CHECK:-off}" = "on" ] || exit 0
+[ "${PRDT_QUESTION_CHECK:-on}" != "off" ] || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 printf '%s' "$EVENT_JSON" | python3 -I -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
 exit 0
@@ -170,9 +168,56 @@ QUESTION_CHECK_REASON = (
     "option set, or an item under a waiting-for-your-answer heading — and no `type: decision` "
     "ticket was created or changed this turn. Open a `type: decision` ticket for each ask or cite "
     "its open ticket id beside it (a waiting item: `assignee: user` counts), then send the reply "
-    "again, opening with one line that the question now has its ticket — the user may already have "
+    "again%s, opening with one line that the question now has its ticket — the user may already have "
     "read this one."
 )
+# T-1116: the language clause that goes after "send the reply again" (wording settled
+# under the discipline-wording module, T-1245). %s = the stored chat language; the
+# clause is empty when no language is known, so the reason is then byte-identical
+# to the T-990 text above.
+QUESTION_CHECK_LANG_CLAUSE = " in lang=%s"
+
+# KEEP `device_lang` / `user_lang` in lockstep with prdt-user-prompt.sh (T-1116).
+USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
+
+
+def _lang_primary(tag):
+    m = re.match(r"\s*([A-Za-z]{2,3})(?:[-_.@]|\s*\Z)", tag) if isinstance(tag, str) else None
+    return m.group(1).lower() if m else None
+
+
+def device_lang():
+    try:
+        import plistlib
+        p = os.path.join(os.path.expanduser("~"), "Library", "Preferences", ".GlobalPreferences.plist")
+        with open(p, "rb") as f:
+            langs = plistlib.load(f).get("AppleLanguages")
+        if isinstance(langs, list) and langs and _lang_primary(langs[0]):
+            return _lang_primary(langs[0])
+    except Exception:
+        pass
+    for k in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        v = _lang_primary(os.environ.get(k) or "")
+        if v:
+            return v
+    return None
+
+
+def user_lang():
+    home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+    try:
+        with open(os.path.join(home, "user-lang"), encoding="utf-8", errors="replace") as f:
+            v = "".join(f.read(64).split())
+    except OSError:
+        v = ""
+    return v if USER_LANG_RE.match(v) else device_lang()
+
+
+def lang_clause():
+    if not QUESTION_CHECK_LANG_CLAUSE:
+        return ""
+    lang = user_lang()
+    return QUESTION_CHECK_LANG_CLAUSE % lang if lang else ""
 LIST_CAP = 5
 RUN_BUDGET_S = 5
 
@@ -520,7 +565,7 @@ def main():
     shown = ", ".join(str(n) for n in uncovered[:LIST_CAP])
     if len(uncovered) > LIST_CAP:
         shown += ", +%d more" % (len(uncovered) - LIST_CAP)
-    sys.stdout.write(json.dumps({"decision": "block", "reason": QUESTION_CHECK_REASON % shown}))
+    sys.stdout.write(json.dumps({"decision": "block", "reason": QUESTION_CHECK_REASON % (shown, lang_clause())}))
 
 
 def _out_of_budget(*_):

@@ -147,6 +147,17 @@ TICKET_OPTIONS_TABLE_SCAFFOLD = (
     "| | | | | |\n"
     "| | | | | |\n"
 )
+# T-1258 (L1 I2, user approval T-1245): a `decision` ticket's `outcome` carries
+# four `###` keys — why (the fork's cause) · how (the principle the chosen answer
+# follows) · module (the shared principle/term group) · what (the act it ends in).
+# `###`, so the H2 frame in `fmt_ticket_body` is untouched; `new` scaffolds them,
+# doctor warns (advisory) on a decision closed after TICKET_DECISION_OUTCOME_LANDING_DATE
+# whose `outcome` lacks any. A scaffold of bare headings is NOT a filled outcome.
+TICKET_DECISION_OUTCOME_KEYS = ("why", "how", "module", "what")
+TICKET_DECISION_OUTCOME_LANDING_DATE = "2026-10-26"
+TICKET_DECISION_OUTCOME_SCAFFOLD = "".join(f"### {k}\n\n" for k in TICKET_DECISION_OUTCOME_KEYS)
+_DECISION_OUTCOME_HEADING_RE = re.compile(
+    r"^### (%s)[ \t]*$" % "|".join(TICKET_DECISION_OUTCOME_KEYS), re.M)
 
 
 
@@ -2645,6 +2656,7 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     if interactive and sys.stdin.isatty():
         slug = input(f"project slug [{slug}]: ").strip() or slug
         version = prompt_version(version)
+        ask_user_lang_once()
     prdt.mkdir(exist_ok=True)
     # Field-preserving config write (T-365): a partial project may already
     # carry config.json (e.g. meta.allowlist) — merge, never rebuild from
@@ -5184,6 +5196,52 @@ def _read_token(name):
         return ""
 
 
+USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
+
+
+def _lang_primary(tag):
+    """'ko-KR' · 'ko_KR.UTF-8' · 'ko' → 'ko'; None when `tag` opens with no 2-3 letter subtag."""
+    m = re.match(r"\s*([A-Za-z]{2,3})(?:[-_.@]|\s*\Z)", tag) if isinstance(tag, str) else None
+    return m.group(1).lower() if m else None
+
+
+def device_lang():
+    """The OS language: macOS AppleLanguages[0] (global preferences plist), else
+    LC_ALL · LC_MESSAGES · LANG. None when none of them names a language.
+    KEEP in lockstep with `device_lang` in hooks/prdt-user-prompt.sh (T-1116)."""
+    try:
+        import plistlib
+        p = Path.home() / "Library" / "Preferences" / ".GlobalPreferences.plist"
+        with open(p, "rb") as f:
+            langs = plistlib.load(f).get("AppleLanguages")
+        if isinstance(langs, list) and langs and _lang_primary(langs[0]):
+            return _lang_primary(langs[0])
+    except Exception:
+        pass
+    for k in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        v = _lang_primary(os.environ.get(k) or "")
+        if v:
+            return v
+    return None
+
+
+def user_lang():
+    """T-1116: the stored chat language (`~/.prdt/user-lang`), else the device language."""
+    v = _read_token("user-lang")
+    return v if USER_LANG_RE.match(v) else device_lang()
+
+
+def ask_user_lang_once():
+    """T-1116 onboarding: ask the chat language once per machine — only while
+    `~/.prdt/user-lang` holds no valid value; the device language is the default
+    answer. An answer that is not a language code keeps the device language."""
+    if USER_LANG_RE.match(_read_token("user-lang")):
+        return
+    default = device_lang() or "en"
+    ans = _ascii_strip(input(f"chat language for PO replies (ko, en, ja …) [{default}]: ")).lower()
+    _write_token("user-lang", ans if USER_LANG_RE.match(ans) else default)
+
+
 def _write_token(name, value):
     path = _token_file(name)
     if value is None:
@@ -5349,6 +5407,15 @@ def settings_entries(droot):
         "get": lambda: "en" if _read_token("cli-lang") == "en" else "ko",
         "put": lambda v: _write_token("cli-lang", v),
     })
+    # T-1116: the user's chat language — machine-level, asked once (`prdt init`),
+    # read by the PO hooks; never collected → the device language.
+    entries.append({
+        "key": "user.lang", "kind": "text", "domain": None,
+        "shape": "a language code of 2-3 lowercase letters (ko, en, ja)",
+        "check": lambda v: None if USER_LANG_RE.match(v) else "shape",
+        "get": user_lang,
+        "put": lambda v: _write_token("user-lang", v),
+    })
     entries.append({
         "key": "priority.projects", "kind": "text", "domain": None,
         "shape": "comma-separated project slugs",
@@ -5503,7 +5570,7 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # `tickets new`'s frontmatter-key order (contracts §Tickets): id · slug · type ·
 # status · assignee · feature? · prd_item? · deps? · created · closed? — a
 # fresh ticket never carries `closed`.
-TICKET_FRONTMATTER_ORDER = ("id", "slug", "type", "status", "assignee", "feature",
+TICKET_FRONTMATTER_ORDER = ("id", "slug", "title", "type", "status", "assignee", "feature",
                             "prd_item", "deps", "created")
 
 
@@ -5534,6 +5601,12 @@ def cmd_tickets_new(args, root):
     if not args.slug or not SLUG_RE.match(args.slug):
         sys.exit("prdt tickets new: --slug is required and must be kebab-case (a-z0-9, hyphen-separated)")
     ttype = args.type
+    # T-1276: `title` is optional free text in the project's user_lang — any
+    # language, never matched against a script or wordlist; only the
+    # frontmatter's one-line shape is enforced.
+    title = (getattr(args, "title", None) or "").strip() or None
+    if title and any(c in title for c in "\r\n"):
+        sys.exit("prdt tickets new: --title must be a single line")
     tid = next_ticket_id(root)
     line = getattr(args, "line", None)
     # T-1084: an explicit placement. `--backlog` → backlog/; `--version [<product>/]vX.Y`
@@ -5570,7 +5643,7 @@ def cmd_tickets_new(args, root):
     # `type: decision` forces `assignee: user` (contracts §Tickets) — never a
     # CLI choice, the same way the frame itself is never a per-ticket choice.
     assignee = "user" if ttype == "decision" else (args.assignee or "po")
-    fm = {"id": tid, "slug": args.slug, "type": ttype, "status": "open", "assignee": assignee,
+    fm = {"id": tid, "slug": args.slug, "title": title, "type": ttype, "status": "open", "assignee": assignee,
           "feature": args.feature, "prd_item": args.prd_item,
           "deps": "[" + ", ".join(args.deps) + "]" if args.deps else None,
           # The MACHINE's local date, not UTC (T-685 fix — PO-observed at
@@ -5591,6 +5664,8 @@ def cmd_tickets_new(args, root):
     def _section(k):
         if k == "options" and ttype == "decision":
             return f"## options\n\n{TICKET_OPTIONS_TABLE_SCAFFOLD}\n"
+        if k == "outcome" and ttype == "decision":
+            return f"## outcome\n\n{TICKET_DECISION_OUTCOME_SCAFFOLD}"
         return f"## {k}\n\n"
     body = "".join(_section(k) for k in body_keys)
     text = "\n".join(fm_lines) + "\n\n" + body
@@ -5732,7 +5807,10 @@ def fmt_ticket_body(body, ttype, status):
             violations.append("type: decision requires `options` with a `recommend` cell")
         elif "recommend" not in opts.lower():
             violations.append("`options` is missing a `recommend` cell (required for type: decision)")
-    if status == "done" and not "".join(key_content.get("outcome", [])).strip():
+    # T-1258: a `decision` scaffold's bare `### why|how|module|what` lines are
+    # structure, not content — they never satisfy "done requires outcome".
+    outcome_text = _DECISION_OUTCOME_HEADING_RE.sub("", "".join(key_content.get("outcome", [])))
+    if status == "done" and not outcome_text.strip():
         violations.append("status: done requires `outcome`")
 
     new_body = preamble + "".join(
@@ -6602,7 +6680,7 @@ def cmd_tickets(args):
             print(links[tid] if tid in hit else f"{tid} (not found)")
         return
     q, params = ("SELECT id, slug, type, status, assignee, version, deps, "
-                 "(SELECT also FROM ticket_also WHERE ticket_also.id = tickets.id) AS also FROM tickets"), []
+                 "(SELECT also FROM ticket_also WHERE ticket_also.id = tickets.id) AS also, path FROM tickets"), []
     conds = []
     if args.backlog:
         conds.append("(version = 'backlog' OR version LIKE '%/backlog')")
@@ -6641,7 +6719,9 @@ def cmd_tickets(args):
         also = json.loads(r[7] or "[]")
         if also:
             dep_s += f" also={','.join(also)}"
-        print(f"{r[0]} [{r[3]:>7}] {r[2]:<6} {r[5]:<8} {r[1] or ''} → {r[4] or '-'}{dep_s}")
+        # T-1276: a ticket's name is its `title` when it has one, else its slug.
+        name = (parse_frontmatter(root / r[8])[0].get("title") if r[8] else None) or r[1] or ""
+        print(f"{r[0]} [{r[3]:>7}] {r[2]:<6} {r[5]:<8} {name} → {r[4] or '-'}{dep_s}")
     if not rows:
         print("(no tickets)")
 
@@ -6809,6 +6889,311 @@ def run_claude_then_restore(cmd, env=None):
         os.kill(os.getpid(), -rc)
         sys.exit(128 - rc)
     sys.exit(rc)
+
+
+# ── decisions find (T-1257, design decision-question-design §3) ──────────────
+# The lookup the PO runs before asking the user anything: closed decision
+# tickets · wiki `decision--*` pages · user-quoted `log.md` lines, one line each.
+# Read-only; a candidate list, never a verdict (the PO judges the match).
+DECISION_KEYS = ("why", "how", "module", "what")
+_DEC_KEY_HEAD_RE = re.compile(r"^###\s+(?:(\S+)\s+)?(why|how|module|what)\s*$", re.I)
+_DEC_INLINE_RE = re.compile(r"(?<![\w#`])(why|how|module|what)\s*[:：]\s*(.+?)(?=\s+(?:why|how|module|what)\s*[:：]|$)", re.I)
+_DEC_QUOTE_RE = re.compile(r"「([^」]+)」|\*[\"“]([^*]+?)[\"”]\*")
+_DEC_USER_LINE_RE = re.compile(r"^\s*[-*]?\s*(?:\d{4}-\d{2}-\d{2}\s+)?(?:사용자|션님|user)\b", re.I)
+_DEC_REVERSED_RE = re.compile(r"뒤집|overturn|supersede", re.I)
+_DEC_LOG_LINE_RE = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2})\s*(.*)$")
+_DEC_LIMIT = 10
+_DEC_FIELD_MAX = 110
+
+
+def _dec_quotes(text):
+    return [(a or b).strip() for a, b in _DEC_QUOTE_RE.findall(text)]
+
+
+def _dec_clip(s, n=_DEC_FIELD_MAX):
+    s = re.sub(r"\s+", " ", s or "").strip().rstrip(".")
+    return s if len(s) <= n else s[: n - 1].rstrip() + "…"
+
+
+def _dec_section(body, name):
+    """Text of one `## name` section of a ticket/page body ('' when absent)."""
+    m = re.search(r"^##\s+%s\s*$" % re.escape(name), body, re.M | re.I)
+    if not m:
+        return ""
+    rest = body[m.end():]
+    n = re.search(r"^##\s", rest, re.M)
+    return rest[: n.start()] if n else rest
+
+
+def _dec_items(text):
+    """Outcome-shaped text → list of {label, why, how, module, what, quote, text}.
+    `### why|how|module|what` headings (optional leading item label such as `①`)
+    are the design-D6 keys; any other `###` heading starts a labelled item whose
+    bullets may carry inline `what: … how: …`. Text with no `###` is one item."""
+    blocks, cur = [], {"label": "", "head": None, "lines": []}
+    for ln in text.splitlines():
+        if ln.startswith("### "):
+            blocks.append(cur)
+            cur = {"label": ln[4:].strip(), "head": ln.strip(), "lines": []}
+        else:
+            cur["lines"].append(ln)
+    blocks.append(cur)
+    items, byl = [], {}
+
+    def item(label):
+        if label not in byl:
+            byl[label] = {"label": label, "text": "", "quote": ""}
+            items.append(byl[label])
+        return byl[label]
+
+    for b in blocks:
+        body = "\n".join(b["lines"]).strip()
+        m = _DEC_KEY_HEAD_RE.match(b["head"] or "")
+        if m:
+            it = item(m.group(1) or "")
+            it.setdefault(m.group(2).lower(), _dec_clip(re.sub(r"^[-*]\s*", "", body.splitlines()[0]) if body else ""))
+            it["text"] += "\n" + (b["head"] or "") + "\n" + body
+            continue
+        it = item(b["label"])
+        it["text"] += "\n" + (b["head"] or "") + "\n" + body
+        for ln in b["lines"]:
+            if _DEC_USER_LINE_RE.match(ln):
+                q = _dec_quotes(ln)
+                if q:
+                    it["quote"] = q[0]
+            for k, v in _DEC_INLINE_RE.findall(ln):
+                it.setdefault(k.lower(), _dec_clip(v))
+    return [i for i in items if i["text"].strip()]
+
+
+def _dec_user_quote(text):
+    q = ""
+    for ln in text.splitlines():
+        if _DEC_USER_LINE_RE.match(ln):
+            qs = _dec_quotes(ln)
+            if qs:
+                q = qs[0]
+    return q
+
+
+def _dec_matcher(words):
+    pats = []
+    for w in words:
+        w = w.strip()
+        if not w:
+            continue
+        # ASCII words match whole-word (so `land` does not hit `landing`); other
+        # scripts match as a substring (Korean has no word boundary to respect).
+        pats.append(re.compile(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(w), re.I)
+                    if w.isascii() else re.compile(re.escape(w), re.I))
+    return pats
+
+
+def _dec_hits(pats, text):
+    return sum(1 for p in pats if p.search(text))
+
+
+def _dec_sort_key(rec):
+    m = re.search(r"(\d+)$", rec["id"])
+    return (rec["date"] or "", int(m.group(1)) if m else 0)
+
+
+def _dec_term_records(root, pats):
+    """Term-dictionary entries (concept → say). Read only from schema-2 files —
+    canon discipline/wordlist/*.json and the project's .prdt/wordlist/*.json; a
+    schema-1 file (or none) contributes nothing and prints nothing (T-1262)."""
+    dirs = []
+    try:
+        cd = wordlist_canon_dir()
+        if cd:
+            dirs.append(Path(cd))
+    except Exception:
+        pass
+    dirs.append(Path(root) / ".prdt" / "wordlist")
+    out, seen = [], set()
+    for d in dirs:
+        for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict) or data.get("schema") != 2 or not isinstance(data.get("entries"), list):
+                continue
+            for e in data["entries"]:
+                if not isinstance(e, dict) or not isinstance(e.get("concept"), str):
+                    continue
+                say = e.get("say") if isinstance(e.get("say"), list) else []
+                hay = " ".join([e["concept"], *[str(s) for s in say]])
+                if pats and not _dec_hits(pats, hay):
+                    continue
+                key = (e["concept"], f.stem)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"id": f"term:{f.stem}", "date": "", "status": "term", "kind": "term",
+                            "line": f"term: {_dec_clip(e['concept'])} → {_dec_clip(' / '.join(str(s) for s in say))}"})
+    return out
+
+
+def decisions_collect(root, words, feature=None):
+    """[(record)] — every candidate, unsorted, unlimited. record = {id, date,
+    status, kind, items[{why,how,module,what,quote}], reversed_by, hits}."""
+    pats = _dec_matcher(words)
+    recs = []
+    for row, p, _ in scan_tickets(root) or []:
+        if feature and row.get("feature") != feature:
+            continue
+        try:
+            text = Path(p).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        fm, body = parse_frontmatter_text(text)
+        outcome, log = _dec_section(body, "outcome"), _dec_section(body, "log")
+        is_dec = row["type"] == "decision" or bool(_dec_user_quote(outcome + "\n" + log))
+        if not is_dec or (pats and not _dec_hits(pats, text)):
+            continue
+        items = _dec_items(outcome)
+        quote = _dec_user_quote(outcome) or _dec_user_quote(log)
+        rev = ""
+        for ln in log.splitlines():
+            if _DEC_REVERSED_RE.search(ln):
+                ids = [i for i in re.findall(r"T-\d+", ln) if i != row["id"]]
+                if ids:
+                    rev = ids[0]
+        recs.append({"id": row["id"], "date": row["closed"] or row["created"] or "",
+                     "status": row["status"] or "-", "kind": "ticket", "items": items,
+                     "quote": quote, "slug": row["slug"], "reversed_by": rev, "text": text})
+    wdirs = [shared_docs_dir(root) / "wiki"] + [d for _, d in product_docs_dirs(root, "wiki")]
+    seen = set()
+    for wd in wdirs:
+        if not wd.is_dir() or wd in seen:
+            continue
+        seen.add(wd)
+        for p in sorted(wd.glob("decision--*.md")):
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            fm, body = parse_frontmatter_text(text)
+            if feature and fm.get("feature") != feature:
+                continue
+            if pats and not _dec_hits(pats, text):
+                continue
+            st = str(fm.get("status") or "-")
+            qs = _dec_quotes(body)
+            recs.append({"id": p.stem, "date": str(fm.get("date") or fm.get("closed") or fm.get("created") or ""),
+                         "status": st, "kind": "wiki", "items": _dec_items(body),
+                         "quote": qs[0] if qs else "", "slug": str(fm.get("title") or p.stem),
+                         "reversed_by": "superseded" if st == "superseded" else "", "text": text})
+    if not feature:
+        lp = shared_docs_dir(root) / "wiki" / "log.md"
+        if lp.is_file():
+            try:
+                lines = lp.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                lines = []
+            for n, ln in enumerate(lines, 1):
+                m = _DEC_LOG_LINE_RE.match(ln)
+                if not m:
+                    continue
+                qs = _dec_quotes(m.group(2))
+                if not qs or (pats and not _dec_hits(pats, ln)):
+                    continue
+                its = _dec_items(m.group(2))
+                recs.append({"id": f"log.md:{n}", "date": m.group(1), "status": "log", "kind": "log",
+                             "items": its, "quote": qs[0], "slug": m.group(2), "reversed_by": "", "text": ln})
+    for r in recs:
+        r["pats"] = pats
+    return recs
+
+
+def _dec_pick_item(rec):
+    """The item of a record that the line speaks for: most word hits, ties →
+    the first one that carries keys or an answer."""
+    pats = rec.get("pats") or []
+    best, score = None, -1
+    for it in rec["items"]:
+        s = _dec_hits(pats, it["text"]) if pats else 0
+        keyed = any(it.get(k) for k in DECISION_KEYS) or it.get("quote")
+        s = s * 2 + (1 if keyed else 0)
+        if s > score:
+            best, score = it, s
+    return best or {}
+
+
+def _dec_kinds(module):
+    return [k.strip() for k in re.split(r"\s+·\s+|[,;]", module or "") if k.strip()]
+
+
+def _dec_line(rec):
+    if rec["kind"] == "term":
+        return rec["line"]
+    it = _dec_pick_item(rec)
+    what = it.get("what") or (_dec_clip(rec["slug"]) if rec["kind"] != "log" else _dec_clip(rec["slug"]))
+    parts = [rec["id"] + (f" {it['label']}" if it.get("label") and rec["kind"] == "ticket" and not _DEC_KEY_HEAD_RE.match("### " + it["label"]) else ""),
+             rec["date"] or "-", rec["status"],
+             f"why: {it.get('why') or 'none'}"]
+    if it.get("how"):
+        parts.append(f"how: {it['how']}")
+    if it.get("module"):
+        parts.append(f"module: {it['module']}")
+    parts.append(f"what: {what}")
+    q = (rec.get("quote") if rec["kind"] == "log" else it.get("quote")) or rec.get("quote")
+    if q:
+        parts.append(f"원문 「{_dec_clip(q, 80)}」")
+    if rec.get("reversed_by"):
+        parts.append(f"→ {rec['reversed_by']}")
+    return " · ".join(parts)
+
+
+def cmd_decisions(args):
+    """`prdt decisions find <words…> [--feature F] [--module [KIND]]` (T-1257)."""
+    root = require_root()
+    if args.action != "find":
+        sys.exit("prdt decisions: only `find` exists")
+    words = args.words or []
+    module = args.module
+    if not words and module is None:
+        sys.exit("prdt decisions find: give at least one word (or --module [KIND])")
+    recs = decisions_collect(root, words, args.feature)
+    if module is not None:
+        keyed = []
+        for r in recs:
+            for it in r["items"]:
+                if it.get("module"):
+                    keyed.append((r, it))
+        if not module:
+            counts = {}
+            for _, it in keyed:
+                for k in _dec_kinds(it["module"]):
+                    counts[k] = counts.get(k, 0) + 1
+            if not counts:
+                print("no module kinds recorded")
+                return
+            for k, n in sorted(counts.items()):
+                print(f"module: {k} · {n} item{'s' if n != 1 else ''}")
+            return
+        want = module.strip().lower()
+        hit = sorted([(r, it) for r, it in keyed if want in [k.lower() for k in _dec_kinds(it["module"])]],
+                     key=lambda ri: _dec_sort_key(ri[0]))
+        if not hit:
+            print(f"no recorded decision for module: {module}")
+            return
+        r0, i0 = hit[0]
+        print(f"module: {module} · principle: {i0.get('how') or 'none'} · set by {r0['id']} · {r0['date'] or '-'}")
+        for r, it in hit[1:] + ([hit[0]] if False else []):
+            print(f"  followed: {r['id']} · {r['date'] or '-'} · {r['status']} · what: {it.get('what') or _dec_clip(r['slug'])}")
+        if len(hit) == 1:
+            print("  followed: none")
+        return
+    recs.sort(key=_dec_sort_key, reverse=True)
+    lines = [_dec_line(r) for r in recs[:_DEC_LIMIT]]
+    lines += [r["line"] for r in _dec_term_records(root, _dec_matcher(words))]
+    if not lines:
+        print("no recorded decision")
+        return
+    print("\n".join(lines))
+
 
 
 def cmd_po(args):
@@ -11460,6 +11845,35 @@ def ticket_frame_warnings(root, tickets):
     return Advisory(warns)
 
 
+def decision_outcome_key_warnings(root, tickets):
+    """T-1258 (L1 I2): advisory — a `type: decision` ticket closed (`status: done`)
+    and created on/after TICKET_DECISION_OUTCOME_LANDING_DATE whose `outcome`
+    lacks any of `### why` · `### how` · `### module` · `### what`. Older
+    decisions and open ones are silent; never verdict-changing (a decision is
+    a record a person completes, not a discipline↔execution mismatch)."""
+    warns = []
+    for r in sorted(tickets, key=lambda r: r["id"]):
+        if r.get("type") != "decision" or r.get("status") != "done":
+            continue
+        created_raw = r.get("created")
+        if not (isinstance(created_raw, str) and TICKET_CREATED_DATE_RE.match(created_raw)) \
+                or created_raw < TICKET_DECISION_OUTCOME_LANDING_DATE:
+            continue
+        try:
+            text = (root / r["path"]).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        _header, body = split_ticket_header_body(text)
+        outcome = "".join(fmt_ticket_body(body, "decision", "done")[0]
+                          .split("## outcome\n", 1)[1:2]).split("\n## ", 1)[0]
+        have = set(_DECISION_OUTCOME_HEADING_RE.findall(outcome))
+        missing = [k for k in TICKET_DECISION_OUTCOME_KEYS if k not in have]
+        if missing:
+            warns.append(f"decision outcome: {r['id']} ({r['path']}): `outcome` lacks "
+                         + " · ".join(f"### {k}" for k in missing))
+    return Advisory(warns)
+
+
 # ── doctor: PRD layout — one file per closed version (T-657) ──────────────────
 #
 # ONE definition of a version id, and both readers use it: this regex and the
@@ -14716,14 +15130,207 @@ def cmd_dispatch_caps(args):
     os.execvpe("bash", ["bash", str(hook)], {**os.environ, "PRDT_GATE_CAPS_REPORT": "1", "PRDT_HOME": str(prdt_home())})
 
 
+# T-1272: one axis line of the gate's caps report — `OVER  <name>: …`, `ok    <name>: …`,
+# `?     <name>: unmeasured` (prdt-dispatch-gate.sh `$axes_text`).
+_CAPS_AXIS_RE = re.compile(r"^(OVER|ok|\?)\s+(.+?): ")
+
+
+def _dispatch_caps_over():
+    """{axis name: True when over its cap} from one gate report-mode run — the gate's
+    own measurement, never re-derived; an unmeasured axis never blocks (gate rule),
+    so it reads as not over. None when the gate could not run or printed no axis."""
+    hook = _gate_hook_path()
+    if hook is None:
+        return None
+    try:
+        out = subprocess.run(["bash", str(hook)], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                             timeout=60, env={**os.environ, "PRDT_GATE_CAPS_REPORT": "1",
+                                              "PRDT_HOME": str(prdt_home())}).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    axes, last = {}, None
+    _SUITE_APPLIES.clear()
+    for ln in out.splitlines():
+        m = _CAPS_AXIS_RE.match(ln)
+        if m:
+            last = m.group(2)
+            axes[last] = m.group(1) == "OVER"
+        elif last is not None and ln.strip().startswith("applies to:") and "developer" in ln:
+            _SUITE_APPLIES.add(last)   # the gate's own `suite: true` axes (load · suites)
+    return axes or None
+
+
+_SUITE_APPLIES = set()   # T-1272: axis names the last caps report said apply to developer/qa only
+
+
+# T-1272: per-project run state, tooling-owned under `<PRDT_HOME>/run/` (contracts/runtime-writes.md:
+# `run/` is tooling-owned, a new file under it needs no carve-out) — keyed by the sha256 of the
+# physical project root, first 16 hex (the same key shape the track records use).
+# prdt-lane-check.sh computes the same key.
+def _lane_run_key(root):
+    return hashlib.sha256(os.path.realpath(str(root)).encode("utf-8")).hexdigest()[:16]
+
+
+def _lanes_paused_path(root):
+    return prdt_home() / "run" / "lanes-paused" / f"{_lane_run_key(root)}.json"
+
+
+def _lane_wait_dir(root):
+    return prdt_home() / "run" / "lane-waits" / _lane_run_key(root)
+
+
+def _read_paused(root):
+    """{"all": bool, "lanes": [name]} or None when nothing is paused."""
+    try:
+        d = json.loads(_lanes_paused_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(d, dict) or (not d.get("all") and not d.get("lanes")):
+        return None
+    return {"all": bool(d.get("all")), "lanes": [x for x in d.get("lanes") or [] if isinstance(x, str)]}
+
+
+def _project_gate_lane_names(root):
+    names = []
+    for line in [None] + list(project_line_names(root)):
+        for ln in compute_schedule(root, line=line).get("lanes") or []:
+            if not ln.get("besteffort") and ln["name"] not in names:
+                names.append(ln["name"])
+    return names
+
+
+def _resolve_lane_args(root, wanted):
+    """A lane is named by its whole name or its first word (`L1` → `L1 결정/질문`)."""
+    known = _project_gate_lane_names(root)
+    out = []
+    for w in wanted:
+        hit = [n for n in known if n == w or (n.split() or [n])[0] == w]
+        if not hit:
+            sys.exit(f"prdt lanes: no gate lane named {safe_label(w)} — known: "
+                     + (", ".join(safe_label(n) for n in known) or "none"))
+        out += [n for n in hit if n not in out]
+    return out, known
+
+
+def cmd_lanes(args):
+    """`prdt lanes pause|resume [<lane>…]` (T-1272) — the user's stop as a recorded state, not a
+    guess from transcript text. The PO runs it the turn the user says stop / go. No lane named =
+    every lane. Read by prdt-lane-check.sh; `prdt schedule` lists what is paused."""
+    if args.action not in ("pause", "resume"):
+        sys.exit("usage: prdt lanes pause [<lane>…] | prdt lanes resume [<lane>…]")
+    root = require_root()
+    path = _lanes_paused_path(root)
+    cur = _read_paused(root) or {"all": False, "lanes": []}
+    named, known = _resolve_lane_args(root, args.lanes) if args.lanes else ([], [])
+    if args.action == "pause":
+        if not named:
+            cur = {"all": True, "lanes": []}
+        elif not cur["all"]:
+            cur["lanes"] += [n for n in named if n not in cur["lanes"]]
+    else:
+        if not named:
+            cur = {"all": False, "lanes": []}
+        elif cur["all"]:
+            cur = {"all": False, "lanes": [n for n in known if n not in named]}
+        else:
+            cur["lanes"] = [n for n in cur["lanes"] if n not in named]
+    if not cur["all"] and not cur["lanes"]:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        print("prdt lanes: nothing paused")
+        return
+    home = prdt_home()
+    home.mkdir(parents=True, exist_ok=True)
+    state_write(home, path, json.dumps({"project_root": os.path.realpath(str(root)), "all": cur["all"],
+                                        "lanes": cur["lanes"], "since": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                                       ensure_ascii=False))   # T-908: link-refusing under PRDT_HOME
+    print("prdt lanes: paused " + ("every lane" if cur["all"] else ", ".join(safe_label(n) for n in cur["lanes"])))
+
+
+def _print_paused(root):
+    p = _read_paused(root)
+    if p:
+        print("paused lanes: " + ("every lane" if p["all"] else ", ".join(safe_label(n) for n in p["lanes"]))
+              + " — `prdt lanes resume` re-enables")
+
+
+def _register_wait_marker(root):
+    """This wait's own marker: `<PRDT_HOME>/run/lane-waits/<project key>/<pid>.json`, removed on exit
+    (a SIGTERM too); prdt-lane-check.sh counts only a live marker of ITS project."""
+    import atexit, signal
+    d = _lane_wait_dir(root)
+    f = d / f"{os.getpid()}.json"
+    try:
+        home = prdt_home()
+        home.mkdir(parents=True, exist_ok=True)
+        state_write(home, f, json.dumps({"pid": os.getpid(), "project_root": os.path.realpath(str(root))}))   # T-908
+    except (OSError, StateLinkError):
+        return
+
+    def _rm(*_):
+        for x, rm in ((f, os.unlink), (d, os.rmdir)):
+            try:
+                rm(x)
+            except OSError:
+                pass
+    atexit.register(_rm)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+
+
+def cmd_dispatch_wait(args):
+    """`prdt dispatch wait [--timeout S] [--interval S]` (T-1272) — blocks until every
+    gate cap over at start (the caps that denied) clears, then exits 0 naming them.
+    Meant for the PO's Bash `run_in_background`: its exit re-invokes the PO.
+    `--persona <p>` (T-1272): only the axes that apply to that persona (developer/qa: all;
+    designer/po: not CPU load or full test suites); default = all.
+    `--timeout` passed first → exit 2. Writes only its own marker (`run/lane-waits/`), removed on exit."""
+    interval = max(1.0, float(args.interval))
+    root = find_project_root()
+    if root:
+        _register_wait_marker(root)
+    deadline = None if args.timeout is None else time.monotonic() + max(0.0, float(args.timeout))
+    axes = _dispatch_caps_over()
+    if axes is None:
+        sys.exit("prdt dispatch wait: the dispatch gate's caps could not be measured "
+                 "(`prdt dispatch caps` shows why)")
+    persona = getattr(args, "persona", None)
+    suite_work = persona in (None, "developer", "qa")   # load · suites apply to developer/qa only (gate T-1004)
+    applies = lambda n: suite_work or n not in _SUITE_APPLIES   # noqa: E731
+    waiting = [n for n, over in axes.items() if over and applies(n)]
+    if not waiting:
+        print("prdt dispatch wait: no dispatch cap is over — dispatch now")
+        return
+    print("prdt dispatch wait: waiting for " + ", ".join(waiting), flush=True)
+    cleared = []
+    while True:
+        for n in list(waiting):
+            if not axes.get(n, False):
+                waiting.remove(n)
+                cleared.append(n)
+        if not waiting:
+            print("prdt dispatch wait: cleared " + ", ".join(cleared) + " — re-dispatch now")
+            return
+        if deadline is not None and time.monotonic() >= deadline:
+            print("prdt dispatch wait: timeout — still over: " + ", ".join(waiting)
+                  + (" · cleared: " + ", ".join(cleared) if cleared else ""))
+            sys.exit(2)
+        time.sleep(interval if deadline is None else max(0.0, min(interval, deadline - time.monotonic())))
+        axes = _dispatch_caps_over() or axes
+
+
 def cmd_dispatch(args):
     """`prdt dispatch ls [--json] [--all]` — markers under
     `<PRDT_HOME>/run/dispatches/` across every project, each with the state the
     dispatch gate assigns it. Default hides `stopped` markers; `--all` shows them."""
     if args.action == "caps":
         return cmd_dispatch_caps(args)
+    if args.action == "wait":
+        return cmd_dispatch_wait(args)
     if args.action != "ls":
-        sys.exit("usage: prdt dispatch ls [--json] [--all] | prdt dispatch caps")
+        sys.exit("usage: prdt dispatch ls [--json] [--all] | prdt dispatch caps | "
+                 "prdt dispatch wait [--persona P] [--timeout S] [--interval S]")
     d = prdt_home() / "run" / "dispatches"
     now = datetime.now(timezone.utc)
     rows, unreadable = [], []
@@ -14809,7 +15416,9 @@ def cmd_schedule(args):
             if s["cycle"] is not None:
                 sys.exit(1)
             return
-        if _render_schedule(s):
+        bad = _render_schedule(s)
+        _print_paused(root)
+        if bad:
             sys.exit(1)
         return
     # Several lines and no --line: every line's schedule, home line first.
@@ -14818,6 +15427,7 @@ def cmd_schedule(args):
         if i:
             print()
         bad = _render_schedule(compute_schedule(root, line=ln)) or bad
+    _print_paused(root)
     if bad:
         sys.exit(1)
 
@@ -15372,6 +15982,118 @@ def schedule_report(root, version):
     p.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(p, text)
     return p, n, bad
+
+
+# ── `prdt deploy record` (T-1250): the ONE writer of a product's deployed-version record ──
+# Spec: docs/<product>/artifacts/v1.15/deployed-record-spec.md §쓰는 쪽. The record is the
+# `deployed:` one-line flow in `docs/<product>/DEPLOY.md` frontmatter; this command rewrites
+# that line and nothing else (every other byte kept, atomic write).
+
+DEPLOY_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/+-]*", re.ASCII)
+_DEPLOYED_FLOW_RE = re.compile(r"\{\s*version:\s*([^,}]*?)\s*,\s*at:\s*([^,}]*?)\s*,\s*ref:\s*([^,}]*?)\s*\}")
+
+
+def _deploy_die(msg):
+    sys.exit(f"prdt deploy record: {msg} — nothing written")
+
+
+def _deploy_split(raw):
+    """((start, end, value) of the `deployed:` line or None, offset of the closing `---`)
+    over the frontmatter of `raw` (bytes); None when there is no closed frontmatter."""
+    lines = raw.splitlines(keepends=True)
+    if not lines or lines[0].rstrip(b"\r\n") != b"---":
+        return None
+    pos, hit, close = len(lines[0]), None, None
+    for ln in lines[1:]:
+        body = ln.rstrip(b"\r\n")
+        if body == b"---":
+            close = pos
+            break
+        if hit is None and body.startswith(b"deployed:"):
+            hit = (pos, pos + len(ln), body[len(b"deployed:"):].decode("utf-8", "replace").strip())
+        pos += len(ln)
+    if close is None:
+        return None
+    return hit, close
+
+
+def _deploy_defaults(root, product, version, ref):
+    code = code_root(root)
+    if ref is None:
+        def g(a):
+            r = _tgit(a, code)
+            return r.stdout.strip() if r.returncode == 0 else ""
+        if g(["rev-parse", "--verify", "--quiet", f"refs/tags/{version}"]):
+            ref = version
+        else:
+            ref = g(["rev-parse", "--short", "refs/heads/main"])
+        if not ref:
+            _deploy_die(f"no tag {version} and no main branch in {code} to take a ref from — pass --ref")
+    return ref
+
+
+def cmd_deploy(args):
+    """`prdt deploy record [<product>] [--ref R] [--version V] [--at YYYY-MM-DD]`."""
+    root = Path(require_root())
+    prods = project_products(root)
+    slug = _resource_project_slug(root)
+    product = args.product
+    if prods:
+        if product is None:
+            product = prods[0]
+        elif product not in prods:
+            _deploy_die(f"{safe_label(product)} is not a product of this project ({', '.join(prods)})")
+    elif product is not None and product != slug:
+        _deploy_die(f"{safe_label(product)} is not a product of this project ({slug})")
+    first = (prods[0] if prods else None) == product or not prods
+    path = product_docs_dir(root, product if prods else None) / "DEPLOY.md"
+    shown = docs_rel(root, path)
+    if not path.is_file():
+        _deploy_die(f"{shown} does not exist")
+    version = args.version
+    if version is None:
+        st = read_json(root / ".prdt" / "po-state.json")
+        v = line_state(st, None if first else product)[1]
+        version = split_line_id(v)[1] if v else None
+        if not version:
+            _deploy_die(f".prdt/po-state.json has no version for {safe_label(product or slug)} — pass --version")
+    if not (isinstance(version, str) and VERSION_ID_RE.fullmatch(version)):
+        _deploy_die(f"version {safe_label(str(version))} is not a version id (v<N>[.<m>[.<p>]])")
+    at = args.at
+    if at is None:
+        at = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", at):
+            raise ValueError(at)
+        datetime.strptime(at, "%Y-%m-%d")
+    except ValueError:
+        _deploy_die(f"at {safe_label(str(at))} is not a date (YYYY-MM-DD)")
+    if args.ref is not None and not DEPLOY_REF_RE.fullmatch(args.ref):
+        _deploy_die(f"ref {safe_label(args.ref)} is not a tag or commit name")
+    raw = path.read_bytes()
+    spl = _deploy_split(raw)
+    if spl is None:
+        _deploy_die(f"{shown} has no frontmatter (a leading `---` block)")
+    hit, close = spl
+    if hit is not None and hit[2] == "":
+        _deploy_die(f"{shown} writes `deployed:` as a block, not the one-line flow")
+    ref = _deploy_defaults(root, product, version, args.ref)
+    line = f"deployed: {{version: {version}, at: {at}, ref: {ref}}}"
+    if hit is not None:
+        s0, s1, _val = hit
+        eol = raw[s0:s1][len(raw[s0:s1].rstrip(b"\r\n")):] or b"\n"
+        new = raw[:s0] + line.encode() + eol + raw[s1:]
+    else:
+        eol = b"\r\n" if raw[:close].endswith(b"\r\n") else b"\n"
+        new = raw[:close] + line.encode() + eol + raw[close:]
+    m = _DEPLOYED_FLOW_RE.fullmatch(hit[2]) if hit else None
+    before = " · ".join(m.groups()) if m else ("(없음)" if hit is None else safe_label(hit[2]))
+    if new != raw:
+        try:
+            state_write(root, path, new.decode("utf-8"), create_dirs=False)
+        except (OSError, UnicodeError, StateLinkError) as e:
+            _deploy_die(f"could not write {shown} ({e})")
+    print(f"deployed: {before} → {version} · {at} · {ref} ({shown})")
 
 
 def cmd_schedule_record(_args):
@@ -15994,6 +16716,8 @@ def cmd_doctor(_args):
         # away, not a discipline↔execution mismatch); silent on any ticket
         # created before the frame's landing date.
         ("ticket frame", FAMILY_PROJECT, lambda: ticket_frame_warnings(root, trows)),
+        # T-1258: advisory — a decision closed after landing without outcome ### why/how/module/what.
+        ("decision outcome keys", FAMILY_PROJECT, lambda: decision_outcome_key_warnings(root, trows)),
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
         ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root), root)),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
@@ -18107,16 +18831,30 @@ def _env_parse_values(p):
 # BCP-47 language under discipline/wordlist/ (mirrored to ~/.prdt with the rest
 # of discipline/), extended per project by `.prdt/wordlist/<lang>.json` (same
 # schema; an entry whose `word` matches a canon entry replaces it, any other is
-# appended — canon is never edited). Checked by `prdt wordlist check` and, at
+# appended — canon is never edited). T-1262: schema 2 (`concept` · `say` ·
+# `avoid[]` · `except_line` · `scope` · `cases`) is read alongside schema 1, per
+# entry; `concept` is the merge key `word` was. Checked by `prdt wordlist check` and, at
 # write time, by prdt-wordlist-check.sh (PostToolUse Write|Edit|MultiEdit) on the
 # UX-writing surfaces below. `prdt wordlist export` is the import path for a
 # product's runtime LLM prompts (patterns are kept to the Python/JS regex
 # common subset; `flags` is "i" or absent).
-WORDLIST_SURFACE_RES = (
-    re.compile(r"^docs/artifacts/.+\.(?:html?|md)$"),
-    re.compile(r"^docs/prd/PRD\.md$"),
-    re.compile(r"^docs/tickets/.+\.md$"),
+WORDLIST_SURFACES = (
+    ("artifacts", re.compile(r"^docs/artifacts/.+\.(?:html?|md)$")),
+    ("prd", re.compile(r"^docs/prd/PRD\.md$")),
+    ("ticket-body", re.compile(r"^docs/tickets/.+\.md$")),
 )
+WORDLIST_SURFACE_RES = tuple(rx for _, rx in WORDLIST_SURFACES)
+# contracts §Language surface names an entry's `scope` may list; `user-chat` has
+# no path (`prdt wordlist check --surface user-chat`).
+WORDLIST_SCOPE_NAMES = ("user-chat", "prd", "artifacts", "ticket-body")
+
+
+def wordlist_surface_of(as_is_rel):
+    """Surface name of a docs path (As-Is layout), or None."""
+    for name, rx in WORDLIST_SURFACES:
+        if rx.match(as_is_rel):
+            return name
+    return None
 _WORDLIST_HTML_SKIP = {"script", "style", "code", "pre", "del", "s", "template", "noscript"}
 _WORDLIST_HTML_ATTRS_RE = re.compile(r"""(?<![\w-])(?:title|alt|placeholder|aria-label)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
 _WORDLIST_HOOK_MAX_LINES = 15
@@ -18160,14 +18898,127 @@ def _wordlist_project_file(root, lang):
     return Path(root) / ".prdt" / "wordlist" / f"{lang}.json" if root else None
 
 
-def wordlist_entries(lang, root=None, warnings=None):
-    """Canon list for `lang` merged with the project's local one (by `word`).
-    Each returned entry carries its compiled `_re` and `_except` regexes.
+def _wordlist_str_list(v):
+    if isinstance(v, str):
+        return [v]
+    if isinstance(v, list) and v and all(isinstance(x, str) and x for x in v):
+        return list(v)
+    return None
+
+
+# T-1263 — three shapes that load fine but break later: a numbered backreference
+# (`\1`, `(?(1)…)`) changes meaning once `avoid` items are joined as
+# `(?:p1)|(?:p2)` for `export`; an inline global flag (`(?i)`) is not at the start
+# of the joined pattern, so `export` cannot compile it; a malformed `cases` makes
+# the case runner raise. Each is refused at load (project list: warning + entry
+# skipped, same as every other bad entry).
+_WORDLIST_BACKREF_RE = re.compile(r"(?<!\\)(?:\\\\)*(?:\\[1-9]|\(\?\([0-9]+\))")
+_WORDLIST_INLINE_FLAG_RE = re.compile(r"(?<!\\)(?:\\\\)*\(\?[aiLmsux]+(?:-[imsx]+)?\)")
+
+
+def _wordlist_check_joined(pairs):
+    """ValueError when several `avoid` items cannot be joined into one export pattern."""
+    if len(pairs) < 2:
+        return
+    for i, (pt, _) in enumerate(pairs, 1):
+        if _WORDLIST_BACKREF_RE.search(pt):
+            raise ValueError(f"`avoid` item {i} uses a numbered backreference; across joined `avoid` items its number changes (use one item, or a named group)")
+        if _WORDLIST_INLINE_FLAG_RE.search(pt):
+            raise ValueError(f"`avoid` item {i} has an inline global flag such as (?i); use `flags` (the joined export pattern cannot carry it)")
+    try:
+        for pt, _ in pairs:
+            re.compile(pt)
+    except re.error:
+        return   # reported per item as a bad pattern
+    try:
+        re.compile("|".join(f"(?:{pt})" for pt, _ in pairs))
+    except re.error as ex:
+        raise ValueError(f"`avoid` items cannot be joined into one export pattern: {ex}")
+
+
+def _wordlist_check_cases(cases):
+    """ValueError unless `cases` is absent or {hit?: [case…], miss?: [case…]}, a
+    case being {text: str, kind?: md|html, n?: int ≥ 1 (hit only)}."""
+    if cases is None:
+        return
+    if not isinstance(cases, dict) or not set(cases) <= {"hit", "miss"}:
+        raise ValueError("`cases` is an object with only `hit` and `miss` lists")
+    for group, items in cases.items():
+        if not isinstance(items, list):
+            raise ValueError(f"`cases.{group}` is a list")
+        for c in items:
+            if not isinstance(c, dict) or not set(c) <= {"text", "kind", "n"} or not isinstance(c.get("text"), str) or not c["text"]:
+                raise ValueError(f"every `cases.{group}` item is an object with a `text` string (and optional `kind`, `n`)")
+            if "kind" in c and c["kind"] not in ("md", "html"):
+                raise ValueError(f"`cases.{group}` `kind` is md or html")
+            if "n" in c and (group != "hit" or isinstance(c["n"], bool) or not isinstance(c["n"], int) or c["n"] < 1):
+                raise ValueError("`n` is an integer ≥ 1 and only on a `hit` case")
+
+
+def _wordlist_normalize(e):
+    """One raw entry (schema 1 or 2, told apart per entry) → the internal entry,
+    or raises ValueError(reason). The internal entry keeps the schema-1 keys
+    (`word` `pattern` `flags` `replace` `except_line` `note`) in the order a
+    schema-1 file has them, so `export` is schema 1 whichever schema it read;
+    `_avoid` = [(pattern, flags)], `_scope`, `_cases` are internal."""
+    if not isinstance(e, dict):
+        raise ValueError("entry is not an object")
+    if "concept" in e:
+        word = e["concept"]
+        replace = _wordlist_str_list(e.get("say"))
+        avoid = e.get("avoid")
+        if not isinstance(word, str) or not word or replace is None or not isinstance(avoid, list) or not avoid:
+            raise ValueError("a schema 2 entry needs `concept`, `say` and a non-empty `avoid[]`")
+        pairs = []
+        for a in avoid:
+            if not isinstance(a, dict) or not isinstance(a.get("pattern"), str) or not a["pattern"] \
+                    or not isinstance(a.get("flags") or "", str):
+                raise ValueError("every `avoid` item needs a `pattern` string")
+            pairs.append((a["pattern"], a.get("flags") or ""))
+        scope = e.get("scope")
+        if scope is not None and not (isinstance(scope, list) and scope and all(x in WORDLIST_SCOPE_NAMES for x in scope)):
+            raise ValueError(f"`scope` lists only {' · '.join(WORDLIST_SCOPE_NAMES)}")
+        _wordlist_check_joined(pairs)
+        _wordlist_check_cases(e.get("cases"))
+        out = {"word": word}
+        flagset = {f for _, f in pairs}
+        if len(pairs) == 1:
+            out["pattern"] = pairs[0][0]
+        else:
+            out["pattern"] = "|".join(f"(?:{pt})" for pt, _ in pairs)
+        if len(flagset) == 1 and "" not in flagset:
+            out["flags"] = next(iter(flagset))
+        elif len(flagset) > 1:
+            out["_mixed_flags"] = True
+        out["replace"] = replace
+        for k in ("except_line", "note"):
+            if k in e:
+                out[k] = e[k]
+        out["_avoid"] = pairs
+        out["_scope"] = scope
+        out["_cases"] = e.get("cases")
+        return out
+    if not isinstance(e.get("word"), str) or not e.get("replace"):
+        raise ValueError("every entry needs `word` and `replace` (schema 1) or `concept`, `say` and `avoid[]` (schema 2)")
+    out = dict(e)
+    out["_avoid"] = [(e.get("pattern") or re.escape(e["word"]), e.get("flags") or "")]
+    out["_scope"] = None
+    out["_cases"] = None
+    return out
+
+
+def wordlist_entries(lang, root=None, warnings=None, surface=None):
+    """Canon list for `lang` merged with the project's local one (by `word`,
+    which is `concept` in schema 2). Each returned entry carries its compiled
+    `_res` and `_except` regexes. With a `surface`, an entry whose `scope` does
+    not list it is left out (no `scope` = every surface).
     With a `warnings` list, a broken PROJECT file or entry is reported there and
     skipped (canon still applies); without one it raises WordlistError.
     A `lang` that is not BCP-47-shaped always raises (T-1080: no path use)."""
     if not wordlist_lang_ok(lang):
         raise WordlistError(f"prdt wordlist: {one_line(repr(lang))} is not a BCP-47 language tag (e.g. ko, en, zh-Hant)")
+    if surface is not None and surface not in WORDLIST_SCOPE_NAMES:
+        raise WordlistError(f"prdt wordlist: {one_line(repr(surface))} is not a surface ({' · '.join(WORDLIST_SCOPE_NAMES)})")
     merged, order = {}, []
     sources = []
     canon = wordlist_canon_dir()
@@ -18185,23 +19036,25 @@ def wordlist_entries(lang, root=None, warnings=None):
             warnings.append(f"{ex} (project list skipped, canon list still applied)")
             continue
         for e in raw:
-            if not isinstance(e, dict) or not isinstance(e.get("word"), str) or not e.get("replace"):
-                msg = f"prdt wordlist: {src}: every entry needs `word` and `replace` ({e!r})"
+            try:
+                n = _wordlist_normalize(e)
+            except ValueError as ex:
+                msg = f"prdt wordlist: {src}: {ex} ({e!r})"
                 if warnings is None or src != proj:
                     raise WordlistError(msg)
                 warnings.append(msg + " (entry skipped)")
                 continue
-            w = e["word"]
+            w = n["word"]
             if w not in merged:
                 order.append(w)
-            merged[w] = dict(e, _src=str(src))
+            merged[w] = dict(n, _src=str(src))
     out = []
     for w in order:
         e = merged[w]
         if isinstance(e["replace"], str):
             e["replace"] = [e["replace"]]
         try:
-            e["_re"] = re.compile(e.get("pattern") or re.escape(w), re.I if "i" in (e.get("flags") or "") else 0)
+            e["_res"] = [re.compile(pt, re.I if "i" in fl else 0) for pt, fl in e["_avoid"]]
             e["_except"] = [re.compile(x) for x in (e.get("except_line") or [])]
         except re.error as ex:
             msg = f"prdt wordlist: {e['_src']}: entry {w!r}: bad pattern: {ex}"
@@ -18209,8 +19062,27 @@ def wordlist_entries(lang, root=None, warnings=None):
                 raise WordlistError(msg)
             warnings.append(msg + " (entry skipped)")
             continue
+        if surface is not None and e["_scope"] is not None and surface not in e["_scope"]:
+            continue
         out.append(e)
     return out
+
+
+def wordlist_run_cases(entry):
+    """Run one schema-2 entry's `cases` against that entry alone; [] = all pass,
+    else one line per failed case. `hit` cases must give `n` (default 1) hits,
+    `miss` cases none; a case without `kind` runs as md and as html."""
+    failures = []
+    cases = entry.get("_cases") or {}
+    for group in ("hit", "miss"):
+        for c in cases.get(group) or []:
+            kinds = [c["kind"]] if c.get("kind") in ("md", "html") else ["md", "html"]
+            want = int(c.get("n", 1)) if group == "hit" else 0
+            for kind in kinds:
+                got = len(wordlist_scan(c["text"], [entry], kind))
+                if got != want:
+                    failures.append(f"{entry['word']}: {group} case {c['text']!r} ({kind}): expected {want} hit(s), got {got}")
+    return failures
 
 
 def wordlist_langs(root=None):
@@ -18384,9 +19256,10 @@ def wordlist_scan(text, entries, kind="md", warnings=None):
                 raw = raw_lines[i] if i < len(raw_lines) else line
                 if any(x.search(raw) for x in e["_except"]):
                     continue
-                for m in e["_re"].finditer(line):
-                    if m.group(0).strip():
-                        part.append((i + 1, m.start(), m.end(), m.group(0), e))
+                for rx in e["_res"]:
+                    for m in rx.finditer(line):
+                        if m.group(0).strip():
+                            part.append((i + 1, m.start(), m.end(), m.group(0), e))
         except _WordlistTimeout:
             part = []
             if warnings is not None:
@@ -18436,9 +19309,9 @@ def _wordlist_repl(replace):
     return " · ".join(one_line(r) for r in replace)
 
 
-def wordlist_check_text(text, name, lang_arg, root, warnings=None):
+def wordlist_check_text(text, name, lang_arg, root, warnings=None, surface=None):
     lang = lang_arg or wordlist_detect_lang(text, root)
-    entries = wordlist_entries(lang, root, warnings)
+    entries = wordlist_entries(lang, root, warnings, surface)
     return lang, wordlist_scan(text, entries, _wordlist_kind(name), warnings)
 
 
@@ -18477,10 +19350,11 @@ def _wordlist_hook(root_hint):
             return
         rel = f.resolve().relative_to(root).as_posix()
         as_is = docs_as_is_rel(root, rel)   # T-1104: To-Be docs/<p>/X · docs/_shared/X match the As-Is surfaces
-        if not any(rx.match(as_is) for rx in WORDLIST_SURFACE_RES):
+        surface = wordlist_surface_of(as_is)
+        if not surface:
             return
         warns = []
-        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns)
+        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns, surface)
     except Exception:
         return
     if not hits and not warns:
@@ -18506,7 +19380,11 @@ def cmd_wordlist(args):
     try:
         if args.action == "export":
             lang = args.lang or "ko"
-            entries = wordlist_entries(lang, root)
+            entries = wordlist_entries(lang, root, None, args.surface)
+            for e in entries:
+                if e.get("_mixed_flags"):
+                    raise WordlistError(f"prdt wordlist: entry {one_line(e['word'])!r} ({e['_src']}) has `avoid` items with different `flags`; "
+                                        "export carries one `flags` per entry")
             if not entries:
                 print(f"prdt wordlist: no list for {lang!r} (have: {one_line(', '.join(wordlist_langs(root))) or 'none'})", file=sys.stderr)
                 sys.exit(3)
@@ -18531,7 +19409,7 @@ def cmd_wordlist(args):
                     print(f"prdt wordlist check: cannot read {name}: {e}", file=sys.stderr)
                     sys.exit(3)
             warns = []
-            lang, hits = wordlist_check_text(text, shown, args.lang, root, warns)
+            lang, hits = wordlist_check_text(text, shown, args.lang, root, warns, args.surface)
             for w in warns:
                 print(one_line(w), file=sys.stderr)
             report.append({"path": shown, "lang": lang, "hits": hits})
@@ -20176,6 +21054,7 @@ def main():
                         "worker's run never opens regardless")
     p.add_argument("--type", choices=TICKET_TYPES, help="new: the ticket's `type` (required)")
     p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
+    p.add_argument("--title", help="new: optional human title (`title:`), free text in the project's user_lang (T-1276)")
     p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value ([<product>/]v<N>.<m>#<key>)")
     p.add_argument("--product", "--line", dest="line", metavar="PRODUCT",
                    help="new: an added product (.prdt/config.json `products`) — the ticket "
@@ -20186,6 +21065,15 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="fmt: print the diff, write nothing · new: print the would-be path and "
                                                        "frontmatter, write nothing (T-1084)")
     p.set_defaults(fn=cmd_tickets)
+    p = sub.add_parser("decisions", help="find <words…> [--feature F] [--module [KIND]] (T-1257): the recorded decisions "
+                                         "(decision tickets · wiki decision pages · user-quoted log.md lines) that match, "
+                                         "one line each — run before asking the user anything")
+    p.add_argument("action", choices=("find",))
+    p.add_argument("words", nargs="*", metavar="WORD")
+    p.add_argument("--feature", default=None, help="find: only tickets of this `feature`")
+    p.add_argument("--module", nargs="?", const="", default=None, metavar="KIND",
+                   help="find: KIND's principle and the items that followed it; bare = the kinds recorded")
+    p.set_defaults(fn=cmd_decisions)
     p = sub.add_parser("artifacts", help="sync (write the ONE docs/artifacts/manifest.json from disk) "
                                          "| check (report artifacts the bucket rule cannot place, and a "
                                          "manifest.json inside a bucket; exit 1 on findings) "
@@ -20285,11 +21173,23 @@ def main():
     p = sub.add_parser("dispatch", help="in-flight dispatch markers, every project (T-695): "
                                         "ls [--json] [--all] — each marker with the state the dispatch gate "
                                         "gives it (live · phantom · stale · stopped); caps — every gate axis "
-                                        "with value · cap · source · remedy (T-893); read-only")
-    p.add_argument("action", choices=("ls", "caps"))
+                                        "with value · cap · source · remedy (T-893); wait — block until "
+                                        "every cap over now clears, exit 0 naming them (T-1272); read-only")
+    p.add_argument("action", choices=("ls", "caps", "wait"))
     p.add_argument("--json", action="store_true", help="machine-readable output")
     p.add_argument("--all", action="store_true", help="include stopped markers")
+    p.add_argument("--timeout", type=float, default=None,
+                   help="wait: give up after this many seconds, exit 2 (default: no limit)")
+    p.add_argument("--interval", type=float, default=30.0, help="wait: seconds between measurements (default 30)")
+    p.add_argument("--persona", choices=("po", "designer", "developer", "qa"), default=None,
+                   help="wait: only the axes that apply to this persona's dispatch (default: all)")
     p.set_defaults(fn=cmd_dispatch)
+    p = sub.add_parser("lanes", help="the user's stop as a recorded state (T-1272): pause [<lane>…] · resume "
+                                     "[<lane>…] — no lane named = every lane; prdt-lane-check.sh reads it, "
+                                     "`prdt schedule` lists what is paused")
+    p.add_argument("action", choices=("pause", "resume"))
+    p.add_argument("lanes", nargs="*", help="lane names (`L1` or the whole name); none = every lane")
+    p.set_defaults(fn=cmd_lanes)
     p = sub.add_parser("schedule", help="next dispatch order by critical path (T-772): open tickets of the "
                                         "current version ranked by slack (critical path first), then "
                                         "blocked-count, PRD H4 order, id — edges from `deps` only, every "
@@ -20362,6 +21262,17 @@ def main():
                                       "ls/register-stop take none")
     p.add_argument("--json", action="store_true", help="ls: machine-readable output")
     p.set_defaults(fn=cmd_resource)
+    p = sub.add_parser("deploy", help="deploy record [<product>] [--ref R] [--version V] [--at YYYY-MM-DD] (T-1250): "
+                                      "the only writer of a product's deployed-version record — rewrites the "
+                                      "`deployed:` line of docs/<product>/DEPLOY.md frontmatter, nothing else; "
+                                      "version = po-state, at = today (Asia/Seoul), ref = tag named like the "
+                                      "version else main's short hash")
+    p.add_argument("action", choices=("record",))
+    p.add_argument("product", nargs="?", help="product name (default: the first product)")
+    p.add_argument("--ref", help="tag or commit name to record (default: tag <version>, else main's short hash)")
+    p.add_argument("--version", help="version id to record (default: the product's po-state version)")
+    p.add_argument("--at", help="deploy date YYYY-MM-DD (default: today, Asia/Seoul)")
+    p.set_defaults(fn=cmd_deploy)
     p = sub.add_parser("preflight", help="model availability canary before a dispatch: "
                                          "prdt preflight <model> [--fallback M] [--recheck] [--clear] "
                                          "— JSON verdict on stdout (available | unavailable | inconclusive)")
@@ -20397,6 +21308,8 @@ def main():
     p.add_argument("--lang", default=None, help="BCP-47 list key (default: project wordlist.lang, else the text's script)")
     p.add_argument("--json", action="store_true")
     p.add_argument("--format", choices=("json", "lines"), default="json")
+    p.add_argument("--surface", default=None, help="contracts §Language surface (user-chat|prd|artifacts|ticket-body): "
+                                                   "only the entries whose `scope` lists it (default: every entry)")
     p.set_defaults(fn=cmd_wordlist)
     # `prdt settings -h`/`--help`: argparse's own subparser help is English
     # and bypasses the message catalog (T-750 QA grill) — answer from the

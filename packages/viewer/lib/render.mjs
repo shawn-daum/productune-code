@@ -47,11 +47,13 @@ import { IDLE,
   OPTION_CARD,
   ENV,
   IDENTITY,
+  setViewerLang,
+  lang as viewerLang,
 } from './labels.mjs'
 import { mermaidBlock, hasMermaid, mermaidScript, MERMAID_CSS } from './mermaid.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
 import { HOME_STAGES, stageSegments, buildHomeGraph, layoutHomeGraph, waitLists, compareTicketIds, NODE_W, NODE_H } from './home-graph.mjs'
-import { disciplineLoadCard, DISCIPLINE_LOAD_CSS, DISCIPLINE_LOAD_SCRIPT } from './discipline-load.mjs'
+import { disciplineLoadCard, DISCIPLINE_LOAD_CSS, disciplineLoadScript } from './discipline-load.mjs'
 import { renderPrdReading, openDecisionTickets, PRD_READING_CSS, PRD_READING_SCRIPT } from './prd-reading.mjs'
 
 function escapeHtml(str) {
@@ -902,34 +904,77 @@ function decisionTicketsOf(tickets) {
   return tickets.filter((t) => t.frontmatter.type === 'decision')
 }
 
-/** T-1138: Home's decision group body — 질문 (decision tickets, open first) then 기록 (decision pages). No decision ticket → the pages-only table, unchanged. */
+/**
+ * T-1259: one decision ticket's record, read from its body — `## outcome`'s `### why / how / what` (T-1258 keys; each null
+ * when absent) and the answer shown on the row (the picked option letter, else the user's last verbatim reply). An open
+ * decision carries its first problem line and the 추천 line instead.
+ * @param {string} body
+ */
+export function decisionRecord(body) {
+  const text = body ?? ''
+  const sec = /^## outcome[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(text)
+  const outcome = sec ? sec[1] : ''
+  const sub = (key) => {
+    const m = new RegExp(`^### ${key}[ \\t]*\\n([\\s\\S]*?)(?=^#{2,3} |(?![\\s\\S]))`, 'm').exec(outcome)
+    const t = m ? m[1].replace(/^\s*-\s+/gm, '').trim() : ''
+    return t || null
+  }
+  // the row's short answer: the first clause of the decided answer (`A. 구현 T-1268.` → `A`)
+  const clause = (t) => {
+    if (!t) return null
+    const line = t.split('\n')[0].trim()
+    const m = /^(.+?)(?:\.(?:\s|$)|:\s)/.exec(line)
+    const c = (m ? m[1] : line).trim()
+    return c.length > 30 ? `${c.slice(0, 29)}…` : c || null
+  }
+  // a ticket answering several questions (`### ①` …): one entry per heading — its decided `what:` text, else its last verbatim reply
+  const heads = [...outcome.matchAll(/^### (.+?)[ \t]*$/gm)].filter((m) => !['why', 'how', 'module', 'what'].includes(m[1].trim()))
+  const parts = heads.map((m, i) => {
+    const end = i + 1 < heads.length ? heads[i + 1].index : outcome.length
+    const chunk = outcome.slice(m.index + m[0].length, end)
+    const w = /^-\s*what:\s*(.+?)(?=\s+how:|\s+module:|$)/m.exec(chunk)
+    const qs = [...chunk.matchAll(/\*"([^"\n]+)"\*/g)].map((x) => x[1].trim())
+    return { label: m[1].trim(), what: w ? w[1].trim() : qs.length ? qs[qs.length - 1] : null }
+  })
+  const what = sub('what')
+  const quotes = [...outcome.matchAll(/\*"([^"\n]+)"\*/g)].map((m) => m[1].trim())
+  const quote = quotes.length ? quotes[quotes.length - 1] : ''
+  // no recorded `what`: the picked option letter, else a short verbatim reply (never a cut-off long one)
+  const fallback = decisionChosen(text) ?? (quote.length <= 12 ? quote : null)
+  const answer = parts.length > 0 ? `${parts.length}건` : clause(what) ?? fallback
+  const problem = /^## problem[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(text)
+  const firstProblem = problem ? (/^\s*-\s+(.+)$/m.exec(problem[1]) || [])[1] ?? null : null
+  const rec = /^-\s*추천:\s*(.+)$/m.exec(text)
+  return { why: sub('why'), how: sub('how'), what, parts, answer: answer || null, question: firstProblem, recommend: rec ? rec[1].trim() : null }
+}
+
+/** T-1259: the one 「줄」 of the decision screen — id · title · status · answer, folding to 이유 · 방식 · 답. */
+function decisionViewRow(t) {
+  const fm = t.frontmatter
+  const id = fm.id || t.rel
+  const V = HOME.decisionView
+  const open = fm.status === 'open'
+  const rec = decisionRecord(t.body)
+  const kv = (label, val) => `<div class="dv-kv"><b>${escapeHtml(label)}</b>${val ? `<span>${inlineMd(val)}</span>` : `<span class="dv-miss">${escapeHtml(V.missing)}</span>`}</div>`
+  const status = open ? V.waiting : ticketStatusText(fm.status)
+  const who = open ? fm.assignee || '' : rec.answer ? V.answer(rec.answer) : ''
+  const body = open
+    ? kv(V.question, rec.question) + kv(V.recommend, rec.recommend)
+    : rec.parts.length > 0
+      ? rec.parts.map((p) => kv(p.label, p.what)).join('')
+      : kv(V.why, rec.why) + kv(V.how, rec.how) + kv(V.what, rec.what)
+  return `<div class="dv-row${open ? ' dv-wait' : ''}" data-dv-id="${escapeHtml(id)}" tabindex="0" role="button" aria-expanded="false"><div class="dv-top"><span class="tid">${escapeHtml(id)}</span><span class="tt">${escapeHtml(fm.title || fm.slug || id)}</span><span class="tst${fm.status === 'done' ? ' done' : ''}">${escapeHtml(status)}</span><span class="who">${escapeHtml(who)}</span></div><div class="dv-body">${body}</div></div>\n`
+}
+
+/** T-1138 → T-1259: Home's decision group body — decision tickets as expandable rows (open first), then 기록 (decision pages) in the table. */
 function decisionRowsTable(tickets, pages) {
   if (tickets.length === 0) return wikiRowsTable(pages)
   const isOpen = (t) => t.frontmatter.status === 'open'
   const ordered = [...sortNewestFirst(tickets.filter(isOpen), (x) => x.frontmatter.created, (x) => x.frontmatter.id || x.rel), ...sortNewestFirst(tickets.filter((t) => !isOpen(t)), (x) => x.frontmatter.created, (x) => x.frontmatter.id || x.rel)]
-  const K = HOME.decisionKind
-  let html = `<div class="table-wrap"><table><thead><tr>${HOME.decisionHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
-  for (const t of ordered) {
-    const fm = t.frontmatter
-    const id = fm.id || t.rel
-    html += `<tr class="detail-row" data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}">`
-    html += `<td><span class="pill pill-type">${escapeHtml(isOpen(t) ? K.ticketOpen : fm.status === 'dropped' ? K.ticketDropped : K.ticketDone)}</span></td>`
-    html += `<td class="id-col">${escapeHtml(id)}</td>`
-    html += `<td>${escapeHtml(fm.slug || id)}</td>`
-    html += `<td><span class="pill pill-status-${statusPillClass(fm.status)}">${escapeHtml(ticketStatusText(fm.status))}</span></td>`
-    html += `<td class="num-col">${escapeHtml(t.bucket || '—')}</td></tr>\n`
-  }
-  for (const p of pages) {
-    const fm = p.frontmatter
-    const id = p.rel.split('/').pop()
-    html += `<tr class="detail-row" data-detail-kind="wiki" data-detail-id="${escapeHtml(id)}">`
-    html += `<td><span class="pill pill-type">${escapeHtml(K.page)}</span></td>`
-    html += `<td class="id-col">${escapeHtml(id)}</td>`
-    html += `<td>${escapeHtml(fm.title || id)}</td>`
-    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(wikiFeatureStatusText(fm.status))}</span></td>`
-    html += `<td class="num-col">${escapeHtml(fm.version || '—')}</td></tr>\n`
-  }
-  return html + '</tbody></table></div>\n'
+  const V = HOME.decisionView
+  let html = `<div class="dv-list">${ordered.map(decisionViewRow).join('')}<p class="dv-note">${escapeHtml(V.note)}</p></div>\n`
+  if (pages.length > 0) html += `<h4 class="dv-pages">${escapeHtml(V.pages)}</h4>${wikiRowsTable(pages)}`
+  return html
 }
 
 /** Home's artifact group — the literal bucket match home has always used (T-713 scope note in `homeSection`); shared with the anchor table (T-792). */
@@ -987,6 +1032,11 @@ function ticketRolePill(assignee) {
 // `sortTable` reorders the rows in place. `kind` 'num' compares numbers,
 // 'text' compares text with numeric-aware collation (T-999 < T-1000).
 /** The number inside a ticket id ("T-1006" → 1006); 0 when there is none. */
+/** T-1276: a ticket's displayed name — its `title`, else its `slug`, else `fallback`. */
+function ticketName(fm, fallback = '') {
+  return fm.title || fm.slug || fallback
+}
+
 function ticketNum(id) {
   const m = /(\d+)/.exec(String(id || ''))
   return m ? Number(m[1]) : 0
@@ -1024,13 +1074,13 @@ function ticketRowsTable(tickets) {
   if (tickets.length === 0) {
     return `<p class="v-note">${TICKET.empty}</p>`
   }
-  let html = `<div class="table-wrap"><table class="sortable">${sortableThead(TICKET.tableHeaders, ['text', 'text', 'text', 'text', 'text', 'text'], 5)}<tbody>\n`
+  let html = `<div class="table-wrap"><table class="sortable tk-table">${sortableThead(TICKET.tableHeaders, ['text', 'text', 'text', 'text', 'text', 'text'], 5)}<tbody>\n`
   for (const t of sortNewestFirst(tickets, (x) => x.frontmatter.created, (x) => x.frontmatter.id || x.rel)) {
     const fm = t.frontmatter
     const id = fm.id || t.rel
     html += `<tr class="detail-row" data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}" data-tie="${ticketNum(id)}">`
     html += sortTd(id, escapeHtml(id), 'id-col')
-    html += sortTd(fm.slug || '', escapeHtml(fm.slug || ''))
+    html += sortTd(ticketName(fm), escapeHtml(ticketName(fm)))
     html += sortTd(fm.type || '', `<span class="pill pill-type">${escapeHtml(fm.type || '')}</span>`)
     html += sortTd(ticketStatusText(fm.status), `<span class="pill pill-status-${statusPillClass(fm.status)}">${escapeHtml(ticketStatusText(fm.status))}</span>`)
     html += sortTd(fm.assignee || '', ticketRolePill(fm.assignee))
@@ -1141,7 +1191,7 @@ function ticketDetailEntries(tickets, repoRootHref, lineTickets = []) {
     const fm = t.frontmatter
     const id = fm.id || t.rel
     entries[id] = {
-      title: fm.slug || id,
+      title: ticketName(fm, id),
       type: fm.type || '',
       status: ticketStatusText(fm.status || ''),
       assignee: fm.assignee || '',
@@ -1155,7 +1205,7 @@ function ticketDetailEntries(tickets, repoRootHref, lineTickets = []) {
       const fm = t.frontmatter
       const id = fm.id || t.rel
       entries[id] = {
-        title: fm.slug || id,
+        title: ticketName(fm, id),
         type: fm.type || '',
         status: ticketStatusText(fm.status || ''),
         assignee: fm.assignee || '',
@@ -1246,10 +1296,10 @@ export const LINE_SECTIONED_STORES = ['home', 'prd', 'ticket', 'feature', 'artif
  */
 export function lineViews(data) {
   if (!Array.isArray(data.lines) || data.lines.length === 0) return []
-  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes }
+  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes, deployed: data.deployed || null }
   return [
     home,
-    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes })),
+    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes, deployed: l.deployed || null })),
   ]
 }
 
@@ -1272,9 +1322,19 @@ function lineHead(v) {
   return `${v.name} ${isIdleView(v) ? lastClosedId(v) : v.currentVersion}`.trim()
 }
 
+/**
+ * T-1253: the 「제품 줄」 table of the progress header — one row per product (deployed · dev · stage), the selected one marked;
+ * [] on a single-product page. An idle product's dev cell reads 「열린 버전 없음」.
+ */
+function productRowsOf(data, selected) {
+  const views = lineViews(data)
+  if (views.length === 0) return []
+  return views.map((v) => ({ name: v.name, deployed: v.deployed ? v.deployed.version : '', dev: isIdleView(v) || !v.currentVersion ? '' : v.currentVersion, stage: v.stage, selected: v === selected || (v.line === selected.line) }))
+}
+
 /** `data` with tickets · PRD · version · stage scoped to one line. */
 function lineData(data, v) {
-  return { ...data, tickets: v.tickets, prd: v.prd, lanes: v.lanes, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
+  return { ...data, tickets: v.tickets, prd: v.prd, lanes: v.lanes, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, project: v.name || data.project, deployed: v.deployed || null, productRows: productRowsOf(data, v), listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
 }
 
 /** Flattens per-line `{groups, defaultKey}` into one group list: keys prefixed `<line>/` (home line bare), the first group of each line carrying the section head. `defaultKey` = the home line's default. */
@@ -1890,7 +1950,7 @@ function featureEvidence(e, anchors) {
     .map((t) => {
       const id = String(t.fm.id || '')
       const mark = t.fm.status === 'open' || t.fm.status === 'dropped' ? `(${FEATURE.ticketStatus[t.fm.status]})` : ''
-      return `${ticketIdLinks(escapeHtml(id), anchors)}${escapeHtml(mark)} ${escapeHtml(t.fm.slug || '')}`.trim()
+      return `${ticketIdLinks(escapeHtml(id), anchors)}${escapeHtml(mark)} ${escapeHtml(ticketName(t.fm))}`.trim()
     })
     .join(' · ')
 }
@@ -2310,7 +2370,7 @@ const INFO_ICON_SVG =
   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>'
 
 /** docs/design.md §8.4 Banner (no side stripe, T-756) — hidden until the page is opened at an `#id` it cannot show; the script fills in the id and the text. */
-const HASH_NOTICE_HTML = `<div class="notice" id="hash-notice" role="status" hidden>
+const hashNoticeHtml = () => `<div class="notice" id="hash-notice" role="status" hidden>
 <span class="notice-icon">${INFO_ICON_SVG}</span>
 <span class="notice-body"><b class="js-notice-id"></b>: <span class="js-notice-text"></span></span>
 <button type="button" class="notice-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 13)}</button>
@@ -2594,7 +2654,7 @@ function homeWaits(data) {
     (list.length === 0
       ? `<p class="cp-empty">${empty}</p>`
       : `<div class="cp-wlist">${list
-          .map((fm) => `<button type="button" class="cp-went" data-detail-kind="ticket" data-detail-id="${escapeHtml(fm.id)}"><span class="mono cp-wid">${escapeHtml(fm.id)}</span><span class="cp-wslug">${escapeHtml(fm.slug || '')}</span>${ticketRolePill(fm.assignee)}</button>`)
+          .map((fm) => `<button type="button" class="cp-went" data-detail-kind="ticket" data-detail-id="${escapeHtml(fm.id)}"><span class="mono cp-wid">${escapeHtml(fm.id)}</span><span class="cp-wslug">${escapeHtml(ticketName(fm))}</span>${ticketRolePill(fm.assignee)}</button>`)
           .join('')}</div>`) +
     '</div>'
   return `<div class="sc-waits">${block(HOME.waitDec, dec, HOME.waitDecEmpty)}${block(HOME.waitReq, req, HOME.waitReqEmpty)}</div>`
@@ -2703,10 +2763,10 @@ function dependencyDiagram(graph, layout, DG_ID = 'home-dg') {
       }
       const idText = `${n.id}${n.done ? ' ✓' : ''}`
       return (
-        `<g class="dg-a dg-btn" ${ticketButtonAttrs(n.id)} aria-label="${escapeHtml(HOME.nodeOpen(n.id))}"><title>${escapeHtml(`${n.id} ${n.slug}`.trim())}</title>` +
+        `<g class="dg-a dg-btn" ${ticketButtonAttrs(n.id)} aria-label="${escapeHtml(HOME.nodeOpen(n.id))}"><title>${escapeHtml(`${n.id} ${n.name}`.trim())}</title>` +
         `<g class="${cls}"><rect class="dg-box" height="${NODE_H}" rx="8" width="${NODE_W}" x="${n.x}" y="${n.y}"></rect>` +
         `<text class="dg-id" x="${n.x + 8}" y="${n.y + 14}">${escapeHtml(idText)}</text>` +
-        `<text class="dg-t" x="${n.x + 8}" y="${n.y + 31}">${escapeHtml(fitText(n.slug, NODE_W - 16))}</text>` +
+        `<text class="dg-t" x="${n.x + 8}" y="${n.y + 31}">${escapeHtml(fitText(n.name, NODE_W - 16))}</text>` +
         `${diagramRole(n.assignee, n.x, n.y)}</g>${chips.join('')}</g>`
       )
     })
@@ -2739,10 +2799,34 @@ function homeDependency(data, currentTickets) {
   return `<div class="cp-block">${head}${notice}${dependencyDiagram(graph, layoutHomeGraph(graph), dgId)}</div>`
 }
 
+/**
+ * T-1253: the card's first block — product · 배포 · 개발 (+ date · ref, or the no-record hint), and on a multi-product
+ * page the 제품 줄 table. Read only; values come from `data.deployed` (DEPLOY.md frontmatter) and the po-state version.
+ */
+function homeDeployHead(data) {
+  const V = HOME.vh
+  const dep = data.deployed || null
+  const dev = data.poState?.stage === 'idle' ? '' : data.currentVersion || ''
+  const devHtml = dev ? `<b class="vh-v">${escapeHtml(dev)}</b>` : `<span class="vh-none">${V.noOpen}</span>`
+  const depHtml = dep ? `<b class="vh-v">${escapeHtml(dep.version)}</b>` : `<span class="vh-none">${V.none}</span>`
+  const meta = dep ? V.meta(dep.at, dep.ref) : ''
+  const name = data.project || ''
+  const head = `<div class="vh"><span class="vh-n">${escapeHtml(name || IDENTITY.tool)}</span><span class="vh-k">${V.dep}</span> ${depHtml}<span class="vh-d"><span class="vh-k">${V.dev}</span> ${devHtml}</span>${meta ? `<span class="vh-m">${escapeHtml(meta)}</span>` : ''}</div>${dep ? '' : `<p class="vh-hint">${V.hint}</p>`}`
+  const rows = data.productRows || []
+  if (rows.length === 0) return head
+  const cell = (v, none) => (v ? `<td class="ver">${escapeHtml(v)}</td>` : `<td class="ver vh-nocell">${none}</td>`)
+  const body = rows
+    .map((r) => `<tr class="${r.selected ? 'sel' : ''}"><td class="ln">${escapeHtml(r.name)}</td>${cell(r.deployed, V.none)}${cell(r.dev, V.noOpen)}<td class="stage">${escapeHtml(IDENTITY.stage[r.stage] || r.stage || '')}</td></tr>`)
+    .join('')
+  const th = V.linesHeaders.map((h) => `<th>${h}</th>`).join('')
+  return `${head}<hr class="vh-sep"><div class="vh-lines"><div class="vh-lines-h">${V.linesHead}<small>${rows.length}</small></div><table class="vh-table"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div><hr class="vh-sep">`
+}
+
 function homeProgressBody(data) {
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
+${homeDeployHead(data)}
 ${homeStageBar(currentTickets, data.poState?.stage || '?')}
 <div class="sc sc-grid">${homeWaits(data)}${homeScope(data, currentTickets)}</div>
 ${homeDependency(data, currentTickets)}
@@ -2775,7 +2859,7 @@ function homeLineGroups(data, v, views, repoRootHref) {
 /** T-1138: an idle product's decision tickets = those of the version its decision pages use (`idleVersion`). */
 function homeTickets_(v) {
   const version = idleVersion(v)
-  return [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))].filter((t) => t.bucket !== 'backlog' && sameVersion(t.bucket, version))
+  return [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t, ...(t.frontmatter?.type === 'decision' && o.bodies && t.rel in o.bodies ? { body: o.bodies[t.rel] } : {}) })))].filter((t) => t.bucket !== 'backlog' && sameVersion(t.bucket, version))
 }
 
 /** A decision page's `version:` is `<line>/<v>` for an added line, bare for the home line (release-lines.md one-line rule). */
@@ -2794,7 +2878,7 @@ function homeSection(data, repoRootHref) {
   const views = lineViews(data)
   if (views.length > 0) {
     const groups = lineSectioned(views, (v) => homeLineGroups(data, v, views, repoRootHref))
-    return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups, defaultKey: groups.defaultKey, topHtml: HASH_NOTICE_HTML }) })
+    return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups, defaultKey: groups.defaultKey, topHtml: hashNoticeHtml() }) })
   }
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   // T-713 scope note: `e.fields.bucket` matching stays literal (never
@@ -2813,7 +2897,7 @@ function homeSection(data, repoRootHref) {
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
   const heading = `${STORE_LABEL.home} · ${data.currentVersion}`
-  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: heading, crumbLabel: heading, groups, topHtml: HASH_NOTICE_HTML }) })
+  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: heading, crumbLabel: heading, groups, topHtml: hashNoticeHtml() }) })
 }
 
 export const TEMPLATE_CSS = `
@@ -2979,6 +3063,25 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
    (docs/artifacts/v1.12/define-screen-set.html, home-progress + home-cases). ---------- */
 .dash-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
 .dash-card { border: 1px solid var(--border-item); border-radius: var(--radius-12); background: var(--bg-surface-base); padding: var(--space-20); }
+/* T-1253: progress header (screen set v1.15 viewer-head) — existing tokens only. */
+.vh { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 var(--space-12); }
+.vh-n { font-size: 15px; font-weight: 700; }
+.vh-k { font-size: 11px; color: var(--text-tertiary); }
+.vh-v { font-family: var(--font-mono); font-size: 13px; font-weight: 700; }
+.vh-d { margin-left: 2px; }
+.vh-none { font-size: 12px; color: var(--text-tertiary); border: 1px dashed var(--border-item); border-radius: 100px; padding: 0 8px; }
+.vh-m { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.vh-hint { margin: -4px 0 var(--space-12); font-size: 12px; color: var(--text-tertiary); }
+.vh-sep { border: none; border-top: 1px solid var(--border-item); margin: 14px 0; }
+.vh-lines-h { font-size: 12px; font-weight: 600; margin-bottom: var(--space-8); }
+.vh-lines-h small { margin-left: 6px; color: var(--text-tertiary); font-weight: 400; }
+.vh-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.vh-table th { font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-align: left; padding: 0 8px 6px; border-bottom: 1px solid var(--border-item); }
+.vh-table td { padding: 8px; border-bottom: 1px solid var(--border-item); vertical-align: middle; }
+.vh-table td.ver { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); }
+.vh-table td.vh-nocell { font-family: var(--font-family); color: var(--text-tertiary); }
+.vh-table td.ln { font-weight: 600; }
+.vh-table tr.sel td { background: var(--accent-subtle); }
 .dash-card-title { font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-tertiary); margin: 0 0 var(--space-12); display: flex; align-items: center; gap: var(--space-8); }
 .sb { display: flex; align-items: center; gap: 0; margin: var(--space-4) 0 var(--space-4); flex-wrap: nowrap; min-width: 0; max-width: 100%; }
 .sb-tick { width: 2px; height: 34px; background: var(--text-secondary); border-radius: 1px; margin-right: var(--space-6); flex: 0 0 auto; }
@@ -3109,6 +3212,26 @@ tbody tr:hover td { background: var(--bg-state-hover); }
 th[aria-sort="ascending"] .sort-ind::after { content: '\\25B2'; opacity: 1; }
 th[aria-sort="descending"] .sort-ind::after { content: '\\25BC'; opacity: 1; }
 th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--text-secondary); }
+.dv-list { margin: 0 0 var(--space-16); }
+.dv-row { border-bottom: 1px solid var(--border-item); padding: 8px 0; cursor: pointer; }
+.dv-row:hover .dv-top { background: var(--bg-state-hover); }
+.dv-top { display: grid; grid-template-columns: 56px minmax(0, 1fr) 72px minmax(0, 260px); gap: 12px; align-items: baseline; font-size: 12.5px; border-radius: 4px; padding: 2px 4px; }
+.dv-top .tid, .dv-top .who { font-family: var(--font-mono); font-size: 11px; }
+.dv-top .who { color: var(--text-tertiary); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dv-top .tst { font-size: 11px; color: var(--text-secondary); }
+.dv-top .tst.done { color: var(--status-done); }
+.dv-wait .tst { color: var(--health-warn); }
+.dv-body { display: none; margin: 8px 4px 4px 4px; padding: 10px 12px; background: var(--bg-surface-on); border-radius: 8px; font-size: 12.5px; line-height: 1.6; }
+.dv-row.open .dv-body { display: block; }
+/* T-1277 (QA d-v115-t1277-qa1): the ticket title column no longer takes its width from a long header, so it keeps a floor — at phone width the table scrolls sideways instead of one glyph a line. */
+.tk-table td:nth-child(2) { min-width: 180px; word-break: keep-all; overflow-wrap: break-word; }
+/* T-1277 (QA d-v115-t1259-qa2): a long cell name (「⑤ ⑥ ⑧ (모듈: 규율 문구 기준)」) takes up to 30% of the row and wraps between words, never one character a line. */
+.dv-kv { display: grid; grid-template-columns: fit-content(30%) minmax(0, 1fr); gap: 10px; padding: 2px 0; }
+.dv-kv b { min-width: 44px; font-size: 11px; color: var(--text-tertiary); font-weight: 600; padding-top: 2px; word-break: keep-all; overflow-wrap: break-word; }
+.dv-miss { color: var(--text-tertiary); }
+.dv-note { margin: 10px 0 0; font-size: 11.5px; color: var(--text-tertiary); }
+.dv-pages { margin: 16px 0 6px; font-size: 11px; color: var(--text-tertiary); }
+@media (max-width: 700px) { .dv-top { grid-template-columns: minmax(0, 1fr); } }
 .id-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
 .table-wrap { border: 1px solid var(--border-item); border-radius: var(--radius-8); overflow: hidden; overflow-x: auto; }
 
@@ -3422,7 +3545,7 @@ export function buildFileContent(id) {
   return `window.${BUILD_GLOBAL} = ${JSON.stringify(String(id))};\n`
 }
 
-const INTERACTION_SCRIPT = `
+const interactionScript = () => `
 (function () {
   var DETAIL_DATA = JSON.parse(document.getElementById('detail-data').textContent);
   var DETAIL_FIELD_LABELS = ${JSON.stringify(DETAIL_FIELD_LABELS)};
@@ -4013,6 +4136,8 @@ ${PRD_READING_SCRIPT}
   }
 
   document.addEventListener('click', function (ev) { onClick(ev); syncUrl(false); });
+  document.addEventListener('click', function (ev) { var r = ev.target.closest && ev.target.closest('.dv-row'); if (r) { r.classList.toggle('open'); r.setAttribute('aria-expanded', r.classList.contains('open') ? 'true' : 'false'); } });
+  document.addEventListener('keydown', function (ev) { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.classList && ev.target.classList.contains('dv-row')) { ev.preventDefault(); ev.target.click(); } });
 
   document.addEventListener('keydown', function (ev) {
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('[data-card-open]')) { ev.preventDefault(); onClick(ev); syncUrl(false); return; }
@@ -4103,7 +4228,7 @@ ${PRD_READING_SCRIPT}
       document.head.appendChild(probe);
     }, ${VIEWER_AUTO_REFRESH_MS});
   }
-${DISCIPLINE_LOAD_SCRIPT}
+${disciplineLoadScript()}
 })();
 `
 
@@ -4130,15 +4255,11 @@ ${DISCIPLINE_LOAD_SCRIPT}
 // choice never flashes light first. Light unless the stored value is 'dark'.
 const THEME_HEAD_SCRIPT = `(function(){var t=null;try{t=localStorage.getItem(${JSON.stringify(THEME_STORAGE_PREFIX)}+location.pathname)}catch(e){}document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light')})();`
 const THEME_HEAD_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(THEME_HEAD_SCRIPT, 'utf8').digest('base64')
-const INTERACTION_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT, 'utf8').digest('base64')
 // T-961: a multi-line page resolves an added line's past ticket
 // (docs/tickets/<line>/<v>/T-n.md) to its own data file key `<line>--<v>`; a
-// single-line page keeps INTERACTION_SCRIPT, byte for byte.
+// single-line page keeps the interaction script, byte for byte.
 const PAST_REF_RE = /(function pastTicketRef\(fields\) \{\n\s*var parts = [^\n]*;)/
 const PAST_REF_LINE = '\n    ' + ['if', '(parts.length', '===', '5)', 'parts.splice(2,', '2,', "parts[2]", '+', "'--'", '+', 'parts[3]);'].join(' ')
-const INTERACTION_SCRIPT_LINES = INTERACTION_SCRIPT.replace(PAST_REF_RE, (head) => head + PAST_REF_LINE)
-if (INTERACTION_SCRIPT_LINES === INTERACTION_SCRIPT) throw new Error('T-961: pastTicketRef text drifted from PAST_REF_RE')
-const INTERACTION_SCRIPT_LINES_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT_LINES, 'utf8').digest('base64')
 // T-961: emitted only on a page with several release lines — a single-line
 // page's CSS, scripts and CSP stay byte-identical.
 const LINES_CSS = `
@@ -4152,21 +4273,42 @@ const LINES_CSS = `
 const LINES_SCRIPT = `(function(){function sync(){document.querySelectorAll('.store-section').forEach(function(s){var b=s.querySelector('.nav-item-clickable.active[data-crumb]');var l=s.querySelector('.js-group-label');if(b&&l)l.textContent=b.getAttribute('data-crumb');});}function later(){setTimeout(sync,0);}document.addEventListener('click',later);document.addEventListener('keydown',later);window.addEventListener('hashchange',later);later();})();`
 const LINES_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(LINES_SCRIPT, 'utf8').digest('base64')
 
-const CSP_CONTENT = [
-  "default-src 'none'",
-  // T-885 (T-876 = D): 'strict-dynamic' lets the hash-trusted interaction
-  // script add a past-version data file's <script src>; a parser-inserted or
-  // innerHTML-inserted script (a document body) still never runs.
-  `script-src 'sha256-${THEME_HEAD_SCRIPT_SHA256_BASE64}' 'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`,
-  "style-src 'unsafe-inline'",
-  "img-src 'self' data:",
-  // T-1010: only the side panel's sandboxed artifact iframe (a contained file:// href) loads a frame.
-  "frame-src file:",
-  "font-src data:",
-  "base-uri 'none'",
-  "form-action 'none'",
-].join('; ')
-const CSP_CONTENT_LINES = CSP_CONTENT.replace(`'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}'`, `'sha256-${INTERACTION_SCRIPT_LINES_SHA256_BASE64}'`).replace("'strict-dynamic'", `'sha256-${LINES_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`)
+/**
+ * T-1277: the interaction script carries the page's labels (JSON-embedded at generation), so the script, its
+ * multi-line variant and the CSP hashes are built once per language — never at module load.
+ */
+const scriptBundles = new Map()
+function scriptBundle(lang) {
+  let b = scriptBundles.get(lang)
+  if (b) return b
+  const sha = (t) => crypto.createHash('sha256').update(t, 'utf8').digest('base64')
+  const interaction = interactionScript()
+  const interactionLines = interaction.replace(PAST_REF_RE, (head) => head + PAST_REF_LINE)
+  if (interactionLines === interaction) throw new Error('T-961: pastTicketRef text drifted from PAST_REF_RE')
+  const interactionSha = sha(interaction)
+  const csp = [
+    "default-src 'none'",
+    // T-885 (T-876 = D): 'strict-dynamic' lets the hash-trusted interaction
+    // script add a past-version data file's <script src>; a parser-inserted or
+    // innerHTML-inserted script (a document body) still never runs.
+    `script-src 'sha256-${THEME_HEAD_SCRIPT_SHA256_BASE64}' 'sha256-${interactionSha}' 'strict-dynamic'`,
+    "style-src 'unsafe-inline'",
+    "img-src 'self' data:",
+    // T-1010: only the side panel's sandboxed artifact iframe (a contained file:// href) loads a frame.
+    "frame-src file:",
+    "font-src data:",
+    "base-uri 'none'",
+    "form-action 'none'",
+  ].join('; ')
+  b = {
+    interaction,
+    interactionLines,
+    csp,
+    cspLines: csp.replace(`'sha256-${interactionSha}'`, `'sha256-${sha(interactionLines)}'`).replace("'strict-dynamic'", `'sha256-${LINES_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`),
+  }
+  scriptBundles.set(lang, b)
+  return b
+}
 
 /**
  * Embeds `obj` as a same-document JSON blob. Escapes EVERY `<` as `<`
@@ -4215,6 +4357,9 @@ export function renderPage({
   // bodies never sit in this page, so the page itself cannot tell.
   pastMermaid = false,
 }) {
+  // T-1277: the chrome language is the project's user_lang (data.userLang, collect.mjs); unset or unknown → ko.
+  setViewerLang(data.userLang)
+  const bundle = scriptBundle(viewerLang)
   pageViewerAbsPath = viewerAbsPath
   const pageTitle = escapeHtml(pageTitleText(data.project))
   const discipline = data.discipline || []
@@ -4259,11 +4404,11 @@ ${discSection(discipline, data.disciplineLoad || null)}`
   const detailScript = detailDataScript(detailData)
   // T-1049 (T-1056 = A): mermaid ships only on a page that carries a diagram block.
   const mm = pastMermaid || hasMermaid(bodyHtml, detailScript) ? mermaidScript() : null
-  const csp = views.length > 0 ? CSP_CONTENT_LINES : CSP_CONTENT
+  const csp = views.length > 0 ? bundle.cspLines : bundle.csp
   const cspMeta = mm ? csp.replace("'strict-dynamic'", `'sha256-${mm.sha256}' 'strict-dynamic'`) : csp
 
   return `<!doctype html>
-<html lang="ko">
+<html lang="${viewerLang}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${cspMeta}">
@@ -4282,7 +4427,7 @@ ${emitRootThemeCss(dark, light)}${views.length > 0 ? LINES_CSS : ''}${mm ? MERMA
 ${bodyHtml}
 </div>
 ${detailScript}
-<script>${views.length > 0 ? INTERACTION_SCRIPT_LINES : INTERACTION_SCRIPT}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}${mm ? `\n<script>${mm.script}</script>` : ''}
+<script>${views.length > 0 ? bundle.interactionLines : bundle.interaction}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}${mm ? `\n<script>${mm.script}</script>` : ''}
 </body>
 </html>
 `

@@ -73,22 +73,32 @@ function write(rel: string, body: string): string {
 }
 
 describe('canonical lists', () => {
-  test('ko · en · ja exist, every entry has a word, a compilable pattern and ≥1 replacement', () => {
+  // T-1263: the canon lists are schema 2; the loader (T-1262) also still reads schema 1.
+  test('ko · en · ja exist as schema 2, every entry has a concept, ≥1 say and compilable avoid patterns', () => {
     for (const lang of ['ko', 'en', 'ja']) {
       const data = JSON.parse(fs.readFileSync(path.join(CANON, `${lang}.json`), 'utf-8'))
       expect(data.lang).toBe(lang)
+      expect(data.schema).toBe(2)
       expect(data.entries.length).toBeGreaterThan(5)
       for (const e of data.entries) {
-        expect(typeof e.word).toBe('string')
-        expect(Array.isArray(e.replace) && e.replace.length > 0).toBe(true)
-        // JS-compilable too: a product imports the same patterns into its runtime.
-        expect(() => new RegExp(e.pattern ?? e.word, e.flags ?? '')).not.toThrow()
+        expect(typeof e.concept).toBe('string')
+        expect(e.word).toBeUndefined()
+        expect(Array.isArray(e.say) && e.say.length > 0).toBe(true)
+        expect(Array.isArray(e.avoid) && e.avoid.length > 0).toBe(true)
+        for (const a of e.avoid) {
+          // JS-compilable too: a product imports the same patterns into its runtime.
+          expect(() => new RegExp(a.pattern, a.flags ?? '')).not.toThrow()
+        }
       }
     }
   })
 
-  test('ko is seeded from the observed words', () => {
-    const words = JSON.parse(fs.readFileSync(path.join(CANON, 'ko.json'), 'utf-8')).entries.map((e: any) => e.word).join(' | ')
+  test('ko is seeded from the observed words, with the 전후 표기 entry first', () => {
+    const entries = JSON.parse(fs.readFileSync(path.join(CANON, 'ko.json'), 'utf-8')).entries
+    expect(entries[0].concept).toBe('전후 표기')
+    expect(entries[0].say).toEqual(['As-Is', 'To-Be'])
+    expect(entries[0].avoid.map((a: any) => a.label)).toEqual(['pair', 'label-head', 'cell-alone'])
+    const words = entries.map((e: any) => e.concept).join(' | ')
     for (const w of ['머무르다', '착지', '사람 손', '모름', 'em dash', '판 내기', '발자국', '축자']) expect(words).toContain(w)
   })
 })
@@ -392,5 +402,289 @@ describe('T-1080 — a cloned project word list cannot forge hook context or tra
     } finally {
       fs.rmSync(path.join(project, 'evil.json'), { force: true })
     }
+  })
+})
+
+describe('T-1262 — schema 2 (concept · say · avoid[] · except_line · scope · cases) beside schema 1', () => {
+  // The 전후 표기 entry as drafted in term-dictionary-design.md (T-1208), with its cases.
+  const BEFORE_AFTER = {
+    concept: '전후 표기',
+    say: ['As-Is', 'To-Be'],
+    avoid: [
+      { label: 'pair', pattern: '(?<![가-힣「])(?:옛\\s*(?:→|->|=>|⇒|&rarr;|/|·|=|,|vs\\.?)\\s*새|옛\\s{2,}새|새\\s*(?:←|<-|&larr;|/|·|vs\\.?)\\s*옛)(?![가-힣」])' },
+      { label: 'label-head', pattern: '(?<![가-힣])[옛새](?=\\s*(?::|=|·\\s))' },
+      { label: 'cell-alone', pattern: '(?:^|(?<=\\s\\s)|(?<=\\|)|(?<=\\|\\s)|(?<=·\\s))[옛새](?=\\s*\\||\\s*$)' },
+    ],
+    cases: {
+      hit: [{ text: '옛 → 새' }, { text: '새 ← 옛' }, { text: '옛: 레인 셋' },
+        { text: '| 항목 | 옛 | 새 |', kind: 'md', n: 2 }, { text: '<table><tr><th>옛</th><th>새</th></tr></table>', kind: 'html' }],
+      miss: [{ text: '옛 코드' }, { text: '새로 만든' }, { text: '「옛 → 새」 표기는 금지' },
+        { text: '<li><span class="rec">새</span>일하는 방식</li>', kind: 'html' }],
+    },
+  }
+  const SCOPED = { concept: '범위 시험', say: ['x'], avoid: [{ pattern: '범위어' }], scope: ['prd'], cases: { hit: [{ text: '범위어' }], miss: [{ text: '다른말' }] } }
+  const WRONG_CASE = { concept: '틀린 예문', say: ['x'], avoid: [{ pattern: '걸림' }], cases: { hit: [{ text: '없음' }], miss: [{ text: '걸림' }] } }
+
+  const proj = (entries: unknown[]) => write('.prdt/wordlist/ko.json', JSON.stringify({ lang: 'ko', schema: 2, entries }))
+  const clear = () => fs.rmSync(path.join(project, '.prdt', 'wordlist'), { recursive: true, force: true })
+
+  // Runs every schema-2 entry's `cases` of the merged canon + project list (the hook-free library call).
+  function runCases(): string[] {
+    const code = [
+      'import sys, json',
+      `sys.path.insert(0, ${JSON.stringify(path.join(CORE_ROOT, 'scripts'))})`,
+      'import prdt_cli as c',
+      `es = c.wordlist_entries("ko", ${JSON.stringify(project)})`,
+      'print(json.dumps([f for e in es for f in c.wordlist_run_cases(e)], ensure_ascii=False))',
+    ].join('\n')
+    const r = spawnSync('python3', ['-c', code], { env: env(), encoding: 'utf-8', timeout: subprocessTimeout('cli') })
+    return JSON.parse(r.stdout)
+  }
+
+  test('every schema-2 entry runs its cases: the drafted 전후 표기 entry passes, a wrong case is named', () => {
+    proj([BEFORE_AFTER, SCOPED])
+    try { expect(runCases()).toEqual([]) } finally { clear() }
+    proj([WRONG_CASE])
+    try {
+      const f = runCases()
+      expect(f).toHaveLength(4)   // a case with no kind runs as md and as html
+      expect(f.join('\n')).toMatch(/틀린 예문: hit case '없음' \(md\): expected 1 hit\(s\), got 0/)
+      expect(f.join('\n')).toMatch(/틀린 예문: miss case '걸림' \(html\): expected 0 hit\(s\), got 1/)
+    } finally { clear() }
+  })
+
+  test('hit line keeps the schema-1 format; the concept is the label, `avoid` items are checked one by one', () => {
+    proj([BEFORE_AFTER])
+    try {
+      const p = write('docs/artifacts/v1.0/ba.md', '# 표\n\n옛 → 새 로 바꿔요\n옛: 하나\n')
+      const r = cli(['check', p])
+      expect(r.out).toMatch(/ba\.md:3:1: 옛 → 새 \(전후 표기\) → As-Is · To-Be/)
+      expect(r.out).toMatch(/ba\.md:4:1: 옛 \(전후 표기\) → As-Is · To-Be/)
+      const hook = spawnSync('bash', [path.join(prdtHome, 'hooks', 'prdt-wordlist-check.sh')], {
+        cwd: project, env: env(), encoding: 'utf-8', timeout: subprocessTimeout('hook'),
+        input: JSON.stringify({ tool_name: 'Write', cwd: project, tool_input: { file_path: p } }),
+      })
+      const ctx: string = JSON.parse(hook.stdout).hookSpecificOutput.additionalContext
+      expect(ctx.split('\n')[0]).toBe('[prdt wordlist] docs/artifacts/v1.0/ba.md: 2 hit(s) from the ko word list (contracts §Language). Edit docs/artifacts/v1.0/ba.md this turn: replace each word below with one of the replacements after its →.')
+      expect(ctx).toContain('- line 3 "옛 → 새 (전후 표기)" → As-Is · To-Be')
+    } finally { clear() }
+  })
+
+  test('schema 1 entry and its schema-2 migration give the same check output and a byte-identical export', () => {
+    const s1 = [
+      { word: '시험어', pattern: '시험[어말]|시험', flags: 'i', replace: ['검사어', '확인어'], except_line: ['^## '], note: 'n' },
+      { word: '시험둘', pattern: '시험둘', replace: ['x'] },
+    ]
+    const s2 = [
+      { concept: '시험어', avoid: [{ pattern: '시험[어말]|시험', flags: 'i' }], say: ['검사어', '확인어'], except_line: ['^## '], note: 'n' },
+      { concept: '시험둘', avoid: [{ pattern: '시험둘' }], say: ['x'] },
+    ]
+    const body = '## 시험어 제목\n시험어 와 시험말\n시험둘\n'
+    const file = write('docs/prd/s.md', body)
+    const run = (entries: unknown[]) => {
+      write('.prdt/wordlist/ko.json', JSON.stringify({ lang: 'ko', entries }))
+      try {
+        return [cli(['check', '--lang', 'ko', file]).out, cli(['export', '--lang', 'ko']).out, cli(['export', '--lang', 'ko', '--format', 'lines']).out]
+      } finally { clear() }
+    }
+    const a = run(s1), b = run(s2)
+    expect(b[0]).toBe(a[0])
+    expect(b[1]).toBe(a[1])
+    expect(b[2]).toBe(a[2])
+    expect(a[0]).toMatch(/시험어/)
+    expect(a[0]).not.toMatch(/s\.md:1:/)   // except_line carried over
+  })
+
+  test('canon entries still check and export exactly as before (schema 1 canon is untouched)', () => {
+    const j = JSON.parse(cli(['export', '--lang', 'ko']).out)
+    expect(j.schema).toBe(1)
+    expect(j.entries.find((e: any) => e.word === '착지')).toEqual({ word: '착지', pattern: '착지', replace: ['도착하다', '저장되다', '반영되다'] })
+  })
+
+  test('several `avoid` items export as one `pattern` (?:p1)|(?:p2); differing flags refuse export, not check', () => {
+    proj([{ concept: '둘', say: ['x'], avoid: [{ pattern: 'aa' }, { pattern: 'bb' }] }])
+    try {
+      const e = JSON.parse(cli(['export', '--lang', 'ko']).out).entries.find((x: any) => x.word === '둘')
+      expect(e).toEqual({ word: '둘', pattern: '(?:aa)|(?:bb)', replace: ['x'] })
+    } finally { clear() }
+    proj([{ concept: '섞임', say: ['x'], avoid: [{ pattern: 'aa', flags: 'i' }, { pattern: 'bb' }] }])
+    try {
+      const ex = cli(['export', '--lang', 'ko'])
+      expect(ex.code).toBe(3)
+      expect(ex.err).toMatch(/different `flags`/)
+      const ck = cli(['check', '--lang', 'ko', '-'], { input: 'AA\n' })
+      expect(ck.code).toBe(1)
+    } finally { clear() }
+  })
+
+  test('schema 1 and 2 entries merge by concept = word: the project entry replaces the canon one', () => {
+    proj([{ concept: '착지', say: ['내려앉다'], avoid: [{ pattern: '착지' }] }])
+    try {
+      const r = cli(['check', '--lang', 'ko', '-'], { input: '착지 했다\n' })
+      expect(r.out).toMatch(/<stdin>:1:1: 착지 → 내려앉다/)
+      expect(r.out).not.toContain('도착하다')
+    } finally { clear() }
+  })
+
+  test('surface filter: `scope` limits an entry; no `scope` = every surface; the hook derives the surface from the path', () => {
+    proj([SCOPED])
+    try {
+      const inPrd = cli(['check', '--lang', 'ko', '--surface', 'prd', '-'], { input: '범위어\n' })
+      expect(inPrd.code).toBe(1)
+      const inChat = cli(['check', '--lang', 'ko', '--surface', 'user-chat', '-'], { input: '범위어\n' })
+      expect(inChat.code).toBe(0)
+      expect(cli(['check', '--lang', 'ko', '-'], { input: '범위어\n' }).code).toBe(1)   // no --surface: every entry
+      // canon entries have no scope: they apply on every surface
+      expect(cli(['check', '--lang', 'ko', '--surface', 'user-chat', '-'], { input: '상태 모름\n' }).code).toBe(1)
+      expect(cli(['export', '--lang', 'ko', '--surface', 'artifacts']).out).not.toContain('범위 시험')
+      const bad = cli(['check', '--lang', 'ko', '--surface', 'nope', '-'], { input: 'x\n' })
+      expect(bad.code).toBe(3)
+      expect(bad.err).toMatch(/not a surface/)
+      const run = (rel: string) => spawnSync('bash', [path.join(prdtHome, 'hooks', 'prdt-wordlist-check.sh')], {
+        cwd: project, env: env(), encoding: 'utf-8', timeout: subprocessTimeout('hook'),
+        input: JSON.stringify({ tool_name: 'Write', cwd: project, tool_input: { file_path: write(rel, '범위어\n') } }),
+      }).stdout
+      expect(run('docs/prd/PRD.md')).toContain('범위 시험')
+      expect(run('docs/artifacts/v1.0/scoped.md')).toBe('')
+      expect(run('docs/tickets/v1.0/T-9.md')).toBe('')
+    } finally { clear() }
+  })
+
+  test('a broken schema-2 project entry is skipped with a warning, canon still applies; schema 1 files raise nothing new', () => {
+    proj([{ concept: '깨짐', say: ['x'], avoid: [] }, { concept: '범위밖', say: ['x'], avoid: [{ pattern: 'q' }], scope: ['chat'] }])
+    try {
+      const r = cli(['check', '--lang', 'ko', '-'], { input: '상태 모름\n' })
+      expect(r.code).toBe(1)
+      expect(r.err).toMatch(/schema 2 entry needs/)
+      expect(r.err).toMatch(/`scope` lists only/)
+    } finally { clear() }
+  })
+})
+
+describe('T-1263 — canon lists in schema 2, and the loader refuses three latent shapes', () => {
+  const proj = (entries: unknown[]) => write('.prdt/wordlist/ko.json', JSON.stringify({ lang: 'ko', schema: 2, entries }))
+  const clear = () => fs.rmSync(path.join(project, '.prdt', 'wordlist'), { recursive: true, force: true })
+  const GOOD = { concept: '좋은항목', say: ['x'], avoid: [{ pattern: '좋은말' }] }
+
+  function py(lang: string, body: string[]): any {
+    const code = [
+      'import sys, json',
+      `sys.path.insert(0, ${JSON.stringify(path.join(CORE_ROOT, 'scripts'))})`,
+      'import prdt_cli as c',
+      ...body,
+    ].join('\n')
+    const r = spawnSync('python3', ['-c', code], { env: env(), encoding: 'utf-8', timeout: subprocessTimeout('cli') })
+    return JSON.parse(r.stdout)
+  }
+
+  test('every canon entry\'s cases run and pass (ko · en · ja); the cases are not empty for 전후 표기', () => {
+    for (const lang of ['ko', 'en', 'ja']) {
+      const out = py(lang, [
+        `es = c.wordlist_entries(${JSON.stringify(lang)}, None)`,
+        'print(json.dumps({"n": len(es), "withCases": sum(1 for e in es if e.get("_cases")), "fail": [f for e in es for f in c.wordlist_run_cases(e)]}, ensure_ascii=False))',
+      ])
+      expect(out.fail).toEqual([])
+      expect(out.n).toBeGreaterThan(5)
+      if (lang === 'ko') expect(out.withCases).toBeGreaterThanOrEqual(1)
+    }
+  })
+
+  test('canon export is still schema 1 and carries every migrated entry exactly as before (one avoid = one pattern)', () => {
+    for (const lang of ['ko', 'en', 'ja']) {
+      const canon = JSON.parse(fs.readFileSync(path.join(CANON, `${lang}.json`), 'utf-8')).entries
+      const exp = JSON.parse(cli(['export', '--lang', lang]).out)
+      expect(exp.schema).toBe(1)
+      const expected = canon.map((e: any) => {
+        const joined = e.avoid.length === 1 ? e.avoid[0].pattern : e.avoid.map((a: any) => `(?:${a.pattern})`).join('|')
+        const o: any = { word: e.concept, pattern: joined }
+        if (e.avoid[0].flags) o.flags = e.avoid[0].flags
+        o.replace = e.say
+        if (e.except_line) o.except_line = e.except_line
+        if (e.note) o.note = e.note
+        return o
+      })
+      expect(exp.entries).toEqual(expected)
+      for (const e of exp.entries) expect(() => new RegExp(e.pattern, e.flags ?? '')).not.toThrow()
+    }
+  })
+
+  test('전후 표기 hit line in the check output and in lines export', () => {
+    const r = cli(['check', '--lang', 'ko', '-'], { input: '옛 → 새 로 바꿔요\n' })
+    expect(r.out).toMatch(/<stdin>:1:1: 옛 → 새 \(전후 표기\) → As-Is · To-Be/)
+    expect(cli(['export', '--lang', 'ko', '--format', 'lines']).out.split('\n')[0]).toBe('- 전후 표기 → As-Is · To-Be')
+  })
+
+  const BAD: Array<[string, unknown, RegExp]> = [
+    ['numbered backreference across joined avoid items',
+      { concept: '역참조', say: ['x'], avoid: [{ pattern: '(가)\\1' }, { pattern: '(나)\\1' }] }, /numbered backreference/],
+    ['numbered backreference in the first of several items',
+      { concept: '역참조일', say: ['x'], avoid: [{ pattern: '(가)\\1' }, { pattern: '나' }] }, /numbered backreference/],
+    ['conditional group reference',
+      { concept: '조건참조', say: ['x'], avoid: [{ pattern: '(가)?(?(1)나|다)' }, { pattern: '라' }] }, /numbered backreference/],
+    ['inline global flag in a non-first avoid item',
+      { concept: '인라인플래그', say: ['x'], avoid: [{ pattern: '가' }, { pattern: '(?i)abc' }] }, /inline global flag/],
+    ['cases that is not an object', { concept: '케이스1', say: ['x'], avoid: [{ pattern: '가' }], cases: [] }, /`cases` is an object/],
+    ['cases with an unknown group', { concept: '케이스2', say: ['x'], avoid: [{ pattern: '가' }], cases: { hits: [] } }, /`cases` is an object/],
+    ['cases.hit that is not a list', { concept: '케이스3', say: ['x'], avoid: [{ pattern: '가' }], cases: { hit: '가' } }, /`cases.hit` is a list/],
+    ['a case without text', { concept: '케이스4', say: ['x'], avoid: [{ pattern: '가' }], cases: { hit: [{ kind: 'md' }] } }, /`text` string/],
+    ['a case that is a bare string', { concept: '케이스5', say: ['x'], avoid: [{ pattern: '가' }], cases: { miss: ['가'] } }, /`text` string/],
+    ['a case with a bad kind', { concept: '케이스6', say: ['x'], avoid: [{ pattern: '가' }], cases: { hit: [{ text: '가', kind: 'txt' }] } }, /md or html/],
+    ['a hit case with n = 0', { concept: '케이스7', say: ['x'], avoid: [{ pattern: '가' }], cases: { hit: [{ text: '가', n: 0 }] } }, /integer ≥ 1/],
+    ['a miss case with n', { concept: '케이스8', say: ['x'], avoid: [{ pattern: '가' }], cases: { miss: [{ text: '가', n: 1 }] } }, /only on a `hit` case/],
+  ]
+
+  test.each(BAD)('project list: %s → warning, entry skipped, the rest still applies, no runner KeyError', (_name, entry, msg) => {
+    proj([entry, GOOD])
+    try {
+      const r = cli(['check', '--lang', 'ko', '-'], { input: '좋은말 이다\n상태 모름\n' })
+      expect(r.err).toMatch(msg)
+      expect(r.err).toMatch(/entry skipped/)
+      expect(r.out).toMatch(/<stdin>:1:1: 좋은말 \(좋은항목\) → x/)   // a sibling entry in the same file applies
+      expect(r.out).toMatch(/모름/)                      // canon applies
+      expect(r.out).not.toContain((entry as any).concept)
+      const out = py('ko', [
+        `w = []`,
+        `es = c.wordlist_entries("ko", ${JSON.stringify(project)}, w)`,
+        'print(json.dumps({"concepts": [e["word"] for e in es], "fail": [f for e in es for f in c.wordlist_run_cases(e)]}, ensure_ascii=False))',
+      ])
+      expect(out.concepts).not.toContain((entry as any).concept)
+      expect(out.concepts).toContain('좋은항목')
+      expect(out.fail).toEqual([])
+    } finally { clear() }
+  })
+
+  test('a canon-shaped file with a bad shape raises instead of loading (canon is never silently thinned)', () => {
+    proj([BAD[0][1]])
+    try {
+      const doctor = py('ko', [
+        'w = []',
+        `c.wordlist_entries("ko", ${JSON.stringify(project)}, w)`,
+        'print(json.dumps(w, ensure_ascii=False))',
+      ])
+      expect(doctor.join('\n')).toMatch(/numbered backreference/)
+      const exp = cli(['export', '--lang', 'ko'])
+      expect(exp.code).toBe(3)   // no warnings list: loader raises, same as any bad project entry
+      expect(exp.err).toMatch(/numbered backreference/)
+    } finally { clear() }
+  })
+
+  test('accepted shapes: one avoid with a backreference or inline flag, named groups per item, flags field, valid cases', () => {
+    proj([
+      { concept: '단일역참조', say: ['x'], avoid: [{ pattern: '(가)\\1' }] },
+      { concept: '단일플래그', say: ['x'], avoid: [{ pattern: '(?i)abc' }] },
+      { concept: '플래그필드', say: ['x'], avoid: [{ pattern: 'qq', flags: 'i' }, { pattern: 'rr', flags: 'i' }],
+        cases: { hit: [{ text: 'QQ' }, { text: '| a | QQ |', kind: 'md', n: 1 }], miss: [{ text: 'zz', kind: 'html' }] } },
+      { concept: '범위', say: ['x'], avoid: [{ pattern: '[(]ab[)]' }, { pattern: '\\\\1' }] },
+    ])
+    try {
+      const out = py('ko', [
+        'w = []',
+        `es = c.wordlist_entries("ko", ${JSON.stringify(project)}, w)`,
+        'print(json.dumps({"w": w, "concepts": [e["word"] for e in es], "fail": [f for e in es for f in c.wordlist_run_cases(e)]}, ensure_ascii=False))',
+      ])
+      expect(out.w).toEqual([])
+      expect(out.concepts).toEqual(expect.arrayContaining(['단일역참조', '단일플래그', '플래그필드', '범위']))
+      expect(out.fail).toEqual([])
+    } finally { clear() }
   })
 })
