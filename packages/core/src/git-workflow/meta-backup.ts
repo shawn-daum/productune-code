@@ -264,15 +264,18 @@ export function backupPushArgs(remote: string, branch: string): string[] {
 
 /**
  * Is `name` a legal git remote NAME? Cheap structural refusals first (a leading
- * `-` is flag-shaped, `:` is refspec-shaped, whitespace is two argv words),
+ * `-` is flag-shaped, `:` is refspec-shaped, ASCII whitespace is two argv words),
  * then git's own `check-ref-format --allow-onelevel` rule, re-implemented
  * in-process (git refs.c `check_refname_format`, no refspec-pattern): no
  * subprocess, so load, timeout or spawn failure can never turn a legal name
  * into a refusal (T-1278). Pure and deterministic; at least as strict as git:
- * a name git rejects is rejected here too.
+ * a name git rejects is rejected here too. Whitespace means ASCII only (bytes
+ * <= 0x20, the control-range test below) — exactly git's own rule: git accepts
+ * U+00A0 / U+2028 / U+3000 / U+FEFF, so refusing them (JS `\s`) would be
+ * stricter than git and diverge from the Python mirror `_legal_remote_name`.
  */
 export function isLegalRemoteName(name: string): boolean {
-  if (!name || name.startsWith('-') || /[:\s]/.test(name)) return false
+  if (!name || name.startsWith('-')) return false
   if (name === '@' || name.includes('..') || name.includes('@{')) return false
   if (name.endsWith('.') || name.startsWith('/') || name.endsWith('/')) return false
   // eslint-disable-next-line no-control-regex
@@ -282,6 +285,9 @@ export function isLegalRemoteName(name: string): boolean {
   }
   return true
 }
+
+/** The failure text of the name refusal — also how a stale latch of it is recognised. */
+const REMOTE_NAME_INVALID_MARK = 'is not a legal remote name'
 
 export async function isValidRemoteName(name: string): Promise<boolean> {
   return isLegalRemoteName(name)
@@ -398,9 +404,21 @@ export async function metaBackupTick(
   // Refused BEFORE any git call on the meta repo: config may pick a registered
   // remote by name, never smuggle a flag or a refspec into the push argv.
   if (!(await isValidRemoteName(remote))) {
-    const error = `meta.backup_remote ${JSON.stringify(remote)} is not a legal remote name — refused`
+    const error = `meta.backup_remote ${JSON.stringify(remote)} ${REMOTE_NAME_INVALID_MARK} — refused`
     recordFailure(projectDir, { remote, attemptAt: now.toISOString(), error })
     return { attempted: false, pushed: false, reason: 'remote-name-invalid', remote, error }
+  }
+  // T-1278: the name passes now, so a standing name-refusal latch is a false
+  // one (written by the old subprocess check under load) — clear it on THIS
+  // tick, whatever decideBackup later says (`already-today` included). Other
+  // failure latches are untouched.
+  {
+    const prev = readMetaBackupState(projectDir)
+    if (prev.last_ok === false && typeof prev.last_error === 'string' && prev.last_error.includes(REMOTE_NAME_INVALID_MARK)) {
+      const cleared: MetaBackupState = { ...prev, last_ok: true }
+      delete cleared.last_error
+      writeMetaBackupState(projectDir, cleared)
+    }
   }
   const remotes = await listMetaRemotes(projectDir)
   if (!remotes.some((r) => r.name === remote)) {

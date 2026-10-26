@@ -26,7 +26,7 @@
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { execFileSync } from 'child_process'
+import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, beforeEach, afterEach, describe } from 'vitest'
 import { initMetaRepo, metaGitDir, commitMeta } from '../../src/git-workflow/meta-git'
 import {
@@ -634,15 +634,26 @@ test('T-848 S4: a link planted at the backup state file is refused — victim un
   }
 })
 
-test('T-1278 — remote-name check is in-process: agrees with git check-ref-format on a corpus, never stricter by accident', () => {
-  const corpus = [
-    'backup', 'origin', 'my-backup', 'nas.home', 'team/backup', 'a/b/c', 'a.b', 'é백업', 'x@y', 'a@',
-    '@', '@{', 'a@{b', 'x..y', 'a.', '.a', 'a/.b', 'a/b.lock', 'a.lock', 'a.lock/b', '/a', 'a/', 'a//b',
-    'bad^ref', 'a~1', 'a?b', 'a*b', 'a[b', 'a\\b', 'a b', 'a\tb', 'a\x7fb', 'a:b', '-f', '--force', '',
-  ]
-  for (const name of corpus) {
+const CORPUS: string[] = JSON.parse(
+  fs.readFileSync(path.join(__dirname, 'fixtures', 'remote-name-corpus.json'), 'utf-8'),
+)
+const PY_LOADER = `
+import importlib.util, importlib.machinery, sys, json
+loader = importlib.machinery.SourceFileLoader("prdt_mod", sys.argv[1])
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec); loader.exec_module(m)
+names = json.load(open(sys.argv[2], encoding="utf-8"))
+print(json.dumps([m._legal_remote_name(n) for n in names]))
+`
+
+// Whitespace policy: ASCII only, both sides. git accepts U+00A0/2028/3000/FEFF
+// (verified against real git below), so ASCII-only is as close to git as it
+// gets and never looser; the flag/refspec/argv-word refusals are ASCII too.
+test('T-1278 — remote-name check is in-process: TS and git agree on the shared corpus (incl. Unicode whitespace)', () => {
+  expect(CORPUS).toEqual(expect.arrayContaining(['my-backup.2', '/', 'a b', 'a b', 'a　b', 'a﻿b']))
+  for (const name of CORPUS) {
     let git = true
-    if (!name || name.startsWith('-') || /[:\s]/.test(name)) git = false
+    if (!name || name.startsWith('-') || name.includes(':') || /[ \t\n\v\f\r]/.test(name)) git = false
     else {
       try {
         execFileSync('git', ['check-ref-format', '--allow-onelevel', name], { stdio: 'ignore' })
@@ -652,4 +663,93 @@ test('T-1278 — remote-name check is in-process: agrees with git check-ref-form
     }
     expect(isLegalRemoteName(name), JSON.stringify(name)).toBe(git)
   }
+})
+
+test('T-1278 — Python _legal_remote_name agrees with TS isLegalRemoteName on the same corpus', () => {
+  const py = path.resolve(__dirname, '..', '..', 'scripts', 'prdt_cli.py')
+  const r = spawnSync('python3', ['-I', '-c', PY_LOADER, py, path.join(__dirname, 'fixtures', 'remote-name-corpus.json')], {
+    encoding: 'utf-8',
+    timeout: 60_000,
+  })
+  expect(r.status, r.stderr).toBe(0)
+  const got: boolean[] = JSON.parse(r.stdout)
+  CORPUS.forEach((name, i) => expect(got[i], JSON.stringify(name)).toBe(isLegalRemoteName(name)))
+})
+
+// A PATH-stub git: logs every check-ref-format call, then sleeps past the old
+// 5 s limit (or exits 128 'dubious ownership'); every other subcommand is
+// forwarded to the real git so the tick can still push.
+function stubGit(mode: 'sleep' | 'dubious'): { dir: string; log: string; realPath: string } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-bk-stub-'))
+  tmpDirs.push(dir)
+  const log = path.join(dir, 'calls.log')
+  const real = execFileSync('which', ['git'], { encoding: 'utf-8' }).trim()
+  const body = mode === 'sleep' ? 'sleep 7' : "echo 'fatal: detected dubious ownership in repository' >&2; exit 128"
+  fs.writeFileSync(
+    path.join(dir, 'git'),
+    `#!/bin/sh\nfor a in "$@"; do if [ "$a" = check-ref-format ]; then echo called >> "${log}"; ${body}; fi; done\nexec "${real}" "$@"\n`,
+    { mode: 0o755 },
+  )
+  return { dir, log, realPath: process.env.PATH ?? '' }
+}
+
+describe.each(['sleep', 'dubious'] as const)('T-1278 — a git that cannot answer check-ref-format (%s)', (mode) => {
+  test('the tick still pushes and the stub is never asked', async () => {
+    const backup = makeBare('backup')
+    metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
+    const stub = stubGit(mode)
+    const prevPath = process.env.PATH
+    process.env.PATH = `${stub.dir}${path.delimiter}${prevPath}`
+    try {
+      const t0 = Date.now()
+      const res = await metaBackupTick(projectDir, { now: new Date('2026-09-11T02:00:00Z') })
+      expect(res).toMatchObject({ attempted: true, pushed: true })
+      expect(res.reason).not.toBe('remote-name-invalid')
+      expect(Date.now() - t0).toBeLessThan(5_000)
+    } finally {
+      process.env.PATH = prevPath
+    }
+    expect(fs.existsSync(stub.log)).toBe(false)
+    expect(readMetaBackupState(projectDir)).toMatchObject({ last_ok: true })
+  }, 30_000)
+})
+
+test('T-1278 — a false remote-name-invalid latch clears on the very next tick, even when decideBackup says already-today', async () => {
+  const backup = makeBare('backup')
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
+  // 04:11Z — the real push that succeeded
+  expect((await metaBackupTick(projectDir, { now: new Date('2026-10-26T04:11:00Z') })).pushed).toBe(true)
+  const okState = readMetaBackupState(projectDir)
+  // 04:25Z — the false latch the old subprocess check wrote under load
+  fs.writeFileSync(
+    metaBackupStatePath(projectDir),
+    JSON.stringify({
+      ...okState,
+      last_attempt_at: '2026-10-26T04:25:00.000Z',
+      last_ok: false,
+      last_error: 'meta.backup_remote "backup" is not a legal remote name — refused',
+    }),
+  )
+  await metaCommit('ahead of remote')
+  const res = await metaBackupTick(projectDir, { now: new Date('2026-10-26T04:26:00Z') })
+  expect(res).toMatchObject({ attempted: false, pushed: false, reason: 'already-today' })
+  const after = readMetaBackupState(projectDir)
+  expect(after.last_ok).toBe(true)
+  expect(after.last_error).toBeUndefined()
+  expect(after.last_push_at).toBe(okState.last_push_at)
+})
+
+test('T-1278 — other failure latches are not cleared by the name check', async () => {
+  const backup = makeBare('backup')
+  metaGitSync(['remote', 'add', 'backup', networkAlias(backup)])
+  expect((await metaBackupTick(projectDir, { now: new Date('2026-10-26T04:11:00Z') })).pushed).toBe(true)
+  const okState = readMetaBackupState(projectDir)
+  fs.writeFileSync(
+    metaBackupStatePath(projectDir),
+    JSON.stringify({ ...okState, last_attempt_at: '2026-10-26T04:25:00.000Z', last_ok: false, last_error: 'ssh: connection refused' }),
+  )
+  await metaCommit('ahead of remote')
+  const res = await metaBackupTick(projectDir, { now: new Date('2026-10-26T04:26:00Z') })
+  expect(res.reason).toBe('backoff')
+  expect(readMetaBackupState(projectDir)).toMatchObject({ last_ok: false, last_error: 'ssh: connection refused' })
 })

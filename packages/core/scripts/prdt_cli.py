@@ -1483,7 +1483,8 @@ def meta_git_refusal(prob):
 def _legal_remote_name(name):
     """In-process mirror of git `check-ref-format --allow-onelevel` (and of core's
     isLegalRemoteName, meta-backup.ts) — no subprocess, so load or a trust refusal
-    can never report a legal name as illegal (T-1278). At least as strict as git."""
+    can never report a legal name as illegal (T-1278). At least as strict as git.
+    Whitespace = ASCII only (ord <= 0x20), git's own rule, same as the TS side."""
     if not name or name.startswith("-") or name == "@" or ".." in name or "@{" in name:
         return False
     if name.endswith(".") or name.startswith("/") or name.endswith("/"):
