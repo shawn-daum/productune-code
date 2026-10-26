@@ -239,15 +239,15 @@ describe.skipIf(!PYTHON3 || !NODE)('T-983 grill fixes', () => {
   }
   const state = () => path.join(sb, 'h', '.prdt', 'update-state.json')
 
-  test('--ensure never runs the daily nudge (no update-state.json); a plain viewer run does (control)', () => {
+  test('--ensure never runs the daily nudge (no update-state.json); a plain non-tty viewer run writes none either (T-1100)', () => {
     fakeCheckout(true)
     execFileSync('git', ['init', '-q', code])
     const run = (args: string[]) => spawnSync(PYTHON3 as string, [prdt, 'viewer', ...args], {
       cwd: root, encoding: 'utf8', timeout: subprocessTimeout('cli'), env: installedEnv() })
     expect(run(['--ensure']).status).toBe(0)
     expect(fs.existsSync(state())).toBe(false)
-    run([])
-    expect(fs.existsSync(state())).toBe(true)
+    run([]) // spawnSync pipes → non-tty: T-1100 spends no slot and writes no state
+    expect(fs.existsSync(state())).toBe(false)
   })
 
   test('PRDT_VIEWER_NO_INSTALL (prdt update): no second install, one failure line naming the fix', () => {
