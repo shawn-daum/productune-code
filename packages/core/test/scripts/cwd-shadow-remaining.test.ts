@@ -71,7 +71,7 @@ describe('decoy modules in cwd are never executed (T-1195)', () => {
 describe('every embedded python in the listed scripts is isolated (-I)', () => {
   const files = [
     'hooks/prdt-session-start.sh', 'hooks/prdt-worktree-guard.sh', 'hooks/prdt-user-prompt.sh',
-    'hooks/prdt-message-display-autolink.sh', 'hooks/prdt-question-check.sh',
+    'hooks/prdt-message-display-autolink.sh', 'hooks/prdt-question-check.sh', 'hooks/prdt-lane-check.sh',
     'hooks/prdt-project-overrides-inject.sh', 'hooks/prdt-overrides-inject.sh',
     'hooks/prdt-inbox-inject.sh', 'prdt-url-scheme.sh', 'install.sh', 'uninstall.sh', 'prdt-flip.sh',
   ]

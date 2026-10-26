@@ -127,6 +127,7 @@ test('the manifest registers prdt-user-prompt.sh on Stop beside the question che
   const stops = m.registrations.filter((r: any) => r.event === 'Stop')
   expect(stops).toEqual([
     { event: 'Stop', hooks: ['prdt-question-check.sh'] },
+    { event: 'Stop', hooks: ['prdt-lane-check.sh'] },
     { event: 'Stop', hooks: ['prdt-user-prompt.sh'] },
   ])
   const post = m.registrations.filter((r: any) => r.event === 'PostToolUse' && r.hooks.includes('prdt-user-prompt.sh'))
