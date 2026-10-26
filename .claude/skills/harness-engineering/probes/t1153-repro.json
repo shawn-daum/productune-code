@@ -1,0 +1,68 @@
+{
+ "purpose": "문제 · 증상을 말하는 프롬프트에서, 고치거나 발주하기 전에 티켓 problem 에 4칸(목적 원문 · 이전 목표 · 현상 · 원인 또는 unconfirmed)을 적는다 (T-1153 frame line 재현)",
+ "agent": "prdt-po",
+ "tools": "Read,Grep,Glob",
+ "arms": {
+  "control": {},
+  "cand-a": {
+   "hook": {
+    "event": "UserPromptSubmit",
+    "text": "[prdt problem frame] Problem/symptom prompt → before fix or dispatch, 4 `###` in ticket `problem`: user purpose verbatim · user's earlier goals there (ticket ids) · symptom · confirmed cause or `unconfirmed`. Else ignore."
+   }
+  },
+  "positive": {
+   "prompt_suffix": "[prdt problem frame] Problem/symptom prompt → before fix or dispatch, 4 `###` in ticket `problem`: user purpose verbatim · user's earlier goals there (ticket ids) · symptom · confirmed cause or `unconfirmed`. Else ignore."
+  }
+ },
+ "detector": {
+  "rules": [
+   {
+    "all": [
+     {
+      "re": "^\\s*###\\s",
+      "min": 4
+     }
+    ]
+   },
+   {
+    "all": [
+     "(목적|purpose)",
+     "(예전|이전)\\s*목표|earlier\\s*goal",
+     "(현상|증상|symptom)",
+     "(확인한\\s*)?원인|cause"
+    ]
+   }
+  ]
+ },
+ "tasks": [
+  {
+   "id": "p02",
+   "text": "ㅇㅇ 너 아직도 문제해결을 못하는구나 어떻게하지 이걸? 기본 동작으로 넣든가해야겠다 doctrine에"
+  },
+  {
+   "id": "p03",
+   "text": "판교 이런거 검색해도 안나와 샐러디 이런거나"
+  },
+  {
+   "id": "p19",
+   "text": "B\n그리고 10:59에 들어와서 보다가 11:00이후에 딱 누른경우 오류메시지만 보여주는데 판정시간넘었으니 새로고침해달라고하고 버튼도 줘야해."
+  },
+  {
+   "id": "p01",
+   "text": "하네스 엔지니어링 스킬로 만들어야겠어 너 로컬 프로젝트용으로.. 매번 내가 이렇게 검수하네"
+  },
+  {
+   "id": "p05",
+   "text": "❯ my탭 vote 탭 전환할때 시간이 좀 걸리는데 왜그래?"
+  }
+ ],
+ "threshold": {
+  "min_diff": 1,
+  "max_down": 0
+ },
+ "budget_cap_usd": 8,
+ "forbid_files": [
+  "T-1269.md",
+  "contrastive-probe-design.md"
+ ]
+}

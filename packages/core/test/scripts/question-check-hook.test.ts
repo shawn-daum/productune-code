@@ -32,7 +32,7 @@ const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-question-check.sh')
 const MANIFEST = path.join(CORE_ROOT, 'scripts', 'hook-manifest.json')
 const FIXTURES = path.join(CORE_ROOT, 'test', 'fixtures', 'question-check')
 const TAG = '[prdt question check]'
-// T-1001 = B: the hook ships OFF; every behaviour test below runs it switched on.
+// T-1260: the hook is ON by default; `off` disables it. Behaviour tests pin it on explicitly.
 const ON = { ...process.env, PRDT_QUESTION_CHECK: 'on' }
 
 const roots: string[] = []
@@ -178,18 +178,17 @@ describe('gating', () => {
   const flagged = () => fx('flagged-t949-canon')
   const store: Store = { 'T-949': { type: 'design', status: 'open' } }
 
-  test('default OFF (T-1001 = B): unset, or any value but `on` → a flagged reply passes silently', () => {
+  test('default ON (T-1260): unset blocks; `off` alone disables', () => {
     const { root, proj } = makeProject(store)
     const event = JSON.stringify({
       session_id: 's', hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, flagged()), last_assistant_message: flagged(),
     })
     const { PRDT_QUESTION_CHECK: _drop, ...bare } = process.env
-    for (const env of [bare, { ...bare, PRDT_QUESTION_CHECK: 'off' }, { ...bare, PRDT_QUESTION_CHECK: '1' }]) {
-      expect(execFileSync('bash', [HOOK], { input: event, encoding: 'utf8', env })).toBe('')
+    for (const env of [bare, { ...bare, PRDT_QUESTION_CHECK: 'on' }]) {
+      expect(blockedLines(execFileSync('bash', [HOOK], { input: event, encoding: 'utf8', env }))).toEqual([26])
     }
-    // same event, switched on → blocked (the fixture is a real flagged ask)
-    expect(blockedLines(execFileSync('bash', [HOOK], { input: event, encoding: 'utf8', env: ON }))).toEqual([26])
+    expect(execFileSync('bash', [HOOK], { input: event, encoding: 'utf8', env: { ...bare, PRDT_QUESTION_CHECK: 'off' } })).toBe('')
   })
 
   test('second consecutive Stop (stop_hook_active) → never a second block', () => {
