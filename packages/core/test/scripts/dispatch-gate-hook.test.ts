@@ -1043,7 +1043,7 @@ describe('T-695: the machine resource cap', () => {
 
   test('load over cap: one line — the user-approved wording, the over-cap value / cap, nothing else (T-893)', () => {
     const d = denyReason({ cwd: proj }, { machine: { loadavg: '{ 31.20 28.00 20.00 }' } })
-    expect(d).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+    expect(d).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.')
   })
 
   test('T-893: `prdt dispatch caps` mode prints every axis with value, cap, cap key + source, remedy, and the cap keys', () => {
@@ -1088,7 +1088,7 @@ describe('T-695: the machine resource cap', () => {
     fs.writeFileSync(path.join(home, 'run', 'dispatches', 'half-written.json'), '{"agent_id": "x", "since": "2026-09-26T0')
     const d = denyReason({ cwd: proj, sessionId: 'sess-T893' }, { machine: { loadavg: '{ 31.20 28.00 20.00 }' }, home })
     const [first, second, ...more] = d.split('\n')
-    expect(first).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+    expect(first).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.')
     expect(second).toContain('[prdt dispatch gate] resource check: unmeasured dispatches')
     expect(more).toEqual([])
   })
@@ -1594,7 +1594,7 @@ describe('T-1171: non-prdt subagent types and the PO fork pass the resource cap 
     for (const st of ['Explore', 'fork', 'general-purpose']) {
       const h = out({ cwd: proj, subagentType: st, prompt: 'x' }, { machine: { memp: MEMP_OK(9) } })
       expect(h.permissionDecision).toBe('deny')
-      expect(h.permissionDecisionReason).toBe('[prdt dispatch gate] WAITING — not spawned (no-suite dispatch): free memory 9% / min 15%. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+      expect(h.permissionDecisionReason).toBe('[prdt dispatch gate] WAITING — not spawned (no-suite dispatch): free memory 9% / min 15%. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.')
       expect(h.updatedInput).toBeUndefined()
     }
     expect(rows(proj)).toEqual([])
