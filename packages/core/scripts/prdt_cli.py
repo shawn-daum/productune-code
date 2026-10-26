@@ -4944,6 +4944,17 @@ def _register_hook_path():
     return None
 
 
+def _resolver_timeout_s():
+    """The resolver call's budget: 10 s, or `PRDT_RESOLVER_TIMEOUT_S` when set (T-1274 —
+    one resolver run is ~1 s of jq spawns idle and passes 10 s on a loaded machine, and a
+    timeout reads as `None`, i.e. "resolver not found"; the test harness scales it)."""
+    try:
+        v = float(os.environ.get("PRDT_RESOLVER_TIMEOUT_S", ""))
+        return v if v > 0 else 10
+    except ValueError:
+        return 10
+
+
 def register_query(mode, droot=None):
     """Ask the resolver — `--list` (the domain) or `--resolve` (values + warnings).
     The hook is the single source of truth for what is legal; this CLI never
@@ -4958,7 +4969,7 @@ def register_query(mode, droot=None):
         env["PRDT_DISCIPLINE"] = str(droot)
     try:
         r = subprocess.run(["bash", str(hook), mode], capture_output=True, text=True,
-                           stdin=subprocess.DEVNULL, env=env, timeout=10)
+                           stdin=subprocess.DEVNULL, env=env, timeout=_resolver_timeout_s())
         out = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
         return out if isinstance(out, dict) else None
     except (OSError, ValueError, subprocess.TimeoutExpired):
