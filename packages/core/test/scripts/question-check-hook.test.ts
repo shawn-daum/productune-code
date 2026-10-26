@@ -150,6 +150,10 @@ describe('T-1116 — the language clause', () => {
     expect(r).toContain('again, opening with')
     expect(r).not.toContain('lang=')
   })
+  test('device language only (en-OS, nothing stored) → no clause (T-1281)', () => {
+    const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, { ...langEnv(), LANG: 'en_US.UTF-8' })
+    expect(JSON.parse(out).reason).not.toContain('lang=')
+  })
 })
 
 describe('compliant — asks backed by an open decision ticket, and reports', () => {

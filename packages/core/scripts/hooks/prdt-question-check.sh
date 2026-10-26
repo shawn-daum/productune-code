@@ -177,46 +177,24 @@ QUESTION_CHECK_REASON = (
 # to the T-990 text above.
 QUESTION_CHECK_LANG_CLAUSE = " in lang=%s"
 
-# KEEP `device_lang` / `user_lang` in lockstep with prdt-user-prompt.sh (T-1116).
+# T-1281: the stored chat language only — never the device language.
 USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
 
 
-def _lang_primary(tag):
-    m = re.match(r"\s*([A-Za-z]{2,3})(?:[-_.@]|\s*\Z)", tag) if isinstance(tag, str) else None
-    return m.group(1).lower() if m else None
-
-
-def device_lang():
-    try:
-        import plistlib
-        p = os.path.join(os.path.expanduser("~"), "Library", "Preferences", ".GlobalPreferences.plist")
-        with open(p, "rb") as f:
-            langs = plistlib.load(f).get("AppleLanguages")
-        if isinstance(langs, list) and langs and _lang_primary(langs[0]):
-            return _lang_primary(langs[0])
-    except Exception:
-        pass
-    for k in ("LC_ALL", "LC_MESSAGES", "LANG"):
-        v = _lang_primary(os.environ.get(k) or "")
-        if v:
-            return v
-    return None
-
-
-def user_lang():
+def stored_user_lang():
     home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
     try:
         with open(os.path.join(home, "user-lang"), encoding="utf-8", errors="replace") as f:
             v = "".join(f.read(64).split())
     except OSError:
         v = ""
-    return v if USER_LANG_RE.match(v) else device_lang()
+    return v if USER_LANG_RE.match(v) else None
 
 
 def lang_clause():
     if not QUESTION_CHECK_LANG_CLAUSE:
         return ""
-    lang = user_lang()
+    lang = stored_user_lang()  # T-1281: stored only
     return QUESTION_CHECK_LANG_CLAUSE % lang if lang else ""
 LIST_CAP = 5
 RUN_BUDGET_S = 5
