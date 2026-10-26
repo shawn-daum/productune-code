@@ -1048,7 +1048,7 @@ describe('T-695: the machine resource cap', () => {
 
   test('load over cap: one line — the user-approved wording, the over-cap value / cap, nothing else (T-893)', () => {
     const d = denyReason({ cwd: proj }, { machine: { loadavg: '{ 31.20 28.00 20.00 }' } })
-    expect(d).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+    expect(d).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.')
   })
 
   test('T-893: `prdt dispatch caps` mode prints every axis with value, cap, cap key + source, remedy, and the cap keys', () => {
@@ -1093,7 +1093,7 @@ describe('T-695: the machine resource cap', () => {
     fs.writeFileSync(path.join(home, 'run', 'dispatches', 'half-written.json'), '{"agent_id": "x", "since": "2026-09-26T0')
     const d = denyReason({ cwd: proj, sessionId: 'sess-T893' }, { machine: { loadavg: '{ 31.20 28.00 20.00 }' }, home })
     const [first, second, ...more] = d.split('\n')
-    expect(first).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+    expect(first).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.')
     expect(second).toContain('[prdt dispatch gate] resource check: unmeasured dispatches')
     expect(more).toEqual([])
   })
@@ -1599,7 +1599,7 @@ describe('T-1171: non-prdt subagent types and the PO fork pass the resource cap 
     for (const st of ['Explore', 'fork', 'general-purpose']) {
       const h = out({ cwd: proj, subagentType: st, prompt: 'x' }, { machine: { memp: MEMP_OK(9) } })
       expect(h.permissionDecision).toBe('deny')
-      expect(h.permissionDecisionReason).toBe('[prdt dispatch gate] WAITING — not spawned (no-suite dispatch): free memory 9% / min 15%. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+      expect(h.permissionDecisionReason).toBe('[prdt dispatch gate] WAITING — not spawned (no-suite dispatch): free memory 9% / min 15%. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.')
       expect(h.updatedInput).toBeUndefined()
     }
     expect(rows(proj)).toEqual([])
@@ -2037,12 +2037,12 @@ describe('T-1248: priority slot order', () => {
     psPid: Array.from({ length: n }, (_, i) => ` ${4200 + i} ${VITEST_ROOT}`).join('\n'),
     lsof: Array.from({ length: n }, (_, i) => `p${4200 + i}\nfcwd\nn${root}/code`).join('\n'),
   })
-  const WAIT_LEGACY = 'WAITING — not spawned (developer dispatch): full test suites 2 / cap 1. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.'
+  const WAIT_LEGACY = 'WAITING — not spawned (developer dispatch): full test suites 2 / cap 1. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.'
 
   test('rank 2 behind a rank-1 running suite waits naming holder and rank; rank 1 passes', () => {
     const home = homeWith('naro-proto,productune')
     const d = denyReason({ cwd: lo }, { machine: suiteIn(hi), home })
-    expect(d).toContain('WAITING — not spawned (developer dispatch): full test suites 1 / cap 1, held by naro-proto (priority 1). productune is priority 2 and goes after it. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+    expect(d).toContain('WAITING — not spawned (developer dispatch): full test suites 1 / cap 1, held by naro-proto (priority 1). productune is priority 2 and goes after it. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.')
     expect(run({ cwd: hi }, { machine: suiteIn(hi), home })).toBe('')
   })
 
@@ -2067,6 +2067,14 @@ describe('T-1248: priority slot order', () => {
     const other = proj('ntf-pm')
     denyReason({ cwd: other }, { machine: suiteIn(lo, 2), home })
     expect(fs.existsSync(path.join(wdir(home), 'ntf-pm'))).toBe(false)
+  })
+
+  test('the yield clause sits right after the suites short, before other over-cap axes (VMs and suites both over)', () => {
+    const home = homeWith('naro-proto,productune')
+    const m = suiteIn(hi)
+    m.ps += '\n' + [VM_PROC, VM_PROC, VM_PROC].join('\n')
+    const d = denyReason({ cwd: lo }, { machine: m, home })
+    expect(d).toContain('full test suites 1 / cap 1, held by naro-proto (priority 1), resident VMs 3 / cap 2. productune is priority 2 and goes after it.')
   })
 
   test('an unlisted project yields to a listed holder', () => {
