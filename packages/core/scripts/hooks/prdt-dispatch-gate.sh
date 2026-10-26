@@ -1214,7 +1214,7 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
 # measurement, sources and remedies are `prdt dispatch caps` (report mode below).
 | (if ($over | length) == 0 then "" else
      deny("[prdt dispatch gate] WAITING — not spawned (\($kind)): " + ($over | map(.short) | join(", "))
-          + ". Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`."
+          + ". Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`."
           + (if $note == "" then "" else "\n" + $note end)) | tojson end) as $deny
 | ($axes | map(
      "\(if .over then "OVER " elif .ok then "ok   " else "?    " end) \(.name): \(if .ok then "\(.val) / \(.cap)" else "unmeasured" end)"

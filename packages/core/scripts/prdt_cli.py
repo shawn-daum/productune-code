@@ -14793,14 +14793,76 @@ def cmd_dispatch_caps(args):
     os.execvpe("bash", ["bash", str(hook)], {**os.environ, "PRDT_GATE_CAPS_REPORT": "1", "PRDT_HOME": str(prdt_home())})
 
 
+# T-1272: one axis line of the gate's caps report — `OVER  <name>: …`, `ok    <name>: …`,
+# `?     <name>: unmeasured` (prdt-dispatch-gate.sh `$axes_text`).
+_CAPS_AXIS_RE = re.compile(r"^(OVER|ok|\?)\s+(.+?): ")
+
+
+def _dispatch_caps_over():
+    """{axis name: True when over its cap} from one gate report-mode run — the gate's
+    own measurement, never re-derived; an unmeasured axis never blocks (gate rule),
+    so it reads as not over. None when the gate could not run or printed no axis."""
+    hook = _gate_hook_path()
+    if hook is None:
+        return None
+    try:
+        out = subprocess.run(["bash", str(hook)], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                             timeout=60, env={**os.environ, "PRDT_GATE_CAPS_REPORT": "1",
+                                              "PRDT_HOME": str(prdt_home())}).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    axes = {}
+    for ln in out.splitlines():
+        m = _CAPS_AXIS_RE.match(ln)
+        if m:
+            axes[m.group(2)] = m.group(1) == "OVER"
+    return axes or None
+
+
+def cmd_dispatch_wait(args):
+    """`prdt dispatch wait [--timeout S] [--interval S]` (T-1272) — blocks until every
+    gate cap over at start (the caps that denied) clears, then exits 0 naming them.
+    Meant for the PO's Bash `run_in_background`: its exit re-invokes the PO.
+    `--timeout` passed first → exit 2. Writes nothing."""
+    interval = max(1.0, float(args.interval))
+    deadline = None if args.timeout is None else time.monotonic() + max(0.0, float(args.timeout))
+    axes = _dispatch_caps_over()
+    if axes is None:
+        sys.exit("prdt dispatch wait: the dispatch gate's caps could not be measured "
+                 "(`prdt dispatch caps` shows why)")
+    waiting = [n for n, over in axes.items() if over]
+    if not waiting:
+        print("prdt dispatch wait: no dispatch cap is over — dispatch now")
+        return
+    print("prdt dispatch wait: waiting for " + ", ".join(waiting), flush=True)
+    cleared = []
+    while True:
+        for n in list(waiting):
+            if not axes.get(n, False):
+                waiting.remove(n)
+                cleared.append(n)
+        if not waiting:
+            print("prdt dispatch wait: cleared " + ", ".join(cleared) + " — re-dispatch now")
+            return
+        if deadline is not None and time.monotonic() >= deadline:
+            print("prdt dispatch wait: timeout — still over: " + ", ".join(waiting)
+                  + (" · cleared: " + ", ".join(cleared) if cleared else ""))
+            sys.exit(2)
+        time.sleep(interval if deadline is None else max(0.0, min(interval, deadline - time.monotonic())))
+        axes = _dispatch_caps_over() or axes
+
+
 def cmd_dispatch(args):
     """`prdt dispatch ls [--json] [--all]` — markers under
     `<PRDT_HOME>/run/dispatches/` across every project, each with the state the
     dispatch gate assigns it. Default hides `stopped` markers; `--all` shows them."""
     if args.action == "caps":
         return cmd_dispatch_caps(args)
+    if args.action == "wait":
+        return cmd_dispatch_wait(args)
     if args.action != "ls":
-        sys.exit("usage: prdt dispatch ls [--json] [--all] | prdt dispatch caps")
+        sys.exit("usage: prdt dispatch ls [--json] [--all] | prdt dispatch caps | "
+                 "prdt dispatch wait [--timeout S] [--interval S]")
     d = prdt_home() / "run" / "dispatches"
     now = datetime.now(timezone.utc)
     rows, unreadable = [], []
@@ -20586,10 +20648,14 @@ def main():
     p = sub.add_parser("dispatch", help="in-flight dispatch markers, every project (T-695): "
                                         "ls [--json] [--all] — each marker with the state the dispatch gate "
                                         "gives it (live · phantom · stale · stopped); caps — every gate axis "
-                                        "with value · cap · source · remedy (T-893); read-only")
-    p.add_argument("action", choices=("ls", "caps"))
+                                        "with value · cap · source · remedy (T-893); wait — block until "
+                                        "every cap over now clears, exit 0 naming them (T-1272); read-only")
+    p.add_argument("action", choices=("ls", "caps", "wait"))
     p.add_argument("--json", action="store_true", help="machine-readable output")
     p.add_argument("--all", action="store_true", help="include stopped markers")
+    p.add_argument("--timeout", type=float, default=None,
+                   help="wait: give up after this many seconds, exit 2 (default: no limit)")
+    p.add_argument("--interval", type=float, default=30.0, help="wait: seconds between measurements (default 30)")
     p.set_defaults(fn=cmd_dispatch)
     p = sub.add_parser("schedule", help="next dispatch order by critical path (T-772): open tickets of the "
                                         "current version ranked by slack (critical path first), then "
