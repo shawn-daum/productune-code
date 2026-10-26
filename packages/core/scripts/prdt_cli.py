@@ -15188,8 +15188,8 @@ def cmd_deploy(args):
     before = " · ".join(m.groups()) if m else ("(없음)" if hit is None else safe_label(hit[2]))
     if new != raw:
         try:
-            atomic_write_text(path, new.decode("utf-8"), mode=stat.S_IMODE(path.stat().st_mode))
-        except (OSError, UnicodeError) as e:
+            state_write(root, path, new.decode("utf-8"), create_dirs=False)
+        except (OSError, UnicodeError, StateLinkError) as e:
             _deploy_die(f"could not write {shown} ({e})")
     print(f"deployed: {before} → {version} · {at} · {ref} ({shown})")
 
