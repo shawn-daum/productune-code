@@ -558,7 +558,7 @@ def render(parts, k, undelivered_docs):
         + "Set of %d parts, any order; complete only with all %d. A missing part did NOT arrive: STOP, Bash-cat its documents (%s; `doctrine.md` beside %s/, the rest under it) before acting.\n" % (n, n, docs_list, shown(disc)))
     if k == 1:
         head += ("Precedence (doctrine → contracts → habit, later wins) is by document, never by part order; override blocks arrive as their own hook outputs and outrank all of this, under the floor in contracts §Overrides.\n"
-            + "Playbook bodies · `contracts/*.md` annexes: Read on the absolute path under %s/ (Read does NOT expand ~); Bash cat only if Read errors.\n" % shown(disc))
+            + "Playbook `<persona>/playbooks/<name>.md` · `contracts/*.md` annex: Read the absolute path under %s/ (Read does NOT expand ~); Bash cat only if Read errors.\n" % shown(disc))
     if k == 1 and undelivered_docs:
         head += ("\nNOT DELIVERED — this set needs %d parts but only %d hook slot(s) are registered on this machine, so parts %d–%d never run. Missing: %s. STOP: cat those paths before acting on anything; re-run install.sh to register the missing slots (prdt doctor reports this).\n"
                  % (len(parts), slots, slots + 1, len(parts), "; ".join("%s (%s)" % (l, shown(p)) for l, p in undelivered_docs)))

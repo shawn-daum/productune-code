@@ -5514,7 +5514,7 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # `tickets new`'s frontmatter-key order (contracts §Tickets): id · slug · type ·
 # status · assignee · feature? · prd_item? · deps? · created · closed? — a
 # fresh ticket never carries `closed`.
-TICKET_FRONTMATTER_ORDER = ("id", "slug", "type", "status", "assignee", "feature",
+TICKET_FRONTMATTER_ORDER = ("id", "slug", "title", "type", "status", "assignee", "feature",
                             "prd_item", "deps", "created")
 
 
@@ -5545,6 +5545,12 @@ def cmd_tickets_new(args, root):
     if not args.slug or not SLUG_RE.match(args.slug):
         sys.exit("prdt tickets new: --slug is required and must be kebab-case (a-z0-9, hyphen-separated)")
     ttype = args.type
+    # T-1276: `title` is optional free text in the project's user_lang — any
+    # language, never matched against a script or wordlist; only the
+    # frontmatter's one-line shape is enforced.
+    title = (getattr(args, "title", None) or "").strip() or None
+    if title and any(c in title for c in "\r\n"):
+        sys.exit("prdt tickets new: --title must be a single line")
     tid = next_ticket_id(root)
     line = getattr(args, "line", None)
     # T-1084: an explicit placement. `--backlog` → backlog/; `--version [<product>/]vX.Y`
@@ -5581,7 +5587,7 @@ def cmd_tickets_new(args, root):
     # `type: decision` forces `assignee: user` (contracts §Tickets) — never a
     # CLI choice, the same way the frame itself is never a per-ticket choice.
     assignee = "user" if ttype == "decision" else (args.assignee or "po")
-    fm = {"id": tid, "slug": args.slug, "type": ttype, "status": "open", "assignee": assignee,
+    fm = {"id": tid, "slug": args.slug, "title": title, "type": ttype, "status": "open", "assignee": assignee,
           "feature": args.feature, "prd_item": args.prd_item,
           "deps": "[" + ", ".join(args.deps) + "]" if args.deps else None,
           # The MACHINE's local date, not UTC (T-685 fix — PO-observed at
@@ -6618,7 +6624,7 @@ def cmd_tickets(args):
             print(links[tid] if tid in hit else f"{tid} (not found)")
         return
     q, params = ("SELECT id, slug, type, status, assignee, version, deps, "
-                 "(SELECT also FROM ticket_also WHERE ticket_also.id = tickets.id) AS also FROM tickets"), []
+                 "(SELECT also FROM ticket_also WHERE ticket_also.id = tickets.id) AS also, path FROM tickets"), []
     conds = []
     if args.backlog:
         conds.append("(version = 'backlog' OR version LIKE '%/backlog')")
@@ -6657,7 +6663,9 @@ def cmd_tickets(args):
         also = json.loads(r[7] or "[]")
         if also:
             dep_s += f" also={','.join(also)}"
-        print(f"{r[0]} [{r[3]:>7}] {r[2]:<6} {r[5]:<8} {r[1] or ''} → {r[4] or '-'}{dep_s}")
+        # T-1276: a ticket's name is its `title` when it has one, else its slug.
+        name = (parse_frontmatter(root / r[8])[0].get("title") if r[8] else None) or r[1] or ""
+        print(f"{r[0]} [{r[3]:>7}] {r[2]:<6} {r[5]:<8} {name} → {r[4] or '-'}{dep_s}")
     if not rows:
         print("(no tickets)")
 
@@ -18418,6 +18426,55 @@ def _wordlist_str_list(v):
     return None
 
 
+# T-1263 — three shapes that load fine but break later: a numbered backreference
+# (`\1`, `(?(1)…)`) changes meaning once `avoid` items are joined as
+# `(?:p1)|(?:p2)` for `export`; an inline global flag (`(?i)`) is not at the start
+# of the joined pattern, so `export` cannot compile it; a malformed `cases` makes
+# the case runner raise. Each is refused at load (project list: warning + entry
+# skipped, same as every other bad entry).
+_WORDLIST_BACKREF_RE = re.compile(r"(?<!\\)(?:\\\\)*(?:\\[1-9]|\(\?\([0-9]+\))")
+_WORDLIST_INLINE_FLAG_RE = re.compile(r"(?<!\\)(?:\\\\)*\(\?[aiLmsux]+(?:-[imsx]+)?\)")
+
+
+def _wordlist_check_joined(pairs):
+    """ValueError when several `avoid` items cannot be joined into one export pattern."""
+    if len(pairs) < 2:
+        return
+    for i, (pt, _) in enumerate(pairs, 1):
+        if _WORDLIST_BACKREF_RE.search(pt):
+            raise ValueError(f"`avoid` item {i} uses a numbered backreference; across joined `avoid` items its number changes (use one item, or a named group)")
+        if _WORDLIST_INLINE_FLAG_RE.search(pt):
+            raise ValueError(f"`avoid` item {i} has an inline global flag such as (?i); use `flags` (the joined export pattern cannot carry it)")
+    try:
+        for pt, _ in pairs:
+            re.compile(pt)
+    except re.error:
+        return   # reported per item as a bad pattern
+    try:
+        re.compile("|".join(f"(?:{pt})" for pt, _ in pairs))
+    except re.error as ex:
+        raise ValueError(f"`avoid` items cannot be joined into one export pattern: {ex}")
+
+
+def _wordlist_check_cases(cases):
+    """ValueError unless `cases` is absent or {hit?: [case…], miss?: [case…]}, a
+    case being {text: str, kind?: md|html, n?: int ≥ 1 (hit only)}."""
+    if cases is None:
+        return
+    if not isinstance(cases, dict) or not set(cases) <= {"hit", "miss"}:
+        raise ValueError("`cases` is an object with only `hit` and `miss` lists")
+    for group, items in cases.items():
+        if not isinstance(items, list):
+            raise ValueError(f"`cases.{group}` is a list")
+        for c in items:
+            if not isinstance(c, dict) or not set(c) <= {"text", "kind", "n"} or not isinstance(c.get("text"), str) or not c["text"]:
+                raise ValueError(f"every `cases.{group}` item is an object with a `text` string (and optional `kind`, `n`)")
+            if "kind" in c and c["kind"] not in ("md", "html"):
+                raise ValueError(f"`cases.{group}` `kind` is md or html")
+            if "n" in c and (group != "hit" or isinstance(c["n"], bool) or not isinstance(c["n"], int) or c["n"] < 1):
+                raise ValueError("`n` is an integer ≥ 1 and only on a `hit` case")
+
+
 def _wordlist_normalize(e):
     """One raw entry (schema 1 or 2, told apart per entry) → the internal entry,
     or raises ValueError(reason). The internal entry keeps the schema-1 keys
@@ -18441,6 +18498,8 @@ def _wordlist_normalize(e):
         scope = e.get("scope")
         if scope is not None and not (isinstance(scope, list) and scope and all(x in WORDLIST_SCOPE_NAMES for x in scope)):
             raise ValueError(f"`scope` lists only {' · '.join(WORDLIST_SCOPE_NAMES)}")
+        _wordlist_check_joined(pairs)
+        _wordlist_check_cases(e.get("cases"))
         out = {"word": word}
         flagset = {f for _, f in pairs}
         if len(pairs) == 1:
@@ -20515,6 +20574,7 @@ def main():
                         "worker's run never opens regardless")
     p.add_argument("--type", choices=TICKET_TYPES, help="new: the ticket's `type` (required)")
     p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
+    p.add_argument("--title", help="new: optional human title (`title:`), free text in the project's user_lang (T-1276)")
     p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value ([<product>/]v<N>.<m>#<key>)")
     p.add_argument("--product", "--line", dest="line", metavar="PRODUCT",
                    help="new: an added product (.prdt/config.json `products`) — the ticket "
