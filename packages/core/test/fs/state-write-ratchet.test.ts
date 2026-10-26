@@ -144,6 +144,7 @@ const ALLOW: Record<string, number> = {
   'core/scripts/hooks/prdt-overrides-inject.sh': 1,
   'core/scripts/hooks/prdt-post-dispatch.sh': 8,
   'core/scripts/hooks/prdt-question-check.sh': 2,
+  'core/scripts/hooks/prdt-lane-check.sh': 2, // T-1272: `2>/dev/null` / `>/dev/null` redirects only — the hook writes nothing
   'core/scripts/hooks/prdt-return-check.sh': 8, // T-1173: +1 = append_inbox's leaf-O_NOFOLLOW os.open fallback (docs/_shared/wiki/inbox.md, never .prdt/), taken only when prdt_safe_fs.py is not installed — same shape as the existing fallback above it
   'core/scripts/hooks/prdt-secret-guard.sh': 3, // T-1109: +1 = embedded Perl `length($n) > length($b)` in is_store_path — a comparison the SH_REDIR scan reads as a redirect, no write
   'core/scripts/hooks/prdt-session-start.sh': 4,
