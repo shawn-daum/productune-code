@@ -14820,6 +14820,15 @@ def cmd_track_land(args):
                         steps = [" ".join([shlex.quote(vbin), "run", *(shlex.quote(str(Path(f).relative_to(pkg))) for f in files)])]
                     else:
                         steps = []      # no file selected: a bare `vitest run` would be the whole suite
+                    # a gitignored build output (dist/) goes stale when src/ changed: build before the tests
+                    pj = read_json(Path(pkg) / "package.json")
+                    has_build = isinstance(pj, dict) and isinstance(pj.get("scripts"), dict) and "build" in pj["scripts"]
+                    prel = pkg.relative_to(wt).as_posix() if pkg != Path(wt) else ""
+                    src_pre = (prel + "/" if prel else "") + "src/"
+                    if has_build and any(c.startswith(src_pre) for c in chg):
+                        if _track_run("pnpm run build", pkg, f"build ({label}: src/ changed)") != 0:
+                            _track_die(f"the build of {label} failed on the merged tree — {base} is unchanged; "
+                                       f"{branch} keeps the merge, fix it there and land again")
                     for cmd in steps + (_track_pkg_extra_steps(pkg) if (extras_due or files or pkg in fallback) else []):
                         rc = _track_run(cmd, pkg, f"relevant tests ({label})")
                         if rc != 0:
