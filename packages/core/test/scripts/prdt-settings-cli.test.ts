@@ -48,7 +48,7 @@ function prdt(lang: 'ko' | 'en', ...args: string[]) {
 const file = (name: string) => path.join(prdtHome, name)
 const read = (name: string) => (fs.existsSync(file(name)) ? fs.readFileSync(file(name), 'utf8') : null)
 const CAP_KEYS = ['load_ratio', 'mem_free_pct_min', 'inflight_max', 'suites_max', 'vms_max', 'inflight_sonnet_max', 'inflight_opus_max', 'inflight_haiku_max', 'inflight_fable_max', 'inflight_default_max'].map((k) => `dispatch.${k}`)
-const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.visual', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang', 'priority.projects', ...CAP_KEYS]
+const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.visual', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang', 'user.lang', 'priority.projects', ...CAP_KEYS]
 
 describe('message catalog', () => {
   test('ko and en carry the same keys, none empty', () => {
@@ -97,6 +97,42 @@ describe.skipIf(!READY)('prdt settings — list', () => {
       .toBe('이제부터 PO가 건네는 파일이 자동으로 열리지 않아요.')
     expect(prdt('en', 'settings', 'unset', 'cli.lang').status).toBe(0)
     expect(read('cli-lang')).toBeNull()
+  })
+  test('user.lang: set writes user-lang, an off-shape code is refused, unset falls back to the device language (T-1116)', () => {
+    const run = (...args: string[]) => spawnSync('python3', [PRDT_CLI, ...args], {
+      cwd: prdtHome, encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      // HOME = sandbox: no macOS global-preferences plist, so the device language is LC_ALL's
+      env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: 'en', LC_ALL: 'ja_JP.UTF-8' },
+    })
+    const value = () => JSON.parse(run('settings', '--json').stdout).find((e: any) => e.key === 'user.lang').value
+    expect(value()).toBe('ja')
+    expect(run('settings', 'set', 'user.lang', 'ko').status).toBe(0)
+    expect(read('user-lang')).toBe('ko\n')
+    expect(value()).toBe('ko')
+    for (const bad of ['KO', 'ko-KR', 'korean']) {
+      expect(run('settings', 'set', 'user.lang', bad).status).toBe(1)
+      expect(read('user-lang')).toBe('ko\n')
+    }
+    expect(run('settings', 'unset', 'user.lang').status).toBe(0)
+    expect(read('user-lang')).toBeNull()
+    expect(value()).toBe('ja')
+  })
+  test('onboarding asks user.lang once: device language as default, a non-code answer keeps it (T-1116)', () => {
+    const ask = (answer: string) => spawnSync('python3', ['-c',
+      'import sys; sys.path.insert(0, sys.argv[1]); import prdt_cli as p; p.ask_user_lang_once()', path.dirname(PRDT_CLI)], {
+      input: answer + '\n', encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, LC_ALL: 'ko_KR.UTF-8' },
+    })
+    expect(ask('').stdout).toContain('[ko]')
+    expect(read('user-lang')).toBe('ko\n')
+    expect(ask('en').stdout).toBe('') // already stored → no question
+    expect(read('user-lang')).toBe('ko\n')
+    fs.rmSync(file('user-lang'))
+    ask('Korean')
+    expect(read('user-lang')).toBe('ko\n')
+    fs.rmSync(file('user-lang'))
+    ask('en')
+    expect(read('user-lang')).toBe('en\n')
   })
   test('ko table matches the approved screen', () => {
     fs.writeFileSync(file('register'), 'audience=developer\nform=outline\nstructure=planner-tables\n')
