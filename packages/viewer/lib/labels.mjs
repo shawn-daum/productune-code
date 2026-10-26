@@ -82,6 +82,17 @@ export const HOME = {
   here: 'now',
   // T-961: stage-bar counts as the v1.13 screen set (T-955) labels them.
   stageTickets: (n) => `티켓 ${n}`,
+  // T-1253: the progress header's deployed record (approved screen set v1.15 viewer-head: differ · norec · multi).
+  vh: {
+    dep: '배포',
+    dev: '개발',
+    none: '기록 없음',
+    hint: '배포된 버전은 이 제품의 DEPLOY.md 에 한 번 적히면 여기 보여요.',
+    meta: (at, ref) => [at ? `배포 ${at}` : '', ref ? `ref ${ref}` : ''].filter(Boolean).join(' · '),
+    noOpen: '열린 버전 없음',
+    linesHead: '제품 줄',
+    linesHeaders: ['제품', '배포', '개발', '단계'],
+  },
   stageDone: (done, total) => `티켓 완료 ${done}/${total}`,
   scope: '스코프',
   scopeSub: (n) => `이번 버전 PRD ${n}항목`,
