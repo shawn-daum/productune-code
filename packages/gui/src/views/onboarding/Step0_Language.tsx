@@ -6,13 +6,15 @@ import { body, footer, stepLabel, stepIntro, btnReset, btnPrimary } from './styl
 
 interface Step0Props {
   uiLang: UiLang
+  chatLang: UiLang
+  onSelectChatLang: (lng: UiLang) => void
   resetFeedback: boolean
   onSelectLang: (lng: UiLang) => void
   onReset: () => void
   onNext: () => void
 }
 
-export default function Step0_Language({ uiLang, resetFeedback, onSelectLang, onReset, onNext }: Step0Props) {
+export default function Step0_Language({ uiLang, chatLang, onSelectChatLang, resetFeedback, onSelectLang, onReset, onNext }: Step0Props) {
   const { t } = useTranslation()
   return (
     <>
@@ -32,6 +34,25 @@ export default function Step0_Language({ uiLang, resetFeedback, onSelectLang, on
           <OptionCard
             selected={uiLang === 'ko'}
             onClick={() => onSelectLang('ko')}
+            label={t('onboarding.step0.optionKo')}
+            intro=""
+            tech=""
+          />
+        </div>
+        <div style={{ ...stepIntro, marginTop: 16 }}>
+          {t('onboarding.step0.chatDescription')}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <OptionCard
+            selected={chatLang === 'en'}
+            onClick={() => onSelectChatLang('en')}
+            label={t('onboarding.step0.optionEn')}
+            intro=""
+            tech=""
+          />
+          <OptionCard
+            selected={chatLang === 'ko'}
+            onClick={() => onSelectChatLang('ko')}
             label={t('onboarding.step0.optionKo')}
             intro=""
             tech=""

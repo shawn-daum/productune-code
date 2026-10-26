@@ -19,6 +19,7 @@
       "description": "Choose your interface language. / GUI 화면 언어를 선택해주세요.",
       "optionEn": "English",
       "optionKo": "한글",
+      "chatDescription": "Choose the language your product team writes to you in.",
       "resetCta": "Reset & start over",
       "resetToast": "Local storage cleared. Reloading…"
     },

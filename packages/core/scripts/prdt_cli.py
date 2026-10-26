@@ -5238,7 +5238,7 @@ def ask_user_lang_once():
     if USER_LANG_RE.match(_read_token("user-lang")):
         return
     default = device_lang() or "en"
-    ans = _ascii_strip(input(f"chat language for PO replies (ko, en, ja …) [{default}]: ")).lower()
+    ans = _ascii_strip(input(msg(load_messages(), "lang.ask.prompt", default=default))).lower()
     _write_token("user-lang", ans if USER_LANG_RE.match(ans) else default)
 
 
@@ -7366,6 +7366,13 @@ def cmd_update(_args):
     없으면(예: 아직 태그 전) — 그래도 묻는다, 다만 노트 자리에 "릴리즈 노트
     없음" 한 줄과 커밋 해시를 "새 버전" 자리에 보여준다."""
     m = load_messages()
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        # T-1281: a machine installed before the chat-language question existed is
+        # asked once here (no-op once a valid `user-lang` is stored).
+        try:
+            ask_user_lang_once()
+        except (EOFError, KeyboardInterrupt):
+            print()
     repo = _resolve_prdt_repo()
     code_root = git_toplevel(repo)
     if code_root is None:

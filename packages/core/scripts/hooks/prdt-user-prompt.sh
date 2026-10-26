@@ -397,14 +397,19 @@ def device_lang():
     return None
 
 
-def user_lang():
+def stored_user_lang():
+    """The valid value in `$PRDT_HOME/user-lang`, else None (T-1281: the Stop check's only source)."""
     home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
     try:
         with open(os.path.join(home, "user-lang"), encoding="utf-8", errors="replace") as f:
             v = "".join(f.read(64).split())
     except OSError:
         v = ""
-    return v if USER_LANG_RE.match(v) else device_lang()
+    return v if USER_LANG_RE.match(v) else None
+
+
+def user_lang():
+    return stored_user_lang() or device_lang()
 
 
 def reply_hot_line():
@@ -604,7 +609,7 @@ def stop_main():
         return
     if ev.get("stop_hook_active") is not True:
         try:
-            lang = user_lang()
+            lang = stored_user_lang()  # T-1281: a device-only guess never judges a reply
             if lang and lang_drift(reply, lang):
                 sys.stdout.write(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "Stop", "additionalContext": LANG_CHECK_NOTICE % lang}}))

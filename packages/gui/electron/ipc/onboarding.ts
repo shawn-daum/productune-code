@@ -5,7 +5,7 @@ import os from 'os'
 import { execFile, spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
-import { setUiLanguage, setAudienceMode, atomicWriteFileSync, stateWriteFileSync } from '@productune/core'
+import { setUiLanguage, setAudienceMode, setUserLang, atomicWriteFileSync, stateWriteFileSync } from '@productune/core'
 import type { UiLanguage, AudienceMode } from '@productune/core'
 import { withLoginShellPath, resetLoginShellPathCache } from '../surface-runner'
 import { installClaudeCli, resolveClaudeCli } from '../claude-installer'
@@ -35,6 +35,8 @@ interface OnboardingCompleteOpts {
   uiLanguage?: UiLanguage
   /** T-326: per-user PO conversational register, chosen at onboarding. */
   audienceMode?: AudienceMode
+  /** T-1281: the chat language code (ko, en …) — stored as `~/.prdt/user-lang`. */
+  chatLanguage?: string
 }
 
 interface OnboardingRecord {
@@ -671,6 +673,12 @@ export function register(): void {
       //    resolves at PO session start.
       if (opts.audienceMode === 'planner' || opts.audienceMode === 'developer') {
         setAudienceMode(opts.audienceMode)
+      }
+
+      // 5. T-1281: the chat language the user chose (the PO reply language check's
+      //    SoT). Not asked / off-shape → nothing stored, the device language stays.
+      if (typeof opts.chatLanguage === 'string') {
+        setUserLang(opts.chatLanguage)
       }
 
       return { ok: true, prewarm: prewarm.state satisfies PrewarmState }
