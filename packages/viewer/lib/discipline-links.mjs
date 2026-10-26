@@ -18,6 +18,8 @@
 // A link is `<a class="dl" href="#" data-doc="<rel>" [data-line="N"]>`: no
 // file path and no scheme, so it never reaches the link-safety check's file
 // branch (render.mjs `isHrefContained`); the click is handled in-page.
+import { LINKS } from './labels.mjs'
+
 
 function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
@@ -67,9 +69,9 @@ export function buildDisciplineIndex(docs) {
   const parts = [
     `${L}(?:(?:[\\w.~-]+/)*discipline/)?(?<p>${alt([...pathKey.keys()].sort(byLengthDesc))})(?![\\w-])`,
     names.length ? `${L}(?<f>${alt(files)})(?![\\w-])` : null,
-    names.length ? `${L}(?<ln>${alt(names)}) (?<n>\\d+)행` : null,
-    names.length ? `${L}(?<st>${alt(names)})(?= \\d+단계)` : null,
-    playbookNames.length ? `${L}(?<pb>${alt(playbookNames)})(?= (?:playbook(?![\\w-])|플레이북))` : null,
+    names.length ? `${L}(?<ln>${alt(names)})${LINKS.lineRef}` : null,
+    names.length ? `${L}(?<st>${alt(names)})${LINKS.stageRef}` : null,
+    playbookNames.length ? `${L}(?<pb>${alt(playbookNames)})${LINKS.playbookRef}` : null,
     hyphenNames.length ? `${L}(?<hy>${alt(hyphenNames)})(?![\\w-])` : null,
   ].filter(Boolean)
   const regex = new RegExp(parts.join('|'), 'g')
