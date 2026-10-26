@@ -19,6 +19,8 @@
       "description": "Choose your interface language. / 화면 언어를 선택해주세요.",
       "optionEn": "English",
       "optionKo": "한국어",
+      "uiGroup": "화면 언어",
+      "chatGroup": "대화 언어",
       "chatDescription": "PO 가 답하는 대화 언어를 선택해주세요.",
       "resetCta": "초기화하고 다시 시작",
       "resetToast": "로컬 스토리지를 초기화했습니다. 다시 시작합니다…"

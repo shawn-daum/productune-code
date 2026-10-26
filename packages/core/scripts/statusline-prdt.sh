@@ -1041,27 +1041,41 @@ def lane_text(lane, cap):
 
 
 def lane_block(lanes, cap):
-    """[(lane, text)] under one product row: R10 — every finished lane (gate
-    and 자투리 alike) on ONE `done: NAME d/t · …` row first, in table order;
-    then one row per other lane, 자투리 last. No row cap, no folding (R12)."""
-    done = [x for x in lanes if x.get("finished") is True]
-    out = []
-    if done:
-        ents = [clean(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}", cap=10**6) for x in done]
-        # F2 (T-1184 QA): never cut an entry — a row that would pass `cap` continues on the next row
-        cur = ""
-        first = True
-        pre = L("lane.finished", lanes="")
-        for e in ents:
-            lead = pre if first else ""
-            if cur and cap < dw(lead + cur + " · " + e):
-                out.append(({}, lead + cur))
-                first, cur = False, e
-            else:
-                cur = cur + " · " + e if cur else e
-        out.append(({}, (pre if first else "") + cur))
-    out.extend((x, lane_text(x, cap)) for x in lanes if x.get("finished") is not True)
-    return out
+    """([finished entries], [(lane, text)]) for one product: T-1202 = B — every
+    finished gate lane (never 자투리) is an `NAME d/t` entry the product's FIRST
+    row carries as `done lanes: …`, table order; then one row per other lane,
+    자투리 last. No row cap, no folding (R12)."""
+    done = [x for x in lanes if x.get("finished") is True and x.get("besteffort") is not True]
+    ents = [clean(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}", cap=10**6) for x in done]
+    out = [(x, lane_text(x, cap)) for x in lanes if not (x.get("finished") is True and x.get("besteffort") is not True)]
+    return ents, out
+
+
+def done_segment(ents, room):
+    """(segment, overflow rows): the `done lanes: A 1/1 · B 2/2` first-row segment
+    holds as many whole entries as fit `room` columns (T-1184 F2: never cut an
+    entry; the first always stays); the rest continue on nameless rows, each
+    whole, under the product row."""
+    if not ents:
+        return "", []
+    pre = L("lane.finished", lanes="")
+    seg, rest = pre + ents[0], []
+    for k, e in enumerate(ents[1:], 1):
+        if dw(seg + " · " + e) <= room:
+            seg += " · " + e
+        else:
+            rest = ents[k:]
+            break
+    rows, cur = [], ""
+    for e in rest:
+        if cur and room < dw(cur + " · " + e):
+            rows.append(({}, cur))
+            cur = e
+        else:
+            cur = cur + " · " + e if cur else e
+    if cur:
+        rows.append(({}, cur))
+    return seg, rows
 
 
 def lane_cap():
@@ -1083,9 +1097,9 @@ out_rows = []
 # T-1147: parallel to `shown` — [(lane, text)] under each product row. Any lane
 # failure (stale module, odd data) = no lane rows at all; the rest stays intact.
 try:
-    lane_rows = [lane_block(lane_data.get(r["line"], []), lane_cap()) for r in shown]
+    lane_parts = [lane_block(lane_data.get(r["line"], []), lane_cap()) for r in shown]
 except Exception:
-    lane_rows = [[] for _ in shown]
+    lane_parts = [([], []) for _ in shown]
 
 # T-1147 / T-1184 R12: lane rows go right under their product row — every one of
 # them: no row cap and no folding for lanes (MAX_ROWS still folds product rows).
@@ -1096,13 +1110,22 @@ for k, r in enumerate(shown):
     head = [r["slug_ver"]] + (home_cells() if r["line"] is None else []) + [r["stage"]]
     if r["vtotal"]:
         head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
-    lane_txt = " ".join(t for _, t in lane_rows[k])
+    branch = L("branch", name=r["branch"]) if r["branch"] else ""
+    # T-1202 = B: finished lanes ride the first row (after tickets, before working); what does not fit continues below
+    try:
+        floor = " | ".join(head + [working_seg([], (1, 1, 0))] + ([branch] if branch else []))
+        done_seg, done_more = done_segment(lane_parts[k][0], max(lane_cap() - dw(floor) - 3, 1))
+    except Exception:
+        done_seg, done_more = "", []
+    if done_seg:
+        head.append(done_seg)
+    lane_rows_k = done_more + lane_parts[k][1]
+    lane_txt = " ".join(t for _, t in lane_rows_k)
     ids = [tid for tid, _ in running if line_of(tid) == r["line"]
            and not re.search(r"(?<![\w-])" + re.escape(tid) + r"(?!\d)", lane_txt)]
-    branch = L("branch", name=r["branch"]) if r["branch"] else ""
     out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
                                         " | ".join(head + [working_seg(ids, lim)]), branch)))
-    out_rows.extend((None, t) for _, t in lane_rows[k])
+    out_rows.extend((None, t) for _, t in lane_rows_k)
 if len(shown) < len(rows):
     out_rows.append((None, L("lines", n=len(rows) - len(shown))))
 out_rows.append((None, action_row()))

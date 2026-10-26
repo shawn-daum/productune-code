@@ -165,19 +165,20 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     expect(rows()[1]).toBe('lane: A  0/2 | blocker T-001(request)')
   })
 
-  test('R10: finished lanes leave their rows for ONE `done:` row above the lanes, table order, ` · `-joined', () => {
+  test('R10 (T-1202 = B): finished gate lanes ride the FIRST row after tickets, before working — table order, ` · `-joined; 자투리 stays a lane row', () => {
     const rowC = `| **합격선** | **레인 C · \`docs/artifacts/v0.1/c.md\` 가 있다** |`
     writePrd([rowA, rowB, rowC])
     ticket('T-001', { status: 'done', gate: GATE_A })
     ticket('T-002', { gate: GATE_B })
     ticket('T-003', { status: 'done', gate: 'docs/artifacts/v0.1/c.md' })
-    ticket('T-004', { status: 'done' }) // 자투리, finished too
+    ticket('T-004', { status: 'done' }) // 자투리, finished too — still its own lane row
     setStage('build')
     const r = rows()
     expect(r).toHaveLength(4)
-    expect(r[1]).toBe('done: A 1/1 · C 1/1 · 자투리 1/1')
-    expect(r[2]).toBe('lane: B  0/1 | next T-002(developer)')
-    expect(rows({ PRDT_LANG: 'ko' })[1]).toBe('작업완료: A 1/1 · C 1/1 · 자투리 1/1')
+    expect(r[0]).toMatch(/^proj v0\.1 \| stage: build \d+\/\d+ \| total tickets \d+\/\d+ \| done lanes: A 1\/1 · C 1\/1 \| working 0$/)
+    expect(r[1]).toBe('lane: B  0/1 | next T-002(developer)')
+    expect(r[2]).toMatch(/^lane: 자투리 +1\/1/)
+    expect(rows({ PRDT_LANG: 'ko' })[0]).toMatch(/\| 총 티켓 \d+\/\d+ \| 완료된 레인: A 1\/1 · C 1\/1 \| 작업중 0$/)
   })
 
   test('F2 (QA): the finished row never truncates an entry — it continues on the next row (9 long names, COLUMNS=80)', () => {
@@ -188,7 +189,8 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     setStage('build')
     const r = rows({ COLUMNS: '80' })
     expect(r.join('\n')).not.toContain('…')
-    const doneRows = r.filter((x, i) => i > 0 && (x.startsWith('done:') || /^\S.*\d+\/\d+$/.test(x) && !x.startsWith('lane')))
+    const doneRows = r.filter((x, i) => i > 0 && (/^\S.*\d+\/\d+$/.test(x) && !x.startsWith('lane')))
+    expect(r[0]).toContain('done lanes: 아주 긴 이름의 레인 번호 0 1/1')
     expect(doneRows.length).toBeGreaterThan(1)
     for (let i = 0; i < 9; i++) expect(r.join('\n')).toContain(`아주 긴 이름의 레인 번호 ${i} 1/1`)
   })
@@ -317,7 +319,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     setStage('build')
     marker('T-001', 'qa')
     const r = rows()
-    expect(r[1]).toBe('done: A 1/1')
+    expect(r[0]).toContain('done lanes: A 1/1')
     expect(r[0]).toContain('working T-001(qa)')
   })
 
