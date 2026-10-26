@@ -109,7 +109,7 @@ describe.skipIf(!READY)('prdt settings — list', () => {
     expect(run('settings', 'set', 'user.lang', 'ko').status).toBe(0)
     expect(read('user-lang')).toBe('ko\n')
     expect(value()).toBe('ko')
-    for (const bad of ['KO', 'ko-KR', 'korean']) {
+    for (const bad of ['KO', 'ko-KR', 'korean', 'xx', 'yes']) {
       expect(run('settings', 'set', 'user.lang', bad).status).toBe(1)
       expect(read('user-lang')).toBe('ko\n')
     }
@@ -153,6 +153,11 @@ describe.skipIf(!READY)('prdt settings — list', () => {
     fs.rmSync(file('user-lang'))
     ask('klingon!', 'zzzz!')
     expect(read('user-lang')).toBeNull() // never a value the user did not choose
+    for (const bad of ['xx', 'yes', 'no']) {
+      const r = ask(bad, 'yy')
+      expect(r.stdout, bad).toContain('language name') // retried once
+      expect(read('user-lang'), bad).toBeNull()        // 'yy' is no code either → nothing stored
+    }
     ask('') // a bare Enter accepts the device default shown
     expect(read('user-lang')).toBe('en\n')
   })
