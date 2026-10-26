@@ -60,8 +60,6 @@
 
 import fs from 'fs'
 import path from 'path'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { stateDir } from '../state/project-kind'
 import { stateWriteFileSync, StateWriteRefused } from '../fs/state-write'
 import {
@@ -71,10 +69,7 @@ import {
   metaGitTrustProblem,
   metaRepoExists,
   listMetaRemotes,
-  scrubbedGitEnv,
 } from './meta-git'
-
-const execFileAsync = promisify(execFile)
 
 export const DEFAULT_META_BACKUP_REMOTE = 'backup'
 export const BACKUP_STATE_FILE = 'prdt-backup-state.json'
@@ -270,22 +265,26 @@ export function backupPushArgs(remote: string, branch: string): string[] {
 /**
  * Is `name` a legal git remote NAME? Cheap structural refusals first (a leading
  * `-` is flag-shaped, `:` is refspec-shaped, whitespace is two argv words),
- * then git's own rule — `git check-ref-format --allow-onelevel`, the same
- * check `git remote add` applies — run with NO repository, so a bad value from
- * config never reaches a git call on the meta repo. Pure over its input; the
- * only I/O is that one plumbing call.
+ * then git's own `check-ref-format --allow-onelevel` rule, re-implemented
+ * in-process (git refs.c `check_refname_format`, no refspec-pattern): no
+ * subprocess, so load, timeout or spawn failure can never turn a legal name
+ * into a refusal (T-1278). Pure and deterministic; at least as strict as git:
+ * a name git rejects is rejected here too.
  */
-export async function isValidRemoteName(name: string): Promise<boolean> {
+export function isLegalRemoteName(name: string): boolean {
   if (!name || name.startsWith('-') || /[:\s]/.test(name)) return false
-  try {
-    await execFileAsync('git', ['check-ref-format', '--allow-onelevel', name], {
-      timeout: 5_000,
-      env: scrubbedGitEnv(),
-    })
-    return true
-  } catch {
-    return false
+  if (name === '@' || name.includes('..') || name.includes('@{')) return false
+  if (name.endsWith('.') || name.startsWith('/') || name.endsWith('/')) return false
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x20\x7f~^:?*[\\]/.test(name)) return false
+  for (const comp of name.split('/')) {
+    if (comp === '' || comp.startsWith('.') || comp.endsWith('.lock')) return false
   }
+  return true
+}
+
+export async function isValidRemoteName(name: string): Promise<boolean> {
+  return isLegalRemoteName(name)
 }
 
 export interface BackupDecisionInput {
