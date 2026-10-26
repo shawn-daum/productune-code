@@ -163,7 +163,7 @@ describe('renderPrdReading', () => {
     expect(html).toContain(PRD_READING.noTickets)
     expect(html).toContain(PRD_READING.reviewQuestions(2))
     expect(html).toContain('data-oq="prd-oq-1"')
-    const withTicket = render({ decisionTickets: [{ id: 'T-9', slug: 'pick-one', assignee: 'user' }] })
+    const withTicket = render({ decisionTickets: [{ id: 'T-9', name: 'pick-one', assignee: 'user' }] })
     expect(withTicket).toContain('data-detail-kind="ticket" data-detail-id="T-9"')
     expect(withTicket).toContain(`${PRD_READING.decideHeading} <span class="ol-badge mono">3</span>`)
   })
