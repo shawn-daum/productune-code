@@ -7941,6 +7941,28 @@ def _prompt_update_choice(m, installed, new_version, sections):
         print(msg(m, "update.error.badchoice"))
 
 
+def _nudge_known_update_to_stderr():
+    """T-1100: print the `update.noninteractive` line to stderr when an earlier tty
+    run already recorded a pending update (state["known_update"]) that is still
+    newer than the installed version. Read-only: state and local RELEASES.md only."""
+    try:
+        known = (read_json(_update_state_path()) or {}).get("known_update")
+        new = known.get("new") if isinstance(known, dict) else None
+        if not new or not isinstance(new, str):
+            return
+        repo = prdt_repo_dir()
+        code_root = git_toplevel(repo) if repo else None
+        if code_root is None:
+            return
+        installed, _ = releases_local(code_root)
+        if installed and not _newer_version(new, installed):
+            return
+        print(msg(load_messages(), "update.noninteractive", installed=installed or "?",
+                  new=_strip_control_chars(new)), file=sys.stderr)
+    except Exception:
+        return
+
+
 def maybe_prompt_update(cmd):
     """T-393 entry — called from main() before dispatch. CI degrades to silence
     before any network call. A non-tty run (hook / piped / no controlling
@@ -7958,6 +7980,12 @@ def maybe_prompt_update(cmd):
     # state read or network call, so it can neither consume the slot nor cost a
     # hook the 2s ls-remote.
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        # T-1100 (PO): a run piped inside the user's terminal (`prdt … | less`:
+        # stdout not a tty, stderr one) keeps the T-749 signal — but only from the
+        # cached state: no network call, no state write, slot not spent. A hook
+        # (stderr not a tty) stays silent.
+        if not sys.stdout.isatty() and sys.stderr.isatty():
+            _nudge_known_update_to_stderr()
         return
     # throttle — at most one check per local calendar day (T-927)
     today = _local_day()
@@ -7975,13 +8003,17 @@ def maybe_prompt_update(cmd):
     if code_root is None:
         return
 
-    def consume_slot():
+    def consume_slot(known=None):
         # T-1100: the slot is spent only once the check reached a verdict (or the
         # prompt is about to be shown) — never up front, so a failed / offline /
         # timed-out check lets a later tty run the same day retry. Still written
         # before the install re-exec so that re-exec cannot loop.
         state["last_check"] = today
         state["last_check_basis"] = "local"
+        if known:
+            state["known_update"] = {"new": known}      # read back by piped-in-terminal runs
+        else:
+            state.pop("known_update", None)
         _write_update_state(state)
 
     ahead = remote_ahead(code_root)                     # ls-remote + ancestry gate (network, 2s)
@@ -8004,7 +8036,7 @@ def maybe_prompt_update(cmd):
     if not target_sha:
         return
     m = load_messages()
-    consume_slot()                                      # the prompt is shown from here on
+    consume_slot(new_version)                           # the prompt is shown from here on
     choice = _prompt_update_choice(m, installed or "?", new_version, sections)
     if choice == "update":
         # T-749b: NEVER re-enter `cmd_update(None)` here — that re-ran the whole

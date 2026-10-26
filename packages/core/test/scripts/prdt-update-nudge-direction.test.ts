@@ -277,7 +277,7 @@ describe.skipIf(!PYTHON3)('T-456/T-749 · maybe_prompt_update end to end (fake H
   }
   const stateOf = (home: string) => path.join(home, '.prdt', 'update-state.json')
   /** One maybe_prompt_update call against `home`; `tty` shims isatty() on both streams, else plain pipes. */
-  function driveNudge(home: string, o: { tty: boolean; answer?: string }): { stdout: string; stderr: string } {
+  function driveNudge(home: string, o: { tty: boolean; answer?: string; errTty?: boolean }): { stdout: string; stderr: string } {
     const shim = o.tty ? `
 class Tty:
     def __init__(self, s): self._s = s
@@ -285,6 +285,12 @@ class Tty:
     def __getattr__(self, n): return getattr(self._s, n)
 sys.stdin = Tty(io.StringIO(${JSON.stringify(o.answer ?? '')}))
 sys.stdout = Tty(sys.stdout)
+` : o.errTty ? `
+class Tty:
+    def __init__(self, s): self._s = s
+    def isatty(self): return True
+    def __getattr__(self, n): return getattr(self._s, n)
+sys.stderr = Tty(sys.stderr)
 ` : ''
     const script = `
 import importlib.util, importlib.machinery, sys, io
@@ -442,6 +448,27 @@ m.maybe_prompt_update("status")
     const on = driveNudge(home, { tty: true, answer: '2\n' })
     expect(on.stdout).toContain('설치됨 v1.5 → 새 버전 v1.6')
     expect(fs.existsSync(stateOf(home))).toBe(true)
+  })
+
+  test('T-1100: piped inside a terminal (stdout pipe, stderr tty) with a known update → one stderr line, state untouched; hook-shaped run silent', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, ['v1.6', 'v1.5'])
+    const home = fakeHome(clone)
+    // before any tty run no update is known: nothing printed, nothing written
+    const cold = driveNudge(home, { tty: false, errTty: true })
+    expect(cold.stdout + cold.stderr).toBe('')
+    expect(fs.existsSync(stateOf(home))).toBe(false)
+    driveNudge(home, { tty: true, answer: '2\n' }) // a tty run records the known update
+    const before = fs.readFileSync(stateOf(home), 'utf-8')
+    expect(JSON.parse(before).known_update).toEqual({ new: 'v1.6' })
+    const piped = driveNudge(home, { tty: false, errTty: true })
+    expect(piped.stdout).toBe('')
+    expect(piped.stderr).toContain('v1.5')
+    expect(piped.stderr).toContain('v1.6')
+    expect(fs.readFileSync(stateOf(home), 'utf-8')).toBe(before)
+    const hook = driveNudge(home, { tty: false })
+    expect(hook.stdout + hook.stderr).toBe('')
+    expect(fs.readFileSync(stateOf(home), 'utf-8')).toBe(before)
   })
 
   test('T-1100: a tty run whose check reached "nothing to offer" spends the slot', () => {
