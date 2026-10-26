@@ -934,14 +934,34 @@ export function decisionRecord(body) {
     const chunk = outcome.slice(m.index + m[0].length, end)
     const w = /^-\s*what:\s*(.+?)(?=\s+how:|\s+module:|$)/m.exec(chunk)
     const qs = [...chunk.matchAll(/\*"([^"\n]+)"\*/g)].map((x) => x[1].trim())
-    return { label: m[1].trim(), what: w ? w[1].trim() : qs.length ? qs[qs.length - 1] : null }
+    const label = m[1].trim()
+    // V4: the answer text often opens with the very question numbers its heading already shows (`⑤ ⑥ ⑧` / `⑤ ⑥ ⑧ 문구 승인`) — drop that echo
+    const nums = label.split(/\s+/).filter((x) => /^[①-⑳\d]+$/.test(x))
+    let text = w ? w[1].trim() : qs.length ? qs[qs.length - 1] : null
+    if (text && nums.length > 0) {
+      const echo = new RegExp(`^(?:(?:${nums.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s+)+`)
+      text = text.replace(echo, '').trim() || text
+    }
+    return { label, what: text }
   })
-  const what = sub('what')
+  // V3: a decision closed before the `### what` key existed still has its answer on record — the text after the first `→`
+  // (first sentence), else the first bullet that is not the user's verbatim line (the PO's own reading of it)
+  const recordedAnswer = () => {
+    const lines = outcome.split('\n').filter((l) => /^\s*-\s+/.test(l))
+    for (const l of lines) {
+      const a = /→\s*(.+)$/.exec(l)
+      if (a) return a[1].split(/(?<=[.。])\s+(?=\S)/)[0].trim() || null
+    }
+    const own = lines.map((l) => l.replace(/^\s*-\s+/, '').trim()).find((l) => !/^(사용자|션님|user)\b/i.test(l) && !l.includes('*"'))
+    return own || null
+  }
+  const recordedWhat = sub('what')
+  const what = recordedWhat ?? (parts.length === 0 ? recordedAnswer() : null)
   const quotes = [...outcome.matchAll(/\*"([^"\n]+)"\*/g)].map((m) => m[1].trim())
   const quote = quotes.length ? quotes[quotes.length - 1] : ''
   // no recorded `what`: the picked option letter, else a short verbatim reply (never a cut-off long one)
   const fallback = decisionChosen(text) ?? (quote.length <= 12 ? quote : null)
-  const answer = parts.length > 0 ? `${parts.length}건` : clause(what) ?? fallback
+  const answer = parts.length > 0 ? `${parts.length}건` : clause(recordedWhat) ?? fallback
   const problem = /^## problem[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(text)
   const firstProblem = problem ? (/^\s*-\s+(.+)$/m.exec(problem[1]) || [])[1] ?? null : null
   const rec = /^-\s*추천:\s*(.+)$/m.exec(text)
@@ -955,14 +975,14 @@ function decisionViewRow(t) {
   const V = HOME.decisionView
   const open = fm.status === 'open'
   const rec = decisionRecord(t.body)
-  const kv = (label, val) => `<div class="dv-kv"><b>${escapeHtml(label)}</b>${val ? `<span>${inlineMd(val)}</span>` : `<span class="dv-miss">${escapeHtml(V.missing)}</span>`}</div>`
-  const status = open ? V.waiting : ticketStatusText(fm.status)
+  const kv = (label, val, miss = V.missing) => `<div class="dv-kv"><b>${escapeHtml(label)}</b>${val ? `<span>${inlineMd(val)}</span>` : `<span class="dv-miss">${escapeHtml(miss)}</span>`}</div>`
+  const status = open ? V.waiting : fm.status === 'done' ? V.closed : ticketStatusText(fm.status)
   const who = open ? fm.assignee || '' : rec.answer ? V.answer(rec.answer) : ''
   const body = open
     ? kv(V.question, rec.question) + kv(V.recommend, rec.recommend)
     : rec.parts.length > 0
       ? rec.parts.map((p) => kv(p.label, p.what)).join('')
-      : kv(V.why, rec.why) + kv(V.how, rec.how) + kv(V.what, rec.what)
+      : kv(V.why, rec.why, V.missingWhy) + kv(V.how, rec.how) + kv(V.what, rec.what)
   return `<div class="dv-row${open ? ' dv-wait' : ''}" data-dv-id="${escapeHtml(id)}" tabindex="0" role="button" aria-expanded="false"><div class="dv-top"><span class="tid">${escapeHtml(id)}</span><span class="tt">${escapeHtml(fm.title || fm.slug || id)}</span><span class="tst${fm.status === 'done' ? ' done' : ''}">${escapeHtml(status)}</span><span class="who">${escapeHtml(who)}</span></div><div class="dv-body">${body}</div></div>\n`
 }
 
@@ -3212,7 +3232,8 @@ tbody tr:hover td { background: var(--bg-state-hover); }
 th[aria-sort="ascending"] .sort-ind::after { content: '\\25B2'; opacity: 1; }
 th[aria-sort="descending"] .sort-ind::after { content: '\\25BC'; opacity: 1; }
 th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--text-secondary); }
-.dv-list { margin: 0 0 var(--space-16); }
+.dv-list { margin: 0 0 var(--space-16); background: var(--bg-surface-base); border: 1px solid var(--border-section); border-radius: 12px; padding: 4px 16px 12px; }
+.dv-row:nth-last-of-type(1) { border-bottom: 0; }
 .dv-row { border-bottom: 1px solid var(--border-item); padding: 8px 0; cursor: pointer; }
 .dv-row:hover .dv-top { background: var(--bg-state-hover); }
 .dv-top { display: grid; grid-template-columns: 56px minmax(0, 1fr) 72px minmax(0, 260px); gap: 12px; align-items: baseline; font-size: 12.5px; border-radius: 4px; padding: 2px 4px; }
