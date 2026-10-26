@@ -147,6 +147,17 @@ TICKET_OPTIONS_TABLE_SCAFFOLD = (
     "| | | | | |\n"
     "| | | | | |\n"
 )
+# T-1258 (L1 I2, user approval T-1245): a `decision` ticket's `outcome` carries
+# four `###` keys — why (the fork's cause) · how (the principle the chosen answer
+# follows) · module (the shared principle/term group) · what (the act it ends in).
+# `###`, so the H2 frame in `fmt_ticket_body` is untouched; `new` scaffolds them,
+# doctor warns (advisory) on a decision closed after TICKET_DECISION_OUTCOME_LANDING_DATE
+# whose `outcome` lacks any. A scaffold of bare headings is NOT a filled outcome.
+TICKET_DECISION_OUTCOME_KEYS = ("why", "how", "module", "what")
+TICKET_DECISION_OUTCOME_LANDING_DATE = "2026-10-26"
+TICKET_DECISION_OUTCOME_SCAFFOLD = "".join(f"### {k}\n\n" for k in TICKET_DECISION_OUTCOME_KEYS)
+_DECISION_OUTCOME_HEADING_RE = re.compile(
+    r"^### (%s)[ \t]*$" % "|".join(TICKET_DECISION_OUTCOME_KEYS), re.M)
 
 
 
@@ -5591,6 +5602,8 @@ def cmd_tickets_new(args, root):
     def _section(k):
         if k == "options" and ttype == "decision":
             return f"## options\n\n{TICKET_OPTIONS_TABLE_SCAFFOLD}\n"
+        if k == "outcome" and ttype == "decision":
+            return f"## outcome\n\n{TICKET_DECISION_OUTCOME_SCAFFOLD}"
         return f"## {k}\n\n"
     body = "".join(_section(k) for k in body_keys)
     text = "\n".join(fm_lines) + "\n\n" + body
@@ -5732,7 +5745,10 @@ def fmt_ticket_body(body, ttype, status):
             violations.append("type: decision requires `options` with a `recommend` cell")
         elif "recommend" not in opts.lower():
             violations.append("`options` is missing a `recommend` cell (required for type: decision)")
-    if status == "done" and not "".join(key_content.get("outcome", [])).strip():
+    # T-1258: a `decision` scaffold's bare `### why|how|module|what` lines are
+    # structure, not content — they never satisfy "done requires outcome".
+    outcome_text = _DECISION_OUTCOME_HEADING_RE.sub("", "".join(key_content.get("outcome", [])))
+    if status == "done" and not outcome_text.strip():
         violations.append("status: done requires `outcome`")
 
     new_body = preamble + "".join(
@@ -11765,6 +11781,35 @@ def ticket_frame_warnings(root, tickets):
     return Advisory(warns)
 
 
+def decision_outcome_key_warnings(root, tickets):
+    """T-1258 (L1 I2): advisory — a `type: decision` ticket closed (`status: done`)
+    and created on/after TICKET_DECISION_OUTCOME_LANDING_DATE whose `outcome`
+    lacks any of `### why` · `### how` · `### module` · `### what`. Older
+    decisions and open ones are silent; never verdict-changing (a decision is
+    a record a person completes, not a discipline↔execution mismatch)."""
+    warns = []
+    for r in sorted(tickets, key=lambda r: r["id"]):
+        if r.get("type") != "decision" or r.get("status") != "done":
+            continue
+        created_raw = r.get("created")
+        if not (isinstance(created_raw, str) and TICKET_CREATED_DATE_RE.match(created_raw)) \
+                or created_raw < TICKET_DECISION_OUTCOME_LANDING_DATE:
+            continue
+        try:
+            text = (root / r["path"]).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        _header, body = split_ticket_header_body(text)
+        outcome = "".join(fmt_ticket_body(body, "decision", "done")[0]
+                          .split("## outcome\n", 1)[1:2]).split("\n## ", 1)[0]
+        have = set(_DECISION_OUTCOME_HEADING_RE.findall(outcome))
+        missing = [k for k in TICKET_DECISION_OUTCOME_KEYS if k not in have]
+        if missing:
+            warns.append(f"decision outcome: {r['id']} ({r['path']}): `outcome` lacks "
+                         + " · ".join(f"### {k}" for k in missing))
+    return Advisory(warns)
+
+
 # ── doctor: PRD layout — one file per closed version (T-657) ──────────────────
 #
 # ONE definition of a version id, and both readers use it: this regex and the
@@ -15451,6 +15496,118 @@ def schedule_report(root, version):
     return p, n, bad
 
 
+# ── `prdt deploy record` (T-1250): the ONE writer of a product's deployed-version record ──
+# Spec: docs/<product>/artifacts/v1.15/deployed-record-spec.md §쓰는 쪽. The record is the
+# `deployed:` one-line flow in `docs/<product>/DEPLOY.md` frontmatter; this command rewrites
+# that line and nothing else (every other byte kept, atomic write).
+
+DEPLOY_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/+-]*", re.ASCII)
+_DEPLOYED_FLOW_RE = re.compile(r"\{\s*version:\s*([^,}]*?)\s*,\s*at:\s*([^,}]*?)\s*,\s*ref:\s*([^,}]*?)\s*\}")
+
+
+def _deploy_die(msg):
+    sys.exit(f"prdt deploy record: {msg} — nothing written")
+
+
+def _deploy_split(raw):
+    """((start, end, value) of the `deployed:` line or None, offset of the closing `---`)
+    over the frontmatter of `raw` (bytes); None when there is no closed frontmatter."""
+    lines = raw.splitlines(keepends=True)
+    if not lines or lines[0].rstrip(b"\r\n") != b"---":
+        return None
+    pos, hit, close = len(lines[0]), None, None
+    for ln in lines[1:]:
+        body = ln.rstrip(b"\r\n")
+        if body == b"---":
+            close = pos
+            break
+        if hit is None and body.startswith(b"deployed:"):
+            hit = (pos, pos + len(ln), body[len(b"deployed:"):].decode("utf-8", "replace").strip())
+        pos += len(ln)
+    if close is None:
+        return None
+    return hit, close
+
+
+def _deploy_defaults(root, product, version, ref):
+    code = code_root(root)
+    if ref is None:
+        def g(a):
+            r = _tgit(a, code)
+            return r.stdout.strip() if r.returncode == 0 else ""
+        if g(["rev-parse", "--verify", "--quiet", f"refs/tags/{version}"]):
+            ref = version
+        else:
+            ref = g(["rev-parse", "--short", "refs/heads/main"])
+        if not ref:
+            _deploy_die(f"no tag {version} and no main branch in {code} to take a ref from — pass --ref")
+    return ref
+
+
+def cmd_deploy(args):
+    """`prdt deploy record [<product>] [--ref R] [--version V] [--at YYYY-MM-DD]`."""
+    root = Path(require_root())
+    prods = project_products(root)
+    slug = _resource_project_slug(root)
+    product = args.product
+    if prods:
+        if product is None:
+            product = prods[0]
+        elif product not in prods:
+            _deploy_die(f"{safe_label(product)} is not a product of this project ({', '.join(prods)})")
+    elif product is not None and product != slug:
+        _deploy_die(f"{safe_label(product)} is not a product of this project ({slug})")
+    first = (prods[0] if prods else None) == product or not prods
+    path = product_docs_dir(root, product if prods else None) / "DEPLOY.md"
+    shown = docs_rel(root, path)
+    if not path.is_file():
+        _deploy_die(f"{shown} does not exist")
+    version = args.version
+    if version is None:
+        st = read_json(root / ".prdt" / "po-state.json")
+        v = line_state(st, None if first else product)[1]
+        version = split_line_id(v)[1] if v else None
+        if not version:
+            _deploy_die(f".prdt/po-state.json has no version for {safe_label(product or slug)} — pass --version")
+    if not (isinstance(version, str) and VERSION_ID_RE.fullmatch(version)):
+        _deploy_die(f"version {safe_label(str(version))} is not a version id (v<N>[.<m>[.<p>]])")
+    at = args.at
+    if at is None:
+        at = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", at):
+            raise ValueError(at)
+        datetime.strptime(at, "%Y-%m-%d")
+    except ValueError:
+        _deploy_die(f"at {safe_label(str(at))} is not a date (YYYY-MM-DD)")
+    if args.ref is not None and not DEPLOY_REF_RE.fullmatch(args.ref):
+        _deploy_die(f"ref {safe_label(args.ref)} is not a tag or commit name")
+    raw = path.read_bytes()
+    spl = _deploy_split(raw)
+    if spl is None:
+        _deploy_die(f"{shown} has no frontmatter (a leading `---` block)")
+    hit, close = spl
+    if hit is not None and hit[2] == "":
+        _deploy_die(f"{shown} writes `deployed:` as a block, not the one-line flow")
+    ref = _deploy_defaults(root, product, version, args.ref)
+    line = f"deployed: {{version: {version}, at: {at}, ref: {ref}}}"
+    if hit is not None:
+        s0, s1, _val = hit
+        eol = raw[s0:s1][len(raw[s0:s1].rstrip(b"\r\n")):] or b"\n"
+        new = raw[:s0] + line.encode() + eol + raw[s1:]
+    else:
+        eol = b"\r\n" if raw[:close].endswith(b"\r\n") else b"\n"
+        new = raw[:close] + line.encode() + eol + raw[close:]
+    m = _DEPLOYED_FLOW_RE.fullmatch(hit[2]) if hit else None
+    before = " · ".join(m.groups()) if m else ("(없음)" if hit is None else safe_label(hit[2]))
+    if new != raw:
+        try:
+            state_write(root, path, new.decode("utf-8"), create_dirs=False)
+        except (OSError, UnicodeError, StateLinkError) as e:
+            _deploy_die(f"could not write {shown} ({e})")
+    print(f"deployed: {before} → {version} · {at} · {ref} ({shown})")
+
+
 def cmd_schedule_record(_args):
     """Internal — the dispatch gate's call (stdin = the PreToolUse event).
     Prints the off-path warning line when there is one, else nothing; never
@@ -16071,6 +16228,8 @@ def cmd_doctor(_args):
         # away, not a discipline↔execution mismatch); silent on any ticket
         # created before the frame's landing date.
         ("ticket frame", FAMILY_PROJECT, lambda: ticket_frame_warnings(root, trows)),
+        # T-1258: advisory — a decision closed after landing without outcome ### why/how/module/what.
+        ("decision outcome keys", FAMILY_PROJECT, lambda: decision_outcome_key_warnings(root, trows)),
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
         ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root), root)),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
@@ -20548,6 +20707,17 @@ def main():
                                       "ls/register-stop take none")
     p.add_argument("--json", action="store_true", help="ls: machine-readable output")
     p.set_defaults(fn=cmd_resource)
+    p = sub.add_parser("deploy", help="deploy record [<product>] [--ref R] [--version V] [--at YYYY-MM-DD] (T-1250): "
+                                      "the only writer of a product's deployed-version record — rewrites the "
+                                      "`deployed:` line of docs/<product>/DEPLOY.md frontmatter, nothing else; "
+                                      "version = po-state, at = today (Asia/Seoul), ref = tag named like the "
+                                      "version else main's short hash")
+    p.add_argument("action", choices=("record",))
+    p.add_argument("product", nargs="?", help="product name (default: the first product)")
+    p.add_argument("--ref", help="tag or commit name to record (default: tag <version>, else main's short hash)")
+    p.add_argument("--version", help="version id to record (default: the product's po-state version)")
+    p.add_argument("--at", help="deploy date YYYY-MM-DD (default: today, Asia/Seoul)")
+    p.set_defaults(fn=cmd_deploy)
     p = sub.add_parser("preflight", help="model availability canary before a dispatch: "
                                          "prdt preflight <model> [--fallback M] [--recheck] [--clear] "
                                          "— JSON verdict on stdout (available | unavailable | inconclusive)")
