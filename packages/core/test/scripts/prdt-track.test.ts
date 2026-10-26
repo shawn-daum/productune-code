@@ -294,6 +294,52 @@ describe('prdt track land', () => {
     expect(git(code, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main')
   })
 
+  // T-1092: a land whose setup step failed left the merge on the track branch and
+  // a half-removed node_modules; the second land skipped merge + setup and ran the
+  // tests on that tree. It must stop and name the setup command and worktree.
+  describe('T-1092: a failed setup step blocks the next land', () => {
+    const ran = () => path.join(proj, 'tests-ran')
+    const lockChange = () => {
+      commit(wt(), 'c.txt', 'new\n', 'feat: c (T-1)')
+      commit(code, 'pnpm-lock.yaml', 'lockfileVersion: 9\n', 'chore: lock')
+      setConfig({ track: { setup: 'exit 3', test: `touch ${ran()} && test -f a.txt` } })
+    }
+
+    test('first land names what stays and the recovery; the second land refuses before the tests; --setup-done lands', () => {
+      lockChange()
+      const first = cli('track', 'land', 'T-1')
+      expect(first.status).toBe(1)
+      expect(first.err).toContain('the setup step failed')
+      expect(first.err).toContain('track/T-1 keeps the merge')
+      expect(first.err).toContain('partially removed')
+      expect(first.err).toContain(`rerun \`exit 3\` in ${wt()}`)
+      expect(fs.existsSync(ran())).toBe(false)
+
+      const second = cli('track', 'land', 'T-1')
+      expect(second.status).toBe(1)
+      expect(second.err).toContain('rerun `exit 3`')
+      expect(second.err).toContain(wt())
+      expect(second.out + second.err).not.toContain('tests on the merged tree')
+      expect(fs.existsSync(ran())).toBe(false)
+      expect(fs.existsSync(wt())).toBe(true)
+
+      setConfig({ track: { setup: 'true', test: `touch ${ran()} && test -f a.txt` } })
+      const third = cli('track', 'land', 'T-1', '--setup-done')
+      expect(third.status, third.err).toBe(0)
+      expect(fs.existsSync(ran())).toBe(true)
+      expect(fs.existsSync(wt())).toBe(false)
+    })
+
+    test('setup succeeds on a changed lockfile: land is unchanged and leaves no marker', () => {
+      commit(wt(), 'c.txt', 'new\n', 'feat: c (T-1)')
+      commit(code, 'pnpm-lock.yaml', 'lockfileVersion: 9\n', 'chore: lock')
+      setConfig({ track: { setup: 'true', test: 'test -f a.txt' } })
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toContain('landed T-1')
+    })
+  })
+
   // T-778 (T-775 grill): `--base main` — dev stays checked out in code/, so the
   // old `git branch -d` (which always checks the CURRENT checkout's HEAD, not
   // the land target) refused to delete track/T-2 forever, since track/T-2 was
