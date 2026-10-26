@@ -147,6 +147,17 @@ TICKET_OPTIONS_TABLE_SCAFFOLD = (
     "| | | | | |\n"
     "| | | | | |\n"
 )
+# T-1258 (L1 I2, user approval T-1245): a `decision` ticket's `outcome` carries
+# four `###` keys — why (the fork's cause) · how (the principle the chosen answer
+# follows) · module (the shared principle/term group) · what (the act it ends in).
+# `###`, so the H2 frame in `fmt_ticket_body` is untouched; `new` scaffolds them,
+# doctor warns (advisory) on a decision closed after TICKET_DECISION_OUTCOME_LANDING_DATE
+# whose `outcome` lacks any. A scaffold of bare headings is NOT a filled outcome.
+TICKET_DECISION_OUTCOME_KEYS = ("why", "how", "module", "what")
+TICKET_DECISION_OUTCOME_LANDING_DATE = "2026-10-26"
+TICKET_DECISION_OUTCOME_SCAFFOLD = "".join(f"### {k}\n\n" for k in TICKET_DECISION_OUTCOME_KEYS)
+_DECISION_OUTCOME_HEADING_RE = re.compile(
+    r"^### (%s)[ \t]*$" % "|".join(TICKET_DECISION_OUTCOME_KEYS), re.M)
 
 
 
@@ -5591,6 +5602,8 @@ def cmd_tickets_new(args, root):
     def _section(k):
         if k == "options" and ttype == "decision":
             return f"## options\n\n{TICKET_OPTIONS_TABLE_SCAFFOLD}\n"
+        if k == "outcome" and ttype == "decision":
+            return f"## outcome\n\n{TICKET_DECISION_OUTCOME_SCAFFOLD}"
         return f"## {k}\n\n"
     body = "".join(_section(k) for k in body_keys)
     text = "\n".join(fm_lines) + "\n\n" + body
@@ -5732,7 +5745,10 @@ def fmt_ticket_body(body, ttype, status):
             violations.append("type: decision requires `options` with a `recommend` cell")
         elif "recommend" not in opts.lower():
             violations.append("`options` is missing a `recommend` cell (required for type: decision)")
-    if status == "done" and not "".join(key_content.get("outcome", [])).strip():
+    # T-1258: a `decision` scaffold's bare `### why|how|module|what` lines are
+    # structure, not content — they never satisfy "done requires outcome".
+    outcome_text = _DECISION_OUTCOME_HEADING_RE.sub("", "".join(key_content.get("outcome", [])))
+    if status == "done" and not outcome_text.strip():
         violations.append("status: done requires `outcome`")
 
     new_body = preamble + "".join(
@@ -6809,6 +6825,311 @@ def run_claude_then_restore(cmd, env=None):
         os.kill(os.getpid(), -rc)
         sys.exit(128 - rc)
     sys.exit(rc)
+
+
+# ── decisions find (T-1257, design decision-question-design §3) ──────────────
+# The lookup the PO runs before asking the user anything: closed decision
+# tickets · wiki `decision--*` pages · user-quoted `log.md` lines, one line each.
+# Read-only; a candidate list, never a verdict (the PO judges the match).
+DECISION_KEYS = ("why", "how", "module", "what")
+_DEC_KEY_HEAD_RE = re.compile(r"^###\s+(?:(\S+)\s+)?(why|how|module|what)\s*$", re.I)
+_DEC_INLINE_RE = re.compile(r"(?<![\w#`])(why|how|module|what)\s*[:：]\s*(.+?)(?=\s+(?:why|how|module|what)\s*[:：]|$)", re.I)
+_DEC_QUOTE_RE = re.compile(r"「([^」]+)」|\*[\"“]([^*]+?)[\"”]\*")
+_DEC_USER_LINE_RE = re.compile(r"^\s*[-*]?\s*(?:\d{4}-\d{2}-\d{2}\s+)?(?:사용자|션님|user)\b", re.I)
+_DEC_REVERSED_RE = re.compile(r"뒤집|overturn|supersede", re.I)
+_DEC_LOG_LINE_RE = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2})\s*(.*)$")
+_DEC_LIMIT = 10
+_DEC_FIELD_MAX = 110
+
+
+def _dec_quotes(text):
+    return [(a or b).strip() for a, b in _DEC_QUOTE_RE.findall(text)]
+
+
+def _dec_clip(s, n=_DEC_FIELD_MAX):
+    s = re.sub(r"\s+", " ", s or "").strip().rstrip(".")
+    return s if len(s) <= n else s[: n - 1].rstrip() + "…"
+
+
+def _dec_section(body, name):
+    """Text of one `## name` section of a ticket/page body ('' when absent)."""
+    m = re.search(r"^##\s+%s\s*$" % re.escape(name), body, re.M | re.I)
+    if not m:
+        return ""
+    rest = body[m.end():]
+    n = re.search(r"^##\s", rest, re.M)
+    return rest[: n.start()] if n else rest
+
+
+def _dec_items(text):
+    """Outcome-shaped text → list of {label, why, how, module, what, quote, text}.
+    `### why|how|module|what` headings (optional leading item label such as `①`)
+    are the design-D6 keys; any other `###` heading starts a labelled item whose
+    bullets may carry inline `what: … how: …`. Text with no `###` is one item."""
+    blocks, cur = [], {"label": "", "head": None, "lines": []}
+    for ln in text.splitlines():
+        if ln.startswith("### "):
+            blocks.append(cur)
+            cur = {"label": ln[4:].strip(), "head": ln.strip(), "lines": []}
+        else:
+            cur["lines"].append(ln)
+    blocks.append(cur)
+    items, byl = [], {}
+
+    def item(label):
+        if label not in byl:
+            byl[label] = {"label": label, "text": "", "quote": ""}
+            items.append(byl[label])
+        return byl[label]
+
+    for b in blocks:
+        body = "\n".join(b["lines"]).strip()
+        m = _DEC_KEY_HEAD_RE.match(b["head"] or "")
+        if m:
+            it = item(m.group(1) or "")
+            it.setdefault(m.group(2).lower(), _dec_clip(re.sub(r"^[-*]\s*", "", body.splitlines()[0]) if body else ""))
+            it["text"] += "\n" + (b["head"] or "") + "\n" + body
+            continue
+        it = item(b["label"])
+        it["text"] += "\n" + (b["head"] or "") + "\n" + body
+        for ln in b["lines"]:
+            if _DEC_USER_LINE_RE.match(ln):
+                q = _dec_quotes(ln)
+                if q:
+                    it["quote"] = q[0]
+            for k, v in _DEC_INLINE_RE.findall(ln):
+                it.setdefault(k.lower(), _dec_clip(v))
+    return [i for i in items if i["text"].strip()]
+
+
+def _dec_user_quote(text):
+    q = ""
+    for ln in text.splitlines():
+        if _DEC_USER_LINE_RE.match(ln):
+            qs = _dec_quotes(ln)
+            if qs:
+                q = qs[0]
+    return q
+
+
+def _dec_matcher(words):
+    pats = []
+    for w in words:
+        w = w.strip()
+        if not w:
+            continue
+        # ASCII words match whole-word (so `land` does not hit `landing`); other
+        # scripts match as a substring (Korean has no word boundary to respect).
+        pats.append(re.compile(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(w), re.I)
+                    if w.isascii() else re.compile(re.escape(w), re.I))
+    return pats
+
+
+def _dec_hits(pats, text):
+    return sum(1 for p in pats if p.search(text))
+
+
+def _dec_sort_key(rec):
+    m = re.search(r"(\d+)$", rec["id"])
+    return (rec["date"] or "", int(m.group(1)) if m else 0)
+
+
+def _dec_term_records(root, pats):
+    """Term-dictionary entries (concept → say). Read only from schema-2 files —
+    canon discipline/wordlist/*.json and the project's .prdt/wordlist/*.json; a
+    schema-1 file (or none) contributes nothing and prints nothing (T-1262)."""
+    dirs = []
+    try:
+        cd = wordlist_canon_dir()
+        if cd:
+            dirs.append(Path(cd))
+    except Exception:
+        pass
+    dirs.append(Path(root) / ".prdt" / "wordlist")
+    out, seen = [], set()
+    for d in dirs:
+        for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict) or data.get("schema") != 2 or not isinstance(data.get("entries"), list):
+                continue
+            for e in data["entries"]:
+                if not isinstance(e, dict) or not isinstance(e.get("concept"), str):
+                    continue
+                say = e.get("say") if isinstance(e.get("say"), list) else []
+                hay = " ".join([e["concept"], *[str(s) for s in say]])
+                if pats and not _dec_hits(pats, hay):
+                    continue
+                key = (e["concept"], f.stem)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"id": f"term:{f.stem}", "date": "", "status": "term", "kind": "term",
+                            "line": f"term: {_dec_clip(e['concept'])} → {_dec_clip(' / '.join(str(s) for s in say))}"})
+    return out
+
+
+def decisions_collect(root, words, feature=None):
+    """[(record)] — every candidate, unsorted, unlimited. record = {id, date,
+    status, kind, items[{why,how,module,what,quote}], reversed_by, hits}."""
+    pats = _dec_matcher(words)
+    recs = []
+    for row, p, _ in scan_tickets(root) or []:
+        if feature and row.get("feature") != feature:
+            continue
+        try:
+            text = Path(p).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        fm, body = parse_frontmatter_text(text)
+        outcome, log = _dec_section(body, "outcome"), _dec_section(body, "log")
+        is_dec = row["type"] == "decision" or bool(_dec_user_quote(outcome + "\n" + log))
+        if not is_dec or (pats and not _dec_hits(pats, text)):
+            continue
+        items = _dec_items(outcome)
+        quote = _dec_user_quote(outcome) or _dec_user_quote(log)
+        rev = ""
+        for ln in log.splitlines():
+            if _DEC_REVERSED_RE.search(ln):
+                ids = [i for i in re.findall(r"T-\d+", ln) if i != row["id"]]
+                if ids:
+                    rev = ids[0]
+        recs.append({"id": row["id"], "date": row["closed"] or row["created"] or "",
+                     "status": row["status"] or "-", "kind": "ticket", "items": items,
+                     "quote": quote, "slug": row["slug"], "reversed_by": rev, "text": text})
+    wdirs = [shared_docs_dir(root) / "wiki"] + [d for _, d in product_docs_dirs(root, "wiki")]
+    seen = set()
+    for wd in wdirs:
+        if not wd.is_dir() or wd in seen:
+            continue
+        seen.add(wd)
+        for p in sorted(wd.glob("decision--*.md")):
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            fm, body = parse_frontmatter_text(text)
+            if feature and fm.get("feature") != feature:
+                continue
+            if pats and not _dec_hits(pats, text):
+                continue
+            st = str(fm.get("status") or "-")
+            qs = _dec_quotes(body)
+            recs.append({"id": p.stem, "date": str(fm.get("date") or fm.get("closed") or fm.get("created") or ""),
+                         "status": st, "kind": "wiki", "items": _dec_items(body),
+                         "quote": qs[0] if qs else "", "slug": str(fm.get("title") or p.stem),
+                         "reversed_by": "superseded" if st == "superseded" else "", "text": text})
+    if not feature:
+        lp = shared_docs_dir(root) / "wiki" / "log.md"
+        if lp.is_file():
+            try:
+                lines = lp.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                lines = []
+            for n, ln in enumerate(lines, 1):
+                m = _DEC_LOG_LINE_RE.match(ln)
+                if not m:
+                    continue
+                qs = _dec_quotes(m.group(2))
+                if not qs or (pats and not _dec_hits(pats, ln)):
+                    continue
+                its = _dec_items(m.group(2))
+                recs.append({"id": f"log.md:{n}", "date": m.group(1), "status": "log", "kind": "log",
+                             "items": its, "quote": qs[0], "slug": m.group(2), "reversed_by": "", "text": ln})
+    for r in recs:
+        r["pats"] = pats
+    return recs
+
+
+def _dec_pick_item(rec):
+    """The item of a record that the line speaks for: most word hits, ties →
+    the first one that carries keys or an answer."""
+    pats = rec.get("pats") or []
+    best, score = None, -1
+    for it in rec["items"]:
+        s = _dec_hits(pats, it["text"]) if pats else 0
+        keyed = any(it.get(k) for k in DECISION_KEYS) or it.get("quote")
+        s = s * 2 + (1 if keyed else 0)
+        if s > score:
+            best, score = it, s
+    return best or {}
+
+
+def _dec_kinds(module):
+    return [k.strip() for k in re.split(r"\s+·\s+|[,;]", module or "") if k.strip()]
+
+
+def _dec_line(rec):
+    if rec["kind"] == "term":
+        return rec["line"]
+    it = _dec_pick_item(rec)
+    what = it.get("what") or (_dec_clip(rec["slug"]) if rec["kind"] != "log" else _dec_clip(rec["slug"]))
+    parts = [rec["id"] + (f" {it['label']}" if it.get("label") and rec["kind"] == "ticket" and not _DEC_KEY_HEAD_RE.match("### " + it["label"]) else ""),
+             rec["date"] or "-", rec["status"],
+             f"why: {it.get('why') or 'none'}"]
+    if it.get("how"):
+        parts.append(f"how: {it['how']}")
+    if it.get("module"):
+        parts.append(f"module: {it['module']}")
+    parts.append(f"what: {what}")
+    q = (rec.get("quote") if rec["kind"] == "log" else it.get("quote")) or rec.get("quote")
+    if q:
+        parts.append(f"원문 「{_dec_clip(q, 80)}」")
+    if rec.get("reversed_by"):
+        parts.append(f"→ {rec['reversed_by']}")
+    return " · ".join(parts)
+
+
+def cmd_decisions(args):
+    """`prdt decisions find <words…> [--feature F] [--module [KIND]]` (T-1257)."""
+    root = require_root()
+    if args.action != "find":
+        sys.exit("prdt decisions: only `find` exists")
+    words = args.words or []
+    module = args.module
+    if not words and module is None:
+        sys.exit("prdt decisions find: give at least one word (or --module [KIND])")
+    recs = decisions_collect(root, words, args.feature)
+    if module is not None:
+        keyed = []
+        for r in recs:
+            for it in r["items"]:
+                if it.get("module"):
+                    keyed.append((r, it))
+        if not module:
+            counts = {}
+            for _, it in keyed:
+                for k in _dec_kinds(it["module"]):
+                    counts[k] = counts.get(k, 0) + 1
+            if not counts:
+                print("no module kinds recorded")
+                return
+            for k, n in sorted(counts.items()):
+                print(f"module: {k} · {n} item{'s' if n != 1 else ''}")
+            return
+        want = module.strip().lower()
+        hit = sorted([(r, it) for r, it in keyed if want in [k.lower() for k in _dec_kinds(it["module"])]],
+                     key=lambda ri: _dec_sort_key(ri[0]))
+        if not hit:
+            print(f"no recorded decision for module: {module}")
+            return
+        r0, i0 = hit[0]
+        print(f"module: {module} · principle: {i0.get('how') or 'none'} · set by {r0['id']} · {r0['date'] or '-'}")
+        for r, it in hit[1:] + ([hit[0]] if False else []):
+            print(f"  followed: {r['id']} · {r['date'] or '-'} · {r['status']} · what: {it.get('what') or _dec_clip(r['slug'])}")
+        if len(hit) == 1:
+            print("  followed: none")
+        return
+    recs.sort(key=_dec_sort_key, reverse=True)
+    lines = [_dec_line(r) for r in recs[:_DEC_LIMIT]]
+    lines += [r["line"] for r in _dec_term_records(root, _dec_matcher(words))]
+    if not lines:
+        print("no recorded decision")
+        return
+    print("\n".join(lines))
+
 
 
 def cmd_po(args):
@@ -11460,6 +11781,35 @@ def ticket_frame_warnings(root, tickets):
     return Advisory(warns)
 
 
+def decision_outcome_key_warnings(root, tickets):
+    """T-1258 (L1 I2): advisory — a `type: decision` ticket closed (`status: done`)
+    and created on/after TICKET_DECISION_OUTCOME_LANDING_DATE whose `outcome`
+    lacks any of `### why` · `### how` · `### module` · `### what`. Older
+    decisions and open ones are silent; never verdict-changing (a decision is
+    a record a person completes, not a discipline↔execution mismatch)."""
+    warns = []
+    for r in sorted(tickets, key=lambda r: r["id"]):
+        if r.get("type") != "decision" or r.get("status") != "done":
+            continue
+        created_raw = r.get("created")
+        if not (isinstance(created_raw, str) and TICKET_CREATED_DATE_RE.match(created_raw)) \
+                or created_raw < TICKET_DECISION_OUTCOME_LANDING_DATE:
+            continue
+        try:
+            text = (root / r["path"]).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        _header, body = split_ticket_header_body(text)
+        outcome = "".join(fmt_ticket_body(body, "decision", "done")[0]
+                          .split("## outcome\n", 1)[1:2]).split("\n## ", 1)[0]
+        have = set(_DECISION_OUTCOME_HEADING_RE.findall(outcome))
+        missing = [k for k in TICKET_DECISION_OUTCOME_KEYS if k not in have]
+        if missing:
+            warns.append(f"decision outcome: {r['id']} ({r['path']}): `outcome` lacks "
+                         + " · ".join(f"### {k}" for k in missing))
+    return Advisory(warns)
+
+
 # ── doctor: PRD layout — one file per closed version (T-657) ──────────────────
 #
 # ONE definition of a version id, and both readers use it: this regex and the
@@ -15146,6 +15496,118 @@ def schedule_report(root, version):
     return p, n, bad
 
 
+# ── `prdt deploy record` (T-1250): the ONE writer of a product's deployed-version record ──
+# Spec: docs/<product>/artifacts/v1.15/deployed-record-spec.md §쓰는 쪽. The record is the
+# `deployed:` one-line flow in `docs/<product>/DEPLOY.md` frontmatter; this command rewrites
+# that line and nothing else (every other byte kept, atomic write).
+
+DEPLOY_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/+-]*", re.ASCII)
+_DEPLOYED_FLOW_RE = re.compile(r"\{\s*version:\s*([^,}]*?)\s*,\s*at:\s*([^,}]*?)\s*,\s*ref:\s*([^,}]*?)\s*\}")
+
+
+def _deploy_die(msg):
+    sys.exit(f"prdt deploy record: {msg} — nothing written")
+
+
+def _deploy_split(raw):
+    """((start, end, value) of the `deployed:` line or None, offset of the closing `---`)
+    over the frontmatter of `raw` (bytes); None when there is no closed frontmatter."""
+    lines = raw.splitlines(keepends=True)
+    if not lines or lines[0].rstrip(b"\r\n") != b"---":
+        return None
+    pos, hit, close = len(lines[0]), None, None
+    for ln in lines[1:]:
+        body = ln.rstrip(b"\r\n")
+        if body == b"---":
+            close = pos
+            break
+        if hit is None and body.startswith(b"deployed:"):
+            hit = (pos, pos + len(ln), body[len(b"deployed:"):].decode("utf-8", "replace").strip())
+        pos += len(ln)
+    if close is None:
+        return None
+    return hit, close
+
+
+def _deploy_defaults(root, product, version, ref):
+    code = code_root(root)
+    if ref is None:
+        def g(a):
+            r = _tgit(a, code)
+            return r.stdout.strip() if r.returncode == 0 else ""
+        if g(["rev-parse", "--verify", "--quiet", f"refs/tags/{version}"]):
+            ref = version
+        else:
+            ref = g(["rev-parse", "--short", "refs/heads/main"])
+        if not ref:
+            _deploy_die(f"no tag {version} and no main branch in {code} to take a ref from — pass --ref")
+    return ref
+
+
+def cmd_deploy(args):
+    """`prdt deploy record [<product>] [--ref R] [--version V] [--at YYYY-MM-DD]`."""
+    root = Path(require_root())
+    prods = project_products(root)
+    slug = _resource_project_slug(root)
+    product = args.product
+    if prods:
+        if product is None:
+            product = prods[0]
+        elif product not in prods:
+            _deploy_die(f"{safe_label(product)} is not a product of this project ({', '.join(prods)})")
+    elif product is not None and product != slug:
+        _deploy_die(f"{safe_label(product)} is not a product of this project ({slug})")
+    first = (prods[0] if prods else None) == product or not prods
+    path = product_docs_dir(root, product if prods else None) / "DEPLOY.md"
+    shown = docs_rel(root, path)
+    if not path.is_file():
+        _deploy_die(f"{shown} does not exist")
+    version = args.version
+    if version is None:
+        st = read_json(root / ".prdt" / "po-state.json")
+        v = line_state(st, None if first else product)[1]
+        version = split_line_id(v)[1] if v else None
+        if not version:
+            _deploy_die(f".prdt/po-state.json has no version for {safe_label(product or slug)} — pass --version")
+    if not (isinstance(version, str) and VERSION_ID_RE.fullmatch(version)):
+        _deploy_die(f"version {safe_label(str(version))} is not a version id (v<N>[.<m>[.<p>]])")
+    at = args.at
+    if at is None:
+        at = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", at):
+            raise ValueError(at)
+        datetime.strptime(at, "%Y-%m-%d")
+    except ValueError:
+        _deploy_die(f"at {safe_label(str(at))} is not a date (YYYY-MM-DD)")
+    if args.ref is not None and not DEPLOY_REF_RE.fullmatch(args.ref):
+        _deploy_die(f"ref {safe_label(args.ref)} is not a tag or commit name")
+    raw = path.read_bytes()
+    spl = _deploy_split(raw)
+    if spl is None:
+        _deploy_die(f"{shown} has no frontmatter (a leading `---` block)")
+    hit, close = spl
+    if hit is not None and hit[2] == "":
+        _deploy_die(f"{shown} writes `deployed:` as a block, not the one-line flow")
+    ref = _deploy_defaults(root, product, version, args.ref)
+    line = f"deployed: {{version: {version}, at: {at}, ref: {ref}}}"
+    if hit is not None:
+        s0, s1, _val = hit
+        eol = raw[s0:s1][len(raw[s0:s1].rstrip(b"\r\n")):] or b"\n"
+        new = raw[:s0] + line.encode() + eol + raw[s1:]
+    else:
+        eol = b"\r\n" if raw[:close].endswith(b"\r\n") else b"\n"
+        new = raw[:close] + line.encode() + eol + raw[close:]
+    m = _DEPLOYED_FLOW_RE.fullmatch(hit[2]) if hit else None
+    before = " · ".join(m.groups()) if m else ("(없음)" if hit is None else safe_label(hit[2]))
+    if new != raw:
+        try:
+            state_write(root, path, new.decode("utf-8"), create_dirs=False)
+        except (OSError, UnicodeError, StateLinkError) as e:
+            _deploy_die(f"could not write {shown} ({e})")
+    print(f"deployed: {before} → {version} · {at} · {ref} ({shown})")
+
+
 def cmd_schedule_record(_args):
     """Internal — the dispatch gate's call (stdin = the PreToolUse event).
     Prints the off-path warning line when there is one, else nothing; never
@@ -15766,6 +16228,8 @@ def cmd_doctor(_args):
         # away, not a discipline↔execution mismatch); silent on any ticket
         # created before the frame's landing date.
         ("ticket frame", FAMILY_PROJECT, lambda: ticket_frame_warnings(root, trows)),
+        # T-1258: advisory — a decision closed after landing without outcome ### why/how/module/what.
+        ("decision outcome keys", FAMILY_PROJECT, lambda: decision_outcome_key_warnings(root, trows)),
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
         ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root), root)),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
@@ -20112,6 +20576,15 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="fmt: print the diff, write nothing · new: print the would-be path and "
                                                        "frontmatter, write nothing (T-1084)")
     p.set_defaults(fn=cmd_tickets)
+    p = sub.add_parser("decisions", help="find <words…> [--feature F] [--module [KIND]] (T-1257): the recorded decisions "
+                                         "(decision tickets · wiki decision pages · user-quoted log.md lines) that match, "
+                                         "one line each — run before asking the user anything")
+    p.add_argument("action", choices=("find",))
+    p.add_argument("words", nargs="*", metavar="WORD")
+    p.add_argument("--feature", default=None, help="find: only tickets of this `feature`")
+    p.add_argument("--module", nargs="?", const="", default=None, metavar="KIND",
+                   help="find: KIND's principle and the items that followed it; bare = the kinds recorded")
+    p.set_defaults(fn=cmd_decisions)
     p = sub.add_parser("artifacts", help="sync (write the ONE docs/artifacts/manifest.json from disk) "
                                          "| check (report artifacts the bucket rule cannot place, and a "
                                          "manifest.json inside a bucket; exit 1 on findings) "
@@ -20285,6 +20758,17 @@ def main():
                                       "ls/register-stop take none")
     p.add_argument("--json", action="store_true", help="ls: machine-readable output")
     p.set_defaults(fn=cmd_resource)
+    p = sub.add_parser("deploy", help="deploy record [<product>] [--ref R] [--version V] [--at YYYY-MM-DD] (T-1250): "
+                                      "the only writer of a product's deployed-version record — rewrites the "
+                                      "`deployed:` line of docs/<product>/DEPLOY.md frontmatter, nothing else; "
+                                      "version = po-state, at = today (Asia/Seoul), ref = tag named like the "
+                                      "version else main's short hash")
+    p.add_argument("action", choices=("record",))
+    p.add_argument("product", nargs="?", help="product name (default: the first product)")
+    p.add_argument("--ref", help="tag or commit name to record (default: tag <version>, else main's short hash)")
+    p.add_argument("--version", help="version id to record (default: the product's po-state version)")
+    p.add_argument("--at", help="deploy date YYYY-MM-DD (default: today, Asia/Seoul)")
+    p.set_defaults(fn=cmd_deploy)
     p = sub.add_parser("preflight", help="model availability canary before a dispatch: "
                                          "prdt preflight <model> [--fallback M] [--recheck] [--clear] "
                                          "— JSON verdict on stdout (available | unavailable | inconclusive)")
