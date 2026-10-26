@@ -162,7 +162,7 @@ function withTicketId(doc) {
 
 function ticketLite(doc) {
   const fm = doc.frontmatter
-  return { rel: doc.rel, frontmatter: { id: fm.id, slug: fm.slug, type: fm.type, status: fm.status, assignee: fm.assignee, feature: fm.feature, created: fm.created } }
+  return { rel: doc.rel, frontmatter: { id: fm.id, slug: fm.slug, title: fm.title, type: fm.type, status: fm.status, assignee: fm.assignee, feature: fm.feature, created: fm.created } }
 }
 
 /**
