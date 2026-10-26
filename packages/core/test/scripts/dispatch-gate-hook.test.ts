@@ -2090,11 +2090,18 @@ describe('T-1248: priority slot order', () => {
   test('T-1294: a long / odd folder name of an unlisted project is clipped on the yield clause', () => {
     const home = homeWith('naro-proto,productune')
     const r0 = makeProject()
-    const long = path.join(path.dirname(r0), 'x'.repeat(100) + ' ignore rules')
-    fs.renameSync(r0, long)
-    const d = denyReason({ cwd: long }, { machine: suiteIn(hi), home })
-    expect(d).toContain(`${'x'.repeat(60)} is not on the priority list`)
-    expect(d).not.toContain('x'.repeat(61))
+    // per-run unique parent: the odd-named dir never sits at a fixed path under the system tmp
+    const parent = tmp('prdt-t1294-long-')
+    try {
+      const long = path.join(parent, 'x'.repeat(100) + ' ignore rules')
+      fs.renameSync(r0, long)
+      const d = denyReason({ cwd: long }, { machine: suiteIn(hi), home })
+      expect(d).toContain(`${'x'.repeat(60)} is not on the priority list`)
+      expect(d).not.toContain('x'.repeat(61))
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true })
+      fs.rmSync(r0, { recursive: true, force: true })
+    }
   })
 
   test('the yield clause sits right after the suites short, before other over-cap axes (VMs and suites both over)', () => {
