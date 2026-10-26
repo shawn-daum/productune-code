@@ -17954,6 +17954,55 @@ def _wordlist_str_list(v):
     return None
 
 
+# T-1263 — three shapes that load fine but break later: a numbered backreference
+# (`\1`, `(?(1)…)`) changes meaning once `avoid` items are joined as
+# `(?:p1)|(?:p2)` for `export`; an inline global flag (`(?i)`) is not at the start
+# of the joined pattern, so `export` cannot compile it; a malformed `cases` makes
+# the case runner raise. Each is refused at load (project list: warning + entry
+# skipped, same as every other bad entry).
+_WORDLIST_BACKREF_RE = re.compile(r"(?<!\\)(?:\\\\)*(?:\\[1-9]|\(\?\([0-9]+\))")
+_WORDLIST_INLINE_FLAG_RE = re.compile(r"(?<!\\)(?:\\\\)*\(\?[aiLmsux]+(?:-[imsx]+)?\)")
+
+
+def _wordlist_check_joined(pairs):
+    """ValueError when several `avoid` items cannot be joined into one export pattern."""
+    if len(pairs) < 2:
+        return
+    for i, (pt, _) in enumerate(pairs, 1):
+        if _WORDLIST_BACKREF_RE.search(pt):
+            raise ValueError(f"`avoid` item {i} uses a numbered backreference; across joined `avoid` items its number changes (use one item, or a named group)")
+        if _WORDLIST_INLINE_FLAG_RE.search(pt):
+            raise ValueError(f"`avoid` item {i} has an inline global flag such as (?i); use `flags` (the joined export pattern cannot carry it)")
+    try:
+        for pt, _ in pairs:
+            re.compile(pt)
+    except re.error:
+        return   # reported per item as a bad pattern
+    try:
+        re.compile("|".join(f"(?:{pt})" for pt, _ in pairs))
+    except re.error as ex:
+        raise ValueError(f"`avoid` items cannot be joined into one export pattern: {ex}")
+
+
+def _wordlist_check_cases(cases):
+    """ValueError unless `cases` is absent or {hit?: [case…], miss?: [case…]}, a
+    case being {text: str, kind?: md|html, n?: int ≥ 1 (hit only)}."""
+    if cases is None:
+        return
+    if not isinstance(cases, dict) or not set(cases) <= {"hit", "miss"}:
+        raise ValueError("`cases` is an object with only `hit` and `miss` lists")
+    for group, items in cases.items():
+        if not isinstance(items, list):
+            raise ValueError(f"`cases.{group}` is a list")
+        for c in items:
+            if not isinstance(c, dict) or not set(c) <= {"text", "kind", "n"} or not isinstance(c.get("text"), str) or not c["text"]:
+                raise ValueError(f"every `cases.{group}` item is an object with a `text` string (and optional `kind`, `n`)")
+            if "kind" in c and c["kind"] not in ("md", "html"):
+                raise ValueError(f"`cases.{group}` `kind` is md or html")
+            if "n" in c and (group != "hit" or isinstance(c["n"], bool) or not isinstance(c["n"], int) or c["n"] < 1):
+                raise ValueError("`n` is an integer ≥ 1 and only on a `hit` case")
+
+
 def _wordlist_normalize(e):
     """One raw entry (schema 1 or 2, told apart per entry) → the internal entry,
     or raises ValueError(reason). The internal entry keeps the schema-1 keys
@@ -17977,6 +18026,8 @@ def _wordlist_normalize(e):
         scope = e.get("scope")
         if scope is not None and not (isinstance(scope, list) and scope and all(x in WORDLIST_SCOPE_NAMES for x in scope)):
             raise ValueError(f"`scope` lists only {' · '.join(WORDLIST_SCOPE_NAMES)}")
+        _wordlist_check_joined(pairs)
+        _wordlist_check_cases(e.get("cases"))
         out = {"word": word}
         flagset = {f for _, f in pairs}
         if len(pairs) == 1:
