@@ -56,7 +56,7 @@ exit 0
 # body out of bash's parser, so `bash -n` still reads this file end to end.
 : <<'PYEOF'
 # ---- python ----
-import hashlib, json, os, re, signal, subprocess, sys
+import hashlib, json, os, re, signal, subprocess, sys, unicodedata
 
 # WORDING: designer inject-edit (T-1272, settled 2026-10-26).
 # %s = the idle lanes with their ready ids ("L1: T-1270, T-1271 · L3: T-1268").
@@ -185,7 +185,17 @@ def idle_lanes(pl, root):
     return out
 
 
+def safe_label(text, limit=60):
+    # T-1294: repo-sourced names (lane · ticket id) on a Stop reason — the CLI's
+    # safe_label contract: fold line breaks / invisible / format chars to a space,
+    # clip to `limit`.
+    s = "".join(" " if (unicodedata.category(c) in ("Cf", "Cc", "Zl", "Zp") or c == "\x85") else c
+                for c in str(text))
+    return s[:limit]
+
+
 def cap(items):
+    items = [safe_label(i) for i in items]
     shown = ", ".join(items[:LIST_CAP])
     return shown + (", +%d more" % (len(items) - LIST_CAP) if LIST_CAP < len(items) else "")
 
@@ -214,7 +224,7 @@ def main():
         idle = [(n, ids) for n, ids in idle if n not in stop]
     if not idle or wait_running(root):
         return
-    parts = ["%s: %s" % (n, cap(ids)) for n, ids in idle]
+    parts = ["%s: %s" % (safe_label(n), cap(ids)) for n, ids in idle]
     lanes = " · ".join(parts[:LIST_CAP]) + (" · +%d more" % (len(parts) - LIST_CAP) if LIST_CAP < len(parts) else "")
     sys.stdout.write(json.dumps({"decision": "block", "reason": LANE_CHECK_REASON % lanes}, ensure_ascii=False))
 
