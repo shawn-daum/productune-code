@@ -34,8 +34,11 @@ export const footer: React.CSSProperties = {
   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
 }
 export const stepLabel: React.CSSProperties = {
-  fontSize: 11, color: 'var(--text-disabled)', textTransform: 'uppercase',
+  fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase',
   letterSpacing: '0.06em', marginBottom: 8,
+}
+export const groupLabel: React.CSSProperties = {
+  fontSize: 11, fontWeight: 600, color: 'var(--text-tertiary)', marginBottom: 6,
 }
 export const stepIntro: React.CSSProperties = {
   fontSize: 12.5, color: 'var(--text-tertiary)', lineHeight: 1.55, /* --text-muted */

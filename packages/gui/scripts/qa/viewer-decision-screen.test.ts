@@ -43,7 +43,7 @@ describe('T-1259: decision screen rows', () => {
   const row = (id: string) => new RegExp(`<div class="dv-row[^>]*data-dv-id="${id}".*?</div></div>\\n`, 's').exec(html)![0]
   it('a done decision: id · title · status · answer, folding to 이유 · 방식 · 답', () => {
     const r = row('T-1')
-    expect(r).toMatch(/class="tid">T-1<.*class="tt">화면 구성 결정<.*class="tst done">완료<.*class="who">답 A</s)
+    expect(r).toMatch(/class="tid">T-1<.*class="tt">화면 구성 결정<.*class="tst done">닫힘<.*class="who">답 A</s)
     expect(r).toContain('<b>이유</b><span>이유 문장.')
     expect(r).toContain('<b>방식</b><span>방식 문장.')
     expect(r).toContain('<b>답</b><span>A. 답 문장.')
