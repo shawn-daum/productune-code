@@ -733,6 +733,12 @@ if [ -n "$WANT_TICKET" ]; then
 fi
 else   # T-893 report mode: no dispatch to judge
   GATE=""; WANT_MODEL="default"; WANT_PERSONA=""; WANT_CO=""; WANT_FILES=""; DIR=""; SID=""
+  # T-1290: `prdt dispatch wait --persona developer|qa` hands its persona and project root, so the
+  # T-1248 priority yield is computed for THAT dispatch kind (a bare report has neither and shows
+  # only the machine axes). Report mode judges and writes nothing either way.
+  case "${PRDT_GATE_PERSONA:-}" in developer|qa)
+    case "${PRDT_GATE_PROJECT_ROOT:-}" in /*) WANT_PERSONA="$PRDT_GATE_PERSONA"; DIR="$PRDT_GATE_PROJECT_ROOT" ;; esac ;;
+  esac
 fi
 
 # ── T-695: machine resource cap ───────────────────────────────────────────────
@@ -1309,7 +1315,7 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
           + " Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`."
           + (if $note == "" then "" else "\n" + $note end)) | tojson end) as $deny
 | ($axes | map(
-     "\(if .over then "OVER " elif .ok then "ok   " else "?    " end) \(.name): \(if .ok then "\(.val) / \(.cap)" else "unmeasured" end)"
+     "\(if .over or ($yield != null and .k == "suites") then "OVER " elif .ok then "ok   " else "?    " end) \(.name): \(if .ok then "\(.val) / \(.cap)" else "unmeasured" end)"
      + "\n       applies to: \(if .suite // false then "developer, qa dispatches (test-running work)" else "every dispatch" end)"
      + "\n       cap key: \(.key) (\(.src)) · source: \(.how)"
      + "\n       to free: \(.free)"

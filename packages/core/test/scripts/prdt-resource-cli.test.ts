@@ -100,10 +100,17 @@ describe.skipIf(!PYTHON3)('prdt resource up|down|ls|register-stop (T-591/T-680)'
   test('the CLI section never hardcodes a kill/shutdown verb or removes anything but its own marker file: the one subprocess call in it runs the resolved `cmd` variable, never a literal string', () => {
     const src = prdtSource(PRDT_CLI)
     const start = src.indexOf('# ── resource ownership markers (T-591/T-680)')
+    // T-1295: later work (dispatch ls · schedule · deploy record) landed between the
+    // marker helpers and `cmd_resource`, so the section is those two slices — never
+    // the span between, which holds unrelated `bash <hook>` subprocess calls.
+    const helpersEnd = src.indexOf('# ── T-695 slice 2: `prdt dispatch ls`')
+    const cmdStart = src.indexOf('def cmd_resource(')
     const end = src.indexOf('# ── resident machine resources')
     expect(start).toBeGreaterThan(0)
-    expect(end).toBeGreaterThan(start)
-    const section = src.slice(start, end)
+    expect(helpersEnd).toBeGreaterThan(start)
+    expect(cmdStart).toBeGreaterThan(helpersEnd)
+    expect(end).toBeGreaterThan(cmdStart)
+    const section = src.slice(start, helpersEnd) + src.slice(cmdStart, end)
     expect(section).not.toMatch(/\bos\.kill\b/)
     expect(section).not.toMatch(/shutil\.rmtree|\bshutdown\b|\bquit\b/i)
     // The only filesystem removal in this section is `p.unlink()` — a marker
