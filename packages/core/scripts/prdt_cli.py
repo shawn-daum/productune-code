@@ -13785,6 +13785,47 @@ def _track_record_remove(code, tid):
         pass
     except OSError as e:
         print(f"track record not removed: {e}", file=sys.stderr)
+    _track_setup_failed_clear(code, tid)
+
+
+# T-1092: a land whose setup step failed leaves the merge on the track branch
+# and possibly a half-removed node_modules; the next land skips the merge (base
+# is already an ancestor) and so would skip setup too, then run the tests on the
+# broken tree. This marker, next to the open record, remembers the failure so
+# that second land stops and names the recovery instead (T-1238 ⑤: refuse, never
+# auto-rerun). `--setup-done` on land is the user's word that setup was rerun.
+def _track_setup_failed_path(code, tid):
+    return _track_record_path(code, tid).with_name(f"{tid}.setup-failed.json")
+
+
+def _track_setup_failed_write(code, tid, setup):
+    p = _track_setup_failed_path(code, tid)
+    home = prdt_home()
+    home.mkdir(parents=True, exist_ok=True)
+    state_write(home, p, json.dumps({"schema": 1, "ticket": tid, "setup": setup}) + "\n")
+
+
+def _track_setup_failed_read(code, tid):
+    """The setup command that failed on an earlier land, or None. A marker that
+    cannot be read still counts (fail closed): returns '' then."""
+    p = _track_setup_failed_path(code, tid)
+    if not os.path.lexists(p):
+        return None
+    try:
+        rec = json.loads(p.read_text(encoding="utf-8"))
+        cmd = rec.get("setup") if isinstance(rec, dict) else ""
+        return cmd if isinstance(cmd, str) else ""
+    except (OSError, ValueError):
+        return ""
+
+
+def _track_setup_failed_clear(code, tid):
+    try:
+        _track_setup_failed_path(code, tid).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        print(f"setup-failed marker not removed: {e}", file=sys.stderr)
 
 
 def _track_require_open(code, wt, branch, tid):
@@ -14064,6 +14105,15 @@ def cmd_track_land(args):
     if test is None:
         _track_die("no test command — pass --test <cmd>, set `track.test` in .prdt/config.json, "
                    "or give package.json a test script")
+    failed_setup = _track_setup_failed_read(code, tid)
+    if failed_setup is not None:
+        if getattr(args, "setup_done", False):
+            _track_setup_failed_clear(code, tid)
+        else:
+            cmd = failed_setup or _track_setup_cmd(root, wt) or "the setup command"
+            _track_die(f"the setup step failed on an earlier land of {tid} — the tests were not run on this tree; "
+                       f"{branch} keeps the merge and dependencies may be partially removed; "
+                       f"rerun `{cmd}` in {wt}, then land again with --setup-done")
     lock = _track_lock(code)
     try:
         old = _tgit(["rev-parse", "--verify", "--quiet", bref], code).stdout.strip()
@@ -14081,7 +14131,10 @@ def cmd_track_land(args):
             if _lockfile_sig(wt) != before:
                 setup = _track_setup_cmd(root, wt)
                 if setup and _track_run(setup, wt, "setup (lockfile changed)") != 0:
-                    _track_die(f"the setup step failed on the merged tree — {base} is unchanged")
+                    _track_setup_failed_write(code, tid, setup)
+                    _track_die(f"the setup step failed on the merged tree — {base} is unchanged; "
+                               f"{branch} keeps the merge and dependencies may be partially removed; "
+                               f"rerun `{setup}` in {wt}, then land again with --setup-done")
         rc = _track_run(test, wt, "tests on the merged tree")
         if rc != 0:
             # T-835 (decision T-822 「C」): 141 = SIGPIPE — a later pipeline stage closed the pipe early.
@@ -20040,6 +20093,9 @@ def main():
                         "opened with --base main refuses a land without --base)")
     p.add_argument("--test", help="land: the test command (default: .prdt/config.json track.test, "
                                   "else the package.json test script)")
+    p.add_argument("--setup-done", action="store_true",
+                   help="land: after a land whose setup step failed, say the setup command was rerun in the "
+                        "worktree (without it the next land refuses and names the command)")
     p.add_argument("--force", action="store_true",
                    help="drop: also discard a branch with uncommitted changes or commits not on dev or main")
     p.set_defaults(fn=cmd_track)
