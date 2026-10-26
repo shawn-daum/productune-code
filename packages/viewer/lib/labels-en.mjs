@@ -238,7 +238,7 @@ const DISCIPLINE_LOAD = {
     'prdt-overrides-inject.sh': ['Machine override', 'all', '~/.prdt/overrides/<persona>.md (+ the playbook override list)'],
     'prdt-project-overrides-inject.sh': ['Project override', 'all', '.prdt/overrides/<persona>.md'],
   },
-  poOnlyHooks: ['prdt-user-prompt.sh', 'prdt-question-check.sh'],
+  poOnlyHooks: ['prdt-user-prompt.sh', 'prdt-question-check.sh', 'prdt-lane-check.sh'],
 }
 
 function readFieldValue(label, count, unit) {

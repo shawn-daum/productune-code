@@ -1046,9 +1046,8 @@ fi
 # dispatch is held by the suites/load axes or by the yield below, cleared when
 # that project's developer/qa dispatch passes, ignored after PRIO_WAIT_MIN min.
 #
-# PENDING inject-edit (T-1248): the three strings below are NEW hook-injected
-# wording, taken from the approved define-screen-set slot-wait state; the
-# designer's `inject-edit` owns their final text. Placeholders: {holder} {hrank}
+# Wording settled by inject-edit d-v115-t1248-des1, unchanged (taken from the
+# approved define-screen-set slot-wait state). Placeholders: {holder} {hrank}
 # {me} {myrank} {order}.
 PRIO_TXT_HELD='held by {holder} (priority {hrank})'
 PRIO_TXT_CLAIMED='claimed by {holder} (priority {hrank}, waiting)'
@@ -1296,13 +1295,11 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
 # T-893: one line, user-approved wording — over-cap axes only; the full
 # measurement, sources and remedies are `prdt dispatch caps` (report mode below).
 | (if ($over | length) == 0 then "" else
-     deny("[prdt dispatch gate] WAITING — not spawned (\($kind)): " + ($over | map(.short) | join(", "))
-          + (if $yield == null then "" else
-               ", " + ((if $yield.run then $txt_held else $txt_claimed end) | fill({holder: $yield.holder, hrank: ($yield.hrank | tostring)}))
-               + ". " + ((if $yield.listed then $txt_after else $txt_after_unlisted end) | fill({me: $prio_me_name, myrank: ($yield.myrank | tostring)}))
-               + " Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`."
-             end)
-          + (if $yield == null then ". Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`." else "" end)
+     deny("[prdt dispatch gate] WAITING — not spawned (\($kind)): "
+          + ($over | map(.short + (if $yield != null and .k == "suites" then ", " + ((if $yield.run then $txt_held else $txt_claimed end) | fill({holder: $yield.holder, hrank: ($yield.hrank | tostring)})) else "" end)) | join(", "))
+          + "."
+          + (if $yield == null then "" else " " + ((if $yield.listed then $txt_after else $txt_after_unlisted end) | fill({me: $prio_me_name, myrank: ($yield.myrank | tostring)})) end)
+          + " Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`."
           + (if $note == "" then "" else "\n" + $note end)) | tojson end) as $deny
 | ($axes | map(
      "\(if .over then "OVER " elif .ok then "ok   " else "?    " end) \(.name): \(if .ok then "\(.val) / \(.cap)" else "unmeasured" end)"
