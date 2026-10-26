@@ -204,3 +204,30 @@ describe.skipIf(!CAN_RUN)('doctor: ticket frame (advisory)', () => {
     expect(deLine, deBlock(out)).toMatch(/violations=0/)
   })
 })
+
+// T-1258 (L1 I2): decision `outcome` carries ### why · how · module · what.
+describe.skipIf(!CAN_RUN)('doctor: decision outcome keys (advisory)', () => {
+  const warnings = () => doctorOut().split('\n').filter(l => l.startsWith('⚠ decision outcome: '))
+  const decision = (id: string, o: { status?: string; created?: string; outcome: string }) =>
+    ticket('v1.10', id, {
+      type: 'decision', assignee: 'user', status: o.status ?? 'done', created: o.created ?? '2026-10-26',
+      body: '## problem\nfork\n\n## options\n| 선택지 | recommend |\n|---|---|\n| A | yes |\n\n## acceptance\nuser answers\n\n## outcome\n' + o.outcome + '\n',
+    })
+
+  test('a closed post-landing decision missing keys is warned, naming the missing ones', () => {
+    decision('T-900', { outcome: '- A\n\n### why\n- x\n\n### what\n- y\n' })
+    const w = warnings()
+    expect(w.length).toBe(1)
+    expect(w[0]).toContain('T-900')
+    expect(w[0]).toContain('### how')
+    expect(w[0]).toContain('### module')
+    expect(w[0]).not.toContain('### why')
+  })
+
+  test('all four keys present, an open decision, and a pre-landing decision are silent', () => {
+    decision('T-901', { outcome: '### why\n- a\n\n### how\n- b\n\n### module\n- c\n\n### what\n- d\n' })
+    decision('T-902', { status: 'open', outcome: '' })
+    decision('T-903', { created: '2026-10-25', outcome: '- A\n' })
+    expect(warnings()).toEqual([])
+  })
+})

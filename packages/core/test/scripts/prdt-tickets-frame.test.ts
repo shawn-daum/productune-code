@@ -189,6 +189,28 @@ describe.skipIf(!PYTHON3)('prdt tickets new', () => {
     expect(checkOut).not.toMatch(/options/)
   })
 
+  // T-1258 (L1 I2): decision outcome scaffolds the four `###` keys.
+  test('type: decision scaffolds ### why/how/module/what under outcome; fmt --check accepts them; non-decision has none', () => {
+    runInit()
+    const out = runPrdt(['tickets', 'new', '--type', 'decision', '--slug', 'keyed-fork']).trim()
+    const text = fs.readFileSync(out.match(/\(file:\/\/(.+)\)$/)![1], 'utf-8')
+    const outcome = text.split(/^## outcome$/m)[1].split(/^## /m)[0]
+    expect([...outcome.matchAll(/^### (.+)$/gm)].map((m) => m[1])).toEqual(['why', 'how', 'module', 'what'])
+    const id = out.match(/^\[(T-\d+)\]/)![1]
+    expect(runPrdtAllowFail(['tickets', 'fmt', id, '--check']).out).not.toMatch(/outcome|stray heading/)
+    const impl = runPrdt(['tickets', 'new', '--type', 'impl', '--slug', 'plain-one']).trim()
+    expect(fs.readFileSync(impl.match(/\(file:\/\/(.+)\)$/)![1], 'utf-8')).not.toMatch(/^### /m)
+  })
+
+  test('T-1258: a done decision whose outcome is only the bare scaffold still fails "done requires outcome"', () => {
+    const res = runInit()
+    writeTicket(res.version, 'T-792', {
+      type: 'decision', assignee: 'user', status: 'done', created: '2026-10-26',
+      body: '## problem\nfork\n\n## options\n| 선택지 | recommend |\n|---|---|\n| A | x |\n\n## acceptance\nok\n\n## outcome\n### why\n\n### how\n\n### module\n\n### what\n',
+    })
+    expect(runPrdtAllowFail(['tickets', 'fmt', 'T-792', '--check']).out).toMatch(/done requires `outcome`/)
+  })
+
   test('rejects a missing/invalid type or slug', () => {
     runInit()
     expect(() => runPrdt(['tickets', 'new', '--slug', 'no-type'])).toThrow()
