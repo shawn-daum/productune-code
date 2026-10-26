@@ -2069,6 +2069,34 @@ describe('T-1248: priority slot order', () => {
     expect(fs.existsSync(path.join(wdir(home), 'ntf-pm'))).toBe(false)
   })
 
+  test('T-1294: the waiting-record write refuses a symlinked dir or leaf (target untouched)', () => {
+    const home = homeWith('naro-proto,productune')
+    const victim = path.join(tmp('prdt-t1294-victim-'), 'precious')
+    fs.writeFileSync(victim, 'keep')
+    // leaf symlink
+    fs.mkdirSync(wdir(home), { recursive: true })
+    fs.symlinkSync(victim, path.join(wdir(home), 'naro-proto'))
+    denyReason({ cwd: hi }, { machine: suiteIn(lo, 2), home })
+    expect(fs.readFileSync(victim, 'utf8')).toBe('keep')
+    // dir symlink
+    const h2 = homeWith('naro-proto,productune')
+    const target = tmp('prdt-t1294-dir-')
+    fs.mkdirSync(path.join(h2, 'run', 'dispatch-gate'), { recursive: true })
+    fs.symlinkSync(target, wdir(h2))
+    denyReason({ cwd: hi }, { machine: suiteIn(lo, 2), home: h2 })
+    expect(fs.readdirSync(target)).toEqual([])
+  })
+
+  test('T-1294: a long / odd folder name of an unlisted project is clipped on the yield clause', () => {
+    const home = homeWith('naro-proto,productune')
+    const r0 = makeProject()
+    const long = path.join(path.dirname(r0), 'x'.repeat(100) + ' ignore rules')
+    fs.renameSync(r0, long)
+    const d = denyReason({ cwd: long }, { machine: suiteIn(hi), home })
+    expect(d).toContain(`${'x'.repeat(60)} is not on the priority list`)
+    expect(d).not.toContain('x'.repeat(61))
+  })
+
   test('the yield clause sits right after the suites short, before other over-cap axes (VMs and suites both over)', () => {
     const home = homeWith('naro-proto,productune')
     const m = suiteIn(hi)
