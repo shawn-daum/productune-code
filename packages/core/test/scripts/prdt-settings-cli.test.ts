@@ -109,7 +109,7 @@ describe.skipIf(!READY)('prdt settings — list', () => {
     expect(run('settings', 'set', 'user.lang', 'ko').status).toBe(0)
     expect(read('user-lang')).toBe('ko\n')
     expect(value()).toBe('ko')
-    for (const bad of ['KO', 'ko-KR', 'korean']) {
+    for (const bad of ['KO', 'ko-KR', 'korean', 'xx', 'yes']) {
       expect(run('settings', 'set', 'user.lang', bad).status).toBe(1)
       expect(read('user-lang')).toBe('ko\n')
     }
@@ -123,7 +123,9 @@ describe.skipIf(!READY)('prdt settings — list', () => {
       input: answer + '\n', encoding: 'utf8', timeout: subprocessTimeout('cli'),
       env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, LC_ALL: 'ko_KR.UTF-8' },
     })
-    expect(ask('').stdout).toContain('[ko]')
+    const first = ask('').stdout
+    expect(first).toContain('[ko]')
+    expect(first).toContain('대화 언어') // the ko catalog line, not a hard-coded string
     expect(read('user-lang')).toBe('ko\n')
     expect(ask('en').stdout).toBe('') // already stored → no question
     expect(read('user-lang')).toBe('ko\n')
@@ -133,6 +135,49 @@ describe.skipIf(!READY)('prdt settings — list', () => {
     fs.rmSync(file('user-lang'))
     ask('en')
     expect(read('user-lang')).toBe('en\n')
+  })
+  test('onboarding maps a language name to its code, re-asks once on an unknown answer, stores nothing if still unknown (T-1281)', () => {
+    const ask = (...answers: string[]) => spawnSync('python3', ['-c',
+      'import sys; sys.path.insert(0, sys.argv[1]); import prdt_cli as p; p.ask_user_lang_once()', path.dirname(PRDT_CLI)], {
+      input: answers.join('\n') + '\n', encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, PRDT_LANG: 'en', LC_ALL: 'en_US.UTF-8' },
+    })
+    for (const [name, code] of [['한국어', 'ko'], ['Korean', 'ko'], ['日本語', 'ja']]) {
+      ask(name)
+      expect(read('user-lang'), name).toBe(code + '\n')
+      fs.rmSync(file('user-lang'))
+    }
+    const retry = ask('klingon!', 'ja')
+    expect(retry.stdout).toContain('language name') // the one-line reason (en catalog)
+    expect(read('user-lang')).toBe('ja\n')
+    fs.rmSync(file('user-lang'))
+    ask('klingon!', 'zzzz!')
+    expect(read('user-lang')).toBeNull() // never a value the user did not choose
+    for (const bad of ['xx', 'yes', 'no']) {
+      const r = ask(bad, 'yy')
+      expect(r.stdout, bad).toContain('language name') // retried once
+      expect(read('user-lang'), bad).toBeNull()        // 'yy' is no code either → nothing stored
+    }
+    ask('') // a bare Enter accepts the device default shown
+    expect(read('user-lang')).toBe('en\n')
+  })
+  test('Ctrl-C at the language question stops prdt update: nothing stored, nothing installed (T-1281)', () => {
+    const script = [
+      'import sys, builtins; sys.path.insert(0, sys.argv[1]); import prdt_cli as p',
+      'p.sys.stdin.isatty = lambda: True; p.sys.stdout.isatty = lambda: True',
+      'def boom(*a): raise KeyboardInterrupt',
+      'builtins.input = boom',
+      'p._run_pull_install = lambda *a, **k: print("INSTALLED")',
+      'p.cmd_update(None)',
+    ].join('\n')
+    const r = spawnSync('python3', ['-c', script, path.dirname(PRDT_CLI)], {
+      encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, PRDT_LANG: 'en', LC_ALL: 'en_US.UTF-8' },
+    })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.stdout).toContain('Cancelled')
+    expect(r.stdout).not.toContain('INSTALLED')
+    expect(read('user-lang')).toBeNull()
   })
   test('ko table matches the approved screen', () => {
     fs.writeFileSync(file('register'), 'audience=developer\nform=outline\nstructure=planner-tables\n')

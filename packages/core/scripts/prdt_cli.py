@@ -1480,6 +1480,20 @@ def meta_git_refusal(prob):
               "repository. Check it, remove it, then run `prdt doctor`.")
 
 
+def _legal_remote_name(name):
+    """In-process mirror of git `check-ref-format --allow-onelevel` (and of core's
+    isLegalRemoteName, meta-backup.ts) — no subprocess, so load or a trust refusal
+    can never report a legal name as illegal (T-1278). At least as strict as git.
+    Whitespace = ASCII only (ord <= 0x20), git's own rule, same as the TS side."""
+    if not name or name.startswith("-") or name == "@" or ".." in name or "@{" in name:
+        return False
+    if name.endswith(".") or name.startswith("/") or name.endswith("/"):
+        return False
+    if any(ord(c) <= 0x20 or ord(c) == 0x7f or c in "~^:?*[\\" for c in name):
+        return False
+    return all(c and not c.startswith(".") and not c.endswith(".lock") for c in name.split("/"))
+
+
 def _meta_git(root, args):
     prob = meta_git_trust_problem(root)
     if prob:
@@ -1567,8 +1581,7 @@ def meta_backup_lag_warnings(root):
     # tick (it has nothing to push to), a flag-/refspec-shaped one is refused by
     # the tick — either way doctor says so here, latch or no latch.
     auto = _meta_backup_remote_name(root)
-    if auto.startswith("-") or any(c in auto for c in ":\t \n") or \
-            _meta_git(root, ["check-ref-format", "--allow-onelevel", auto]).returncode != 0:
+    if not _legal_remote_name(auto):
         warns.append(f"meta: `meta.backup_remote` = {auto!r} is not a legal remote name — the automatic backup "
                      f"refuses it; set .prdt/config.json meta.backup_remote to one of: {', '.join(remotes)}")
     elif auto not in remotes:
@@ -5197,6 +5210,10 @@ def _read_token(name):
 
 
 USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
+# T-1281: the codes a user may CHOOSE (onboarding answer · `settings set user.lang`);
+# reading a stored value stays shape-only (USER_LANG_RE). Pinned list: the languages
+# the catalogs/wordlists cover plus common ISO 639-1 codes.
+USER_LANG_CODES = frozenset("ko en ja zh es fr de pt ru it ar hi vi th id tr nl pl sv uk he fa".split())
 
 
 def _lang_primary(tag):
@@ -5231,15 +5248,42 @@ def user_lang():
     return v if USER_LANG_RE.match(v) else device_lang()
 
 
+# Language names a user may type (non-ASCII as escapes: the settings code holds no literal).
+LANG_NAMES = {
+    "ko": "ko", "korean": "ko", "\ud55c\uad6d\uc5b4": "ko", "\ud55c\uae00": "ko", "\ud55c\uad6d\ub9d0": "ko",
+    "en": "en", "english": "en", "\uc601\uc5b4": "en", "\uc601\ubb38": "en",
+    "ja": "ja", "japanese": "ja", "\u65e5\u672c\u8a9e": "ja", "\uc77c\ubcf8\uc5b4": "ja", "\u306b\u307b\u3093\u3054": "ja",
+    "zh": "zh", "chinese": "zh", "\u4e2d\u6587": "zh", "\uc911\uad6d\uc5b4": "zh",
+}
+
+
+def lang_answer_code(ans):
+    """An answer → a language code (a code itself, or a common language name); None when neither."""
+    a = _ascii_strip(ans).lower()
+    if a in LANG_NAMES:
+        return LANG_NAMES[a]
+    return a if a in USER_LANG_CODES else None
+
+
 def ask_user_lang_once():
     """T-1116 onboarding: ask the chat language once per machine — only while
-    `~/.prdt/user-lang` holds no valid value; the device language is the default
-    answer. An answer that is not a language code keeps the device language."""
+    `~/.prdt/user-lang` holds no valid value. A bare Enter accepts the device
+    language shown as the default; a language name maps to its code; any other
+    answer is re-asked once with a one-line reason, then nothing is stored
+    (T-1281: never a value the user did not choose). KeyboardInterrupt propagates."""
     if USER_LANG_RE.match(_read_token("user-lang")):
         return
-    default = device_lang() or "en"
-    ans = _ascii_strip(input(f"chat language for PO replies (ko, en, ja …) [{default}]: ")).lower()
-    _write_token("user-lang", ans if USER_LANG_RE.match(ans) else default)
+    m = load_messages()
+    default = device_lang()
+    default = default if default in USER_LANG_CODES else "en"
+    for attempt in range(2):
+        if attempt:
+            print(msg(m, "lang.ask.retry"))
+        raw = input(msg(m, "lang.ask.prompt", default=default))
+        code = default if not _ascii_strip(raw) else lang_answer_code(raw)
+        if code:
+            _write_token("user-lang", code)
+            return
 
 
 def _write_token(name, value):
@@ -5411,8 +5455,8 @@ def settings_entries(droot):
     # read by the PO hooks; never collected → the device language.
     entries.append({
         "key": "user.lang", "kind": "text", "domain": None,
-        "shape": "a language code of 2-3 lowercase letters (ko, en, ja)",
-        "check": lambda v: None if USER_LANG_RE.match(v) else "shape",
+        "shape": "a language code: " + ", ".join(sorted(USER_LANG_CODES)),
+        "check": lambda v: None if v in USER_LANG_CODES else "shape",
         "get": user_lang,
         "put": lambda v: _write_token("user-lang", v),
     })
@@ -7323,7 +7367,20 @@ def _git_repo(repo, *a):
     return subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True)
 
 
-def _remote_target_sha(code_root, timeout=2):
+def _remote_git_timeout(timeout=None):
+    """T-1100: the git network-call cap of the update-nudge readers (`remote_ahead`,
+    `releases_pending_between`, `_remote_target_sha`). Default 2 s; an explicit
+    argument wins; `PRDT_REMOTE_AHEAD_TIMEOUT_S` overrides the default (tests under load)."""
+    if timeout is not None:
+        return timeout
+    try:
+        v = float(os.environ.get("PRDT_REMOTE_AHEAD_TIMEOUT_S") or 2)
+    except ValueError:
+        return 2
+    return v if v > 0 else 2
+
+
+def _remote_target_sha(code_root, timeout=None):
     """Full SHA of `origin/<current-branch>` — the exact ref `remote_ahead` /
     `releases_pending_between` already read to compute
     the version + notes an update prompt shows. `_run_pull_install` pulls to
@@ -7335,6 +7392,7 @@ def _remote_target_sha(code_root, timeout=2):
     fetched `origin/<branch>`. Its first 7 characters are also the "new
     version" label of the no-release-notes prompt (T-749b). None on any failure —
     caller degrades the same way `ahead is None` does."""
+    timeout = _remote_git_timeout(timeout)
     try:
         branch = subprocess.run(["git", "-C", str(code_root), "rev-parse", "--abbrev-ref", "HEAD"],
                                  capture_output=True, text=True, timeout=timeout).stdout.strip()
@@ -7353,8 +7411,8 @@ def cmd_update(_args):
 
     T-749: 묻지 않고 바로 pull+install 하던 as-is를 고친다 — 설치된 버전 → 새
     버전과 그 사이 RELEASES.md 노트를 먼저 보여주고 `1. update`/`2. skip` 을
-    번호 입력으로 물은 뒤에야 pull 한다(`_prompt_update_choice`; 화살표 선택이
-    아니다 — 그 선택의 재현된 결함은 이 함수 바로 아래 주석 참고).
+    물은 뒤에야 pull 한다(`_prompt_update_choice`; T-1231: 터미널이면
+    화살표 · Enter · Esc 메뉴, 아니면 번호 입력).
 
     T-749b (QA grill finding #2): T-749 위 문단의 "묻고서만 pull" 규칙을 새
     RELEASES.md 섹션이 없는 두 경우까지 잘못 확대해, 그 두 경우엔 pull도
@@ -7366,6 +7424,17 @@ def cmd_update(_args):
     없으면(예: 아직 태그 전) — 그래도 묻는다, 다만 노트 자리에 "릴리즈 노트
     없음" 한 줄과 커밋 해시를 "새 버전" 자리에 보여준다."""
     m = load_messages()
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        # T-1281: a machine installed before the chat-language question existed is
+        # asked once here (no-op once a valid `user-lang` is stored).
+        try:
+            ask_user_lang_once()
+        except EOFError:
+            print()
+        except KeyboardInterrupt:
+            print()
+            print(msg(m, "update.cancelled"))
+            return
     repo = _resolve_prdt_repo()
     code_root = git_toplevel(repo)
     if code_root is None:
@@ -7411,7 +7480,16 @@ def cmd_update(_args):
     if not target_sha:
         sys.exit(msg(m, "update.error.offline"))
 
-    if _prompt_update_choice(m, installed or "?", new_version, sections) != "update":
+    choice = _prompt_update_choice(m, installed or "?", new_version, sections)
+    if choice == "skip":
+        # T-1231: "skip — don't ask again today" must hold: stamp the same daily
+        # slot the run-time nudge spends, so today's next prdt run stays quiet.
+        st = read_json(_update_state_path()) or {}
+        st["last_check"] = _local_day()
+        st["last_check_basis"] = "local"
+        st["known_update"] = {"new": _strip_control_chars(new_version)}
+        _write_update_state(st)
+    if choice != "update":
         return
 
     _run_pull_install(repo, target_sha=target_sha)
@@ -7427,11 +7505,12 @@ def cmd_update(_args):
 # AND the remote advertises a version above the installed one, shows the same
 # version+notes box `cmd_update` shows and asks the same plain `1`/`2` number
 # prompt (`_prompt_update_choice`, T-749). CI degrades to silence before any
-# network call; a non-tty run still checks (throttled to once a day, same as
-# always) but only PRINTS the pending version line — it never prompts, never
-# installs. Non-blocking by construction (doctrine #5). Design SoT:
+# network call; a non-tty run (hook / pipe) returns before any state read or
+# network call (T-1100) — it never prompts, installs, or consumes the day's
+# slot, which a failed/offline check leaves unspent too. Non-blocking by
+# construction (doctrine #5). Design SoT:
 # docs/tickets/v1.4/T-393.md (original UX flow) · docs/tickets/v1.11/T-749.md
-# (version+notes box, plain-number choice, non-tty line).
+# (version+notes box, plain-number choice).
 #   · state: ~/.prdt/update-state.json = {last_check(local date, last_check_basis="local")}.
 #   · pending version + RN box come from <codeRoot>/docs/RELEASES.md (T-394 parse
 #     contract: section = ^## , version = first token after '## ' = git tag verbatim).
@@ -7822,7 +7901,7 @@ def readme_stale_at_tag_warnings(root):
     return []
 
 
-def releases_pending_between(code_root, installed_version, timeout=2):
+def releases_pending_between(code_root, installed_version, timeout=None):
     """(new_version, [(version, section_text), ...]) — every REMOTE RELEASES.md
     section strictly above `installed_version`, newest first; `new_version` is
     the newest of those. `(None, [])` on any fetch failure or when nothing
@@ -7834,6 +7913,7 @@ def releases_pending_between(code_root, installed_version, timeout=2):
     pre-update local one). `installed_version` unparseable/None → every
     parseable remote section qualifies (mirrors `_newer_version`'s "unreadable
     local leaves nothing to compare against" posture)."""
+    timeout = _remote_git_timeout(timeout)
     def g(*a, t=timeout):
         return subprocess.run(["git", "-C", str(code_root), *a],
                               capture_output=True, text=True, timeout=t)
@@ -7863,7 +7943,7 @@ def releases_pending_between(code_root, installed_version, timeout=2):
     return out[0][0], out
 
 
-def remote_ahead(code_root, timeout=2):
+def remote_ahead(code_root, timeout=None):
     """True only when `origin/<current-branch>` is STRICTLY AHEAD of local HEAD —
     i.e. local HEAD is an ancestor of the remote tip and the two differ, which is
     exactly the case `cmd_update`'s `pull --ff-only` can satisfy. False when equal,
@@ -7878,6 +7958,7 @@ def remote_ahead(code_root, timeout=2):
     on the dirty tree or fast-forwards to a no-op, so only `skip` ends it. The
     nudge exists to offer an update that can be taken; a non-fast-forwardable
     difference is not one."""
+    timeout = _remote_git_timeout(timeout)
     def g(*a, t=timeout):
         return subprocess.run(["git", "-C", str(code_root), *a],
                               capture_output=True, text=True, timeout=t)
@@ -7947,7 +8028,7 @@ def _strip_control_chars(s):
     return _CONTROL_CHAR_RE.sub("", s or "")
 
 
-def _render_update_notes(m, installed, new_version, sections):
+def _render_update_notes(m, installed, new_version, sections, numbered=True):
     """The version+notes box both `cmd_update` and the run-time nudge show
     (T-749). Rules-only frame (no right border) — sidesteps CJK double-width
     misalignment that a boxed layout would get wrong; each section's own body
@@ -7980,29 +8061,198 @@ def _render_update_notes(m, installed, new_version, sections):
             print(f"    {line}" if line.strip() else "")
         print()
     print(rule)
-    print(f"  {msg(m, 'update.choice1')}")
-    print(f"  {msg(m, 'update.choice2')}")
+    if numbered:                       # T-1231: the arrow menu draws its own two lines
+        print(f"  {msg(m, 'update.choice1')}")
+        print(f"  {msg(m, 'update.choice2')}")
+
+
+def _read_menu_key(fd):
+    """One key off the raw tty fd: "up" | "down" | "enter" | "esc" | "eof" |
+    "other". A lone ESC (no byte follows within 50ms) is Esc; `ESC [ A` / `ESC O A`
+    are the arrows. A truncated or over-long escape sequence never blocks: every
+    follow-up byte is waited for 50ms (timeout = Esc), parameter bytes are capped
+    at 16, and a control byte inside a sequence aborts it (ESC = Esc, else the
+    key is ignored)."""
+    import select
+
+    def more():
+        return bool(select.select([fd], [], [], 0.05)[0])
+
+    b = os.read(fd, 1)
+    if not b:
+        return "eof"
+    if b in (b"\r", b"\n"):
+        return "enter"
+    if b == b"\x04":
+        return "eof"
+    if b != b"\x1b":
+        return "other"
+    if not more():
+        return "esc"
+    nxt = os.read(fd, 1)
+    if nxt not in (b"[", b"O"):
+        return "other"
+    for _ in range(16):                # CSI: params/intermediates 0x20-0x3f, then a final byte 0x40-0x7e
+        if not more():
+            return "esc"               # truncated sequence
+        c = os.read(fd, 1)
+        if not c:
+            return "eof"
+        if 0x40 <= c[0] <= 0x7e:
+            return {b"A": "up", b"B": "down"}.get(c, "other")
+        if not 0x20 <= c[0] <= 0x3f:
+            return "esc" if c == b"\x1b" else "other"
+    return "other"                     # over-long: ignore
+
+
+def _clip(s, width):
+    """`s` cut to at most `width` display columns (CJK counts 2)."""
+    out, used = "", 0
+    for ch in s:
+        w = _display_width(ch)
+        if used + w > width:
+            break
+        out += ch
+        used += w
+    return out
+
+
+def _arrow_menu(m, items, hint_key):
+    """T-1231: arrow / Enter / Esc selection on a real terminal. `items`:
+    [(label_key, desc_key), ...]; the first cursor sits on item 0 (user T-1238:
+    reverses T-749's number-only prompt). Returns the chosen index, or None for
+    Esc / Ctrl-D / EOF (the guide line is erased first). Returns "unsupported"
+    when the terminal can't enter cbreak mode (stdin is not a real tty, termios
+    missing) so the caller falls back to the number prompt. Ctrl-C raises
+    KeyboardInterrupt after the terminal is restored. SIGTERM / SIGHUP restore
+    the terminal and cursor, then die by the signal; SIGTSTP restores, stops,
+    and re-enters on resume. Each row is clipped to the terminal width so a
+    redraw always moves up exactly len(rows)+1 physical rows. Stdlib only."""
+    try:
+        import signal, termios, tty
+        fd = sys.stdin.fileno()
+        saved = termios.tcgetattr(fd)
+    except Exception:                  # no termios, no fileno, or not a tty (pipe behind an isatty shim)
+        return "unsupported"
+    rows = [(msg(m, lk), msg(m, dk)) for lk, dk in items]
+    hint = msg(m, hint_key)
+    color = not os.environ.get("NO_COLOR")
+    bold, dim, off = ("\x1b[1m", "\x1b[2m", "\x1b[0m") if color else ("", "", "")
+    out = sys.stdout
+    cur = 0
+    first = True
+
+    def draw():
+        nonlocal first
+        width = max(shutil.get_terminal_size((80, 24)).columns - 1, 1)   # never touch the last column: no wrap
+        if not first:
+            out.write(f"\x1b[{len(rows) + 1}A\r")   # back up over the items + hint
+        first = False
+        for i, (label, desc) in enumerate(rows):
+            head = _clip(("❯ " if i == cur else "  ") + label, width)
+            room = width - _display_width(head) - 3
+            tail = f"   {dim}{_clip(desc, room)}{off}" if room > 0 else ""
+            head = f"{bold}{head}{off}" if i == cur else head
+            out.write(f"\x1b[2K{head}{tail}\n")
+        out.write(f"\x1b[2K{dim}{_clip(hint, width)}{off}\n")
+        out.flush()
+
+    def enter():
+        tty.setcbreak(fd)
+        out.write("\x1b[?25l")         # hide the caret while the menu is up
+        out.flush()
+
+    def restore(now=False):
+        try:
+            out.write("\x1b[?25h")
+            out.flush()
+        except Exception:
+            pass
+        try:
+            termios.tcsetattr(fd, termios.TCSANOW if now else termios.TCSADRAIN, saved)
+        except Exception:                # TCSANOW in signal handlers: a drain can block behind an unread pty
+            pass
+
+    def on_die(signum, _frame):
+        restore(now=True)
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    def on_stop(signum, _frame):
+        restore(now=True)
+        signal.signal(signal.SIGTSTP, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGTSTP)      # stops here; continues on SIGCONT
+        signal.signal(signal.SIGTSTP, on_stop)
+        enter()
+        draw()
+
+    old = {}
+    try:
+        for sig, h in ((signal.SIGTERM, on_die), (signal.SIGHUP, on_die), (signal.SIGTSTP, on_stop)):
+            old[sig] = signal.signal(sig, h)
+    except ValueError:                 # not the main thread — no handlers, terminal still restored on normal exits
+        pass
+    try:
+        enter()
+        draw()
+        while True:
+            key = _read_menu_key(fd)
+            if key == "enter":
+                return cur
+            if key in ("esc", "eof"):
+                out.write("\x1b[1A\r\x1b[2K")   # Esc state: the guide line goes away
+                return None
+            if key == "up":
+                cur = (cur - 1) % len(rows)
+            elif key == "down":
+                cur = (cur + 1) % len(rows)
+            else:
+                continue
+            draw()
+    finally:
+        restore()
+        for sig, h in old.items():
+            signal.signal(sig, h)
 
 
 def _prompt_update_choice(m, installed, new_version, sections):
-    """Render the version+notes box and collect a plain `1`/`2` answer — never
-    an arrow-key select. T-749 reproduced gum/fzf's arrow-select confirming its
-    PRE-HIGHLIGHTED first option (the destructive "update now") on a single bare
-    Enter with zero navigation — see the design-comment block above
-    `maybe_prompt_update` for the repro. A typed digit has no default to fall
-    into: a bare Enter (or anything else) just re-prompts. Returns "update",
-    "skip", or "cancel" — never None.
+    """Render the version+notes box and ask: update or skip. On a real terminal
+    (T-1231) that is an arrow / Enter / Esc menu with the cursor first on
+    "update"; Esc installs nothing (`update.cancelled`). Anything else (pipe,
+    `isatty()` shim with no real tty) keeps the T-749 plain `1`/`2` number
+    prompt. Returns "update", "skip", or "cancel" — never None.
 
-    T-749b (QA grill findings #3/#4): EOF on stdin reads as "skip" (never
-    installs) same as before, but now prints a fresh-line newline first — the
-    terminal never echoes one for Ctrl-D itself, so the next message used to
-    run on directly after the prompt text with no line break. Ctrl-C
-    (KeyboardInterrupt) is caught here too — it used to propagate all the way
-    out of `main()` as an uncaught traceback and, on the run-time nudge path,
-    take the ORIGINAL command down with it; caught here it prints one fresh
-    line + one catalog message and returns "cancel", never installs, and lets
-    both callers fall through normally."""
-    _render_update_notes(m, installed, new_version, sections)
+    T-749 (why the number prompt exists): gum/fzf's arrow-select confirmed its
+    PRE-HIGHLIGHTED first option on a single bare Enter. T-1231 brings the arrow
+    menu back on user decision T-1238 row 1 (first cursor on update), so a bare
+    Enter on a terminal now installs by design; the number path has no default:
+    a bare Enter (or anything else) just re-prompts.
+
+    T-749b (QA grill findings #3/#4), number path: EOF on stdin reads as "skip"
+    (never installs) with a fresh-line newline first; Ctrl-C (KeyboardInterrupt)
+    is caught — one fresh line + one catalog message, returns "cancel", never
+    installs, both callers fall through normally. The menu path treats Ctrl-C
+    the same way."""
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if interactive:
+        _render_update_notes(m, installed, new_version, sections, numbered=False)
+        try:
+            picked = _arrow_menu(
+                m, [("update.item.go", "update.item.go.d"), ("update.item.skip", "update.item.skip.d")],
+                "update.hint")
+        except KeyboardInterrupt:
+            print()
+            print(msg(m, "update.cancelled"))
+            return "cancel"
+        if picked != "unsupported":
+            if picked is None:
+                print(msg(m, "update.cancelled"))
+                return "cancel"
+            return "update" if picked == 0 else "skip"
+        print(f"  {msg(m, 'update.choice1')}")      # no real tty behind the isatty(): number prompt
+        print(f"  {msg(m, 'update.choice2')}")
+    else:
+        _render_update_notes(m, installed, new_version, sections)
     while True:
         try:
             raw = input(msg(m, "update.prompt")).strip()
@@ -8020,16 +8270,51 @@ def _prompt_update_choice(m, installed, new_version, sections):
         print(msg(m, "update.error.badchoice"))
 
 
+def _nudge_known_update_to_stderr():
+    """T-1100: print the `update.noninteractive` line to stderr when an earlier tty
+    run already recorded a pending update (state["known_update"]) that is still
+    newer than the installed version. Read-only: state and local RELEASES.md only."""
+    try:
+        known = (read_json(_update_state_path()) or {}).get("known_update")
+        new = known.get("new") if isinstance(known, dict) else None
+        if not new or not isinstance(new, str):
+            return
+        repo = prdt_repo_dir()
+        code_root = git_toplevel(repo) if repo else None
+        if code_root is None:
+            return
+        installed, _ = releases_local(code_root)
+        if installed and not _newer_version(new, installed):
+            return
+        print(msg(load_messages(), "update.noninteractive", installed=installed or "?",
+                  new=_strip_control_chars(new)), file=sys.stderr)
+    except Exception:
+        return
+
+
 def maybe_prompt_update(cmd):
     """T-393 entry — called from main() before dispatch. CI degrades to silence
-    before any network call. A non-tty run (piped / no controlling terminal)
-    still runs the once-a-day check but only PRINTS the pending version line —
-    it never prompts and never installs (T-749 acceptance). See the T-749
+    before any network call. A non-tty run (hook / piped / no controlling
+    terminal) returns before any state read or network call (T-1100): it never
+    prompts, never installs, and never consumes the day's slot. See the T-749
     design-comment block above this section for the reproduced defect the
     plain-number prompt (`_prompt_update_choice`) replaces."""
     if cmd in ("update", "preflight"):                  # never self-check the updater;
         return                                          # `preflight` emits machine-read JSON on stdout
     if os.environ.get("CI"):
+        return
+    # T-1100: only a run that could actually prompt (stdin AND stdout a tty) checks
+    # at all. A hook / pipe / no-tty run used to consume the day's slot (and print a
+    # line nobody read) before the user ever saw a prompt; now it returns before any
+    # state read or network call, so it can neither consume the slot nor cost a
+    # hook the 2s ls-remote.
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        # T-1100 (PO): a run piped inside the user's terminal (`prdt … | less`:
+        # stdout not a tty, stderr one) keeps the T-749 signal — but only from the
+        # cached state: no network call, no state write, slot not spent. A hook
+        # (stderr not a tty) stays silent.
+        if not sys.stdout.isatty() and sys.stderr.isatty():
+            _nudge_known_update_to_stderr()
         return
     # throttle — at most one check per local calendar day (T-927)
     today = _local_day()
@@ -8046,18 +8331,32 @@ def maybe_prompt_update(cmd):
     code_root = git_toplevel(repo)                      # <clone>/packages/core → <clone> (T-394 anchor)
     if code_root is None:
         return
-    # consume today's slot up front so the post-update re-exec can't loop
-    state["last_check"] = today
-    state["last_check_basis"] = "local"
-    _write_update_state(state)
+
+    def consume_slot(known=None):
+        # T-1100: the slot is spent only once the check reached a verdict (or the
+        # prompt is about to be shown) — never up front, so a failed / offline /
+        # timed-out check lets a later tty run the same day retry. Still written
+        # before the install re-exec so that re-exec cannot loop.
+        state["last_check"] = today
+        state["last_check_basis"] = "local"
+        if known:
+            state["known_update"] = {"new": known}      # read back by piped-in-terminal runs
+        else:
+            state.pop("known_update", None)
+        _write_update_state(state)
+
     ahead = remote_ahead(code_root)                     # ls-remote + ancestry gate (network, 2s)
-    if not ahead:                                       # None (degrade/offline) or False (equal / local ahead / diverged)
+    if ahead is None:                                   # offline / timeout / no remote → slot stays, a later run retries
+        return
+    if not ahead:                                       # equal / local ahead / diverged → a real verdict, slot spent
+        consume_slot()
         return
     installed, _ = releases_local(code_root)
     new_version, sections = releases_pending_between(code_root, installed)  # REMOTE RELEASES via fetch+show (T-393)
-    if not new_version:                                 # no qualifying section / fetch failed → silent degrade
+    if not new_version:                                 # no qualifying section / fetch failed → silent degrade, slot stays
         return
     if not _newer_version(new_version, installed):
+        consume_slot()
         return                                          # T-456: never advertise an equal-or-lower version
     # T-749c: captured NOW, before the prompt — the same `origin/<branch>` sha
     # the version/notes above came from. A capture failure degrades silently,
@@ -8066,17 +8365,7 @@ def maybe_prompt_update(cmd):
     if not target_sha:
         return
     m = load_messages()
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        # T-785 F3: this line used to always go to stdout — a caller piping/
-        # capturing stdout (the auto-open hook's `| head -1`, any `$(prdt …)`)
-        # got the nudge INSTEAD of the line it asked for, silently. Route to
-        # stdout only when stdout itself is still a real terminal (stdin
-        # alone came from a pipe/redirect — nothing downstream is parsing
-        # this stream); otherwise stderr, never the stdout a script reads.
-        out = sys.stdout if sys.stdout.isatty() else sys.stderr
-        print(msg(m, "update.noninteractive", installed=installed or "?", new=_strip_control_chars(new_version)),
-              file=out)
-        return
+    consume_slot(new_version)                           # the prompt is shown from here on
     choice = _prompt_update_choice(m, installed or "?", new_version, sections)
     if choice == "update":
         # T-749b: NEVER re-enter `cmd_update(None)` here — that re-ran the whole
