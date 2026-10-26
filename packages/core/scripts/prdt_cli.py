@@ -14071,6 +14071,120 @@ def _lockfile_sig(wt):
     return {n: (wt / n).read_bytes() if (wt / n).is_file() else None for n in TRACK_LOCKFILES}
 
 
+# ── T-1268: `land` runs the RELEVANT tests by default ────────────────────────
+# contracts/definition-of-done.md: the whole suite has its own slot (ship entry);
+# a land's done-claim runs the relevant set of the merged diff against its base —
+# changed tests · `vitest related` importers (here `vitest list --changed <base>`,
+# the same module-graph query) · tests whose text names a changed file. The whole
+# suite runs only when this land closes a lane, or on `--full`; `--test <cmd>` and
+# a configured `track.test` are explicit commands and run as given.
+TRACK_VITEST_CONFIGS = ("vitest.config.ts", "vitest.config.mts", "vitest.config.js", "vitest.config.mjs")
+
+
+def _track_vitest_pkgs(wt):
+    """Directories under the worktree holding a vitest config (node_modules and .git skipped)."""
+    out = []
+    for d, dirs, files in os.walk(str(wt)):
+        dirs[:] = [x for x in dirs if x not in ("node_modules", ".git")]
+        if any(f in files for f in TRACK_VITEST_CONFIGS):
+            out.append(Path(d))
+    return sorted(out)
+
+
+def _track_vitest_bin(pkg, wt):
+    for base in (pkg, wt):
+        b = Path(base) / "node_modules" / ".bin" / "vitest"
+        if b.is_file():
+            return str(b)
+    return None
+
+
+def _track_vitest_list(vbin, pkg, extra):
+    """Absolute test-file paths `vitest list --filesOnly --json [extra]` prints (banner lines skipped)."""
+    r = subprocess.run([vbin, "list", "--filesOnly", "--json", *extra], cwd=str(pkg),
+                       capture_output=True, text=True, timeout=600)
+    m = re.search(r"(?m)^\[", r.stdout)
+    if r.returncode != 0 or not m:
+        _track_die(f"could not list tests in {pkg} (`vitest list` exit {r.returncode}) — "
+                   f"nothing was merged; {(r.stderr or r.stdout).strip()[-300:]}")
+    try:
+        rows, _ = json.JSONDecoder().raw_decode(r.stdout[m.start():])
+    except ValueError:
+        _track_die(f"could not read the test list of {pkg} — nothing was merged")
+    return [x["file"] for x in rows if isinstance(x, dict) and isinstance(x.get("file"), str)]
+
+
+def _track_names_of(path):
+    """Strings a test text may use to NAME a changed file: its basename, its repo path, and the
+    last two path.join pieces quoted (`'scripts', 'prdt'` — extension optional on the last)."""
+    parts = path.split("/")
+    base = parts[-1]
+    stem = base.rsplit(".", 1)[0] if "." in base else base
+    names = {base, path}
+    if len(parts) >= 2:
+        for last in {base, stem}:
+            names.add(f"'{parts[-2]}', '{last}'")
+            names.add(f'"{parts[-2]}", "{last}"')
+    return names
+
+
+def _track_relevant_set(wt, base_sha, changed):
+    """([(pkg, vbin, [files])], untested_changed, counts) — the union per vitest package."""
+    pkgs = _track_vitest_pkgs(wt)
+    plan, named_any, tot = [], set(), {"changed_tests": 0, "importers": 0, "naming": 0}
+    names = {c: _track_names_of(c) for c in changed}
+    for pkg in pkgs:
+        vbin = _track_vitest_bin(pkg, wt)
+        if vbin is None:
+            _track_die(f"no vitest binary for {pkg} (node_modules missing) — run the setup step in {wt}")
+        alltests = _track_vitest_list(vbin, pkg, [])
+        changed_abs = {str((Path(wt) / c).resolve()) for c in changed}
+        rel_hits = set(_track_vitest_list(vbin, pkg, ["--changed", base_sha]))
+        own = {t for t in alltests if str(Path(t).resolve()) in changed_abs}
+        naming = set()
+        for t in alltests:
+            try:
+                text = Path(t).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for c, ns in names.items():
+                if any(n in text for n in ns):
+                    naming.add(t)
+                    named_any.add(c)
+        importers = rel_hits - own
+        files = sorted((own | rel_hits | naming) & set(alltests))
+        tot["changed_tests"] += len(own)
+        tot["importers"] += len(importers - naming)
+        tot["naming"] += len(naming - own - rel_hits)
+        if files:
+            plan.append((pkg, vbin, files))
+    covered = {c for c in changed if c in named_any}
+    return plan, covered, tot, bool(pkgs)
+
+
+def _track_closes_lane(root, tid):
+    """(closes: bool, note) — the land makes the last open impl ticket of a gate lane done.
+    Lane membership is `prdt_lanes.lanes_for` (the one computation `prdt schedule` renders)."""
+    try:
+        tickets = _schedule_tickets(Path(root))
+        row = tickets.get(tid, (None, None))[0]
+        if row is None or row["type"] != "impl" or row["status"] != "open":
+            return False, ""
+        for line in (project_line_names(root) or [None]):
+            for lane in lanes_for(root, line):
+                if lane.get("besteffort") or tid not in lane["tickets"]:
+                    continue
+                others = [t for t in lane["tickets"] if t != tid and tickets[t][0]["type"] == "impl"
+                          and tickets[t][0]["status"] == "open"]
+                if not others:
+                    return True, f"closes lane {lane['name']}"
+                return False, ""
+        return False, ""
+    except Exception as e:   # a broken lane read must not stop the land — say so, keep the cheap default
+        return False, f"lane check unavailable ({type(e).__name__}) — relevant set only"
+
+
+
 def cmd_track_land(args):
     root, code, tid, wt, branch = _track_ctx(args)
     _track_require_open(code, wt, branch, tid)
@@ -14101,10 +14215,19 @@ def cmd_track_land(args):
     st = _tgit(["status", "--porcelain"], wt)
     if st.returncode != 0 or st.stdout.strip():
         _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or drop them, then land")
+    explicit = bool((isinstance(args.test, str) and args.test.strip())
+                    or isinstance(_track_cfg(root).get("test"), str) and _track_cfg(root).get("test").strip())
     test = _track_test_cmd(root, wt, args.test)
-    if test is None:
+    full = bool(getattr(args, "full", False))
+    closes, lane_note = (False, "") if explicit or full else _track_closes_lane(root, tid)
+    # No vitest package = no relevant set to derive: the whole command is all there is.
+    no_vitest = not (explicit or full or closes) and not _track_vitest_pkgs(wt)
+    whole = explicit or full or closes or no_vitest
+    if whole and test is None:
         _track_die("no test command — pass --test <cmd>, set `track.test` in .prdt/config.json, "
                    "or give package.json a test script")
+    if no_vitest:
+        lane_note = "no vitest package to derive the relevant tests from"
     failed_setup = _track_setup_failed_read(code, tid)
     if failed_setup is not None:
         if getattr(args, "setup_done", False):
@@ -14135,7 +14258,35 @@ def cmd_track_land(args):
                     _track_die(f"the setup step failed on the merged tree — {base} is unchanged; "
                                f"{branch} keeps the merge and dependencies may be partially removed; "
                                f"rerun `{setup}` in {wt}, then land again with --setup-done")
-        rc = _track_run(test, wt, "tests on the merged tree")
+        if whole:
+            why_whole = ("--test" if isinstance(args.test, str) and args.test.strip() else
+                         "track.test" if explicit else "--full" if full else lane_note)
+            rc = _track_run(test, wt, f"tests on the merged tree (whole suite: {why_whole})")
+            ran = f"tests `{test}`"
+        else:
+            if lane_note:
+                print(lane_note)
+            chg = [x for x in _tgit(["diff", "--name-only", old, "HEAD"], wt).stdout.splitlines() if x]
+            plan, covered, tot, _ = _track_relevant_set(wt, old, chg)
+            n = sum(len(f) for _p, _v, f in plan)
+            if not plan:
+                print(f"relevant tests: none — {len(chg)} changed file(s) against {base}, no test imports "
+                      f"or names them; landing without a test run")
+                rc, ran = 0, "no relevant tests"
+            else:
+                print(f"relevant tests: {n} file(s) in {len(plan)} package(s) — {tot['changed_tests']} changed, "
+                      f"{tot['importers']} importing, {tot['naming']} naming a changed file; "
+                      f"{len(chg)} changed file(s) against {base}", flush=True)
+                for pkg, _v, files in plan:
+                    for f in files:
+                        print(f"  {pkg.relative_to(wt) if pkg != wt else '.'}: {Path(f).relative_to(pkg)}")
+                rc = 0
+                for pkg, vbin, files in plan:
+                    rc = _track_run(" ".join([shlex.quote(vbin), "run", *(shlex.quote(str(Path(f).relative_to(pkg))) for f in files)]),
+                                    pkg, f"relevant tests ({pkg.relative_to(wt) if pkg != wt else '.'})")
+                    if rc != 0:
+                        break
+                ran = f"relevant tests ({n} file(s))"
         if rc != 0:
             # T-835 (decision T-822 「C」): 141 = SIGPIPE — a later pipeline stage closed the pipe early.
             why = ("\nexit 141: a later pipeline stage (such as `| head`) closed the pipe, so the run was cut short "
@@ -14191,7 +14342,7 @@ def cmd_track_land(args):
         print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
     else:
         print(f"branch {branch} kept — not merged into {base} (unexpected after land)")
-    print(f"landed {tid} — tests `{test}` green; nothing pushed")
+    print(f"landed {tid} — {ran}{'' if ran.startswith('no ') else ' green'}; nothing pushed")
 
 
 def cmd_track_drop(args):
@@ -20093,6 +20244,9 @@ def main():
                         "opened with --base main refuses a land without --base)")
     p.add_argument("--test", help="land: the test command (default: .prdt/config.json track.test, "
                                   "else the package.json test script)")
+    p.add_argument("--full", action="store_true",
+                   help="land: run the whole suite instead of the relevant tests (the default whole run is a land "
+                        "that closes a lane)")
     p.add_argument("--setup-done", action="store_true",
                    help="land: after a land whose setup step failed, say the setup command was rerun in the "
                         "worktree (without it the next land refuses and names the command)")
