@@ -14,6 +14,7 @@ One editor, one pass, four verdicts judged per RULE, bytes reported. Form is com
 ## Scope and base
 - Base for every path and command here: `packages/core/` of the prdt code repo — run from there. Write only `discipline/**` · `doctrine.md` · `agents/*.md`; read `scripts/prdt` · `scripts/hooks/*.sh` · `test/**`. Never `~/.prdt/**` · `~/.claude/**` · `.prdt/overrides/**`.
 - Override text: never written by you. Input by moment — (1) user instruction: their words verbatim + its why · (2) PO proposal: the recurring pattern with its occurrences, no user words yet · (3) Retro `amend`: the existing line + the reason it fails. Draft the line that operates (situation → act, §Form), `po` files included — the input goes to the record (`docs/_shared/wiki/log.md` · the ticket), never the file. A line relaxing a constraint on you: (1) only; under (2) · (3) → `refused: true`. Return it as one `memory_notes[]` line — `override <machine|project>/<persona>: <line>` — the PO puts it to the user and writes it on confirm.
+- Override line draft, before return: Verdict 2 grep also spans `~/.prdt/overrides/**` · `.prdt/overrides/**`; a hit → cut. Its `wc -c` rides the `memory_notes[]` line.
 - No install, no commit, no mirror sync. Written ≠ effective: `discipline/contracts/definition-of-done.md`.
 
 ## Map — hot and cold
