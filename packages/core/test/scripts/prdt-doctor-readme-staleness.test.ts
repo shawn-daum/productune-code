@@ -36,12 +36,13 @@ const PYTHON3 = which('python3')
 
 let projectDir: string
 
-function runPrdt(args: string[], tier: 'cli' | 'doctor' = 'cli'): string {
+function runPrdt(args: string[], tier: 'cli' | 'doctor' = 'cli', env?: Record<string, string>): string {
   return execFileSync('python3', [PRDT_CLI, ...args], {
     cwd: projectDir,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: subprocessTimeout(tier),
+    ...(env ? { env: { ...process.env, ...env } } : {}),
   })
 }
 
@@ -49,9 +50,9 @@ function runInit(): any {
   return JSON.parse(runPrdt(['init', '--json', '--slug', 'proj', '--yes']))
 }
 
-function doctor(): string {
+function doctor(env?: Record<string, string>): string {
   try {
-    return runPrdt(['doctor'], 'doctor')
+    return runPrdt(['doctor'], 'doctor', env)
   } catch (e: any) {
     throw new Error(`prdt doctor failed: ${e.stderr || e.message}`)
   }
@@ -316,5 +317,16 @@ describe.skipIf(!PYTHON3)('prdt doctor — README staleness at a cut tag (T-589)
     git(codeRoot, 'commit', '-q', '-m', 'seed')
     git(codeRoot, 'tag', 'vendor-sync')
     expect(readmeLines(doctor())).toHaveLength(0)
+  })
+
+  test('T-1274: a git call that times out is reported as a named timeout, never as "no stale lines"', () => {
+    // The fixture would produce violations if git answered: a dead path at the tag.
+    plantAndTag(path.join(projectDir, 'code'), 'v1.0',
+      HEALTHY_README.replace('scripts/install.sh   # setup', 'scripts/does-not-exist.sh   # setup'))
+    const out = doctor({ PRDT_README_GIT_TIMEOUT_S: '0.001' })
+    const named = out.split('\n').filter((l) => /readme vs shipped tag/.test(l) && /did not answer within 0\.001 s/.test(l))
+    expect(named, out).toHaveLength(1)
+    expect(named[0]).toMatch(/git tag/)
+    expect(readmeLines(out).some((l) => /stale against the shipped tag/.test(l))).toBe(false)
   })
 })
