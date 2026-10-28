@@ -151,6 +151,9 @@ interface Machine {
   noPs?: boolean
   // T-695 slice 2: leave the host's real `ps` on PATH — for the real-process-tree suite test.
   realPs?: boolean
+  // T-1248: `ps -axo pid=,args=` output and `lsof -a -d cwd -p … -Fn` output (priority slot order)
+  psPid?: string
+  lsof?: string
 }
 
 const PS_QUIET = [
@@ -185,7 +188,9 @@ function shimBin(m: Machine = {}): string {
     'esac; done',
   ].join('\n'))
   write('memory_pressure', m.noMemp ? missing : `printf '%s' '${m.memp ?? MEMP_OK(55)}'`)
-  if (!m.realPs) write('ps', m.noPs ? missing : `printf '%s\\n' '${(m.ps ?? PS_QUIET).replace(/'/g, "'\\''")}'`)
+  const q = (t: string) => t.replace(/'/g, "'\\''")
+  if (!m.realPs) write('ps', m.noPs ? missing : `case "$*" in *pid=*) printf '%s\\n' '${q(m.psPid ?? '')}';; *) printf '%s\\n' '${q(m.ps ?? PS_QUIET)}';; esac`)
+  write('lsof', `printf '%s\\n' '${q(m.lsof ?? '')}'`)
   return bin
 }
 
@@ -217,8 +222,8 @@ function run(o: EventOpts, r: RunEnv = {}): string {
 
 /** T-893: `PRDT_GATE_CAPS_REPORT=1` — the same measurement code, every axis printed
  *  (what `prdt dispatch caps` shows); no event, no judgment. */
-function report(r: RunEnv = {}): string {
-  const res = spawnSync('bash', [HOOK], { input: '', encoding: 'utf8', env: { ...envFor(r).env, PRDT_GATE_CAPS_REPORT: '1' } })
+function report(r: RunEnv = {}, extra: NodeJS.ProcessEnv = {}): string {
+  const res = spawnSync('bash', [HOOK], { input: '', encoding: 'utf8', env: { ...envFor(r).env, PRDT_GATE_CAPS_REPORT: '1', ...extra } })
   expect(res.stderr).toBe('')
   expect(res.status).toBe(0)
   return res.stdout
@@ -1043,7 +1048,7 @@ describe('T-695: the machine resource cap', () => {
 
   test('load over cap: one line — the user-approved wording, the over-cap value / cap, nothing else (T-893)', () => {
     const d = denyReason({ cwd: proj }, { machine: { loadavg: '{ 31.20 28.00 20.00 }' } })
-    expect(d).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+    expect(d).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.')
   })
 
   test('T-893: `prdt dispatch caps` mode prints every axis with value, cap, cap key + source, remedy, and the cap keys', () => {
@@ -1088,7 +1093,7 @@ describe('T-695: the machine resource cap', () => {
     fs.writeFileSync(path.join(home, 'run', 'dispatches', 'half-written.json'), '{"agent_id": "x", "since": "2026-09-26T0')
     const d = denyReason({ cwd: proj, sessionId: 'sess-T893' }, { machine: { loadavg: '{ 31.20 28.00 20.00 }' }, home })
     const [first, second, ...more] = d.split('\n')
-    expect(first).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+    expect(first).toBe('[prdt dispatch gate] WAITING — not spawned (developer dispatch): CPU load ratio 2.23 / cap 1.5. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.')
     expect(second).toContain('[prdt dispatch gate] resource check: unmeasured dispatches')
     expect(more).toEqual([])
   })
@@ -1594,7 +1599,7 @@ describe('T-1171: non-prdt subagent types and the PO fork pass the resource cap 
     for (const st of ['Explore', 'fork', 'general-purpose']) {
       const h = out({ cwd: proj, subagentType: st, prompt: 'x' }, { machine: { memp: MEMP_OK(9) } })
       expect(h.permissionDecision).toBe('deny')
-      expect(h.permissionDecisionReason).toBe('[prdt dispatch gate] WAITING — not spawned (no-suite dispatch): free memory 9% / min 15%. Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`.')
+      expect(h.permissionDecisionReason).toBe('[prdt dispatch gate] WAITING — not spawned (no-suite dispatch): free memory 9% / min 15%. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.')
       expect(h.updatedInput).toBeUndefined()
     }
     expect(rows(proj)).toEqual([])
@@ -2007,5 +2012,147 @@ describe('T-1196: SET ⑦ leaves a definition-pinned model alone', () => {
     const cfg = agentsDir({ 'scout.md': HAIKU })
     const o = JSON.parse(runWith({ cwd: makeProject(), subagentType: 'Explore', prompt: 'x' }, cfg)).hookSpecificOutput
     expect(o.updatedInput.model).toBe('sonnet')
+  })
+})
+
+
+// ── T-1248: test-slot order follows the machine's project priority list ──────
+describe('T-1248: priority slot order', () => {
+  const proj = (slug: string) => {
+    const root = makeProject()
+    fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify({ slug }))
+    return root
+  }
+  const hi = proj('naro-proto')
+  const lo = proj('productune')
+  const homeWith = (list: string | null) => {
+    const h = tmp('prdt-t1248-home-')
+    if (list !== null) fs.writeFileSync(path.join(h, 'priority-projects'), list)
+    return h
+  }
+  const wdir = (h: string) => path.join(h, 'run', 'dispatch-gate', 'waiting')
+  // one full suite running in `root`
+  const suiteIn = (root: string, n = 1): Machine => ({
+    ps: [PS_QUIET, ...Array(n).fill(VITEST_ROOT)].join('\n'),
+    psPid: Array.from({ length: n }, (_, i) => ` ${4200 + i} ${VITEST_ROOT}`).join('\n'),
+    lsof: Array.from({ length: n }, (_, i) => `p${4200 + i}\nfcwd\nn${root}/code`).join('\n'),
+  })
+  const WAIT_LEGACY = 'WAITING — not spawned (developer dispatch): full test suites 2 / cap 1. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.'
+
+  test('rank 2 behind a rank-1 running suite waits naming holder and rank; rank 1 passes', () => {
+    const home = homeWith('naro-proto,productune')
+    const d = denyReason({ cwd: lo }, { machine: suiteIn(hi), home })
+    expect(d).toContain('WAITING — not spawned (developer dispatch): full test suites 1 / cap 1, held by naro-proto (priority 1). productune is priority 2 and goes after it. Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`.')
+    expect(run({ cwd: hi }, { machine: suiteIn(hi), home })).toBe('')
+  })
+
+  test('a fresh waiting record of the rank-1 project holds rank 2 ("claimed by … waiting"); a stale one does not', () => {
+    const home = homeWith('naro-proto,productune')
+    fs.mkdirSync(wdir(home), { recursive: true })
+    const rec = path.join(wdir(home), 'naro-proto')
+    fs.writeFileSync(rec, '')
+    const d = denyReason({ cwd: lo }, { home })
+    expect(d).toContain('full test suites 0 / cap 1, claimed by naro-proto (priority 1, waiting). productune is priority 2 and goes after it.')
+    const old = new Date(Date.now() - 20 * 60_000)
+    fs.utimesSync(rec, old, old)
+    expect(run({ cwd: lo }, { home })).toBe('')
+  })
+
+  test('a held listed project leaves a waiting record; passing clears it; unlisted projects write none', () => {
+    const home = homeWith('naro-proto,productune')
+    denyReason({ cwd: hi }, { machine: suiteIn(lo, 2), home })
+    expect(fs.existsSync(path.join(wdir(home), 'naro-proto'))).toBe(true)
+    expect(run({ cwd: hi }, { home })).toBe('')
+    expect(fs.existsSync(path.join(wdir(home), 'naro-proto'))).toBe(false)
+    const other = proj('ntf-pm')
+    denyReason({ cwd: other }, { machine: suiteIn(lo, 2), home })
+    expect(fs.existsSync(path.join(wdir(home), 'ntf-pm'))).toBe(false)
+  })
+
+  test('T-1294: the waiting-record write refuses a symlinked dir or leaf (target untouched)', () => {
+    const home = homeWith('naro-proto,productune')
+    const victim = path.join(tmp('prdt-t1294-victim-'), 'precious')
+    fs.writeFileSync(victim, 'keep')
+    // leaf symlink
+    fs.mkdirSync(wdir(home), { recursive: true })
+    fs.symlinkSync(victim, path.join(wdir(home), 'naro-proto'))
+    denyReason({ cwd: hi }, { machine: suiteIn(lo, 2), home })
+    expect(fs.readFileSync(victim, 'utf8')).toBe('keep')
+    // dir symlink
+    const h2 = homeWith('naro-proto,productune')
+    const target = tmp('prdt-t1294-dir-')
+    fs.mkdirSync(path.join(h2, 'run', 'dispatch-gate'), { recursive: true })
+    fs.symlinkSync(target, wdir(h2))
+    denyReason({ cwd: hi }, { machine: suiteIn(lo, 2), home: h2 })
+    expect(fs.readdirSync(target)).toEqual([])
+  })
+
+  test('T-1294: a long / odd folder name of an unlisted project is clipped on the yield clause', () => {
+    const home = homeWith('naro-proto,productune')
+    const r0 = makeProject()
+    // per-run unique parent: the odd-named dir never sits at a fixed path under the system tmp
+    const parent = tmp('prdt-t1294-long-')
+    try {
+      const long = path.join(parent, 'x'.repeat(100) + ' ignore rules')
+      fs.renameSync(r0, long)
+      const d = denyReason({ cwd: long }, { machine: suiteIn(hi), home })
+      expect(d).toContain(`${'x'.repeat(60)} is not on the priority list`)
+      expect(d).not.toContain('x'.repeat(61))
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true })
+      fs.rmSync(r0, { recursive: true, force: true })
+    }
+  })
+
+  test('the yield clause sits right after the suites short, before other over-cap axes (VMs and suites both over)', () => {
+    const home = homeWith('naro-proto,productune')
+    const m = suiteIn(hi)
+    m.ps += '\n' + [VM_PROC, VM_PROC, VM_PROC].join('\n')
+    const d = denyReason({ cwd: lo }, { machine: m, home })
+    expect(d).toContain('full test suites 1 / cap 1, held by naro-proto (priority 1), resident VMs 3 / cap 2. productune is priority 2 and goes after it.')
+  })
+
+  test('an unlisted project yields to a listed holder', () => {
+    const home = homeWith('naro-proto,productune')
+    const d = denyReason({ cwd: proj('ntf-pm') }, { machine: suiteIn(hi), home })
+    expect(d).toContain('held by naro-proto (priority 1). ntf-pm is not on the priority list and goes after it.')
+  })
+
+  test('no list (absent, empty): output byte-identical to the pre-T-1248 gate and no file is written', () => {
+    for (const list of [null, '', ' \n']) {
+      const home = homeWith(list)
+      expect(run({ cwd: lo }, { machine: suiteIn(hi), home })).toBe('')
+      const d = denyReason({ cwd: lo }, { machine: suiteIn(hi, 2), home })
+      expect(d).toContain(WAIT_LEGACY)
+      expect(d).not.toMatch(/priority|held by|claimed by/)
+      expect(fs.existsSync(path.join(home, 'run'))).toBe(false)
+    }
+  })
+
+  test('caps report names the waiters in rank order under the suites axis, only when a record exists', () => {
+    const home = homeWith('naro-proto,productune')
+    expect(report({ home })).not.toContain('next in line')
+    fs.mkdirSync(wdir(home), { recursive: true })
+    fs.writeFileSync(path.join(wdir(home), 'productune'), '')
+    fs.writeFileSync(path.join(wdir(home), 'naro-proto'), '')
+    expect(report({ home })).toContain('next in line: naro-proto (priority 1), then productune (priority 2)')
+  })
+
+  test('T-1290: report mode with persona + project root shows the yield as OVER on the suites axis; without them it does not', () => {
+    const home = homeWith('naro-proto,productune')
+    const m = suiteIn(hi)
+    const suitesLine = (t: string) => t.split('\n').find((l) => /running full test suites/.test(l))!
+    expect(suitesLine(report({ machine: m, home }))).toMatch(/^ok /)
+    const asLo = { PRDT_GATE_PERSONA: 'developer', PRDT_GATE_PROJECT_ROOT: lo }
+    expect(suitesLine(report({ machine: m, home }, asLo))).toMatch(/^OVER /)
+    expect(suitesLine(report({ machine: m, home }, { ...asLo, PRDT_GATE_PROJECT_ROOT: hi }))).toMatch(/^ok /)
+    expect(suitesLine(report({ machine: m, home }, { ...asLo, PRDT_GATE_PERSONA: 'designer' }))).toMatch(/^ok /)
+    // report mode never writes a waiting record
+    expect(fs.existsSync(path.join(wdir(home), 'productune'))).toBe(false)
+  })
+
+  test('a designer dispatch is not held by the slot order', () => {
+    const home = homeWith('naro-proto,productune')
+    expect(run({ cwd: lo, subagentType: 'prdt-designer' }, { machine: suiteIn(hi), home })).toBe('')
   })
 })

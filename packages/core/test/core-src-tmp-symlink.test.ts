@@ -158,6 +158,13 @@ const ROWS: Row[] = [
     call: (m, c) => m.setSnapshot(c.dir, 'T-1',
       { status: 'open', qa_status: null, qa_loops: null, lastCheckedAt: '2026-09-23T00:00:00Z' }),
   },
+  {
+    // T-1281: born on atomicWriteFileSync — its guard is the shared primitive; the pre body is a control (fixture header)
+    site: 'settings/user-lang.ts setUserLang',
+    file: 'settings/user-lang.ts',
+    target: (c) => path.join(c.home, '.prdt', 'user-lang'),
+    call: (m, c) => m.setUserLang('ko', c.home),
+  },
   // state/pending-promotions.ts moved to stateWriteFileSync (T-848 S4) — see
   // test/fs/state-write-sites.test.ts for its planted-link cases.
 ]

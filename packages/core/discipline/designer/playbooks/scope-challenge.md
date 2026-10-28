@@ -27,6 +27,7 @@ Scope that arrives as a finished ticket bundle leaves the user nothing to choose
 
 ## Output — the fork table, and nothing else
 - Write `docs/<product>/artifacts/<version>/scope-challenge.md` (`v1.8/scope-challenge.md`): at most 3 forks, each one a table of its named options with what that option gains, what it loses, and which one you recommend.
+- Under the forks, one lanes row, facts only, no pick: kept items as candidate lanes, each with who it blocks now · what it shares with another lane · gating decisions; unsourced → unknown.
 - **Never touch `docs/<product>/prd/PRD.md`.** This run leaves the PRD byte-identical — no scope edit, no version section, not a note. The PRD is `prd-clarity`'s to write, after the user has answered.
 - Print the absolute artifact path on its own line. `summary`: fork count · the cut you recommend hardest · anything you could not source.
 - Reasoning the user should keep past this round → `memory_notes[]`; out-of-scope finds → `unresolved[]`.
