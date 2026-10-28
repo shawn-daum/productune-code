@@ -25,10 +25,12 @@ function put(root: string, rel: string, body: string) {
   fs.mkdirSync(path.dirname(p), { recursive: true })
   fs.writeFileSync(p, body)
 }
+// HOME = a sandbox beside PRDT_HOME, so the machine-wide prefix check reads a
+// fixture `~/.claude.json`, never the developer's own.
 function cli(root: string, home: string, args: string[]) {
   const r = spawnSync('python3', [PRDT_CLI, ...args], {
     cwd: root, encoding: 'utf8', timeout: 60_000,
-    env: { ...process.env, PRDT_HOME: home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0', TZ: 'UTC' },
+    env: { ...process.env, HOME: path.join(home, 'user-home'), PRDT_HOME: home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0', TZ: 'UTC' },
   })
   return { out: r.stdout, err: r.stderr, code: r.status }
 }
@@ -81,6 +83,45 @@ describe('tickets new --product numbers per product (T-1298)', () => {
     expect(cli(root, home, mk('a1', 'ntf-archive')).code).toBe(0)
     expect(ids(root)).toEqual(['T-RCHV-001'])
     expect(prefixes(root)).toEqual({ 'ntf-archive': 'RCHV' })
+  }, T)
+
+  test('a prefix held by a project the tooling never opened (only in ~/.claude.json projects) is skipped too', () => {
+    // QA d-v116-t1298-qa1 row (1): /other on disk, not in run/open-roots, no
+    // dispatch marker. `prdt init` records every project root it sets up in
+    // ~/.claude.json `projects` (trust entry), so that list names it.
+    const { root, home } = project()
+    const other = path.join(tmp('prdt-t1298-other-'), 'other')
+    put(other, '.prdt/config.json', JSON.stringify({ slug: 'other', ticket_prefixes: { 'other-archive': 'RCH' } }))
+    put(home, 'user-home/.claude.json', JSON.stringify({ projects: { [other]: { hasTrustDialogAccepted: true }, '/nonexistent/x': {} } }))
+    expect(fs.existsSync(path.join(home, 'run', 'open-roots'))).toBe(false)
+    const r = cli(root, home, mk('a1', 'ntf-archive'))
+    expect(r.code, r.err).toBe(0)
+    expect(ids(root)).toEqual(['T-RCHV-001'])
+  }, T)
+
+  test('--version <product>/vX without --product numbers per product, like --product', () => {
+    // QA row (3): `--version ntf-archive/v1.3` alone fell to the global T-NNN counter.
+    const { root, home } = project()
+    const r = cli(root, home, ['tickets', 'new', '--type', 'impl', '--slug', 'a1', '--version', 'ntf-archive/v1.3'])
+    expect(r.code, r.err).toBe(0)
+    expect(fs.existsSync(path.join(root, 'docs/tickets/ntf-archive/v1.3/T-RCH-001.md')), r.out).toBe(true)
+    expect(ids(root)).toEqual(['T-RCH-001'])
+  }, T)
+
+  test('no free prefix: refused loudly, naming the config key and an example to record one by hand', () => {
+    // QA row (5): `ntf-xyz` has 3 consonants only; another project holds XYZ.
+    const { root, home } = project()
+    const cfg = JSON.parse(fs.readFileSync(path.join(root, '.prdt/config.json'), 'utf8'))
+    put(root, '.prdt/config.json', JSON.stringify({ ...cfg, products: [{ name: 'ntf-archive' }, { name: 'ntf-xyz' }] }, null, 2))
+    const other = path.join(tmp('prdt-t1298-other-'), 'other')
+    put(other, '.prdt/config.json', JSON.stringify({ slug: 'other', ticket_prefixes: { other: 'XYZ' } }))
+    put(home, 'run/open-roots', `${other}\n`)
+    const r = cli(root, home, mk('x1', 'ntf-xyz'))
+    expect(r.code).not.toBe(0)
+    expect(r.err).toContain('no free id prefix')
+    expect(r.err).toContain('.prdt/config.json')
+    expect(r.err).toContain('"ticket_prefixes": {"ntf-xyz": "')
+    expect(ids(root)).toEqual([])
   }, T)
 
   test('--dry-run consumes no id and records no prefix', () => {

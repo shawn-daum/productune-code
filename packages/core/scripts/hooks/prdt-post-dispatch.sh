@@ -448,7 +448,8 @@ def _append_line(path, text):
 MARKER_RETENTION_HOURS = 24
 # `T-682`, `d-T682-s3-…` (the PO's dispatch_id convention has no hyphen), never
 # the `T-4` inside `GPT-4` (F9: left boundary) nor `T-68` inside `T-6829`.
-TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T-?([0-9]{1,5})(?![0-9])")
+# T-1298: also `T-RCH-002` (group 1 = the consonant prefix); the leftmost id wins.
+TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T(?:-([BCDFGHJKLMNPQRSTVWXYZ]{1,8})-|-?)([0-9]{1,5})(?![0-9])")
 
 # T-774: the marker's `model` field is the TIER a dispatch runs at, never a
 # versioned model id — the Agent tool's own `model` parameter is restricted to
@@ -570,7 +571,7 @@ def ticket_from_ctx(ctx_obj):
         if isinstance(field, str):
             m = TICKET_TOKEN_RE.search(field)
             if m:
-                return dispatch_id, f"T-{m.group(1)}"
+                return dispatch_id, (f"T-{m.group(1)}-{m.group(2)}" if m.group(1) else f"T-{m.group(2)}")
     return dispatch_id, None
 
 

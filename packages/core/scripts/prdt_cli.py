@@ -5655,11 +5655,22 @@ def next_ticket_id(root, prefix=None):
 TICKET_PREFIX_RE = re.compile(r"\A[BCDFGHJKLMNPQRSTVWXYZ]{1,8}\Z")
 
 
+def _claude_project_roots():
+    """Every directory key of `~/.claude.json projects` — Claude Code's own list of
+    the folders it ran in, which `prdt init` also writes for each project it sets
+    up (`set_trust_accepted`). A project never opened since is still listed here;
+    run/open-roots and dispatch markers only hold the recent ones."""
+    data = read_json(Path.home() / ".claude.json")
+    projs = data.get("projects") if isinstance(data, dict) else None
+    return {k for k in (projs if isinstance(projs, dict) else ()) if isinstance(k, str) and k.startswith("/")}
+
+
 def _machine_ticket_prefixes(root):
     """Every prefix recorded in `.prdt/config.json ticket_prefixes` of the projects
-    this machine's tooling has seen (`_known_project_roots`), this one included."""
+    on this machine: the roots tooling has seen (`_known_project_roots`) plus every
+    folder in `~/.claude.json projects`, this one included."""
     seen = set()
-    for r in _known_project_roots() | {str(root)}:
+    for r in _known_project_roots() | _claude_project_roots() | {str(root)}:
         cfg = read_json(Path(r) / ".prdt" / "config.json")
         tp = cfg.get("ticket_prefixes") if isinstance(cfg, dict) else None
         for v in (tp.values() if isinstance(tp, dict) else ()):
@@ -5695,8 +5706,10 @@ def ticket_prefix(root, product, names, persist=True):
     pick = next((c for c in ("".join(cons[:n]) for n in range(min(3, len(cons)), min(len(cons), 8) + 1))
                  if c and c not in taken), None)
     if pick is None:
-        sys.exit(f"prdt tickets new: no free id prefix for product {safe_label(product)} — record one by hand "
-                 f"in .prdt/config.json `ticket_prefixes` (1–8 upper-case consonants) — no ticket written")
+        sys.exit(f"prdt tickets new: no free id prefix for product {safe_label(product)} — every consonant "
+                 f"prefix of its name is held by a project on this machine. Record one by hand in "
+                 f".prdt/config.json, e.g. \"ticket_prefixes\": {{\"{safe_label(product)}\": \"<1–8 upper-case "
+                 f"consonants no other project uses>\"}}, then re-run — no ticket written")
     if persist:
         cfg["ticket_prefixes"] = {**tp, product: pick}
         state_write(root, cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
@@ -5771,7 +5784,6 @@ def cmd_tickets_new(args, root):
     if title and any(c in title for c in "\r\n"):
         sys.exit("prdt tickets new: --title must be a single line")
     line = getattr(args, "line", None)
-    asked_product = line
     # T-1084: an explicit placement. `--backlog` → backlog/; `--version [<product>/]vX.Y`
     # → that version's folder (created if absent). A product prefix on --version is
     # the same release-line rule as --product; both naming different products is an error.
@@ -5790,6 +5802,8 @@ def cmd_tickets_new(args, root):
         if not is_version_path_id(bare):
             sys.exit(f"prdt tickets new: --version '{safe_label(str(explicit))}' is not a version id "
                      f"(v<N>[.<m>[.<p>]] or backlog) — no ticket written")
+    # T-1298: a product named by --product OR by --version's `<product>/` part.
+    asked_product = line
     if line is not None and line not in project_line_names(root):
         if line == _resource_project_slug(root):
             line = None
@@ -16109,8 +16123,8 @@ SCHEDULE_LOG = "schedule.jsonl"
 SCHEDULE_CLASSES = ("followed", "deviated", "continuation", "off-graph")
 SCHEDULE_MODEL_TIERS = ("sonnet", "opus", "haiku", "fable")
 # Same token rule as prdt-post-dispatch.sh's TICKET_TOKEN_RE (`T-682`,
-# `d-T682-…`; never the `T-4` of `GPT-4`, never `T-68` inside `T-6829`).
-SCHEDULE_TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T-?([0-9]{1,5})(?![0-9])")
+# `d-T682-…`, `T-RCH-002`; never the `T-4` of `GPT-4`, never `T-68` inside `T-6829`).
+SCHEDULE_TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T(?:-([BCDFGHJKLMNPQRSTVWXYZ]{1,8})-|-?)([0-9]{1,5})(?![0-9])")
 SCHEDULE_ID_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")
 SCHEDULE_REPORT_BEGIN = "<!-- prdt:schedule-report:begin — `prdt schedule report` 가 이 구간을 다시 쓴다. 손으로 고치지 않는다. -->"
 SCHEDULE_REPORT_END = "<!-- prdt:schedule-report:end -->"
@@ -16149,7 +16163,7 @@ def schedule_ticket_for_ctx(ctx, tickets):
         if isinstance(field, str):
             m = SCHEDULE_TICKET_TOKEN_RE.search(field)
             if m:
-                return f"T-{m.group(1)}", "token"
+                return (f"T-{m.group(1)}-{m.group(2)}" if m.group(1) else f"T-{m.group(2)}"), "token"
     return None, None
 
 
