@@ -5406,7 +5406,7 @@ def _dispatch_cap_put(key, text):
 # T-1247: `priority.projects` — project slugs, first listed goes first. Known
 # projects = slugs of the roots tooling already saw on this machine (no registry):
 # run/open-roots lines + run/dispatches/*.json `project_root` + the cwd project.
-def _known_project_slugs():
+def _known_project_roots():
     roots = set()
     try:
         for ln in (prdt_home() / "run" / "open-roots").read_text(encoding="utf-8", errors="replace").split("\n"):
@@ -5426,7 +5426,11 @@ def _known_project_slugs():
     cwd_root = find_project_root()
     if cwd_root:
         roots.add(str(cwd_root))
-    slugs = {project_slug(r) for r in roots}
+    return roots
+
+
+def _known_project_slugs():
+    slugs = {project_slug(r) for r in _known_project_roots()}
     return sorted(x for x in slugs if x)
 
 
