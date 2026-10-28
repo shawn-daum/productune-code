@@ -148,6 +148,8 @@ describe.skipIf(!PYTHON3)('prdt doctor — build stage signal reads the gate (T-
     expect(run(['doctor'], 'doctor')).not.toMatch(SIGNAL)
   })
 
+  // T-1274: one `prdt doctor` per test — two in one test ran ~35 s under 7 concurrent
+  // runs against the 30 s per-test budget. The second state is built directly.
   test('no gate line, no meta record of the build write: every version ticket, and doctor says so', () => {
     writePrd([])
     writeTicket('v0.1', 'T-001', { status: 'done' })
@@ -156,7 +158,13 @@ describe.skipIf(!PYTHON3)('prdt doctor — build stage signal reads the gate (T-
     const out = run(['doctor'], 'doctor')
     expect(out).not.toMatch(SIGNAL)
     expect(out).toMatch(FALLBACK_NOTE)
+  })
+
+  test('no gate line, no meta record of the build write: every version ticket closed → fires', () => {
+    writePrd([])
+    writeTicket('v0.1', 'T-001', { status: 'done' })
     writeTicket('v0.1', 'T-002', { status: 'dropped' })
+    setStage('build')
     expect(run(['doctor'], 'doctor')).toMatch(SIGNAL)
   })
 
@@ -180,12 +188,18 @@ describe.skipIf(!PYTHON3)('prdt doctor — build stage signal reads the gate (T-
     expect(out).not.toMatch(SIGNAL)
   })
 
-  test('ship stage unchanged: no open tickets fires, an open one is silent', () => {
+  test('ship stage unchanged: no open tickets fires', () => {
     writePrd([rowA])
     writeTicket('v0.1', 'T-001', { status: 'done', gate: GATE_A })
     setStage('ship')
     expect(run(['doctor'], 'doctor')).toMatch(/stage: v0\.1 has no open tickets at stage=ship — consider Retro entry/)
+  })
+
+  test('ship stage unchanged: an open one is silent', () => {
+    writePrd([rowA])
+    writeTicket('v0.1', 'T-001', { status: 'done', gate: GATE_A })
     writeTicket('v0.1', 'T-002', {})
+    setStage('ship')
     expect(run(['doctor'], 'doctor')).not.toMatch(/at stage=ship — consider Retro/)
   })
 })

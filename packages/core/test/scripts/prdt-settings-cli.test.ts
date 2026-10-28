@@ -107,7 +107,7 @@ describe.skipIf(!READY)('prdt settings — list', () => {
     const run = (...args: string[]) => spawnSync('python3', [PRDT_CLI, ...args], {
       cwd: prdtHome, encoding: 'utf8', timeout: subprocessTimeout('cli'),
       // HOME = sandbox: no macOS global-preferences plist, so the device language is LC_ALL's
-      env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: 'en', LC_ALL: 'ja_JP.UTF-8' },
+      env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: 'en', LC_ALL: 'ja_JP.UTF-8', PRDT_RESOLVER_TIMEOUT_S: RESOLVER_TIMEOUT_S },
     })
     const value = () => JSON.parse(run('settings', '--json').stdout).find((e: any) => e.key === 'user.lang').value
     // T-1291: nothing stored → the screen shows what the hook uses (no check), never the device language
