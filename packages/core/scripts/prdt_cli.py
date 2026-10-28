@@ -1315,9 +1315,9 @@ def _scrubbed_git_env():
     return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
-def _git(args, cwd):
+def _git(args, cwd, timeout=10):
     return subprocess.run(["git", *args], cwd=str(cwd), env=_scrubbed_git_env(),
-                          capture_output=True, text=True, timeout=10)
+                          capture_output=True, text=True, timeout=timeout)
 
 
 # T-848: `.prdt/meta.git` sits in the project tree, so a cloned repository can
@@ -7840,6 +7840,17 @@ def _readme_shown_stages(text):
     return tokens
 
 
+def _readme_git_timeout_s():
+    """Per-git-call budget of the README-at-tag check: 10 s (`_git`'s default),
+    or `PRDT_README_GIT_TIMEOUT_S` when set (T-1274 — the test that proves a
+    timeout is named sets it near zero)."""
+    try:
+        v = float(os.environ.get("PRDT_README_GIT_TIMEOUT_S", ""))
+        return v if v > 0 else 10
+    except ValueError:
+        return 10
+
+
 def readme_stale_at_tag_warnings(root):
     """`<codeRoot>/README.md`, evaluated against the newest `v*` tag's own
     tree — never the working tree or the diff (retro.md / patch-cycle.md
@@ -7867,10 +7878,24 @@ def readme_stale_at_tag_warnings(root):
     Degrade-never-raise, same posture as `release_notes_gap_warnings`: no git,
     no version-shaped tag, or the README/CLI source unreadable at that tag
     (either file plain absent there, or an old shape this parse can't read)
-    all fall through to `[]` — a silence, not a claim that nothing is stale."""
+    all fall through to `[]` — a silence, not a claim that nothing is stale.
+
+    T-1274: a git call that TIMES OUT is not one of those silences — git was
+    there and the answer is unknown, so the check returns `Skipped` naming the
+    timed-out call. Before, it fell into the `[]` above and a loaded machine
+    printed no stale lines for a README that had them. The budget is
+    `_readme_git_timeout_s()`."""
     cr = code_root(root)
+    budget = _readme_git_timeout_s()
+
+    def timed_out(what):
+        return Skipped(f"readme vs shipped tag: `git {what}` did not answer within {budget:g} s — "
+                       f"the machine is busy; re-run prdt doctor later")
+
     try:
-        r = _git(["tag", "--list", "v*"], cr)
+        r = _git(["tag", "--list", "v*"], cr, timeout=budget)
+    except subprocess.TimeoutExpired:
+        return timed_out("tag --list")
     except (OSError, subprocess.SubprocessError):
         return []
     if r.returncode != 0:
@@ -7881,25 +7906,35 @@ def readme_stale_at_tag_warnings(root):
         return []
     tag = keyed[-1][1]
 
+    class _ShowTimeout(Exception):
+        pass
+
     def show(path):
         try:
-            sr = _git(["show", f"{tag}:{path}"], cr)
+            sr = _git(["show", f"{tag}:{path}"], cr, timeout=budget)
+        except subprocess.TimeoutExpired:
+            raise _ShowTimeout(path)
         except (OSError, subprocess.SubprocessError):
             return None
         return sr.stdout if sr.returncode == 0 else None
 
-    readme = show("README.md")
-    if readme is None:
-        return []
-    # T-1170: the CLI body lives in prdt_cli.py behind the `prdt` launcher at
-    # tags cut after the split; older tags still hold the whole CLI in `prdt`.
-    cli_source = show("packages/core/scripts/prdt_cli.py")
-    if cli_source is None:
-        cli_source = show("packages/core/scripts/prdt")
+    try:
+        readme = show("README.md")
+        if readme is None:
+            return []
+        # T-1170: the CLI body lives in prdt_cli.py behind the `prdt` launcher at
+        # tags cut after the split; older tags still hold the whole CLI in `prdt`.
+        cli_source = show("packages/core/scripts/prdt_cli.py")
+        if cli_source is None:
+            cli_source = show("packages/core/scripts/prdt")
+    except _ShowTimeout as e:
+        return timed_out(f"show {tag}:{e.args[0]}")
     if cli_source is None:
         return []
     try:
-        lr = _git(["ls-tree", "-r", "--name-only", tag], cr)
+        lr = _git(["ls-tree", "-r", "--name-only", tag], cr, timeout=budget)
+    except subprocess.TimeoutExpired:
+        return timed_out(f"ls-tree {tag}")
     except (OSError, subprocess.SubprocessError):
         return []
     if lr.returncode != 0:
