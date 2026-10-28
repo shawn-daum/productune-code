@@ -36,8 +36,12 @@ contextBridge.exposeInMainWorld('api', {
     engine: 'claude'
     uiLanguage?: 'en' | 'ko'
     audienceMode?: 'planner' | 'developer'
+    chatLanguage?: string
   }): Promise<{ ok: boolean; error?: string; prewarm?: 'ready' | 'failed' | 'timeout' }> =>
     ipcRenderer.invoke('onboarding:complete', opts),
+
+  getChatLanguage: (): Promise<string | null> =>
+    ipcRenderer.invoke('onboarding:getChatLanguage'),
 
   checkClaude: (): Promise<{ installed: boolean; authed: boolean }> =>
     ipcRenderer.invoke('onboarding:checkClaude'),

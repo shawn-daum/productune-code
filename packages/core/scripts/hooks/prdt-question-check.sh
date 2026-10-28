@@ -168,9 +168,34 @@ QUESTION_CHECK_REASON = (
     "option set, or an item under a waiting-for-your-answer heading — and no `type: decision` "
     "ticket was created or changed this turn. Open a `type: decision` ticket for each ask or cite "
     "its open ticket id beside it (a waiting item: `assignee: user` counts), then send the reply "
-    "again, opening with one line that the question now has its ticket — the user may already have "
+    "again%s, opening with one line that the question now has its ticket — the user may already have "
     "read this one."
 )
+# T-1116: the language clause that goes after "send the reply again" (wording settled
+# under the discipline-wording module, T-1245). %s = the stored chat language; the
+# clause is empty when no language is known, so the reason is then byte-identical
+# to the T-990 text above.
+QUESTION_CHECK_LANG_CLAUSE = " in lang=%s"
+
+# T-1281: the stored chat language only — never the device language.
+USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
+
+
+def stored_user_lang():
+    home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+    try:
+        with open(os.path.join(home, "user-lang"), encoding="utf-8", errors="replace") as f:
+            v = "".join(f.read(64).split())
+    except OSError:
+        v = ""
+    return v if USER_LANG_RE.match(v) else None
+
+
+def lang_clause():
+    if not QUESTION_CHECK_LANG_CLAUSE:
+        return ""
+    lang = stored_user_lang()  # T-1281: stored only
+    return QUESTION_CHECK_LANG_CLAUSE % lang if lang else ""
 LIST_CAP = 5
 RUN_BUDGET_S = 5
 
@@ -518,7 +543,7 @@ def main():
     shown = ", ".join(str(n) for n in uncovered[:LIST_CAP])
     if len(uncovered) > LIST_CAP:
         shown += ", +%d more" % (len(uncovered) - LIST_CAP)
-    sys.stdout.write(json.dumps({"decision": "block", "reason": QUESTION_CHECK_REASON % shown}))
+    sys.stdout.write(json.dumps({"decision": "block", "reason": QUESTION_CHECK_REASON % (shown, lang_clause())}))
 
 
 def _out_of_budget(*_):

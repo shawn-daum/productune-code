@@ -78,17 +78,17 @@ function writeTranscript(root: string, reply: string): string {
   return p
 }
 
-function runHook(event: Record<string, unknown>): string {
-  return execFileSync('bash', [HOOK], { input: JSON.stringify(event), encoding: 'utf8', timeout: 20_000, env: ON })
+function runHook(event: Record<string, unknown>, env: NodeJS.ProcessEnv = ON): string {
+  return execFileSync('bash', [HOOK], { input: JSON.stringify(event), encoding: 'utf8', timeout: 20_000, env })
 }
 
-function stop(store: Store, reply: string, extra: Record<string, unknown> = {}, opts: { prdt?: boolean } = {}) {
+function stop(store: Store, reply: string, extra: Record<string, unknown> = {}, opts: { prdt?: boolean } = {}, env: NodeJS.ProcessEnv = ON) {
   const { root, proj } = makeProject(store, opts)
   const transcript_path = writeTranscript(root, reply)
   const out = runHook({
     session_id: 's', hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
     cwd: proj, transcript_path, last_assistant_message: reply, ...extra,
-  })
+  }, env)
   return { out, proj, root }
 }
 
@@ -129,6 +129,30 @@ describe('flagged — real ticketless asks of 2026-10-06', () => {
   test('the reason never echoes the reply text', () => {
     const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'))
     expect(JSON.parse(out).reason).not.toContain('설치')
+  })
+})
+
+describe('T-1116 — the language clause', () => {
+  // HOME = sandbox: no macOS global-preferences plist; locale env empty → no device language
+  const langEnv = (userLang?: string): NodeJS.ProcessEnv => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-lang-'))
+    roots.push(home)
+    if (userLang) fs.writeFileSync(path.join(home, 'user-lang'), userLang + '\n')
+    return { ...ON, HOME: home, PRDT_HOME: home, LC_ALL: '', LC_MESSAGES: '', LANG: 'C' }
+  }
+  test('a stored language names itself in the reason', () => {
+    const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, langEnv('ko'))
+    expect(JSON.parse(out).reason).toContain('again in lang=ko, opening with')
+  })
+  test('no language known → the T-990 reason, no clause', () => {
+    const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, langEnv())
+    const r = JSON.parse(out).reason
+    expect(r).toContain('again, opening with')
+    expect(r).not.toContain('lang=')
+  })
+  test('device language only (en-OS, nothing stored) → no clause (T-1281)', () => {
+    const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, { ...langEnv(), LANG: 'en_US.UTF-8' })
+    expect(JSON.parse(out).reason).not.toContain('lang=')
   })
 })
 

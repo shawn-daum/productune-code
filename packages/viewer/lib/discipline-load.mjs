@@ -16,7 +16,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseFrontmatter } from './frontmatter.mjs'
-import { DISCIPLINE_LOAD as L } from './labels.mjs'
+import { DISCIPLINE_LOAD as L, LINKS } from './labels.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const CORE_ROOT = path.resolve(HERE, '../../core')
@@ -34,7 +34,7 @@ function readText(file) {
 }
 
 function partLabel(piece) {
-  const base = String(piece.label).replace(/ playbook menu$/, ' 메뉴')
+  const base = String(piece.label).replace(/ playbook menu$/, LINKS.menuSuffix)
   return piece.of > 1 ? `${base} ${piece.piece}/${piece.of}` : base
 }
 
@@ -318,9 +318,10 @@ ${personaRules}
 .dl-detail .dl-dk { color: var(--text-tertiary); margin-right: 6px; }
 `
 
-const DETAIL_LABELS = { p: L.detail.path, e: L.detail.event, m: L.detail.matcher, w: L.detail.when, r: L.detail.reads, s: L.detail.size }
-
-export const DISCIPLINE_LOAD_SCRIPT = `
+/** T-1277: built per call — it embeds the detail labels of the language in force. */
+export const disciplineLoadScript = () => {
+  const DETAIL_LABELS = { p: L.detail.path, e: L.detail.event, m: L.detail.matcher, w: L.detail.when, r: L.detail.reads, s: L.detail.size }
+  return `
 (function () {
   var card = document.querySelector('[data-dl-card]');
   if (!card) return;
@@ -367,3 +368,5 @@ export const DISCIPLINE_LOAD_SCRIPT = `
   });
 })();
 `
+}
+export const DISCIPLINE_LOAD_SCRIPT = disciplineLoadScript()

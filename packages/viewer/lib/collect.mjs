@@ -162,7 +162,7 @@ function withTicketId(doc) {
 
 function ticketLite(doc) {
   const fm = doc.frontmatter
-  return { rel: doc.rel, frontmatter: { id: fm.id, slug: fm.slug, type: fm.type, status: fm.status, assignee: fm.assignee, feature: fm.feature, created: fm.created } }
+  return { rel: doc.rel, frontmatter: { id: fm.id, slug: fm.slug, title: fm.title, type: fm.type, status: fm.status, assignee: fm.assignee, feature: fm.feature, created: fm.created } }
 }
 
 /**
@@ -921,6 +921,8 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
   return {
     poState,
     project: collectProjectSlug(repoRoot),
+    // T-1277: the viewer chrome's language — the project's recorded `user_lang` (BCP-47) in `.prdt/config.json`; null when unrecorded.
+    userLang: userLangOf(cfg),
     currentVersion,
     lines,
     // T-1253: the home product's deployed record (null = none).
@@ -955,6 +957,12 @@ function realRootOrNull(repoRoot) {
   } catch {
     return null
   }
+}
+
+/** T-1277: `user_lang` of a parsed `.prdt/config.json` (a non-empty string), else null. */
+export function userLangOf(cfg) {
+  const v = cfg && typeof cfg === 'object' ? cfg.user_lang : null
+  return typeof v === 'string' && v.trim() ? v.trim() : null
 }
 
 /** `.prdt/config.json`, or null when absent or unreadable. */

@@ -471,6 +471,11 @@ def project_line_names(root):
     return [e["name"] for e in project_lines(root)]
 
 
+def gate_lines(root):
+    """Every line a gate runs over: the home product (None) first, then each added product."""
+    return [None] + list(project_line_names(root))
+
+
 def split_line_id(vid):
     """`ntf-archive/v1.2` → ("ntf-archive", "v1.2"); `v1.2` → (None, "v1.2")."""
     if isinstance(vid, str) and "/" in vid:

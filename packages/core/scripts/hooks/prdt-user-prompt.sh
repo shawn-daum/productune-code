@@ -368,6 +368,98 @@ def form_outline_blank_violations(text):
     return out
 
 
+# ── T-1116: the user's chat language ─────────────────────────────────────────
+# Stored once per machine (`prdt settings set user.lang <code>`, asked at
+# `prdt init`) in `$PRDT_HOME/user-lang`; never collected → no
+# language is assumed (T-1281: the device language never judges a reply or picks `--lang`).
+USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
+
+
+def stored_user_lang():
+    """The valid value in `$PRDT_HOME/user-lang`, else None (T-1281: the Stop check's only source)."""
+    home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+    try:
+        with open(os.path.join(home, "user-lang"), encoding="utf-8", errors="replace") as f:
+            v = "".join(f.read(64).split())
+    except OSError:
+        v = ""
+    return v if USER_LANG_RE.match(v) else None
+
+
+
+
+def reply_hot_line():
+    """REPLY_HOT_LINE with its `<user_lang>` placeholder resolved to the stored
+    value (T-1116); no language known → the `--lang` flag is dropped
+    (`prdt wordlist check -` then reads the project's wordlist.lang)."""
+    lang = stored_user_lang()  # T-1281: stored only; none → the project's wordlist.lang
+    if lang:
+        return REPLY_HOT_LINE.replace("<user_lang>", lang)
+    return REPLY_HOT_LINE.replace("--lang <user_lang> ", "")
+
+
+# T-1116: the final-reply language check (Stop, PO only). Wording settled under
+# the discipline-wording module (T-1245). %s = the stored language code.
+LANG_CHECK_NOTICE = (
+    "[prdt lang check] reply above is not in lang=%s. Send it again now in that "
+    "language; code, paths, ids, quoted text unchanged."
+)
+# Which script a language's prose is written in. A language not listed here (a
+# Latin-script language other than English, or Japanese/Chinese whose unspaced
+# text a word count cannot weigh) is never checked.
+LANG_SCRIPT = {"ko": "hangul", "en": "latin"}
+LANG_MIN_WORDS = 8        # fewer prose words left → a link block / code reply, not judged
+LANG_MIN_SHARE = 0.2      # target-script share of the prose words below this → drift
+LANG_MAX_CHARS = 16000    # only the reply's head is judged: bounded time on a huge reply
+# Spans that are not prose: inline code, markdown links and images, autolinks/tags,
+# URLs, quoted text (each bounded to one line).
+LANG_SPAN_RE = re.compile(
+    r"`[^`\n]*`"
+    r"|!?\[[^\]\n]*\]\([^)\n]*\)"
+    r"|<[^>\n]*>"
+    r"|\*?\"[^\"\n]*\"\*?|“[^”\n]*”|「[^」\n]*」|『[^』\n]*』|‘[^’\n]*’"
+)
+# Whitespace tokens that are not prose: URLs, paths/identifiers/key=value (/ \ _ = @ # :// ),
+# dotted names (file.ext, a.b — a sentence-final period is not inside a token), ticket
+# ids, flags. Judged per token, so a long unbroken run costs linear time.
+LANG_TOKEN_DROP_RE = re.compile(r"[/\\_=@#]|\w\.\w|[A-Z]-\d|\A--?[A-Za-z]")
+LANG_WORD_RE = re.compile(r"[^\W\d_]+")
+
+
+def _word_script(w):
+    for c in w:
+        o = ord(c)
+        if 0xAC00 <= o <= 0xD7A3 or 0x1100 <= o <= 0x11FF or 0x3130 <= o <= 0x318F:
+            return "hangul"
+    return "latin" if any("a" <= c.lower() <= "z" for c in w) else None
+
+
+def lang_drift(reply, lang):
+    """True when `reply`'s prose — fences, blockquotes and LANG_DROP_RE spans
+    removed — holds LANG_MIN_WORDS+ words and under LANG_MIN_SHARE of them are in
+    `lang`'s script. False for an unlisted language and for a short remainder."""
+    target = LANG_SCRIPT.get(lang)
+    if not target or not isinstance(reply, str):
+        return False
+    counts = {"hangul": 0, "latin": 0}
+    in_fence = False
+    for ln in reply[:LANG_MAX_CHARS].split("\n"):
+        if FORM_OUTLINE_FENCE_RE.match(ln.strip()):
+            in_fence = not in_fence
+            continue
+        if in_fence or ln.lstrip().startswith(">"):
+            continue
+        for tok in LANG_SPAN_RE.sub(" ", ln).split():
+            if LANG_TOKEN_DROP_RE.search(tok):
+                continue
+            for w in LANG_WORD_RE.findall(tok):
+                s = _word_script(w)
+                if s:
+                    counts[s] += 1
+    total = counts["hangul"] + counts["latin"]
+    return total >= LANG_MIN_WORDS and counts[target] / total < LANG_MIN_SHARE
+
+
 FORM_OUTLINE_TAIL_CHUNK = 256 * 1024
 FORM_OUTLINE_TAIL_MAX = 1024 * 1024
 
@@ -479,7 +571,10 @@ def form_outline_bound():
 
 
 def stop_main():
-    """T-1025: the Stop check no longer blocks or prints. While form=outline is bound
+    """T-1116: a PO reply whose prose is not in the user's chat language is returned
+    once — Stop additionalContext (the T-1097 channel: no user-visible error line);
+    `stop_hook_active` (true on the Stop after it) lets the rewrite through.
+    T-1025: never blocks. While form=outline is bound
     it appends one data row per PO reply (paragraph-line count, blank-block count) to
     ~/.prdt/run/form-outline-counts.jsonl (newest FORM_OUTLINE_MAX_ROWS kept, T-1081);
     a stop with no reply text writes nothing."""
@@ -488,6 +583,15 @@ def stop_main():
     reply = ev.get("last_assistant_message")
     if not (isinstance(reply, str) and reply.strip()):
         return
+    if ev.get("stop_hook_active") is not True:
+        try:
+            lang = stored_user_lang()  # T-1281: a device-only guess never judges a reply
+            if lang and lang_drift(reply, lang):
+                sys.stdout.write(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "Stop", "additionalContext": LANG_CHECK_NOTICE % lang}}))
+                sys.stdout.flush()
+        except Exception:
+            pass
     if not form_outline_bound():
         return
     home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
@@ -528,7 +632,7 @@ def post_tool_main():
     form=outline hot line in the same additionalContext while form=outline is bound."""
     if ev.get("agent_type") != "prdt-po":
         return
-    ctx = REPLY_HOT_LINE
+    ctx = reply_hot_line()
     if form_outline_bound():
         ctx += "\n" + FORM_OUTLINE_HOT_LINE
     sys.stdout.write(json.dumps({"hookSpecificOutput": {
@@ -1019,7 +1123,7 @@ if hook_dir and os.path.isfile(resolver):
         lines.append(REGISTER_UNCONFIRMED_NOTICE % "the call could not be run")
 # T-1072: the reply hot line on every prompt, whatever the register binding or the
 # resolver's outcome — a turn with no tool call (~18%, T-1024) still gets it.
-lines.append(REPLY_HOT_LINE)
+lines.append(reply_hot_line())
 
 # Next to the state line, because it is a statement ABOUT that line's absence on
 # the previous turn. Silent in the normal case: `guard_begin` returns None and

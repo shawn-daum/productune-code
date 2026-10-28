@@ -56,7 +56,7 @@ let home: string
 let userHome: string
 
 function env(): NodeJS.ProcessEnv {
-  return { ...process.env, HOME: userHome, PATH: `${BIN}:${process.env.PATH}`, PRDT_HOME: home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0', TZ: 'UTC' }
+  return { ...process.env, HOME: userHome, PATH: `${BIN}:${process.env.PATH}`, PRDT_HOME: home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0', TZ: 'UTC', SHIM_LOG: path.join(userHome, 'vitest-shim.log') }
 }
 
 function git(cwd: string, ...args: string[]): string {
@@ -682,6 +682,266 @@ describe('prdt track land', () => {
     fs.writeFileSync(lock, '999999\n')   // a dead owner: taken over
     expect(cli('track', 'land', 'T-1', '--test', 'true').status).toBe(0)
     expect(fs.existsSync(lock)).toBe(false)
+  })
+})
+
+// T-1268: `land` runs the RELEVANT tests by default; the whole suite only on a
+// lane-closing land or `--full`; `--test` / `track.test` run as given. The vitest
+// binary is a shell shim (list --changed = a grep of the importing test; run =
+// appends its file arguments to $SHIM_LOG) so the orchestration is what is under test.
+describe('T-1268: land runs the relevant test set by default', () => {
+  const SHIM = [
+    'case "$1" in',
+    '  list)',
+    '    base=""; while [ $# -gt 0 ]; do [ "$1" = "--changed" ] && base="$2"; shift; done',
+    '    files=$(ls test/*.test.ts 2>/dev/null)',
+    '    if [ -n "$base" ]; then',
+    '      ch=$(git diff --name-only "$base" HEAD -- . | sed "s#^pkg/##")',
+    '      sel=""; for t in $files; do for c in $ch; do',
+    '        [ "$c" = "$t" ] && sel="$sel $t"',
+    '        stem=$(basename "$c" .ts); case "$c" in src/*) grep -q "../src/$stem" "$t" && sel="$sel $t";; esac',
+    '      done; done; files=$(echo $sel | tr " " "\\n" | sort -u)',
+    '    fi',
+    '    echo "banner line"; printf "["; sep=""; for t in $files; do printf "%s{\\"file\\":\\"%s/%s\\"}" "$sep" "$PWD" "$t"; sep=","; done; echo "]";;',
+    '  run) shift; echo "$@" >> "$SHIM_LOG";;',
+    'esac',
+  ].join('\n')
+
+  const ran = () => (fs.existsSync(path.join(userHome, 'vitest-shim.log')) ? fs.readFileSync(path.join(userHome, 'vitest-shim.log'), 'utf8') : '')
+
+  function ticket(id: string, fm: { status?: string; deps?: string; gate?: string } = {}) {
+    const dir = path.join(proj, 'docs', 'tickets', 'v1.11')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, `${id}.md`), ['---', `id: ${id}`, `slug: s-${id.toLowerCase()}`, 'type: impl',
+      `status: ${fm.status ?? 'open'}`, 'assignee: developer', ...(fm.deps ? [`deps: ${fm.deps}`] : []), 'created: 2026-10-15', '---', '',
+      '## problem', '', fm.gate ? `Produces \`${fm.gate}\`.` : 'x', '', '## acceptance', '', '- x', ''].join('\n'))
+  }
+  function prd() {
+    fs.mkdirSync(path.join(proj, 'docs', 'prd'), { recursive: true })
+    fs.writeFileSync(path.join(proj, 'docs', 'prd', 'PRD.md'), ['# PRD', '', '## v1.11 — round', '', '### 합격선', '', '| 항목 | 문언 |', '|:--|:--|',
+      '| **합격선** | **레인 A · `docs/artifacts/g.md` 가 있다** |', '', '#### alpha — item', '', 'a', ''].join('\n'))
+  }
+  const editA = () => commit(wt(), 'pkg/src/a.ts', 'export const a = 2\n', 'feat: a2 (T-1)')
+
+  beforeEach(() => {
+    makeProject()
+    // no `track.test`: the relevant-set default is what runs
+    fs.writeFileSync(path.join(proj, '.prdt', 'config.json'), JSON.stringify({ slug: 'x', code: { dir: 'code' }, track: { setup: 'true' } }))
+    commit(code, 'package.json', '{"scripts":{"test":"whole"}}\n', 'chore: package.json')
+    commit(code, 'pnpm-lock.yaml', 'lockfileVersion: 9\n', 'chore: lock')
+    commit(code, 'pkg/vitest.config.ts', 'export default {}\n', 'chore: pkg')
+    commit(code, 'pkg/src/a.ts', 'export const a = 1\n', 'feat: a')
+    commit(code, 'pkg/src/b.ts', 'export const b = 1\n', 'feat: b')
+    commit(code, 'pkg/test/a.test.ts', "import { a } from '../src/a'\n", 'test: a')
+    commit(code, 'pkg/test/b.test.ts', "import { b } from '../src/b'\n", 'test: b')
+    commit(code, 'pkg/test/n.test.ts', "// names tool.sh\n", 'test: n')
+    commit(code, 'pkg/test/scan.test.ts', "// lists src/ by readdir\n", 'test: scan')
+    cli('track', 'open', 'T-1')
+    const bin = path.join(wt(), 'pkg', 'node_modules', '.bin')
+    fs.mkdirSync(bin, { recursive: true })
+    fs.writeFileSync(path.join(bin, 'vitest'), `#!/bin/sh\n${SHIM}\n`)
+    fs.chmodSync(path.join(bin, 'vitest'), 0o755)
+    prd()
+  })
+
+  test('relevant-only default: the importing test and the test naming the changed file run, the unrelated one does not; counts are printed', () => {
+    ticket('T-1')
+    editA()
+    commit(wt(), 'tool.sh', '#!/bin/sh\n', 'feat: tool')
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toMatch(/relevant tests: 2 file\(s\) in 1 package\(s\) — 0 changed, 1 importing, 1 naming a changed file; 2 changed file\(s\) against dev/)
+    expect(r.out).toContain('pkg: test/a.test.ts')
+    expect(r.out).toContain('pkg: test/n.test.ts')
+    expect(ran().trim()).toBe('test/a.test.ts test/n.test.ts')
+    expect(r.out).not.toContain('whole suite')
+    expect(r.out).toContain('dev fast-forwarded')
+    expect(r.out).toContain('relevant tests (2 file(s)) green')
+  })
+
+  test('a bare stem without extension names the file (basename, extension optional)', () => {
+    ticket('T-1')
+    commit(wt(), 'pkg/test/s.test.ts', "// uses the widget_tool helper\n", 'test: s')
+    commit(wt(), 'lib/widget_tool.py', 'x = 1\n', 'feat: widget (T-1)')
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('pkg: test/s.test.ts')
+    expect(ran().trim()).toBe('test/s.test.ts')
+  })
+
+  test("the package's own test script extras (after vitest run) still run when the package is selected", () => {
+    ticket('T-1')
+    commit(wt(), 'pkg/package.json', '{"scripts":{"test":"vitest run && echo EXTRA-STEP >> \\"$SHIM_LOG\\""}}\n', 'chore: pkg scripts')
+    editA()
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(ran()).toContain('test/a.test.ts')
+    expect(ran()).toContain('EXTRA-STEP')
+  })
+
+  // T-1268 (QA d-v115-t1268-qa2): a test that lists a source directory is reached by no import and no
+  // name — a land whose diff touches the package always runs the declared scanner list, and the
+  // package's extra steps, even when the derived set is empty.
+  describe('directory scanners always run when a land touches their package', () => {
+    const LIST = 'packages/core/config/directory-scanners.json'
+    const declare = (tests: string[], scans = ['pkg', 'other']) => {
+      commit(wt(), LIST, JSON.stringify({ packages: { pkg: { scans, tests, exempt: {} } } }) + '\n', 'chore: scanner list')
+    }
+
+    test('a change no import or name reaches (pkg/src/c.ts) still runs the listed scanner test', () => {
+      ticket('T-1')
+      declare(['test/scan.test.ts'])
+      commit(wt(), 'pkg/src/c.ts', 'export const c = 1\n', 'feat: c (T-1)')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toMatch(/relevant tests: 1 file\(s\) in 1 package\(s\) — .*1 always-run directory scanner/)
+      expect(ran().trim()).toBe('test/scan.test.ts')
+    })
+
+    test('a change under another path the package scans (other/) runs it too; a change outside every scanned path does not', () => {
+      ticket('T-1')
+      declare(['test/scan.test.ts'])
+      commit(wt(), 'other/x.txt', 'x\n', 'feat: x (T-1)')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(ran().trim()).toBe('test/scan.test.ts')
+    })
+
+    test('a diff outside every scanned path leaves the scanner list alone', () => {
+      ticket('T-1')
+      declare(['test/scan.test.ts'], ['pkg-elsewhere'])
+      commit(wt(), 'notes.md', 'x\n', 'docs: notes (T-1)')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(ran()).toBe('')
+    })
+
+    test('the package extra steps run when only an unreached file under the package changes — and no bare `vitest run`', () => {
+      ticket('T-1')
+      commit(wt(), 'pkg/package.json', '{"scripts":{"test":"vitest run && echo EXTRA-STEP >> \\"$SHIM_LOG\\""}}\n', 'chore: pkg scripts')
+      commit(wt(), 'pkg/notes.txt', 'x\n', 'docs: notes (T-1)')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toContain('the package\'s extra test steps still run')
+      expect(ran().trim()).toBe('EXTRA-STEP')
+    })
+
+    test('a listed scanner test that is not a test of the package refuses the land before anything merges', () => {
+      ticket('T-1')
+      declare(['test/gone.test.ts'])
+      commit(wt(), 'pkg/src/c.ts', 'export const c = 1\n', 'feat: c (T-1)')
+      const before = git(code, 'rev-parse', 'dev')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status).not.toBe(0)
+      expect(r.err).toContain('which is not a test of that package')
+      expect(git(code, 'rev-parse', 'dev')).toBe(before)
+    })
+
+    test('a red scanner test refuses the land', () => {
+      ticket('T-1')
+      fs.writeFileSync(path.join(wt(), 'pkg', 'node_modules', '.bin', 'vitest'), `#!/bin/sh\n${SHIM.replace('run) shift; echo "$@" >> "$SHIM_LOG";;', 'run) exit 1;;')}\n`)
+      declare(['test/scan.test.ts'])
+      commit(wt(), 'pkg/src/c.ts', 'export const c = 1\n', 'feat: c (T-1)')
+      const before = git(code, 'rev-parse', 'dev')
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status).not.toBe(0)
+      expect(r.err).toContain('tests failed on the merged tree')
+      expect(git(code, 'rev-parse', 'dev')).toBe(before)
+    })
+  })
+
+  test('a package with a build script is built before its tests when src/ changed, and not when only tests changed', () => {
+    ticket('T-1')
+    commit(wt(), 'pkg/package.json', '{"scripts":{"build":"tsc","test":"vitest run"}}\n', 'chore: pkg build script')
+    editA()
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('build (pkg: src/ changed)')
+    expect(r.out.indexOf('build (pkg')).toBeLessThan(r.out.indexOf('relevant tests (pkg)'))
+  })
+
+  test('a tests-only change builds nothing', () => {
+    ticket('T-1')
+    commit(wt(), 'pkg/package.json', '{"scripts":{"build":"tsc","test":"vitest run"}}\n', 'chore: pkg build script')
+    commit(wt(), 'pkg/test/a.test.ts', "import { a } from '../src/a'\n// tweak\n", 'test: a (T-1)')
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).not.toContain('build (pkg')
+  })
+
+  test('an empty relevant set says so and lands', () => {
+    ticket('T-1')
+    commit(wt(), 'notes.md', 'x\n', 'docs: notes (T-1)')
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('relevant tests: none')
+    expect(ran()).toBe('')
+    expect(r.out).toContain('dev fast-forwarded')
+  })
+
+  test('a red relevant test refuses the land and dev stays put', () => {
+    ticket('T-1')
+    fs.writeFileSync(path.join(wt(), 'pkg', 'node_modules', '.bin', 'vitest'), `#!/bin/sh\n${SHIM.replace('run) shift; echo "$@" >> "$SHIM_LOG";;', 'run) exit 1;;')}\n`)
+    editA()
+    const before = git(code, 'rev-parse', 'dev')
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status).not.toBe(0)
+    expect(r.err).toContain('tests failed on the merged tree')
+    expect(git(code, 'rev-parse', 'dev')).toBe(before)
+  })
+
+  test('lane-closing land: the ticket is its gate lane\'s last open impl ticket, so the whole suite runs', () => {
+    ticket('T-0', { status: 'done' })
+    ticket('T-1', { gate: 'docs/artifacts/g.md', deps: '[T-0]' })
+    editA()
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('whole suite: closes lane A): pnpm test')
+    expect(ran()).toBe('')
+    expect(r.out).toContain('dev fast-forwarded')
+  })
+
+  test('multi-product project: the home product\'s last lane land runs the whole suite (T-1291)', () => {
+    ticket('T-0', { status: 'done' })
+    ticket('T-1', { gate: 'docs/artifacts/g.md', deps: '[T-0]' })
+    // product layout: home product `x` owns docs/x/, an added product `extra` owns none
+    fs.mkdirSync(path.join(proj, 'docs', '_shared'), { recursive: true })
+    fs.mkdirSync(path.join(proj, 'docs', 'x'), { recursive: true })
+    for (const d of ['tickets', 'prd']) fs.renameSync(path.join(proj, 'docs', d), path.join(proj, 'docs', 'x', d))
+    fs.writeFileSync(path.join(proj, '.prdt', 'config.json'), JSON.stringify({ slug: 'x', code: { dir: 'code' }, track: { setup: 'true' }, products: [{ name: 'extra' }] }))
+    editA()
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('whole suite: closes lane A): pnpm test')
+  })
+
+  test('a land that leaves another open impl ticket in the lane is not lane-closing', () => {
+    ticket('T-0')
+    ticket('T-1', { gate: 'docs/artifacts/g.md', deps: '[T-0]' })
+    ticket('T-2', { gate: 'docs/artifacts/g.md', deps: '[T-1]' })
+    editA()
+    const r = cli('track', 'land', 'T-1')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).not.toContain('whole suite')
+    expect(ran().trim()).toBe('test/a.test.ts')
+  })
+
+  test('explicit --full runs the whole suite even when the land closes no lane', () => {
+    ticket('T-1')
+    editA()
+    const r = cli('track', 'land', 'T-1', '--full')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('whole suite: --full): pnpm test')
+    expect(ran()).toBe('')
+  })
+
+  test('--test still overrides everything, relevant set included', () => {
+    ticket('T-1')
+    editA()
+    const r = cli('track', 'land', 'T-1', '--test', 'echo CUSTOM')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('whole suite: --test): echo CUSTOM')
+    expect(ran()).toBe('')
   })
 })
 
