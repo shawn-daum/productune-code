@@ -20,8 +20,15 @@
  * deterministic in every test; the check itself is tested against its pure
  * function and its own PATH stubs (prdt-doctor-resident-resources.test.ts,
  * prdt-doctor-verdict.test.ts), which are prepended AFTER this and so win.
- * Real `docker` / `lume` stay reachable — the check still runs and is not
- * reported as skipped, it just never sees a load worth warning about.
+ *
+ * T-1274: `lume` and `docker` are stubbed here too — a `lume` printing `[]`
+ * and a `docker` printing no containers. The real ones are host-global
+ * services: every concurrent doctor run in the suite asked the SAME lume
+ * daemon and docker socket (`lume ls --format json`, `docker ps`), each with a
+ * 10 s budget, and under 7 parallel copies of the doctor files those calls
+ * were where time went. With the stubs the check still RUNS (both names stay
+ * on PATH, so it is not reported as skipped) and finds nothing resident —
+ * the same answer the load stub above already made it give.
  */
 
 import fs from 'fs'
@@ -33,6 +40,8 @@ fs.writeFileSync(path.join(dir, 'uptime'),
   '#!/bin/sh\necho "12:00  up 1 day, 2 users, load averages: 1.00 1.00 1.00"\n', { mode: 0o755 })
 fs.writeFileSync(path.join(dir, 'memory_pressure'),
   '#!/bin/sh\necho "System-wide memory free percentage: 50%"\n', { mode: 0o755 })
+fs.writeFileSync(path.join(dir, 'lume'), '#!/bin/sh\necho "[]"\n', { mode: 0o755 })
+fs.writeFileSync(path.join(dir, 'docker'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
 process.env.PATH = `${dir}${path.delimiter}${process.env.PATH ?? ''}`
 process.env.PRDT_TEST_MACHINE_STUB = dir
 
