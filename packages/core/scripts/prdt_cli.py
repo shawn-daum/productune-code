@@ -299,7 +299,7 @@ def find_project_root(start=None):
     return hit
 
 
-_TRACK_DIR_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+_TRACK_DIR_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")  # T-1298: T-NNN or T-<PREFIX>-<n>
 
 
 def _inside_track_worktree(p):
@@ -5406,7 +5406,7 @@ def _dispatch_cap_put(key, text):
 # T-1247: `priority.projects` — project slugs, first listed goes first. Known
 # projects = slugs of the roots tooling already saw on this machine (no registry):
 # run/open-roots lines + run/dispatches/*.json `project_root` + the cwd project.
-def _known_project_slugs():
+def _known_project_roots():
     roots = set()
     try:
         for ln in (prdt_home() / "run" / "open-roots").read_text(encoding="utf-8", errors="replace").split("\n"):
@@ -5426,7 +5426,11 @@ def _known_project_slugs():
     cwd_root = find_project_root()
     if cwd_root:
         roots.add(str(cwd_root))
-    slugs = {project_slug(r) for r in roots}
+    return roots
+
+
+def _known_project_slugs():
+    slugs = {project_slug(r) for r in _known_project_roots()}
     return sorted(x for x in slugs if x)
 
 
@@ -5614,8 +5618,9 @@ def cmd_settings(args):
 
 # ── tickets / history ─────────────────────────────────────────────────────────
 
-def next_ticket_id(root):
-    """The next `T-NNN` — a global counter unique across every ticket dir
+def next_ticket_id(root, prefix=None):
+    """The next `T-NNN` (`prefix` given → the next `T-<prefix>-NNN`, that
+    product's own counter, T-1298) — a global counter unique across every ticket dir
     (contracts §Tickets: "moving a file never renumbers it"), so this reads
     every dir under `docs/tickets/` (current version · backlog · older
     versions), never just the current one. Both the FILENAME and the
@@ -5625,7 +5630,7 @@ def next_ticket_id(root):
     from reissuing it."""
     # T-1104: one number space per project — every product's dir + _shared.
     max_n = 0
-    idre = re.compile(r"^T-(\d+)$")
+    idre = re.compile(rf"^T-{prefix}-(\d+)$" if prefix else r"^T-(\d+)$")
     for _prod, tdir in product_docs_dirs(root, "tickets"):
         if not tdir.is_dir():
             continue
@@ -5642,7 +5647,73 @@ def next_ticket_id(root):
     # Contracts §Tickets: "the `T-NNN` form … at least three digits, zero-
     # padded: a first ticket is `T-001`" — `:03d` pads to 3 and widens on its
     # own once the counter needs more (T-685 fix; PO-observed `T-1`).
-    return f"T-{max_n + 1:03d}"
+    return f"T-{prefix}-{max_n + 1:03d}" if prefix else f"T-{max_n + 1:03d}"
+
+
+# T-1298 (format: T-1314 = 1) — per-product ticket ids `T-<PREFIX>-<n>`. PREFIX is
+# consonants only, so it never reads as a legacy id part (`T-P4-120`, `T-PATCH-281`).
+TICKET_PREFIX_RE = re.compile(r"\A[BCDFGHJKLMNPQRSTVWXYZ]{1,8}\Z")
+
+
+def _claude_project_roots():
+    """Every directory key of `~/.claude.json projects` — Claude Code's own list of
+    the folders it ran in, which `prdt init` also writes for each project it sets
+    up (`set_trust_accepted`). A project never opened since is still listed here;
+    run/open-roots and dispatch markers only hold the recent ones."""
+    data = read_json(Path.home() / ".claude.json")
+    projs = data.get("projects") if isinstance(data, dict) else None
+    return {k for k in (projs if isinstance(projs, dict) else ()) if isinstance(k, str) and k.startswith("/")}
+
+
+def _machine_ticket_prefixes(root):
+    """Every prefix recorded in `.prdt/config.json ticket_prefixes` of the projects
+    on this machine: the roots tooling has seen (`_known_project_roots`) plus every
+    folder in `~/.claude.json projects`, this one included."""
+    seen = set()
+    for r in _known_project_roots() | _claude_project_roots() | {str(root)}:
+        cfg = read_json(Path(r) / ".prdt" / "config.json")
+        tp = cfg.get("ticket_prefixes") if isinstance(cfg, dict) else None
+        for v in (tp.values() if isinstance(tp, dict) else ()):
+            if isinstance(v, str) and TICKET_PREFIX_RE.match(v):
+                seen.add(v)
+    return seen
+
+
+def ticket_prefix(root, product, names, persist=True):
+    """The fixed id prefix of `product` (one of `names`, the project's products).
+    Recorded → that value, never re-derived. Else: the name minus the leading part
+    every product name shares (cut at a hyphen), vowels dropped, the first 3
+    letters; a prefix any project on this machine already holds → one consonant
+    more. Recorded in `.prdt/config.json ticket_prefixes` unless `persist` is off."""
+    cfg_path = Path(root) / ".prdt" / "config.json"
+    cfg = read_json(cfg_path)
+    if not isinstance(cfg, dict):
+        sys.exit("prdt tickets new: .prdt/config.json is unreadable — no ticket written")
+    tp = cfg.get("ticket_prefixes")
+    if tp is not None and not isinstance(tp, dict):
+        sys.exit("prdt tickets new: .prdt/config.json `ticket_prefixes` is not an object — no ticket written")
+    tp = tp or {}
+    if product in tp:
+        fixed = tp[product]
+        if not (isinstance(fixed, str) and TICKET_PREFIX_RE.match(fixed)):
+            sys.exit(f"prdt tickets new: .prdt/config.json `ticket_prefixes.{safe_label(product)}` "
+                     f"is not 1–8 upper-case consonants — no ticket written")
+        return fixed
+    common = os.path.commonprefix(list(names)) if len(names) > 1 else ""
+    common = common[:common.rfind("-") + 1]
+    cons = [c.upper() for c in product[len(common):] if c.isascii() and c.isalpha() and c.lower() not in "aeiou"]
+    taken = _machine_ticket_prefixes(root)
+    pick = next((c for c in ("".join(cons[:n]) for n in range(min(3, len(cons)), min(len(cons), 8) + 1))
+                 if c and c not in taken), None)
+    if pick is None:
+        sys.exit(f"prdt tickets new: no free id prefix for product {safe_label(product)} — every consonant "
+                 f"prefix of its name is held by a project on this machine. Record one by hand in "
+                 f".prdt/config.json, e.g. \"ticket_prefixes\": {{\"{safe_label(product)}\": \"<1–8 upper-case "
+                 f"consonants no other project uses>\"}}, then re-run — no ticket written")
+    if persist:
+        cfg["ticket_prefixes"] = {**tp, product: pick}
+        state_write(root, cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+    return pick
 
 
 def current_version_id(root, line=None):
@@ -5712,7 +5783,6 @@ def cmd_tickets_new(args, root):
     title = (getattr(args, "title", None) or "").strip() or None
     if title and any(c in title for c in "\r\n"):
         sys.exit("prdt tickets new: --title must be a single line")
-    tid = next_ticket_id(root)
     line = getattr(args, "line", None)
     # T-1084: an explicit placement. `--backlog` → backlog/; `--version [<product>/]vX.Y`
     # → that version's folder (created if absent). A product prefix on --version is
@@ -5732,12 +5802,24 @@ def cmd_tickets_new(args, root):
         if not is_version_path_id(bare):
             sys.exit(f"prdt tickets new: --version '{safe_label(str(explicit))}' is not a version id "
                      f"(v<N>[.<m>[.<p>]] or backlog) — no ticket written")
+    # T-1298: a product named by --product OR by --version's `<product>/` part.
+    asked_product = line
     if line is not None and line not in project_line_names(root):
         if line == _resource_project_slug(root):
             line = None
         else:
             sys.exit(f"prdt tickets new: --product {safe_label(line)} is not a product declared in "
                      f".prdt/config.json `products`")
+    # T-1298: `--product` in a project of two or more products → that product's own
+    # counter `T-<PREFIX>-<n>`; otherwise the one global `T-NNN` counter as before.
+    added = project_line_names(root)
+    if asked_product is not None and added:
+        home = product_dir_name(_resource_project_slug(root))
+        prod = line if line is not None else home
+        tid = next_ticket_id(root, ticket_prefix(root, prod, [home] + added,
+                                                 persist=not getattr(args, "dry_run", False)))
+    else:
+        tid = next_ticket_id(root)
     if explicit:
         version = join_line_id(line, split_line_id(explicit)[1])
     else:
@@ -6334,7 +6416,7 @@ def viewer_scratch_message(rel, kind):
 
 
 _VIEWER_BUNDLE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-_VIEWER_TICKET_PAGE_RE = re.compile(r"^T-\d+\.html$")
+_VIEWER_TICKET_PAGE_RE = re.compile(r"^T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+\.html$")
 
 
 def _viewer_bundle_name(name):
@@ -6534,7 +6616,7 @@ def viewer_anchor(root, target):
     the caller then opens the file itself. Keys mirror the page's own anchor
     table (render.mjs `buildAnchors`): ticket → its id, wiki page → its slug,
     any other document → its repo-relative path."""
-    if re.fullmatch(r"T-\d+", target):
+    if re.fullmatch(r"T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+", target):
         return target
     # T-973: a `path#section` target (the `[ctx].prd_path` form,
     # `docs/prd/PRD.md#v1.13`) names the document — the viewer opens a PRD as
@@ -7181,7 +7263,7 @@ def decisions_collect(root, words, feature=None):
         rev = ""
         for ln in log.splitlines():
             if _DEC_REVERSED_RE.search(ln):
-                ids = [i for i in re.findall(r"T-\d+", ln) if i != row["id"]]
+                ids = [i for i in re.findall(r"T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+", ln) if i != row["id"]]
                 if ids:
                     rev = ids[0]
         recs.append({"id": row["id"], "date": row["closed"] or row["created"] or "",
@@ -12501,7 +12583,7 @@ def _resource_line(root):
     ct = st.get("current_task") if isinstance(st, dict) else None
     if isinstance(ct, dict):
         tid = ct.get("ticket_id")
-        if isinstance(tid, str) and re.match(r"^T-\d+$", tid):
+        if isinstance(tid, str) and re.match(r"^T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+$", tid):
             if prods:
                 for prod, tdir in product_docs_dirs(root, "tickets"):
                     if prod is not None and (any(tdir.glob(f"*/{tid}.md")) or (tdir / f"{tid}.md").exists()):
@@ -13483,7 +13565,7 @@ PRD_REVERSED_NONE_ROW = "- 없음"
 # slugs (e.g. `decision--v1.10-structure-round`) resolve; a leading/trailing/
 # doubled dot still fails since the separator only sits between alnum runs.
 PRD_REVERSED_ROW_RE = re.compile(
-    r"^- (\[\[decision--[a-z0-9]+([.-][a-z0-9]+)*\]\]|T-[0-9]+) — .+$")
+    r"^- (\[\[decision--[a-z0-9]+([.-][a-z0-9]+)*\]\]|T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]+) — .+$")
 
 
 
@@ -14454,7 +14536,7 @@ def discipline_caps_warnings(droot):
 # NO PUSH, NO REMOTE PR (T-748 A): nothing in this section names a remote, and
 # `track` is exempt from the meta backup tick too (maybe_meta_backup), so a
 # track command never pushes anything anywhere.
-TRACK_ID_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+TRACK_ID_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")  # T-1298: T-NNN or T-<PREFIX>-<n>
 TRACK_BASES = ("dev", "main")
 TRACK_LOCK = "prdt-track-land.lock"
 TRACK_LOCKFILES = ("pnpm-lock.yaml", "package-lock.json", "yarn.lock")
@@ -16041,9 +16123,9 @@ SCHEDULE_LOG = "schedule.jsonl"
 SCHEDULE_CLASSES = ("followed", "deviated", "continuation", "off-graph")
 SCHEDULE_MODEL_TIERS = ("sonnet", "opus", "haiku", "fable")
 # Same token rule as prdt-post-dispatch.sh's TICKET_TOKEN_RE (`T-682`,
-# `d-T682-…`; never the `T-4` of `GPT-4`, never `T-68` inside `T-6829`).
-SCHEDULE_TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T-?([0-9]{1,5})(?![0-9])")
-SCHEDULE_ID_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+# `d-T682-…`, `T-RCH-002`; never the `T-4` of `GPT-4`, never `T-68` inside `T-6829`).
+SCHEDULE_TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T(?:-([BCDFGHJKLMNPQRSTVWXYZ]{1,8})-|-?)([0-9]{1,5})(?![0-9])")
+SCHEDULE_ID_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")
 SCHEDULE_REPORT_BEGIN = "<!-- prdt:schedule-report:begin — `prdt schedule report` 가 이 구간을 다시 쓴다. 손으로 고치지 않는다. -->"
 SCHEDULE_REPORT_END = "<!-- prdt:schedule-report:end -->"
 # The PO-habit clause the off-path warning quotes — a test pins it verbatim
@@ -16081,7 +16163,7 @@ def schedule_ticket_for_ctx(ctx, tickets):
         if isinstance(field, str):
             m = SCHEDULE_TICKET_TOKEN_RE.search(field)
             if m:
-                return f"T-{m.group(1)}", "token"
+                return (f"T-{m.group(1)}-{m.group(2)}" if m.group(1) else f"T-{m.group(2)}"), "token"
     return None, None
 
 
@@ -21007,7 +21089,7 @@ def _cloud_ls_remote(code, ref):
     return "", None
 
 
-CLOUD_REF_RE = re.compile(r"^refs/heads/ci/T-\d+/[A-Za-z0-9._-]+$")
+CLOUD_REF_RE = re.compile(r"^refs/heads/ci/T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+/[A-Za-z0-9._-]+$")
 
 
 def _cloud_delete_ref(code, ref):
@@ -21301,7 +21383,7 @@ def cmd_test_cloud(args):
         return
     tid = args.ticket
     if not (isinstance(tid, str) and TRACK_ID_RE.match(tid)):
-        _cloud_die("the ticket id must look like T-NNN", 2)
+        _cloud_die("the ticket id must look like T-NNN or T-<PREFIX>-<n>", 2)
     if args.shards < 1:
         _cloud_die("--shards must be 1 or more", 2)
     repo = cloud_github_repo(code)

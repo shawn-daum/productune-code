@@ -71,7 +71,8 @@ describe('tickets new hint (T-992)', () => {
     const r = run(root, ['tickets', 'new', '--type', 'impl', '--slug', 'fresh', '--line', 'android'])
     expect(r.status).toBe(0)
     expect(r.stderr).toContain('android/v2.1#login')
-    expect(fs.existsSync(path.join(root, 'docs/tickets/android/v2.1/T-007.md'))).toBe(true)
+    // T-1298: a named added product numbers on its own counter (android → NDR).
+    expect(fs.existsSync(path.join(root, 'docs/tickets/android/v2.1/T-NDR-001.md'))).toBe(true)
   })
   test('no hint with --prd-item, for decision tickets, or in backlog', () => {
     const root = project()
