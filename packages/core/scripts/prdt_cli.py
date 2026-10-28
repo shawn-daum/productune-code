@@ -17229,6 +17229,8 @@ def cmd_doctor(_args):
         ("bin helper modules", FAMILY_DE, lambda: bin_helper_warnings()),
         # T-977: a broken project word list is skipped by the write-time hook
         ("project word list", FAMILY_PROJECT, lambda: wordlist_project_warnings(root)),
+        # T-1304: a broken canon entry is skipped by the hook too — say so here
+        ("canon word list", FAMILY_DE, lambda: wordlist_canon_warnings()),
         # meta-cli bridge (dist/bin/meta-cli.cjs) behind packages/core/src (T-731) —
         # a BUILD staleness, not a mirror-content diff like the three checks
         # around it, but the same family: a committed fix binds nothing until
@@ -19388,13 +19390,16 @@ def _wordlist_normalize(e):
     return out
 
 
-def wordlist_entries(lang, root=None, warnings=None, surface=None):
+def wordlist_entries(lang, root=None, warnings=None, surface=None, lenient_canon=False):
     """Canon list for `lang` merged with the project's local one (by `word`,
     which is `concept` in schema 2). Each returned entry carries its compiled
     `_res` and `_except` regexes. With a `surface`, an entry whose `scope` does
     not list it is left out (no `scope` = every surface).
     With a `warnings` list, a broken PROJECT file or entry is reported there and
     skipped (canon still applies); without one it raises WordlistError.
+    `lenient_canon` (with a `warnings` list) treats a broken CANON file or entry
+    the same way — the write-time hook and doctor (T-1304: one bad canon entry
+    must not silence every check); `check` / `export` keep raising.
     A `lang` that is not BCP-47-shaped always raises (T-1080: no path use)."""
     if not wordlist_lang_ok(lang):
         raise WordlistError(f"prdt wordlist: {one_line(repr(lang))} is not a BCP-47 language tag (e.g. ko, en, zh-Hant)")
@@ -19408,20 +19413,23 @@ def wordlist_entries(lang, root=None, warnings=None, surface=None):
     proj = _wordlist_project_file(root, lang)
     if proj and proj.is_file():
         sources.append(proj)
+    def lenient(src):
+        return warnings is not None and (str(src) == str(proj) or lenient_canon)
     for src in sources:
         try:
             raw = _wordlist_read(src)
         except WordlistError as ex:
-            if warnings is None or src != proj:
+            if not lenient(src):
                 raise
-            warnings.append(f"{ex} (project list skipped, canon list still applied)")
+            warnings.append(f"{ex} (project list skipped, canon list still applied)" if src == proj
+                            else f"{ex} (canon list skipped)")
             continue
         for e in raw:
             try:
                 n = _wordlist_normalize(e)
             except ValueError as ex:
                 msg = f"prdt wordlist: {src}: {ex} ({e!r})"
-                if warnings is None or src != proj:
+                if not lenient(src):
                     raise WordlistError(msg)
                 warnings.append(msg + " (entry skipped)")
                 continue
@@ -19439,7 +19447,7 @@ def wordlist_entries(lang, root=None, warnings=None, surface=None):
             e["_except"] = [re.compile(x) for x in (e.get("except_line") or [])]
         except re.error as ex:
             msg = f"prdt wordlist: {e['_src']}: entry {w!r}: bad pattern: {ex}"
-            if warnings is None or e["_src"] != str(proj):
+            if not lenient(e["_src"]):
                 raise WordlistError(msg)
             warnings.append(msg + " (entry skipped)")
             continue
@@ -19690,9 +19698,9 @@ def _wordlist_repl(replace):
     return " · ".join(one_line(r) for r in replace)
 
 
-def wordlist_check_text(text, name, lang_arg, root, warnings=None, surface=None):
+def wordlist_check_text(text, name, lang_arg, root, warnings=None, surface=None, lenient_canon=False):
     lang = lang_arg or wordlist_detect_lang(text, root)
-    entries = wordlist_entries(lang, root, warnings, surface)
+    entries = wordlist_entries(lang, root, warnings, surface, lenient_canon)
     return lang, wordlist_scan(text, entries, _wordlist_kind(name), warnings)
 
 
@@ -19707,6 +19715,24 @@ def wordlist_project_warnings(root):
         w = []
         try:
             wordlist_entries(f.stem, root, w)
+        except WordlistError as ex:
+            w.append(str(ex))
+        warns.extend(f"wordlist: {x}" for x in w)
+    return warns
+
+
+def wordlist_canon_warnings():
+    """Doctor (T-1304): every canon `discipline/wordlist/<lang>.json` that is
+    unreadable, malformed or carries a bad entry — the hook skips it with a
+    warning, `check` fails on it."""
+    d = wordlist_canon_dir()
+    if not d:
+        return Skipped("no canon word list (discipline/wordlist/)")
+    warns = []
+    for f in sorted(d.glob("*.json")):
+        w = []
+        try:
+            wordlist_entries(f.stem, None, w, lenient_canon=True)
         except WordlistError as ex:
             w.append(str(ex))
         warns.extend(f"wordlist: {x}" for x in w)
@@ -19735,7 +19761,7 @@ def _wordlist_hook(root_hint):
         if not surface:
             return
         warns = []
-        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns, surface)
+        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns, surface, lenient_canon=True)
     except Exception:
         return
     if not hits and not warns:
