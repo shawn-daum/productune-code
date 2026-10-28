@@ -339,6 +339,6 @@ describe('viewer/lib/render.mjs — T-707: an empty group shows the Designer\'s 
     const html = renderEmptyGroupFixture()
     const storeMatch = /<section[^>]*data-store="artifact"[^>]*>[\s\S]*?<\/section>/.exec(html)
     expect(storeMatch).not.toBeNull()
-    expect(storeMatch![0]).toContain('아직 산출물이 없어요')
+    expect(storeMatch![0]).toContain('아직 아티팩트가 없어요')
   })
 })

@@ -78,7 +78,7 @@ describe('the record shapes the ntf-pm products already write', () => {
   })
 })
 
-describe('viewer-head:multi — two products: the selected header + a 제품 줄 table with 배포 · 개발 columns', () => {
+describe('viewer-head:multi — two products: the selected header + a 제품 table with 배포 · 개발 columns', () => {
   function multi(): string {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-dr-m-')))
     write(root, '.prdt/config.json', JSON.stringify({ slug: 'ntf-pm', products: [{ name: 'ntf-archive' }] }))

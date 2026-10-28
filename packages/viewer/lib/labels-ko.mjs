@@ -92,7 +92,7 @@ const HOME = {
     hint: '배포된 버전은 이 제품의 DEPLOY.md 에 한 번 적히면 여기 보여요.',
     meta: (at, ref) => [at ? `배포 ${at}` : '', ref ? `ref ${ref}` : ''].filter(Boolean).join(' · '),
     noOpen: '열린 버전 없음',
-    linesHead: '제품 줄',
+    linesHead: '제품',
     linesHeaders: ['제품', '배포', '개발', '단계'],
   },
   stageDone: (done, total) => `티켓 완료 ${done}/${total}`,
@@ -111,9 +111,9 @@ const HOME = {
   scopeLaneRule: '레인 숫자 = 그 레인 티켓 전체 · 항목 숫자 = 그 항목 티켓 · 항목은 티켓이 가장 많은 레인 아래',
   scopeFixTag: (n) => `형식 고치기 ${n}`,
   scopeFixTitle: '버전 없이 키만 적혀 있어요. <버전>#<키> 형식으로 고쳐 주세요.',
-  waitDec: '내 결정 대기',
+  waitDec: '결정사항',
   waitDecEmpty: '기다리는 결정이 없어요.',
-  waitReq: '사용자 작업 대기',
+  waitReq: '요청사항',
   waitReqEmpty: '지금 할 일이 없어요.',
   dependency: 'dependency',
   beforeBuild: 'Build 진입 전',
@@ -128,7 +128,7 @@ const HOME = {
   chipRider: '라이더',
   chipTurn: '사용자를 기다림',
   legendMainCritical: '메인 패스 · 크리티컬 패스',
-  legendRider: '메인 패스 외의 best effort 작업',
+  legendRider: '메인 패스 밖에서 남는 자리에 맡기는 티켓',
   legendDone: '끝난 티켓',
   nodeOpen: (id) => `${id} 상세 열기`,
 }
@@ -305,7 +305,7 @@ const DISCIPLINE_LOAD = {
   source: '그림 출처:',
   sourceNote: '뷰어를 만들 때마다 다시 그린다.',
   personas: [['po', 'PO'], ['designer', 'Designer'], ['developer', 'Developer'], ['qa', 'QA']],
-  lane1: { head: '1. 세션 시작 (상시)', sub: '세션 · 작업자가 시작할 때 전부 들어온다', parts: '정본 규율 · 파트 {N}개', layers: '파트 뒤에 붙는 블록', part: 'part {N}' },
+  lane1: { head: '1. 세션 시작 (상시)', sub: '세션 · 페르소나가 시작할 때 전부 들어온다', parts: '정본 규율 · 파트 {N}개', layers: '파트 뒤에 붙는 블록', part: 'part {N}' },
   lane2: { head: '2. 필요할 때 (트리거)', sub: '상시 문서의 한 줄이 이 문서를 가리킬 때 읽는다', annex: 'contracts 부속 문서 · {N}', playbooks: '{P} playbook · {N} (메뉴의 when 줄)', override: 'playbook override' },
   lane3: { head: '3. 도구를 쓸 때마다 (훅)', sub: '이벤트마다 검사하고, 막거나 기록한다', allMatcher: '(전부)', dimNoneForPo: '흐린 훅: 없음 (PO 는 전부 받는다)', dimForOthers: '흐린 훅: PO 세션에서만 움직인다' },
   precedence: {
@@ -317,7 +317,7 @@ const DISCIPLINE_LOAD = {
   detail: { path: '경로', when: '원문 조건 (when)', matcher: 'matcher', event: '이벤트', size: '크기', poOnly: 'PO 세션에서만 움직인다', reads: '읽는 곳', scope: '받는 쪽' },
   partDetail: '한 파트 {L} 바이트 이하 · 이 파트 {B} 바이트',
   annexNote: 'contracts.md 의 한 줄이 이 문서를 가리킬 때 읽는다',
-  menuNote: '메뉴 표의 when 이 맞을 때 작업자가 스스로 고른다',
+  menuNote: '메뉴 표의 when 이 맞을 때 페르소나가 스스로 고른다',
   overrideItem: ['~/.prdt/overrides/playbooks/<name>.md', '그 playbook 을 고른 순간 --playbook <name> 으로 읽는다'],
   overrideDetail: '기기 override 블록 끝의 목록에 이름이 있을 때만',
   planMissing: '세션 시작 파트를 읽지 못했어요.',
@@ -349,7 +349,7 @@ const ARTIFACT = {
   sidebarLabel: '아티팩트',
   bucketSuffix: ' 버킷', // §G count-badge: "<bucket> 버킷 · N건" (목업 실측)
   // T-705 §E: 원문 '이 버킷에는 산출물이 없다.'의 목업 실측 문안(둘째 줄 포함, §A keep).
-  empty: '아직 산출물이 없어요.<br><span style="font-size:11px;">버전이 열리면 이 버킷에 manifest.json 이 생겨요.</span>',
+  empty: '아직 아티팩트가 없어요.<br><span style="font-size:11px;">버전이 열리면 이 버킷에 manifest.json 이 생겨요.</span>',
   // T-705 §B: raw f.status 를 pill 없이 그대로 찍던 것 → pill + 한글 텍스트.
   statusText: { pending: '대기', approved: '승인', archived: '보관' },
   countUnit: '건',
@@ -383,7 +383,7 @@ const PRD_READING = {
   outlineHeading: '목차',
   decideHeading: '결정할 것',
   questionsHeading: '남은 질문',
-  ticketsHeading: '결정 대기 티켓',
+  ticketsHeading: '결정사항',
   goToPrd: 'PRD 로 이동',
   expandAll: '모두 펼치기',
   collapseAll: '모두 접기',
@@ -428,7 +428,7 @@ const PRD_READING = {
 // the detail's attribute row; no explanatory line).
 const FRAME = {
   openInNewTab: '새 탭에서 열기',
-  frameTitle: '산출물 미리보기',
+  frameTitle: '아티팩트 미리보기',
 }
 
 const FILE_HREF_NOTE =
