@@ -299,7 +299,7 @@ def find_project_root(start=None):
     return hit
 
 
-_TRACK_DIR_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+_TRACK_DIR_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")  # T-1298: T-NNN or T-<PREFIX>-<n>
 
 
 def _inside_track_worktree(p):
@@ -14536,7 +14536,7 @@ def discipline_caps_warnings(droot):
 # NO PUSH, NO REMOTE PR (T-748 A): nothing in this section names a remote, and
 # `track` is exempt from the meta backup tick too (maybe_meta_backup), so a
 # track command never pushes anything anywhere.
-TRACK_ID_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+TRACK_ID_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")  # T-1298: T-NNN or T-<PREFIX>-<n>
 TRACK_BASES = ("dev", "main")
 TRACK_LOCK = "prdt-track-land.lock"
 TRACK_LOCKFILES = ("pnpm-lock.yaml", "package-lock.json", "yarn.lock")
@@ -21089,7 +21089,7 @@ def _cloud_ls_remote(code, ref):
     return "", None
 
 
-CLOUD_REF_RE = re.compile(r"^refs/heads/ci/T-\d+/[A-Za-z0-9._-]+$")
+CLOUD_REF_RE = re.compile(r"^refs/heads/ci/T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+/[A-Za-z0-9._-]+$")
 
 
 def _cloud_delete_ref(code, ref):
@@ -21383,7 +21383,7 @@ def cmd_test_cloud(args):
         return
     tid = args.ticket
     if not (isinstance(tid, str) and TRACK_ID_RE.match(tid)):
-        _cloud_die("the ticket id must look like T-NNN", 2)
+        _cloud_die("the ticket id must look like T-NNN or T-<PREFIX>-<n>", 2)
     if args.shards < 1:
         _cloud_die("--shards must be 1 or more", 2)
     repo = cloud_github_repo(code)

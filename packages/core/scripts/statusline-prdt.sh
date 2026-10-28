@@ -75,7 +75,7 @@ while [ -n "$D" ] && [ "$D" != "/" ]; do
   [ -f "$D/.prdt/po-state.json" ] && ROOT="$D"
   # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary — never walk out of it
   if [ -f "$D/.git" ] && [ "$(basename "$(dirname "$D")")" = "tracks" ]; then
-    case "${D##*/}" in T-[0-9]|T-[0-9][0-9]|T-[0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9][0-9]) ROOT=""; break ;; esac
+    [[ "${D##*/}" =~ ^T-([BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}$ ]] && { ROOT=""; break; }   # T-1298: T-NNN or T-<PREFIX>-<n>
   fi
   UP="$(dirname "$D")"
   [ "$UP" = "$D" ] && break

@@ -77,7 +77,7 @@ while [ $# -gt 0 ]; do
   esac
   shift 2
 done
-[[ $TICKET =~ ^T-[0-9]+$ ]] || refuse "--ticket must be T-NNN"
+[[ $TICKET =~ ^T-([BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]+$ ]] || refuse "--ticket must be T-NNN or T-<PREFIX>-<n>"
 [[ $SESSION =~ ^[A-Za-z0-9._-]+$ ]] || refuse "--session must be [A-Za-z0-9._-] only"
 [[ $SHA =~ ^[0-9a-f]{40}$ ]] || refuse "--sha must be a full commit id"
 [[ $RUNNER_SHA =~ ^[0-9a-f]{40}$ ]] || refuse "--runner-sha must be a full commit id"

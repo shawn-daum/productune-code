@@ -2374,15 +2374,21 @@ export function buildAnchors(data) {
 
 /** Highest ticket number the page lists — an absent `#T-<n>` at or below it names a ticket that existed once (ids are one global counter, contracts §Tickets), i.e. moved or removed since generation: the `stale` notice rather than `unknown`. */
 export function maxTicketNumber(data) {
-  let max = 0
+  return maxTicketByPrefix(data)[''] || 0
+}
+
+/** T-1298: highest number per counter — `''` for plain `T-<n>`, `<PREFIX>` for a product's own `T-<PREFIX>-<n>` (each product numbers on its own). */
+export function maxTicketByPrefix(data) {
+  const max = {}
   const see = (id) => {
-    const m = /^T-(\d+)$/.exec(id || '')
-    if (m) max = Math.max(max, Number(m[1]))
+    const m = /^T-(?:([BCDFGHJKLMNPQRSTVWXYZ]{1,8})-)?(\d+)$/.exec(id || '')
+    if (m) { const k = m[1] || ''; max[k] = Math.max(max[k] || 0, Number(m[2])) }
   }
   for (const set of allLineTickets(data)) {
     for (const t of set.included) see(t.frontmatter.id)
     for (const b of set.omitted) for (const t of b.tickets) see(t.frontmatter.id)
   }
+  if (!('' in max)) max[''] = 0
   return max
 }
 
@@ -3883,8 +3889,9 @@ ${PRD_READING_SCRIPT}
   function showHashNotice(raw) {
     var notice = document.getElementById('hash-notice');
     if (!notice) return;
-    var m = /^T-([0-9]+)$/.exec(raw);
-    var stale = (m !== null && Number(m[1]) <= DETAIL_DATA.maxTicket) || raw.indexOf('docs/') === 0;
+    var m = /^T-(?:([BCDFGHJKLMNPQRSTVWXYZ]{1,8})-)?([0-9]+)$/.exec(raw);
+    var top = m !== null ? DETAIL_DATA.maxTicket[m[1] || ''] : undefined;
+    var stale = (top !== undefined && Number(m[2]) <= top) || raw.indexOf('docs/') === 0;
     notice.querySelector('.js-notice-id').textContent = '#' + raw;
     notice.querySelector('.js-notice-text').textContent = stale ? HASH_NOTICE.stale : HASH_NOTICE.unknown;
     notice.hidden = false;
@@ -4404,7 +4411,7 @@ export function renderPage({
     // detail-row — its body renders directly in its own sidebar group's pane
     // (prdStoreInner) — so DETAIL_DATA never needs one.
     anchors,
-    maxTicket: maxTicketNumber(data),
+    maxTicket: maxTicketByPrefix(data),
     // T-885: bucket → sibling data-file src, written by the generator only.
     pastTickets: pastTicketSrc,
     // T-803 (T-897 = B): { id, src } — this file's build id and its sibling
