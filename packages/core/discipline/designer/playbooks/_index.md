@@ -7,4 +7,5 @@
 | hifi | Define screen set — the version's navigable prototype · user-facing screens after a DS direction is settled · new visual pattern or complex interaction to convey | sonnet/high |
 | inject-edit | edit to hook-injected text — discipline · playbook · annex · agent stub · override line · hot↔cold move · corpus sweep | opus/high |
 | prd-clarity | Define entry · net-new or changed product scope · PRD refinement | opus/high |
+| report | report page · slide deck the user reads | sonnet/medium |
 | scope-challenge | Define entry on a net-new version whose scope arrived already complete — the PO has no fork material to put to the user | opus/high |
