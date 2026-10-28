@@ -657,8 +657,7 @@ while d and d != "/":
         state_path = p
     # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary
     if (os.path.isfile(os.path.join(d, ".git")) and os.path.basename(os.path.dirname(d)) == "tracks"
-            and os.path.basename(d)[:2] == "T-" and os.path.basename(d)[2:7].isascii()
-            and os.path.basename(d)[2:].isdigit() and len(os.path.basename(d)) <= 7):
+            and re.match(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z", os.path.basename(d))):  # T-1298: T-NNN or T-<PREFIX>-<n>
         state_path = None
         break
     up = os.path.dirname(d)
@@ -953,7 +952,7 @@ _guard_notice, _guard_marker = guard_begin(
 STAGES = ("define", "build", "ship", "retro", "idle")
 ASSIGNEES = ("po", "designer", "developer", "qa", "user")
 VERSION_RE = re.compile(r"\Av[0-9]{1,4}(?:\.[0-9]{1,4}){0,2}\Z")
-TICKET_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+TICKET_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")
 
 # T-517: `state_path` is a DERIVED PATH and it is interpolated INLINE in the guard
 # line below, so a project directory whose NAME carries a line break would put the
@@ -1041,7 +1040,7 @@ def waiting_lists(root):
                 dec.add(tid)
             elif ma and ma.group(1) == "user":
                 req.add(tid)
-    key = lambda t: int(t[2:])
+    key = lambda t: (t.rpartition("-")[0], int(t.rpartition("-")[2]))   # T-1298: T-NNN, then T-<PREFIX>-<n>
     return sorted(dec, key=key), sorted(req, key=key)
 
 

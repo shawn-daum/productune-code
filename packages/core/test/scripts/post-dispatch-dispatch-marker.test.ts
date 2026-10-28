@@ -641,3 +641,22 @@ describe('T-788 — _reconcile never keeps a guessed ticket', () => {
     })
   })
 })
+
+// T-1298 (QA d-v116-t1298-qa1 rows 2 · 4): a per-product id `T-<PREFIX>-<n>` in
+// the dispatch's `[ctx]` lands on the marker whole — never None, never a later T-NNN.
+describe('T-1298: marker ticket id from a product-prefixed id', () => {
+  beforeEach(() => { root = makeProject(); prdtHome = tmp('prdt-t1298-home-') })
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(prdtHome, { recursive: true, force: true }) })
+
+  for (const [label, ctx] of [
+    ['dispatch_id', { slug: 'nope', goal: 'g', dispatch_id: 'd-v116-T-RCH-002-dev1' }],
+    ['goal', { slug: 'nope', goal: 'work T-RCH-002', dispatch_id: 'd-v116-x' }],
+    ['goal with a later T-NNN', { slug: 'nope', goal: 'T-RCH-002 replaces T-5', dispatch_id: 'd-v116-x' }],
+  ] as const) {
+    test(`SubagentStart reads T-RCH-002 from the ${label}`, () => {
+      const t = writeTranscript([{ toolUse: 'toolu_r', ctx }])
+      expectSilent(subagentStart({ agentId: 'agent-r', transcriptPath: t }))
+      expect(readMarker(prdtHome, 'agent-r').ticket_id).toBe('T-RCH-002')
+    })
+  }
+})

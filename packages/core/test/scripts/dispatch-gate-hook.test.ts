@@ -1732,6 +1732,19 @@ describe('T-1151: a user-started ticket needs the user\'s purpose and confirmati
     expect(d.deny).toContain('[prdt dispatch gate]')
   })
 
+  test('T-1298: a product-prefixed ticket id (T-RCH-002) named in the prompt is judged and echoed whole', () => {
+    const rel = 'docs/productune/tickets/v1.14/T-RCH-002.md'
+    const proj = projWith({ [rel]: ticket({ id: 'T-RCH-002', slug: SLUG, type: 'impl' }, T1179_AT_DISPATCH) })
+    const d = decision({ cwd: proj, subagentType: 'prdt-developer',
+      prompt: `${ctxLine({ ...VALID_CTX, slug: SLUG, prd_path: PRD14 })}\n\nTicket: ${rel} (T-RCH-002).` })
+    expect(d.deny).toBeTruthy()
+    expect(d.deny).toContain('T-RCH-002')
+    expect(d.deny).not.toContain('this ticket')
+    const ok = projWith({ [rel]: ticket({ id: 'T-RCH-002', slug: SLUG, type: 'impl' }, withBoth) })
+    expect(decision({ cwd: ok, subagentType: 'prdt-developer',
+      prompt: `${ctxLine({ ...VALID_CTX, slug: SLUG, prd_path: PRD14 })}\n\nTicket: T-RCH-002.` })).toEqual({})
+  })
+
   test('a denied dispatch writes no schedule row', () => {
     const proj = projWith({ [REL]: ticket({ id: 'T-1179', slug: SLUG }, T1179_AT_DISPATCH) })
     const before = fs.readdirSync(path.join(proj, '.prdt')).sort()

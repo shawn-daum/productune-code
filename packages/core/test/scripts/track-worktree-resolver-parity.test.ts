@@ -136,6 +136,27 @@ describe.skipIf(!READY)('track worktree is a project boundary for every resolver
   test('control: with the boundary neutralized every resolver reaches REALPROJ from the worktree', () => {
     for (const [who, ans] of Object.entries(answers(f, f.deep, true))) expect(ans, `${who} unpatched`).toBe('REALPROJ')
   })
+  test('T-1298: a product-prefixed track (tracks/T-RCH-002) is the same boundary for every resolver', () => {
+    const wt = path.join(f.proj, 'tracks', 'T-RCH-002')
+    const deep = path.join(wt, 'packages', 'core')
+    fs.mkdirSync(deep, { recursive: true })
+    fs.writeFileSync(path.join(wt, '.git'), 'gitdir: /nonexistent\n')
+    for (const cwd of [wt, deep]) {
+      for (const [who, ans] of Object.entries(answers(f, cwd))) expect(ans, `${who} from ${cwd}`).toBe('none')
+    }
+    // the twins with no observable answer above: each one's boundary regex reads the new form
+    for (const s of OTHER_TWINS) expect(fs.readFileSync(s, 'utf8'), path.basename(s)).toContain('[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}')
+    // CLI: `prdt track` ids, the track-dir shape and the cloud result ref take the new form; legacy T-P4-120 does not
+    const out = execFileSync('python3', ['-c', `
+import importlib.machinery, importlib.util
+l = importlib.machinery.SourceFileLoader("m", ${JSON.stringify(path.join(path.dirname(PRDT_CLI), 'prdt_cli.py'))})
+s = importlib.util.spec_from_loader("m", l); m = importlib.util.module_from_spec(s); l.exec_module(m)
+print([bool(m.TRACK_ID_RE.match(x)) for x in ("T-12", "T-RCH-002", "T-P4-120", "T-rch-2")],
+      bool(m._TRACK_DIR_RE.match("T-RCH-002")), bool(m.CLOUD_REF_RE.match("refs/heads/ci/T-RCH-002/s1")))
+`], { encoding: 'utf8' }).trim()
+    expect(out).toBe('[True, True, False, False] True True')
+  })
+
   test('the other python twins carry the same boundary block', () => {
     for (const s of OTHER_TWINS) {
       const src = fs.readFileSync(s, 'utf8')

@@ -288,7 +288,7 @@ const PRD_READING = {
   pairHeads: ['As-Is', 'To-Be'],
   pairCount: (n) => `${n} pair${n === 1 ? '' : 's'}`,
   groupCount: (g, n) => `Group ${g} · ${n} pair${n === 1 ? '' : 's'}`,
-  movedPrefix: /^\((v\d[\d.]*) (?:로 옮김|moved),\s*(T-\d+)\)\s*/,
+  movedPrefix: /^\((v\d[\d.]*) (?:로 옮김|moved),\s*(T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+)\)\s*/,
   movedTag: (v, t) => `moved to ${v} · ${t}`,
   movedTitle: 'Moved items',
   initialOpen: /^(합격선|Gate|What|Open Questions|As-Is → To-Be)(\s|$)/,
