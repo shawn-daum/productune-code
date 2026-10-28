@@ -433,3 +433,30 @@ describe.skipIf(!READY)('prdt settings — priority.projects (T-1247)', () => {
     expect(prdt('en', 'settings', 'set', 'priority.projects', 'm,a').status).toBe(0)
   })
 })
+
+// T-1274: a resolver that is present but did not answer in time is reported as slow, never as
+// missing — the old line sent the user to re-run install.sh for a busy machine.
+describe.skipIf(!READY)('prdt settings — resolver timeout', () => {
+  function slow(lang: 'ko' | 'en', ...args: string[]) {
+    const r = spawnSync('python3', [PRDT_CLI, ...args], {
+      cwd: prdtHome, encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: lang, PRDT_RESOLVER_TIMEOUT_S: '0.001' },
+    })
+    return { status: r.status, err: r.stderr }
+  }
+  test('settings names the timeout, not a missing file', () => {
+    const ko = slow('ko', 'settings')
+    expect(ko.status).toBe(1)
+    expect(ko.err.trim()).toBe(catalog.ko['settings.error.resolver_timeout'].replace('{seconds}', '0.001'))
+    expect(ko.err).not.toContain('찾지 못했어요')
+    const en = slow('en', 'settings', 'set', 'register.form', 'outline')
+    expect(en.status).toBe(1)
+    expect(en.err.trim()).toBe(catalog.en['settings.error.resolver_timeout'].replace('{seconds}', '0.001'))
+  })
+  test('register names the timeout, not a missing file', () => {
+    const r = slow('en', 'register', '--list')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('did not answer within 0.001 s')
+    expect(r.err).not.toContain('not found')
+  })
+})

@@ -4970,13 +4970,34 @@ def _resolver_timeout_s():
         return 10
 
 
+# Why the last `register_query` returned None: "missing" (no hook file, or an answer
+# that could not be read — a pre-T-586 mirror) or "timeout" (the hook is there but did
+# not finish inside `_resolver_timeout_s()`). T-1274: a timeout used to be reported as
+# "not found — re-run install.sh", sending the person to reinstall on a busy machine.
+_REGISTER_FAILURE = {"reason": None}
+
+
+def register_failure_reason():
+    return _REGISTER_FAILURE["reason"] or "missing"
+
+
+def _register_not_found_exit():
+    if register_failure_reason() == "timeout":
+        sys.exit(f"prdt register: resolver (prdt-audience-inject.sh) did not answer within "
+                 f"{_resolver_timeout_s():g} s — the file is there; retry when the machine is less busy")
+    sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+
+
 def register_query(mode, droot=None):
     """Ask the resolver — `--list` (the domain) or `--resolve` (values + warnings).
     The hook is the single source of truth for what is legal; this CLI never
-    re-implements the domain. None when the hook is absent or its answer could
-    not be read (a pre-T-586 mirror prints nothing for either flag)."""
+    re-implements the domain. None when the hook is absent, its answer could
+    not be read (a pre-T-586 mirror prints nothing for either flag), or it timed
+    out — `register_failure_reason()` tells which."""
+    _REGISTER_FAILURE["reason"] = None
     hook = _register_hook_path()
     if hook is None:
+        _REGISTER_FAILURE["reason"] = "missing"
         return None
     env = dict(os.environ)
     env["PRDT_HOME"] = str(prdt_home())
@@ -4986,9 +5007,15 @@ def register_query(mode, droot=None):
         r = subprocess.run(["bash", str(hook), mode], capture_output=True, text=True,
                            stdin=subprocess.DEVNULL, env=env, timeout=_resolver_timeout_s())
         out = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
-        return out if isinstance(out, dict) else None
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        _REGISTER_FAILURE["reason"] = "timeout"
         return None
+    except (OSError, ValueError):
+        out = None
+    if not isinstance(out, dict):
+        _REGISTER_FAILURE["reason"] = "missing"
+        return None
+    return out
 
 
 REGISTER_BODY_FM_KEYS = ("key", "value", "governs")
@@ -5003,6 +5030,9 @@ def register_warnings(droot):
     warns = []
     res = register_query("--resolve", droot)
     if res is None:
+        if register_failure_reason() == "timeout":
+            return Skipped(f"register resolver (prdt-audience-inject.sh) did not answer within "
+                           f"{_resolver_timeout_s():g} s — the machine is busy; re-run prdt doctor later")
         return Skipped("register resolver (prdt-audience-inject.sh) not found or pre-T-586 — "
                        "re-run install.sh")
     for w in res.get("warnings") or []:
@@ -5088,7 +5118,7 @@ def cmd_register(args):
     if args.list:
         dom = register_query("--list", droot)
         if dom is None:
-            sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+            _register_not_found_exit()
         if args.json:
             print(json.dumps(dom, ensure_ascii=False))
             return
@@ -5105,7 +5135,7 @@ def cmd_register(args):
     if action == "show":
         res = register_query("--resolve", droot)
         if res is None:
-            sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+            _register_not_found_exit()
         if args.json:
             print(json.dumps(res, ensure_ascii=False))
             return
@@ -5135,7 +5165,7 @@ def cmd_register(args):
             sys.exit(f"prdt register: set refuses an empty value for `{key}` — use `prdt register unset {key}` to remove it")
         dom = register_query("--list", droot)
         if dom is None:
-            sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+            _register_not_found_exit()
         spec = next((k for k in dom["keys"] if k["key"] == key), None)
         if spec is None:
             sys.exit(f"prdt register: unknown key `{key}` — keys: "
@@ -5506,6 +5536,8 @@ def cmd_settings(args):
     m = load_messages()
     entries = settings_entries(discipline_root())
     if entries is None:
+        if register_failure_reason() == "timeout":
+            sys.exit(msg(m, "settings.error.resolver_timeout", seconds=f"{_resolver_timeout_s():g}"))
         sys.exit(msg(m, "settings.error.resolver"))
     none = msg(m, "settings.value.none")
     shown = lambda v, e=None: (msg(m, e["none_key"]) if e and e.get("none_key") else none) if v is None else v
