@@ -519,7 +519,7 @@ def want_ticket:
   | if ($s | type) == "string" and ($s | test("^prdt-(designer|developer)$")) and $c != null
        and (($c.slug // null) | type) == "string" and ($c.slug | test("^[a-z0-9]+(-[a-z0-9]+)*$"))
        and (($c.prd_path // null) | type) == "string" and ($c.prd_path | test("^docs/([a-z0-9-]+/)?prd/PRD\\.md#v[0-9]+\\.[0-9]+$"))
-    then "\($c.slug) \($c.prd_path) \([.tool_input.prompt | scan("T-[0-9]+")] | unique | .[:8] | join(" "))" else "" end;
+    then "\($c.slug) \($c.prd_path) \([.tool_input.prompt | scan("T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]+")] | unique | .[:8] | join(" "))" else "" end;
 
 # T-695: two lines — does the resource cap apply to this call (any Agent
 # dispatch on PreToolUse — T-1171 dropped the `prdt-*` restriction), and the `[ctx]` verdict above (deny · warn ·
@@ -712,7 +712,7 @@ if [ -n "$WANT_TICKET" ]; then
         ' "$T_HITS" 2>/dev/null)"
         if [ -n "$T_VERDICT" ]; then
           T_ID="${T_HITS##*/}"; T_ID="${T_ID%.md}"
-          case "$T_ID" in T-[0-9]*) case "${T_ID#T-}" in *[!0-9]*) T_ID="this ticket" ;; esac ;; *) T_ID="this ticket" ;; esac
+          [[ "$T_ID" =~ ^T-([BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]+$ ]] || T_ID="this ticket"   # T-1298: T-NNN or T-<PREFIX>-<n>
           case "$T_VERDICT" in
             purpose) T_MISS="no user quote under \`### 목적\` (the user's purpose)"
                      T_NEXT="their reason already in their own words → quote it under \`### 목적\`; else ask why it matters, end your turn, quote the answer there. Your \`### 확인\` quote is a go-ahead (\"일단 시안 가져와봐\") → retitle it \`### 확인 (바로 진행)\` instead. Then re-dispatch." ;;
@@ -944,7 +944,7 @@ if [ -z "$MARK_BAD" ] && [ ${#MARK_FILES[@]} -gt 0 ]; then
         | {id: ((.agent_id // "") | tostring), t: ((.transcript // "") | tostring), age: ($now - $s),
            persona: ((.persona // "") | tostring), root: ((.project_root // "") | tostring),
            co: (if (.checkout | type) == "string" then .checkout else "" end),
-           ticket: ((.ticket_id // "") | tostring | if test("^T-[0-9]{1,5}$") then . else "" end),
+           ticket: ((.ticket_id // "") | tostring | if test("^T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}$") then . else "" end),
            model: (((.model // "default") | tostring) as $mm
                    | if ($mm | test("^(sonnet|opus|haiku|fable)$")) then $mm else "default" end),
            did: (if (.dispatch_id | type) == "string" then .dispatch_id else "" end),

@@ -182,7 +182,7 @@ except Exception:
 STAGES = ("define", "build", "ship", "retro", "idle")
 ASSIGNEES = ("po", "designer", "developer", "qa", "user")
 VERSION_RE = re.compile(r"\Av[0-9]{1,4}(?:\.[0-9]{1,4}){0,2}\Z")
-TICKET_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+TICKET_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")
 
 
 def token(raw, ok, absent=""):
@@ -512,7 +512,7 @@ def _fm_deps(head):
     fm = re.match(r"---\n(.*?)\n---", head, re.S)
     block = fm.group(1) if fm else head
     m = re.search(r"^deps:[ \t]*(.*(?:\n[ \t]+-[^\n]*)*)", block, re.M)
-    return re.findall(r"T-\d+", m.group(1)) if m else []
+    return re.findall(r"T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+", m.group(1)) if m else []
 
 
 def scan(base, row):
@@ -571,7 +571,8 @@ for r in rows:
 
 
 def _tid_key(t):
-    return int(t[2:])
+    head, _, n = t.rpartition("-")   # T-1298: `T-12` → ("T", 12), `T-RCH-001` → ("T-RCH", 1)
+    return head, int(n)
 
 
 dec = sorted(set(dec), key=_tid_key)

@@ -1755,7 +1755,7 @@ function discSection(docs, load = null) {
 // written on one side only also shows on the other side, as a name-only
 // link (T-808 outcome). No taxonomy → the pre-T-882 spec-file list (T-901 = B);
 // no taxonomy and no spec file → the approved empty state.
-const TICKET_ID_RE = /\bT-(?:P\d+-|PATCH-)?\d+\b/g
+const TICKET_ID_RE = /\bT-(?:P\d+-|PATCH-|[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+\b/g
 
 function ticketIdLinks(escapedText, anchors) {
   return escapedText.replace(TICKET_ID_RE, (id) =>

@@ -683,7 +683,7 @@ def _ctx_slug(agent_id):
         for line in content.split("\n"):
             if line.startswith("[ctx] {"):
                 slug = json.loads(line[len("[ctx] "):]).get("slug")
-                return slug if isinstance(slug, str) and re.fullmatch(r"T-[0-9]+", slug) else None
+                return slug if isinstance(slug, str) and re.fullmatch(r"T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]+", slug) else None
     except Exception:
         return None
     return None

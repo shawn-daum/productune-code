@@ -8,7 +8,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const TICKET_PAGE_RE = /^T-\d+\.html$/
+const TICKET_PAGE_RE = /^T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+\.html$/
 
 function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;')
@@ -23,7 +23,7 @@ export function ticketIdsOf(data) {
   }
   add(data.tickets)
   for (const l of data.lines || []) add(l.tickets)
-  return [...ids].filter((id) => /^T-\d+$/.test(id)).sort()
+  return [...ids].filter((id) => /^T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+$/.test(id)).sort()
 }
 
 // T-1076: `page` = the viewer's own file name (the `--out` basename), so a

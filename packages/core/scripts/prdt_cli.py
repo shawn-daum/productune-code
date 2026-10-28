@@ -6402,7 +6402,7 @@ def viewer_scratch_message(rel, kind):
 
 
 _VIEWER_BUNDLE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-_VIEWER_TICKET_PAGE_RE = re.compile(r"^T-\d+\.html$")
+_VIEWER_TICKET_PAGE_RE = re.compile(r"^T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+\.html$")
 
 
 def _viewer_bundle_name(name):
@@ -6602,7 +6602,7 @@ def viewer_anchor(root, target):
     the caller then opens the file itself. Keys mirror the page's own anchor
     table (render.mjs `buildAnchors`): ticket → its id, wiki page → its slug,
     any other document → its repo-relative path."""
-    if re.fullmatch(r"T-\d+", target):
+    if re.fullmatch(r"T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+", target):
         return target
     # T-973: a `path#section` target (the `[ctx].prd_path` form,
     # `docs/prd/PRD.md#v1.13`) names the document — the viewer opens a PRD as
@@ -7249,7 +7249,7 @@ def decisions_collect(root, words, feature=None):
         rev = ""
         for ln in log.splitlines():
             if _DEC_REVERSED_RE.search(ln):
-                ids = [i for i in re.findall(r"T-\d+", ln) if i != row["id"]]
+                ids = [i for i in re.findall(r"T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+", ln) if i != row["id"]]
                 if ids:
                     rev = ids[0]
         recs.append({"id": row["id"], "date": row["closed"] or row["created"] or "",
@@ -12569,7 +12569,7 @@ def _resource_line(root):
     ct = st.get("current_task") if isinstance(st, dict) else None
     if isinstance(ct, dict):
         tid = ct.get("ticket_id")
-        if isinstance(tid, str) and re.match(r"^T-\d+$", tid):
+        if isinstance(tid, str) and re.match(r"^T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+$", tid):
             if prods:
                 for prod, tdir in product_docs_dirs(root, "tickets"):
                     if prod is not None and (any(tdir.glob(f"*/{tid}.md")) or (tdir / f"{tid}.md").exists()):
@@ -13551,7 +13551,7 @@ PRD_REVERSED_NONE_ROW = "- 없음"
 # slugs (e.g. `decision--v1.10-structure-round`) resolve; a leading/trailing/
 # doubled dot still fails since the separator only sits between alnum runs.
 PRD_REVERSED_ROW_RE = re.compile(
-    r"^- (\[\[decision--[a-z0-9]+([.-][a-z0-9]+)*\]\]|T-[0-9]+) — .+$")
+    r"^- (\[\[decision--[a-z0-9]+([.-][a-z0-9]+)*\]\]|T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]+) — .+$")
 
 
 
@@ -16111,7 +16111,7 @@ SCHEDULE_MODEL_TIERS = ("sonnet", "opus", "haiku", "fable")
 # Same token rule as prdt-post-dispatch.sh's TICKET_TOKEN_RE (`T-682`,
 # `d-T682-…`; never the `T-4` of `GPT-4`, never `T-68` inside `T-6829`).
 SCHEDULE_TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T-?([0-9]{1,5})(?![0-9])")
-SCHEDULE_ID_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+SCHEDULE_ID_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")
 SCHEDULE_REPORT_BEGIN = "<!-- prdt:schedule-report:begin — `prdt schedule report` 가 이 구간을 다시 쓴다. 손으로 고치지 않는다. -->"
 SCHEDULE_REPORT_END = "<!-- prdt:schedule-report:end -->"
 # The PO-habit clause the off-path warning quotes — a test pins it verbatim
