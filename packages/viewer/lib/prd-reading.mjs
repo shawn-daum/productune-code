@@ -174,7 +174,7 @@ export function openDecisionTickets(tickets) {
 
 /** Ticket ids of a What-table cell: `T-841 · T-858` → shown as is; the outline shortens to `T-841 +1`. */
 function outlineTickets(text) {
-  const ids = String(text).match(/T-\d+/g) || []
+  const ids = String(text).match(/T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+/g) || []
   if (ids.length === 0) return ''
   return ids.length === 1 ? ids[0] : `${ids[0]} +${ids.length - 1}`
 }

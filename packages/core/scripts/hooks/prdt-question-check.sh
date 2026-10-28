@@ -203,8 +203,8 @@ RUN_BUDGET_S = 5
 # decisions later get their own `D-NNN` records — add "D" and its dir here).
 DECISION_ID_PREFIXES = ("T",)
 _PFX = "|".join(re.escape(p) for p in DECISION_ID_PREFIXES)
-TICKET_ID_RE = re.compile(r"(?<![A-Za-z0-9])((?:%s)-\d{1,6})(?!\d)" % _PFX)
-TICKET_FILE_RE = re.compile(r"^(?:%s)-\d{1,6}\.md$" % _PFX)
+TICKET_ID_RE = re.compile(r"(?<![A-Za-z0-9])((?:%s)-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6})(?!\d)" % _PFX)
+TICKET_FILE_RE = re.compile(r"^(?:%s)-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6}\.md$" % _PFX)
 FENCE_RE = re.compile(r"^\s*(?:`{3,}|~{3,})")
 DIAGRAM_FENCE_RE = re.compile(r"^\s*(?:`{3,}|~{3,})\s*(?:mermaid|dot|graphviz|plantuml|puml|d2)\b", re.I)
 # Text right after an option letter that makes the line a diagram edge (`A --> B`).

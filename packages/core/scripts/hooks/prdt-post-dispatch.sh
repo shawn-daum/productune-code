@@ -539,7 +539,7 @@ def ticket_by_slug(slug):
                 except Exception:
                     continue
                 tid = fm.get("id") or fn[:-3]
-                m = re.match(r"\AT-([0-9]{1,5})\Z", tid)
+                m = re.match(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?([0-9]{1,5})\Z", tid)
                 if not (m and fm.get("slug")):
                     continue
                 cand = (fm.get("status") == "open", int(m.group(1)), tid)
@@ -652,7 +652,7 @@ def po_state_ticket():
         with open(os.path.join(state_dir, "po-state.json"), encoding="utf-8") as f:
             ct = (json.load(f) or {}).get("current_task")
         tid = ct.get("ticket_id") if isinstance(ct, dict) else None
-        return tid if isinstance(tid, str) and re.match(r"\AT-[0-9]{1,5}\Z", tid) else None
+        return tid if isinstance(tid, str) and re.match(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z", tid) else None
     except Exception:
         return None
 
