@@ -115,6 +115,10 @@ describe.skipIf(!OK)('[ctx] → ticket — post-dispatch and scripts/prdt agree'
       { slug: 'dup' }, { slug: 'twice' }, { slug: 'solo', dispatch_id: 'd-T999' },
       { slug: 'nope', dispatch_id: 'd-T123-a' }, { slug: 'nope', goal: 'fix T-45 now' },
       { slug: 'T-77-thing' }, { slug: 'nope' }, { slug: '' }, {},
+      // T-1298 (QA d-v116-t1298-qa1 row 2): per-product ids `T-<PREFIX>-<n>`;
+      // the leftmost id wins, never a later T-NNN; legacy T-P4-120 is not one.
+      { slug: 'nope', dispatch_id: 'd-v116-T-RCH-002-dev1' }, { slug: 'nope', goal: 'work T-RCH-002' },
+      { slug: 'nope', goal: 'T-RCH-002 replaces T-5' }, { slug: 'nope', goal: 'see T-P4-120' },
     ]
     const [hook, cli] = runPy(`
 root = sys.argv[3]
@@ -137,7 +141,8 @@ ctxs = json.loads(sys.argv[4])
 print(json.dumps([[ticket_from_ctx(c)[1] for c in ctxs],
                   [m.schedule_ticket_for_ctx(c, tickets)[0] for c in ctxs]]))
 `, [POST, PRDT_CLI, root, JSON.stringify(ctxs)]) as [unknown[], unknown[]]
-    expect(hook).toEqual(['T-002', 'T-012', 'T-020', 'T-123', 'T-45', 'T-77', null, null, null])
+    expect(hook).toEqual(['T-002', 'T-012', 'T-020', 'T-123', 'T-45', 'T-77', null, null, null,
+      'T-RCH-002', 'T-RCH-002', 'T-RCH-002', null])
     expect(cli).toEqual(hook)
   })
 })
