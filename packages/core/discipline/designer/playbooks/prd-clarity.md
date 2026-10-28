@@ -57,6 +57,11 @@ Weights are defaults — a project with no brand surface reweights, and you say 
 - **Asked, never gated.** Not a score dimension, not an extra iteration; spend a `next_question` only when the loop never produced that material. A PRD declaring neither is NOT a violation: note the gap in `summary`.
 - **Current open version section only.** Never add these headings to a closed `## v<N>.<m>` section, never retro-rename one: a closed section keeps the strings it closed with (`### 이 버전 직전 (as-is)` · `### 이 버전 직후 (to-be)`), and readers accept both. No PRD, or no current version section → outside this rule, not in violation.
 - Version section, not the document head: the values are per-version, the read unit is head + ONE version section, and only inside the section does immutability keep what each round declared.
+- **Version title** — `## v<N>.<m> — <label>`: `<label>` = the change the user sees once this
+  version ships, one phrase in the user's own words. Never an in-house work-unit word (round · stream ·
+  tier · pass · lane · sub-cycle · phase · core · debt, in any language) and never item names listed
+  with `·` or `,`. Several lanes → name what they share, else the lane the north star rides; the items
+  live in the As-Is/To-Be group headings. The ` — ` separator stays (machine-read).
 - **Reversed rows** — one row per reversed decision page or ticket, opening with its key (`[[decision--<slug>]]` or `T-NNN`), or the single row `- 없음`. Scope items under What are `#### <key> — <label>`; key rule and the ticket address `prd_item`: `contracts/fixed-paths.md`.
 
 ## North star (Define-time scope input, not retro trivia)

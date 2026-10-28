@@ -309,6 +309,31 @@
           "pattern": "(옛|예전|As-Is|To-Be|새|제품이 먼저인) ?배치"
         }
       ]
+    },
+    {
+      "concept": "단추",
+      "say": [
+        "버튼"
+      ],
+      "avoid": [
+        {
+          "pattern": "(?<!「)단추(?!」)"
+        }
+      ],
+      "note": "UI button is 버튼, never translated (T-1329). A 「」-quoted mention is not a hit.",
+      "cases": {
+        "hit": [
+          { "text": "저장 단추를 누른다" },
+          { "text": "기록 단추" },
+          { "text": "단추 두 개" },
+          { "text": "| 확인 단추 | 위치 |", "kind": "md" },
+          { "text": "<button aria-label=\"닫기 단추\">x</button>", "kind": "html" }
+        ],
+        "miss": [
+          { "text": "저장 버튼을 누른다" },
+          { "text": "「단추」 표기는 쓰지 않는다" }
+        ]
+      }
     }
   ]
 }
