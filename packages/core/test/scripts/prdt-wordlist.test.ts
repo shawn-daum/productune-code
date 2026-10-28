@@ -688,3 +688,77 @@ describe('T-1263 — canon lists in schema 2, and the loader refuses three laten
     } finally { clear() }
   })
 })
+
+describe('T-1304 — a malformed canon entry warns instead of silencing the hook', () => {
+  // A scratch canon (PRDT_DISCIPLINE → <scratch>/wordlist/ko.json): the real ko list
+  // plus one entry the loader refuses and one with a pattern that does not compile.
+  let disc: string
+  const BROKEN = { concept: '깨진항목', say: ['x'] }   // schema 2 without `avoid[]`
+  const BADRE = { word: '나쁜패턴', pattern: '(', replace: ['x'] }
+  beforeAll(() => {
+    disc = path.join(sandbox, 'scratch-discipline')
+    fs.mkdirSync(path.join(disc, 'wordlist'), { recursive: true })
+    const ko = JSON.parse(fs.readFileSync(path.join(CANON, 'ko.json'), 'utf-8'))
+    ko.entries = [BROKEN, ...ko.entries, BADRE]
+    fs.writeFileSync(path.join(disc, 'wordlist', 'ko.json'), JSON.stringify(ko))
+  })
+  const denv = () => env({ PRDT_DISCIPLINE: disc })
+  const canonFile = () => path.join(disc, 'wordlist', 'ko.json')
+
+  test('prdt wordlist hook names the file and each bad entry, and the valid entries still report hits', () => {
+    const p = write('docs/artifacts/v1.0/canon-bad.md', '상태 모름\n')
+    const r = spawnSync('python3', [PRDT_CLI, 'wordlist', 'hook'], {
+      cwd: project, env: denv(), encoding: 'utf-8', timeout: subprocessTimeout('cli'),
+      input: JSON.stringify({ tool_name: 'Write', cwd: project, tool_input: { file_path: p } }),
+    })
+    expect(r.status).toBe(0)
+    const ctx: string = JSON.parse(r.stdout).hookSpecificOutput.additionalContext
+    expect(ctx).toMatch(/"모름" → /)
+    const warns = ctx.split('\n').filter(l => l.startsWith('- warning: '))
+    expect(warns.some(l => l.includes(canonFile()) && l.includes('깨진항목'))).toBe(true)
+    expect(warns.some(l => l.includes(canonFile()) && l.includes('나쁜패턴'))).toBe(true)
+  })
+
+  test('an unreadable canon file is named by the hook too (project list, if any, still applies)', () => {
+    const d2 = path.join(sandbox, 'scratch-discipline-2')
+    fs.mkdirSync(path.join(d2, 'wordlist'), { recursive: true })
+    fs.writeFileSync(path.join(d2, 'wordlist', 'ko.json'), '{ not json')
+    write('.prdt/wordlist/ko.json', JSON.stringify({ lang: 'ko', schema: 2, entries: [{ concept: '좋은항목', say: ['x'], avoid: [{ pattern: '좋은말' }] }] }))
+    try {
+      const p = write('docs/artifacts/v1.0/canon-unreadable.md', '좋은말 이다\n')
+      const r = spawnSync('python3', [PRDT_CLI, 'wordlist', 'hook'], {
+        cwd: project, env: env({ PRDT_DISCIPLINE: d2 }), encoding: 'utf-8', timeout: subprocessTimeout('cli'),
+        input: JSON.stringify({ tool_name: 'Write', cwd: project, tool_input: { file_path: p } }),
+      })
+      const ctx: string = JSON.parse(r.stdout).hookSpecificOutput.additionalContext
+      expect(ctx).toMatch(/"좋은말 \(좋은항목\)" → x/)
+      expect(ctx).toMatch(new RegExp(`warning: .*${path.join(d2, 'wordlist', 'ko.json').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
+    } finally {
+      fs.rmSync(path.join(project, '.prdt', 'wordlist'), { recursive: true, force: true })
+    }
+  })
+
+  test('doctor checks the canon files and names the malformed entry', () => {
+    const code = [
+      'import sys, importlib.machinery as m',
+      'p = m.SourceFileLoader("prdt", sys.argv[1]).load_module()',
+      'print("\\n".join(p.wordlist_canon_warnings()))',
+    ].join('\n')
+    const doc = spawnSync('python3', ['-c', code, PRDT_CLI], { cwd: project, env: denv(), encoding: 'utf-8', timeout: subprocessTimeout('cli') })
+    expect(doc.status).toBe(0)
+    const lines = doc.stdout.trim().split('\n')
+    expect(lines.some(l => l.startsWith('wordlist: ') && l.includes(canonFile()) && l.includes('깨진항목'))).toBe(true)
+    expect(lines.some(l => l.includes('나쁜패턴'))).toBe(true)
+    // the shipped canon is clean: no warning
+    const clean = spawnSync('python3', ['-c', code, PRDT_CLI], { cwd: project, env: env({ PRDT_DISCIPLINE: path.join(CORE_ROOT, 'discipline') }), encoding: 'utf-8', timeout: subprocessTimeout('cli') })
+    expect(clean.stdout.trim()).toBe('')
+  })
+
+  test('prdt wordlist check on the same malformed canon still fails loudly (exit 3)', () => {
+    const r = spawnSync('python3', [PRDT_CLI, 'wordlist', 'check', '--lang', 'ko', '-'], {
+      cwd: project, env: denv(), encoding: 'utf-8', input: '상태 모름\n', timeout: subprocessTimeout('cli'),
+    })
+    expect(r.status).toBe(3)
+    expect(r.stderr).toContain('깨진항목')
+  })
+})
