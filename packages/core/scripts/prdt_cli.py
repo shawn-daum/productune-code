@@ -5462,16 +5462,29 @@ def settings_entries(droot):
     if dom is None:
         return None
     entries = []
+    # T-1274: one `--resolve` answers every register.* get() until a register put
+    # changes the file — a listing used to run the resolver once per register key
+    # (5 runs of ~0.3–1 s idle, ×10 on a loaded machine), each with the same answer.
+    resolved = {}
+
+    def reg_values():
+        if "values" not in resolved:
+            resolved["values"] = (register_query("--resolve", droot) or {}).get("values") or {}
+        return resolved["values"]
 
     def reg_get(k):
-        return lambda: ((register_query("--resolve", droot) or {}).get("values") or {}).get(k)
+        return lambda: reg_values().get(k)
+
+    def reg_put(k, v):
+        resolved.clear()
+        return register_write(dom, k, v or "")
 
     for spec in dom["keys"]:
         k = spec["key"]
         entries.append({
             "key": f"register.{k}", "kind": spec["kind"], "domain": spec.get("domain"),
             "shape": spec.get("shape"), "check": (lambda v, spec=spec: register_value_error(spec, v)),
-            "get": reg_get(k), "put": (lambda v, k=k: register_write(dom, k, v or "")),
+            "get": reg_get(k), "put": (lambda v, k=k: reg_put(k, v)),
         })
     # prdt-auto-open.sh: exactly "off" (whitespace-stripped) disables; anything
     # else — missing file included — is on.
