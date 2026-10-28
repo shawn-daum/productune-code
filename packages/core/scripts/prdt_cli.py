@@ -3386,7 +3386,7 @@ def cmd_inbox(args):
                          "state": "open", "decided": "", "text": text})
             _inbox_write(rows)
         print(f"sent {rid} → {to}: {text}")
-        print(f"{to}'s PO sees it at its next session start; it decides adoption there.")
+        print(f"{to}'s PO sees it on its next prompt (an open session) or at its next session start; it decides adoption there.")
         return
     if action in ("adopt", "decline"):
         if len(args.rest) != 1:
