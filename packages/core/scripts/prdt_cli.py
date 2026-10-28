@@ -1,6 +1,6 @@
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|refs|reindex|lint|promote) · tickets · schedule · track (open|review|land) · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint|promote) · tickets · schedule · track (open|review|merge) · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
@@ -14522,7 +14522,11 @@ def discipline_caps_warnings(droot):
     return warns
 
 
-# ── prdt track open | review | land (T-775, T-681 slice S4) ──────────────────
+# ── prdt track open | review | merge (T-775, T-681 slice S4) ─────────────────
+# T-1264: the command was `land` until v1.16; the user named it `merge` (it is a
+# merge with the tests in front). `land` stays an alias with identical behavior
+# through v1.16 and is removed in v1.17 (PRD v1.16). The lock file keeps its
+# old name so a `land` from an older install and a `merge` still exclude each other.
 # Design SoT: docs/artifacts/v1.11/critical-path.html, tab 「체크아웃 격리」.
 # contracts/git.md ③: a parallel track is cut from `dev` by `prdt track open`
 # (branch `track/<T-NNN>`), never Agent `isolation: "worktree"` — that fails
@@ -14807,7 +14811,7 @@ def cmd_track_open(args):
     if wt.exists():
         _track_die(f"{wt} already exists — this track is open (`prdt track review {tid}`)")
     if _tgit(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], code).returncode == 0:
-        _track_die(f"branch {branch} already exists with no worktree at {wt} — land or drop it first")
+        _track_die(f"branch {branch} already exists with no worktree at {wt} — merge or drop it first")
     _track_exclude(code, root)
     wt.parent.mkdir(parents=True, exist_ok=True)
     r = _tgit(["worktree", "add", str(wt), "-b", branch, f"refs/heads/{base}"], code)
@@ -14869,7 +14873,7 @@ def cmd_track_review(args):
         base = _track_base(code, branch)
         if rec is TRACK_RECORD_BAD:
             print(f"warning: the open record for {tid} ({_track_record_path(code, tid)}) is unreadable or does "
-                  f"not match this track — comparing against {base} from git config; a bare land will refuse",
+                  f"not match this track — comparing against {base} from git config; a bare merge will refuse",
                   file=sys.stderr)
     # T-915: every git argument names the branch by its full ref — a bare
     # `dev`/`main`/`track/T-NNN` resolves refs/tags/<name> before
@@ -14923,7 +14927,7 @@ def cmd_track_review(args):
               f"{safe_label(str(d.get('dispatch_id') or '-'))} → "
               f"{safe_label(str((s or {}).get('outcome') or 'no stop row'))}")
     if recs and not any(d.get("persona") == "qa" for d, _s in recs):
-        print("   no qa dispatch recorded — a user_facing or risk_flags change needs a QA verdict before land")
+        print("   no qa dispatch recorded — a user_facing or risk_flags change needs a QA verdict before merge")
     # 5 discipline files
     disc = sorted(p for p in changed if p.startswith("packages/core/discipline/") or p.startswith("discipline/"))
     print("\n5. discipline files: " + (", ".join(disc) + " — the DoD annex's discipline extra step applies"
@@ -14961,12 +14965,12 @@ def _track_lock(code):
             except (OSError, ValueError):
                 pid = 0
             if pid and _pid_alive(pid):
-                _track_die(f"another `prdt track land` is running (pid {pid}) — land one track at a time")
+                _track_die(f"another `prdt track merge` is running (pid {pid}) — merge one track at a time")
             try:
                 lock.unlink()           # its owner is gone: the lock is this tool's own leftover
             except OSError:
                 pass
-    _track_die(f"could not take the land lock {lock}")
+    _track_die(f"could not take the merge lock {lock}")
 
 
 def _lockfile_sig(wt):
@@ -15196,7 +15200,7 @@ def _track_closes_lane(root, tid):
 
 
 
-def cmd_track_land(args):
+def cmd_track_merge(args):
     root, code, tid, wt, branch = _track_ctx(args)
     _track_require_open(code, wt, branch, tid)
     # T-784 (F1, security pass): the land target is an explicit PO flag on
@@ -15225,7 +15229,7 @@ def cmd_track_land(args):
     bref, tref = f"refs/heads/{base}", f"refs/heads/{branch}"   # T-915: never a bare name a tag can shadow
     st = _tgit(["status", "--porcelain"], wt)
     if st.returncode != 0 or st.stdout.strip():
-        _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or drop them, then land")
+        _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or drop them, then merge")
     explicit = bool((isinstance(args.test, str) and args.test.strip())
                     or isinstance(_track_cfg(root).get("test"), str) and _track_cfg(root).get("test").strip())
     test = _track_test_cmd(root, wt, args.test)
@@ -15245,9 +15249,9 @@ def cmd_track_land(args):
             _track_setup_failed_clear(code, tid)
         else:
             cmd = failed_setup or _track_setup_cmd(root, wt) or "the setup command"
-            _track_die(f"the setup step failed on an earlier land of {tid} — the tests were not run on this tree; "
+            _track_die(f"the setup step failed on an earlier merge of {tid} — the tests were not run on this tree; "
                        f"{branch} keeps the merge and dependencies may be partially removed; "
-                       f"rerun `{cmd}` in {wt}, then land again with --setup-done")
+                       f"rerun `{cmd}` in {wt}, then merge again with --setup-done")
     lock = _track_lock(code)
     try:
         old = _tgit(["rev-parse", "--verify", "--quiet", bref], code).stdout.strip()
@@ -15260,7 +15264,7 @@ def cmd_track_land(args):
                 un = _tgit(["diff", "--name-only", "--diff-filter=U"], wt).stdout.split()
                 _tgit(["merge", "--abort"], wt)
                 _track_die(f"merging {base} into {branch} conflicts in: {', '.join(un) or '(see git output)'} — "
-                           f"{base} is unchanged; resolve on {branch} (re-dispatch its worker), then land again")
+                           f"{base} is unchanged; resolve on {branch} (re-dispatch its worker), then merge again")
             print(f"merged {base} ({old[:12]}) into {branch}")
             if _lockfile_sig(wt) != before:
                 setup = _track_setup_cmd(root, wt)
@@ -15268,7 +15272,7 @@ def cmd_track_land(args):
                     _track_setup_failed_write(code, tid, setup)
                     _track_die(f"the setup step failed on the merged tree — {base} is unchanged; "
                                f"{branch} keeps the merge and dependencies may be partially removed; "
-                               f"rerun `{setup}` in {wt}, then land again with --setup-done")
+                               f"rerun `{setup}` in {wt}, then merge again with --setup-done")
         if whole:
             why_whole = ("--test" if isinstance(args.test, str) and args.test.strip() else
                          "track.test" if explicit else "--full" if full else lane_note)
@@ -15282,7 +15286,7 @@ def cmd_track_land(args):
             n = sum(len(f) for _p, _v, f, _e in plan)
             if not plan:
                 print(f"relevant tests: none — {len(chg)} changed file(s) against {base}, no test imports "
-                      f"or names them and no package changed; landing without a test run")
+                      f"or names them and no package changed; merging without a test run")
                 rc, ran = 0, "no relevant tests"
             else:
                 if n:
@@ -15316,7 +15320,7 @@ def cmd_track_land(args):
                     if has_build and any(c.startswith(src_pre) for c in chg):
                         if _track_run("pnpm run build", pkg, f"build ({label}: src/ changed)") != 0:
                             _track_die(f"the build of {label} failed on the merged tree — {base} is unchanged; "
-                                       f"{branch} keeps the merge, fix it there and land again")
+                                       f"{branch} keeps the merge, fix it there and merge again")
                     for cmd in steps + (_track_pkg_extra_steps(pkg) if (extras_due or files or pkg in fallback) else []):
                         rc = _track_run(cmd, pkg, f"relevant tests ({label})")
                         if rc != 0:
@@ -15330,15 +15334,15 @@ def cmd_track_land(args):
                    "and its result is unknown — remove the `| head` or write the output to a file"
                    if rc == 141 else "")
             _track_die(f"tests failed on the merged tree — {base} is unchanged; {branch} keeps the merge, "
-                       f"fix it there and land again{why}")
+                       f"fix it there and merge again{why}")
         dirty = _tgit(["status", "--porcelain"], wt)
         if dirty.returncode != 0 or dirty.stdout.strip():
             left = [ln[3:] if len(ln) > 3 else ln for ln in dirty.stdout.splitlines() if ln]
             _track_die(f"tests left the merged tree dirty ({', '.join(left) or '?'}) — {base} is unchanged; "
-                       f"{branch} keeps the merge, clean it up there and land again")
+                       f"{branch} keeps the merge, clean it up there and merge again")
         new = _tgit(["rev-parse", "--verify", "--quiet", tref], code).stdout.strip()
         if not new or _tgit(["merge-base", "--is-ancestor", bref, new], code).returncode != 0:
-            _track_die(f"{base} moved during the land — land again")
+            _track_die(f"{base} moved during the merge — merge again")
         holder = None
         cur = None
         for line in _tgit(["worktree", "list", "--porcelain"], code).stdout.splitlines() + [""]:
@@ -15378,8 +15382,8 @@ def cmd_track_land(args):
         r = _tgit(["branch", "-D", branch], code)
         print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
     else:
-        print(f"branch {branch} kept — not merged into {base} (unexpected after land)")
-    print(f"landed {tid} — {ran}{'' if ran.startswith('no ') else ' green'}; nothing pushed")
+        print(f"branch {branch} kept — not merged into {base} (unexpected after merge)")
+    print(f"merged {tid} — {ran}{'' if ran.startswith('no ') else ' green'}; nothing pushed")
 
 
 def cmd_track_drop(args):
@@ -15398,7 +15402,7 @@ def cmd_track_drop(args):
         on_main = _tgit(["merge-base", "--is-ancestor", tref, "refs/heads/main"], code).returncode == 0
         if not (on_dev or on_main):
             _track_die(f"branch {branch} holds commits not on dev or main — `prdt track drop {tid} --force` "
-                       f"to drop it anyway, or `prdt track land {tid}` to keep them")
+                       f"to drop it anyway, or `prdt track merge {tid}` to keep them")
     r = _tgit(["worktree", "remove", "--force", str(wt)], code)
     if r.returncode != 0:
         _track_die("git worktree remove failed: " + (r.stderr.strip() or r.stdout.strip()))
@@ -15406,7 +15410,7 @@ def cmd_track_drop(args):
     r = _tgit(["branch", "-D", branch], code)
     print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
     _track_record_remove(code, tid)
-    print(f"dropped {tid} — nothing landed, nothing pushed")
+    print(f"dropped {tid} — nothing merged, nothing pushed")
 
 
 def cmd_track(args):
@@ -15416,8 +15420,9 @@ def cmd_track(args):
         if len(args.base) > 1:
             _track_die("--base given more than once — pass it once (dev or main)", 2)
         args.base = args.base[0]
-    {"open": cmd_track_open, "review": cmd_track_review, "land": cmd_track_land,
-     "drop": cmd_track_drop}[args.action](args)
+    # T-1264: `land` = alias of `merge` through v1.16, removed in v1.17.
+    {"open": cmd_track_open, "review": cmd_track_review, "merge": cmd_track_merge,
+     "land": cmd_track_merge, "drop": cmd_track_drop}[args.action](args)
 
 
 
@@ -21786,27 +21791,29 @@ def main():
                         "the first product); default every product, first one first — `--json` the first product")
     p.set_defaults(fn=cmd_schedule)
     p = sub.add_parser("track", help="parallel track worktree (T-775): open <T-NNN> [--base dev|main] · "
-                                     "review <T-NNN> · land <T-NNN> [--base dev|main] [--test CMD] · "
+                                     "review <T-NNN> · merge <T-NNN> [--base dev|main] [--test CMD] · "
                                      "drop <T-NNN> [--force] — the worktree is <project>/tracks/<T-NNN> on "
-                                     "branch track/<T-NNN> of the code repo; land merges the base in, runs "
+                                     "branch track/<T-NNN> of the code repo; merge merges the base in, runs "
                                      "the tests on the merged tree and fast-forwards the base; drop discards "
-                                     "the worktree and branch instead; neither pushes")
-    p.add_argument("action", choices=("open", "review", "land", "drop"))
+                                     "the worktree and branch instead; neither pushes · land: alias of merge "
+                                     "(same behavior), removed in v1.17")
+    p.add_argument("action", choices=("open", "review", "merge", "land", "drop"),
+                   help="open · review · merge · drop (land: alias of merge, removed in v1.17)")
     p.add_argument("ticket", help="T-NNN")
     p.add_argument("--base", choices=TRACK_BASES, action="append",
                    help="open: the branch to cut from (default dev) · "
-                        "land: the branch to land to (default dev; landing "
+                        "merge: the branch to merge to (default dev; merging "
                         "to main takes this explicit PO flag every time — "
                         "never read from git config, worker-writable; a track "
-                        "opened with --base main refuses a land without --base)")
-    p.add_argument("--test", help="land: the test command (default: .prdt/config.json track.test, "
+                        "opened with --base main refuses a merge without --base)")
+    p.add_argument("--test", help="merge: the test command (default: .prdt/config.json track.test, "
                                   "else the package.json test script)")
     p.add_argument("--full", action="store_true",
-                   help="land: run the whole suite instead of the relevant tests (the default whole run is a land "
+                   help="merge: run the whole suite instead of the relevant tests (the default whole run is a merge "
                         "that closes a lane)")
     p.add_argument("--setup-done", action="store_true",
-                   help="land: after a land whose setup step failed, say the setup command was rerun in the "
-                        "worktree (without it the next land refuses and names the command)")
+                   help="merge: after a merge whose setup step failed, say the setup command was rerun in the "
+                        "worktree (without it the next merge refuses and names the command)")
     p.add_argument("--force", action="store_true",
                    help="drop: also discard a branch with uncommitted changes or commits not on dev or main")
     p.set_defaults(fn=cmd_track)
