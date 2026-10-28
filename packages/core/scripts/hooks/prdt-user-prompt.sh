@@ -1130,6 +1130,27 @@ lines.append(reply_hot_line())
 if _guard_notice:
     lines.append(_guard_notice)
 
+# ── T-1300: inbox lines sent after this PO session started ───────────────────
+# prdt-inbox-inject.sh owns reading, addressing and wording; on UserPromptSubmit it
+# prints only the open lines this session has not been shown, once, and 0 bytes
+# otherwise. Spawned only for the PO with a non-empty machine store; any failure
+# is silent (the line stays open in the store and returns at the next session start).
+INBOX_INJECT_TIMEOUT_S = 5
+if ev.get("agent_type") == "prdt-po" and hook_dir:
+    _inbox_hook = os.path.join(hook_dir, "prdt-inbox-inject.sh")
+    _inbox_store = os.path.join(os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt"),
+                                "inbox.md")
+    try:
+        if os.path.isfile(_inbox_hook) and os.path.getsize(_inbox_store) > 0:
+            r = subprocess.run(["bash", _inbox_hook], input=json.dumps(ev), capture_output=True,
+                               text=True, timeout=INBOX_INJECT_TIMEOUT_S)
+            if r.returncode == 0 and r.stdout.strip():
+                _ib = json.loads(r.stdout)["hookSpecificOutput"]
+                if _ib.get("hookEventName") == "UserPromptSubmit" and isinstance(_ib.get("additionalContext"), str):
+                    lines.append(_ib["additionalContext"])
+    except Exception:
+        pass
+
 if withheld:
     lines.append(
         "[prdt state guard] po-state field(s) rendered as <withheld>: "
