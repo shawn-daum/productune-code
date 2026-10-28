@@ -1568,7 +1568,7 @@ function wikiSection(pages) {
 // Source: the wiki's `term` documents (data.wiki, type: term) — no second
 // copy; the wiki store still lists them too. Table 용어 · 분류 · 정의 (the
 // 분류 chip is the first `tags` value, the 정의 is the document's h1 after
-// its 「— 」), detail = h1 as lead, 분류 · 상태 fields, the body below the h1.
+// its first 「— 」 or 「: 」), detail = h1 as lead, 분류 · 상태 fields, the body below the h1.
 function termPages(wiki) {
   return (wiki || []).filter((p) => p.frontmatter.type === 'term')
 }
@@ -1584,7 +1584,9 @@ function termParts(p) {
   const h1 = lines.findIndex((l) => /^#\s+\S/.test(l))
   const lead = h1 === -1 ? '' : lines[h1].replace(/^#\s+/, '').trim()
   const rest = h1 === -1 ? p.body : lines.slice(h1 + 1).join('\n')
-  const def = lead.includes('—') ? lead.slice(lead.indexOf('—') + 1).trim() : lead
+  // T-1343: an h1 reads 「name — definition」 or 「name: definition」; split at the first of either.
+  const sep = /—|:\s/.exec(lead)
+  const def = sep ? lead.slice(sep.index + sep[0].length).trim() : lead
   const tags = Array.isArray(p.frontmatter.tags) ? p.frontmatter.tags : []
   return { id, name, gloss, lead, def, rest, category: tags.length ? String(tags[0]) : '' }
 }

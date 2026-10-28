@@ -8,7 +8,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
-import { collectReleases, parseReleases } from '@productune/viewer/lib/collect.mjs'
+import { collectReleases, collectWiki, parseReleases } from '@productune/viewer/lib/collect.mjs'
+import ko from '@productune/viewer/lib/labels-ko.mjs'
+import { META_ROOT } from './meta-root'
 
 const RELEASES_MD = `# Releases
 
@@ -122,6 +124,36 @@ describe('용어 사전 (T-883)', () => {
   })
 })
 
+// T-1343: term documents whose h1 reads 「name: definition」 (17 installed on
+// 2026-10-28) split on ': ' as well as '—' — the 정의 column never repeats the name.
+const colonTerm = (name: string, gloss: string, def: string) => ({
+  rel: `docs/wiki/term--${name}.md`,
+  frontmatter: { title: `${name} (${gloss})`, type: 'term', status: 'live', tags: ['concept'] },
+  body: `# ${name}: ${def}\n\n본문.\n`,
+})
+const glossaryDefs = (html: string) =>
+  [...section(html, 'glossary').matchAll(/<span class="nm">([^<]*)<\/span>.*?<td class="def-col">([^<]*)<\/td>/g)].map((m) => ({ name: m[1], def: m[2] }))
+
+describe('용어 사전 정의 칸 (T-1343)', () => {
+  it("splits an h1 on ': ' as well as '—'", () => {
+    const d = data()
+    d.wiki.push(colonTerm('North Star', 'major 버전의 방향 문장', 'major 버전마다 하나 두는 방향 문장') as any)
+    const rows = glossaryDefs(render(d))
+    expect(rows).toContainEqual({ name: 'North Star', def: 'major 버전마다 하나 두는 방향 문장' })
+    expect(rows).toContainEqual({ name: 'dispatch', def: '위임' })
+  })
+
+  it.skipIf(!META_ROOT)('no row over the installed term pages repeats its name in the 정의 column', () => {
+    const wiki = collectWiki(META_ROOT!)
+    const rows = glossaryDefs(render({ ...data({ terms: false }), wiki }))
+    expect(rows.length).toBe(wiki.filter((p: any) => p.frontmatter.type === 'term').length)
+    for (const r of rows) {
+      expect(r.def, r.name).not.toBe('')
+      expect(r.def.startsWith(r.name), `${r.name} → ${r.def}`).toBe(false)
+    }
+  })
+})
+
 describe('릴리즈 노트 (T-883)', () => {
   it('table 버전 · 제목 · 날짜 with one row per version section, newest first as written', () => {
     const sec = section(render(data()), 'release')
@@ -226,5 +258,24 @@ describe('collectReleases — read path and containment (T-883)', () => {
     expect(r.map((x) => x.version)).toEqual(heads.map((h) => h.match(/^## (v\d\S*)/)![1]))
     expect(r[0].version).toMatch(/^v\d/)
     expect(r.every((x) => x.date !== '')).toBe(true)
+  })
+})
+
+// T-1343: the ko spellings the user picked (T-1341 = A) — 제품 · 결정사항 ·
+// 요청사항 · 페르소나 · 아티팩트, and the rider legend = the term page's definition.
+describe('ko labels follow the picked term spellings (T-1343)', () => {
+  it('home, discipline-load, artifact and PRD-reading labels', () => {
+    const k = ko as any
+    expect(k.HOME.vh.linesHead).toBe('제품')
+    expect(k.HOME.waitDec).toBe('결정사항')
+    expect(k.HOME.waitReq).toBe('요청사항')
+    expect(k.HOME.legendRider).toBe('메인 패스 밖에서 남는 자리에 맡기는 티켓')
+    expect(k.PRD_READING.ticketsHeading).toBe('결정사항')
+    expect(k.DISCIPLINE_LOAD.lane1.sub).toContain('페르소나가')
+    expect(k.DISCIPLINE_LOAD.menuNote).toContain('페르소나가')
+    expect(k.ARTIFACT.empty).toContain('아직 아티팩트가 없어요.')
+    expect(k.FRAME.frameTitle).toBe('아티팩트 미리보기')
+    const all = JSON.stringify(k, (_k, v) => (typeof v === 'function' ? undefined : v))
+    for (const old of ['내 결정 대기', '사용자 작업 대기', '결정 대기 티켓', 'best effort 작업', '작업자', '산출물']) expect(all, old).not.toContain(old)
   })
 })
