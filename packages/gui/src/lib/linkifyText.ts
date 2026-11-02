@@ -2,7 +2,7 @@
  * linkifyText — T-P4-114 §C / widened by T-PATCH-093
  *
  * Converts bare references in markdown text to ptn: links for internal routing:
- *   T-P4-NNN              → [T-P4-NNN](ptn:ticket/T-P4-NNN)        (#A78BFA)
+ *   T-NNN / T-<PFX>-NNN   → [T-NNN](ptn:ticket/T-NNN)              (#A78BFA, T-1157)
  *   docs/…/f.md           → [f.md](ptn:file/docs/…/f.md)           (#38BDF8)
  *   packages/…/f.ts       → [f.ts](ptn:file/packages/…/f.ts)        (#38BDF8)
  *   src/…/f.ts            → [f.ts](ptn:file/src/…/f.ts)             (#38BDF8)
@@ -43,7 +43,14 @@ const CODE_BLOCK_RE = /(```[\s\S]*?```|`[^`\n]+`)/g
  * Alternation order == priority:
  *   1. Bare URL                https?://…           → [hostname](url)
  *   2. Existing markdown link  [text](href)         → preserve verbatim
- *   3. Ticket ID               T-P4-\d+             → ptn:ticket/
+ *   3. Ticket ID               T-NNN · T-<PFX>-NNN  → ptn:ticket/
+ *        Same id shapes as the terminal MessageDisplay autolink (T-1143,
+ *        ID_RE in packages/core/scripts/hooks/prdt-message-display-autolink.sh):
+ *        optional PATCH- or 1-8 uppercase-consonant product prefix, 1-6
+ *        digits; plus the legacy P4- prefix. No shared source exists across
+ *        the Python hook and this TS module, so the pattern is mirrored —
+ *        keep the two in step. Look-alikes stay plain: ST-12 (letter
+ *        before), T-12a (letter after), T-12-slug, T-12.md, tracks/T-12.
  *   4. Relative file path                            → ptn:file/
  *        a. rooted:  ./?  (docs|packages|src|.productune)/…/.ext
  *        b. root-level whitelist: config.json | package.json | tsconfig.json
@@ -84,7 +91,7 @@ const CODE_BLOCK_RE = /(```[\s\S]*?```|`[^`\n]+`)/g
  * is trusted broadly (no doctrine-signal requirement).
  */
 const LINK_RE =
-  /(https?:\/\/[^\s<>"]+)|(\[[^\]]*\]\([^)]*\))|(T-P4-\d+)|((?<![\w/.\-])\.?\/?(?:(?:docs|packages|src|\.productune)\/[\w/.\-]+\.(?:md|tsx|ts|sh|json)|docs\/artifacts\/[\w/.\-]+\.html|\.productune\/\.env[a-zA-Z0-9._-]*|\.env[a-zA-Z0-9._-]*|(?:config|package|tsconfig)\.json))|(file:\/\/[^\s<>")\]]+|(?:~|\/[\w.\-]+)(?:\/[\w.\-]+)*\/\.productune\/(?:po|designer|developer|qa)\/[\w/.\-]+\.md)/g
+  /(https?:\/\/[^\s<>"]+)|(\[[^\]]*\]\([^)]*\))|((?<![A-Za-z0-9_.\\/-])T-(?:P4-|PATCH-|[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6}(?![\d_]|-\w|\.(?:md|html)\b|[A-Za-z]))|((?<![\w/.\-])\.?\/?(?:(?:docs|packages|src|\.productune)\/[\w/.\-]+\.(?:md|tsx|ts|sh|json)|docs\/artifacts\/[\w/.\-]+\.html|\.productune\/\.env[a-zA-Z0-9._-]*|\.env[a-zA-Z0-9._-]*|(?:config|package|tsconfig)\.json))|(file:\/\/[^\s<>")\]]+|(?:~|\/[\w.\-]+)(?:\/[\w.\-]+)*\/\.productune\/(?:po|designer|developer|qa)\/[\w/.\-]+\.md)/g
 
 /**
  * Anchored (`^…$`) variant of LINK_RE for whole-string matching (T-346).
