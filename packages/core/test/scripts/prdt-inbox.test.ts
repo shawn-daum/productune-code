@@ -395,3 +395,81 @@ describe('T-975 an address is an explicit slug, never a folder name', () => {
     expect(cfg.slug.length).toBeGreaterThan(0)
   })
 })
+
+describe('T-1300 a long-running PO session gets a line sent after it started, on its next prompt, once', () => {
+  const USER_PROMPT = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-user-prompt.sh')
+  const SID = 'sess-t1300-a'
+
+  function start(cwd: string, sid = SID): string {
+    const payload = JSON.stringify({ hook_event_name: 'SessionStart', agent_type: 'prdt-po', cwd, source: 'startup', session_id: sid })
+    const r = spawnSync('bash', [HOOK], { input: payload, env: env(), encoding: 'utf8' })
+    expect(r.status).toBe(0)
+    return ctxOf(r.stdout)
+  }
+  /** The real UserPromptSubmit path: the per-prompt hook, sandboxed HOME / PRDT_HOME. */
+  function prompt(cwd: string, sid = SID, agentType = 'prdt-po'): string {
+    const ev: Record<string, unknown> = { hook_event_name: 'UserPromptSubmit', cwd, prompt: 'next', session_id: sid }
+    if (agentType) ev.agent_type = agentType
+    const r = spawnSync('bash', [USER_PROMPT], { input: JSON.stringify(ev), env: env(), encoding: 'utf8' })
+    expect(r.status).toBe(0)
+    return ctxOf(r.stdout)
+  }
+  function inboxLines(ctx: string): string[] {
+    return ctx.split('\n').filter((l) => l.startsWith('| r-'))
+  }
+
+  test('sent after session start → on the next prompt, once; the prompt after carries 0 inbox bytes', () => {
+    expect(start(projB)).toBe('')
+    const id = idOf(cli(projA, 'send', 'beta', 'please cut a release').out)
+    const first = prompt(projB)
+    expect(first).toContain('[prdt inbox')
+    expect(inboxLines(first)).toEqual([expect.stringContaining(`| ${id} · from alpha · `)])
+    const second = prompt(projB)
+    expect(second).toContain('[prdt state]')
+    expect(second).not.toContain('[prdt inbox')
+    expect(second).not.toContain(id)
+  })
+
+  test('a line delivered at session start is not re-injected per prompt; only the newer one arrives', () => {
+    const old = idOf(cli(projA, 'send', 'beta', 'old line').out)
+    expect(start(projB)).toContain(old)
+    expect(prompt(projB)).not.toContain('[prdt inbox')
+    const fresh = idOf(cli(projC, 'send', 'beta', 'fresh line').out)
+    const ctx = prompt(projB)
+    expect(inboxLines(ctx)).toEqual([expect.stringContaining(`| ${fresh} · from gamma · `)])
+    expect(ctx).not.toContain(old)
+  })
+
+  test('a line decided before the next prompt is never injected', () => {
+    expect(start(projB)).toBe('')
+    const id = idOf(cli(projA, 'send', 'beta', 'decided quickly').out)
+    expect(cli(projB, 'decline', id).code).toBe(0)
+    expect(prompt(projB)).not.toContain('[prdt inbox')
+  })
+
+  test('only the addressed PO gets it: no agent_type, another project, or no session id → nothing', () => {
+    start(projB)
+    start(projC, 'sess-t1300-c')
+    cli(projA, 'send', 'beta', 'for beta only')
+    expect(prompt(projB, SID, '')).not.toContain('[prdt inbox')
+    expect(prompt(projC, 'sess-t1300-c')).not.toContain('[prdt inbox')
+    const r = spawnSync('bash', [HOOK], {
+      input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', agent_type: 'prdt-po', cwd: projB }), env: env(), encoding: 'utf8' })
+    expect(r.stdout).toBe('')
+  })
+
+  test('the inbox hook itself prints 0 bytes on a prompt with nothing new', () => {
+    cli(projA, 'send', 'beta', 'already seen')
+    start(projB)
+    const r = spawnSync('bash', [HOOK], {
+      input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', agent_type: 'prdt-po', cwd: projB, session_id: SID }), env: env(), encoding: 'utf8' })
+    expect(r.status).toBe(0)
+    expect(r.stdout).toBe('')
+  })
+
+  test('a session older than this change (no seen record) gets the open lines once, then nothing', () => {
+    const id = idOf(cli(projA, 'send', 'beta', 'sent days ago').out)
+    expect(inboxLines(prompt(projB, 'sess-t1300-old'))).toEqual([expect.stringContaining(id)])
+    expect(prompt(projB, 'sess-t1300-old')).not.toContain('[prdt inbox')
+  })
+})
