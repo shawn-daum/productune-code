@@ -336,7 +336,7 @@ describe('prdt track land', () => {
       setConfig({ track: { setup: 'true', test: 'test -f a.txt' } })
       const r = cli('track', 'land', 'T-1')
       expect(r.status, r.err).toBe(0)
-      expect(r.out).toContain('landed T-1')
+      expect(r.out).toContain('merged T-1')
     })
   })
 
@@ -530,7 +530,7 @@ describe('prdt track land', () => {
       const bad = cli('track', 'review', 'T-2')
       expect(bad.status, bad.err).toBe(0)
       expect(bad.out).toContain('track/T-2 vs dev')
-      expect(bad.err).toContain('a bare land will refuse')
+      expect(bad.err).toContain('a bare merge will refuse')
     })
 
     test('a worker rewriting the record to dev cannot move main; deleting it falls back to the pre-T-833 dev default — main still untouched', () => {
@@ -598,7 +598,7 @@ describe('prdt track land', () => {
     expect(r.status).toBe(1)
     expect(r.err).toContain('tests left the merged tree dirty')
     expect(r.err).toContain('stray.txt')
-    expect(r.out).not.toContain('landed')
+    expect(r.out).not.toMatch(/^merged T-1 —/m)
     expect(git(code, 'rev-parse', 'dev')).toBe(before)
     expect(fs.existsSync(wt())).toBe(true)
   })
@@ -678,10 +678,70 @@ describe('prdt track land', () => {
     fs.writeFileSync(lock, `${process.pid}\n`)
     const r = cli('track', 'land', 'T-1', '--test', 'true')
     expect(r.status).toBe(1)
-    expect(r.err).toContain('another `prdt track land` is running')
+    expect(r.err).toContain('another `prdt track merge` is running')
     fs.writeFileSync(lock, '999999\n')   // a dead owner: taken over
     expect(cli('track', 'land', 'T-1', '--test', 'true').status).toBe(0)
     expect(fs.existsSync(lock)).toBe(false)
+  })
+})
+
+// T-1264: the user named the command `merge` (「merge전 테스트화 함께 진행하는거잖아」).
+// `prdt track merge` is the command; `land` stays as an alias with identical
+// behavior through v1.16 and is removed in v1.17. Help and messages say `merge`.
+describe('T-1264: prdt track merge (land = alias through v1.16)', () => {
+  beforeEach(() => {
+    makeProject()
+    cli('track', 'open', 'T-1')
+  })
+
+  for (const spelling of ['merge', 'land']) {
+    test(`\`prdt track ${spelling}\`: tests on the merged tree, dev fast-forwards, branch and worktree gone, says merged`, () => {
+      commit(wt(), 'c.txt', 'new\n', 'feat: c (T-1)')
+      commit(code, 'b.txt', 'dev moved\n', 'feat: b')
+      const r = cli('track', spelling, 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).toContain('dev fast-forwarded')
+      expect(r.out).toMatch(/^merged T-1 — .*nothing pushed$/m)
+      expect(r.out).not.toContain('landed')
+      expect(fs.readFileSync(path.join(code, 'c.txt'), 'utf8')).toBe('new\n')
+      expect(fs.existsSync(wt())).toBe(false)
+      expect(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/track/T-1'], { cwd: code }).status).not.toBe(0)
+    })
+  }
+
+  test('merge refusals name `merge`: a held lock and a dirty worktree', () => {
+    fs.writeFileSync(path.join(wt(), 'wip.txt'), 'x\n')
+    const dirty = cli('track', 'merge', 'T-1')
+    expect(dirty.status).toBe(1)
+    expect(dirty.err).toContain('then merge')
+    fs.rmSync(path.join(wt(), 'wip.txt'))
+    const lock = path.join(code, '.git', 'prdt-track-land.lock')
+    fs.writeFileSync(lock, `${process.pid}\n`)
+    const held = cli('track', 'merge', 'T-1', '--test', 'true')
+    expect(held.status).toBe(1)
+    expect(held.err).toContain('another `prdt track merge` is running')
+    fs.rmSync(lock)
+  })
+
+  test('drop of unmerged commits points at `prdt track merge`', () => {
+    commit(wt(), 'c.txt', 'new\n', 'feat: c')
+    const r = cli('track', 'drop', 'T-1')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('`prdt track merge T-1`')
+  })
+
+  test('help names merge and marks land as the alias removed in v1.17', () => {
+    const top = cli('--help')
+    const topFlat = top.out.replace(/\s+/g, ' ')
+    expect(topFlat).toContain('track (open|review|merge)')
+    expect(topFlat).toContain('merge <T-NNN>')
+    expect(topFlat).toMatch(/land: alias of merge \(same behavior\), removed in v1\.17/)
+    const h = cli('track', '--help')
+    expect(h.status).toBe(0)
+    const flat = h.out.replace(/\s+/g, ' ')
+    expect(flat).toMatch(/land: alias of merge.*removed in v1\.17/)
+    expect(flat).not.toMatch(/--test TEST land:/)
+    expect(flat).toContain('merge: the test command')
   })
 })
 

@@ -388,8 +388,10 @@ describe.skipIf(!PY)('T-834 — no worker writes the track records', () => {
     }
   })
 
-  test('a worker running `prdt track open|land|drop` is denied; `review` is not', () => {
+  test('a worker running `prdt track open|merge|land|drop` is denied; `review` is not', () => {
     for (const c of [
+      'prdt track merge T-2',
+      '~/.prdt/bin/prdt track merge T-2 --base dev',
       'prdt track drop T-2 --force',
       'prdt track land T-2',
       'prdt track open T-3 --base dev',
@@ -425,6 +427,7 @@ describe.skipIf(!PY)('T-834 — no worker writes the track records', () => {
       `PRDT_HOME=${sbx} prdt track open T-1 --base main`,
       `PRDT_HOME=${sbx} python3 packages/core/scripts/prdt track drop T-1 --force`,
       `export PRDT_HOME=${sbx}; prdt track land T-1`,
+      `export PRDT_HOME=${sbx}; prdt track merge T-1`,
       `rm -rf ${sbx}/run/tracks`,
       `python3 -c "open('${sbx}/run/tracks/k/T-1.json','w')"`,
       'PRDT_HOME=$S/prdt prdt track drop T-1',                       // unresolvable sandbox: accepted gap, silent
