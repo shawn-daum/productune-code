@@ -471,6 +471,11 @@ def find_asks(text):
             continue
         m = None if in_diagram and in_fence else OPTION_LINE_RE.match(ln)
         if m and not EDGE_AFTER_RE.match(ln[m.end():]):
+            # T-1377: an `A` after an A…B pair opens the next option set — ten
+            # items each laid out A/B are ten asks, each scoped to its own item
+            letters = [l for l, _ in opt_block]
+            if m.group(1) == "A" and "A" in letters and "B" in letters[letters.index("A") + 1:]:
+                flush_options()
             opt_block.append((m.group(1), i))
         if in_fence:
             continue
@@ -550,27 +555,63 @@ def recorded_decisions(root, ids):
             and x.get("status") == "done" and x.get("answered") is True and not x.get("reversed_by")}
 
 
+# T-1377: an ask approving a body shown above it in its section (a fenced draft).
+APPROVAL_RE = re.compile(r"승인|approv", re.I)
+
+
+def body_above(lines, a, i):
+    """True when a closed, non-diagram fence lies in lines[a:i]."""
+    open_at = None
+    for k in range(a, i):
+        if FENCE_RE.match(lines[k]):
+            if open_at is None:
+                open_at = k
+            else:
+                if not DIAGRAM_FENCE_RE.match(lines[open_at]):
+                    return True
+                open_at = None
+    return False
+
+
+def ask_subject(lines, i, kind, option_ref, tickets):
+    """T-1377: the decision ids an ask is ABOUT. The decision ids on the ask's own
+    line (and, for a list item, the item's first line) name its subject; an id
+    elsewhere in the item or section is then a citation (a reason, a source).
+    None there → every id in its item or section, except an approval ask after a
+    fenced body in its section: that ask is about the body."""
+    a, b = ask_scope(lines, i, kind, option_ref)
+    is_dec = lambda k: bool(tickets.get(k)) and tickets[k][0] == "decision"
+    ids_on = lambda chunk: {m.group(1) for m in TICKET_ID_RE.finditer(chunk) if is_dec(m.group(1))}
+    own = ids_on(lines[i]) | (ids_on(lines[a]) if a != i and (lines[i][:1].isspace() or kind == "waiting"
+                                                              or LIST_ITEM_RE.match(lines[i])) else set())
+    if own:
+        return own
+    if APPROVAL_RE.search(QUOTED_RE.sub(" ", lines[i])) and body_above(lines, a, i):
+        return set()
+    return ids_on("\n".join(lines[a:b]))
+
+
 def reask_check(root, lines, asks, tickets, turn_start):
-    """T-1285: the block reason when an ask cites, in its own item or section, a
-    decision ticket closed before this turn whose answer is on record; else None.
-    Runs before the decision-changed-this-turn exemption: opening a new decision
-    ticket for an answered question is the re-ask itself (T-1239 observation 4)."""
+    """T-1285: (block reason, asked line numbers) when an ask is about (ask_subject,
+    T-1377) a decision ticket closed before this turn whose answer is on record;
+    else (None, set()). Runs before the decision-changed-this-turn exemption:
+    opening a new decision ticket for an answered question is the re-ask itself
+    (T-1239 observation 4)."""
     hits = {}
     for i, kind, option_ref in asks:
-        a, b = ask_scope(lines, i, kind, option_ref)
-        for m in TICKET_ID_RE.finditer("\n".join(lines[a:b])):
-            t = tickets.get(m.group(1))
-            if t and t[0] == "decision" and t[1] == "done" and t[3] < turn_start - 1:
-                hits.setdefault(m.group(1), set()).add(i + 1)
+        for k in ask_subject(lines, i, kind, option_ref, tickets):
+            t = tickets[k]
+            if t[1] == "done" and t[3] < turn_start - 1:
+                hits.setdefault(k, set()).add(i + 1)
     if not hits:
-        return None
+        return None, set()
     rec = recorded_decisions(root, set(hits))
     if not rec:
-        return None
+        return None, set()
     ln = sorted({n for k in rec for n in hits[k]})
     shown = ", ".join(str(n) for n in ln[:LIST_CAP]) + (", +%d more" % (len(ln) - LIST_CAP) if LIST_CAP < len(ln) else "")
     ids = sorted(rec)
-    return REASK_REASON % (shown, ", ".join(ids[:LIST_CAP]), lang_clause())
+    return REASK_REASON % (shown, ", ".join(ids[:LIST_CAP]), lang_clause()), set(ln)
 
 
 def batch_check(lines, asks, tickets):
@@ -621,14 +662,22 @@ def main():
     if idx is None:
         return
     tickets, unknown = idx
-    reask = reask_check(root, lines, asks, tickets, turn_start)
-    if reask:
-        return block(reask)
-    batch = batch_check(lines, asks, tickets)
-    if batch:
-        return block(batch)
+    # T-1377: every check that applies speaks in the one block, none hides another.
+    reask, reasked = reask_check(root, lines, asks, tickets, turn_start)
+    reasons = [r for r in (reask, batch_check(lines, asks, tickets)) if r]
+    question = question_check(lines, asks, tickets, unknown, turn_start, reply, reasked)
+    if question:
+        reasons.append(question)
+    if reasons:
+        block("\n\n".join(reasons))
+
+
+def question_check(lines, asks, tickets, unknown, turn_start, reply, reasked):
+    """T-985: the reason when an ask has no open decision ticket beside it; else
+    None. An ask the re-ask check already holds (`reasked` line numbers) is left
+    to it: the recorded answer, not a new ticket, is what that ask needs."""
     if any(t == "decision" and mt >= turn_start - 1 for t, _, _, mt in tickets.values()):
-        return
+        return None
     open_dec = {k for k, (t, s, _, _) in tickets.items() if t == "decision" and s == "open"}
     open_req = {k for k, (t, s, a, _) in tickets.items() if t != "decision" and s == "open" and a == "user"}
     # an id whose file could not be read counts as covering (fails open)
@@ -647,15 +696,15 @@ def main():
                 a, b = section_bounds(lines, i)
             found = ids_in("\n".join(lines[a:b]))
             ok = bool(found & (open_dec | open_req if kind == "waiting" else open_dec))
-        if not ok:
+        if not ok and i + 1 not in reasked:
             uncovered.append(i + 1)
     if not uncovered:
-        return
+        return None
     uncovered = sorted(set(uncovered))
     shown = ", ".join(str(n) for n in uncovered[:LIST_CAP])
     if len(uncovered) > LIST_CAP:
         shown += ", +%d more" % (len(uncovered) - LIST_CAP)
-    block(QUESTION_CHECK_REASON % (shown, lang_clause()))
+    return QUESTION_CHECK_REASON % (shown, lang_clause())
 
 
 def _out_of_budget(*_):
