@@ -13,6 +13,7 @@ probe.json
   arms               {name: spec}; name in control|cand-a|cand-b|positive
     spec.hook        {"event": "UserPromptSubmit", "text": "..."}  -> claude --settings
     spec.overlay     {"files": {"discipline/x.md": "/abs/source"}}   -> scratch PRDT_HOME
+                     (keys: discipline/<path> or doctrine.md — any other key exits)
                      (give control an empty overlay {} when any arm uses one)
     spec.prompt_suffix  appended to the task text (positive arm)
   detector           {"rules": [{"all": [regex | {"re": regex, "min": n}, ...]}, ...]}
@@ -330,6 +331,21 @@ def table(probe, out, arms, prep, R, bud, wall_total, conc, base_home, maxt):
     return "\n".join(lines), stop
 
 
+def overlay_key_check(probe):
+    """T-1285: an overlay key the session-start hook never reads drops the candidate
+    silently, so the arm runs as control (T-1271). Keys: `discipline/<path>` or
+    `doctrine.md`, relative, no `..`."""
+    bad = []
+    for name, a in probe["arms"].items():
+        for rel in ((a.get("overlay") or {}).get("files") or {}):
+            parts = rel.split("/")
+            ok = rel == "doctrine.md" or (len(parts) > 1 and parts[0] == "discipline" and all(p not in ("", ".", "..") for p in parts))
+            if not ok:
+                bad.append(f"{name}: {rel}")
+    if bad:
+        sys.exit("overlay key outside discipline/ (the hook never reads it, the arm would run as control): " + ", ".join(bad))
+
+
 def isolation_check(probe, cwd):
     bad = []
     for n in probe.get("forbid_files", []):
@@ -349,6 +365,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     probe = json.load(open(a.probe))
     os.makedirs(a.out, exist_ok=True)
+    overlay_key_check(probe)
     isolation_check(probe, a.cwd)
     mp = write_manifest(a.out, a.probe, probe)
     print(f"manifest: {mp}")
