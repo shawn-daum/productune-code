@@ -174,8 +174,15 @@ describe('render — one sidebar section per line', () => {
     }
   })
 
-  it('용어 · 규율 · 위키 · 릴리스 노트 sidebars carry no line section', () => {
-    for (const store of ['wiki', 'glossary', 'release', 'disc']) expect(sidebar(store), store).not.toContain('ls-h')
+  it('규율 · 위키 · 릴리스 노트 sidebars carry no line section', () => {
+    for (const store of ['wiki', 'release', 'disc']) expect(sidebar(store), store).not.toContain('ls-h')
+  })
+
+  it("T-1255: each line's 현재 버전 sidebar lists 용어 사전 directly under its env", () => {
+    const keys = [...sidebar('home').matchAll(/data-group-select="([^"]+)"/g)].map((m) => m[1])
+    expect(keys[keys.indexOf('env') + 1]).toBe('glossary')
+    expect(keys[keys.indexOf('ntf-archive/env') + 1]).toBe('ntf-archive/glossary')
+    expect(pane('home', 'glossary')).toContain('용어')
   })
 
   it("each line's 진행 상황 is the Home blocks scoped to that line's tickets", () => {
