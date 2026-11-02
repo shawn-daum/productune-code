@@ -201,6 +201,11 @@ describe('T-1317: a language asked for in chat outranks stored user.lang for the
     'how do I talk to Korean users about this feature?',
     'README 를 영어로 번역해줘',
     'translate it into English',
+    // qa2: questions, permission asks and a task with an object stay unswitched
+    '영어로 말해도 돼?',
+    '커밋 메시지는 영어로 해줘',
+    'Do you speak Korean?',
+    '그 사람한테 영어로 말해야 하나?',
   ])('not a chat-language ask: %s', text => {
     const sb = sandbox('ko')
     prompt(sb, text)
@@ -216,6 +221,11 @@ describe('T-1317: a language asked for in chat outranks stored user.lang for the
     ['switch to English please', 'en'],
     ['Can you answer in English?', 'en'],
     ['한국어로 답해줘', 'ko'],
+    // qa2: clear asks the first matcher missed
+    ['From now on, speak English.', 'en'],
+    ["Let's switch back to Korean.", 'ko'],
+    ['영어로 대화하자', 'en'],
+    ['한국어로 해줘', 'ko'],
   ])('a chat-language ask switches: %s', (text, lang) => {
     const sb = sandbox(lang === 'en' ? 'ko' : 'en')
     prompt(sb, text)
