@@ -1130,6 +1130,24 @@ describe('T-1286: land selects tests by the files they were seen to read', () =>
     expect(r.out).not.toContain('pkg: test/probe.test.ts')
     expect(r.out).toContain('dev fast-forwarded')
   })
+
+  test.each([
+    ['null list', { f: null }],
+    ['number list', { d: 5 }],
+  ])('a map entry with a %s falls back and still lands, exit 0', (_n, entry) => {
+    commit(code, 'pkg/test/probe.test.ts', PROBE, 'test: config probe')
+    open('T-1')
+    commit(wt('T-1'), 'notes.md', 'x\n', 'docs: notes (T-1)')
+    expect(cli('track', 'land', 'T-1', '--test', 'cd pkg && node_modules/.bin/vitest run').status).toBe(0)
+    const [m] = mapFile()
+    fs.writeFileSync(m, JSON.stringify({ schema: 1, tests: { 'pkg/test/probe.test.ts': entry } }))
+    open('T-2')
+    commit(wt('T-2'), 'pkg/config/settings-extra.json', '{"ok": true}\n', 'feat: settings (T-2)')
+    const r = cli('track', 'land', 'T-2')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('test-read map: unreadable')
+    expect(r.out).toContain('dev fast-forwarded')
+  })
 })
 
 describe('prdt track drop', () => {
