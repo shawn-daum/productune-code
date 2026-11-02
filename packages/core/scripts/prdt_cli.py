@@ -6619,6 +6619,22 @@ def schedule_docs_viewer_regen():
         _DOCS_WRITTEN.clear()
 
 
+# T-1303: the release notes the viewer reads — the fixed path in
+# packages/viewer/lib/collect.mjs `RELEASES_REL` (T-883; a project whose code
+# folder is not `code/` has no release-notes view yet — backlog T-1085).
+VIEWER_RELEASES_REL = "code/docs/RELEASES.md"
+
+
+def viewer_release_versions(root):
+    """The `## <version>` tokens of the viewer's RELEASES.md in file order, or
+    None when that file is missing or unreadable."""
+    try:
+        text = (Path(root) / VIEWER_RELEASES_REL).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return [v for v, _ in _parse_all_releases(text)]
+
+
 def viewer_anchor(root, target):
     """The viewer `#id` for `target` (a ticket id or a file path), or None when
     the viewer only summarizes that file (an `.html` mockup, an image, …) —
@@ -6630,7 +6646,9 @@ def viewer_anchor(root, target):
     # T-973: a `path#section` target (the `[ctx].prd_path` form,
     # `docs/prd/PRD.md#v1.13`) names the document — the viewer opens a PRD as
     # one pane, so the section part is dropped, never read as part of a filename.
-    target = target.split("#", 1)[0] or target
+    # T-1303: RELEASES.md keeps it — `#<version>` opens that version's section.
+    target, _, frag = target.partition("#")
+    target = target or "#" + frag
     p = Path(target)
     p = (p if p.is_absolute() else Path.cwd() / p).resolve()
     try:
@@ -6640,6 +6658,12 @@ def viewer_anchor(root, target):
     # T-1104: classify by the As-Is shape (`docs/<p>/x` / `docs/_shared/x` →
     # `docs/x`); the anchor itself stays the real repo-relative path.
     real, rel = rel, docs_as_is_rel(root, rel)
+    if real == VIEWER_RELEASES_REL:
+        # T-1303: the release-notes view; a section the file does not have
+        # opens the view itself (the page has no anchor for it).
+        if not p.is_file():
+            return None
+        return f"{real}#{frag}" if frag and frag in (viewer_release_versions(root) or []) else real
     # T-973: an artifact is carried by manifest membership, any extension
     # (the page's buildAnchors keys every manifest entry); everything else
     # the viewer carries is a markdown file that must exist — a path to
@@ -6833,7 +6857,23 @@ def cmd_viewer(args):
         if failed:
             sys.exit(f"prdt viewer: {failed}")
         return
-    if not args.targets:
+    targets, labels = list(args.targets), {}
+    release = getattr(args, "release", None)
+    if release:
+        # T-1303: `--release v1.16` = the target `code/docs/RELEASES.md#v1.16`,
+        # read from the working tree (an uncommitted draft included).
+        ver = release if release.startswith("v") else f"v{release}"
+        versions = viewer_release_versions(root)
+        if versions is None:
+            sys.exit(f"prdt viewer: {VIEWER_RELEASES_REL} 파일이 없어서 릴리스 노트 링크를 만들지 않았어요.")
+        if ver not in versions:
+            shown = ", ".join(versions[:5]) + (" …" if len(versions) > 5 else "") if versions else "없음"
+            sys.exit(f"prdt viewer: {VIEWER_RELEASES_REL} 에 {ver} 절이 없어요 — 있는 버전: {shown}")
+        f = Path(root) / VIEWER_RELEASES_REL
+        t = f"{f}#{ver}"
+        targets.append(t)
+        labels[t] = str(f)
+    if not targets:
         problem = viewer_scratch_problem(root)
         if problem:
             sys.exit(viewer_scratch_message(*problem))
@@ -6842,7 +6882,7 @@ def cmd_viewer(args):
             sys.exit(f"prdt viewer: 뷰어를 만들지 못했어요 — {problem}")
         print(f"[viewer](file://{file_url_path(viewer)})")
         return
-    for line in viewer_links(root, args.targets):
+    for line in viewer_links(root, targets, labels=labels):
         print(line)
 
 
@@ -21652,6 +21692,9 @@ def main():
                    help="T-983: install the generator's dependencies if missing and build viewer.html if absent; "
                         "silent when ready, one failure line otherwise (the PO session-start hook and `prdt update` run it)")
     p.add_argument("--refresh", action="store_true", help="with --ensure: regenerate viewer.html even when it exists")
+    p.add_argument("--release", metavar="VERSION",
+                   help="T-1303: also link the release-notes view at VERSION's section of code/docs/RELEASES.md "
+                        "(working tree, an uncommitted draft included); same as the target code/docs/RELEASES.md#VERSION")
     p.set_defaults(fn=cmd_viewer)
     p = sub.add_parser("tickets", help="list tickets (--version --feature --status --assignee --ready --backlog) "
                                        "· --link T-NNN … prints paste-ready file:// links "
