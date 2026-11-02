@@ -309,7 +309,7 @@ describe('worker habits point at the annex where their own act needs it', () => 
     pinAbsent(row, '`(vX~', { file: 'discipline/contracts/fixed-paths.md (the Fixed paths feature-spec row)', protects: 'no dual text — authoring vocabulary lives at the authoring site only' })
   })
   test('po habit: isolation triggers pointer', () => {
-    expect(HABITS.po).toContain('Worktree isolation only on the three contract triggers, through `prdt track` (`contracts/git.md`)')
+    expect(HABITS.po).toContain('Worktree isolation only on the 3 contract triggers, through `prdt track` (`contracts/git.md`)')
   })
 })
 
