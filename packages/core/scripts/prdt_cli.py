@@ -8662,9 +8662,14 @@ def maybe_meta_backup(cmd):
         if isinstance(pair, str):
             return                                      # no PRDT_REPO / node / built bridge → silent
         node, bridge = pair
+        # T-1352: stdin=DEVNULL too. A detached node that holds the user's tty
+        # as fd 0 restores, on exit, the termios it saw at start (node
+        # ResetStdio: cooked + echo) — clobbering the raw mode of the Claude
+        # Code `prdt` launched meanwhile, so every terminal reply and mouse
+        # report then echoes as `^[…` text in its input box.
         subprocess.Popen([node, bridge, "backup", str(root)],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
     except Exception:
         return
 
