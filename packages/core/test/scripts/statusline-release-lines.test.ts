@@ -3,7 +3,8 @@
  *
  * Drives the REAL `statusline-prdt.sh` end to end:
  *   - T-984 (user-confirmed 2026-10-06): `<label> <version> | branch: <b> |
- *     <stage> n/m | total tickets n/m | working …`; single-line: an empty dec/req pair
+ *     <stage> n/m | total tickets n/m`, then its lane rows (T-1330: every stage, the
+ *     only home of `working`); single-line: an empty dec/req pair
  *     is always its own last row, `dec 0 · req 0` when empty.
  *   - T-961: one row per release line (home first, then config `products`, T-1108 (old `lines` still read) in
  *     declaration order), one shared dec/req row; never more than 17 rows
@@ -105,7 +106,7 @@ describe.skipIf(!READY)('statusline — T-984 layout, single line', () => {
     seed({ slug: 'productune' }, { stage: 'build', version: 'v1.13' })
     ticket('v1.13', 'T-1', { status: 'done' })
     ticket('v1.13', 'T-2')
-    expect(rows()).toEqual(['productune v1.13 | stage: build 1/2 | total tickets 1/2 | working 0', 'decision 0 | request 0'])
+    expect(rows()).toEqual(['productune v1.13 | stage: build 1/2 | total tickets 1/2', 'lane: 자투리  1/2 | next T-2(developer)', 'decision 0 | request 0'])
   })
 
   test('either list has an entry → listed on the same last row', () => {
@@ -114,7 +115,8 @@ describe.skipIf(!READY)('statusline — T-984 layout, single line', () => {
     ticket('v1.13', 'T-985', { assignee: 'user' })
     marker('T-985', 'qa')
     expect(rows()).toEqual([
-      'productune v1.13 | stage: define 0/1 | total tickets 0/2 | working T-985(qa)',
+      'productune v1.13 | stage: define 0/1 | total tickets 0/2',
+      'lane: 자투리  0/2 | working T-985(qa) | blocker T-984(decision) T-985(request)',
       'decision T-984 | request T-985',
     ])
   })
@@ -146,14 +148,14 @@ describe.skipIf(!READY)('statusline — stage ticket count (T-923)', () => {
     expect(stageSeg()).toBe('stage: build 1/3')
     seed({ slug: 'p' }, { stage: 'ship', version: 'v1.0' })
     expect(stageSeg()).toBe('stage: ship 1/2')
-    expect(rows()[0]).toContain('| total tickets 3/7 |')
+    expect(rows()[0]).toMatch(/\| total tickets 3\/7$/)
   })
 
   test('retro and idle have no stage tickets → 0/0; the version total still shows; a po-state `checks` is ignored', () => {
     ticket('v1.0', 'T-1', { status: 'done' })
     ticket('v1.0', 'T-2')
     seed({ slug: 'p' }, { stage: 'retro', version: 'v1.0', checks: { retro: ['a'] } })
-    expect(rows()[0]).toBe('p v1.0 | stage: retro 0/0 | total tickets 1/2 | working 0')
+    expect(rows().slice(0, 2)).toEqual(['p v1.0 | stage: retro 0/0 | total tickets 1/2', 'lane: 자투리  1/2 | next T-2(developer)'])
     seed({ slug: 'p' }, { stage: 'idle', version: 'v1.0', checks: { idle: ['x'] } })
     expect(stageSeg()).toBe('stage: idle 0/0')
   })
@@ -174,8 +176,10 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     ticket('ntf-archive/v1.1', 'T-700', { status: 'done' }) // older version: not counted
     marker('T-764')
     expect(rows()).toEqual([
-      'ntf-pm v2.2 | stage: define 0/1 | total tickets 1/2 | working 0',
-      'ntf-archive v1.2 | stage: build 0/2 | total tickets 0/2 | working T-764(developer)',
+      'ntf-pm v2.2 | stage: define 0/1 | total tickets 1/2',
+      'lane: 자투리  1/2 | blocker T-760(decision)',
+      'ntf-archive v1.2 | stage: build 0/2 | total tickets 0/2',
+      'lane: 자투리  0/2 | working T-764(developer) | blocker T-767(request)',
       'decision T-760 | request T-767',
     ])
   })
@@ -184,9 +188,12 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     seed({ slug: 'shop', products: [{ name: 'android' }, { name: 'ios' }] },
       { stage: 'ship', version: 'v3.4', products: { android: { stage: 'build', version: 'v2.1' }, ios: { stage: 'define', version: 'v2.1' } } })
     expect(rows()).toEqual([
-      'shop v3.4 | stage: ship 0/0 | working 0',
-      'android v2.1 | stage: build 0/0 | working 0',
-      'ios v2.1 | stage: define 0/0 | working 0',
+      'shop v3.4 | stage: ship 0/0',
+      'lane: 자투리  0/0 | working 0',
+      'android v2.1 | stage: build 0/0',
+      'lane: 자투리  0/0 | working 0',
+      'ios v2.1 | stage: define 0/0',
+      'lane: 자투리  0/0 | working 0',
       'decision 0 | request 0',
     ])
   })
@@ -196,7 +203,7 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     seed({ slug: 'ntf-pm', lines: [{ name: 'ntf-archive' }, { name: 'v2-bad' }, { name: 'ntf-pm' }, { name: 'ntf-archive' }] },
       { stage: 'build', version: 'v2.2', lines: { ghost: { stage: 'ship', version: 'v9.9' } } })
     const r = rows()
-    expect(r).toEqual(['ntf-pm v2.2 | stage: build 0/0 | working 0', 'ntf-archive | stage: ? 0/0 | working 0', 'decision 0 | request 0'])
+    expect(r).toEqual(['ntf-pm v2.2 | stage: build 0/0', 'lane: 자투리  0/0 | working 0', 'ntf-archive | stage: ? 0/0', 'lane: 자투리  0/0 | working 0', 'decision 0 | request 0'])
     expect(r.join('\n')).not.toContain('ghost')
   })
 
@@ -207,21 +214,24 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
       execFileSync('git', ['-C', sib, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'i'])
       seed({ slug: 'ntf-pm', products: [{ name: 'ntf-archive', code: { dir: path.relative(root, sib) } }] },
         { stage: 'build', version: 'v2.2', products: { 'ntf-archive': { stage: 'ship', version: 'v1.2' } } })
-      expect(rows()[1]).toBe('ntf-archive v1.2 | stage: ship 0/0 | working 0 | branch: release')
+      expect(rows()[2]).toBe('ntf-archive v1.2 | stage: ship 0/0 | branch: release')
     } finally {
       fs.rmSync(sib, { recursive: true, force: true })
     }
   })
 
-  test('never more than 17 rows: past the limit the last line rows fold into `+N products`', () => {
+  test('never more than 17 rows: product and lane rows share the cap; past it they fold into `+N more rows` (T-1330 / T-1372 2 = A, T-1374 = A)', () => {
     const names = Array.from({ length: 20 }, (_, i) => `line-${i + 1}`)
     seed({ slug: 'big', products: names.map((name) => ({ name })) },
       { stage: 'build', version: 'v1.0', products: Object.fromEntries(names.map((n) => [n, { stage: 'build', version: 'v1.0' }])) })
     const r = rows()
     expect(r).toHaveLength(17)
-    expect(r[0]).toBe('big v1.0 | stage: build 0/0 | working 0')
-    expect(r[14]).toBe('line-14 v1.0 | stage: build 0/0 | working 0')
-    expect(r[15]).toBe('+6 products')
+    // 21 products x (product row + default lane row) = 42 body rows; 15 shown, 27 folded
+    expect(r[0]).toBe('big v1.0 | stage: build 0/0')
+    expect(r[1]).toBe('lane: 자투리  0/0 | working 0')
+    expect(r[14]).toBe('line-7 v1.0 | stage: build 0/0')
+    expect(r.filter((x) => x === 'lane: 자투리  0/0 | working 0')).toHaveLength(7)
+    expect(r[15]).toBe('+27 more rows')
     expect(r[16]).toBe('decision 0 | request 0')
   })
 
@@ -230,6 +240,6 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     const before = rows()
     seed({ slug: 'p', lines: [] }, { stage: 'build', version: 'v1.0' })
     expect(rows()).toEqual(before)
-    expect(before).toHaveLength(2)
+    expect(before).toHaveLength(3)
   })
 })

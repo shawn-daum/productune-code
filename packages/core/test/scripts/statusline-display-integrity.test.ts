@@ -38,7 +38,7 @@ const ANY_BREAK = /\r\n|[\n\r\u000b\u000c\u0085\u2028\u2029]/
 const CTRL = /\p{Cc}|\p{Cf}|\p{Zl}|\p{Zp}/u
 
 /** Line row + the always-present `dec … · req …` row (T-988 = A). */
-const ROWS = 2
+const ROWS = 3   // product row · the default 자투리 lane row (T-1330) · dec/req row
 
 let root: string
 
@@ -169,6 +169,6 @@ describe.skipIf(!READY)('the statusline cannot be made to misrepresent by file c
 
   test('a legitimate project renders exactly as before (nothing traded away)', () => {
     seed({ slug: 'realproj' }, GOOD_STATE)
-    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | stage: build 0/0 | working 0\ndecision 0 | request 0')
+    expect(run().replace(/\n$/, '')).toBe('realproj v1.6 | stage: build 0/0\nlane: 자투리  0/0 | working 0\ndecision 0 | request 0')
   })
 })

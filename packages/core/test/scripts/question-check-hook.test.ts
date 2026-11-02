@@ -563,3 +563,119 @@ describe('T-1364 = C (threshold 4) — asks over 4+ open decisions in one reply 
     expect(stop(store(4), reply, { stop_hook_active: true }).out).toBe('')
   })
 })
+
+describe('T-1377 — L1 replays: re-ask only on the recorded decision itself, never hiding batch-ask or question check', () => {
+  // Verbatim first replies of docs/productune/artifacts/v1.16/decision-approval-observation.md
+  // (1) r1 / r1b, (2) r2, (3) r3, against the scratch project `memo` as it stood:
+  // T-001 `theme-follows-system` done + answered a day before; r2 opened T-002~T-011 that turn.
+  const PRDT = path.join(CORE_ROOT, 'scripts', 'prdt')
+  const REASK = '[prdt re-ask check]'
+  const BATCH = '[prdt batch-ask check]'
+  const env = (): NodeJS.ProcessEnv => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-l1-'))
+    roots.push(home)
+    return { ...ON, PRDT_HOME: home, PRDT_BIN: PRDT }
+  }
+  function decision(proj: string, id: string, slug: string, status: string, outcome: string, ago: number) {
+    const p = path.join(proj, 'docs', 'tickets', 'v1.13', `${id}.md`)
+    fs.writeFileSync(p, ['---', `id: ${id}`, `slug: ${slug}`, 'type: decision', `status: ${status}`, 'assignee: user',
+      'created: 2026-11-01', '---', '', '## problem', '', `- ${slug}`, '', '## outcome', '', outcome, '', '## log', '', ''].join('\n'))
+    const t = (Date.now() - ago) / 1000
+    fs.utimesSync(p, t, t)
+  }
+  const T001 = (proj: string) => decision(proj, 'T-001', 'theme-follows-system', 'done',
+    '폰 설정을 따른다 — 사용자 「처음부터 아무것도 안 만지고 쓰게 하고 싶어. 설정 화면 늘어나는 거 싫다. 어두운 건 폰 설정 따라가면 돼」', 86_400_000)
+  const R2_OPENED = ['T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011']
+  function replay(name: string, setup: (proj: string) => void) {
+    const reply = fx(name)
+    const { root, proj } = makeProject({})
+    setup(proj)
+    const out = runHook({
+      hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
+    }, env())
+    return out ? (JSON.parse(out).reason as string) : ''
+  }
+
+  test('(1) r1 — a true re-ask of T-001 → re-ask block naming T-001', () => {
+    const reason = replay('reask-r1', T001)
+    expect(reason.startsWith(REASK)).toBe(true)
+    expect(reason).toContain('T-001')
+    expect(reason).not.toContain(TAG)
+  })
+
+  test('(1) r1b — a true re-ask of T-001 → re-ask block naming T-001', () => {
+    const reason = replay('reask-r1b', T001)
+    expect(reason.startsWith(REASK)).toBe(true)
+    expect(reason).toContain('T-001')
+  })
+
+  test('(2) r2 — 10 open decisions asked, T-001 cited as a reason → batch-ask block, no re-ask block', () => {
+    const reason = replay('batch-r2', (p) => {
+      T001(p)
+      for (const id of R2_OPENED) decision(p, id, `memo-${id.toLowerCase()}`, 'open', '', 1_000)
+    })
+    expect(reason).not.toContain(REASK)
+    expect(reason.startsWith(BATCH)).toBe(true)
+    expect(reason).toContain('10 open decisions')
+  })
+
+  test('(3) r3 — approval of a release-note body with no decision ticket, T-001 cited as a source → question check, no re-ask block', () => {
+    const reason = replay('approval-r3', T001)
+    expect(reason).not.toContain(REASK)
+    expect(reason.startsWith(TAG)).toBe(true)
+  })
+
+  test('several checks applying in one Stop → the reason carries each, none dropped', () => {
+    // r1's re-ask of T-001 + r3's ticketless approval in one reply, in separate sections
+    const reply = fx('reask-r1') + '\n## 릴리스 노트\n\n' + fx('approval-r3')
+    const { root, proj } = makeProject({})
+    T001(proj)
+    const out = runHook({
+      hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
+    }, env())
+    const both = JSON.parse(out).reason as string
+    expect(both.startsWith(REASK)).toBe(true)
+    expect(both).toContain('\n\n' + TAG)
+    expect(both).toContain('T-001')
+  })
+
+  // QA grill d-v116-t1377-qa1 (4): T-001 done a day ago, T-012 opened this turn
+  function inline(reply: string, withT012: boolean) {
+    const { root, proj } = makeProject({})
+    T001(proj)
+    if (withT012) decision(proj, 'T-012', 'in-app-theme-toggle', 'open', '', 1_000)
+    const out = runHook({
+      hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
+    }, env())
+    return out ? (JSON.parse(out).reason as string) : ''
+  }
+  const DECIDED = '다크모드는 T-001 에서 폰 설정을 따르기로 정하셨어요.'
+  const DRAFT = ['```', '설정 > 화면 테마: 시스템 따라가기 / 밝게 / 어둡게', '```']
+  const cases: [string, string, boolean][] = [
+    ['d — a new ticket named on the ask line', [DECIDED, '', '앱 안 토글을 둘지 다시 골라 주세요 (T-012).'].join('\n'), true],
+    ['d2 — a new ticket heading the ask line', [DECIDED, '', 'T-012: 앱 안 토글을 둘까요?'].join('\n'), true],
+    ['c3 — a fenced draft re-deciding T-001, approval naming the new ticket',
+      [DECIDED, '', ...DRAFT, '', '이 초안(T-012)대로 앱 안 테마 설정을 넣는 걸 승인해 주실까요?'].join('\n'), true],
+    ['c — a fenced draft re-deciding T-001, approval with no new id',
+      [DECIDED, '', ...DRAFT, '', '이 초안대로 앱 안 테마 설정을 넣는 걸 승인해 주실까요?'].join('\n'), false],
+    ['c2 — the same, an imperative approval', [DECIDED, '', ...DRAFT, '', '이 초안대로 넣어도 되는지 승인해 주세요.'].join('\n'), false],
+  ]
+  for (const [label, reply, withT012] of cases) {
+    test(`${label} → re-ask on T-001 only`, () => {
+      const reason = inline(reply, withT012)
+      expect(reason.startsWith(REASK)).toBe(true)
+      expect(reason).toContain('T-001')
+      expect(reason).not.toContain(TAG)
+    })
+  }
+
+  test('re-ask and question check on the same decision in one section → re-ask only', () => {
+    const reply = ['## 화면 테마', '', DECIDED, '', '- 앱 안 토글, 이번에 넣을까요?', '', '이대로 갈까요, 아니면 바꿀까요?'].join('\n')
+    const reason = inline(reply, false)
+    expect(reason.startsWith(REASK)).toBe(true)
+    expect(reason).not.toContain(TAG)
+  })
+})
