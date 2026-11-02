@@ -44,7 +44,9 @@ function makeFakeRepo(): string {
   fs.writeFileSync(
     path.join(repo, 'dist', 'bin', 'meta-cli.cjs'),
     `require('fs').appendFileSync(${JSON.stringify(callsLog)}, process.argv.slice(2).join(' ') + '\\n')\n` +
-    `process.stdout.write('{"ok":true}\\n')\n`,
+    `process.stdout.write('{"ok":true}\\n')\n` +
+    // T-1352: what fd 0 the detached tick inherited (dev:ino:rdev).
+    `{ const st = require('fs').fstatSync(0); require('fs').writeFileSync(${JSON.stringify(path.join(repo, 'stdin.txt'))}, st.dev + ':' + st.ino + ':' + st.rdev) }\n`,
   )
   return repo
 }
@@ -127,6 +129,36 @@ describe.skipIf(!PYTHON3 || !NODE)('prdt CLI main — detached backup tick (T-50
     runPrdt(['meta', 'remote'])
     await new Promise((r) => setTimeout(r, 300))
     expect(calls().filter((l) => l.startsWith('backup '))).toHaveLength(1)
+  })
+
+  // T-1352: a detached node bridge holding the user's tty as fd 0 restores the
+  // termios it saw at ITS start when it exits (node ResetStdio) — cooked + echo
+  // — under the Claude Code that `prdt` launched meanwhile in raw mode; every
+  // terminal reply and mouse report then echoes as `^[…` text in the input box.
+  // The tick must never inherit the caller's stdin.
+  test('the detached tick does not inherit the caller stdin (fd 0 is /dev/null)', async () => {
+    execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
+      cwd: projectDir, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    pointPrdtEnvAt(fakeRepo)
+    const stdinFile = path.join(projectDir, 'caller-stdin.txt')
+    fs.writeFileSync(stdinFile, '')
+    const fd = fs.openSync(stdinFile, 'r')
+    try {
+      spawnSync('python3', [PRDT_CLI, 'tickets'], {
+        cwd: projectDir, stdio: [fd, 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
+        env: { ...process.env, ...ARMED },
+      })
+    } finally { fs.closeSync(fd) }
+    expect(await waitForCalls(1)).toHaveLength(1)
+    const stdinTxt = path.join(fakeRepo, 'stdin.txt')
+    const t0 = Date.now()
+    while (!fs.existsSync(stdinTxt) && Date.now() - t0 < 4000) await new Promise((r) => setTimeout(r, 50))
+    const caller = fs.statSync(stdinFile)
+    const devnull = fs.statSync('/dev/null')
+    const got = fs.readFileSync(stdinTxt, 'utf8')
+    expect(got).not.toBe(`${caller.dev}:${caller.ino}:${caller.rdev}`)
+    expect(got).toBe(`${devnull.dev}:${devnull.ino}:${devnull.rdev}`)
   })
 
   test('no meta split → no spawn', async () => {
