@@ -148,6 +148,23 @@ describe('prdt decisions find', () => {
     expect(line.endsWith('→ T-12')).toBe(true)
   })
 
+  test('--json: every matching record with id · kind · status · date · reversed_by · answered (T-1285)', () => {
+    write('docs/tickets/v1.0/T-15.md', ['---', 'id: T-15', 'slug: fixture-t-15', 'type: decision', 'status: open', 'assignee: user',
+      'created: 2026-10-21', '---', '', '## problem', '', '- Frobnicator', '', '## outcome', '', '### why', '', '### what', ''].join('\n'))
+    try {
+      const recs = JSON.parse(runPrdt(['decisions', 'find', 'Frobnicator', '--json'])) as Array<Record<string, unknown>>
+      const by = Object.fromEntries(recs.map((r) => [r.id, r]))
+      expect(by['T-10']).toMatchObject({ kind: 'ticket', status: 'done', date: '2026-10-01', reversed_by: '', answered: true })
+      expect(by['T-13']).toMatchObject({ status: 'done', reversed_by: 'T-12', answered: true })
+      // an outcome holding only empty key headings is no answer
+      expect(by['T-15']).toMatchObject({ status: 'open', answered: false })
+      expect(by['T-14']).toBeUndefined()
+      expect(JSON.parse(runPrdt(['decisions', 'find', 'zzzqqq', '--json']))).toEqual([])
+    } finally {
+      fs.rmSync(path.join(projectDir, 'docs/tickets/v1.0/T-15.md'), { force: true })
+    }
+  })
+
   test('no hit prints one clear line', () => {
     expect(runPrdt(['decisions', 'find', 'zzzqqq']).trim()).toBe('no recorded decision')
   })

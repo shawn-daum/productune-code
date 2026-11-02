@@ -52,12 +52,13 @@ function lanes(): any[] {
   return JSON.parse(r.out).lanes
 }
 
-function writeTicket(version: string, id: string, fm: { type?: string; status?: string; assignee?: string; deps?: string; gate?: string } = {}) {
+function writeTicket(version: string, id: string, fm: { type?: string; status?: string; assignee?: string; deps?: string; gate?: string; extra?: string[] } = {}) {
   const dir = path.join(projectDir, 'docs', 'tickets', version)
   fs.mkdirSync(dir, { recursive: true })
   const lines = ['---', `id: ${id}`, `slug: s-${id.toLowerCase()}`, `type: ${fm.type ?? 'impl'}`,
     `status: ${fm.status ?? 'open'}`, `assignee: ${fm.assignee ?? 'developer'}`]
   if (fm.deps) lines.push(`deps: ${fm.deps}`)
+  if (fm.extra) lines.push(...fm.extra)
   lines.push('created: 2026-10-15', '---', '', '## problem', '', fm.gate ? `Produces \`${fm.gate}\`.` : 'x', '', '## acceptance', '', '- x', '')
   fs.writeFileSync(path.join(dir, `${id}.md`), lines.join('\n'))
 }
@@ -360,5 +361,106 @@ describe.skipIf(!PYTHON3)('prdt schedule lanes', () => {
       fs.rmSync(path.join(projectDir, '.prdt', 'schedule.jsonl'), { force: true })
       expect(record('s-t-002')).not.toMatch(/outside the lanes/)
     })
+  })
+})
+
+// T-1359 (v1.16 L4, design docs/productune/artifacts/v1.16/lane-records-design.md §1–§3): a lane is
+// a gate ticket's `lane:` frontmatter record; the PRD 합격선 table is read only when the
+// version holds no record.
+describe.skipIf(!PYTHON3)('prdt schedule lanes from lane records (T-1359)', () => {
+  const rec = (name: string, gate?: string) => [`lane: ${name}`, ...(gate ? [`gate: ${gate}`] : [])]
+
+  test('records with no 합격선 table: one lane per record, gate-ticket number order, `gate:` is gate_path', () => {
+    writePrd([])
+    writeTicket('v0.1', 'T-010', { type: 'ops', assignee: 'po', deps: '[T-011]', extra: rec('L1 결정/승인', GATE_A) })
+    writeTicket('v0.1', 'T-002', { type: 'ops', assignee: 'po', deps: '[T-003]', extra: rec('L9 뒤 이름') })
+    writeTicket('v0.1', 'T-003', { status: 'done' })
+    writeTicket('v0.1', 'T-011', {})
+    writeTicket('v0.1', 'T-020', {})
+    const ls = lanes()
+    expect(ls.map((l) => l.name)).toEqual(['L9 뒤 이름', 'L1 결정/승인', '자투리'])
+    expect(ls[0]).toMatchObject({ gate_ticket: 'T-002', gate_path: null, linked: true, unnamed: false, tickets: ['T-002', 'T-003'], done: 1, total: 2 })
+    expect(ls[1]).toMatchObject({ gate_ticket: 'T-010', gate_path: GATE_A, linked: true, tickets: ['T-010', 'T-011'] })
+    expect(ls[2].tickets).toEqual(['T-020'])
+  })
+
+  test('records win over the 합격선 table; a body naming the gate path is no gate', () => {
+    writePrd([rowA, rowB])
+    writeTicket('v0.1', 'T-001', { type: 'decision', assignee: 'po', status: 'done', gate: GATE_A })
+    writeTicket('v0.1', 'T-002', { type: 'ops', assignee: 'po', deps: '[T-003]', extra: rec('R1', GATE_A) })
+    writeTicket('v0.1', 'T-003', {})
+    const ls = lanes()
+    expect(ls.map((l) => l.name)).toEqual(['R1', '자투리'])
+    expect(ls[0]).toMatchObject({ gate_ticket: 'T-002', gate_path: GATE_A, tickets: ['T-002', 'T-003'] })
+    expect(ls[1].tickets).toEqual(['T-001'])
+  })
+
+  test('a dropped gate ticket takes its lane away; a record in another version is not this version\'s lane', () => {
+    writePrd([rowA])
+    writeTicket('v0.1', 'T-001', { type: 'ops', assignee: 'po', status: 'dropped', deps: '[T-002]', extra: rec('gone') })
+    writeTicket('v0.1', 'T-002', {})
+    writeTicket('v0.0', 'T-000', { type: 'ops', assignee: 'po', status: 'done', extra: rec('old') })
+    writeTicket('v0.1', 'T-003', { gate: GATE_A })
+    // no live record in v0.1 → the table is read exactly as before
+    const ls = lanes()
+    expect(ls.map((l) => l.name)).toEqual(['A', '자투리'])
+    expect(ls[0].gate_ticket).toBe('T-003')
+  })
+
+  test('two records with one name: the later lane carries a warning', () => {
+    writePrd([])
+    writeTicket('v0.1', 'T-001', { type: 'ops', assignee: 'po', extra: rec('same') })
+    writeTicket('v0.1', 'T-002', { type: 'ops', assignee: 'po', extra: rec('same') })
+    const ls = lanes()
+    expect(ls.map((l) => l.name)).toEqual(['same', 'same'])
+    expect(ls[0].warning).toBeNull()
+    expect(ls[1].warning).toMatch(/same/)
+  })
+
+  // T-1365 (approved wording A, docs/productune/artifacts/v1.16/lane-records-build-entry-step.md §A-2)
+  const NUDGE = 'lanes: from the PRD 합격선 table, no `lane:` record in v0.1 — write the records (build-entry step 4)'
+  const setStage = (stage: string) => {
+    const p = path.join(projectDir, '.prdt', 'po-state.json')
+    fs.writeFileSync(p, JSON.stringify({ ...JSON.parse(fs.readFileSync(p, 'utf-8')), stage }))
+  }
+
+  test('T-1365: build stage, 합격선 rows, no record → the nudge line right below `lanes done:`', () => {
+    setStage('build')
+    writePrd([rowA])
+    writeTicket('v0.1', 'T-001', { gate: GATE_A })
+    const out = run(['schedule']).out.split('\n')
+    const i = out.findIndex((l) => l.startsWith('lanes done: '))
+    expect(i).toBeGreaterThan(-1)
+    expect(out[i + 1]).toBe(NUDGE)
+    expect(out.filter((l) => l === NUDGE)).toHaveLength(1)
+    const j = JSON.parse(run(['schedule', '--json']).out)
+    expect(JSON.stringify(j)).not.toContain('build-entry step 4')
+  })
+
+  test('T-1365: no nudge once a record exists, outside build, or with no 합격선 row', () => {
+    setStage('build')
+    writePrd([rowA])
+    writeTicket('v0.1', 'T-001', { gate: GATE_A })
+    writeTicket('v0.1', 'T-002', { type: 'ops', assignee: 'po', status: 'done', extra: rec('R1', GATE_A) })
+    expect(run(['schedule']).out).not.toContain('build-entry step 4')
+    fs.rmSync(path.join(projectDir, 'docs', 'tickets', 'v0.1', 'T-002.md'))
+    setStage('define')
+    expect(run(['schedule']).out).not.toContain('build-entry step 4')
+    setStage('build')
+    writePrd([])
+    expect(run(['schedule']).out).not.toContain('build-entry step 4')
+    writePrd([rowA])
+    expect(run(['schedule']).out).toContain(NUDGE) // control: the same fixture prints it
+  })
+
+  test('a lane ticket inside an earlier lane belongs to the earlier lane (R8)', () => {
+    writePrd([])
+    writeTicket('v0.1', 'T-001', { type: 'ops', assignee: 'po', deps: '[T-003]', extra: rec('one') })
+    writeTicket('v0.1', 'T-002', { type: 'ops', assignee: 'po', deps: '[T-003, T-004]', extra: rec('two') })
+    writeTicket('v0.1', 'T-003', {})
+    writeTicket('v0.1', 'T-004', {})
+    const ls = lanes()
+    expect(ls[0].tickets).toEqual(['T-001', 'T-003'])
+    expect(ls[1].tickets).toEqual(['T-002', 'T-004'])
   })
 })

@@ -311,14 +311,14 @@ describe('prdt track land', () => {
       expect(first.status).toBe(1)
       expect(first.err).toContain('the setup step failed')
       expect(first.err).toContain('track/T-1 keeps the merge')
-      expect(first.err).toContain('partially removed')
-      expect(first.err).toContain(`rerun \`exit 3\` in ${wt()}`)
+      expect(first.err).toContain(`${path.join(wt(), 'node_modules')} may be emptied`)
+      expect(first.err).toContain(`\`cd ${wt()} && exit 3\`, then \`prdt track merge T-1 --setup-done\``)
       expect(fs.existsSync(ran())).toBe(false)
 
       const second = cli('track', 'land', 'T-1')
       expect(second.status).toBe(1)
-      expect(second.err).toContain('rerun `exit 3`')
-      expect(second.err).toContain(wt())
+      expect(second.err).toContain(`${path.join(wt(), 'node_modules')} may be emptied`)
+      expect(second.err).toContain(`\`cd ${wt()} && exit 3\`, then \`prdt track merge T-1 --setup-done\``)
       expect(second.out + second.err).not.toContain('tests on the merged tree')
       expect(fs.existsSync(ran())).toBe(false)
       expect(fs.existsSync(wt())).toBe(true)
@@ -328,6 +328,40 @@ describe('prdt track land', () => {
       expect(third.status, third.err).toBe(0)
       expect(fs.existsSync(ran())).toBe(true)
       expect(fs.existsSync(wt())).toBe(false)
+    })
+
+    // T-1355 (external report): the lockfile changed on dev, the install could not
+    // reach a registry and emptied node_modules; the second land then ran the tests
+    // and died on `vitest: not found`. The second land must stop before the tests,
+    // dev untouched, and the named recovery (with --base when the land used one) lands.
+    test('T-1355: an install that empties node_modules and fails — second land stops before vitest; the named recovery lands', () => {
+      commit(wt(), 'c.txt', 'new\n', 'feat: c (T-1)')
+      const bin = path.join(wt(), 'node_modules', '.bin')
+      fs.mkdirSync(bin, { recursive: true })
+      fs.writeFileSync(path.join(bin, 'vitest'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+      commit(code, 'pnpm-lock.yaml', 'lockfileVersion: 9\n', 'chore: lock')
+      const install = 'rm -rf node_modules && echo ERR_PNPM_META_FETCH_FAIL >&2 && exit 1'
+      setConfig({ track: { setup: install, test: `node_modules/.bin/vitest run && touch ${ran()}` } })
+      const devBefore = git(code, 'rev-parse', 'dev')
+
+      const first = cli('track', 'land', 'T-1', '--base', 'dev')
+      expect(first.status).toBe(1)
+      expect(fs.existsSync(path.join(wt(), 'node_modules'))).toBe(false)
+      expect(first.err).toContain(`then \`prdt track merge T-1 --base dev --setup-done\``)
+      expect(git(code, 'rev-parse', 'dev')).toBe(devBefore)
+
+      const second = cli('track', 'land', 'T-1', '--base', 'dev')
+      expect(second.status).toBe(1)
+      expect(second.out + second.err).not.toContain('not found')
+      expect(second.out + second.err).not.toContain('tests on the merged tree')
+      expect(second.err).toContain(`\`cd ${wt()} && ${install}\``)
+      expect(git(code, 'rev-parse', 'dev')).toBe(devBefore)
+
+      fs.mkdirSync(bin, { recursive: true })
+      fs.writeFileSync(path.join(bin, 'vitest'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+      const third = cli('track', 'merge', 'T-1', '--base', 'dev', '--setup-done')
+      expect(third.status, third.err).toBe(0)
+      expect(fs.existsSync(ran())).toBe(true)
     })
 
     test('setup succeeds on a changed lockfile: land is unchanged and leaves no marker', () => {
