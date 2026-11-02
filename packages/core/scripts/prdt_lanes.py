@@ -1103,6 +1103,8 @@ def compute_schedule(root, tickets=None, line=None):
     out.update(critical_path=chain, cp_length=length if length > 0 else 0, rows=rows)
     out["lanes"] = compute_lanes(root, tickets, st, line, version, in_flight, [r["id"] for r in rows])
     if out["lanes"]:
+        # T-1365: where the lanes came from — `records` (gate tickets' `lane:`) or the PRD `table`
+        out["lanes_from"] = "records" if _lane_records(tickets, version) else "table"
         # T-1184 R10: the version total the lane sums must equal (text `total` line)
         here = [r for r, _p in tickets.values() if r["version"] == version and r["status"] in ("open", "done")]
         impl = [r for r in here if r["type"] == "impl"]
