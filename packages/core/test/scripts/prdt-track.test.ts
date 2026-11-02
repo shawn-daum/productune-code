@@ -1039,6 +1039,117 @@ describe('T-1268: land runs the relevant test set by default', () => {
   })
 })
 
+// T-1286: a test that reads a folder by a path no scanner regex knows (QA d-v115-t1268-qa3:
+// `path.join(ROOT, 'config')`) is reached by no import, no name and no list. Every land's test run
+// records which repo files each test file opened; a later land selects a test whose recorded reads
+// its diff touches. REAL vitest here (core's own, linked in) — the recording is what is under test.
+describe('T-1286: land selects tests by the files they were seen to read', () => {
+  const VITEST = path.join(CORE_ROOT, 'node_modules', 'vitest')
+  // QA's probe shape: lists a folder through a path.join on a root constant, parses every file in it
+  const PROBE = [
+    "import { test, expect } from 'vitest'",
+    "import fs from 'node:fs'",
+    "import path from 'node:path'",
+    "const ROOT = path.resolve(__dirname, '..')",
+    "test('every config file parses', () => {",
+    "  for (const f of fs.readdirSync(path.join(ROOT, 'config'))) JSON.parse(fs.readFileSync(path.join(ROOT, 'config', f), 'utf8'))",
+    '})',
+    '',
+  ].join('\n')
+  const linkVitest = (t: string) => {
+    const nm = path.join(wt(t), 'pkg', 'node_modules')
+    fs.mkdirSync(path.join(nm, '.bin'), { recursive: true })
+    fs.symlinkSync(VITEST, path.join(nm, 'vitest'))
+    fs.symlinkSync(path.join(VITEST, 'vitest.mjs'), path.join(nm, '.bin', 'vitest'))
+  }
+  const open = (t: string) => { const r = cli('track', 'open', t); expect(r.status, r.err).toBe(0); linkVitest(t) }
+  const mapFile = () => {
+    const found: string[] = []
+    const walk = (d: string) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name === 'test-read-map.json') found.push(p) } }
+    if (fs.existsSync(path.join(home, 'run'))) walk(path.join(home, 'run'))
+    return found
+  }
+
+  beforeEach(() => {
+    makeProject()
+    fs.writeFileSync(path.join(proj, '.prdt', 'config.json'), JSON.stringify({ slug: 'x', code: { dir: 'code' }, track: { setup: 'true' } }))
+    commit(code, 'pkg/vitest.config.ts', 'export default {}\n', 'chore: pkg')
+    commit(code, 'pkg/config/a.json', '{"a": 1}\n', 'feat: config a')
+  })
+
+  test('a probe added on a track is recorded when its land runs it; a later land that breaks the folder runs it and is refused', () => {
+    open('T-1')
+    commit(wt('T-1'), 'pkg/test/probe.test.ts', PROBE, 'test: config probe (T-1)')
+    const r1 = cli('track', 'land', 'T-1')
+    expect(r1.status, r1.err).toBe(0)
+    expect(r1.out).toContain('pkg: test/probe.test.ts')
+    expect(r1.out).toMatch(/test-read map: 1 test file\(s\) recorded/)
+    expect(mapFile()).toHaveLength(1)
+
+    open('T-2')
+    // a new file in the listed folder: no test imports it or names it, and no list declares the folder
+    commit(wt('T-2'), 'pkg/config/settings-extra.json', '{ not json\n', 'feat: settings (T-2)')
+    const before = git(code, 'rev-parse', 'dev')
+    const r2 = cli('track', 'land', 'T-2')
+    expect(r2.out).toContain('pkg: test/probe.test.ts')
+    expect(r2.out).toMatch(/1 by recorded file reads/)
+    expect(r2.status).not.toBe(0)
+    expect(r2.err).toContain('tests failed on the merged tree')
+    expect(git(code, 'rev-parse', 'dev')).toBe(before)
+  })
+
+  test('a whole-suite land records the map; the next land selects the probe from it', () => {
+    commit(code, 'pkg/test/probe.test.ts', PROBE, 'test: config probe')
+    open('T-1')
+    commit(wt('T-1'), 'notes.md', 'x\n', 'docs: notes (T-1)')
+    const r1 = cli('track', 'land', 'T-1', '--test', 'cd pkg && node_modules/.bin/vitest run')
+    expect(r1.status, r1.err).toBe(0)
+    expect(r1.out).toContain('whole suite: --test)')
+    expect(r1.out).toMatch(/test-read map: 1 test file\(s\) recorded/)
+
+    open('T-2')
+    commit(wt('T-2'), 'pkg/config/settings-extra.json', '{"ok": true}\n', 'feat: settings (T-2)')
+    const r2 = cli('track', 'land', 'T-2')
+    expect(r2.status, r2.err).toBe(0)
+    expect(r2.out).toContain('pkg: test/probe.test.ts')
+    expect(r2.out).toContain('relevant tests (1 file(s)) green')
+  })
+
+  test('an unreadable map falls back to the import / name / list selection and still lands', () => {
+    commit(code, 'pkg/test/probe.test.ts', PROBE, 'test: config probe')
+    open('T-1')
+    commit(wt('T-1'), 'notes.md', 'x\n', 'docs: notes (T-1)')
+    expect(cli('track', 'land', 'T-1', '--test', 'cd pkg && node_modules/.bin/vitest run').status).toBe(0)
+    const [m] = mapFile()
+    fs.writeFileSync(m, '{ torn')
+    open('T-2')
+    commit(wt('T-2'), 'pkg/config/settings-extra.json', '{"ok": true}\n', 'feat: settings (T-2)')
+    const r = cli('track', 'land', 'T-2')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('test-read map: unreadable')
+    expect(r.out).not.toContain('pkg: test/probe.test.ts')
+    expect(r.out).toContain('dev fast-forwarded')
+  })
+
+  test.each([
+    ['null list', { f: null }],
+    ['number list', { d: 5 }],
+  ])('a map entry with a %s falls back and still lands, exit 0', (_n, entry) => {
+    commit(code, 'pkg/test/probe.test.ts', PROBE, 'test: config probe')
+    open('T-1')
+    commit(wt('T-1'), 'notes.md', 'x\n', 'docs: notes (T-1)')
+    expect(cli('track', 'land', 'T-1', '--test', 'cd pkg && node_modules/.bin/vitest run').status).toBe(0)
+    const [m] = mapFile()
+    fs.writeFileSync(m, JSON.stringify({ schema: 1, tests: { 'pkg/test/probe.test.ts': entry } }))
+    open('T-2')
+    commit(wt('T-2'), 'pkg/config/settings-extra.json', '{"ok": true}\n', 'feat: settings (T-2)')
+    const r = cli('track', 'land', 'T-2')
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain('test-read map: unreadable')
+    expect(r.out).toContain('dev fast-forwarded')
+  })
+})
+
 describe('prdt track drop', () => {
   beforeEach(() => { makeProject(); cli('track', 'open', 'T-1') })
 
