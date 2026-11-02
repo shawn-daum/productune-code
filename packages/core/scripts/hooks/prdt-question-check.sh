@@ -290,18 +290,28 @@ PICK_RE = re.compile(
 # (a clause opening `아니면` joins the one before); `괜찮` · `이대로` ·
 # `승인` · `동의` for 답해. A fact clause (`되는지`, `맞는지`, `있을지`), a bare
 # request, and a relayed one (`…알려 주세요 라고 보냈어요`) stay information.
+# A decision someone else makes stays information too: a third-party subject
+# (`팀장님이` · `법무팀이` · `고객사가` · `디자이너가` · `…께서`), a relay
+# (`…께 여쭤보고`), a passive outcome (`승인될지`), or a `…면` after the 지
+# clause (`정해지면 알려 주세요`). `답해 주세요` aimed at a named mail or document
+# (`그 메일에` · `동의서에`) is a to-do; `이 메시지에` and a bare one stay asks.
 ASK_TAIL_RE = re.compile(
     r"(알려|답해)\s*주(?:세요|십시오)(?!\s*(?:라고|라는|란|를|이라고|하고|는))")
 CLAUSE_SPLIT_RE = re.compile(r"[,，.;:!?。？()（）]")
 _JI = r"지(?:를|는|도)?(?![가-힣])"
 CONFIRM_CLAUSE_RE = re.compile(
-    r"괜찮[은을]" + _JI + r"|(?:진행|승인|채택)\s*(?:해도\s*될|하실|할|될)" + _JI
+    r"괜찮[은을]" + _JI + r"|(?:진행|승인|채택)\s*(?:해도\s*될|하실|할)" + _JI
     + r"|도\s*(?:될|되는|괜찮은)" + _JI
     + r"|(?:고칠|고쳐야\s*할|수정할)\s*(?:줄|곳|부분|데|것|게)\s*(?:이|가)?\s*있는" + _JI)
 CHOICE_CLAUSE_RE = re.compile(
     r"어떻게|(?:어느|어떤)\s*(?:쪽|안|것|걸)(?:으로|로|을|를|이|가)?(?![가-힣])|중\s*(?:어느|무엇|뭐|하나)")
 CHOICE_VERB_RE = re.compile(r"[할갈쓸]" + _JI)
 OPTION_LETTER_RE = re.compile(r"(?<![A-Za-z0-9])([A-H])안?(?![A-Za-z0-9])")
+THIRD_PARTY_RE = re.compile(
+    r"(?:님|팀|측|들|객)(?:이|께서)(?![가-힣])|(?:사|너|자)(?:가|께서)(?![가-힣])|께서(?![가-힣])"
+    r"|(?:여쭤|여쭈어|물어)\s*보"
+    r"|지[가는를도]?\s+(?:\S+\s+)?\S*(?<![화측표전정반])(?<!아니)면\s")
+REPLY_TARGET_RE = re.compile(r"(?:메일|동의서|문서|설문|티켓|이슈|댓글|스레드)\s*에(?![가-힣])")
 REPLY_APPROVE_RE = re.compile(r"괜찮|좋으면|문제\s*없으면|이대로|승인|동의|\bok(?:ay)?\b", re.I)
 
 
@@ -313,8 +323,10 @@ def tail_ask(clean):
         if len(parts) > 1 and clause.lstrip().startswith("아니면"):
             clause = parts[-2] + " " + clause  # `A 할지, 아니면 B …` is one either/or
         if m.group(1) == "답해":
-            if REPLY_APPROVE_RE.search(clause):
+            if REPLY_APPROVE_RE.search(clause) and not REPLY_TARGET_RE.search(clause):
                 return True
+            continue
+        if THIRD_PARTY_RE.search(clause):
             continue
         if CONFIRM_CLAUSE_RE.search(clause):
             return True
