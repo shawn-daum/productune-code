@@ -72,14 +72,14 @@ function ticketPath(version: string, id: string): string {
 }
 
 function writeTicket(version: string, id: string, opts: {
-  type?: string; status?: string; assignee?: string; created?: string; body: string
+  type?: string; status?: string; assignee?: string; created?: string; extra?: string[]; body: string
 }) {
   const dir = path.join(projectDir, 'docs', 'tickets', version)
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(ticketPath(version, id), [
     '---', `id: ${id}`, `slug: fixture-${id.toLowerCase()}`, `type: ${opts.type ?? 'impl'}`,
     `status: ${opts.status ?? 'open'}`, `assignee: ${opts.assignee ?? 'developer'}`,
-    `created: ${opts.created ?? '2026-09-24'}`, '---', '', opts.body,
+    `created: ${opts.created ?? '2026-09-24'}`, ...(opts.extra ?? []), '---', '', opts.body,
   ].join('\n'))
 }
 
@@ -359,6 +359,24 @@ describe.skipIf(!PYTHON3)('prdt tickets fmt', () => {
     const { out, status } = runPrdtAllowFail(['tickets', 'fmt', 'T-711', '--check'])
     expect(status).not.toBe(0)
     expect(out).toMatch(/T-711:.*created is missing or malformed/)
+  })
+
+  // ── T-1299: optional frontmatter key `request: R-NNN` (an external request
+  // record's id) is canonical — `--check` accepts it and reports a value that
+  // is not R-<digits>.
+  test('T-1299: `request: R-NNN` passes --check; a malformed request value is reported', () => {
+    const res = runInit()
+    const body = '## problem\nx\n\n## acceptance\ny\n'
+    writeTicket(res.version, 'T-720', { extra: ['request: R-012'], body })
+    const ok = runPrdtAllowFail(['tickets', 'fmt', 'T-720', '--check'])
+    expect(ok.status).toBe(0)
+    expect(ok.out).toMatch(/T-720: ok/)
+    for (const [id, bad] of [['T-721', 'r-12'], ['T-722', 'R-'], ['T-723', 'REQ-12'], ['T-724', 'R-12a']]) {
+      writeTicket(res.version, id, { extra: [`request: ${bad}`], body })
+      const r = runPrdtAllowFail(['tickets', 'fmt', id, '--check'])
+      expect(r.status).not.toBe(0)
+      expect(r.out).toMatch(new RegExp(`${id}:.*request.*R-<digits>`))
+    }
   })
 
   test('older tickets (created before the frame landing date) pass untouched', () => {

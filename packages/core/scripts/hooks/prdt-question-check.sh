@@ -160,7 +160,7 @@ def tickets_homes(root):
             + [(None, os.path.join(root, "docs", "_shared", "tickets"))])
 
 
-# Wording confirmed by user (T-990 = A, 2026-10-06).
+# Wording: T-990 = A (2026-10-06); re-send clause T-1302 (inject-edit).
 # %s = the uncovered asks' line numbers ("3, 12").
 QUESTION_CHECK_REASON = (
     "[prdt question check] this reply asks the user to choose or confirm with no open decision "
@@ -168,8 +168,8 @@ QUESTION_CHECK_REASON = (
     "option set, or an item under a waiting-for-your-answer heading — and no `type: decision` "
     "ticket was created or changed this turn. Open a `type: decision` ticket for each ask or cite "
     "its open ticket id beside it (a waiting item: `assignee: user` counts), then send the reply "
-    "again%s, opening with one line that the question now has its ticket — the user may already have "
-    "read this one."
+    "again%s, opening with one line that the question now has its ticket, every other line kept — a body "
+    "up for approval keeps its numbered lines (or group ranges + ticket link), never the options alone."
 )
 # T-1116: the language clause that goes after "send the reply again" (wording settled
 # under the discipline-wording module, T-1245). %s = the stored chat language; the
