@@ -264,6 +264,10 @@ describe('T-993 = B — which questions are asks', () => {
     ['English which-should', 'Which one should we start with?'],
     ['English shall-we mid-sentence', 'Tests are green, so shall we ship it today?'],
     ['English read-back', 'You want the empty row hidden. Is that right?'],
+    // T-1379: the two L1 approval asks (d-v116-t1324-qa2) that passed unflagged
+    ['T-1379 approval by reply', '초안을 아래에 붙였어요. 이대로 괜찮으면 이 메시지에 답해 주세요.'],
+    ['T-1379 confirm-clause 알려 주세요', '이 문구로 괜찮은지, 고칠 줄이 있는지 알려 주세요.'],
+    ['T-1379 choose-clause 알려 주세요', 'A 와 B 중 어느 쪽으로 진행할지 알려주세요'],
   ]
   for (const [label, reply] of blocked) {
     test(`${label} → blocked`, () => {
@@ -281,6 +285,10 @@ describe('T-993 = B — which questions are asks', () => {
     ['English which-fact', 'Which version are you running?'],
     ['English offer', 'Would you like me to open the viewer?'],
     ['feedback', '화면 보시고 어떠셨어요?'],
+    // T-1379: 알려 주세요 without a confirm/choose clause is an information request
+    ['information request (imperative)', '에러가 난 로그 파일 경로를 알려 주세요.'],
+    ['information request (fact clause)', 'API 키가 설정돼 있는지 알려 주세요.'],
+    ['quoted approval ask (a report of one)', 'PO 가 「이대로 괜찮으면 이 메시지에 답해 주세요」 라고 물었어요.'],
   ]
   for (const [label, reply] of silent) {
     test(`${label} → silent`, () => {
