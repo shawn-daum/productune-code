@@ -61,7 +61,8 @@ export function stageSegments(currentTickets) {
 }
 
 /**
- * The gate (합격선) ticket: the live current-version ticket whose body names the
+ * The gate (합격선) ticket. T-1359: the first live `lane:` record by ticket number when
+ * the version holds one. Otherwise the live current-version ticket whose body names the
  * artifact path the PRD 합격선 row names. Null when the PRD names none or no
  * live ticket carries it — the screen then says the main path is not connected.
  *
@@ -72,10 +73,14 @@ export function stageSegments(currentTickets) {
  * displaces it. Ties fall to the higher ticket number (T-914).
  */
 export function findGateTicket(currentTickets, gatePath) {
+  const live = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
+  // T-1359: a `lane:` frontmatter record is a gate ticket; with any record, the first by
+  // ticket number is the gate and the PRD path is not searched (twin: prdt_lanes `_lane_records`).
+  const records = live.filter((t) => typeof t.frontmatter.lane === 'string' && t.frontmatter.lane.trim())
+  if (records.length > 0) return records.slice().sort((a, b) => compareTicketIds(a.frontmatter.id, b.frontmatter.id))[0]
   // T-1104: one path, or the As-Is + To-Be spellings of it (a ticket may name either).
   const paths = (Array.isArray(gatePath) ? gatePath : [gatePath]).filter(Boolean)
   if (paths.length === 0) return null
-  const live = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
   const hits = live.filter((t) => typeof t.body === 'string' && paths.some((g) => t.body.includes(g)))
   if (hits.length === 0) return null
   const ids = live.map((t) => t.frontmatter.id)
