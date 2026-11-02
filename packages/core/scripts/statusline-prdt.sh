@@ -25,8 +25,9 @@
 #   - The `dec … | req …` row is ALWAYS its own last row (`dec 0 | req 0` when
 #     empty), single-line and multi-line projects alike (T-988 = A, T-984
 #     reversed by the user 2026-10-06).
-#   - Never more than MAX_ROWS (17, measured on the user's machine) product rows; lane rows
-#     (T-1147) are never capped or folded (T-1184 R12).
+#   - Never more than MAX_ROWS (17, measured on the user's machine) rows; product and lane
+#     rows share the cap and fold past it into one `+N more rows` row (T-1330: T-1372 2 = A,
+#     T-1374 = A — n counts hidden rows); the dec/req last row always stays.
 #   - `<stage> n/m` (T-923) = done/total of this version's tickets in the current
 #     stage, by the viewer's type rule; retro · idle → 0/0. No checklist record is read.
 #   - `<label> <version>` is ONE OSC 8 link to `.prdt/scratch/viewer/viewer.html`
@@ -1039,7 +1040,7 @@ def lane_block(lanes, cap):
     """([finished entries], [(lane, text)]) for one product: T-1202 = B — every
     finished gate lane (never 자투리) is an `NAME d/t` entry the product's FIRST
     row carries as `done lanes: …`, table order; then one row per other lane,
-    자투리 last. No row cap, no folding (R12)."""
+    자투리 last. The row cap (MAX_ROWS) counts these rows too (T-1330)."""
     done = [x for x in lanes if x.get("finished") is True and x.get("besteffort") is not True]
     ents = [clean(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}", cap=10**6) for x in done]
     out = [(x, lane_text(x, cap)) for x in lanes if not (x.get("finished") is True and x.get("besteffort") is not True)]
@@ -1085,9 +1086,8 @@ def lane_cap():
 #   <label> <version> | stage: <stage> n/m | total tickets n/m | branch: <b>   (T-1017; T-1330: no working)
 # One row per line, home first, then ALWAYS one `dec … | req …` row last
 # (`dec 0 | req 0` when empty, T-1019), single-line and multi-line alike.
-# Never more than MAX_ROWS rows: past it, the last line rows fold into `+N lines`.
-line_budget = MAX_ROWS - 1
-shown = rows if len(rows) <= line_budget else rows[:line_budget - 1]
+# Never more than MAX_ROWS rows, lane rows included (T-1330 / T-1372 2 = A): past it the
+# trailing product + lane rows fold into one `+N more rows` row (T-1374 = A).
 out_rows = []
 
 
@@ -1111,20 +1111,19 @@ def lanes_with_running(lanes, r):
     return lanes
 
 
-# T-1147: parallel to `shown` — [(lane, text)] under each product row. A lane
+# T-1147: parallel to `rows` — [(lane, text)] under each product row. A lane
 # rendering failure (odd data) = the default 자투리 row only; the rest stays intact.
 lane_parts = []
-for r in shown:
+for r in rows:
     try:
         lane_parts.append(lane_block(lanes_with_running(lane_data.get(r["line"], []), r), lane_cap()))
     except Exception:
         lane_parts.append(lane_block(lanes_with_running([], r), lane_cap()))
 
-# T-1147 / T-1184 R12: lane rows go right under their product row — every one of
-# them: no row cap and no folding for lanes (MAX_ROWS still folds product rows).
+# T-1147: lane rows go right under their product row; T-1330: they count toward MAX_ROWS.
 
 # product rows — T-1330: no `working` cell; running dispatches sit on lane rows
-for k, r in enumerate(shown):
+for k, r in enumerate(rows):
     head = [r["slug_ver"]] + (home_cells() if r["line"] is None else []) + [r["stage"]]
     if r["vtotal"]:
         head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
@@ -1140,8 +1139,9 @@ for k, r in enumerate(shown):
     lane_rows_k = done_more + lane_parts[k][1]
     out_rows.append((r["slug_ver"], fit(lambda lim, head=head: " | ".join(head), branch)))
     out_rows.extend((None, t) for _, t in lane_rows_k)
-if len(shown) < len(rows):
-    out_rows.append((None, L("lines", n=len(rows) - len(shown))))
+if len(out_rows) > MAX_ROWS - 1:
+    keep = MAX_ROWS - 2
+    out_rows = out_rows[:keep] + [(None, L("lines", n=len(out_rows) - keep))]
 out_rows.append((None, action_row()))
 
 

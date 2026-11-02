@@ -6,7 +6,8 @@
  * Design SoT: docs/artifacts/v1.14/lanes-design.html — R3 (cells), R4 (byte
  * identity outside the new rows), width folding, label keys; rev3 tab
  * 「T-1178 · 레인 = 합격선 + 자투리」 (T-1184): R7 자투리 row, R10 one finished
- * row, R11 multi-word names, R12 head-of-queue `next`, no row cap / folding.
+ * row, R11 multi-word names, R12 head-of-queue `next`; T-1330 (T-1372 2 = A):
+ * lane rows count toward the 17-row cap and fold with product rows.
  * Drives the REAL statusline-prdt.sh next to the REAL prdt CLI.
  */
 
@@ -301,7 +302,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     expect(tiny.endsWith('…')).toBe(true)
   })
 
-  test('R12: no row cap and no folding — 20 lanes give 20 lane rows; the 자투리 row is never folded', () => {
+  test('T-1330: lane rows count toward the 17-row cap — 20 lanes fold past it into `+N more rows`; the dec/req row stays', () => {
     const more = Array.from({ length: 20 }, (_, i) => {
       const g = `docs/artifacts/v0.1/h${i}.md`
       return { g, row: `| **합격선** | **레인 H${i} · \`${g}\` 가 있다** |` }
@@ -312,12 +313,14 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     setStage('build')
     marker('T-305')
     const r = rows()
-    expect(r).toHaveLength(23)
-    expect(r.filter((x) => x.startsWith('lane: H'))).toHaveLength(20)
+    // 22 body rows (product + 20 lanes + 자투리): 15 shown, 7 folded, then dec/req
+    expect(r).toHaveLength(17)
+    expect(r.filter((x) => x.startsWith('lane: H'))).toHaveLength(14)
     expect(r[5]).toBe('lane: H4  0/1 | next T-304(developer)')
     expect(r[6]).toBe('lane: H5  0/1 | working T-305(developer)')
-    expect(r[21]).toBe('lane: 자투리  0/1 | next T-400(developer)')
-    expect(r.join('\n')).not.toMatch(/\+\d+/)
+    expect(r[14]).toBe('lane: H13  0/1 | next T-313(developer)')
+    expect(r[15]).toBe('+7 more rows')
+    expect(r[16]).toBe('decision 0 | request 0')
     expect(r[0]).not.toContain('working')
   })
 
