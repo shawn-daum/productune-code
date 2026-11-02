@@ -1412,7 +1412,7 @@ function allLineTickets(data) {
 // its own, so it cannot guess one.
 // T-958: `alwaysButtons` keeps a one-group sidebar clickable (env: one file is
 // still a file row, never 「그룹 없음」); a group's `dim` greys its row.
-function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey, topHtml = '', alwaysButtons = false }) {
+function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey, topHtml = '', alwaysButtons = false, noCard = false }) {
   const singleGroup = groups.length === 1 && !alwaysButtons
   const defaultIndex = defaultKey === undefined ? 0 : Math.max(0, groups.findIndex((g) => g.key === defaultKey))
   const identity = pageIdentity
@@ -1436,7 +1436,7 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', d
           const crumbAttr = g.crumb ? ` data-crumb="${escapeHtml(g.crumb)}"` : ''
           const dim = g.dim ? ' nav-dim' : ''
           // T-1165: the progress card sits right under the home store's 진행 상황 item.
-          const card = g.key === 'progress' && !cardPlaced ? ((cardPlaced = true), sidebarCardHtml(identity?.card, g.key)) : ''
+          const card = !noCard && g.key === 'progress' && !cardPlaced ? ((cardPlaced = true), sidebarCardHtml(identity?.card, g.key)) : ''
           return `${head}<button type="button" class="nav-item nav-item-clickable${dim}${active}" data-group-select="${escapeHtml(g.key)}"${crumbAttr}><span>${escapeHtml(g.label)}</span>${countHtml}</button>${card}`
         })
         .join('\n')
@@ -1445,7 +1445,7 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', d
   const sidebar = `<nav class="sidebar">
 ${identity ? sidebarIdentityHtml(identity) : '<div class="sidebar-title">productune</div>'}
 <div class="sidebar-sub">${escapeHtml(sidebarSubLabel)}</div>
-${!cardPlaced && !groups.some((g) => g.key === 'progress') ? sidebarCardHtml(identity?.card) : ''}
+${!noCard && !cardPlaced && !groups.some((g) => g.key === 'progress') ? sidebarCardHtml(identity?.card) : ''}
 ${sidebarButtons}
 ${tool ? `<div class="sidebar-foot"><span class="foot-tool" title="${escapeHtml(IDENTITY.toolTitle)}">${escapeHtml(tool)}</span></div>` : ''}
 </nav>`
@@ -2542,28 +2542,32 @@ function envFileBody(f, dir, where) {
  */
 function envSection(data) {
   const views = lineViews(data)
-  const single = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '' }
+  const single = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', prd: data.prd }
   const groups = lineSectioned(views.length > 0 ? views : [single], (v) => {
     const env = envOfView(data, v)
     const dim = isIdleView(v)
     const where = envWhere(data, v.line)
     if (!env || env.files.length === 0) {
-      const body = `<div class="env-nofile"><b>${escapeHtml(v.line ? ENV.emptyHead : ENV.homeNone)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
+      const body = `<div class="env-nofile"><b>${escapeHtml(views.length > 0 ? ENV.emptyHead : ENV.homeNone)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
       return { groups: [{ key: 'none', label: ENV.noFile, dim: true, bodyHtml: body }] }
     }
     return { groups: env.files.map((f) => ({ key: f.name, label: f.sample ? `${f.name} · ${ENV.sample}` : f.name, count: f.keys.length, dim, bodyHtml: envFileBody(f, env.dir, where && { ...where, absDir: env.absDir }) })) }
   })
+  // A single-product page has no LINES_SCRIPT, so no data-crumb: the crumb stays the plain item label (as after any switch).
+  if (views.length === 0) groups.forEach((g) => delete g.crumb)
   const machine = data.machineEnv
   if (machine) {
     const head = { label: ENV.machineScope, stage: machine.dir }
     if (machine.keys.length === 0) {
       const body = `<div class="env-nofile"><b>${ENV.machineEmptyHead}</b><span>${escapeHtml(ENV.machineEmptyDetail)}</span></div>`
-      groups.push({ key: '@machine', label: ENV.machineNoKey, dim: true, crumb: ENV.machineScope, head, bodyHtml: body })
+      groups.push({ key: '@machine', label: ENV.machineNoKey, dim: true, ...(views.length > 0 ? { crumb: ENV.machineScope } : {}), head, bodyHtml: body })
     } else {
-      groups.push({ key: '@machine', label: '.env', count: machine.keys.length, crumb: `${ENV.machineScope} · .env`, head, bodyHtml: envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir) })
+      groups.push({ key: '@machine', label: '.env', count: machine.keys.length, ...(views.length > 0 ? { crumb: `${ENV.machineScope} · .env` } : {}), head, bodyHtml: envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir) })
     }
   }
-  return storeSection('env', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.env, crumbLabel: STORE_LABEL.env, groups, alwaysButtons: true }) })
+  // approved.png state #1: the machine-scope .env is preselected when it holds keys; no progress card in this store.
+  const defaultKey = machine && machine.keys.length > 0 ? '@machine' : undefined
+  return storeSection('env', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.env, crumbLabel: STORE_LABEL.env, groups, defaultKey, alwaysButtons: true, noCard: true }) })
 }
 
 // ---------- home: the in-progress version's workspace (T-666 slice 2a) ----------
@@ -3536,7 +3540,6 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .est.off { color: var(--text-tertiary); border-style: dashed; }
 .env-nofile { display: flex; flex-direction: column; gap: 4px; padding: 18px; border: 1px dashed var(--border-inline); border-radius: 10px; color: var(--text-tertiary); font-size: 12.5px; }
 .env-nofile b { color: var(--text-primary); font-size: 13px; }
-.env-scope { margin: 18px 0 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .tagw { font-family: var(--font-family); font-size: 10.5px; color: var(--text-tertiary); border: 1px solid var(--border-inline); border-radius: 100px; padding: 0 7px; margin-left: 8px; white-space: nowrap; }
 .env-card + .env-card { margin-top: 12px; }
 /* T-1191: a file card's open controls — link-styled, the same accent link look as .env-go had */
@@ -4494,7 +4497,7 @@ ${discSection(discipline, data.disciplineLoad || null)}`
 <style>
 ${fontFaceCss}
 ${TEMPLATE_CSS}
-${emitRootThemeCss(dark, light)}${views.length > 0 ? LINES_CSS : ''}${mm ? MERMAID_CSS : ''}
+${emitRootThemeCss(dark, light)}${LINES_CSS}${mm ? MERMAID_CSS : ''}
 </style>
 </head>
 <body>
