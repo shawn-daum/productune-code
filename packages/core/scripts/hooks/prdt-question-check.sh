@@ -252,7 +252,8 @@ OPTION_LINE_RE = re.compile(
     r"^\s*(?:[-*+•]\s+|\|\s*)?(?:\*\*)?([A-H])(?:안)?(?:\*\*)?(?=$|[\s).:—-])")
 # Spans whose `?` is not an ask: inline code and quoted text.
 QUOTED_RE = re.compile(
-    r"`[^`\n]*`|\*\"[^\"\n]*\"\*|\"[^\"\n]*\"|“[^”\n]*”|「[^」\n]*」|『[^』\n]*』|‘[^’\n]*’")
+    r"`[^`\n]*`|\*\"[^\"\n]*\"\*|\"[^\"\n]*\"|“[^”\n]*”|「[^」\n]*」|『[^』\n]*』|‘[^’\n]*’"
+    r"|(?<![A-Za-z0-9])'[^'\n]*'(?![A-Za-z0-9])")  # ASCII '…', not an apostrophe (don't)
 QUESTION_RE = re.compile(r"([^.!?。？\n]*)[?？]")
 LEAD_JUNK_RE = re.compile(r"^[\s\-*+•·>|#\d.)]*(?:\*\*)?\s*")
 # T-993 = B. Choose / yes-no confirm / read-back confirm endings.
@@ -280,12 +281,49 @@ RHETORICAL_RE = re.compile(r"^(?:왜|어째서|why\b|how come\b)", re.I)
 CLOSING_RE = re.compile(
     r"도와\s*드릴|궁금한|더\s*필요한|질문\s*있으|어떠(?:셨|세|신|했)|어땠|괜찮으셨|마음에\s*드(?:셨|시나|세)"
     r"|anything else|any (?:other )?questions|let me know|how (?:does|did) (?:it|that|this) (?:look|feel)", re.I)
-# T-1379: `…답해 주세요` (approve by replying) and a confirm/choose clause before
-# `알려 주세요` (`괜찮은지 … 알려 주세요`, `진행할지 알려 주세요`) are asks; a bare
-# `알려 주세요` or a fact clause (`있는지 알려 주세요`) stays an information request.
 PICK_RE = re.compile(
-    r"(?:골라|정해|선택해|결정해|승인해|답해)\s*주(?:세요|십시오)|please\s+(?:choose|pick|decide)"
-    r"|(?:괜찮[은을]|맞는|좋[은을]|되는|[할될갈쓸을])지\s*[^.!?。\n]*?알려\s*주(?:세요|십시오)", re.I)
+    r"(?:골라|정해|선택해|결정해|승인해)\s*주(?:세요|십시오)|please\s+(?:choose|pick|decide)", re.I)
+# T-1379: `알려 주세요` / `답해 주세요` is an ask only when ITS OWN clause (text
+# back to the nearest , . ; : ( or sentence end) carries an approval or choice
+# marker: `괜찮은지` · `진행할지` · `승인할지` · `고칠 줄이 있는지` · `어느 쪽/어떤 안
+# · 어떻게 … 할지` · two option letters (`A 와 B … 할지`) · `…해도 될지` for 알려
+# (a clause opening `아니면` joins the one before); `괜찮` · `이대로` ·
+# `승인` · `동의` for 답해. A fact clause (`되는지`, `맞는지`, `있을지`), a bare
+# request, and a relayed one (`…알려 주세요 라고 보냈어요`) stay information.
+ASK_TAIL_RE = re.compile(
+    r"(알려|답해)\s*주(?:세요|십시오)(?!\s*(?:라고|라는|란|를|이라고|하고|는))")
+CLAUSE_SPLIT_RE = re.compile(r"[,，.;:!?。？()（）]")
+_JI = r"지(?:를|는|도)?(?![가-힣])"
+CONFIRM_CLAUSE_RE = re.compile(
+    r"괜찮[은을]" + _JI + r"|(?:진행|승인|채택)\s*(?:해도\s*될|하실|할|될)" + _JI
+    + r"|도\s*(?:될|되는|괜찮은)" + _JI
+    + r"|(?:고칠|고쳐야\s*할|수정할)\s*(?:줄|곳|부분|데|것|게)\s*(?:이|가)?\s*있는" + _JI)
+CHOICE_CLAUSE_RE = re.compile(
+    r"어떻게|(?:어느|어떤)\s*(?:쪽|안|것|걸)(?:으로|로|을|를|이|가)?(?![가-힣])|중\s*(?:어느|무엇|뭐|하나)")
+CHOICE_VERB_RE = re.compile(r"[할갈쓸]" + _JI)
+OPTION_LETTER_RE = re.compile(r"(?<![A-Za-z0-9])([A-H])안?(?![A-Za-z0-9])")
+REPLY_APPROVE_RE = re.compile(r"괜찮|좋으면|문제\s*없으면|이대로|승인|동의|\bok(?:ay)?\b", re.I)
+
+
+def tail_ask(clean):
+    """True when an `알려/답해 주세요` closes a clause that asks to approve or choose."""
+    for m in ASK_TAIL_RE.finditer(clean):
+        parts = CLAUSE_SPLIT_RE.split(clean[:m.start()])
+        clause = parts[-1]
+        if len(parts) > 1 and clause.lstrip().startswith("아니면"):
+            clause = parts[-2] + " " + clause  # `A 할지, 아니면 B …` is one either/or
+        if m.group(1) == "답해":
+            if REPLY_APPROVE_RE.search(clause):
+                return True
+            continue
+        if CONFIRM_CLAUSE_RE.search(clause):
+            return True
+        letters = set(OPTION_LETTER_RE.findall(clause))
+        if CHOICE_VERB_RE.search(clause) and (CHOICE_CLAUSE_RE.search(clause) or len(letters) >= 2):
+            return True
+    return False
+
+
 OPTION_REF_RE = re.compile(r"(?<![A-Za-z0-9])[A-H](?:안)?(?=$|[\s·,와과로중를을이가/)])")
 
 
@@ -497,7 +535,7 @@ def find_asks(text):
                 asks.append((i, "question", bool(OPTION_REF_RE.search(q.group(1)))))
                 break
         else:
-            if PICK_RE.search(clean):
+            if PICK_RE.search(clean) or tail_ask(clean):
                 asks.append((i, "pick", bool(OPTION_REF_RE.search(clean))))
     flush_options()
     return lines, asks

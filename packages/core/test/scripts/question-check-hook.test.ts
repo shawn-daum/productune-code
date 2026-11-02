@@ -268,6 +268,13 @@ describe('T-993 = B — which questions are asks', () => {
     ['T-1379 approval by reply', '초안을 아래에 붙였어요. 이대로 괜찮으면 이 메시지에 답해 주세요.'],
     ['T-1379 confirm-clause 알려 주세요', '이 문구로 괜찮은지, 고칠 줄이 있는지 알려 주세요.'],
     ['T-1379 choose-clause 알려 주세요', 'A 와 B 중 어느 쪽으로 진행할지 알려주세요'],
+    ['T-1379 proceed clause 알려 주세요', '테스트는 다 통과했어요. 이대로 진행할지 알려 주세요.'],
+    ['T-1379 option letters 알려 주세요', 'A 안과 B 안 가운데 무엇으로 할지 알려 주세요.'],
+    // T-1379: observed PO approval asks from the reply-corpus replay
+    ['T-1379 어떻게 할지', '시안을 보시고 6건을 어떻게 할지 알려 주세요(「전부 권고대로」도 돼요).'],
+    ['T-1379 괜찮은지 답해 주세요', '화면 세트 배치와 위키 이동 명령 출력이 괜찮은지 답해 주세요 (T-1065)'],
+    ['T-1379 해도 될지', 'PRD v1.13 완료 기준이 채워졌는지 확인하고, 배포해도 될지 알려 주세요.'],
+    ['T-1379 아니면 joins the clause before', '본문을 이대로 승인할지, 아니면 빼거나 고칠 줄 번호를 알려 주세요. (T-1301)'],
   ]
   for (const [label, reply] of blocked) {
     test(`${label} → blocked`, () => {
@@ -289,6 +296,21 @@ describe('T-993 = B — which questions are asks', () => {
     ['information request (imperative)', '에러가 난 로그 파일 경로를 알려 주세요.'],
     ['information request (fact clause)', 'API 키가 설정돼 있는지 알려 주세요.'],
     ['quoted approval ask (a report of one)', 'PO 가 「이대로 괜찮으면 이 메시지에 답해 주세요」 라고 물었어요.'],
+    // T-1379 QA grill (d-v116-t1379-qa1): non-ask 알려/답해 주세요 sentences
+    ['을지로 is not a 지 ending', '을지로 사무실 주소를 알려 주세요.'],
+    ['-ㄹ지라도 is not a 지 ending', '실패할지라도 결과 로그는 알려 주세요.'],
+    ['a choice clause before a comma', '배포할지 말지는 제가 정할게요, 지금은 에러 로그 경로만 알려 주세요.'],
+    ['fact check 되는지', '션님 맥에서 로그인이 되는지 알려 주세요.'],
+    ['fact check 맞는지', '설치된 node 버전이 22 가 맞는지 알려 주세요.'],
+    ['fact check 좋은지', '회사 와이파이 상태가 좋은지 알려 주세요.'],
+    ['information 있을지', '다음 주에 시간이 있을지 알려 주세요.'],
+    ['information 언제 할지', '팀장님이 리뷰를 언제 할지 알려 주세요.'],
+    ['information 몇 명이 갈지', '워크숍에 몇 명이 갈지 알려 주세요.'],
+    ['information 어떤 브라우저를 쓸지', '평소에 어떤 브라우저를 쓸지 알려 주세요.'],
+    ['relayed ask (라고 보냈어요)', 'developer 에게 테스트가 되는지 알려 주세요 라고 다시 보냈어요.'],
+    ['relayed ask (를 받고)', 'QA 가 빌드가 되는지 알려 주세요 를 받고 확인했어요.'],
+    ['third-party to-do 답해 주세요', '팀장님 메일에 오늘 안에 답해 주세요 (리뷰 일정 때문).'],
+    ['ASCII-quoted approval ask', "PO 가 '이 문구로 괜찮은지 알려 주세요' 라고 물었어요."],
   ]
   for (const [label, reply] of silent) {
     test(`${label} → silent`, () => {
