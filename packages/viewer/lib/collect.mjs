@@ -56,7 +56,7 @@ import { createDocsLayout } from './docs-layout.mjs'
 // a ticket bucket directory spelled differently from po-state's own version
 // string (`v1.10.0` on disk vs `v1.10` in `.prdt/po-state.json`) is still the
 // same version. No cycle: render.mjs never imports collect.mjs.
-import { sameVersion, decodePathSegments } from './render.mjs'
+import { sameVersion, decodePathSegments, compareVersionIdsDesc } from './render.mjs'
 
 // T-912 F1: every read under the repo root passes through realpath containment
 // (the RELEASES.md / discipline rule, T-883 / T-842 class): a path whose REAL
@@ -703,13 +703,13 @@ export const INSTALL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.
  * (no python3, not a prdt project, bad PRD) is `[]`, which the scope block draws as no lanes.
  * @returns {Array<{name: string, linked: boolean, done: number, total: number, tickets: string[]}>}
  */
-export function collectLanes(repoRoot, line = null, { scriptsDir = path.join(INSTALL_ROOT, 'packages/core/scripts') } = {}) {
+export function collectLanes(repoRoot, line = null, { version = '', scriptsDir = path.join(INSTALL_ROOT, 'packages/core/scripts') } = {}) {
   if (!fs.existsSync(path.join(scriptsDir, 'prdt_lanes.py'))) return []
   // -I: neither the cwd (the project root) nor PYTHONPATH reaches sys.path, so the sibling module is
   // put there in code — a project-root prdt_lanes.py / json.py is never imported (T-1195).
-  const code = 'import sys,json\nsys.path.insert(0,sys.argv[3])\nimport prdt_lanes as m\nprint(json.dumps(m.lanes_for(sys.argv[1], sys.argv[2] or None), ensure_ascii=False))'
+  const code = 'import sys,json\nsys.path.insert(0,sys.argv[3])\nimport prdt_lanes as m\nprint(json.dumps(m.lanes_for(sys.argv[1], sys.argv[2] or None, sys.argv[4] or None), ensure_ascii=False))'
   try {
-    const r = spawnSync('python3', ['-I', '-c', code, repoRoot, line || '', scriptsDir], {
+    const r = spawnSync('python3', ['-I', '-c', code, repoRoot, line || '', scriptsDir, version], {
       encoding: 'utf8',
       timeout: 20000,
       cwd: repoRoot,
@@ -722,6 +722,16 @@ export function collectLanes(repoRoot, line = null, { scriptsDir = path.join(INS
   } catch {
     return []
   }
+}
+
+/**
+ * T-1256: an idle product's last closed version's lanes as at close ([] when the product is not idle or has no closed
+ * round). `prd.closed` names the rounds; the version is line-prefixed the way a ticket row carries it.
+ */
+export function collectClosedLanes(repoRoot, line, stage, prd) {
+  if (stage !== 'idle') return []
+  const last = [...prd.closed].map((c) => c.name.replace(/\.md$/, '')).sort(compareVersionIdsDesc)[0]
+  return last ? collectLanes(repoRoot, line, { version: line ? `${line}/${last}` : last }) : []
 }
 
 export function collectToolVersion(installRoot = INSTALL_ROOT) {
@@ -906,18 +916,21 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
   const lines = lineNames.map((name) => {
     const { stage, version } = lineState(poState, name)
     const lineLayout = layout.layout === 'product' ? createDocsLayout(repoRoot, name) : layout
+    const prd = collectPrd(repoRoot, version, { line: name, lineNames, layout: lineLayout })
     return {
       name,
       stage,
       version,
-      prd: collectPrd(repoRoot, version, { line: name, lineNames, layout: lineLayout }),
+      prd,
       tickets: collectTickets(repoRoot, version, { line: name, layout: lineLayout }),
       lanes: collectLanes(repoRoot, name),
+      ...(stage === 'idle' ? { closedLanes: collectClosedLanes(repoRoot, name, stage, prd) } : {}),
       deployed: collectDeployed(lineLayout),
       // T-958: key names + set/empty only (env-status.mjs).
       env: collectEnv(repoRoot, lineEnvDir(cfg, name)),
     }
   })
+  const homePrd = collectPrd(repoRoot, currentVersion, { lineNames, layout })
   return {
     poState,
     project: collectProjectSlug(repoRoot),
@@ -929,9 +942,10 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
     deployed: collectDeployed(layout),
     // T-1104: how this project's docs/ is laid out — render maps As-Is paths and links through it.
     docsLayout: layout,
-    prd: collectPrd(repoRoot, currentVersion, { lineNames, layout }),
+    prd: homePrd,
     tickets: collectTickets(repoRoot, currentVersion, { exclude: lineNames, layout }),
     lanes: collectLanes(repoRoot),
+    ...(poState.stage === 'idle' ? { closedLanes: collectClosedLanes(repoRoot, null, poState.stage, homePrd) } : {}),
     wiki: collectWiki(repoRoot, layout),
     features: collectFeatures(repoRoot, layout),
     featureTaxonomy: collectFeatureTaxonomy(repoRoot),
