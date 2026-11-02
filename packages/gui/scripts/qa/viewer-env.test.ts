@@ -162,10 +162,10 @@ describe('env item + Home env block — several lines', () => {
     expect(html).not.toContain('id="store-env"')
   })
 
-  it('current-version sidebar: env is the last item of each line, counted by env files (samples included)', () => {
+  it('current-version sidebar: env closes each line, followed only by 용어 사전 (T-1255), counted by env files (samples included)', () => {
     const side = home().split('<nav class="sidebar">')[1].split('</nav>')[0]
-    expect(side).toMatch(/data-group-select="ntf-archive\/decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="ntf-archive\/env"[^>]*><span>env<\/span><span class="nav-item-count">2<\/span><\/button>\s*(?:<div class="sidebar-foot">[\s\S]*?<\/div>\s*)?$/)
-    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*><span>env<\/span><span class="nav-item-count">0<\/span><\/button>\s*<div class="ls-h"><b>ntf-archive/)
+    expect(side).toMatch(/data-group-select="ntf-archive\/decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="ntf-archive\/env"[^>]*><span>env<\/span><span class="nav-item-count">2<\/span><\/button>\s*<button[^>]*data-group-select="ntf-archive\/glossary"[^>]*><span>용어 사전<\/span><span class="nav-item-count">\d+<\/span><\/button>\s*(?:<div class="sidebar-foot">[\s\S]*?<\/div>\s*)?$/)
+    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*><span>env<\/span><span class="nav-item-count">0<\/span><\/button>\s*<button[^>]*data-group-select="glossary"[^>]*><span>용어 사전<\/span><span class="nav-item-count">\d+<\/span><\/button>\s*<div class="ls-h"><b>ntf-archive/)
   })
 
   it('env pane: every file card shows its key names by default (samples too) — no eye toggle, no value, length or edit control', () => {
@@ -248,13 +248,13 @@ describe('env item — single-line project', () => {
   })
   afterAll(() => fs.rmSync(root, { recursive: true, force: true }))
 
-  it('no section heads; env is the last sidebar item counting its one file; 진행 상황 has no env block', () => {
+  it('no section heads; env counts its one file, followed only by 용어 사전 (T-1255); 진행 상황 has no env block', () => {
     const html = render(collectAll(root, { disciplineRoot: root }))
     expect(html).not.toContain('id="store-env"')
     const home = html.split('id="store-home"')[1].split('</section>')[0]
     const side = home.split('<nav class="sidebar">')[1].split('</nav>')[0]
     expect(side).not.toContain('ls-h')
-    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*><span>env<\/span><span class="nav-item-count">1<\/span><\/button>\s*(?:<div class="sidebar-foot">[\s\S]*?<\/div>\s*)?$/)
+    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*><span>env<\/span><span class="nav-item-count">1<\/span><\/button>\s*<button[^>]*data-group-select="glossary"[^>]*><span>용어 사전<\/span><span class="nav-item-count">\d+<\/span><\/button>\s*(?:<div class="sidebar-foot">[\s\S]*?<\/div>\s*)?$/)
     expect(home).not.toContain('env-blk')
     expect(home).toContain(`prdt://open-env?root=${encodeURIComponent(fs.realpathSync(root))}&amp;file=.env.local`)
     expect(html).not.toContain(SENTINEL)

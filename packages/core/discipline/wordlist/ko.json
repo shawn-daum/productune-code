@@ -241,16 +241,47 @@
       ]
     },
     {
-      "concept": "합치다 (브랜치)",
+      "concept": "land · 합치다 (git)",
       "say": [
         "merge"
       ],
       "avoid": [
         {
-          "pattern": "(브랜치|변경|작업|트랙)[을를]? ?합치"
+          "label": "합치다",
+          "pattern": "(?:브랜치|변경|작업|트랙|커밋|(?<![A-Za-z])(?:dev|main)|track/\\S+)(?:들)?(?:[을를에로]|으로)? ?합[치쳐칠친침]"
+        },
+        {
+          "label": "land",
+          "pattern": "(?:T-\\d+|트랙|track(?:/\\S+)?|브랜치|branch|(?<![A-Za-z])(?:dev|main))(?:[을를이가은는에로]|으로)? ?(?<![A-Za-z])land(?:s|ed|ing)?(?![A-Za-z])|(?<![A-Za-z])land(?:s|ed|ing)? ?(?:했|하|해|할|됐|된|되|돼|됨|함)|(?<![A-Za-z])land(?:s|ed|ing)? (?:on|to|into) (?:dev|main)(?![A-Za-z])"
         }
       ],
-      "note": "development terms stay untranslated: merge · commit · branch · deploy"
+      "note": "the track adopt step (`prdt track merge`, tests then merge) is merge (T-1265 · T-1266). Development terms stay untranslated: merge · commit · branch · deploy. land in another sense (dev pushes land as previews) is not a hit.",
+      "cases": {
+        "hit": [
+          { "text": "브랜치를 합쳐요" },
+          { "text": "dev에 합칠게요" },
+          { "text": "T-1092 land" },
+          { "text": "작업을 합친 뒤" },
+          { "text": "트랙을 dev로 합쳐요" },
+          { "text": "main으로 합침" },
+          { "text": "변경 합치기" },
+          { "text": "track/T-1092 land 했어요" },
+          { "text": "T-1092 를 dev에 land 해요", "n": 1 },
+          { "text": "트랙 land 뒤 테스트" }
+        ],
+        "miss": [
+          { "text": "의견을 합쳐 주세요" },
+          { "text": "두 표를 합친 결과" },
+          { "text": "힘을 합치면" },
+          { "text": "합계" },
+          { "text": "dev pushes land as previews" },
+          { "text": "「land」 는 팀이 붙인 이름" },
+          { "text": "`prdt track land` 는 한 버전 남아요", "kind": "md" },
+          { "text": "landing 페이지" },
+          { "text": "island 지도" },
+          { "text": "devland 합계" }
+        ]
+      }
     },
     {
       "concept": "문이 잠기다",
