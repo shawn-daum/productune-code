@@ -38,6 +38,9 @@ importers:
       lucide-react:
         specifier: ^1.14.0
         version: 1.14.0(react@18.3.1)
+      mdast-util-from-markdown:
+        specifier: ^2.0.3
+        version: 2.0.3
       mermaid:
         specifier: ^11.17.2
         version: 11.17.2
