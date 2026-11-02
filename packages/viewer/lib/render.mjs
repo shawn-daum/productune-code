@@ -4427,7 +4427,7 @@ export function renderPage({
   // bodies never sit in this page, so the page itself cannot tell.
   pastMermaid = false,
 }) {
-  // T-1277: the chrome language is the project's user_lang (data.userLang, collect.mjs); unset or unknown → ko.
+  // T-1277: the chrome language is data.userLang (project user_lang, else machine user-lang; collect.mjs); unset or unknown → ko.
   setViewerLang(data.userLang)
   const bundle = scriptBundle(viewerLang)
   pageViewerAbsPath = viewerAbsPath
