@@ -14633,13 +14633,13 @@ def _track_test_cmd(root, wt, override):
     return None
 
 
-def _track_run(cmd, cwd, label):
+def _track_run(cmd, cwd, label, env=None):
     """Runs under pipefail (T-813): `--test '<cmd> | tail'` must not take tail's
     exit code, or a failing test lands as a pass."""
     print(f"{label}: {cmd}", flush=True)
     bash = shutil.which("bash")
     argv = [bash, "-o", "pipefail", "-c", cmd] if bash else ["/bin/sh", "-c", f"set -o pipefail; {cmd}"]
-    r = subprocess.run(argv, cwd=str(cwd), stdout=sys.stderr, stderr=sys.stderr)
+    r = subprocess.run(argv, cwd=str(cwd), stdout=sys.stderr, stderr=sys.stderr, env=env)
     return r.returncode
 
 
@@ -14676,12 +14676,17 @@ def _no_dup_keys(pairs):
     return out
 
 
-def _track_record_path(code, tid):
+def _track_run_dir(code):
+    """$PRDT_HOME/run/tracks/<code-repo key>/ — tooling-owned, outside the repo and its worktrees."""
     r = _tgit(["rev-parse", "--git-common-dir"], code)
     gd = Path(r.stdout.strip())
     gd = (gd if gd.is_absolute() else Path(code) / gd).resolve()
     key = hashlib.sha256(str(gd).encode("utf-8")).hexdigest()[:16]
-    return prdt_home() / "run" / "tracks" / key / f"{tid}.json"
+    return prdt_home() / "run" / "tracks" / key
+
+
+def _track_record_path(code, tid):
+    return _track_run_dir(code) / f"{tid}.json"
 
 
 def _track_record_write(code, tid, branch, base):
@@ -15134,6 +15139,167 @@ def _track_scanner_list(wt):
     return out
 
 
+# Test-read map (T-1286): the scanner list and the aliases above are kept by hand, and a read shape
+# their regexes do not know (QA d-v115-t1268-qa3: `readdirSync(path.join(ROOT, 'config'))`) still landed
+# green. So every land's test run (relevant set or whole suite) loads this tracer into the vitest
+# workers through NODE_OPTIONS: it records, per test file, the repo paths that file's tests read
+# (f = a file read / stat / exists · d = a directory listed · t = a tree listed or copied recursively).
+# A green run merges what it saw into $PRDT_HOME/run/tracks/<repo key>/test-read-map.json, and the next
+# land adds every test whose recorded reads its diff touches. The map only ADDS to the import / name /
+# list selection: a missing, unreadable or stale map selects exactly what that selection does.
+# Not seen: reads made by a child process a test spawns (the prdt CLI, a hook script) — those stay
+# with the name / alias / list routes.
+TRACK_TEST_MAP = "test-read-map.json"
+TRACK_FS_TRACER = r"""'use strict'
+// prdt test-read trace (T-1286) — written by `prdt track land`, loaded by `--require` via NODE_OPTIONS.
+// The output dir and repo root are baked in, not read from env: turbo's strict env mode passes
+// NODE_OPTIONS to its tasks but drops undeclared variables.
+;(() => {
+  const OUT = __PRDT_TRACE_OUT__, ROOT = __PRDT_TRACE_ROOT__
+  const wt = require('worker_threads')
+  if (!process.send && wt.isMainThread) {
+    // the runner, not a test worker (vitest runs test files in forks with IPC, or threads). Hand this file
+    // to every process it forks through execArgv too: a fork wrapper may drop NODE_OPTIONS (core's own
+    // isolation rules do, when a test runs vitest inside a test).
+    const cp = require('child_process'), self = __filename, f = cp.fork
+    if (typeof f !== 'function' || f.__prdtFsTrace) return
+    const w = function (modulePath, args, options) {
+      let a = args, op = options
+      if (!Array.isArray(a)) { op = a == null ? op : a; a = [] }
+      const opts = Object.assign({}, op || {})
+      const ea = opts.execArgv || process.execArgv
+      if (!ea.includes(self)) opts.execArgv = [...ea, '--require', self]
+      return f.call(this, modulePath, a, opts)
+    }
+    w.__prdtFsTrace = true
+    cp.fork = w
+    try { require('module').syncBuiltinESMExports() } catch {}
+    return
+  }
+  const fs = require('fs'), path = require('path'), url = require('url')
+  if (fs.__prdtFsTrace) return
+  fs.__prdtFsTrace = true
+  const o = { openSync: fs.openSync, writeSync: fs.writeSync, realpathSync: fs.realpathSync }
+  let real = ROOT
+  try { real = o.realpathSync(ROOT) } catch {}
+  const roots = [...new Set([ROOT, real])].map((r) => r.replace(/\/+$/, '') + '/')
+  const rel = (abs) => { for (const r of roots) if (abs.startsWith(r)) return abs.slice(r.length); return null }
+  const seen = new Set()
+  let fd = -1
+  const note = (kind, p) => {
+    try {
+      const st = globalThis.__vitest_worker__          // vitest sets .filepath to the test file it runs
+      const tf = st && st.filepath
+      if (!tf || p == null || typeof p === 'number') return
+      const s = typeof p === 'string' ? p : p instanceof URL ? url.fileURLToPath(p) : Buffer.isBuffer(p) ? p.toString() : null
+      if (!s) return
+      const r = rel(path.resolve(s)), t = rel(tf)
+      if (!r || t == null || r === '.git' || r.startsWith('.git/') || r.includes('node_modules')) return
+      const key = t + '\0' + kind + '\0' + r
+      if (seen.has(key)) return
+      seen.add(key)
+      if (fd < 0) fd = o.openSync(path.join(OUT, process.pid + '-' + wt.threadId + '.jsonl'), 'a')
+      o.writeSync(fd, JSON.stringify([t, kind, r]) + '\n')
+    } catch {}
+  }
+  const recursive = (a) => !!(a && typeof a === 'object' && a.recursive)
+  const wrap = (obj, name, kindOf) => {
+    const f = obj && obj[name]
+    if (typeof f !== 'function') return
+    const w = function (p, a) { note(kindOf(a), p); return f.apply(this, arguments) }
+    Object.defineProperties(w, Object.getOwnPropertyDescriptors(f))
+    obj[name] = w
+  }
+  const file = () => 'f', listing = (a) => (recursive(a) ? 't' : 'd'), copy = (a) => (recursive(a) ? 't' : 'f')
+  for (const n of ['readFileSync', 'readFile', 'existsSync', 'exists', 'statSync', 'stat', 'lstatSync', 'lstat',
+    'accessSync', 'access', 'openSync', 'open', 'createReadStream', 'copyFileSync', 'copyFile', 'realpathSync', 'realpath'])
+    wrap(fs, n, file)
+  for (const n of ['readdirSync', 'readdir', 'opendirSync', 'opendir']) wrap(fs, n, listing)
+  for (const n of ['cpSync', 'cp']) wrap(fs, n, copy)
+  const pr = fs.promises
+  for (const n of ['readFile', 'stat', 'lstat', 'access', 'open', 'copyFile', 'realpath']) wrap(pr, n, file)
+  for (const n of ['readdir', 'opendir']) wrap(pr, n, listing)
+  wrap(pr, 'cp', copy)
+  try { require('module').syncBuiltinESMExports() } catch {}   // `import { readFileSync } from 'node:fs'` too
+})()
+"""
+
+
+def _track_trace_env(wt):
+    """(env, trace dir) for a traced test run: a private temp dir holding the tracer and its output."""
+    import tempfile
+    d = Path(tempfile.mkdtemp(prefix="prdt-fs-trace-"))
+    tracer = d / "prdt-fs-trace.cjs"
+    with open(tracer, "x", encoding="utf-8") as fh:
+        fh.write(TRACK_FS_TRACER.replace("__PRDT_TRACE_OUT__", json.dumps(str(d)))
+                 .replace("__PRDT_TRACE_ROOT__", json.dumps(str(Path(wt).resolve()))))
+    env = dict(os.environ)
+    env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + f' --require "{tracer}"').strip()
+    return env, d
+
+
+def _track_test_map_read(code):
+    """({test path: {"f","d","t": set}}, note). Missing or unreadable → ({}, why) — the selection is then
+    exactly the import / name / list one."""
+    p = _track_run_dir(code) / TRACK_TEST_MAP
+    if not p.is_file():
+        return {}, "none yet — tests are chosen by import, name and the declared lists"
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        tests = d["tests"] if isinstance(d, dict) and d.get("schema") == 1 else None
+        if not isinstance(tests, dict):
+            raise ValueError
+    except (OSError, ValueError, KeyError):
+        return {}, "unreadable — tests are chosen by import, name and the declared lists"
+    out = {}
+    for t, e in tests.items():
+        if isinstance(e, dict):
+            out[t] = {k: {x for x in e.get(k, []) if isinstance(x, str)} for k in ("f", "d", "t")}
+    return out, f"{len(out)} test file(s), updated {d.get('updated', '?')}"
+
+
+def _track_trace_hit(entry, c):
+    """A changed repo path the test was seen to reach: read it, listed its folder, or walked a tree above it."""
+    if c in entry["f"]:
+        return True
+    if "/" in c and c.rsplit("/", 1)[0] in entry["d"]:
+        return True
+    return any(c == t or c.startswith(t + "/") for t in entry["t"])
+
+
+def _track_test_map_update(code, wt, trace_dir, ran):
+    """Merge a GREEN run's trace into the map: each traced test file's entry is replaced by what it read
+    this run; a test file in `ran` with no trace line read nothing in the repo. A run that left no trace at
+    all (no vitest worker ran, or the tracer could not attach) changes nothing."""
+    try:
+        seen = {}
+        for f in sorted(Path(trace_dir).glob("*.jsonl")):
+            for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    t, k, p = json.loads(line)
+                except ValueError:
+                    continue      # a worker killed mid-write leaves a torn last line
+                if k in ("f", "d", "t") and isinstance(t, str) and isinstance(p, str):
+                    seen.setdefault(t, {"f": set(), "d": set(), "t": set()})[k].add(p)
+        if not seen:
+            print("test-read map: no file reads recorded on this run — map unchanged")
+            return
+        tests, _ = _track_test_map_read(code)
+        for t in ran:
+            tests[t] = {"f": set(), "d": set(), "t": set()}
+        tests.update(seen)
+        tests = {t: e for t, e in tests.items() if (Path(wt) / t).is_file()}
+        home = prdt_home()
+        home.mkdir(parents=True, exist_ok=True)
+        state_write(home, _track_run_dir(code) / TRACK_TEST_MAP, json.dumps({
+            "schema": 1, "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "tests": {t: {k: sorted(e[k]) for k in ("f", "d", "t")} for t, e in sorted(tests.items())},
+        }, ensure_ascii=False) + "\n")
+        print(f"test-read map: {len(seen)} test file(s) recorded this run, {len(tests)} in the map")
+    except Exception as e:     # the tests are green; a map that could not be written must not stop the land
+        print(f"test-read map: not updated ({type(e).__name__}: {e})")
+
+
 def _track_pkg_extra_steps(pkg):
     """Commands the package's own `test` script runs besides vitest (`vitest run && node test/x.mjs`)."""
     pj = read_json(Path(pkg) / "package.json")
@@ -15143,15 +15309,18 @@ def _track_pkg_extra_steps(pkg):
     return [seg.strip() for seg in t.split("&&") if seg.strip() and not re.match(r"vitest(\s|$)", seg.strip())]
 
 
-def _track_relevant_set(wt, base_sha, changed):
+def _track_relevant_set(wt, base_sha, changed, tmap=None):
     """([(pkg, vbin, [files], extras_due)], covered, counts, has_pkgs, fallback) — the union per vitest package.
     A package the diff touches always carries its declared directory-scanner tests (TRACK_SCANNER_LIST) in
     `files`, and `extras_due` = a file under the package changed, so its extra test steps run even when
     `files` is empty. `fallback` = {pkg: [changed files whose reach into that package's tests is unknown]}:
-    those packages run their whole test command."""
+    those packages run their whole test command. `tmap` (T-1286) = the test-read map: a test whose
+    recorded reads the diff touches joins `files` too."""
     pkgs = _track_vitest_pkgs(wt)
     scanners = _track_scanner_list(wt)
-    plan, named_any, tot, fallback = [], set(), {"changed_tests": 0, "importers": 0, "naming": 0, "scanners": 0}, {}
+    tmap = tmap or {}
+    wt_res = Path(wt).resolve()
+    plan, named_any, tot, fallback = [], set(), {"changed_tests": 0, "importers": 0, "naming": 0, "scanners": 0, "traced": 0}, {}
     names = {c: _track_names_of(c) for c in changed}
     stems = {c: _track_stem_re(c) for c in changed}
     for pkg in pkgs:
@@ -15186,8 +15355,18 @@ def _track_relevant_set(wt, base_sha, changed):
                    and str((Path(wt) / c).resolve()).startswith(str(Path(pkg).resolve()) + os.sep)]
         if unknown:
             fallback[pkg] = unknown
+        traced = set()
+        for t in alltests:
+            try:
+                entry = tmap.get(Path(t).resolve().relative_to(wt_res).as_posix())
+            except ValueError:
+                continue
+            hits = [c for c in changed if entry and _track_trace_hit(entry, c)]
+            if hits:
+                traced.add(t)
+                named_any.update(hits)
         importers = rel_hits - own
-        derived = (own | rel_hits | naming) & set(alltests)
+        derived = (own | rel_hits | naming | traced) & set(alltests)
         pkg_rel = pkg.relative_to(wt).as_posix() if pkg != Path(wt) else "."
         under = lambda c, d: d == "." or c == d or c.startswith(d + "/")
         always = set()
@@ -15204,6 +15383,7 @@ def _track_relevant_set(wt, base_sha, changed):
         tot["changed_tests"] += len(own)
         tot["importers"] += len(importers - naming)
         tot["naming"] += len(naming - own - rel_hits)
+        tot["traced"] += len(traced - own - rel_hits - naming)
         tot["scanners"] += len(always - derived)
         if files or unknown or extras_due:
             plan.append((pkg, vbin, files, extras_due))
@@ -15286,6 +15466,7 @@ def cmd_track_merge(args):
             _track_die(f"the setup step failed on an earlier merge of {tid} — the tests were not run on this tree; "
                        + _track_setup_recovery(tid, branch, wt, cmd, args.base))
     lock = _track_lock(code)
+    trace_dir = None
     try:
         old = _tgit(["rev-parse", "--verify", "--quiet", bref], code).stdout.strip()
         if not old:
@@ -15305,16 +15486,20 @@ def cmd_track_merge(args):
                     _track_setup_failed_write(code, tid, setup)
                     _track_die(f"the setup step failed on the merged tree — {base} is unchanged; "
                                + _track_setup_recovery(tid, branch, wt, setup, args.base))
+        tenv, trace_dir = _track_trace_env(wt)
+        ran_rel = []    # test files the relevant run ran (a whole run's set is whatever the trace shows)
         if whole:
             why_whole = ("--test" if isinstance(args.test, str) and args.test.strip() else
                          "track.test" if explicit else "--full" if full else lane_note)
-            rc = _track_run(test, wt, f"tests on the merged tree (whole suite: {why_whole})")
+            rc = _track_run(test, wt, f"tests on the merged tree (whole suite: {why_whole})", env=tenv)
             ran = f"tests `{test}`"
         else:
             if lane_note:
                 print(lane_note)
             chg = [x for x in _tgit(["diff", "--name-only", old, "HEAD"], wt).stdout.splitlines() if x]
-            plan, covered, tot, _, fallback = _track_relevant_set(wt, old, chg)
+            tmap, tnote = _track_test_map_read(code)
+            print(f"test-read map: {tnote}")
+            plan, covered, tot, _, fallback = _track_relevant_set(wt, old, chg, tmap)
             n = sum(len(f) for _p, _v, f, _e in plan)
             if not plan:
                 print(f"relevant tests: none — {len(chg)} changed file(s) against {base}, no test imports "
@@ -15324,6 +15509,7 @@ def cmd_track_merge(args):
                 if n:
                     print(f"relevant tests: {n} file(s) in {len(plan)} package(s) — {tot['changed_tests']} changed, "
                           f"{tot['importers']} importing, {tot['naming']} naming a changed file"
+                          f"{', ' + str(tot['traced']) + ' by recorded file reads' if tot['traced'] else ''}"
                           f"{', ' + str(tot['scanners']) + ' always-run directory scanner(s)' if tot['scanners'] else ''}; "
                           f"{len(chg)} changed file(s) against {base}", flush=True)
                 else:
@@ -15353,8 +15539,9 @@ def cmd_track_merge(args):
                         if _track_run("pnpm run build", pkg, f"build ({label}: src/ changed)") != 0:
                             _track_die(f"the build of {label} failed on the merged tree — {base} is unchanged; "
                                        f"{branch} keeps the merge, fix it there and merge again")
+                    ran_rel += [Path(f).resolve().relative_to(Path(wt).resolve()).as_posix() for f in files]
                     for cmd in steps + (_track_pkg_extra_steps(pkg) if (extras_due or files or pkg in fallback) else []):
-                        rc = _track_run(cmd, pkg, f"relevant tests ({label})")
+                        rc = _track_run(cmd, pkg, f"relevant tests ({label})", env=tenv)
                         if rc != 0:
                             break
                     if rc != 0:
@@ -15367,6 +15554,7 @@ def cmd_track_merge(args):
                    if rc == 141 else "")
             _track_die(f"tests failed on the merged tree — {base} is unchanged; {branch} keeps the merge, "
                        f"fix it there and merge again{why}")
+        _track_test_map_update(code, wt, trace_dir, ran_rel)
         dirty = _tgit(["status", "--porcelain"], wt)
         if dirty.returncode != 0 or dirty.stdout.strip():
             left = [ln[3:] if len(ln) > 3 else ln for ln in dirty.stdout.splitlines() if ln]
@@ -15395,6 +15583,8 @@ def cmd_track_merge(args):
             lock.unlink()
         except OSError:
             pass
+        if trace_dir is not None:
+            shutil.rmtree(trace_dir, ignore_errors=True)
     r = _tgit(["worktree", "remove", str(wt)], code)
     if r.returncode == 0:
         print(f"worktree {wt} removed")
