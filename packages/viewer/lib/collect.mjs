@@ -718,7 +718,7 @@ export function collectLanes(repoRoot, line = null, { scriptsDir = path.join(INS
     if (r.status !== 0) return []
     const lanes = JSON.parse(r.stdout)
     if (!Array.isArray(lanes)) return []
-    return lanes.map((l) => ({ name: String(l.name), linked: l.linked === true, done: Number(l.done) || 0, total: Number(l.total) || 0, tickets: Array.isArray(l.tickets) ? l.tickets.map(String) : [] }))
+    return lanes.map((l) => ({ name: String(l.name), linked: l.linked === true, besteffort: l.besteffort === true, done: Number(l.done) || 0, total: Number(l.total) || 0, tickets: Array.isArray(l.tickets) ? l.tickets.map(String) : [] }))
   } catch {
     return []
   }

@@ -2908,7 +2908,7 @@ function homeLineGroups(data, v, views, repoRootHref) {
   const currentArtifacts = lineArtifactEntries(data.artifacts, v, views).filter((e) => e.fields.bucket === cur)
   const currentDecisions = lineDecisionPages(data.wiki, v)
   const decisionTickets = decisionTicketsOf(idle ? homeTickets_(v) : currentTickets)
-  const idleHomeHtml = idle ? idleNotice(IDLE.homeHead(v.name), IDLE.homeDetail(v.tickets.included.filter((t) => t.bucket === 'backlog').length)) : ''
+  const idleHomeHtml = idle ? idleLastVersionHtml(v) + idleNotice(IDLE.homeHead(v.name), IDLE.homeDetail(v.tickets.included.filter((t) => t.bucket === 'backlog').length)) : ''
   // T-1108: an idle product has no open version, so its ticket pane lists every ticket it has (backlog + closed rounds).
   const homeTickets = idle ? [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))] : currentTickets
   const groups = [
@@ -2921,6 +2921,25 @@ function homeLineGroups(data, v, views, repoRootHref) {
     glossaryGroup(data.wiki),
   ]
   return { groups, defaultKey: 'progress' }
+}
+
+/**
+ * T-1256: an idle product's last closed version as it stood at close — its id, ticket counts (the stage bar) and each
+ * lane with its gate result. '' when the product has no closed version (today's idle text alone). Lanes are the
+ * po-state-retained version's (the one lane computation), so they show only when that is the closed version.
+ */
+function idleLastVersionHtml(v) {
+  const closed = lastClosedId(v)
+  if (!closed) return ''
+  const tickets = homeTickets_({ ...v, currentVersion: closed })
+  const lanes = (Array.isArray(v.lanes) ? v.lanes : []).filter((l) => sameVersion(v.currentVersion, closed) && l.linked)
+  const laneRows = lanes
+    .map((l) => {
+      const gate = l.besteffort ? '' : ` <span class="sc-n">${escapeHtml(l.total > 0 && l.done === l.total ? IDLE.lastGatePass : IDLE.lastGateOpen)}</span>`
+      return `<div class="sc-row"><span class="sc-lab">${escapeHtml(IDLE.lastLane(l.name))}</span><span class="mono sc-n">${l.done}/${l.total}</span>${gate}</div>`
+    })
+    .join('')
+  return `<div class="dash-card" data-last-version="${escapeHtml(closed)}"><div class="cp-h">${escapeHtml(IDLE.lastHead(closed))}</div>${homeStageBar(tickets, '')}${laneRows ? `<div class="sc-rows">${laneRows}</div>` : ''}</div>`
 }
 
 /** T-1138: an idle product's decision tickets = those of the version its decision pages use (`idleVersion`). */
