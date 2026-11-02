@@ -761,9 +761,9 @@ function fmtBytes(n) {
 // 621-627) — doctrine #2, don't re-draw what is already signed off.
 // T-880 = A: 현재 버전(home) · PRD · 티켓 · 위키 · 기능 · 아티팩트 · 용어 사전 ·
 // 릴리즈 노트 · 규율 — the discipline store (T-886) lands last, after 'release'.
-// T-1047: env has no activity-bar item — it is a current-version sidebar item (after 결정).
+// T-1227: env is an activity-bar store again (approved v1.14 screen set, env-machine-placement) — sidebar = a group per product + machine scope, one item per file.
 // T-1255: 용어 사전 left the activity bar too — it is the current-version sidebar item right under env.
-const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'release', 'disc']
+const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'env', 'release', 'disc']
 const STORE_ICON_PATHS = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
   prd: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/>',
@@ -774,6 +774,8 @@ const STORE_ICON_PATHS = {
   release: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
   // T-886: copied from the approved screen set (define-screen-set.html 「규율」 activity button).
   disc: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+  // T-1227: copied from the approved v1.14 screen set (screen-env-viewer 「env」 activity button).
+  env: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M16 7l3 3M19 4l2 2"/>',
   artifact:
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
 }
@@ -2532,24 +2534,36 @@ function envFileBody(f, dir, where) {
     `<p class="env-note">${f.sample ? ENV.sampleNote : ENV.note}</p>${envActions(f, where)}<div class="erows">${rows}</div></div>`
 }
 
-/** One current-version sidebar group per view: env = the last item (after 결정), its count = env file count (samples included). */
-function envGroup(env, emptyHead, machine, where) {
-  const machineHtml = machineEnvBody(machine)
-  if (!env || env.files.length === 0) {
-    const body = `<div class="env-nofile"><b>${escapeHtml(emptyHead)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
-    return { key: 'env', label: STORE_LABEL.env, count: 0, bodyHtml: body + machineHtml }
+/**
+ * T-1227: the env store (approved v1.14 screen set, screen-env-viewer). Sidebar = one group per
+ * product (its env files, or one dim 「env 파일 없음」 item) then the machine-scope group (`.env`, or
+ * one dim 「키 없음」 item); one item per file, its count = the file's key count; the body of an item is
+ * that file's card only.
+ */
+function envSection(data) {
+  const views = lineViews(data)
+  const single = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '' }
+  const groups = lineSectioned(views.length > 0 ? views : [single], (v) => {
+    const env = envOfView(data, v)
+    const dim = isIdleView(v)
+    const where = envWhere(data, v.line)
+    if (!env || env.files.length === 0) {
+      const body = `<div class="env-nofile"><b>${escapeHtml(v.line ? ENV.emptyHead : ENV.homeNone)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
+      return { groups: [{ key: 'none', label: ENV.noFile, dim: true, bodyHtml: body }] }
+    }
+    return { groups: env.files.map((f) => ({ key: f.name, label: f.sample ? `${f.name} · ${ENV.sample}` : f.name, count: f.keys.length, dim, bodyHtml: envFileBody(f, env.dir, where && { ...where, absDir: env.absDir }) })) }
+  })
+  const machine = data.machineEnv
+  if (machine) {
+    const head = { label: ENV.machineScope, stage: machine.dir }
+    if (machine.keys.length === 0) {
+      const body = `<div class="env-nofile"><b>${ENV.machineEmptyHead}</b><span>${escapeHtml(ENV.machineEmptyDetail)}</span></div>`
+      groups.push({ key: '@machine', label: ENV.machineNoKey, dim: true, crumb: ENV.machineScope, head, bodyHtml: body })
+    } else {
+      groups.push({ key: '@machine', label: '.env', count: machine.keys.length, crumb: `${ENV.machineScope} · .env`, head, bodyHtml: envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir) })
+    }
   }
-  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir, where && { ...where, absDir: env.absDir })).join('\n') + machineHtml }
-}
-
-/** T-1109: the machine-scope section (~/.prdt/env/.env) — names, 설정됨 / 비어 있음, 제품 코드 값이 우선; none stored → the empty card. Absent `machine` (a single-file render) → nothing. */
-function machineEnvBody(machine) {
-  if (!machine) return ''
-  const head = `<div class="env-scope">${ENV.machineScope}</div>`
-  if (machine.keys.length === 0) {
-    return `${head}<div class="env-nofile"><b>${ENV.machineEmptyHead}</b><span>${escapeHtml(ENV.machineEmptyDetail)}</span></div>`
-  }
-  return head + envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir)
+  return storeSection('env', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.env, crumbLabel: STORE_LABEL.env, groups, alwaysButtons: true }) })
 }
 
 // ---------- home: the in-progress version's workspace (T-666 slice 2a) ----------
@@ -2917,7 +2931,6 @@ function homeLineGroups(data, v, views, repoRootHref) {
     { key: 'prd', label: STORE_LABEL.prd, count: idle ? lastClosedId(v) : v.currentVersion, bodyHtml: idle ? idleNotice(IDLE.prdHead(v.name), IDLE.prdDetail()) : prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: homeTickets.length, bodyHtml: ticketRowsTable(homeTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
-    envGroup(envOfView(data, v), ENV.emptyHead, v.line ? null : data.machineEnv, envWhere(data, v.line)),
     glossaryGroup(data.wiki),
   ]
   return { groups, defaultKey: 'progress' }
@@ -2960,7 +2973,6 @@ function homeSection(data, repoRootHref) {
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
-    envGroup(data.env, ENV.homeNone, data.machineEnv, envWhere(data, null)),
     glossaryGroup(data.wiki),
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
@@ -4018,12 +4030,6 @@ ${PRD_READING_SCRIPT}
     var view = p.get('view');
     if (!view) return false;
     var group = p.get('group');
-    if (view === 'env') {
-      // T-1047: env is a current-version item now; an old ?view=env&group=<line>/<file> link lands on that line's env item.
-      var cut = group ? group.lastIndexOf('/') : -1;
-      view = 'home';
-      group = (cut === -1 ? '' : group.slice(0, cut + 1)) + 'env';
-    }
     var section = findByAttr('.store-section', 'data-store', view);
     if (!section) return false;
     clearHashMarks();
@@ -4468,6 +4474,7 @@ ${ticketSection(data.tickets, data.currentVersion, views)}
 ${wikiSection(data.wiki)}
 ${featuresSection(data)}
 ${artifactsSection(data.artifacts, data.currentVersion, views)}
+${envSection(data)}
 ${releaseSection(data.releases || [])}
 ${discSection(discipline, data.disciplineLoad || null)}`
   const detailScript = detailDataScript(detailData)
