@@ -71,12 +71,23 @@ describe.skipIf(!PY)('T-1173 rule 4 — memory_notes reach the inbox by the retu
   })
 
   test('a SubagentStop return (no handback) appends too; no notes append nothing', () => {
-    worker('a3', 'not-a-ticket')
+    worker('a3', 'a b')
     expect(stop('a3', env({ memory_notes: ['stop note'] }))).toBe('')
     expect(added()).toEqual([expect.stringMatching(/^- \d{4}-\d{2}-\d{2} stop note$/)])
     worker('a4')
     expect(stop('a4', env())).toBe('')
     expect(added()).toHaveLength(1)
+  })
+
+  test('T-1222 C4: a kebab-case ctx slug tags the line too; a slug that could break the tag stays untagged', () => {
+    worker('k1', 'hooks-review-low-fixes')
+    expect(handback('k1', env({ memory_notes: ['kebab note'] }))).toBe('')
+    expect(added()).toEqual([expect.stringMatching(/^- \d{4}-\d{2}-\d{2} \[hooks-review-low-fixes\] kebab note$/)])
+    for (const [aid, bad] of [['k2', 'x] y'], ['k3', 'a\nb'], ['k4', 'x'.repeat(81)], ['k5', '-lead']] as const) {
+      worker(aid, bad)
+      expect(handback(aid, env({ memory_notes: [`note ${aid}`] }))).toBe('')
+      expect(added().at(-1), bad).toMatch(new RegExp(`^- \\d{4}-\\d{2}-\\d{2} note ${aid}$`))
+    }
   })
 
   test('legacy layout writes docs/wiki/inbox.md', () => {
