@@ -404,6 +404,84 @@ LANG_CHECK_NOTICE = (
     "[prdt lang check] reply above is not in lang=%s. Send it again now in that "
     "language; code, paths, ids, quoted text unchanged."
 )
+# T-1307: the mid-turn language check (PostToolUse, PO only) — the PO prose written
+# right before this tool call (after a tool output or a worker return). DRAFT wording:
+# returned for the designer's inject-edit + user confirmation. %s = the session language.
+LANG_MIDTURN_NOTICE = (
+    "[prdt lang check] your text before this tool call is not in lang=%s. Write the rest "
+    "of this turn in that language; code, paths, ids, quoted text unchanged."
+)
+# T-1317 (decision A): a language the user asks for in chat outranks the stored
+# `user.lang` for the rest of that session. UserPromptSubmit records the latest request
+# in `$PRDT_HOME/run/session-lang/<session_id>`; the Stop and PostToolUse checks read it.
+# Only an ask about the CHAT (reply/answer/speak … in X, X로 답/말 …) counts — a task on
+# text in that language ("translate it into English", "영어로 번역") does not.
+CHAT_LANG_CODE = {"english": "en", "korean": "ko", "영어": "en", "한국어": "ko", "한글": "ko"}
+CHAT_LANG_RES = (
+    re.compile(r"\b(?:repl|respond|answer|speak|talk|chat|convers|switch)\w*"
+               r"(?:\s+\S+){0,4}?\s+(?:in|to)\s+(english|korean)\b", re.I),
+    re.compile(r"(영어|한국어|한글)\s*로\s*(?:만\s*)?(?:답|대답|응답|말|얘기|이야기|대화|바꿔)"),
+)
+SESSION_ID_RE = re.compile(r"\A[A-Za-z0-9_-]{1,128}\Z")
+SESSION_LANG_KEEP_S = 30 * 86400
+
+
+def _session_lang_path():
+    sid = ev.get("session_id")
+    if not (isinstance(sid, str) and SESSION_ID_RE.match(sid)):
+        return None
+    home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+    return os.path.join(home, "run", "session-lang", sid)
+
+
+def chat_lang_request(prompt):
+    """The language code the LAST chat-language ask in `prompt` names, else None."""
+    if not isinstance(prompt, str):
+        return None
+    best = None
+    for rx in CHAT_LANG_RES:
+        for m in rx.finditer(prompt[:8000]):
+            if best is None or best[0] < m.end():
+                best = (m.end(), CHAT_LANG_CODE[m.group(1).lower()])
+    return best[1] if best else None
+
+
+def note_chat_lang():
+    """UserPromptSubmit: record this session's chat-language ask (writes only on a match)."""
+    lang = chat_lang_request(ev.get("prompt"))
+    p = _session_lang_path()
+    if not (lang and p):
+        return
+    d = os.path.dirname(p)
+    os.makedirs(d, exist_ok=True)
+    now = time.time()
+    for n in os.listdir(d):  # rare write → sweep sessions older than SESSION_LANG_KEEP_S
+        try:
+            q = os.path.join(d, n)
+            if SESSION_LANG_KEEP_S < now - os.path.getmtime(q):
+                os.remove(q)
+        except OSError:
+            pass
+    tmp = "%s.tmp%d" % (p, os.getpid())
+    with open(tmp, "w") as f:
+        f.write(lang + "\n")
+    os.replace(tmp, p)
+
+
+def session_lang():
+    """T-1317: this session's chat-language ask, else the stored `user.lang`, else None."""
+    p = _session_lang_path()
+    if p:
+        try:
+            with open(p, encoding="utf-8", errors="replace") as f:
+                v = "".join(f.read(16).split())
+            if USER_LANG_RE.match(v):
+                return v
+        except OSError:
+            pass
+    return stored_user_lang()
+
+
 # Which script a language's prose is written in. A language not listed here (a
 # Latin-script language other than English, or Japanese/Chinese whose unspaced
 # text a word count cannot weigh) is never checked.
@@ -585,7 +663,7 @@ def stop_main():
         return
     if ev.get("stop_hook_active") is not True:
         try:
-            lang = stored_user_lang()  # T-1281: a device-only guess never judges a reply
+            lang = session_lang()  # T-1281: never a device guess · T-1317: chat ask first
             if lang and lang_drift(reply, lang):
                 sys.stdout.write(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "Stop", "additionalContext": LANG_CHECK_NOTICE % lang}}))
@@ -627,14 +705,87 @@ def cap_jsonl(path, keep):
         pass
 
 
+def prose_before_tool(transcript_path, tool_use_id):
+    """T-1307: the main-session assistant text written right before the tool_use
+    `tool_use_id` — back from it to the nearest user record (tool result / prompt) or
+    earlier tool_use, so each text is judged once, at the first tool call after it.
+    Tail read in FORM_OUTLINE_TAIL_CHUNK steps up to FORM_OUTLINE_TAIL_MAX. None on
+    no text, a miss, or any failure."""
+    try:
+        if not (isinstance(tool_use_id, str) and tool_use_id
+                and isinstance(transcript_path, str) and os.path.isfile(transcript_path)):
+            return None
+        size = os.path.getsize(transcript_path)
+        total = min(size, FORM_OUTLINE_TAIL_CHUNK)
+        while size > 0:
+            with open(transcript_path, "rb") as f:
+                f.seek(max(0, size - total))
+                raw = f.read()
+            lines = raw.decode("utf-8", "replace").split("\n")
+            if size - total > 0:
+                lines = lines[1:]
+            texts, found, done = [], False, False
+            for line in reversed(lines):
+                if not found and tool_use_id not in line:
+                    continue
+                if found and '"assistant"' not in line and '"user"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(rec, dict) or rec.get("isSidechain") is not False:
+                    continue
+                if found and rec.get("type") == "user":
+                    done = True
+                    break
+                msg = rec.get("message")
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if rec.get("type") != "assistant" or not isinstance(content, list):
+                    continue
+                if not found:
+                    at = next((i for i, b in enumerate(content) if isinstance(b, dict)
+                               and b.get("type") == "tool_use" and b.get("id") == tool_use_id), None)
+                    if at is None:
+                        continue
+                    found, content = True, content[:at]
+                for b in reversed(content):
+                    if not isinstance(b, dict):
+                        continue
+                    if b.get("type") == "tool_use":
+                        done = True
+                        break
+                    if b.get("type") == "text" and isinstance(b.get("text"), str):
+                        texts.append(b["text"])
+                if done:
+                    break
+            if done or (found and total >= size):
+                return "\n\n".join(reversed(texts)) or None
+            if total >= FORM_OUTLINE_TAIL_MAX or total >= size:
+                return None
+            total = min(total + FORM_OUTLINE_TAIL_CHUNK, FORM_OUTLINE_TAIL_MAX, size)
+    except Exception:
+        return None
+    return None
+
+
 def post_tool_main():
     """T-1025 / T-1072: after every PO tool call, the reply hot line — joined by the
-    form=outline hot line in the same additionalContext while form=outline is bound."""
+    form=outline hot line in the same additionalContext while form=outline is bound.
+    T-1307: plus LANG_MIDTURN_NOTICE when the prose right before this tool call is not
+    in the session language (nothing drifted → the same bytes as before)."""
     if ev.get("agent_type") != "prdt-po":
         return
     ctx = reply_hot_line()
     if form_outline_bound():
         ctx += "\n" + FORM_OUTLINE_HOT_LINE
+    try:
+        lang = session_lang()
+        if lang in LANG_SCRIPT and lang_drift(
+                prose_before_tool(ev.get("transcript_path"), ev.get("tool_use_id")), lang):
+            ctx += "\n" + LANG_MIDTURN_NOTICE % lang
+    except Exception:
+        pass
     sys.stdout.write(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PostToolUse",
         "additionalContext": ctx}}, ensure_ascii=False))
@@ -669,6 +820,11 @@ if not state_path:
 
 # T-1022: a Stop event leaves here — after the one project-root walk above (so it is
 # in a prdt project) and before any state-flow side effect (guard marker, flag drain).
+if ev.get("hook_event_name") == "UserPromptSubmit":  # T-1317: before the flow below
+    try:
+        note_chat_lang()
+    except Exception:
+        pass
 if ev.get("hook_event_name") in ("Stop", "PostToolUse"):
     try:
         (stop_main if ev.get("hook_event_name") == "Stop" else post_tool_main)()
