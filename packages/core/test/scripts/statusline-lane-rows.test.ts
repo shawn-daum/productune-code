@@ -35,12 +35,12 @@ const unwrap = (s: string) => s.replace(OSC8_RE, '$1')
 function cli(args: string[]): void {
   execFileSync('python3', [PRDT_CLI, ...args], {
     cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
-    env: { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en', PRDT_META_BACKUP: '0' },
+    env: { ...process.env, HOME: tmpRoot, PRDT_HOME: prdtHome, PRDT_LANG: 'en', PRDT_META_BACKUP: '0' },
   })
 }
 
 function statusline(env: Record<string, string | undefined> = {}): string {
-  const e: Record<string, string | undefined> = { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en', COLUMNS: undefined, ...env }
+  const e: Record<string, string | undefined> = { ...process.env, HOME: tmpRoot, PRDT_HOME: prdtHome, PRDT_LANG: 'en', COLUMNS: undefined, ...env }
   for (const k of Object.keys(e)) if (e[k] === undefined) delete e[k]
   return unwrap(execFileSync('bash', [STATUSLINE_SH], {
     input: JSON.stringify({ workspace: { current_dir: root } }), encoding: 'utf8', env: e as NodeJS.ProcessEnv,
@@ -384,7 +384,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
       + 'def compute_schedule(root, tickets=None, line=None):\n    return {"lanes": [{"name": "A", "linked": True, "done": "x", "total": 1}]}\n')
     const out = unwrap(execFileSync('bash', [path.join(dir, 'statusline-prdt.sh')], {
       input: JSON.stringify({ workspace: { current_dir: root } }), encoding: 'utf8',
-      env: { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en' } as NodeJS.ProcessEnv, timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: tmpRoot, PRDT_HOME: prdtHome, PRDT_LANG: 'en' } as NodeJS.ProcessEnv, timeout: subprocessTimeout('cli'),
     })).replace(/\n$/, '').split('\n')
     expect(out).toHaveLength(3)
     expect(out[0]).not.toContain('working')
