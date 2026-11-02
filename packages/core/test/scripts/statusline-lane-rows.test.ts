@@ -59,12 +59,13 @@ function writePrd(gateRows: string[]) {
   fs.writeFileSync(path.join(root, 'docs', 'prd', 'PRD.md'), ['# PRD', '', '## v0.1 — test round', '', ...table, '#### alpha — item', '', 'a', ''].join('\n'))
 }
 
-function ticket(id: string, fm: { type?: string; status?: string; assignee?: string; deps?: string; gate?: string } = {}, version = 'v0.1') {
+function ticket(id: string, fm: { type?: string; status?: string; assignee?: string; deps?: string; gate?: string; extra?: string[] } = {}, version = 'v0.1') {
   const dir = path.join(root, 'docs', 'tickets', version)
   fs.mkdirSync(dir, { recursive: true })
   const lines = ['---', `id: ${id}`, `slug: s-${id.toLowerCase()}`, `type: ${fm.type ?? 'impl'}`,
     `status: ${fm.status ?? 'open'}`, `assignee: ${fm.assignee ?? 'developer'}`]
   if (fm.deps) lines.push(`deps: ${fm.deps}`)
+  if (fm.extra) lines.push(...fm.extra)
   lines.push('created: 2026-10-15', '---', '', '## problem', '', fm.gate ? `Produces \`${fm.gate}\`.` : 'x', '', '## acceptance', '', '- x', '')
   fs.writeFileSync(path.join(dir, `${id}.md`), lines.join('\n'))
 }
@@ -378,5 +379,35 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     setStage('build')
     statusline()
     expect(fs.existsSync(path.join(prdtHome, 'update-state.json'))).toBe(false)
+  })
+})
+
+// T-1359: a lane record (gate ticket `lane:`) draws the lane rows with no 합격선 table in the PRD.
+describe.skipIf(!PYTHON3)('statusline lane rows from lane records (T-1359)', () => {
+  test('stage build, no 합격선 table, one record: the record lane row is drawn', () => {
+    writePrd([])
+    ticket('T-001', { type: 'ops', assignee: 'po', deps: '[T-002]', extra: ['lane: R1 기록', `gate: ${GATE_A}`] })
+    ticket('T-002', { status: 'done' })
+    setStage('build')
+    const r = rows()
+    expect(r).toHaveLength(3)
+    expect(r[1]).toMatch(/^lane: R1 기록  1\/2/)
+  })
+
+  test('a `lane:` line in a ticket body is no record: the default 자투리 lane only (T-1330)', () => {
+    writePrd([])
+    const dir = path.join(root, 'docs', 'tickets', 'v0.1')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'T-001.md'), ['---', 'id: T-001', 'slug: s', 'type: impl', 'status: open', 'assignee: developer', 'created: 2026-10-15', '---', '', 'lane: not a record', ''].join('\n'))
+    setStage('build')
+    expect(rows()).toEqual([expect.stringMatching(/^proj /), 'lane: 자투리  0/1 | next T-001(developer)', 'decision 0 | request 0'])
+  })
+
+  test('T-1330: a lane record draws its lane row in stage define too', () => {
+    writePrd([])
+    ticket('T-001', { type: 'ops', assignee: 'po', deps: '[T-002]', extra: ['lane: R1 기록', `gate: ${GATE_A}`] })
+    ticket('T-002', { status: 'done' })
+    setStage('define')
+    expect(rows()[1]).toMatch(/^lane: R1 기록  1\/2/)
   })
 })
