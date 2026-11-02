@@ -937,14 +937,16 @@ def wiki_store_pages(wdir, relative_to=None, prefix="", reserved=(), no_links_be
     return pages
 
 
-def scan_wiki(root):
+def scan_wiki(root, product=None):
     # T-1104 (layer table: wiki — every layer read; same page name → product ›
     # _shared). The current product's pages keep their bare names (a
     # `[[retro--v1.10]]` from a _shared page still resolves); another
     # product's carry `<product>:`. Legacy → docs/wiki alone, unchanged.
+    # T-1218: `product` = the product a reader resolves names for (a file in
+    # docs/<p>/ reads p's view), in place of the current product.
     pages = list(wiki_store_pages(shared_docs_dir(root) / "wiki", relative_to=root,
                                   no_links_below=Path(root)))
-    cur = current_product(root)
+    cur = product or current_product(root)
     for prod in project_products(root):
         wdir = Path(root) / "docs" / prod / "wiki"
         if not wdir.is_dir():
@@ -3631,13 +3633,44 @@ def cmd_feedback(args):
           "inject-edit, put to the user — written only after the user approves. This command wrote only the ledger.")
 
 
+def _wiki_lint_view(root):
+    """T-1218: (pages, resolve) for `wiki_lint`. Every page once, named the way
+    the first product's view names it — never the current product's, so a
+    finding reads the same whatever po-state focuses on. `resolve(page, link)`
+    → (exists, target page or None): a bare name resolves in the view of the
+    product whose folder holds the page (a `_shared` page: the first product's),
+    a `[[<product>:name]]` link in that product's view. A target that exists
+    but is shadowed in the first product's view has no page row (None).
+    Legacy / one product: the single view, unchanged."""
+    prods = project_products(root)
+    pages = scan_wiki(root, prods[0] if prods else None)
+    if len(prods) < 2:
+        by_name = {p["name"]: p for p in pages}
+        return pages, lambda pg, l: (l in by_name, by_name.get(l))
+    by_path = {p["path"]: p for p in pages}
+    views = {}
+
+    def view(p):
+        if p not in views:
+            views[p] = {x["name"]: x for x in scan_wiki(root, p)}
+        return views[p]
+
+    def resolve(pg, l):
+        pfx, sep, rest = l.partition(":")
+        if sep and pfx in prods:
+            hit = view(pfx).get(rest)
+        else:
+            hit = view(_product_from_docs_path(root, pg["path"], prods) or prods[0]).get(l)
+        return (hit is not None, by_path.get(hit["path"]) if hit else None)
+    return pages, resolve
+
+
 def wiki_lint(root):
-    pages = scan_wiki(root)
+    pages, resolve = _wiki_lint_view(root)
     warns = []
     # unusable frontmatter shapes, named per file (T-550) — reported, never fatal
     for pg in pages:
         warns += [f"wiki: {pg['path']}: {x}" for x in pg.get("problems") or []]
-    names = {p["name"] for p in pages}
     # `machine:` prefixed links resolve against the machine store (design
     # linkage §2 C2, T-674 slice 2c) — a project-wiki page citing one is legal
     # (curate-wiki.md's own prescribed form), so it is checked, not just
@@ -3651,15 +3684,16 @@ def wiki_lint(root):
                     warns.append(f"wiki: [[{l}]] referenced from {pg['name']} does not "
                                  f"exist (machine wiki)")
                 continue
-            inbound.add(l)
-            if l not in names:
+            found, tgt = resolve(pg, l)
+            if tgt is not None:
+                inbound.add(tgt["path"])
+            if not found:
                 warns.append(f"wiki: [[{l}]] referenced from {pg['name']} does not exist")
-    by_name = {p["name"]: p for p in pages}
     for pg in pages:
-        if pg["status"] == "live" and pg["name"] not in inbound and not pg["links"]:
+        if pg["status"] == "live" and pg["path"] not in inbound and not pg["links"]:
             warns.append(f"wiki: orphan page {pg['name']} (no links in or out)")
         for l in pg["links"]:
-            tgt = mach_by_name.get(l) if l.startswith(MACHINE) else by_name.get(l)
+            tgt = mach_by_name.get(l) if l.startswith(MACHINE) else resolve(pg, l)[1]
             if tgt and tgt["status"] == "superseded" and pg["status"] == "live":
                 warns.append(f"wiki: live page {pg['name']} references superseded [[{l}]]")
     inbox = docs_path(root, "wiki") / "inbox.md"
@@ -6690,7 +6724,9 @@ def viewer_anchor(root, target):
         # file the caller can still open directly.
         bucket, _, art_path = rel[len("docs/artifacts/"):].partition("/")
         if art_path:
-            entries, _err, _malformed, _present = read_artifact_manifest(root)
+            # T-1218: the manifest of the product folder the path sits in.
+            prod = _product_from_docs_path(root, real, project_products(root))
+            entries, _err, _malformed, _present = read_artifact_manifest(root, prod)
             if (bucket, art_path) in entries:
                 return real
         return None
@@ -11127,11 +11163,30 @@ ARTIFACT_DERIVED_KEYS = ("bucket", "path", "ticket", "kind", "status", "lang", "
 
 
 def artifacts_root(root, product=None):
-    return docs_path(root, "artifacts", product)
+    """`docs/<product>/artifacts/` — T-1218: no product = the first product, never
+    po-state's current one (`line_product`); legacy layout → `docs/artifacts/`."""
+    return docs_path(root, "artifacts", line_product(root, product))
 
 
-def artifact_manifest_path(root):
-    return artifacts_root(root) / ARTIFACT_MANIFEST_NAME
+def artifact_manifest_path(root, product=None):
+    return artifacts_root(root, product) / ARTIFACT_MANIFEST_NAME
+
+
+def artifact_products(root):
+    """Every product that owns an artifacts folder + manifest, first product first;
+    [None] in the legacy layout (the one `docs/artifacts/`)."""
+    return project_products(root) or [None]
+
+
+def _art_msg(root, product, text):
+    """T-1218: a message's As-Is `docs/artifacts/` → this product's real folder, so
+    `docs_msg` (which maps to the CURRENT product) leaves it alone. Legacy → unchanged."""
+    base = artifacts_root(root, product)
+    try:
+        real = base.relative_to(Path(root)).as_posix()
+    except ValueError:
+        return text
+    return text if real == "docs/artifacts" else text.replace("docs/artifacts/", real + "/")
 
 
 def is_artifact_bucket_name(name):
@@ -11139,10 +11194,10 @@ def is_artifact_bucket_name(name):
     return _version_id_canon(name) is not None
 
 
-def artifact_buckets(root):
+def artifact_buckets(root, product=None):
     """Home buckets `docs/artifacts/<version>/` in version order, then each
     added line's `docs/artifacts/<line>/<version>/` (T-951 = A)."""
-    base = artifacts_root(root)
+    base = artifacts_root(root, product)
     if not base.is_dir():
         return []
     out = sorted((d for d in base.iterdir() if d.is_dir() and is_artifact_bucket_name(d.name)),
@@ -11167,10 +11222,10 @@ def bucket_id(bucket):
     return bucket.name if home else f"{bucket.parent.name}/{bucket.name}"
 
 
-def legacy_bucket_manifests(root):
+def legacy_bucket_manifests(root, product=None):
     """Every `<dir>/manifest.json` directly under docs/artifacts/ — the pre-T-661
     per-bucket shape, in a version bucket or not. Sorted by directory name."""
-    base = artifacts_root(root)
+    base = artifacts_root(root, product)
     if not base.is_dir():
         return []
     return sorted((d / ARTIFACT_MANIFEST_NAME for d in base.iterdir()
@@ -11205,7 +11260,7 @@ def artifact_files(bucket):
     return out
 
 
-def stray_manifest_jsons_in_buckets(root):
+def stray_manifest_jsons_in_buckets(root, product=None):
     """Every manifest.json under a bucket at a depth OTHER than the bucket's own
     root — the root one (`<bucket>/manifest.json`) is the pre-T-661 per-bucket
     shape, already reported by `legacy_bucket_manifests` with its own remedy;
@@ -11214,7 +11269,7 @@ def stray_manifest_jsons_in_buckets(root):
     requires check/doctor to report (T-672 ⓒ) — `artifact_files` above already
     keeps `sync` from registering it."""
     out = []
-    for bucket in artifact_buckets(root):
+    for bucket in artifact_buckets(root, product):
         for p in sorted(bucket.rglob(ARTIFACT_MANIFEST_NAME), key=lambda x: x.as_posix()):
             if p.parent != bucket:
                 out.append(p)
@@ -11249,10 +11304,10 @@ def _read_manifest_file(mp, need_bucket):
     return out, None, malformed, True
 
 
-def read_artifact_manifest(root):
+def read_artifact_manifest(root, product=None):
     """The root manifest: (entries keyed by (bucket, path), error or None,
     malformed notes[], present). Absent = empty, no error."""
-    return _read_manifest_file(artifact_manifest_path(root), need_bucket=True)
+    return _read_manifest_file(artifact_manifest_path(root, product), need_bucket=True)
 
 
 def derive_artifact_kind(rel):
@@ -11313,7 +11368,7 @@ def _artifact_entry_canon(bucket, e):
     return out
 
 
-def build_artifact_manifest(root, prior=None):
+def build_artifact_manifest(root, prior=None, product=None):
     """Derive the root manifest from disk, carrying forward every hand-set field
     of a prior entry with the same (bucket, path). Entries in bucket order
     (version order), then path — a shape a static generator reads without the CLI.
@@ -11332,10 +11387,10 @@ def build_artifact_manifest(root, prior=None):
     an archive-move match is genuinely dropped — sync never re-derives it, so a
     line is returned per drop instead of the manifest changing silently."""
     if prior is None:
-        prior, _, _, _ = read_artifact_manifest(root)
+        prior, _, _, _ = read_artifact_manifest(root, product)
     entries = []
     consumed = set()
-    for bucket in artifact_buckets(root):
+    for bucket in artifact_buckets(root, product):
         files = artifact_files(bucket)
         files_set = set(files)
         for rel in files:
@@ -11369,14 +11424,14 @@ def build_artifact_manifest(root, prior=None):
             entries.append(_artifact_entry_canon(bucket_id(bucket), e))
     entries.sort(key=_artifact_entry_sort_key)
     dropped = sorted(prior.keys() - consumed, key=lambda k: (_version_id_canon(k[0]) or (), k[0], k[1]))
-    drop_lines = [f"artifact: docs/artifacts/manifest.json dropped {b}/{p} — no longer on disk"
+    drop_lines = [_art_msg(root, product, f"artifact: docs/artifacts/manifest.json dropped {b}/{p} — no longer on disk")
                   for (b, p) in dropped]
     return {"schema_v": ARTIFACT_MANIFEST_SCHEMA_V, "entries": entries}, drop_lines
 
 
-def write_artifact_manifest(root, data):
+def write_artifact_manifest(root, data, product=None):
     """True when the file changed. Atomic (temp + replace)."""
-    mp = artifact_manifest_path(root)
+    mp = artifact_manifest_path(root, product)
     want = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     if mp.is_file() and mp.read_text(encoding="utf-8") == want:
         return False
@@ -11385,12 +11440,21 @@ def write_artifact_manifest(root, data):
     return True
 
 
-def artifact_placement_warnings(root):
+def all_artifact_placement_warnings(root):
+    """T-1218: `artifact_placement_warnings` over every product's own folder."""
+    return [w for p in artifact_products(root) for w in artifact_placement_warnings(root, p)]
+
+
+def artifact_placement_warnings(root, product=None):
+    return [_art_msg(root, product, w) for w in _artifact_placement_warnings(root, product)]
+
+
+def _artifact_placement_warnings(root, product=None):
     """Every file under docs/artifacts/ is attributable to a version by its bucket,
     and registered in the ONE root manifest. Anything the rule cannot place says
     so — including the pre-T-661 shape, a manifest.json inside a bucket, so a
     project that has not migrated learns it from the tool (ntf-pm lesson, T-657)."""
-    base = artifacts_root(root)
+    base = artifacts_root(root, product)
     if not base.is_dir():
         return []
     warns = []
@@ -11411,23 +11475,23 @@ def artifact_placement_warnings(root):
         elif not is_artifact_bucket_name(p.name):
             warns.append(f"artifact: docs/artifacts/{p.name}/ is not a version bucket "
                          f"(expected a version id: v<N>, v<N>.<m> or v<N>.<m>.<p>)")
-    legacy = legacy_bucket_manifests(root)
+    legacy = legacy_bucket_manifests(root, product)
     for mp in legacy:
         warns.append(f"artifact: {mp.parent.name}/manifest.json is a per-bucket manifest — the "
                      f"one manifest is docs/artifacts/manifest.json; run `prdt artifacts migrate`")
-    for mp in stray_manifest_jsons_in_buckets(root):
+    for mp in stray_manifest_jsons_in_buckets(root, product):
         rel = mp.relative_to(base).as_posix()
         warns.append(f"artifact: {rel} is a manifest.json inside a bucket — it is never registered "
                      f"as an artifact and never a home for entries (contracts §Fixed paths); remove or "
                      f"relocate it")
-    prior, err, malformed, present = read_artifact_manifest(root)
+    prior, err, malformed, present = read_artifact_manifest(root, product)
     if err:
         warns.append(f"artifact: docs/artifacts/manifest.json {err} — run `prdt artifacts sync`")
         return warns
     for m in malformed:
         warns.append(f"artifact: docs/artifacts/manifest.json {m} — run `prdt artifacts sync`")
     next_step = "`prdt artifacts migrate`" if legacy else "`prdt artifacts sync`"
-    buckets = artifact_buckets(root)
+    buckets = artifact_buckets(root, product)
     for bucket in buckets:
         for d in sorted(bucket.iterdir(), key=lambda x: x.name):
             if d.is_dir() and d.name != "archive":
@@ -11453,23 +11517,23 @@ def artifact_placement_warnings(root):
 
 
 def _print_stray_artifact_warnings(root):
-    for w in artifact_placement_warnings(root):
+    for w in all_artifact_placement_warnings(root):
         if "sits outside" in w or "not a version bucket" in w:
             print(w)
 
 
-def artifacts_migrate(root, dry_run=False):
+def artifacts_migrate(root, dry_run=False, product=None):
     """Move every per-bucket manifest into the root one, losslessly: each entry
     lands verbatim plus `bucket` = its directory name; nothing is re-derived
     from disk here (that is `sync`, run next). All-or-nothing: a manifest the
     move cannot place (a directory that is not a version id, an unreadable
     file) stops the run before anything is written. Returns (report lines,
     exit code)."""
-    legacy = legacy_bucket_manifests(root)
+    legacy = legacy_bucket_manifests(root, product)
     lines = []
     if not legacy:
         lines.append("artifacts: nothing to migrate — no per-bucket manifest.json under docs/artifacts/")
-        return lines, 0
+        return [_art_msg(root, product, l) for l in lines], 0
     blockers = []
     staged = []  # (dir name, entries keyed by path)
     for mp in legacy:
@@ -11488,13 +11552,13 @@ def artifacts_migrate(root, dry_run=False):
     if blockers:
         lines.extend(blockers)
         lines.append(f"artifacts: migrate stopped — {len(blockers)} blocker(s), nothing written")
-        return lines, 1
-    prior, err, malformed, present = read_artifact_manifest(root)
+        return [_art_msg(root, product, l) for l in lines], 1
+    prior, err, malformed, present = read_artifact_manifest(root, product)
     if err or malformed:
         for m in ([err] if err else []) + malformed:
             lines.append(f"artifact: docs/artifacts/manifest.json {m} — fix it first")
         lines.append("artifacts: migrate stopped — the root manifest is not readable as-is, nothing written")
-        return lines, 1
+        return [_art_msg(root, product, l) for l in lines], 1
     merged = dict(prior)
     kept = []
     total = 0
@@ -11517,21 +11581,40 @@ def artifacts_migrate(root, dry_run=False):
                  f"docs/artifacts/manifest.json ({len(data['entries'])} entrie(s)"
                  f"{f', {len(prior)} already there' if present else ''})")
     if dry_run:
-        return lines, 0
-    write_artifact_manifest(root, data)
+        return [_art_msg(root, product, l) for l in lines], 0
+    write_artifact_manifest(root, data, product)
     for name, _ in staged:
-        os.remove(artifacts_root(root) / name / ARTIFACT_MANIFEST_NAME)
+        os.remove(artifacts_root(root, product) / name / ARTIFACT_MANIFEST_NAME)
     lines.append("artifacts: per-bucket manifest.json files removed — next: `prdt artifacts check`, "
                  "then `prdt artifacts sync` for files the old manifests never registered")
-    return lines, 0
+    return [_art_msg(root, product, l) for l in lines], 0
 
 
-def _artifact_bucket_path_split(root, path_arg):
+def _artifact_path_product(root, path_arg):
+    """T-1218: the product a `prdt artifacts set` path names — `docs/<p>/artifacts/…`
+    (relative or absolute) → p; any other spelling → the first product (None in
+    the legacy layout)."""
+    prods = project_products(root)
+    if not prods:
+        return None
+    p = Path(path_arg)
+    if p.is_absolute():
+        try:
+            p = p.relative_to(Path(root))
+        except ValueError:
+            return prods[0]
+    parts = p.as_posix().replace("\\", "/").lstrip("./").split("/")
+    if len(parts) >= 3 and parts[0] == "docs" and parts[1] in prods and parts[2] == "artifacts":
+        return parts[1]
+    return prods[0]
+
+
+def _artifact_bucket_path_split(root, path_arg, product=None):
     """`<bucket>, <rel>` from a `prdt artifacts set` path argument, which may
     be spelled relative to the project root (`docs/artifacts/v1.10/x.md`),
     relative to docs/artifacts/ (`v1.10/x.md`), or as an absolute path under
     either. Exits with a clear message on anything else — never a guess."""
-    base = artifacts_root(root)
+    base = artifacts_root(root, product)
     p = Path(path_arg)
     if p.is_absolute():
         try:
@@ -11540,7 +11623,7 @@ def _artifact_bucket_path_split(root, path_arg):
             sys.exit(f"prdt artifacts set: {path_arg} is not under {base}")
     else:
         s = path_arg.replace("\\", "/").lstrip("./")
-        for prefix in ("docs/artifacts/",):
+        for prefix in dict.fromkeys(("docs/artifacts/", base.relative_to(Path(root)).as_posix() + "/")):
             if s.startswith(prefix):
                 s = s[len(prefix):]
                 break
@@ -11563,20 +11646,24 @@ def artifacts_set(root, path_arg, ticket):
     writes: `build_artifact_manifest` already carries forward any prior
     entry's `ticket` key untouched (T-512 §7) whenever the key is PRESENT,
     which this command makes true by writing it."""
-    prior, err, malformed, present = read_artifact_manifest(root)
+    product = _artifact_path_product(root, path_arg)
+
+    def say(text):
+        return _art_msg(root, product, text)
+    prior, err, malformed, present = read_artifact_manifest(root, product)
     if err:
-        sys.exit(f"prdt artifacts set: docs/artifacts/manifest.json {err} — fix or remove it first")
+        sys.exit(say(f"prdt artifacts set: docs/artifacts/manifest.json {err} — fix or remove it first"))
     if not present:
-        sys.exit("prdt artifacts set: docs/artifacts/manifest.json does not exist yet — "
-                 "run `prdt artifacts sync` first")
+        sys.exit(say("prdt artifacts set: docs/artifacts/manifest.json does not exist yet — "
+                     "run `prdt artifacts sync` first"))
     if malformed:
-        sys.exit(f"prdt artifacts set: docs/artifacts/manifest.json has {len(malformed)} malformed "
-                 f"entrie(s) — fix them first (see `prdt artifacts check`)")
-    bucket, rel = _artifact_bucket_path_split(root, path_arg)
+        sys.exit(say(f"prdt artifacts set: docs/artifacts/manifest.json has {len(malformed)} malformed "
+                     f"entrie(s) — fix them first (see `prdt artifacts check`)"))
+    bucket, rel = _artifact_bucket_path_split(root, path_arg, product)
     key = (bucket, rel)
     if key not in prior:
-        sys.exit(f"prdt artifacts set: {bucket}/{rel} is not a registered entry in "
-                 f"docs/artifacts/manifest.json — run `prdt artifacts sync` first")
+        sys.exit(say(f"prdt artifacts set: {bucket}/{rel} is not a registered entry in "
+                     f"docs/artifacts/manifest.json — run `prdt artifacts sync` first"))
     tid = (ticket or "").strip()
     if not TICKET_ID_RE.match(tid):
         sys.exit(f"prdt artifacts set: --ticket {ticket!r} is not a ticket id (T-NNN)")
@@ -11590,7 +11677,7 @@ def artifacts_set(root, path_arg, ticket):
     merged[key] = _artifact_entry_canon(bucket, e)
     data = {"schema_v": ARTIFACT_MANIFEST_SCHEMA_V,
             "entries": sorted(merged.values(), key=_artifact_entry_sort_key)}
-    write_artifact_manifest(root, data)
+    write_artifact_manifest(root, data, product)
     print(f"prdt artifacts set: {bucket}/{rel} ticket → {tid}")
 
 
@@ -11605,45 +11692,75 @@ def cmd_artifacts(args):
         artifacts_set(root, args.path, args.ticket)
         return
     if args.action == "check":
-        warns = artifact_placement_warnings(root)
+        warns = all_artifact_placement_warnings(root)
         for w in warns:
             print(w)
         print(f"artifacts: {len(warns)} finding(s)")
         sys.exit(1 if warns else 0)
+    # T-1218: every product's own folder + manifest, first product first — never
+    # only po-state's current one. An added product with no artifacts folder is skipped.
+    prods = [p for i, p in enumerate(artifact_products(root))
+             if i == 0 or artifacts_root(root, p).is_dir()]
     if args.action == "migrate":
-        lines, code = artifacts_migrate(root, dry_run=getattr(args, "dry_run", False))
-        for l in lines:
-            print(l)
+        dry = getattr(args, "dry_run", False)
+        if len(prods) > 1:
+            # All-or-nothing across products too: every product is judged (a dry
+            # run) before any is written; one blocker anywhere writes nothing.
+            judged = [(prod, *artifacts_migrate(root, dry_run=True, product=prod)) for prod in prods]
+            stopped = [prod for prod, _, c in judged if c]
+            if stopped:
+                for prod, lines, c in judged:
+                    if c:
+                        for l in lines:
+                            print(l)
+                where = ", ".join(_art_msg(root, p, "docs/artifacts/") for p in stopped)
+                print(f"artifacts: migrate stopped — blocker(s) in {where}; nothing written in any product")
+                sys.exit(1)
+        code = 0
+        for prod in prods:
+            lines, c = artifacts_migrate(root, dry_run=dry, product=prod)
+            for l in lines:
+                print(l)
+            code = max(code, c)
         sys.exit(code)
     # sync — write the ONE root manifest from disk; report what sits outside a bucket.
     warn_live_dispatch("artifacts sync")
-    legacy = legacy_bucket_manifests(root)
-    if legacy:
-        for mp in legacy:
-            print(f"artifact: {mp.parent.name}/manifest.json is a per-bucket manifest")
-        sys.exit("artifacts: sync refused — re-deriving from disk would drop the values those "
-                 "files hold; run `prdt artifacts migrate` first")
-    prior, err, malformed, _ = read_artifact_manifest(root)
-    if err:
-        sys.exit(f"artifacts: sync refused — docs/artifacts/manifest.json {err}; fix or remove it first")
-    if malformed:
-        # A broken root entry (T-672 ⓑ) — e.g. one with no `bucket` — cannot be
-        # re-derived from disk (nothing on disk says which bucket it belongs to),
-        # so re-deriving anyway would drop it and its values with no report. Same
-        # posture as the two refusals above: broken input stops sync before it
-        # writes, the same way it stops on a broken file.
-        for m in malformed:
-            print(f"artifact: docs/artifacts/manifest.json {m}")
-        sys.exit(f"artifacts: sync refused — {len(malformed)} malformed entrie(s) in "
-                 f"docs/artifacts/manifest.json would be silently dropped by re-deriving; fix them "
-                 f"first (e.g. fill in the missing `bucket`)")
-    data, dropped = build_artifact_manifest(root, prior=prior)
-    for d in dropped:
-        print(d)
-    if write_artifact_manifest(root, data):
-        print(f"artifacts: docs/artifacts/manifest.json written ({len(data['entries'])} entrie(s))")
-    else:
-        print("artifacts: manifest already current")
+    # Every product's input is judged before any manifest is written: a refusal
+    # never leaves one product synced and the next not.
+    priors = []
+    for prod in prods:
+        say = (lambda t, prod=prod: _art_msg(root, prod, t))
+        legacy = legacy_bucket_manifests(root, prod)
+        if legacy:
+            for mp in legacy:
+                print(f"artifact: {mp.parent.name}/manifest.json is a per-bucket manifest")
+            sys.exit("artifacts: sync refused — re-deriving from disk would drop the values those "
+                     "files hold; run `prdt artifacts migrate` first")
+        prior, err, malformed, _ = read_artifact_manifest(root, prod)
+        if err:
+            sys.exit(say(f"artifacts: sync refused — docs/artifacts/manifest.json {err}; fix or remove it first"))
+        if malformed:
+            # A broken root entry (T-672 ⓑ) — e.g. one with no `bucket` — cannot be
+            # re-derived from disk (nothing on disk says which bucket it belongs to),
+            # so re-deriving anyway would drop it and its values with no report. Same
+            # posture as the two refusals above: broken input stops sync before it
+            # writes, the same way it stops on a broken file.
+            for m in malformed:
+                print(say(f"artifact: docs/artifacts/manifest.json {m}"))
+            sys.exit(say(f"artifacts: sync refused — {len(malformed)} malformed entrie(s) in "
+                         f"docs/artifacts/manifest.json would be silently dropped by re-deriving; fix them "
+                         f"first (e.g. fill in the missing `bucket`)"))
+        priors.append((prod, prior))
+    for prod, prior in priors:
+        data, dropped = build_artifact_manifest(root, prior=prior, product=prod)
+        for d in dropped:
+            print(d)
+        if write_artifact_manifest(root, data, prod):
+            print(_art_msg(root, prod, f"artifacts: docs/artifacts/manifest.json written ({len(data['entries'])} entrie(s))"))
+        elif len(prods) > 1:
+            print(_art_msg(root, prod, "artifacts: docs/artifacts/manifest.json already current"))
+        else:
+            print("artifacts: manifest already current")
     _print_stray_artifact_warnings(root)
 
 
@@ -12561,6 +12678,16 @@ def prd_line_layout_warnings(root, st):
     lines = project_line_names(root)
     if not lines:
         return []
+    if docs_layout(root) == "product":
+        # T-1218: product layout — each added product keeps its own docs/<p>/prd/ and
+        # docs/<p>/tickets/, the same shape as the first product's: the one check
+        # `prd_layout_warnings` runs on it, against that product's po-state view.
+        prods = set(project_products(root))
+        warns = []
+        for ln_name in lines:
+            if ln_name in prods:
+                warns += prd_layout_warnings(root, _line_st(st, ln_name), product=ln_name)
+        return warns
     prd_md = docs_path(root, "prd", line_product(root)) / "PRD.md"
     try:
         text = prd_md.read_text(encoding="utf-8")
@@ -12749,7 +12876,7 @@ def _prd_version_file_kind(text):
     return "other"
 
 
-def prd_layout_warnings(root, st):
+def prd_layout_warnings(root, st, product=None):
     """A discipline↔execution check (FAMILY_DE): what the contract says the PRD
     tree looks like, against what is on disk.
 
@@ -12793,7 +12920,9 @@ def prd_layout_warnings(root, st):
     round itself, whose section is the open one in PRD.md (or not yet written
     between close and Define)."""
     root = Path(root)
-    home = line_product(root)   # T-1214: this check judges the first product (`st` top level)
+    # T-1214: the first product (`st` top level) unless `product` names an added one,
+    # whose `st` is then that product's view (`_line_st`).
+    home = line_product(root, product)
     prd_dir = docs_path(root, "prd", home)
     prd_md = prd_dir / "PRD.md"
     vdir = prd_dir / "versions"
@@ -12801,6 +12930,10 @@ def prd_layout_warnings(root, st):
 
     def rel(p):
         return str(p.relative_to(root))
+
+    # T-1218: messages carry the real path of THIS product's versions/ — an As-Is
+    # `docs/prd/versions/` would be rewritten to the current product by `docs_msg`.
+    vrel = rel(vdir)
 
     def read(p):
         try:
@@ -12879,7 +13012,7 @@ def prd_layout_warnings(root, st):
                     f"the round's section, it becomes the ENTIRE body of {rel(have)}, moved there "
                     f"byte-identical over what the file holds now; if {rel(have)} is right, {here} "
                     f"is not where that round is recorded")
-        return (f"its home is docs/prd/versions/{v}.md, the ENTIRE body of that file "
+        return (f"its home is {vrel}/{v}.md, the ENTIRE body of that file "
                 f"(contracts §Fixed paths); move it byte-identical")
 
     pv = st.get("version") if isinstance(st, dict) else None
@@ -12912,7 +13045,7 @@ def prd_layout_warnings(root, st):
                         # PRD.md no longer carries it — legal, and silent here.
                         _, phrase = found_phrase(on_disk[open_key][0])
                         warns.append(f"prd: `## {v}` is the OPEN section in {rel(prd_md)}:{ln} and "
-                                     f"{phrase} — docs/prd/versions/ is the CLOSED record, written at "
+                                     f"{phrase} — {vrel}/ is the CLOSED record, written at "
                                      f"close by MOVING the section out of the working file; while the "
                                      f"round is open it lives in {rel(prd_md)} alone (contracts §Fixed paths)")
                     continue
@@ -12924,7 +13057,7 @@ def prd_layout_warnings(root, st):
             warns.append(f"prd: {rel(prd_md)} holds {len(heads)} `## v` sections "
                          f"({', '.join(prd_section_ids)}) — the working file is the standing head "
                          f"+ ONE open version section; move each closed one byte-identical to "
-                         f"its own docs/prd/versions/v<N>.<m>.md (contracts §Fixed paths)")
+                         f"its own {vrel}/v<N>.<m>.md (contracts §Fixed paths)")
 
     declared_lines = set(project_line_names(root))
     for p in (sorted(prd_dir.rglob("*.md")) if prd_dir.is_dir() else []):
@@ -12960,13 +13093,13 @@ def prd_layout_warnings(root, st):
             if _version_id_canon(first_v) != own_key:
                 warns.append(f"prd: {here} opens with `## {first_v}` — a version file holds its "
                              f"own `## {own}` block and nothing else; `## {first_v}` belongs in "
-                             f"docs/prd/versions/{first_v}.md")
+                             f"{vrel}/{first_v}.md")
             elif first_ln != 1:
                 warns.append(f"prd: {here} has {first_ln - 1} line(s) above its `## {own}` heading "
                              f"— the file is that block and nothing else (no frontmatter, no head)")
             for v, ln in heads[1:]:
                 warns.append(f"prd: {here}:{ln} carries a second section `## {v}` — one version "
-                             f"per file; `## {v}` belongs in docs/prd/versions/{v}.md")
+                             f"per file; `## {v}` belongs in {vrel}/{v}.md")
             continue
         # no `## v` heading and not a snapshot → a registered-absence stub:
         # ONE line, no `## ` (the rule itself: `_prd_version_file_kind`).
@@ -12990,7 +13123,7 @@ def prd_layout_warnings(root, st):
                 continue
             if ceiling is not None and k >= ceiling:
                 continue
-            warns.append(f"prd: {rel(d)}/ has no docs/prd/versions/{d.name}.md — a closed round's "
+            warns.append(f"prd: {rel(d)}/ has no {vrel}/{d.name}.md — a closed round's "
                          f"`## {d.name}` section, or a one-line `no PRD section — <decision>` stub "
                          f"when the round was tickets-only (contracts/fixed-paths.md §PRD)")
     return warns
@@ -13585,11 +13718,8 @@ def artifact_ticket_edge_warnings(root, tickets):
     already report a manifest that cannot be READ at all (malformed shape);
     this is the one further question once it reads clean: does the value
     point at something real."""
-    prior, err, _malformed, present = read_artifact_manifest(root)
-    if err or not present:
-        return []
     warns = []
-    for (bucket, rel), e in sorted(prior.items()):
+    for prod, (bucket, rel), e in _all_artifact_entries(root):
         tid = e.get("ticket")
         if tid is None:
             continue
@@ -13598,6 +13728,21 @@ def artifact_ticket_edge_warnings(root, tickets):
         elif tid.strip() not in tickets:
             warns.append(f"artifact: {bucket}/{rel} ticket: {tid} does not exist in the ticket index")
     return warns
+
+
+def _all_artifact_entries(root):
+    """T-1218: [(product, (bucket, path), entry)] over every product's readable
+    manifest, first product first; an added product's bucket reads `<product>/<v>`
+    (the id shape an added line's bucket already has)."""
+    prods = artifact_products(root)
+    out = []
+    for i, prod in enumerate(prods):
+        prior, err, _malformed, present = read_artifact_manifest(root, prod)
+        if err or not present:
+            continue
+        for (bucket, rel), e in sorted(prior.items()):
+            out.append((prod, (bucket if i == 0 else f"{prod}/{bucket}", rel), e))
+    return out
 
 
 # ── doctor: P1 (prd form) · E4 (prd_item edge) — T-674 slice 2b ───────────────
@@ -14143,16 +14288,14 @@ def _edge_rows(root, trows, tickets, pages, st):
             k = _version_id_canon(vv)
             rows.append((pg["name"], "version", vv, 1 if k is not None and k in versions else 0))
 
-    prior, err, _malformed, present = read_artifact_manifest(root)
-    if not err and present:
-        for (bucket, relp), e in sorted(prior.items()):
-            tv = e.get("ticket")
-            if tv is None:
-                continue
-            tv_str = tv.strip() if isinstance(tv, str) else str(tv)
-            resolved = 1 if (isinstance(tv, str) and TICKET_ID_RE.match(tv_str)
-                             and tv_str in tickets) else 0
-            rows.append((f"{bucket}/{relp}", "artifact_ticket", tv_str, resolved))
+    for _prod, (bucket, relp), e in _all_artifact_entries(root):
+        tv = e.get("ticket")
+        if tv is None:
+            continue
+        tv_str = tv.strip() if isinstance(tv, str) else str(tv)
+        resolved = 1 if (isinstance(tv, str) and TICKET_ID_RE.match(tv_str)
+                         and tv_str in tickets) else 0
+        rows.append((f"{bucket}/{relp}", "artifact_ticket", tv_str, resolved))
     return rows
 
 
@@ -14222,7 +14365,14 @@ def prd_ticket_link_warnings(root):
     (outside the reversed section) · `versions/v1.9.md` citing superseded
     `decision--prd-single-file` and `decision--gui-round-v1.10`."""
     root = Path(root)
-    proj_pages = {p["name"]: p for p in scan_wiki(root)}
+    prods = project_products(root)
+    views = {}   # T-1218: a file in docs/<p>/ resolves bare names in p's view, never the current product's
+
+    def proj_view(f):
+        p = _product_from_docs_path(root, f, prods)
+        if p not in views:
+            views[p] = {pg["name"]: pg for pg in scan_wiki(root, p)}
+        return views[p]
     mach_pages = {p["name"]: p for p in scan_machine_wiki()}
     warns = []
     for f in _prd_and_ticket_files(root):
@@ -14230,6 +14380,7 @@ def prd_ticket_link_warnings(root):
             text = f.read_text(encoding="utf-8")
         except OSError:
             continue
+        proj_pages = proj_view(f)
         reversed_lines = _reversed_section_lines(text)
         rel = f.relative_to(root)
         for ln, line in _md_structural_lines(text):
@@ -14673,13 +14824,13 @@ def _track_test_cmd(root, wt, override):
     return None
 
 
-def _track_run(cmd, cwd, label):
+def _track_run(cmd, cwd, label, env=None):
     """Runs under pipefail (T-813): `--test '<cmd> | tail'` must not take tail's
     exit code, or a failing test lands as a pass."""
     print(f"{label}: {cmd}", flush=True)
     bash = shutil.which("bash")
     argv = [bash, "-o", "pipefail", "-c", cmd] if bash else ["/bin/sh", "-c", f"set -o pipefail; {cmd}"]
-    r = subprocess.run(argv, cwd=str(cwd), stdout=sys.stderr, stderr=sys.stderr)
+    r = subprocess.run(argv, cwd=str(cwd), stdout=sys.stderr, stderr=sys.stderr, env=env)
     return r.returncode
 
 
@@ -14716,12 +14867,17 @@ def _no_dup_keys(pairs):
     return out
 
 
-def _track_record_path(code, tid):
+def _track_run_dir(code):
+    """$PRDT_HOME/run/tracks/<code-repo key>/ — tooling-owned, outside the repo and its worktrees."""
     r = _tgit(["rev-parse", "--git-common-dir"], code)
     gd = Path(r.stdout.strip())
     gd = (gd if gd.is_absolute() else Path(code) / gd).resolve()
     key = hashlib.sha256(str(gd).encode("utf-8")).hexdigest()[:16]
-    return prdt_home() / "run" / "tracks" / key / f"{tid}.json"
+    return prdt_home() / "run" / "tracks" / key
+
+
+def _track_record_path(code, tid):
+    return _track_run_dir(code) / f"{tid}.json"
 
 
 def _track_record_write(code, tid, branch, base):
@@ -15174,6 +15330,170 @@ def _track_scanner_list(wt):
     return out
 
 
+# Test-read map (T-1286): the scanner list and the aliases above are kept by hand, and a read shape
+# their regexes do not know (QA d-v115-t1268-qa3: `readdirSync(path.join(ROOT, 'config'))`) still landed
+# green. So every land's test run (relevant set or whole suite) loads this tracer into the vitest
+# workers through NODE_OPTIONS: it records, per test file, the repo paths that file's tests read
+# (f = a file read / stat / exists · d = a directory listed · t = a tree listed or copied recursively).
+# A green run merges what it saw into $PRDT_HOME/run/tracks/<repo key>/test-read-map.json, and the next
+# land adds every test whose recorded reads its diff touches. The map only ADDS to the import / name /
+# list selection: a missing, unreadable or stale map selects exactly what that selection does.
+# Not seen: reads made by a child process a test spawns (the prdt CLI, a hook script) — those stay
+# with the name / alias / list routes.
+TRACK_TEST_MAP = "test-read-map.json"
+TRACK_FS_TRACER = r"""'use strict'
+// prdt test-read trace (T-1286) — written by `prdt track land`, loaded by `--require` via NODE_OPTIONS.
+// The output dir and repo root are baked in, not read from env: turbo's strict env mode passes
+// NODE_OPTIONS to its tasks but drops undeclared variables.
+;(() => {
+  const OUT = __PRDT_TRACE_OUT__, ROOT = __PRDT_TRACE_ROOT__
+  const wt = require('worker_threads')
+  if (!process.send && wt.isMainThread) {
+    // the runner, not a test worker (vitest runs test files in forks with IPC, or threads). Hand this file
+    // to every process it forks through execArgv too: a fork wrapper may drop NODE_OPTIONS (core's own
+    // isolation rules do, when a test runs vitest inside a test).
+    const cp = require('child_process'), self = __filename, f = cp.fork
+    if (typeof f !== 'function' || f.__prdtFsTrace) return
+    const w = function (modulePath, args, options) {
+      let a = args, op = options
+      if (!Array.isArray(a)) { op = a == null ? op : a; a = [] }
+      const opts = Object.assign({}, op || {})
+      const ea = opts.execArgv || process.execArgv
+      if (!ea.includes(self)) opts.execArgv = [...ea, '--require', self]
+      return f.call(this, modulePath, a, opts)
+    }
+    w.__prdtFsTrace = true
+    cp.fork = w
+    try { require('module').syncBuiltinESMExports() } catch {}
+    return
+  }
+  const fs = require('fs'), path = require('path'), url = require('url')
+  if (fs.__prdtFsTrace) return
+  fs.__prdtFsTrace = true
+  const o = { openSync: fs.openSync, writeSync: fs.writeSync, realpathSync: fs.realpathSync }
+  let real = ROOT
+  try { real = o.realpathSync(ROOT) } catch {}
+  const roots = [...new Set([ROOT, real])].map((r) => r.replace(/\/+$/, '') + '/')
+  const rel = (abs) => { for (const r of roots) if (abs.startsWith(r)) return abs.slice(r.length); return null }
+  const seen = new Set()
+  let fd = -1
+  const note = (kind, p) => {
+    try {
+      const st = globalThis.__vitest_worker__          // vitest sets .filepath to the test file it runs
+      const tf = st && st.filepath
+      if (!tf || p == null || typeof p === 'number') return
+      const s = typeof p === 'string' ? p : p instanceof URL ? url.fileURLToPath(p) : Buffer.isBuffer(p) ? p.toString() : null
+      if (!s) return
+      const r = rel(path.resolve(s)), t = rel(tf)
+      if (!r || t == null || r === '.git' || r.startsWith('.git/') || r.includes('node_modules')) return
+      const key = t + '\0' + kind + '\0' + r
+      if (seen.has(key)) return
+      seen.add(key)
+      if (fd < 0) fd = o.openSync(path.join(OUT, process.pid + '-' + wt.threadId + '.jsonl'), 'a')
+      o.writeSync(fd, JSON.stringify([t, kind, r]) + '\n')
+    } catch {}
+  }
+  const recursive = (a) => !!(a && typeof a === 'object' && a.recursive)
+  const wrap = (obj, name, kindOf) => {
+    const f = obj && obj[name]
+    if (typeof f !== 'function') return
+    const w = function (p, a) { note(kindOf(a), p); return f.apply(this, arguments) }
+    Object.defineProperties(w, Object.getOwnPropertyDescriptors(f))
+    obj[name] = w
+  }
+  const file = () => 'f', listing = (a) => (recursive(a) ? 't' : 'd'), copy = (a) => (recursive(a) ? 't' : 'f')
+  for (const n of ['readFileSync', 'readFile', 'existsSync', 'exists', 'statSync', 'stat', 'lstatSync', 'lstat',
+    'accessSync', 'access', 'openSync', 'open', 'createReadStream', 'copyFileSync', 'copyFile', 'realpathSync', 'realpath'])
+    wrap(fs, n, file)
+  for (const n of ['readdirSync', 'readdir', 'opendirSync', 'opendir']) wrap(fs, n, listing)
+  for (const n of ['cpSync', 'cp']) wrap(fs, n, copy)
+  const pr = fs.promises
+  for (const n of ['readFile', 'stat', 'lstat', 'access', 'open', 'copyFile', 'realpath']) wrap(pr, n, file)
+  for (const n of ['readdir', 'opendir']) wrap(pr, n, listing)
+  wrap(pr, 'cp', copy)
+  try { require('module').syncBuiltinESMExports() } catch {}   // `import { readFileSync } from 'node:fs'` too
+})()
+"""
+
+
+def _track_trace_env(wt):
+    """(env, trace dir) for a traced test run: a private temp dir holding the tracer and its output."""
+    import tempfile
+    d = Path(tempfile.mkdtemp(prefix="prdt-fs-trace-"))
+    tracer = d / "prdt-fs-trace.cjs"
+    with open(tracer, "x", encoding="utf-8") as fh:
+        fh.write(TRACK_FS_TRACER.replace("__PRDT_TRACE_OUT__", json.dumps(str(d)))
+                 .replace("__PRDT_TRACE_ROOT__", json.dumps(str(Path(wt).resolve()))))
+    env = dict(os.environ)
+    env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + f' --require "{tracer}"').strip()
+    return env, d
+
+
+def _track_test_map_read(code):
+    """({test path: {"f","d","t": set}}, note). Missing or unreadable → ({}, why) — the selection is then
+    exactly the import / name / list one."""
+    p = _track_run_dir(code) / TRACK_TEST_MAP
+    if not p.is_file():
+        return {}, "none yet — tests are chosen by import, name and the declared lists"
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        tests = d["tests"] if isinstance(d, dict) and d.get("schema") == 1 else None
+        if not isinstance(tests, dict):
+            raise ValueError
+    except (OSError, ValueError, KeyError):
+        return {}, "unreadable — tests are chosen by import, name and the declared lists"
+    out = {}
+    for t, e in tests.items():
+        if isinstance(e, dict):
+            vals = [e.get(k, []) for k in ("f", "d", "t")]
+            if not all(isinstance(v, list) for v in vals):
+                return {}, "unreadable — tests are chosen by import, name and the declared lists"
+            out[t] = {k: {x for x in v if isinstance(x, str)} for k, v in zip(("f", "d", "t"), vals)}
+    return out, f"{len(out)} test file(s), updated {d.get('updated', '?')}"
+
+
+def _track_trace_hit(entry, c):
+    """A changed repo path the test was seen to reach: read it, listed its folder, or walked a tree above it."""
+    if c in entry["f"]:
+        return True
+    if "/" in c and c.rsplit("/", 1)[0] in entry["d"]:
+        return True
+    return any(c == t or c.startswith(t + "/") for t in entry["t"])
+
+
+def _track_test_map_update(code, wt, trace_dir, ran):
+    """Merge a GREEN run's trace into the map: each traced test file's entry is replaced by what it read
+    this run; a test file in `ran` with no trace line read nothing in the repo. A run that left no trace at
+    all (no vitest worker ran, or the tracer could not attach) changes nothing."""
+    try:
+        seen = {}
+        for f in sorted(Path(trace_dir).glob("*.jsonl")):
+            for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    t, k, p = json.loads(line)
+                except ValueError:
+                    continue      # a worker killed mid-write leaves a torn last line
+                if k in ("f", "d", "t") and isinstance(t, str) and isinstance(p, str):
+                    seen.setdefault(t, {"f": set(), "d": set(), "t": set()})[k].add(p)
+        if not seen:
+            print("test-read map: no file reads recorded on this run — map unchanged")
+            return
+        tests, _ = _track_test_map_read(code)
+        for t in ran:
+            tests[t] = {"f": set(), "d": set(), "t": set()}
+        tests.update(seen)
+        tests = {t: e for t, e in tests.items() if (Path(wt) / t).is_file()}
+        home = prdt_home()
+        home.mkdir(parents=True, exist_ok=True)
+        state_write(home, _track_run_dir(code) / TRACK_TEST_MAP, json.dumps({
+            "schema": 1, "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "tests": {t: {k: sorted(e[k]) for k in ("f", "d", "t")} for t, e in sorted(tests.items())},
+        }, ensure_ascii=False) + "\n")
+        print(f"test-read map: {len(seen)} test file(s) recorded this run, {len(tests)} in the map")
+    except Exception as e:     # the tests are green; a map that could not be written must not stop the land
+        print(f"test-read map: not updated ({type(e).__name__}: {e})")
+
+
 def _track_pkg_extra_steps(pkg):
     """Commands the package's own `test` script runs besides vitest (`vitest run && node test/x.mjs`)."""
     pj = read_json(Path(pkg) / "package.json")
@@ -15183,15 +15503,18 @@ def _track_pkg_extra_steps(pkg):
     return [seg.strip() for seg in t.split("&&") if seg.strip() and not re.match(r"vitest(\s|$)", seg.strip())]
 
 
-def _track_relevant_set(wt, base_sha, changed):
+def _track_relevant_set(wt, base_sha, changed, tmap=None):
     """([(pkg, vbin, [files], extras_due)], covered, counts, has_pkgs, fallback) — the union per vitest package.
     A package the diff touches always carries its declared directory-scanner tests (TRACK_SCANNER_LIST) in
     `files`, and `extras_due` = a file under the package changed, so its extra test steps run even when
     `files` is empty. `fallback` = {pkg: [changed files whose reach into that package's tests is unknown]}:
-    those packages run their whole test command."""
+    those packages run their whole test command. `tmap` (T-1286) = the test-read map: a test whose
+    recorded reads the diff touches joins `files` too."""
     pkgs = _track_vitest_pkgs(wt)
     scanners = _track_scanner_list(wt)
-    plan, named_any, tot, fallback = [], set(), {"changed_tests": 0, "importers": 0, "naming": 0, "scanners": 0}, {}
+    tmap = tmap or {}
+    wt_res = Path(wt).resolve()
+    plan, named_any, tot, fallback = [], set(), {"changed_tests": 0, "importers": 0, "naming": 0, "scanners": 0, "traced": 0}, {}
     names = {c: _track_names_of(c) for c in changed}
     stems = {c: _track_stem_re(c) for c in changed}
     for pkg in pkgs:
@@ -15226,8 +15549,18 @@ def _track_relevant_set(wt, base_sha, changed):
                    and str((Path(wt) / c).resolve()).startswith(str(Path(pkg).resolve()) + os.sep)]
         if unknown:
             fallback[pkg] = unknown
+        traced = set()
+        for t in alltests:
+            try:
+                entry = tmap.get(Path(t).resolve().relative_to(wt_res).as_posix())
+            except ValueError:
+                continue
+            hits = [c for c in changed if entry and _track_trace_hit(entry, c)]
+            if hits:
+                traced.add(t)
+                named_any.update(hits)
         importers = rel_hits - own
-        derived = (own | rel_hits | naming) & set(alltests)
+        derived = (own | rel_hits | naming | traced) & set(alltests)
         pkg_rel = pkg.relative_to(wt).as_posix() if pkg != Path(wt) else "."
         under = lambda c, d: d == "." or c == d or c.startswith(d + "/")
         always = set()
@@ -15244,6 +15577,7 @@ def _track_relevant_set(wt, base_sha, changed):
         tot["changed_tests"] += len(own)
         tot["importers"] += len(importers - naming)
         tot["naming"] += len(naming - own - rel_hits)
+        tot["traced"] += len(traced - own - rel_hits - naming)
         tot["scanners"] += len(always - derived)
         if files or unknown or extras_due:
             plan.append((pkg, vbin, files, extras_due))
@@ -15326,6 +15660,7 @@ def cmd_track_merge(args):
             _track_die(f"the setup step failed on an earlier merge of {tid} — the tests were not run on this tree; "
                        + _track_setup_recovery(tid, branch, wt, cmd, args.base))
     lock = _track_lock(code)
+    trace_dir = None
     try:
         old = _tgit(["rev-parse", "--verify", "--quiet", bref], code).stdout.strip()
         if not old:
@@ -15345,16 +15680,20 @@ def cmd_track_merge(args):
                     _track_setup_failed_write(code, tid, setup)
                     _track_die(f"the setup step failed on the merged tree — {base} is unchanged; "
                                + _track_setup_recovery(tid, branch, wt, setup, args.base))
+        tenv, trace_dir = _track_trace_env(wt)
+        ran_rel = []    # test files the relevant run ran (a whole run's set is whatever the trace shows)
         if whole:
             why_whole = ("--test" if isinstance(args.test, str) and args.test.strip() else
                          "track.test" if explicit else "--full" if full else lane_note)
-            rc = _track_run(test, wt, f"tests on the merged tree (whole suite: {why_whole})")
+            rc = _track_run(test, wt, f"tests on the merged tree (whole suite: {why_whole})", env=tenv)
             ran = f"tests `{test}`"
         else:
             if lane_note:
                 print(lane_note)
             chg = [x for x in _tgit(["diff", "--name-only", old, "HEAD"], wt).stdout.splitlines() if x]
-            plan, covered, tot, _, fallback = _track_relevant_set(wt, old, chg)
+            tmap, tnote = _track_test_map_read(code)
+            print(f"test-read map: {tnote}")
+            plan, covered, tot, _, fallback = _track_relevant_set(wt, old, chg, tmap)
             n = sum(len(f) for _p, _v, f, _e in plan)
             if not plan:
                 print(f"relevant tests: none — {len(chg)} changed file(s) against {base}, no test imports "
@@ -15364,6 +15703,7 @@ def cmd_track_merge(args):
                 if n:
                     print(f"relevant tests: {n} file(s) in {len(plan)} package(s) — {tot['changed_tests']} changed, "
                           f"{tot['importers']} importing, {tot['naming']} naming a changed file"
+                          f"{', ' + str(tot['traced']) + ' by recorded file reads' if tot['traced'] else ''}"
                           f"{', ' + str(tot['scanners']) + ' always-run directory scanner(s)' if tot['scanners'] else ''}; "
                           f"{len(chg)} changed file(s) against {base}", flush=True)
                 else:
@@ -15393,8 +15733,9 @@ def cmd_track_merge(args):
                         if _track_run("pnpm run build", pkg, f"build ({label}: src/ changed)") != 0:
                             _track_die(f"the build of {label} failed on the merged tree — {base} is unchanged; "
                                        f"{branch} keeps the merge, fix it there and merge again")
+                    ran_rel += [Path(f).resolve().relative_to(Path(wt).resolve()).as_posix() for f in files]
                     for cmd in steps + (_track_pkg_extra_steps(pkg) if (extras_due or files or pkg in fallback) else []):
-                        rc = _track_run(cmd, pkg, f"relevant tests ({label})")
+                        rc = _track_run(cmd, pkg, f"relevant tests ({label})", env=tenv)
                         if rc != 0:
                             break
                     if rc != 0:
@@ -15407,6 +15748,7 @@ def cmd_track_merge(args):
                    if rc == 141 else "")
             _track_die(f"tests failed on the merged tree — {base} is unchanged; {branch} keeps the merge, "
                        f"fix it there and merge again{why}")
+        _track_test_map_update(code, wt, trace_dir, ran_rel)
         dirty = _tgit(["status", "--porcelain"], wt)
         if dirty.returncode != 0 or dirty.stdout.strip():
             left = [ln[3:] if len(ln) > 3 else ln for ln in dirty.stdout.splitlines() if ln]
@@ -15435,6 +15777,8 @@ def cmd_track_merge(args):
             lock.unlink()
         except OSError:
             pass
+        if trace_dir is not None:
+            shutil.rmtree(trace_dir, ignore_errors=True)
     r = _tgit(["worktree", "remove", str(wt)], code)
     if r.returncode == 0:
         print(f"worktree {wt} removed")
@@ -17369,7 +17713,7 @@ def cmd_doctor(_args):
         # Supersedes the referencing-ticket scan, which was never the checkable
         # condition: it missed a file naming its own ticket in its title, and it
         # cleared a file only because a LATER round's ticket happened to cite it.
-        ("artifact placement", FAMILY_PROJECT, lambda: artifact_placement_warnings(root)),
+        ("artifact placement", FAMILY_PROJECT, lambda: all_artifact_placement_warnings(root)),
         # PRD layout — one file per closed version · one open section in PRD.md ·
         # a stub for a tickets-only round · the gap a ticket dir with no record
         # leaves (T-657). Fires on the pre-migration shapes too (history.md lump,
@@ -18252,18 +18596,18 @@ def layout_apply(root, plan):
         try:
             widx = shared_docs_dir(root) / "wiki" / "index.md"
             undo["wiki_index"] = widx.read_bytes() if widx.is_file() else False
-            man = artifact_manifest_path(root)
+            man = artifact_manifest_path(root, prod)
             if (root / "docs" / prod / "artifacts").is_dir():
                 undo["manifest"] = man.read_bytes() if man.is_file() else False
-                if legacy_bucket_manifests(root):
+                if legacy_bucket_manifests(root, prod):
                     raise _LayoutFail(6, "산출물 목록 · 인덱스 · 위키 index.md 를 다시 만들 수 없어요 "
                                          "(artifacts 폴더에 버킷별 manifest 가 남아 있어요)",
                                       "prdt artifacts migrate 를 먼저 실행한 뒤 다시 실행하세요.")
-                prior, merr, malformed, _ = read_artifact_manifest(root)
+                prior, merr, malformed, _ = read_artifact_manifest(root, prod)
                 if merr or malformed:
                     raise OSError(0, f"artifacts manifest 를 읽을 수 없어요: {merr or malformed[0]}")
-                data, _dropped = build_artifact_manifest(root, prior=prior)
-                write_artifact_manifest(root, data)
+                data, _dropped = build_artifact_manifest(root, prior=prior, product=prod)
+                write_artifact_manifest(root, data, prod)
                 if undo["manifest"] is False:
                     generated.append(man)
             con, _v, _pages, _m = rebuild_index(root)
@@ -18290,7 +18634,7 @@ def layout_apply(root, plan):
 
         # 8 — one meta commit
         extra = [".prdt/config.json"]
-        for cand in (artifact_manifest_path(root), shared_docs_dir(root) / "wiki" / "index.md"):
+        for cand in (artifact_manifest_path(root, prod), shared_docs_dir(root) / "wiki" / "index.md"):
             if cand.is_file():
                 extra.append(Path(cand).relative_to(root).as_posix())
         # the old paths were staged as deleted at step 4 — only what exists now is added here
@@ -18334,7 +18678,7 @@ def layout_path_warnings(root):
         tickets = {r["id"]: r for r in trows}
     except Exception:
         tickets = {}
-    for fn in (lambda: artifact_placement_warnings(root), lambda: prd_layout_warnings(root, st),
+    for fn in (lambda: all_artifact_placement_warnings(root), lambda: prd_layout_warnings(root, st),
                lambda: artifact_ticket_edge_warnings(root, tickets), lambda: meta_drift_warnings(root),
                lambda: dead_discipline_path_warnings(root)):
         try:
