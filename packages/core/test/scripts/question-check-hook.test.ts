@@ -449,6 +449,16 @@ describe('T-1285 — a recorded decision cited beside an ask is a re-ask (T-1313
     expect(j.reason).not.toContain('hook 이 막음') // never echoes the reply
   })
 
+  test('T-1365 = A — the reason is the approved To-Be wording, byte for byte', () => {
+    // docs/productune/artifacts/v1.16/lane-records-build-entry-step.md §B To-Be (467 B)
+    const TO_BE = '[prdt re-ask check] this reply asks the user (line %s) beside a decision already answered: %s (answer: `prdt decisions find <id>`). Act on the recorded answer and cite it, never ask it again; a decision ticket opened this turn for that ask → `dropped` naming the record. Keep the ask only when the record is stale or conflicting, its state changed, or a consent gate needs live words — say which beside the ask. Then send the reply again%s, every other line kept.'
+    expect(Buffer.byteLength(TO_BE)).toBe(467)
+    const reason = JSON.parse(run((p) => { record(p, 'T-1313'); newTicket(p) }, REASK_REPLY)).reason as string
+    const lines = (/\(line ([\d, ]+)\)/.exec(reason) as RegExpExecArray)[1]
+    const parts = [lines, 'T-1313', '']
+    expect(reason).toBe(TO_BE.replace(/%s/g, () => parts.shift() as string))
+  })
+
   test('the per-product id form (T-1298) is a citable record too', () => {
     const reply = REASK_REPLY.replace('T-1313', 'T-PRDT-7')
     const out = run((p) => { record(p, 'T-PRDT-7'); newTicket(p) }, reply)
@@ -500,5 +510,56 @@ describe('T-1285 — a recorded decision cited beside an ask is a re-ask (T-1313
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: true,
       cwd: proj, transcript_path: writeTranscript(root, REASK_REPLY), last_assistant_message: REASK_REPLY,
     }, env())).toBe('')
+  })
+})
+
+describe('T-1364 = C (threshold 4) — asks over 4+ open decisions in one reply block once', () => {
+  const BATCH = '[prdt batch-ask check]'
+  const store = (n: number): Store => Object.fromEntries(Array.from({ length: n }, (_, k) => [`T-20${k + 1}`, DEC()]))
+  const waiting = (ids: string[]) => ['## 답 기다리는 것', '', ...ids.map(id => `- ${id} 이 항목, A 로 할까요?`)].join('\n')
+
+  test('4 open decisions, each with its own ask → blocked once, naming the count', () => {
+    const { out } = stop(store(4), waiting(['T-201', 'T-202', 'T-203', 'T-204']))
+    const j = JSON.parse(out)
+    expect(j.decision).toBe('block')
+    expect(j.reason.startsWith(BATCH)).toBe(true)
+    expect(j.reason).toContain('4 open decisions')
+    expect(j.reason).not.toContain('이 항목') // never echoes the reply
+  })
+
+  test('5 asks over the same 4 ids count 4 distinct ids → still one block', () => {
+    const reply = waiting(['T-201', 'T-202', 'T-203', 'T-204', 'T-201'])
+    expect(JSON.parse(stop(store(4), reply).out).reason).toContain('4 open decisions')
+  })
+
+  test('3 open decisions with asks → no block from this check (all covered → silent)', () => {
+    expect(stop(store(3), waiting(['T-201', 'T-202', 'T-203'])).out).toBe('')
+  })
+
+  test('3 asked + a 4th open decision only cited, with no ask beside it → not counted', () => {
+    const reply = waiting(['T-201', 'T-202', 'T-203']) + '\n\n## 진행 중\n\nT-204 는 기록만 해 두었어요.'
+    expect(stop(store(4), reply).out).toBe('')
+  })
+
+  test('done or non-decision tickets beside the asks are not open decisions → not counted', () => {
+    const s: Store = { ...store(3), 'T-204': IMPL() }
+    expect(stop(s, waiting(['T-201', 'T-202', 'T-203', 'T-204'])).out).not.toContain(BATCH)
+  })
+
+  test('decision tickets opened this turn do not exempt the batch', () => {
+    const { root, proj } = makeProject(store(4))
+    const now = Date.now() / 1000
+    fs.utimesSync(path.join(proj, 'docs', 'tickets', 'v1.13', 'T-201.md'), now, now)
+    const reply = waiting(['T-201', 'T-202', 'T-203', 'T-204'])
+    const out = runHook({
+      hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
+    })
+    expect(JSON.parse(out).reason.startsWith(BATCH)).toBe(true)
+  })
+
+  test('second Stop (stop_hook_active) → never a second block', () => {
+    const reply = waiting(['T-201', 'T-202', 'T-203', 'T-204'])
+    expect(stop(store(4), reply, { stop_hook_active: true }).out).toBe('')
   })
 })

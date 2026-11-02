@@ -45,6 +45,11 @@
 # during the turn (mtime at or after the turn's user prompt, read from the
 # transcript) — T-985 acceptance, literally.
 #
+# BATCH ASK (T-1364 = C). Before that exemption, a reply whose asks carry
+# BATCH_ASK_MIN (4) or more distinct open decision ids — each id inside an
+# ask's own item or section; an id cited with no ask beside it is not counted —
+# is blocked once, so the PO asks one screen-changing item at a time.
+#
 # ONE BLOCK, NEVER TWO. `stop_hook_active` is the harness's own loop guard:
 # false on the first Stop, true on the Stop that follows a block. On true this
 # hook exits silently, so a re-reply that still asks without a ticket reaches the
@@ -200,14 +205,24 @@ LIST_CAP = 5
 RUN_BUDGET_S = 5
 
 # T-1285 (mechanism T-1313 = A): an ask beside a decision the user already
-# answered. DRAFT wording — Designer `inject-edit` owns the final text.
+# answered. Wording: T-1365 = A (Designer inject-edit, 2026-11-02;
+# docs/productune/artifacts/v1.16/lane-records-build-entry-step.md §B To-Be).
 # %s = line numbers, record ids, language clause.
 REASK_REASON = (
-    "[prdt re-ask check] this reply asks the user (line %s) beside a decision the user already "
-    "answered: %s (`prdt decisions find <id>` shows the answer). Do not ask it again — act on the "
-    "recorded answer and cite it; a decision ticket opened this turn for the same ask → status "
-    "dropped. Only a new fact that the record did not know reopens it: name that fact beside the "
-    "ask. Then send the reply again%s, every other line kept."
+    "[prdt re-ask check] this reply asks the user (line %s) beside a decision already answered: %s "
+    "(answer: `prdt decisions find <id>`). Act on the recorded answer and cite it, never ask it again; "
+    "a decision ticket opened this turn for that ask → `dropped` naming the record. Keep the ask only "
+    "when the record is stale or conflicting, its state changed, or a consent gate needs live words "
+    "— say which beside the ask. Then send the reply again%s, every other line kept."
+)
+# T-1285 (2) / T-1364 = C: one reply whose asks carry this many distinct OPEN
+# decision ids (each id inside an ask's own item or section) is blocked once.
+# DRAFT wording — awaiting user confirmation. %s = count, ids, language clause.
+BATCH_ASK_MIN = 4
+BATCH_ASK_REASON = (
+    "[prdt batch-ask check] this reply asks the user about %s open decisions at once (%s). "
+    "Ask one screen-changing item at a time; put wording-only items together in one table. "
+    "Then send the reply again%s."
 )
 DECISIONS_FIND_TIMEOUT_S = 3
 
@@ -557,6 +572,26 @@ def reask_check(root, lines, asks, tickets, turn_start):
     return REASK_REASON % (shown, ", ".join(ids[:LIST_CAP]), lang_clause())
 
 
+def batch_check(lines, asks, tickets):
+    """T-1364 = C: the block reason when the asks carry BATCH_ASK_MIN or more
+    distinct open decision ids, each counted only inside an ask's own scope
+    (an id merely cited elsewhere in the reply is not asked); else None. Runs
+    before the decision-changed-this-turn exemption: opening the tickets in the
+    same turn is how a batch usually arrives."""
+    asked = set()
+    for i, kind, option_ref in asks:
+        a, b = ask_scope(lines, i, kind, option_ref)
+        for m in TICKET_ID_RE.finditer("\n".join(lines[a:b])):
+            t = tickets.get(m.group(1))
+            if t and t[0] == "decision" and t[1] == "open":
+                asked.add(m.group(1))
+    if len(asked) < BATCH_ASK_MIN:
+        return None
+    ids = sorted(asked)
+    shown = ", ".join(ids[:LIST_CAP]) + (", +%d more" % (len(ids) - LIST_CAP) if LIST_CAP < len(ids) else "")
+    return BATCH_ASK_REASON % (len(ids), shown, lang_clause())
+
+
 def block(reason):
     sys.stdout.write(json.dumps({"decision": "block", "reason": reason}))
 
@@ -588,6 +623,9 @@ def main():
     reask = reask_check(root, lines, asks, tickets, turn_start)
     if reask:
         return block(reask)
+    batch = batch_check(lines, asks, tickets)
+    if batch:
+        return block(batch)
     if any(t == "decision" and mt >= turn_start - 1 for t, _, _, mt in tickets.values()):
         return
     open_dec = {k for k, (t, s, _, _) in tickets.items() if t == "decision" and s == "open"}
