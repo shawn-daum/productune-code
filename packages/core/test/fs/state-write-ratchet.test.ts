@@ -155,6 +155,8 @@ const ALLOW: Record<string, number> = {
   'core/scripts/prdt::_index_db_prepare': 1,
   'core/scripts/prdt::_track_lock': 2,
   'core/scripts/prdt::_resource_lock': 1,
+  // T-1286: the test-read tracer, created O_EXCL ('x') in a fresh mkdtemp dir of its own — outside any project / state dir
+  'core/scripts/prdt::_track_trace_env': 1,
   'core/scripts/prdt::main': 1,
   // hook / status-line shell: `>` `>>` redirects (temp files, stderr captures, per-session stamps) — not audited for .prdt targets; hooks write project state through prdt_safe_fs.py
   'core/scripts/hooks/prdt-audience-inject.sh': 2,

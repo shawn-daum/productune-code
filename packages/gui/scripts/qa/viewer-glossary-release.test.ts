@@ -100,18 +100,18 @@ describe('activity bar (T-880 = A)', () => {
     const html = render(data())
     const nav = html.slice(html.indexOf('<nav class="activity">'), html.indexOf('</nav>'))
     const keys = [...nav.matchAll(/data-store="([^"]+)" title="([^"]+)"/g)].map((m) => m[1])
-    // T-1047: env left the activity bar · T-1255: 용어 사전 moved into 현재 버전, under env
-    expect(keys).toEqual(['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'release', 'disc'])
+    // T-1227: env is a store after 아티팩트 · T-1255: 용어 사전 lives in 현재 버전
+    expect(keys).toEqual(['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'env', 'release', 'disc'])
     expect(nav).not.toContain('용어 사전')
     expect(nav).toContain('title="릴리즈 노트" aria-label="릴리즈 노트"')
   })
 })
 
 describe('용어 사전 (T-883 · T-1255 in 현재 버전)', () => {
-  it('sits in the 현재 버전 sidebar directly under env, and has no store of its own', () => {
+  it('sits in the 현재 버전 sidebar right after 결정 (the slot env had), and has no store of its own', () => {
     const html = render(data())
     const keys = homeGroupKeys(html)
-    expect(keys.slice(-2)).toEqual(['env', 'glossary'])
+    expect(keys.slice(-2)).toEqual(['decision', 'glossary'])
     expect(html).toContain('data-group-select="glossary"><span>용어 사전</span><span class="nav-item-count">2</span></button>')
     expect(html).not.toContain('data-store="glossary"')
     expect(html).not.toContain('id="store-glossary"')
@@ -125,10 +125,10 @@ describe('용어 사전 (T-883 · T-1255 in 현재 버전)', () => {
     expect(sec).not.toContain('fact--x')
   })
 
-  it('an idle product still lists its terms under env', () => {
+  it('an idle product still lists its terms after 결정', () => {
     const d = { ...data(), currentVersion: '', poState: { stage: 'idle' } }
     const html = render(d)
-    expect(homeGroupKeys(html).slice(-2)).toEqual(['env', 'glossary'])
+    expect(homeGroupKeys(html).slice(-2)).toEqual(['decision', 'glossary'])
     expect(glossaryPane(html)).toContain('<span class="count-badge">용어 <b>2</b>개</span>')
   })
 
