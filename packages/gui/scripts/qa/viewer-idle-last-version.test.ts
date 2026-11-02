@@ -4,7 +4,8 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterAll } from 'vitest'
+import { setViewerLang } from '@productune/viewer/lib/labels.mjs'
 import { collectAll } from '@productune/viewer/lib/collect.mjs'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
 
@@ -16,9 +17,9 @@ function write(root: string, rel: string, text: string) {
 }
 const ticket = (id: string, extra = '', status = 'done') => `---\nid: ${id}\nslug: s-${id}\ntype: impl\nstatus: ${status}\nassignee: developer\n${extra}---\nbody ${id}\n`
 
-function mk(opts: { closed: boolean; stage?: string }) {
+function mk(opts: { closed: boolean; stage?: string; lang?: string }) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-idle-last-')))
-  write(root, '.prdt/config.json', JSON.stringify({ slug: 'ntf-pm', products: [{ name: 'ntf-archive' }] }))
+  write(root, '.prdt/config.json', JSON.stringify({ slug: 'ntf-pm', products: [{ name: 'ntf-archive' }], ...(opts.lang ? { user_lang: opts.lang } : {}) }))
   write(root, '.prdt/po-state.json', JSON.stringify({ schema_version: 1, stage: 'ship', version: 'v2.2', current_task: null, products: { 'ntf-archive': { stage: opts.stage ?? 'idle', version: 'v1.1' } } }))
   write(root, 'docs/prd/PRD.md', '# PRD\n\nhead\n\n## v2.2 — round\n\n#### a — Item A\n')
   if (opts.closed) write(root, 'docs/prd/versions/ntf-archive/v1.1.md', '## ntf-archive v1.1 — closed\n\nbody\n')
@@ -47,10 +48,51 @@ describe('T-1256 idle Home shows the last closed version', () => {
     const p = progress(html)
     expect(p).toContain('레인 A')
     expect(p).toContain('2/2')
-    expect(p).toContain('게이트 통과')
+    expect(p).toContain('합격선 통과')
   })
   it('keeps the backlog count line', () => {
     expect(html).toContain('backlog 티켓 2건이 대기 중이에요.')
+  })
+})
+
+// T-1376 option A (user 2026-11-03): the approved To-Be strings, evidence lines 1-1 · 1-2 · 2-1 · 3-1 · 3-2.
+describe('T-1376 approved wording', () => {
+  afterAll(() => setViewerLang('ko'))
+  it('ko: head 1-1, gate result 2-1, sentence under the block 3-1; lane line unchanged', () => {
+    const html = mk({ closed: true })
+    const p = progress(html)
+    expect(p).toContain('완료한 버전 v1.1 · 완료 시점 진행 상황')
+    expect(p).toContain('<span class="sc-lab">레인 A</span>')
+    expect(p).toContain('합격선 통과')
+    expect(html).not.toContain('게이트')
+    expect(html).toContain('backlog 티켓 2건이 대기 중이에요. 새 버전을 시작하면 이 화면에 그 버전의 진행 상황이 보여요.')
+  })
+  it('ko: an open lane reads 합격선 미통과', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-idle-open-')))
+    write(root, '.prdt/config.json', JSON.stringify({ slug: 'ntf-pm', products: [{ name: 'ntf-archive' }] }))
+    write(root, '.prdt/po-state.json', JSON.stringify({ schema_version: 1, stage: 'ship', version: 'v2.2', current_task: null, products: { 'ntf-archive': { stage: 'idle', version: 'v1.1' } } }))
+    write(root, 'docs/prd/PRD.md', '# PRD\n\nhead\n\n## v2.2 — round\n\n#### a — Item A\n')
+    write(root, 'docs/prd/versions/ntf-archive/v1.1.md', '## ntf-archive v1.1 — closed\n\nbody\n')
+    write(root, 'docs/tickets/ntf-archive/v1.1/T-5.md', ticket('T-5', '', 'open'))
+    write(root, 'docs/tickets/ntf-archive/v1.1/T-7.md', ticket('T-7', 'deps: [T-5]\nlane: A\n'))
+    expect(progress(render(collectAll(root, { disciplineRoot: path.join(root, 'no-discipline') })))).toContain('합격선 미통과')
+  })
+  it('en: head 1-2 and sentence under the block 3-2', () => {
+    const html = mk({ closed: true, lang: 'en' })
+    expect(progress(html)).toContain('Finished version v1.1 · progress at completion')
+    expect(html).toContain('2 backlog tickets are waiting. Once a new version starts, this screen shows that version&#39;s progress.')
+  })
+  it('no closed version: the sentence stays today\'s (ko and en)', () => {
+    expect(mk({ closed: false, lang: 'en' })).toContain('2 backlog tickets are waiting. Progress shows on this screen once a new version starts.')
+    setViewerLang('ko')
+  })
+})
+
+// QA d-v116-t1256-qa1: at 1280px the gate result sat at the far right; the lane rows size their columns to content.
+describe('T-1256 lane rows layout', () => {
+  it('lane rows use content-sized columns and every row has three cells', () => {
+    const p = progress(mk({ closed: true }))
+    expect(p).toContain('<div class="sc-rows" style="grid-template-columns:max-content max-content 1fr">')
   })
 })
 
@@ -97,7 +139,7 @@ describe('T-1256 lanes of a closed version from prd/versions/', () => {
     const p = progress(render(collectAll(root, { disciplineRoot: path.join(root, 'no-discipline') })))
     expect(p).toContain('레인 A')
     expect(p).toContain('2/2')
-    expect(p).toContain('게이트 통과')
+    expect(p).toContain('합격선 통과')
   })
   it('lanes_for with no version is unchanged: current version still from the open section', () => {
     const html = single({ stage: 'build', closed: false })
@@ -113,7 +155,7 @@ describe('T-1256 single-product page', () => {
     expect(p).toContain('v1.1')
     expect(p).toContain('티켓 완료 2/2')
     expect(p).toContain('레인 A')
-    expect(p).toContain('게이트 통과')
+    expect(p).toContain('합격선 통과')
     expect(html).toContain('demo 는 지금 진행 중인 버전이 없어요.')
     expect(html).toContain('backlog 티켓 1건이 대기 중이에요.')
   })
