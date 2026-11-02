@@ -110,6 +110,42 @@ describe('prdt-lane-check.sh', () => {
     expect(j.reason).toContain('L2: T-010')
   })
 
+  // T-1381: a ready row owned by the PO (assignee: po) has no worker to dispatch.
+  test('T-1381: a lane whose ready rows are all po-owned does not block; the other idle lane still does', () => {
+    const p = makeProject([
+      { id: 'T-001', deps: ['T-002'], body: `\`${GATE}\`` },
+      { id: 'T-002' },
+      { id: 'T-010', deps: ['T-011'], body: `\`${GATE2}\`` },
+      { id: 'T-011', type: 'ops', assignee: 'po' },
+    ])
+    const j = JSON.parse(runHook(p, { env: { HOME: p.home } }))
+    expect(j.reason).toContain('L1 결정/질문: T-002')
+    expect(j.reason).not.toContain('L2')
+    expect(j.reason).not.toContain('T-011')
+  })
+
+  test('T-1381: a lane with only a po-owned ready row is the only lane → no block', () => {
+    const p = makeProject([
+      { id: 'T-001', status: 'done', body: `\`${GATE}\`` },
+      { id: 'T-010', deps: ['T-011'], body: `\`${GATE2}\`` },
+      { id: 'T-011', type: 'ops', assignee: 'po' },
+    ])
+    expect(runHook(p, { env: { HOME: p.home } })).toBe('')
+  })
+
+  test('T-1381: a lane with a worker ready row still blocks, naming only the dispatchable ids', () => {
+    const p = makeProject([
+      { id: 'T-001', status: 'done', body: `\`${GATE}\`` },
+      { id: 'T-010', deps: ['T-011', 'T-012'], body: `\`${GATE2}\`` },
+      { id: 'T-011', type: 'ops', assignee: 'po' },
+      { id: 'T-012', assignee: 'designer' },
+    ])
+    const j = JSON.parse(runHook(p, { env: { HOME: p.home } }))
+    expect(j.decision).toBe('block')
+    expect(j.reason).toContain('L2: T-012')
+    expect(j.reason).not.toContain('T-011')
+  })
+
   test('T-1294: a repo-sourced lane name is clipped to 60 chars on the Stop reason', () => {
     const p = makeProject(BASE)
     const prd = path.join(p.proj, 'docs', 'prd', 'PRD.md')
