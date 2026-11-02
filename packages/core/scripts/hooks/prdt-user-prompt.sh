@@ -415,23 +415,32 @@ LANG_MIDTURN_NOTICE = (
 # `user.lang` for the rest of that session. UserPromptSubmit records the latest request
 # in `$PRDT_HOME/run/session-lang/<session_id>`; the Stop and PostToolUse checks read it.
 # Only a request addressed to the assistant about the CHAT counts (T-1307 QA): an
-# imperative verb at a clause start or after please / can you …, then `in X`
-# ("switch to X"); "X로(만) 답해/대답해/말해 …". A task on text ("translate your answer to
+# imperative verb at a clause start or after please / can you / let's / from now on …,
+# then `in X` ("switch to X", bare "speak X"); "X로(만) 답해/대답해/말해/대화하자 …";
+# "X로 해줘" only as a whole clause. A task on text ("translate your answer to
 # English", "write a reply in English", "이 문장 영어로 바꿔줘", "영어로 답장 써줘"), a how-to
 # ("영어로 말하는 법", "how do I talk to Korean users") or a negated ask ("Don't reply in
 # English") does not. Unsure → no switch: a missed switch costs one rewrite, a wrong one
 # flags the user's own language for the whole session.
 CHAT_LANG_CODE = {"english": "en", "korean": "ko", "영어": "en", "한국어": "ko", "한글": "ko"}
+_CHAT_LANG_LEAD = (r"(?:\A|[.!?;,\n]|\b(?:please|pls|kindly|just|now|and|then|from\s+now\s+on|"
+                   r"let['’]?s|let\s+us|(?:can|could|would|will)\s+you|you\s+(?:should|must)))\s*")
+CHAT_LANG_KO_RE = re.compile(r"(영어|한국어|한글)\s*로\s*(?:만\s*)?"
+                             r"(?:답|대답|답변|응답|말|얘기|이야기|대화)\s*(?:해|하자|합시다)"
+                             r"(?!\s*(?:주지|서|야|도|봐도|본|보는))")
 CHAT_LANG_RES = (
-    re.compile(r"(?:\A|[.!?;,\n]|\b(?:please|pls|kindly|just|now|and|then|"
-               r"(?:can|could|would|will)\s+you|you\s+(?:should|must)))\s*"
+    re.compile(_CHAT_LANG_LEAD +
                r"(?:(?:repl(?:y|ies)|respond|answer|speak|talk|chat)"
                r"(?:\s+(?:to\s+me|back|only))*\s+(?:only\s+)?in"
                r"|switch(?:\s+(?:back|the\s+(?:chat\s+)?language|languages))?\s+to)"
                r"\s+(english|korean)\b", re.I),
-    re.compile(r"(영어|한국어|한글)\s*로\s*(?:만\s*)?"
-               r"(?:답|대답|답변|응답|말|얘기|이야기|대화)\s*해"
-               r"(?!\s*(?:주지|서|야|도|봐도|본|보는))"),
+    # bare "speak X" only as a command, never after can/do you (a capability question)
+    re.compile(r"(?:\A|[.!?;,\n]|\b(?:please|pls|just|now|from\s+now\s+on))\s*"
+               r"speak\s+(?:only\s+)?(english|korean)\b", re.I),
+    CHAT_LANG_KO_RE,
+    # "X로 해줘" only as the whole clause (adverbs allowed): "커밋 메시지는 영어로 해줘" has an object
+    re.compile(r"(?:\A|(?<=[.!?;,\n]))\s*(?:(?:앞으로|이제부터|이제|지금부터|다시|그냥|계속)\s*)*"
+               r"(영어|한국어|한글)\s*로\s*(?:만\s*)?해\s*(?:줘|주세요|줄래|요)?\s*[.!~]*\s*(?=\Z|\n)"),
 )
 # An object right before "X로" makes it a task on that text ("이거 영어로 말해줘").
 CHAT_LANG_KO_OBJECT_RE = re.compile(r"(?:이거|이걸|이것|그거|그걸|저거|문장|단어|표현|메일|글)\S*\s*\Z")
@@ -454,7 +463,7 @@ def chat_lang_request(prompt):
     best = None
     for rx in CHAT_LANG_RES:
         for m in rx.finditer(prompt[:8000]):
-            if rx is CHAT_LANG_RES[1] and CHAT_LANG_KO_OBJECT_RE.search(prompt[max(0, m.start() - 12):m.start()]):
+            if rx is CHAT_LANG_KO_RE and CHAT_LANG_KO_OBJECT_RE.search(prompt[max(0, m.start() - 12):m.start()]):
                 continue
             if best is None or best[0] < m.end():
                 best = (m.end(), CHAT_LANG_CODE[m.group(1).lower()])
