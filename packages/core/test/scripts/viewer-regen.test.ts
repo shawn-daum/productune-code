@@ -346,21 +346,31 @@ describe.skipIf(!RUN)('T-838 — doc-writing prdt subcommands regenerate the vie
     expect(readLog(s.openLog)).toBe('')
   })
 
+  // T-1366: every baseline below is taken only AFTER the regen the previous
+  // command scheduled has been seen (waitFor), never by settling alone — under
+  // load the detached worker started later than the 0.85 s settle window, its
+  // late run then landed inside a "does not regenerate" step (expected 1 to be
+  // 0 · expected 2 to be 1, reproduced 5/8 at load 34/14). The quiet window of
+  // each "does not" step is 3× this run's own measured regen lag (capped at the
+  // quick-tier budget, same scale), so a wrong regen still shows up when the
+  // machine is slow.
   test('tickets fmt regenerates after a rewrite; --check, --dry-run and an already formatted ticket do not', async () => {
     const s = cliSandbox()
     const id = newTicket(s, 'fmt-me')
-    await settledCount(s.countFile)
-    const base = countOf(s.countFile)
+    const t0 = Date.now()
+    expect(await waitFor(() => countOf(s.countFile) > 0)).toBe(true)
+    const quietMs = Math.min(subprocessTimeout('quick'), Math.max(400, 3 * (Date.now() - t0)))
+    const base = await settledCount(s.countFile)
     const f = path.join(s.root, 'docs', 'tickets', 'v0.1', `${id}.md`)
     fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('## problem', '## Problem'))
     try { s.run(['tickets', 'fmt', id, '--check']) } catch { /* exits 1 on a violation, by design */ }
     s.run(['tickets', 'fmt', id, '--dry-run'])
-    expect(await settledCount(s.countFile)).toBe(base)
+    expect(await settledCount(s.countFile, quietMs)).toBe(base)
     s.run(['tickets', 'fmt', id])
     expect(await waitFor(() => countOf(s.countFile) > base)).toBe(true)
     const after = await settledCount(s.countFile)
     expect(s.run(['tickets', 'fmt', id])).toContain('already formatted')
-    expect(await settledCount(s.countFile)).toBe(after)
+    expect(await settledCount(s.countFile, quietMs)).toBe(after)
   })
 
   test('wiki reindex regenerates when index.md changes, not when it is rewritten unchanged', async () => {
