@@ -1,7 +1,7 @@
 /**
  * T-1215 — the layout-reserved product folder names, one rule in every copy:
  * Python `product_dir_name` (prdt_lanes.py) · viewer `productDirName` · init-project.mjs
- * `productDirName` (the GUI heal path). Plus the added-product side: a reserved
+ * `productDirName` (the GUI heal path) · meta-git.ts `productDirName` (meta autosave, T-1222). Plus the added-product side: a reserved
  * `products[].name` is refused (warning · `tickets new --product`).
  */
 import path from 'path'
@@ -16,6 +16,7 @@ const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
 const LANES = path.join(CORE_ROOT, 'scripts', 'prdt_lanes.py')
 const VIEWER_MJS = path.resolve(CORE_ROOT, '..', 'viewer', 'lib', 'docs-layout.mjs')
 const INIT_MJS = path.join(CORE_ROOT, 'scripts', 'lib', 'init-project.mjs')
+const META_GIT_TS = path.join(CORE_ROOT, 'src', 'git-workflow', 'meta-git.ts')
 
 const INPUTS = ['qa', 'QA', 'archive', 'prd', 'Tickets', 'wiki', 'features', 'artifacts', 'po', 'designer', 'developer',
   '', '!!!', 'v1', 'backlog', 'my-app', 'qa-product', 'Q A']
@@ -47,6 +48,8 @@ describe('T-1215 reserved product folder names — copy parity', () => {
     const init = await import(INIT_MJS)
     expect(INPUTS.map((x) => viewer.productDirName(x))).toEqual(want)
     expect(INPUTS.map((x) => init.productDirName(x))).toEqual(want)
+    const metaGit = await import(META_GIT_TS)
+    expect(INPUTS.map((x) => metaGit.productDirName(x))).toEqual(want)
     expect(want[INPUTS.indexOf('qa')]).toBe('qa-product')
     expect(want[INPUTS.indexOf('archive')]).toBe('archive-product')
     expect(want[INPUTS.indexOf('')]).toBe('product')

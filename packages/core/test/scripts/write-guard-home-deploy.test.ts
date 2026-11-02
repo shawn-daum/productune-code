@@ -183,6 +183,65 @@ describe.skipIf(!PY)('T-1173 rule 3 — a deploy command waits for ship entry', 
   })
 })
 
+describe.skipIf(!PY)('T-1222 C6 — a package-runner spelling of a prod deploy is a deploy', () => {
+  beforeEach(() => mk())
+
+  test('pnpm dlx · pnpm exec · yarn dlx · npm exec · pnpx · bun x wrapping vercel/netlify prod are denied', () => {
+    for (const c of ['pnpm dlx vercel --prod', 'pnpm exec vercel --prod', 'yarn dlx netlify deploy --prod',
+      'npm exec vercel -- --prod', 'npm exec -- vercel --prod', 'pnpx vercel --prod', 'bun x vercel --prod',
+      'yarn exec vercel deploy --prod', 'npx -p vercel@latest vercel --prod', 'pnpm --filter web exec vercel --prod',
+      'pnpm dlx vercel@33 --prod', 'npm x netlify deploy --prod']) {
+      const why = reason(bash('main', c))
+      expect(why, c).toContain('[prdt deploy guard]')
+      expect(why, c).toContain('stage=build')
+    }
+  })
+
+  test('runner spellings of a non-prod command stay silent', () => {
+    for (const c of ['pnpm dlx vercel', 'pnpm exec vercel deploy', 'yarn dlx netlify deploy', 'pnpm install',
+      'pnpm exec vitest run', 'yarn dlx create-vite', 'npm exec -- tsc', 'pnpm dlx'])
+      expect(bash('main', c), c).toBe('')
+  })
+})
+
+describe.skipIf(!PY)('T-1222 C7 — an added product\'s own stage gates its deploy', () => {
+  // first product (top-level stage) at ship; added product `web2` at build
+  function mk2(currentTask: unknown): void {
+    mk('ship', 'v1.2')
+    fs.writeFileSync(path.join(root, '.prdt', 'config.json'),
+      JSON.stringify({ slug: 'p', code: { dir: 'code' }, products: [{ name: 'web2' }] }))
+    fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage: 'ship', version: 'v1.2',
+      current_task: currentTask, products: { web2: { stage: 'build', version: 'v0.3' } } }))
+  }
+  const task = (product?: string) => ({ ticket_id: 'T-9', slug: 's', assignee: 'developer', ...(product ? { product } : {}) })
+
+  test('the current task names the added product → its build stage denies, naming its version', () => {
+    mk2(task('web2'))
+    const why = reason(bash('main', 'vercel --prod'))
+    expect(why).toContain('stage=build (v0.3)')
+  })
+
+  test('the current task is the first product (no product key) → the top-level ship stage lets it through', () => {
+    mk2(task())
+    expect(bash('main', 'vercel --prod')).toBe('')
+  })
+
+  test('no current task → the product is unknown, so any product still in define/build denies', () => {
+    mk2(null)
+    expect(reason(bash('main', 'git push origin main'))).toContain('stage=build (v0.3)')
+  })
+
+  test('an N/A-skip line naming the added product\'s version lets it through; the pre-v1.14 `lines` key is read too', () => {
+    mk2(task('web2'))
+    fs.appendFileSync(path.join(root, 'docs', '_shared', 'wiki', 'log.md'), '- readiness v0.3 N/A-skip (web2 patch)\n')
+    expect(bash('main', 'vercel --prod')).toBe('')
+    mk2(null)
+    fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage: 'ship', version: 'v1.2',
+      current_task: null, lines: { web2: { stage: 'define', version: 'v0.1' } } }))
+    expect(reason(bash('main', 'vercel --prod'))).toContain('stage=define (v0.1)')
+  })
+})
+
 describe.skipIf(!PY)('T-1173 pre-filter — push/merge/vercel/netlify words reach python for Bash events only', () => {
   beforeEach(() => mk())
   // A python3 stub that records being invoked: the hook's pre-filter decides whether it ever starts.
