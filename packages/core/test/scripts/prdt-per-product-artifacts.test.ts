@@ -128,6 +128,53 @@ describe.skipIf(!PYTHON3)('T-1218 per-product artifacts · messages · wiki · P
     }
   })
 
+  test('wiki page links and orphans resolve in the page\'s own product, whatever the current product', () => {
+    write('docs/arch/wiki/fact--a.md', '---\ntype: fact\ntitle: a\n---\n\nsee [[fact--b]]\n')
+    write('docs/arch/wiki/fact--b.md', '---\ntype: fact\ntitle: b\n---\n\nbody\n')
+    write('docs/arch/wiki/fact--c.md', '---\ntype: fact\ntitle: c\n---\n\nsee [[fact--nope]]\n')
+    write('docs/home/wiki/fact--h.md', '---\ntype: fact\ntitle: h\n---\n\nsee [[arch:fact--b]] and [[retro--v0.0]]\n')
+    write('docs/_shared/wiki/fact--s.md', '---\ntype: fact\ntitle: s\n---\n\nsee [[home:fact--h]]\n')
+    cli(['wiki', 'reindex'])   // doctor regenerates index.md itself — start every run from the same tree
+    let first: string[] | null = null
+    let doctorFirst: string[] | null = null
+    for (const cur of CURS) {
+      state(cur)
+      const out: string[] = py('print(json.dumps(m.wiki_lint(root)))')
+      // arch's own [[fact--b]] resolves; prefixed links resolve; fact--a/fact--b/fact--h/retro are linked
+      expect(out.filter(w => w.includes('fact--b') || w.includes('fact--h') || w.includes('retro--v0.0')
+        || w.includes('fact--a') || w.includes('fact--s'))).toEqual([])
+      // the one truly dead link, named the same way at every current product
+      expect(out.filter(w => w.includes('does not exist'))).toEqual(
+        ['wiki: [[fact--nope]] referenced from arch:fact--c does not exist'])
+      if (first === null) first = out
+      else expect(out).toEqual(first)
+      const d = cli(['doctor'])
+      const dw = (d.stdout + d.stderr).split('\n').filter(l => l.includes('wiki:'))
+      if (doctorFirst === null) doctorFirst = dw
+      else expect(dw).toEqual(doctorFirst)
+    }
+  })
+
+  test('artifacts migrate across products is all-or-nothing: a blocker in one product writes nothing anywhere', () => {
+    write('docs/home/artifacts/v0.1/manifest.json', JSON.stringify({ entries: [{ path: 'h.md' }] }))
+    write('docs/arch/artifacts/bogus/manifest.json', JSON.stringify({ entries: [{ path: 'x.md' }] }))
+    const r = cli(['artifacts', 'migrate'])
+    expect(r.status).toBe(1)
+    expect(fs.existsSync(path.join(root, 'docs/home/artifacts/v0.1/manifest.json'))).toBe(true)
+    expect(fs.existsSync(path.join(root, 'docs/home/artifacts/manifest.json'))).toBe(false)
+    expect(fs.existsSync(path.join(root, 'docs/arch/artifacts/bogus/manifest.json'))).toBe(true)
+    const outLines = r.stdout.trim().split('\n')
+    expect(outLines[outLines.length - 1]).toMatch(/nothing written/)
+    expect(r.stdout).not.toMatch(/removed/)
+    // fixed → both products migrate in one run
+    fs.rmSync(path.join(root, 'docs/arch/artifacts/bogus'), { recursive: true })
+    const ok = cli(['artifacts', 'migrate'])
+    expect(ok.status).toBe(0)
+    expect(fs.existsSync(path.join(root, 'docs/home/artifacts/v0.1/manifest.json'))).toBe(false)
+    expect(JSON.parse(read('docs/home/artifacts/manifest.json')).entries.map((e: any) => `${e.bucket}/${e.path}`))
+      .toEqual(['v0.1/h.md'])
+  })
+
   test('artifacts sync writes each product\'s own manifest; the result does not move with the current product', () => {
     let seen: { home: string, arch: string } | null = null
     for (const cur of CURS) {
