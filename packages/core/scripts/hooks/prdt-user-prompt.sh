@@ -58,7 +58,7 @@ exit 0
 # body out of bash's parser, so `bash -n` still reads this file end to end.
 : <<'PYEOF'
 # ---- python ----
-import hashlib, json, os, re, subprocess, sys, time
+import hashlib, json, os, re, stat, subprocess, sys, time
 
 # T-1104: product-first docs layout (docs/artifacts/v1.14/product-first-docs-layout.html).
 # KEEP `project_products` / `tickets_homes` in lockstep with `project_products` /
@@ -389,10 +389,10 @@ def stored_user_lang():
 
 
 def reply_hot_line():
-    """REPLY_HOT_LINE with its `<user_lang>` placeholder resolved to the stored
-    value (T-1116); no language known → the `--lang` flag is dropped
+    """REPLY_HOT_LINE with its `<user_lang>` placeholder resolved to the session
+    language (T-1116 · T-1307: the chat ask, else stored `user.lang`); no language known → the `--lang` flag is dropped
     (`prdt wordlist check -` then reads the project's wordlist.lang)."""
-    lang = stored_user_lang()  # T-1281: stored only; none → the project's wordlist.lang
+    lang = session_lang()  # T-1281: never a device guess · T-1307: the chat ask first; none → wordlist.lang
     if lang:
         return REPLY_HOT_LINE.replace("<user_lang>", lang)
     return REPLY_HOT_LINE.replace("--lang <user_lang> ", "")
@@ -405,23 +405,36 @@ LANG_CHECK_NOTICE = (
     "language; code, paths, ids, quoted text unchanged."
 )
 # T-1307: the mid-turn language check (PostToolUse, PO only) — the PO prose written
-# right before this tool call (after a tool output or a worker return). DRAFT wording:
-# returned for the designer's inject-edit + user confirmation. %s = the session language.
+# right before this tool call (after a tool output or a worker return). Wording approved
+# under T-1370 (= A). %s = the session language.
 LANG_MIDTURN_NOTICE = (
-    "[prdt lang check] your text before this tool call is not in lang=%s. Write the rest "
-    "of this turn in that language; code, paths, ids, quoted text unchanged."
+    "[prdt lang check] your text before this tool call is not in lang=%s. Write this "
+    "turn's remaining user-chat text in that language; code, paths, ids, quoted text unchanged."
 )
 # T-1317 (decision A): a language the user asks for in chat outranks the stored
 # `user.lang` for the rest of that session. UserPromptSubmit records the latest request
 # in `$PRDT_HOME/run/session-lang/<session_id>`; the Stop and PostToolUse checks read it.
-# Only an ask about the CHAT (reply/answer/speak … in X, X로 답/말 …) counts — a task on
-# text in that language ("translate it into English", "영어로 번역") does not.
+# Only a request addressed to the assistant about the CHAT counts (T-1307 QA): an
+# imperative verb at a clause start or after please / can you …, then `in X`
+# ("switch to X"); "X로(만) 답해/대답해/말해 …". A task on text ("translate your answer to
+# English", "write a reply in English", "이 문장 영어로 바꿔줘", "영어로 답장 써줘"), a how-to
+# ("영어로 말하는 법", "how do I talk to Korean users") or a negated ask ("Don't reply in
+# English") does not. Unsure → no switch: a missed switch costs one rewrite, a wrong one
+# flags the user's own language for the whole session.
 CHAT_LANG_CODE = {"english": "en", "korean": "ko", "영어": "en", "한국어": "ko", "한글": "ko"}
 CHAT_LANG_RES = (
-    re.compile(r"\b(?:repl|respond|answer|speak|talk|chat|convers|switch)\w*"
-               r"(?:\s+\S+){0,4}?\s+(?:in|to)\s+(english|korean)\b", re.I),
-    re.compile(r"(영어|한국어|한글)\s*로\s*(?:만\s*)?(?:답|대답|응답|말|얘기|이야기|대화|바꿔)"),
+    re.compile(r"(?:\A|[.!?;,\n]|\b(?:please|pls|kindly|just|now|and|then|"
+               r"(?:can|could|would|will)\s+you|you\s+(?:should|must)))\s*"
+               r"(?:(?:repl(?:y|ies)|respond|answer|speak|talk|chat)"
+               r"(?:\s+(?:to\s+me|back|only))*\s+(?:only\s+)?in"
+               r"|switch(?:\s+(?:back|the\s+(?:chat\s+)?language|languages))?\s+to)"
+               r"\s+(english|korean)\b", re.I),
+    re.compile(r"(영어|한국어|한글)\s*로\s*(?:만\s*)?"
+               r"(?:답|대답|답변|응답|말|얘기|이야기|대화)\s*해"
+               r"(?!\s*(?:주지|서|야|도|봐도|본|보는))"),
 )
+# An object right before "X로" makes it a task on that text ("이거 영어로 말해줘").
+CHAT_LANG_KO_OBJECT_RE = re.compile(r"(?:이거|이걸|이것|그거|그걸|저거|문장|단어|표현|메일|글)\S*\s*\Z")
 SESSION_ID_RE = re.compile(r"\A[A-Za-z0-9_-]{1,128}\Z")
 SESSION_LANG_KEEP_S = 30 * 86400
 
@@ -441,6 +454,8 @@ def chat_lang_request(prompt):
     best = None
     for rx in CHAT_LANG_RES:
         for m in rx.finditer(prompt[:8000]):
+            if rx is CHAT_LANG_RES[1] and CHAT_LANG_KO_OBJECT_RE.search(prompt[max(0, m.start() - 12):m.start()]):
+                continue
             if best is None or best[0] < m.end():
                 best = (m.end(), CHAT_LANG_CODE[m.group(1).lower()])
     return best[1] if best else None
@@ -472,11 +487,13 @@ def session_lang():
     """T-1317: this session's chat-language ask, else the stored `user.lang`, else None."""
     p = _session_lang_path()
     if p:
-        try:
-            with open(p, encoding="utf-8", errors="replace") as f:
-                v = "".join(f.read(16).split())
-            if USER_LANG_RE.match(v):
-                return v
+        try:  # a regular file only: a symlink, FIFO or directory there is never read
+            if stat.S_ISREG(os.lstat(p).st_mode):
+                fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(fd, "rb") as f:
+                    v = "".join(f.read(16).decode("utf-8", "replace").split())
+                if USER_LANG_RE.match(v):
+                    return v
         except OSError:
             pass
     return stored_user_lang()
