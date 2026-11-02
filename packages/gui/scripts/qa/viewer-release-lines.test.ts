@@ -178,10 +178,10 @@ describe('render — one sidebar section per line', () => {
     for (const store of ['wiki', 'release', 'disc']) expect(sidebar(store), store).not.toContain('ls-h')
   })
 
-  it("T-1255: each line's 현재 버전 sidebar lists 용어 사전 directly under its env", () => {
+  it("T-1255: each line's 현재 버전 sidebar lists 용어 사전 right after its 결정 (T-1227: env moved to its own store)", () => {
     const keys = [...sidebar('home').matchAll(/data-group-select="([^"]+)"/g)].map((m) => m[1])
-    expect(keys[keys.indexOf('env') + 1]).toBe('glossary')
-    expect(keys[keys.indexOf('ntf-archive/env') + 1]).toBe('ntf-archive/glossary')
+    expect(keys[keys.indexOf('decision') + 1]).toBe('glossary')
+    expect(keys[keys.indexOf('ntf-archive/decision') + 1]).toBe('ntf-archive/glossary')
     expect(pane('home', 'glossary')).toContain('용어')
   })
 
@@ -306,13 +306,14 @@ describe('multi-line project without features.taxonomy — docs/features specs (
 })
 
 describe('single-line project — no section heads, unchanged output', () => {
-  it('lineViews is empty and no line markup, CSS or script appears', () => {
+  it('lineViews is empty and no line script or data-crumb appears; head markup only in the env store', () => {
     const one = { ...data, lines: [] }
     expect(lineViews(one)).toEqual([])
     const h = render(one)
-    expect(h).not.toContain('class="ls-h"')
+    // T-1227: the env store heads its products even for one product, so the head CSS is always emitted; other stores carry none
+    const nonEnv = h.replace(/<section[^>]*data-store="env"[\s\S]*?<\/section>/, '')
+    expect(nonEnv).not.toContain('class="ls-h"')
     expect(h).not.toContain('data-crumb=')
-    expect(h).not.toContain('.ls-h {')
   })
 
   it.skipIf(!META_ROOT)(`real productune corpus: no lines, and the lines path is inert (${META_SKIP_REASON ?? 'meta root found'})`, () => {
@@ -321,6 +322,6 @@ describe('single-line project — no section heads, unchanged output', () => {
     const a = render(real)
     const { lines: _drop, ...noKey } = real
     expect(a).toBe(render(noKey))
-    expect(a).not.toContain('class="ls-h"')
+    expect(a.replace(/<section[^>]*data-store="env"[\s\S]*?<\/section>/, '')).not.toContain('class="ls-h"')
   })
 })
