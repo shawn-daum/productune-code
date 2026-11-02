@@ -17,8 +17,11 @@
  *   https://hostname      → [hostname](https://hostname)            (#C8C8CC)
  *
  * Skips (this preprocessor, `linkifyText`, never rewrites these):
- *   - Fenced code blocks  ``` … ```
- *   - Inline backtick code  `…`
+ *   - Every code region the markdown parser sees (T-1157): ``` and ~~~
+ *     fences (unclosed ones run to the end), indented code blocks, inline
+ *     code spans of any backtick run length, multi-line spans included.
+ *     Located by mdast-util-from-markdown — the parser react-markdown itself
+ *     runs — so a skipped region is exactly what renders as code.
  *   - Existing markdown links  [text](href)  — preserved as-is
  *
  * T-346: a code span being skipped here is correct for markdown semantics,
@@ -29,13 +32,35 @@
  * That is render-time, not a preprocessing step, so it's kept out of the
  * skip list above.
  *
- * No npm dependencies — pure string preprocessor for react-markdown.
+ * A ticket id is never a whole-span code target (T-1157): `T-1157` in
+ * backticks renders as plain code.
  */
 
-// ── Code block splitter ───────────────────────────────────────────────────────
+import { fromMarkdown } from 'mdast-util-from-markdown'
 
-/** Matches fenced (```…```) and inline (`…`) code regions. */
-const CODE_BLOCK_RE = /(```[\s\S]*?```|`[^`\n]+`)/g
+// ── Code region finder ────────────────────────────────────────────────────────
+
+interface MdNode {
+  type: string
+  position?: { start: { offset?: number }; end: { offset?: number } }
+  children?: MdNode[]
+}
+
+/** [start, end) offsets of every `code` / `inlineCode` node, in source order. */
+function _codeRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = []
+  const walk = (node: MdNode): void => {
+    if (node.type === 'code' || node.type === 'inlineCode') {
+      const start = node.position?.start.offset
+      const end = node.position?.end.offset
+      if (start !== undefined && end !== undefined) ranges.push([start, end])
+      return
+    }
+    node.children?.forEach(walk)
+  }
+  walk(fromMarkdown(text) as MdNode)
+  return ranges
+}
 
 // ── Combined linkification pattern (one-pass, priority by alternation order) ─
 
@@ -50,7 +75,9 @@ const CODE_BLOCK_RE = /(```[\s\S]*?```|`[^`\n]+`)/g
  *        digits; plus the legacy P4- prefix. No shared source exists across
  *        the Python hook and this TS module, so the pattern is mirrored —
  *        keep the two in step. Look-alikes stay plain: ST-12 (letter
- *        before), T-12a (letter after), T-12-slug, T-12.md, tracks/T-12.
+ *        before), T-12a (letter after), T-12-slug, tracks/T-12, and any
+ *        filename-like T-12.<ext> (T-12.md, T-12.json, T-12.yaml…).
+ *        A sentence-ending "T-12." still links.
  *   4. Relative file path                            → ptn:file/
  *        a. rooted:  ./?  (docs|packages|src|.productune)/…/.ext
  *        b. root-level whitelist: config.json | package.json | tsconfig.json
@@ -91,7 +118,7 @@ const CODE_BLOCK_RE = /(```[\s\S]*?```|`[^`\n]+`)/g
  * is trusted broadly (no doctrine-signal requirement).
  */
 const LINK_RE =
-  /(https?:\/\/[^\s<>"]+)|(\[[^\]]*\]\([^)]*\))|((?<![A-Za-z0-9_.\\/-])T-(?:P4-|PATCH-|[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6}(?![\d_]|-\w|\.(?:md|html)\b|[A-Za-z]))|((?<![\w/.\-])\.?\/?(?:(?:docs|packages|src|\.productune)\/[\w/.\-]+\.(?:md|tsx|ts|sh|json)|docs\/artifacts\/[\w/.\-]+\.html|\.productune\/\.env[a-zA-Z0-9._-]*|\.env[a-zA-Z0-9._-]*|(?:config|package|tsconfig)\.json))|(file:\/\/[^\s<>")\]]+|(?:~|\/[\w.\-]+)(?:\/[\w.\-]+)*\/\.productune\/(?:po|designer|developer|qa)\/[\w/.\-]+\.md)/g
+  /(https?:\/\/[^\s<>"]+)|(\[[^\]]*\]\([^)]*\))|((?<![A-Za-z0-9_.\\/-])T-(?:P4-|PATCH-|[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6}(?![\d_]|-\w|\.\w|[A-Za-z]))|((?<![\w/.\-])\.?\/?(?:(?:docs|packages|src|\.productune)\/[\w/.\-]+\.(?:md|tsx|ts|sh|json)|docs\/artifacts\/[\w/.\-]+\.html|\.productune\/\.env[a-zA-Z0-9._-]*|\.env[a-zA-Z0-9._-]*|(?:config|package|tsconfig)\.json))|(file:\/\/[^\s<>")\]]+|(?:~|\/[\w.\-]+)(?:\/[\w.\-]+)*\/\.productune\/(?:po|designer|developer|qa)\/[\w/.\-]+\.md)/g
 
 /**
  * Anchored (`^…$`) variant of LINK_RE for whole-string matching (T-346).
@@ -111,15 +138,13 @@ const LINK_RE_ANCHORED = new RegExp(`^(?:${LINK_RE.source})$`)
  * Code regions are preserved unchanged; everything else is linkified.
  */
 export function linkifyText(text: string): string {
-  // Split by code blocks
+  // Split by the code regions the markdown parser finds
   const segments: Array<{ t: string; code: boolean }> = []
   let lastIdx = 0
-  CODE_BLOCK_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = CODE_BLOCK_RE.exec(text)) !== null) {
-    if (m.index > lastIdx) segments.push({ t: text.slice(lastIdx, m.index), code: false })
-    segments.push({ t: m[0], code: true })
-    lastIdx = m.index + m[0].length
+  for (const [start, end] of _codeRanges(text)) {
+    if (start > lastIdx) segments.push({ t: text.slice(lastIdx, start), code: false })
+    segments.push({ t: text.slice(start, end), code: true })
+    lastIdx = end
   }
   if (lastIdx < text.length) segments.push({ t: text.slice(lastIdx), code: false })
 
@@ -230,8 +255,9 @@ function _linkifySegment(text: string): string {
 /**
  * T-346 — test whether `raw` (an inline code-span's text content, backticks
  * already stripped by the markdown parser) is, in its entirety once trimmed,
- * ONE linkify-eligible token (file:// URI, docs/artifacts/*.html path, ticket
- * ID, doctrine path, or bare URL — same alternation/scope as prose linkify).
+ * ONE linkify-eligible token (file:// URI, docs/artifacts/*.html path,
+ * doctrine path, or bare URL — same alternation/scope as prose linkify, minus
+ * ticket ids, which stay plain code in a span — T-1157).
  *
  * Deliberately whole-string only (anchored `^…$`), not a substring scan: a
  * code span like `` `const url = "https://x"` `` must stay inert — only a
@@ -251,5 +277,7 @@ export function matchSingleLinkTarget(raw: string): ResolvedLink | null {
   if (!m) return null
   const [, bareUrl, existingLink, ticketId, filePath, absDoctrine] = m
   if (existingLink !== undefined) return null
+  // T-1157: a span holding only a ticket id stays plain code.
+  if (ticketId !== undefined) return null
   return _resolveMatch({ bareUrl, ticketId, filePath, absDoctrine })
 }

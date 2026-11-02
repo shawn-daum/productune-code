@@ -54,9 +54,60 @@ test('ticket file path still links as a file, not a ticket', () => {
   )
 })
 
-test('matchSingleLinkTarget resolves bare and prefixed ids in a code span', () => {
-  expect(matchSingleLinkTarget('T-1157')).toEqual({ label: 'T-1157', href: 'ptn:ticket/T-1157' })
-  expect(matchSingleLinkTarget('T-WK-12')).toEqual({ label: 'T-WK-12', href: 'ptn:ticket/T-WK-12' })
+test('matchSingleLinkTarget never makes a ticket-id-only code span a link', () => {
+  for (const id of ['T-1157', 'T-WK-12', 'T-PATCH-93', 'T-P4-114', ' T-1157 ']) {
+    expect(matchSingleLinkTarget(id)).toBeNull()
+  }
   expect(matchSingleLinkTarget('ST-12')).toBeNull()
   expect(matchSingleLinkTarget('T-12a')).toBeNull()
 })
+
+test('matchSingleLinkTarget still resolves the other whole-span targets (T-346)', () => {
+  expect(matchSingleLinkTarget('docs/artifacts/foo.html')).toEqual({
+    label: 'foo.html',
+    href: 'ptn:file/docs/artifacts/foo.html',
+  })
+  expect(matchSingleLinkTarget('https://example.com/x')).toEqual({
+    label: 'example.com',
+    href: 'https://example.com/x',
+  })
+})
+
+// ── QA d-v116-t1157-qa1 fail rows: every code form keeps ids plain ───────────
+
+test.each([
+  ['tilde fence', '~~~\nT-1157\n~~~'],
+  ['tilde fence with info string', '~~~text\nsee T-1157 now\n~~~'],
+  ['four-tilde fence holding a ~~~ line', '~~~~\nT-1\n~~~\nT-2\n~~~~'],
+  ['unclosed fence runs to the end', '```\nT-1157\nT-12'],
+  ['multi-line inline code span', 'run `T-1157\nT-12` here'],
+  ['double-backtick span holding a backtick', 'run ``a ` T-1157`` here'],
+  ['four-space indented code block', 'intro\n\n    T-1157 in code\n'],
+  ['tab indented code block', 'intro\n\n\tT-1157 in code\n'],
+])('does not link an id inside a %s', (_label, input) => {
+  expect(linkifyText(input)).toBe(input)
+})
+
+test('prose around a code form still links', () => {
+  expect(linkifyText('T-1 ~~~ no fence\n\n~~~\nT-2\n~~~\n\nT-3 `T-4\nT-5` T-6')).toBe(
+    `${link('T-1')} ~~~ no fence\n\n~~~\nT-2\n~~~\n\n${link('T-3')} \`T-4\nT-5\` ${link('T-6')}`,
+  )
+})
+
+test('an indented list continuation is prose, not code — its id still links', () => {
+  expect(linkifyText('- item\n\n    T-12 continues the item')).toBe(
+    `- item\n\n    ${link('T-12')} continues the item`,
+  )
+})
+
+test('a lone backtick is not a code span — ids after it still link', () => {
+  expect(linkifyText('a ` tick then T-12')).toBe(`a \` tick then ${link('T-12')}`)
+})
+
+test.each(['json', 'ts', 'yaml', 'txt', 'sh', 'tsx', 'log'])(
+  'T-1157.%s (filename-like) stays plain',
+  (ext) => {
+    const input = `open T-1157.${ext} now`
+    expect(linkifyText(input)).toBe(input)
+  },
+)
