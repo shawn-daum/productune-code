@@ -115,7 +115,8 @@
 #   Beyond the T-779 shapes, two more are denied for this directory only:
 #   an interpreter (python/node/perl/ruby/…) whose inline program — `-c`/`-e`
 #   argument, heredoc body, here-string — names it, and a worker's own
-#   `prdt track open|land|drop` (PO commands; `review` stays allowed). A
+#   `prdt track open|merge|drop` (and its `land` alias through v1.16; PO
+#   commands; `review` stays allowed). A
 #   real reassignment of PRDT_HOME / HOME — a prefix on the SAME command
 #   (`PRDT_HOME=… prdt track …`, `env PRDT_HOME=…`; it reaches that child,
 #   not its own `$VAR` arguments), `export X=…`, or a bare `X=…` statement
@@ -581,7 +582,7 @@ def _resolve_target(path, base, env):
 
 def deny_tracks(rp, how):
     msg = (f"prdt write guard (T-834): {tracks_abs} holds the PO's track records — `prdt track open` "
-           f"writes them, `land` and `drop` remove them, and $PRDT_HOME/run/ is tooling-owned "
+           f"writes them, `merge` and `drop` remove them, and $PRDT_HOME/run/ is tooling-owned "
            f"(contracts §Return), so a worker cannot write, move or delete anything there — denied {how}: {rp}. "
            f"Reading it (cat, ls) is allowed; report a wrong record to the PO instead of changing it.")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
@@ -1379,10 +1380,11 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch, lv=None):
             if names_tracks(" ".join(args + stdin_texts)):
                 deny_tracks(tracks_abs, f"Bash {name} program naming the track records")
         if is_worker and (name == "prdt" or (INTERP_RE.match(name) and ops and os.path.basename(ops[0]) == "prdt")):
-            # T-834: `prdt track open|land|drop` writes or removes the record —
+            # T-834: `prdt track open|merge|drop` writes or removes the record —
             # PO acts (contracts/git.md); a worker may still run `review`.
+            # T-1264: `land` = the alias of `merge` through v1.16, denied alike.
             pa = [a for a in (args if name == "prdt" else args[args.index(ops[0]) + 1:]) if not a.startswith("-")]
-            if len(pa) >= 2 and pa[0] == "track" and pa[1] in ("open", "land", "drop") and same_home(env):
+            if len(pa) >= 2 and pa[0] == "track" and pa[1] in ("open", "merge", "land", "drop") and same_home(env):
                 deny_tracks(tracks_abs, f"Bash prdt track {pa[1]} (a PO command)")
         dep = deploy_shape(name, args, ecwd, heads)
         if dep:
