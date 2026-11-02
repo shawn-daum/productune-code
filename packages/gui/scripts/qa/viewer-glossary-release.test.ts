@@ -171,7 +171,7 @@ describe('릴리즈 노트 (T-883)', () => {
     expect(e.html).toContain('<span class="detail-field-value ver">v1.11.1</span>')
     expect(e.html).toContain('>날짜<')
     expect(e.html).toContain('<div class="v-note">패치 릴리스입니다. T-810 을 반영합니다.<br>적용: <code>prdt update</code></div>')
-    expect(e.html).toContain('<h3 class="pill pill-heading-2">Added</h3>')
+    expect(e.html).toContain('<h3 class="pill pill-heading-2">1. Added</h3>') // T-1303: group-line numbers (T-1316)
     expect(e.html).toContain('<strong>새 기능입니다.</strong>')
   })
 
