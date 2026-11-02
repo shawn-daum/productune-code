@@ -39,12 +39,25 @@ set -m  # every background phase job gets its own process group (stopped as a wh
 TICKET=""; SHA=""; SESSION=""; RUNNER_SHA=""; SHARD=""; FILES=(); EXCLUDES=()
 SETUP_TO=180; INSTALL_TO=600; TEST_TO=1200
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-# redact: user:token@ in URLs, GitHub/GitLab token literals, auth header values
+# redact: user:token@ in URLs, GitHub/GitLab/Anthropic/OpenAI/AWS/Slack/npm key literals, auth header
+# values (also on the next line). T-1221: the same rules, in the same order, as redact() in
+# prdt-cloud-condense.mjs; Bearer/Basic take ASCII or listed Unicode spaces before the value. Only constructs identical on BSD and GNU sed (see T-1221). LC_ALL=C so [[:space:]] is ASCII whitespace only, as in the JS copy.
 redact() {
-  sed -E -e 's#(://)[^/@[:space:]]*@#\1***@#g' \
+  # Bearer/Basic separator: ASCII whitespace or one of these Unicode spaces as UTF-8 bytes (sed runs
+  # under LC_ALL=C): NBSP, U+2000-U+200A, U+202F, U+205F, U+3000 — never any other character.
+  local u o
+  u=$(printf '\302\240|\342\200\257|\342\201\237|\343\200\200')
+  for o in 200 201 202 203 204 205 206 207 210 211 212; do u="$u|$(printf "\\342\\200\\$o")"; done
+  LC_ALL=C sed -E -e '/([Aa]uthorization|AUTHORIZATION)[:=][[:space:]]*$/{$!N;}' \
+    -e 's#(://)[^/@[:space:]]*@#\1***@#g' \
     -e 's#(gh[opusr]_|github_pat_|glpat-)[A-Za-z0-9_]+#\1***#g' \
+    -e 's#(sk-ant-)[A-Za-z0-9_-]+#\1***#g' \
+    -e 's#(^|[^A-Za-z0-9_-])(sk-)[A-Za-z0-9_-]{8,}#\1\2***#g' \
+    -e 's#(AKIA)[0-9A-Z]{16}#\1***#g' \
+    -e 's#(xox[abpr]-)[A-Za-z0-9-]+#\1***#g' \
+    -e 's#(npm_)[A-Za-z0-9]{20,}#\1***#g' \
     -e 's#([Aa]uthorization|AUTHORIZATION)([:=][[:space:]]*).*#\1\2***#' \
-    -e 's#([Bb]earer|[Bb]asic)[[:space:]]+[A-Za-z0-9._~+/=-]+#\1 ***#g'
+    -e "s#([Bb]earer|[Bb]asic)([[:space:]]|$u)+[A-Za-z0-9._~+/=-]+#\\1 ***#g"
 }
 refuse() { echo "prdt-cloud-test: $1 — nothing pushed" >&2; exit 2; }
 while [ $# -gt 0 ]; do
@@ -64,7 +77,7 @@ while [ $# -gt 0 ]; do
   esac
   shift 2
 done
-[[ $TICKET =~ ^T-[0-9]+$ ]] || refuse "--ticket must be T-NNN"
+[[ $TICKET =~ ^T-([BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]+$ ]] || refuse "--ticket must be T-NNN or T-<PREFIX>-<n>"
 [[ $SESSION =~ ^[A-Za-z0-9._-]+$ ]] || refuse "--session must be [A-Za-z0-9._-] only"
 [[ $SHA =~ ^[0-9a-f]{40}$ ]] || refuse "--sha must be a full commit id"
 [[ $RUNNER_SHA =~ ^[0-9a-f]{40}$ ]] || refuse "--runner-sha must be a full commit id"
@@ -195,7 +208,7 @@ fi
 
 TAIL=""
 if [ -n "$LOG" ] && [ -f "$LOG" ]; then
-  TAIL=$(tail -c 1500 "$LOG")
+  TAIL=$(redact < "$LOG" | tail -c 1500)   # redact the whole log first: a cut inside a token must not leak its tail
   tail -n 20 "$LOG" | redact | while IFS= read -r l; do echo "PRDT_PHASE $PHASE log| $l"; done
 fi
 [ "$STATUS" = ok ] && PHASE=""

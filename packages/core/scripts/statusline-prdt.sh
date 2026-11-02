@@ -75,7 +75,7 @@ while [ -n "$D" ] && [ "$D" != "/" ]; do
   [ -f "$D/.prdt/po-state.json" ] && ROOT="$D"
   # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary — never walk out of it
   if [ -f "$D/.git" ] && [ "$(basename "$(dirname "$D")")" = "tracks" ]; then
-    case "${D##*/}" in T-[0-9]|T-[0-9][0-9]|T-[0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9]|T-[0-9][0-9][0-9][0-9][0-9]) ROOT=""; break ;; esac
+    [[ "${D##*/}" =~ ^T-([BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}$ ]] && { ROOT=""; break; }   # T-1298: T-NNN or T-<PREFIX>-<n>
   fi
   UP="$(dirname "$D")"
   [ "$UP" = "$D" ] && break
@@ -103,7 +103,10 @@ def _product_dir_name(slug):
     if not isinstance(slug, str) or not slug:
         return None
     k = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")
-    return k if _PROD_NAME_RE.match(k) else "product"
+    if not _PROD_NAME_RE.match(k):
+        return "product"
+    # T-1215: layout-reserved names (PRODUCT_RESERVED_NAMES in prdt_lanes.py) get a suffix
+    return k + "-product" if k in ("prd", "tickets", "artifacts", "wiki", "features", "archive", "po", "designer", "developer", "qa") else k
 
 
 def project_products(root):
@@ -179,7 +182,7 @@ except Exception:
 STAGES = ("define", "build", "ship", "retro", "idle")
 ASSIGNEES = ("po", "designer", "developer", "qa", "user")
 VERSION_RE = re.compile(r"\Av[0-9]{1,4}(?:\.[0-9]{1,4}){0,2}\Z")
-TICKET_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+TICKET_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")
 
 
 def token(raw, ok, absent=""):
@@ -263,6 +266,91 @@ def L(key, **kw):
 
 
 slug = clean(cfg_slug) or clean(os.path.basename(root)) or "?"
+
+
+# ── T-1249: first-line cells after the version cell ─────────────────────────
+# Each helper returns a display string or "" (= no cell). `home_cells()` is the
+# one place first-line cells are listed, in print order (T-1252 adds its own).
+def priority_cell():
+    """`우선 n/m` — this project's rank in the machine's `priority.projects`
+    (comma-separated slugs in `$PRDT_HOME/priority-projects`). Only with 2+
+    listed names and this project's explicit config slug among them."""
+    home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+    try:
+        raw = "".join(open(os.path.join(home, "priority-projects"), encoding="utf-8", errors="replace").read().split())
+    except OSError:
+        return ""
+    names = [n for n in raw.split(",") if n]
+    if len(names) < 2 or not isinstance(cfg_slug, str) or cfg_slug not in names:
+        return ""
+    return L("priority", n=names.index(cfg_slug) + 1, m=len(names))
+
+
+def _vkey(v):
+    """`v1` == `v1.0` == `v1.0.0` — version id as a 3-int tuple, or None off-shape."""
+    if not (isinstance(v, str) and VERSION_RE.match(v)):
+        return None
+    n = [int(x) for x in v[1:].split(".")]
+    return tuple(n + [0] * (3 - len(n)))
+
+
+def _deployed_version(row):
+    """The `deployed.version` of this row's product (T-1186 record), or None.
+    Reads `docs/<product>/DEPLOY.md` frontmatter only — the one-line flow
+    `deployed: {version: v1.2, at: ..., ref: ...}` and the block form. No record,
+    no file, a symlink, or an off-shape value all read as None (never raised)."""
+    prods = project_products(root)
+    if prods:
+        path = os.path.join(root, "docs", row["line"] or prods[0], "DEPLOY.md")
+    elif row["line"] is None:
+        path = os.path.join(root, "docs", "DEPLOY.md")
+    else:
+        return None
+    try:
+        if os.path.islink(path) or not os.path.isfile(path):
+            return None
+        with open(path, encoding="utf-8", errors="replace") as f:
+            head = f.read(65536).split("\n")
+    except OSError:
+        return None
+    if not head or head[0].strip() != "---":
+        return None
+    block = False
+    for ln in head[1:]:
+        if ln.strip() == "---":
+            return None
+        if block:
+            m = re.match(r"\A\s+version\s*:\s*(.*?)\s*\Z", ln)
+            if m:
+                return m.group(1).strip("\"'")
+            if ln.strip() and not ln[:1].isspace():
+                return None
+            continue
+        m = re.match(r"\Adeployed\s*:\s*(.*?)\s*\Z", ln)
+        if not m:
+            continue
+        if not m.group(1):
+            block = True
+            continue
+        m2 = re.search(r"[{,]\s*version\s*:\s*([^,}\s]+)", m.group(1))
+        return m2.group(1).strip("\"'") if m2 else None
+    return None
+
+
+def deployed_cell(row):
+    """`배포 vX · 개발 vY` — only when this product has a readable deployed
+    record that differs from the dev version its row shows (T-1252)."""
+    dev = row.get("version")
+    if not _vkey(dev):
+        return ""
+    dep = _deployed_version(row)
+    if not _vkey(dep) or _vkey(dep) == _vkey(dev):
+        return ""
+    return L("deployed", dep=dep, dev=dev)
+
+
+def home_cells():
+    return [c for c in (priority_cell(),) if c]
 
 # ── T-961 / T-1108: products (pre-v1.14 name: release lines) ─
 # The first product is the project slug and reads po-state's top-level stage /
@@ -385,6 +473,10 @@ for r in rows:
     # T-922: `<label> <version>` opens the row (one OSC 8 link, see wrap_slug);
     # version is omitted only when po-state carries none.
     r["slug_ver"] = f"{r['label']} {r['version']}" if r["version"] else r["label"]
+    # T-1252: a differing deployed record turns the version cell itself into `<label> 배포 vX · 개발 vY`
+    _dc = deployed_cell(r)
+    if _dc:
+        r["slug_ver"] = f"{r['label']} {_dc}"
     r["branch"] = clean(r["branch"])
     r["vdone"] = r["vtotal"] = 0
     r["sdone"], r["stotal"] = {}, {}
@@ -420,7 +512,7 @@ def _fm_deps(head):
     fm = re.match(r"---\n(.*?)\n---", head, re.S)
     block = fm.group(1) if fm else head
     m = re.search(r"^deps:[ \t]*(.*(?:\n[ \t]+-[^\n]*)*)", block, re.M)
-    return re.findall(r"T-\d+", m.group(1)) if m else []
+    return re.findall(r"T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+", m.group(1)) if m else []
 
 
 def scan(base, row):
@@ -479,7 +571,8 @@ for r in rows:
 
 
 def _tid_key(t):
-    return int(t[2:])
+    head, _, n = t.rpartition("-")   # T-1298: `T-12` → ("T", 12), `T-RCH-001` → ("T-RCH", 1)
+    return head, int(n)
 
 
 dec = sorted(set(dec), key=_tid_key)
@@ -949,17 +1042,41 @@ def lane_text(lane, cap):
 
 
 def lane_block(lanes, cap):
-    """[(lane, text)] under one product row: one row per unfinished lane and the
-    자투리 lane (finished or not), 자투리 last. A finished gate lane (done ==
-    total) leaves the rows — `finished_entries` puts it on the product row (T-1203).
-    No row cap, no folding (R12)."""
-    return [(x, lane_text(x, cap)) for x in lanes if x.get("finished") is not True or x.get("besteffort") is True]
+    """([finished entries], [(lane, text)]) for one product: T-1202 = B — every
+    finished gate lane (never 자투리) is an `NAME d/t` entry the product's FIRST
+    row carries as `done lanes: …`, table order; then one row per other lane,
+    자투리 last. No row cap, no folding (R12)."""
+    done = [x for x in lanes if x.get("finished") is True and x.get("besteffort") is not True]
+    ents = [clean(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}", cap=10**6) for x in done]
+    out = [(x, lane_text(x, cap)) for x in lanes if not (x.get("finished") is True and x.get("besteffort") is not True)]
+    return ents, out
 
 
-def finished_entries(lanes):
-    """T-1203: `NAME d/t` of every finished gate lane, table order."""
-    return [clean(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}", cap=10**6)
-            for x in lanes if x.get("finished") is True and x.get("besteffort") is not True]
+def done_segment(ents, room):
+    """(segment, overflow rows): the `done lanes: A 1/1 · B 2/2` first-row segment
+    holds as many whole entries as fit `room` columns (T-1184 F2: never cut an
+    entry; the first always stays); the rest continue on nameless rows, each
+    whole, under the product row."""
+    if not ents:
+        return "", []
+    pre = L("lane.finished", lanes="")
+    seg, rest = pre + ents[0], []
+    for k, e in enumerate(ents[1:], 1):
+        if dw(seg + " · " + e) <= room:
+            seg += " · " + e
+        else:
+            rest = ents[k:]
+            break
+    rows, cur = [], ""
+    for e in rest:
+        if cur and room < dw(cur + " · " + e):
+            rows.append(({}, cur))
+            cur = e
+        else:
+            cur = cur + " · " + e if cur else e
+    if cur:
+        rows.append(({}, cur))
+    return seg, rows
 
 
 def lane_cap():
@@ -981,11 +1098,9 @@ out_rows = []
 # T-1147: parallel to `shown` — [(lane, text)] under each product row. Any lane
 # failure (stale module, odd data) = no lane rows at all; the rest stays intact.
 try:
-    lane_rows = [lane_block(lane_data.get(r["line"], []), lane_cap()) for r in shown]
-    fin_rows = [finished_entries(lane_data.get(r["line"], [])) for r in shown]
+    lane_parts = [lane_block(lane_data.get(r["line"], []), lane_cap()) for r in shown]
 except Exception:
-    lane_rows = [[] for _ in shown]
-    fin_rows = [[] for _ in shown]
+    lane_parts = [([], []) for _ in shown]
 
 # T-1147 / T-1184 R12: lane rows go right under their product row — every one of
 # them: no row cap and no folding for lanes (MAX_ROWS still folds product rows).
@@ -993,40 +1108,25 @@ except Exception:
 # product rows — a running dispatch stays on `working` unless a surviving lane row
 # of its product prints that id (the user must always see what is running)
 for k, r in enumerate(shown):
-    head = [r["slug_ver"], r["stage"]]
+    head = [r["slug_ver"]] + (home_cells() if r["line"] is None else []) + [r["stage"]]
     if r["vtotal"]:
         head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
-    lane_txt = " ".join(t for _, t in lane_rows[k])
-    fin = fin_rows[k]
+    branch = L("branch", name=r["branch"]) if r["branch"] else ""
+    # T-1202 = B: finished lanes ride the first row (after tickets, before working); what does not fit continues below
+    try:
+        floor = " | ".join(head + [working_seg([], (1, 1, 0))] + ([branch] if branch else []))
+        done_seg, done_more = done_segment(lane_parts[k][0], max(lane_cap() - dw(floor) - 3, 1))
+    except Exception:
+        done_seg, done_more = "", []
+    if done_seg:
+        head.append(done_seg)
+    lane_rows_k = done_more + lane_parts[k][1]
+    lane_txt = " ".join(t for _, t in lane_rows_k)
     ids = [tid for tid, _ in running if line_of(tid) == r["line"]
            and not re.search(r"(?<![\w-])" + re.escape(tid) + r"(?!\d)", lane_txt)]
-    branch = L("branch", name=r["branch"]) if r["branch"] else ""
-    # T-1203: finished gate lanes ride the first line, after `총 티켓`, before `작업중`.
-    # F2: an entry is never cut — one that would pass the width goes to a
-    # continuation row under the product row (a lone over-wide entry stays whole).
-    sep_w = dw(" | " + branch) if branch else 0
-    take = len(fin)
-    while take:
-        probe = " | ".join(head + [L("lane.finished", lanes=" · ".join(fin[:take])), working_seg(ids, (1, 1, 0))])
-        if dw(probe) + sep_w <= LINE_CAP:
-            break
-        take -= 1
-    take = take or min(1, len(fin))
-    row_head = head + ([L("lane.finished", lanes=" · ".join(fin[:take]))] if take else [])
-    row = fit(lambda lim, rh=row_head, ids=ids: " | ".join(rh + [working_seg(ids, lim)]), branch)
-    if take and take < len(fin) or (take and dw(" | ".join(row_head)) + sep_w > LINE_CAP):
-        row = " | ".join(row_head + [working_seg(ids, (1, 1, 0))]) + (" | " + branch if branch else "")
-    out_rows.append((r["slug_ver"], row))
-    rest, cur = fin[take:], ""
-    for e in rest:
-        if cur and lane_cap() < dw(cur + " · " + e):
-            out_rows.append((None, cur))
-            cur = e
-        else:
-            cur = cur + " · " + e if cur else e
-    if cur:
-        out_rows.append((None, cur))
-    out_rows.extend((None, t) for _, t in lane_rows[k])
+    out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
+                                        " | ".join(head + [working_seg(ids, lim)]), branch)))
+    out_rows.extend((None, t) for _, t in lane_rows_k)
 if len(shown) < len(rows):
     out_rows.append((None, L("lines", n=len(rows) - len(shown))))
 out_rows.append((None, action_row()))

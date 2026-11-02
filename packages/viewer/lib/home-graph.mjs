@@ -197,6 +197,7 @@ export function buildHomeGraph({ tickets, gatePath = '', riderKey = 'riders' }) 
     return {
       id,
       slug: fm.slug || '',
+      name: fm.title || fm.slug || '',
       assignee: fm.assignee || '',
       status: fm.status,
       done: fm.status === 'done',

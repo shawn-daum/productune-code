@@ -14,7 +14,7 @@ import fs from 'fs'
 import os from 'os'
 import crypto from 'crypto'
 import { execFileSync } from 'child_process'
-import { test, expect, beforeEach, afterEach } from 'vitest'
+import { test, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest'
 import {
   initMetaRepo,
   metaRepoExists,
@@ -63,8 +63,7 @@ async function withEnv(vars: Record<string, string>, fn: () => Promise<void>): P
 }
 
 /** A prdt project = a code git repo with an initial code commit. */
-function makeProject(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-'))
+function buildProject(root: string): void {
   git(['init', '-q'], root)
   git(['config', 'user.email', 'code@test'], root)
   git(['config', 'user.name', 'code'], root)
@@ -79,6 +78,20 @@ function makeProject(): string {
   fs.writeFileSync(path.join(root, 'docs', 'prd', 'PRD.md'), '# PRD\n')
   git(['add', 'packages/app.ts'], root)
   git(['commit', '-qm', 'code init'], root)
+}
+
+// T-1274: the project (a code repo, 6 git spawns) is identical for every test — built
+// once per file, copied per test. The copy carries no absolute path (a plain repo).
+let template: string
+beforeAll(() => {
+  template = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-tpl-'))
+  buildProject(template)
+})
+afterAll(() => { fs.rmSync(template, { recursive: true, force: true }) })
+
+function makeProject(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-'))
+  fs.cpSync(template, root, { recursive: true, verbatimSymlinks: true })
   return root
 }
 

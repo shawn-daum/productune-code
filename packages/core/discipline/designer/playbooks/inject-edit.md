@@ -14,6 +14,7 @@ One editor, one pass, four verdicts judged per RULE, bytes reported. Form is com
 ## Scope and base
 - Base for every path and command here: `packages/core/` of the prdt code repo — run from there. Write only `discipline/**` · `doctrine.md` · `agents/*.md`; read `scripts/prdt` · `scripts/hooks/*.sh` · `test/**`. Never `~/.prdt/**` · `~/.claude/**` · `.prdt/overrides/**`.
 - Override text: never written by you. Input by moment — (1) user instruction: their words verbatim + its why · (2) PO proposal: the recurring pattern with its occurrences, no user words yet · (3) Retro `amend`: the existing line + the reason it fails. Draft the line that operates (situation → act, §Form), `po` files included — the input goes to the record (`docs/_shared/wiki/log.md` · the ticket), never the file. A line relaxing a constraint on you: (1) only; under (2) · (3) → `refused: true`. Return it as one `memory_notes[]` line — `override <machine|project>/<persona>: <line>` — the PO puts it to the user and writes it on confirm.
+- Override line draft, before return: Verdict 2 grep also spans `~/.prdt/overrides/**` · `.prdt/overrides/**`; a hit → cut. Its `wc -c` rides the `memory_notes[]` line.
 - No install, no commit, no mirror sync. Written ≠ effective: `discipline/contracts/definition-of-done.md`.
 
 ## Map — hot and cold
@@ -23,11 +24,11 @@ One editor, one pass, four verdicts judged per RULE, bytes reported. Form is com
 
 ## Verdict 1 — hot or cold, per rule
 - Act = what the rule's own line says its subject does, object included; the object fixes the grain (`escalation for this playbook` = one act per playbook · bare `escalate` = one act of the persona) — never widened or narrowed to move a count. A body that tells the worker to run another body performs only its own acts; the run body's acts stay its own (grill running smoke adds no dependent to a smoke rule).
-- Fix the persona before counting: list every persona whose bodies perform the act, whichever file you opened. All → contracts (Verdict 2). One → that persona. Several → owner = the persona whose act is last to change the outcome (model choice: the PO, routing after a worker's `escalate_to`); each other persona keeps its act-specific delta plus a pointer in its own home. (d) counts the owner's cold bodies only.
-- Judge the RULE once; every copy follows the one verdict. Hot when one holds: (a) recognition — the actor must notice the situation before any lookup (stage regression, self-promotion, consent gates) · (b) binds every turn or every return (floor, secrets, envelope shape, language) · (c) it IS the ≤1-line trigger pointer to a cold body · (d) two or more cold bodies of the owner perform the act.
+- Fix the persona before counting: list every persona whose bodies perform the act, whichever file you opened. All → contracts (Verdict 2). One → that persona. Several → owner = the persona whose act is last to change the outcome (model choice: the PO, routing after a worker's `escalate_to`); each other persona keeps its act-specific delta plus a pointer in its own home. (d) judges the owner's dispatches only.
+- Judge the RULE once; every copy follows the one verdict. Hot when one holds: (a) recognition — the actor must notice the situation before any lookup (stage regression, self-promotion, consent gates) · (b) binds every turn or every return (floor, secrets, envelope shape, language) · (c) it IS the ≤1-line trigger pointer to a cold body · (d) the situation arises in most of the owner's dispatches — evidence read: `.prdt/turns.jsonl` `playbooks_run` per `persona` (situation = a playbook's trigger) · the owner's tickets (`assignee:`), each project, read for the situation; neither shows it → (d) fails, `unresolved[]` names it unmeasured. Dependent count never decides (d).
 - Dependent = a cold body whose procedure performs the act (runs the command · renders · writes the file · returns the verdict), whether or not it names the rule. Grep for identifiers finds copies, never dependents: list the owner's cold bodies and read each for the act.
 - Hot survivor → every cold copy keeps only its act-specific delta (a step, a field, a number) plus a pointer; a restated kernel is deleted.
-- Cold survivor (a–d all fail, exactly one dependent) → body moves into that dependent; hot side keeps ≤1 line naming the trigger, never a bare path. Zero dependents → deletion, reported as one.
+- Cold survivor (a–d all fail) → one body: one dependent → into it; several → the Verdict 2 cold home; hot side keeps ≤1 line naming the trigger, never a bare path. Zero dependents → deletion, reported as one.
 
 ## Verdict 2 — file and layer, one home
 - Binds every persona → `discipline/contracts.md` hot / `discipline/contracts/<section>.md` cold. One persona → its `habit.md` / its playbook; several → the owner's (Verdict 1). Belief, not rule → `doctrine.md`. Fact of this machine or project → override line (Scope). Rule scoped to one playbook → that body, or `overrides/playbooks/<name>.md` when it is a machine fact.
@@ -56,7 +57,7 @@ One editor, one pass, four verdicts judged per RULE, bytes reported. Form is com
 
 ## Run
 1. State the behavior: one line, situation → act at the line's own grain, and every persona performing it (Verdict 1). Grep for its home (Verdict 2).
-2. Verdicts 1–4, one line of grounds each → envelope `decisions[]`; Verdict 1 names the dependents.
+2. Verdicts 1–4, one line of grounds each → envelope `decisions[]`; Verdict 1 names the dependents and the (d) evidence.
 3. Placement first, above the wording, for every rule or override line drafted: hot or cold with its Verdict-1 ground · the chosen home and each rejected one, each with its `when` and hot pointer bytes. Then draft compressed. Keep/cut list. Meaning check.
 4. Measure before (Verdict 3): `wc -c` on touched files · `--plan` per affected persona at the reference length (or the one length you report).
 5. Land in the source tree. Frontmatter touched → `PRDT_DISCIPLINE=$PWD/discipline python3 scripts/prdt menus`. Pinned literals in the same diff.

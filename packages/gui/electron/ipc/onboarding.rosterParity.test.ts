@@ -41,6 +41,7 @@ import path from 'path'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { fileURLToPath } from 'url'
+import { createRequire } from 'node:module'
 import { test, expect } from 'vitest'
 import { PRDT_HOOK_BASENAMES, installClaudeHooks } from './onboarding'
 import hookManifest from '../../../core/scripts/hook-manifest.json'
@@ -49,9 +50,18 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 // packages/gui/electron/ipc → packages/core/scripts
 const CORE_SCRIPTS = path.resolve(HERE, '..', '..', '..', 'core', 'scripts')
 const INSTALL_SH = path.join(CORE_SCRIPTS, 'install.sh')
-// Real install.sh run: ~1.1 s alone, up to ~4.5 s while core vitest runs in parallel
-// (`prdt track land`); vitest's 5 s default timed out (T-849).
-const INSTALL_SH_TEST_TIMEOUT_MS = 15_000
+// Real install.sh run: ~2.3 s alone (~4.4 s when §1b rebuilds a stale node bridge),
+// several times that under full-suite load. A fixed literal here overrode the
+// load-scaled per-test budget gui's vitest.config.ts resolves (T-790/T-649): at a
+// land's load (22/31/20) the run died on "Test timed out in 15000ms" while it
+// passes alone in ~2.4 s (T-1244). Both numbers now come from the one shared
+// module, so the budget grows with load and stays hang detection.
+const timeouts = createRequire(import.meta.url)('../../../../scripts/vitest-timeouts.cjs') as {
+  testTimeoutMs: () => number
+  subprocessMs: (tier: 'cli') => number
+}
+const INSTALL_SH_TEST_TIMEOUT_MS = timeouts.testTimeoutMs()
+const INSTALL_SH_SUBPROCESS_TIMEOUT_MS = timeouts.subprocessMs('cli')
 
 test('T-414: GUI PRDT_HOOK_BASENAMES equals hook-manifest.json basenames (no re-hardcoded literal)', () => {
   expect([...PRDT_HOOK_BASENAMES]).toEqual(hookManifest.basenames)
@@ -77,7 +87,7 @@ test('T-414: GUI hook roster equals install.sh registered roster in full shape (
     //    registers hooks into claudeDir/settings.json via the manifest-driven jq.
     execFileSync('bash', [INSTALL_SH, '--no-statusline'], {
       env: { ...process.env, HOME: home, PRDT_HOME: prdtHome, CLAUDE_DIR: claudeDir },
-      timeout: 60_000,
+      timeout: INSTALL_SH_SUBPROCESS_TIMEOUT_MS,
     })
     const settingsPath = path.join(claudeDir, 'settings.json')
     const cliHooks = JSON.parse(fs.readFileSync(settingsPath, 'utf8')).hooks

@@ -82,7 +82,7 @@ print(json.dumps({
 `
 
 function env(home: string): NodeJS.ProcessEnv {
-  return { ...process.env, PRDT_HOME: home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0', TZ: 'UTC' }
+  return { ...process.env, HOME: path.join(home, 'user-home'), PRDT_HOME: home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0', TZ: 'UTC' }
 }
 
 function probe(root: string) {
@@ -164,7 +164,8 @@ print(json.dumps(m.po_state_warnings({"schema_version":1,"stage":"build","versio
   test('tickets new --line lands in that line\'s open version dir', () => {
     const r = cli(root, home, ['tickets', 'new', '--type', 'impl', '--slug', 'zz', '--line', 'android'])
     expect(r.code).toBe(0)
-    expect(fs.existsSync(path.join(root, 'docs/tickets/android/v2.1/T-005.md'))).toBe(true)
+    // T-1298: a named added product numbers on its own counter (android → NDR).
+    expect(fs.existsSync(path.join(root, 'docs/tickets/android/v2.1/T-NDR-001.md'))).toBe(true)
   }, T)
 
   test('resource up: the marker carries the current ticket\'s line; ls shows it', () => {

@@ -57,7 +57,7 @@ const RENDER_MJS_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 // syntax is not copy). Excluding them by declaration name, not by content, so
 // this checker cannot be fooled by *wrapping* a real hard-coded label in
 // either of those two constants.
-const OPAQUE_BLOB_DECLARATIONS = new Set(['TEMPLATE_CSS', 'INTERACTION_SCRIPT', 'LINES_CSS', 'LINES_SCRIPT'])
+const OPAQUE_BLOB_DECLARATIONS = new Set(['TEMPLATE_CSS', 'INTERACTION_SCRIPT', 'interactionScript', 'LINES_CSS', 'LINES_SCRIPT'])
 
 // A dev-facing diagnostic message (`templateGuardErrors`'s own guard-failure
 // text, e.g. "template CSS contains a hex or rgb() literal") is real English
@@ -339,6 +339,6 @@ describe('viewer/lib/render.mjs — T-707: an empty group shows the Designer\'s 
     const html = renderEmptyGroupFixture()
     const storeMatch = /<section[^>]*data-store="artifact"[^>]*>[\s\S]*?<\/section>/.exec(html)
     expect(storeMatch).not.toBeNull()
-    expect(storeMatch![0]).toContain('아직 산출물이 없어요')
+    expect(storeMatch![0]).toContain('아직 아티팩트가 없어요')
   })
 })

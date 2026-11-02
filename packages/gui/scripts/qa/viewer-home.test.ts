@@ -191,12 +191,12 @@ describe('home screen — T-796 acceptance in the generated page', () => {
   it('draws the stage bar, 스코프, both wait lists and the dependency block (named 「dependency」)', () => {
     expect(connected.home).toContain('class="sb"')
     expect(connected.home).toContain('스코프')
-    expect(connected.home).toContain('내 결정 대기')
-    expect(connected.home).toContain('사용자 작업 대기')
+    expect(connected.home).toContain('결정사항')
+    expect(connected.home).toContain('요청사항')
     expect(connected.home).toContain('dependency')
     expect(connected.home).toContain('메인 패스 · 크리티컬 패스')
   })
-  it('T-961: 내 결정 대기 · 사용자 작업 대기 sit left of 스코프, dependency stays below', () => {
+  it('T-961 (T-1343 spellings): 결정사항 · 요청사항 sit left of 스코프, dependency stays below', () => {
     const h = connected.home
     const w = h.indexOf('class="sc-waits"')
     const sc = h.indexOf('class="cp-h">스코프')

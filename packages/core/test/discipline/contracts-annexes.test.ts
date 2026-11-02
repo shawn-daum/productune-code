@@ -180,7 +180,7 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     // re-breaking this test.
     expect(CONTRACTS).toMatch(/^## Secrets — .+\(EVERY persona, PO included\)$/m)
     expect(CONTRACTS).toContain('## Overrides — precedence and the non-overridable floor')
-    expect(annex('runtime-writes')).toContain('- Carve-out: `~/.prdt/register` · `auto-open` · `plan-tier` · `dispatch-caps.json` (keys `register.*` · `viewer.auto-open` · `plan.tier` · `dispatch.*`) are PO-writable only via `prdt settings set|unset <key>`')
+    expect(annex('runtime-writes')).toContain('- Carve-out: `~/.prdt/register` · `auto-open` · `plan-tier` · `priority-projects` · `dispatch-caps.json` · `user-lang` (keys `register.*` · `viewer.auto-open` · `plan.tier` · `priority.projects` · `dispatch.*` · `user.lang`) are PO-writable only via `prdt settings set|unset <key>`')
     // T-613: re-pinned to the current wording. T-586 added the playbook-scoped
     // override path to this carve-out; the carve-out clause is floor text, so
     // the test follows contracts.md, never the reverse. Every path the line
@@ -191,7 +191,7 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
       '`~/.prdt/overrides/playbooks/<name>.md`',
       '`~/.prdt/wiki/`',
       '`~/.prdt/resource-stop.json`',
-      '`~/.prdt/register` · `auto-open` · `plan-tier` · `dispatch-caps.json` (keys `register.*` · `viewer.auto-open` · `plan.tier` · `dispatch.*`)',
+      '`~/.prdt/register` · `auto-open` · `plan-tier` · `priority-projects` · `dispatch-caps.json` · `user-lang` (keys `register.*` · `viewer.auto-open` · `plan.tier` · `priority.projects` · `dispatch.*` · `user.lang`)',
     ])
       pin(annex('runtime-writes'), p, {
         file: 'discipline/contracts/runtime-writes.md',
@@ -333,7 +333,7 @@ describe.skipIf(!READY)('delivery — the hook plan of THIS tree', () => {
       input: JSON.stringify({ hook_event_name: 'SubagentStart', agent_type: 'prdt-developer', cwd: os.tmpdir() }),
       encoding: 'utf8', env: { ...process.env, PRDT_HOME: home },
     })
-    expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain('Playbook bodies · `contracts/*.md` annexes: Read on the absolute path under')
+    expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain('Playbook `<persona>/playbooks/<name>.md` · `contracts/*.md` annex: Read the absolute path under')
   })
 
   for (const persona of ['po', 'developer', 'qa', 'designer']) {

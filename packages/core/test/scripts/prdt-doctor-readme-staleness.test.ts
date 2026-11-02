@@ -22,7 +22,8 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
-import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { test, expect, describe, beforeAll, beforeEach, afterEach, afterAll } from 'vitest'
+import { cloneTree } from '../helpers/project-template'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
@@ -35,12 +36,13 @@ const PYTHON3 = which('python3')
 
 let projectDir: string
 
-function runPrdt(args: string[]): string {
+function runPrdt(args: string[], tier: 'cli' | 'doctor' = 'cli', env?: Record<string, string>): string {
   return execFileSync('python3', [PRDT_CLI, ...args], {
     cwd: projectDir,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: subprocessTimeout('cli'),
+    timeout: subprocessTimeout(tier),
+    ...(env ? { env: { ...process.env, ...env } } : {}),
   })
 }
 
@@ -48,9 +50,9 @@ function runInit(): any {
   return JSON.parse(runPrdt(['init', '--json', '--slug', 'proj', '--yes']))
 }
 
-function doctor(): string {
+function doctor(env?: Record<string, string>): string {
   try {
-    return runPrdt(['doctor'])
+    return runPrdt(['doctor'], 'doctor', env)
   } catch (e: any) {
     throw new Error(`prdt doctor failed: ${e.stderr || e.message}`)
   }
@@ -133,12 +135,61 @@ prdt-po → prdt-designer → prdt-developer → prdt-qa
 lifecycle: Define → Build → Ship → Retro → idle
 `
 
+// T-1274: one `doctor` run per distinct fixture, not per test. Tests asserting on the SAME
+// planted tree (same README, same tag) share its output — the first of them plants and runs,
+// the rest read the memo. Every assertion stays in its own test.
+const doctorMemo = new Map<string, string>()
+function sharedDoctor(key: string, plant: () => void): string {
+  let out = doctorMemo.get(key)
+  if (out === undefined) { plant(); out = doctor(); doctorMemo.set(key, out) }
+  return out
+}
+
+// one tag whose README carries three independent command faults: a dead path, a
+// subcommand the CLI does not register, and a dead path with a trailing comment
+function plantFaultyCommands() {
+  const readme = HEALTHY_README
+    .replace('scripts/install.sh   # setup',
+      'scripts/does-not-exist.sh   # setup\nscripts/gone.sh tracks/T-NNN   # 1/2 (update/skip)')
+    .replace('prdt tickets   # ticket ops', 'prdt tickets   # ticket ops\nprdt bogus     # not registered')
+  plantAndTag(path.join(projectDir, 'code'), 'v1.0', readme)
+}
+
+// one tag whose README names a persona and a stage the CLI does not ship (`nobody`,
+// `limbo`) and never presents a persona and a stage it does (`qa`, `idle`)
+function plantFaultyVocab() {
+  const readme = HEALTHY_README
+    .replace('prdt-po → prdt-designer → prdt-developer → prdt-qa', 'prdt-po → prdt-designer → prdt-developer → prdt-nobody')
+    .replace('lifecycle: Define → Build → Ship → Retro → idle', 'lifecycle: Define → Build → Ship → Retro → limbo')
+  plantAndTag(path.join(projectDir, 'code'), 'v1.0', readme)
+}
+
 const README_RE = /readme:.*/
 const readmeLines = (out: string) => out.split('\n').filter((l) => README_RE.test(l))
 
-beforeEach(() => {
-  projectDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-readme-')), 'proj')
+// T-1274: `prdt init` (~30 spawns) ran in every test, and its result is identical each
+// time — built once per file, cloned per test. Every test still gets its own project
+// and its own `doctor` run (the README / tag differs per test).
+let templateRoot: string
+
+beforeAll(() => {
+  doctorMemo.clear()
+  if (!PYTHON3) return
+  templateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-readme-tpl-'))
+  projectDir = path.join(templateRoot, 'proj')
   fs.mkdirSync(projectDir, { recursive: true })
+  runInit()
+})
+
+afterAll(() => {
+  if (templateRoot) fs.rmSync(templateRoot, { recursive: true, force: true })
+})
+
+beforeEach(() => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-readme-'))
+  projectDir = path.join(root, 'proj')
+  if (PYTHON3) cloneTree(path.join(templateRoot, 'proj'), projectDir)
+  else fs.mkdirSync(projectDir, { recursive: true })
 })
 
 afterEach(() => {
@@ -147,9 +198,7 @@ afterEach(() => {
 
 describe.skipIf(!PYTHON3)('prdt doctor — README staleness at a cut tag (T-589)', () => {
   test('clean: healthy README at the tag produces no readme violation, only the advisory', () => {
-    runInit()
-    plantAndTag(path.join(projectDir, 'code'), 'v1.0', HEALTHY_README)
-    const out = doctor()
+    const out = sharedDoctor('healthy', () => plantAndTag(path.join(projectDir, 'code'), 'v1.0', HEALTHY_README))
     const lines = readmeLines(out)
     expect(lines.length).toBe(1)
     expect(lines[0]).toMatch(/advisory|never shows or names/i)
@@ -159,7 +208,6 @@ describe.skipIf(!PYTHON3)('prdt doctor — README staleness at a cut tag (T-589)
   })
 
   test('T-1170: a tag on a launcher-split tree reads prdt_cli.py — no false violations', () => {
-    runInit()
     plantAndTag(path.join(projectDir, 'code'), 'v1.0', HEALTHY_README, { split: true })
     const lines = readmeLines(doctor())
     expect(lines.some((l) => /stale against the shipped tag|vocabulary disagrees/.test(l))).toBe(false)
@@ -168,13 +216,11 @@ describe.skipIf(!PYTHON3)('prdt doctor — README staleness at a cut tag (T-589)
   })
 
   test('T-1170: a split tag still flags a real stale subcommand', () => {
-    runInit()
     plantAndTag(path.join(projectDir, 'code'), 'v1.0', HEALTHY_README.replace('prdt wiki ', 'prdt bogus'), { split: true })
     expect(readmeLines(doctor()).some((l) => /prdt bogus/.test(l))).toBe(true)
   })
 
   test('silent: no tag at all (degrade-never-raise)', () => {
-    runInit()
     const codeRoot = path.join(projectDir, 'code')
     fs.mkdirSync(codeRoot, { recursive: true })
     git(codeRoot, 'init', '-q')
@@ -185,43 +231,33 @@ describe.skipIf(!PYTHON3)('prdt doctor — README staleness at a cut tag (T-589)
   })
 
   test('silent: code repo absent / not a git repo', () => {
-    runInit()
     expect(readmeLines(doctor())).toHaveLength(0)
   })
 
   test('violation: a repo path named in a runnable block does not resolve at the tag', () => {
-    runInit()
-    const readme = HEALTHY_README.replace('scripts/install.sh   # setup', 'scripts/does-not-exist.sh   # setup')
-    plantAndTag(path.join(projectDir, 'code'), 'v1.0', readme)
-    const out = doctor()
+    const out = sharedDoctor('faulty-commands', plantFaultyCommands)
     const lines = readmeLines(out)
     expect(lines.some((l) => /stale against the shipped tag/.test(l) && /scripts\/does-not-exist\.sh/.test(l))).toBe(true)
   })
 
   test('violation: a `prdt <subcommand>` shown in a runnable block is not one the tagged CLI accepts', () => {
-    runInit()
-    const readme = HEALTHY_README.replace('prdt tickets   # ticket ops', 'prdt tickets   # ticket ops\nprdt bogus     # not registered')
-    plantAndTag(path.join(projectDir, 'code'), 'v1.0', readme)
-    const out = doctor()
+    const out = sharedDoctor('faulty-commands', plantFaultyCommands)
     const lines = readmeLines(out)
     expect(lines.some((l) => /stale against the shipped tag/.test(l) && /prdt bogus/.test(l))).toBe(true)
   })
 
   test('readme-illustration-block-is-not-scanned: a dead-looking path ONLY inside a non-runnable illustration block raises nothing — fails without the block-selection rule', () => {
-    runInit()
     // The illustration block below names a path that plainly does not resolve
     // at the tag (`docs/tickets/<version>/T-NNN.md`, a placeholder) — if the
     // scan did not restrict itself to shell-family fenced blocks, this alone
     // would fire finding A. It must not.
-    plantAndTag(path.join(projectDir, 'code'), 'v1.0', HEALTHY_README)
-    const out = doctor()
+    const out = sharedDoctor('healthy', () => plantAndTag(path.join(projectDir, 'code'), 'v1.0', HEALTHY_README))
     const lines = readmeLines(out)
     expect(lines.some((l) => /T-NNN/.test(l))).toBe(false)
     expect(lines.some((l) => /stale against the shipped tag/.test(l))).toBe(false)
   })
 
   test('T-810: path-shaped words after a shell `#` comment are not paths; a real stale path before the comment still warns', () => {
-    runInit()
     const ok = HEALTHY_README.replace('scripts/install.sh   # setup',
       'scripts/install.sh   # pick 1/2 (update/skip) in tracks/T-NNN, branch track/T-NNN\n# whole-line note: docs/gone/x.md')
     plantAndTag(path.join(projectDir, 'code'), 'v1.0', ok)
@@ -229,57 +265,37 @@ describe.skipIf(!PYTHON3)('prdt doctor — README staleness at a cut tag (T-589)
   })
 
   test('T-810: a stale path in the command itself still warns even with a trailing comment', () => {
-    runInit()
-    const bad = HEALTHY_README.replace('scripts/install.sh   # setup',
-      'scripts/gone.sh tracks/T-NNN   # 1/2 (update/skip)')
-    plantAndTag(path.join(projectDir, 'code'), 'v1.0', bad)
-    const lines = readmeLines(doctor())
+    const lines = readmeLines(sharedDoctor('faulty-commands', plantFaultyCommands))
     expect(lines.some((l) => /stale against the shipped tag/.test(l) && /scripts\/gone\.sh/.test(l))).toBe(true)
     expect(lines.some((l) => /`update\/skip`|`1\/2`/.test(l))).toBe(false)
   })
 
   test('violation: README names a persona `prdt-<x>` the tagged CLI does not ship', () => {
-    runInit()
-    const readme = HEALTHY_README.replace('prdt-po → prdt-designer → prdt-developer → prdt-qa',
-      'prdt-po → prdt-designer → prdt-developer → prdt-qa → prdt-nobody')
-    plantAndTag(path.join(projectDir, 'code'), 'v1.0', readme)
-    const out = doctor()
+    const out = sharedDoctor('faulty-vocab', plantFaultyVocab)
     const lines = readmeLines(out)
     expect(lines.some((l) => /persona vocabulary disagrees/.test(l) && /nobody/.test(l))).toBe(true)
   })
 
   test('violation: README never presents a persona the tagged CLI ships', () => {
-    runInit()
-    const readme = HEALTHY_README.replace('prdt-po → prdt-designer → prdt-developer → prdt-qa', 'prdt-po → prdt-designer → prdt-developer')
-    plantAndTag(path.join(projectDir, 'code'), 'v1.0', readme)
-    const out = doctor()
+    const out = sharedDoctor('faulty-vocab', plantFaultyVocab)
     const lines = readmeLines(out)
     expect(lines.some((l) => /persona vocabulary disagrees/.test(l) && /never presents shipped persona.*qa/.test(l))).toBe(true)
   })
 
   test('violation: README names a stage the tagged CLI does not ship', () => {
-    runInit()
-    const readme = HEALTHY_README.replace('lifecycle: Define → Build → Ship → Retro → idle',
-      'lifecycle: Define → Build → Ship → Retro → idle → limbo')
-    plantAndTag(path.join(projectDir, 'code'), 'v1.0', readme)
-    const out = doctor()
+    const out = sharedDoctor('faulty-vocab', plantFaultyVocab)
     const lines = readmeLines(out)
     expect(lines.some((l) => /stage vocabulary disagrees/.test(l) && /limbo/.test(l))).toBe(true)
   })
 
   test('violation: README never presents a stage the tagged CLI ships', () => {
-    runInit()
-    const readme = HEALTHY_README.replace('lifecycle: Define → Build → Ship → Retro → idle',
-      'lifecycle: Define → Build → Ship → Retro')
-    plantAndTag(path.join(projectDir, 'code'), 'v1.0', readme)
-    const out = doctor()
+    const out = sharedDoctor('faulty-vocab', plantFaultyVocab)
     const lines = readmeLines(out)
     expect(lines.some((l) => /stage vocabulary disagrees/.test(l) && /never presents shipped stage.*idle/.test(l))).toBe(true)
   })
 
   test('evaluates the NEWEST version-shaped tag, not an older one', () => {
     const codeRoot = path.join(projectDir, 'code')
-    runInit()
     plantAndTag(codeRoot, 'v1.0', HEALTHY_README.replace('scripts/install.sh   # setup', 'scripts/does-not-exist.sh   # setup'))
     // v1.1: fix landed AFTER the bad v1.0 cut — the newest tag is clean.
     writeFile(codeRoot, 'README.md', HEALTHY_README)
@@ -294,7 +310,6 @@ describe.skipIf(!PYTHON3)('prdt doctor — README staleness at a cut tag (T-589)
 
   test('a v-prefixed non-release tag is not evaluated', () => {
     const codeRoot = path.join(projectDir, 'code')
-    runInit()
     fs.mkdirSync(codeRoot, { recursive: true })
     git(codeRoot, 'init', '-q')
     writeFile(codeRoot, 'README.md', 'stale nonsense, never a v* tag cut against it\n')
@@ -302,5 +317,16 @@ describe.skipIf(!PYTHON3)('prdt doctor — README staleness at a cut tag (T-589)
     git(codeRoot, 'commit', '-q', '-m', 'seed')
     git(codeRoot, 'tag', 'vendor-sync')
     expect(readmeLines(doctor())).toHaveLength(0)
+  })
+
+  test('T-1274: a git call that times out is reported as a named timeout, never as "no stale lines"', () => {
+    // The fixture would produce violations if git answered: a dead path at the tag.
+    plantAndTag(path.join(projectDir, 'code'), 'v1.0',
+      HEALTHY_README.replace('scripts/install.sh   # setup', 'scripts/does-not-exist.sh   # setup'))
+    const out = doctor({ PRDT_README_GIT_TIMEOUT_S: '0.001' })
+    const named = out.split('\n').filter((l) => /readme vs shipped tag/.test(l) && /did not answer within 0\.001 s/.test(l))
+    expect(named, out).toHaveLength(1)
+    expect(named[0]).toMatch(/git tag/)
+    expect(readmeLines(out).some((l) => /stale against the shipped tag/.test(l))).toBe(false)
   })
 })

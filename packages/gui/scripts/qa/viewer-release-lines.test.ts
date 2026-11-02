@@ -243,7 +243,7 @@ describe('render — one sidebar section per line', () => {
     expect(Object.keys(blob.ticket)).toEqual(expect.arrayContaining(['T-101', 'T-201', 'T-204', 'T-205']))
     expect(blob.ticket['T-201'].path).toBe('docs/tickets/ntf-archive/v1.2/T-201.md')
     expect(blob.feature['ntf-archive/search']).toBeTruthy()
-    expect(blob.maxTicket).toBe(205)
+    expect(blob.maxTicket).toEqual({ "": 205 })   // T-1298: per counter, plain ids under ""
   })
 })
 
