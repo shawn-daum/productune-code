@@ -640,4 +640,42 @@ describe('T-1377 — L1 replays: re-ask only on the recorded decision itself, ne
     expect(both).toContain('\n\n' + TAG)
     expect(both).toContain('T-001')
   })
+
+  // QA grill d-v116-t1377-qa1 (4): T-001 done a day ago, T-012 opened this turn
+  function inline(reply: string, withT012: boolean) {
+    const { root, proj } = makeProject({})
+    T001(proj)
+    if (withT012) decision(proj, 'T-012', 'in-app-theme-toggle', 'open', '', 1_000)
+    const out = runHook({
+      hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
+    }, env())
+    return out ? (JSON.parse(out).reason as string) : ''
+  }
+  const DECIDED = '다크모드는 T-001 에서 폰 설정을 따르기로 정하셨어요.'
+  const DRAFT = ['```', '설정 > 화면 테마: 시스템 따라가기 / 밝게 / 어둡게', '```']
+  const cases: [string, string, boolean][] = [
+    ['d — a new ticket named on the ask line', [DECIDED, '', '앱 안 토글을 둘지 다시 골라 주세요 (T-012).'].join('\n'), true],
+    ['d2 — a new ticket heading the ask line', [DECIDED, '', 'T-012: 앱 안 토글을 둘까요?'].join('\n'), true],
+    ['c3 — a fenced draft re-deciding T-001, approval naming the new ticket',
+      [DECIDED, '', ...DRAFT, '', '이 초안(T-012)대로 앱 안 테마 설정을 넣는 걸 승인해 주실까요?'].join('\n'), true],
+    ['c — a fenced draft re-deciding T-001, approval with no new id',
+      [DECIDED, '', ...DRAFT, '', '이 초안대로 앱 안 테마 설정을 넣는 걸 승인해 주실까요?'].join('\n'), false],
+    ['c2 — the same, an imperative approval', [DECIDED, '', ...DRAFT, '', '이 초안대로 넣어도 되는지 승인해 주세요.'].join('\n'), false],
+  ]
+  for (const [label, reply, withT012] of cases) {
+    test(`${label} → re-ask on T-001 only`, () => {
+      const reason = inline(reply, withT012)
+      expect(reason.startsWith(REASK)).toBe(true)
+      expect(reason).toContain('T-001')
+      expect(reason).not.toContain(TAG)
+    })
+  }
+
+  test('re-ask and question check on the same decision in one section → re-ask only', () => {
+    const reply = ['## 화면 테마', '', DECIDED, '', '- 앱 안 토글, 이번에 넣을까요?', '', '이대로 갈까요, 아니면 바꿀까요?'].join('\n')
+    const reason = inline(reply, false)
+    expect(reason.startsWith(REASK)).toBe(true)
+    expect(reason).not.toContain(TAG)
+  })
 })
