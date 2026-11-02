@@ -13247,11 +13247,14 @@ def _build_entry_date(root, line, version):
     Newest-first over the commits touching po-state: the oldest commit of the newest
     unbroken run reading (build, `version`) for this line; its committer date is the
     write's day or later (a snapshot lands at or after the write). The newest snapshot
-    not reading (build, `version`) → None (the write is not recorded yet)."""
+    not reading (build, `version`) → None (the write is not recorded yet).
+    T-1210: the committer date is read in LOCAL time (`format-local`) — ticket `created`
+    days are local, and a UTC-dated commit read as written lands a day early."""
     if root is None or not (meta_git_dir(root) / "HEAD").exists():
         return None
     try:
-        r = _meta_git(root, ["log", "--format=%H%x00%cI", "--", ".prdt/po-state.json"])
+        r = _meta_git(root, ["log", "--date=format-local:%Y-%m-%d", "--format=%H%x00%cd",
+                             "--", ".prdt/po-state.json"])
     except (OSError, subprocess.SubprocessError):
         return None
     if r.returncode != 0:
@@ -13297,9 +13300,15 @@ def _build_gate_met(root, line, ver_tickets, version):
         return all(ln["finished"] for ln in gate), note
     entry = _build_entry_date(root, line, version)
     if entry:
-        slice_ = [t for t in ver_tickets if not t.get("created") or str(t["created"])[:10] <= entry]
+        # T-1210: a `created` that is not YYYY-MM-DD cannot be compared as a day — it
+        # counts inside the slice (errs toward a later signal) and doctor names it.
+        unreadable = sorted(t["id"] for t in ver_tickets
+                            if not TICKET_CREATED_DATE_RE.match(str(t.get("created") or "")))
+        slice_ = [t for t in ver_tickets if t["id"] in unreadable or str(t["created"]) <= entry]
+        note = (f"stage: {version} build-entry slice counts {', '.join(safe_label(i) for i in unreadable)} "
+                f"inside (created not YYYY-MM-DD) — fix created to judge the slice") if unreadable else None
         if slice_:
-            return not any(t["status"] == "open" for t in slice_), None
+            return not any(t["status"] == "open" for t in slice_), note
         why = f"no {version} ticket created by the build write ({entry})"
     else:
         why = "no meta-git record of the stage write to build"
