@@ -2117,6 +2117,21 @@ describe('T-1248: priority slot order', () => {
     }
   })
 
+  test('T-1305: a project folder name with a newline still gets the yield notice (gate never goes silent)', () => {
+    const home = homeWith('naro-proto,productune')
+    const r0 = makeProject()
+    const parent = tmp('prdt-t1305-nl-')
+    try {
+      const odd = path.join(parent, 'line1\nline2')
+      fs.renameSync(r0, odd)
+      const d = denyReason({ cwd: odd }, { machine: suiteIn(hi), home })
+      expect(d).toContain('full test suites 1 / cap 1, held by naro-proto (priority 1). line1_line2 is not on the priority list and goes after it.')
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true })
+      fs.rmSync(r0, { recursive: true, force: true })
+    }
+  })
+
   test('the yield clause sits right after the suites short, before other over-cap axes (VMs and suites both over)', () => {
     const home = homeWith('naro-proto,productune')
     const m = suiteIn(hi)
