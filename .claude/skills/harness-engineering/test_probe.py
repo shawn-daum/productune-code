@@ -107,6 +107,23 @@ class T(unittest.TestCase):
             r = run(mk(t, extra={"forbid_files": ["T-9.md"]}), os.path.join(t, "o"))
             self.assertNotEqual(r.returncode, 0); self.assertIn("isolation", r.stderr)
 
+    def test_overlay_key_outside_discipline_fails_loudly(self):
+        # T-1285: a key the session-start hook never reads (no `discipline/` prefix, `..`, absolute)
+        # used to drop the candidate silently, so the arm ran as control (T-1271).
+        with tempfile.TemporaryDirectory() as t:
+            src = os.path.join(t, "src.md"); open(src, "w").write("x")
+            for bad in ("po/habit.md", "discipline/../po/habit.md", "/abs/discipline/x.md", "disciplinex/po.md"):
+                pp = mk(t, extra={"arms": {"control": {"overlay": {}}, "cand-a": {"overlay": {"files": {bad: src}}}}})
+                r = subprocess.run([sys.executable, os.path.join(HERE, "probe.py"), pp, "--out", os.path.join(t, "o-" + str(abs(hash(bad)))),
+                                    "--dry-run"], capture_output=True, text=True)
+                self.assertNotEqual(r.returncode, 0, bad)
+                self.assertIn("overlay key", r.stderr, bad); self.assertIn(bad, r.stderr)
+            for good in ("discipline/po/habit.md", "doctrine.md"):
+                pp = mk(t, extra={"arms": {"control": {"overlay": {}}, "cand-a": {"overlay": {"files": {good: src}}}}})
+                r = subprocess.run([sys.executable, os.path.join(HERE, "probe.py"), pp, "--out", os.path.join(t, "ok-" + str(abs(hash(good)))),
+                                    "--dry-run"], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, good + r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
