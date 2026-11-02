@@ -313,6 +313,16 @@ done
 # same IN-or-OUT test prdt-call-governor.sh makes (it never reads the file, so
 # it needs neither the outermost-wins rule nor a realpath — T-484/T-493).
 [ -n "$DIR" ] || exit 0
+# T-1305: str_take keeps the JSON escapes of the value (`\n`, `\\`, `\uXXXX`
+# …), so a folder name holding a newline reached the up-walk as the literal
+# text `\n`, matched no directory, and the whole gate went silent (the
+# priority-yield notice included). Decode the value — one jq fork, and only
+# when a backslash is present; a decode failure leaves DIR empty (silent, as
+# before). The `x` sentinel keeps a trailing newline in the name.
+case "$DIR" in
+  *\\*) DIR="$(jq -jn --arg s "\"$DIR\"" '$s | fromjson | strings' 2>/dev/null; printf x)"; DIR="${DIR%x}"
+        [ -n "$DIR" ] || exit 0 ;;
+esac
 # `${DIR%/*}` returns a slash-less string UNCHANGED, not empty, so a relative
 # DIR would never shrink and the loop below would spin to the hook timeout.
 # The harness always sends an absolute cwd, so this is unreached in practice —
