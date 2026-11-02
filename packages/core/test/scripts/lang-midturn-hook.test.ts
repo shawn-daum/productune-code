@@ -71,8 +71,9 @@ function write(sb: Sb, recs: Rec[]) {
 }
 
 const HOT_KO = '[prdt reply] Final user-chat reply only, over one line → `prdt wordlist check --lang ko -` on the draft first, each hit (`—` · 합치기 · 모름) → a listed replacement.'
+const HOT_EN = HOT_KO.replace('--lang ko', '--lang en')
 const NOTICE = (lang: string) =>
-  `[prdt lang check] your text before this tool call is not in lang=${lang}. Write the rest of this turn in that language; code, paths, ids, quoted text unchanged.`
+  `[prdt lang check] your text before this tool call is not in lang=${lang}. Write this turn's remaining user-chat text in that language; code, paths, ids, quoted text unchanged.`
 
 // The observed shape (v1.15 po-voice observation (4)): English prose right after a worker's English return.
 const ENGLISH_AFTER_WORKER =
@@ -150,17 +151,17 @@ describe('T-1317: a language asked for in chat outranks stored user.lang for the
     const sb = sandbox('ko')
     prompt(sb, '이번 세션은 영어로 답해줘')
     write(sb, [userPrompt('이번 세션은 영어로 답해줘'), aText(ENGLISH_AFTER_WORKER), aTool('t1')])
-    expect(post(sb, 't1')).toBe(HOT_KO)
+    expect(post(sb, 't1')).toBe(HOT_EN)
     expect(stop(sb, ENGLISH_AFTER_WORKER)).toBeNull()
     write(sb, [userPrompt('ok'), aText(KOREAN + ' 그리고 다음 단계도 이어서 바로 진행할게요.'), aTool('t2')])
-    expect(post(sb, 't2')).toBe(HOT_KO + '\n' + NOTICE('en'))
+    expect(post(sb, 't2')).toBe(HOT_EN + '\n' + NOTICE('en'))
   })
 
   test('English request phrasing, then a later Korean request: the latest one wins', () => {
     const sb = sandbox('ko')
     prompt(sb, 'please reply in English from now on')
     write(sb, [userPrompt('x'), aText(ENGLISH_AFTER_WORKER), aTool('t1')])
-    expect(post(sb, 't1')).toBe(HOT_KO)
+    expect(post(sb, 't1')).toBe(HOT_EN)
     prompt(sb, '다시 한국어로 말해줘')
     expect(post(sb, 't1')).toBe(HOT_KO + '\n' + NOTICE('ko'))
   })
@@ -184,5 +185,56 @@ describe('T-1317: a language asked for in chat outranks stored user.lang for the
     prompt(sb, 'answer in Korean please')
     write(sb, [userPrompt('x'), aText(ENGLISH_AFTER_WORKER), aTool('t1')])
     expect(post(sb, 't1')).toContain(NOTICE('ko'))
+  })
+
+  // T-1307 QA qa1 fail rows: a task on text, a how-to, or a negated ask never switches.
+  // When unsure, no switch: a missed switch costs one rewrite, a wrong one flags the
+  // user's own language for the whole session.
+  test.each([
+    'Translate your answer to English',
+    'Translate my reply to English for the client',
+    '이 문장 영어로 바꿔줘',
+    '영어로 말하는 법 알려줘',
+    'Write a reply in English to this customer email',
+    '고객 메일에 영어로 답장 써줘',
+    "Don't reply in English.",
+    'how do I talk to Korean users about this feature?',
+    'README 를 영어로 번역해줘',
+    'translate it into English',
+  ])('not a chat-language ask: %s', text => {
+    const sb = sandbox('ko')
+    prompt(sb, text)
+    write(sb, [userPrompt(text), aText(ENGLISH_AFTER_WORKER), aTool('t1')])
+    expect(post(sb, 't1')).toBe(HOT_KO + '\n' + NOTICE('ko'))
+    expect(fs.existsSync(path.join(sb.home, 'run', 'session-lang', 's1'))).toBe(false)
+  })
+
+  test.each([
+    ['Please reply in English from now on.', 'en'],
+    ['영어로 대답해줘', 'en'],
+    ['앞으로 영어로만 답해', 'en'],
+    ['switch to English please', 'en'],
+    ['Can you answer in English?', 'en'],
+    ['한국어로 답해줘', 'ko'],
+  ])('a chat-language ask switches: %s', (text, lang) => {
+    const sb = sandbox(lang === 'en' ? 'ko' : 'en')
+    prompt(sb, text)
+    expect(fs.readFileSync(path.join(sb.home, 'run', 'session-lang', 's1'), 'utf8').trim()).toBe(lang)
+    write(sb, [userPrompt(text), aText(lang === 'en' ? KOREAN + ' 그리고 다음 단계도 이어서 바로 진행할게요.' : ENGLISH_AFTER_WORKER), aTool('t1')])
+    expect(post(sb, 't1')).toBe(HOT_KO.replace('--lang ko', `--lang ${lang}`) + '\n' + NOTICE(lang))
+  })
+
+  test('the session-lang entry is read only when it is a regular file (symlink, FIFO ignored)', () => {
+    const sb = sandbox('ko')
+    const dir = path.join(sb.home, 'run', 'session-lang')
+    fs.mkdirSync(dir, { recursive: true })
+    const target = path.join(sb.root, 'elsewhere')
+    fs.writeFileSync(target, 'en\n')
+    fs.symlinkSync(target, path.join(dir, 's1'))
+    write(sb, [userPrompt('x'), aText(ENGLISH_AFTER_WORKER), aTool('t1')])
+    expect(post(sb, 't1')).toBe(HOT_KO + '\n' + NOTICE('ko'))
+    fs.rmSync(path.join(dir, 's1'))
+    execFileSync('mkfifo', [path.join(dir, 's1')])
+    expect(post(sb, 't1')).toBe(HOT_KO + '\n' + NOTICE('ko'))
   })
 })
