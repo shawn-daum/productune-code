@@ -6005,6 +6005,11 @@ def fmt_ticket_body(body, ttype, status):
     return new_body, violations
 
 
+# T-1299: optional frontmatter key `request: R-NNN` — the external request
+# record a ticket serves (ntf-pm reports read request → work links from it).
+TICKET_REQUEST_RE = re.compile(r"^R-\d+$")
+
+
 def cmd_tickets_fmt(args, root):
     """`prdt tickets fmt <id…>` — normalize H2 headings to the frame (plain),
     report violations without writing (`--check`, non-zero exit on any), or
@@ -6051,6 +6056,10 @@ def cmd_tickets_fmt(args, root):
             if not created_valid:
                 check_violations.append(f"created is missing or malformed ({created_raw!r}) — "
                                          f"cannot verify pre-frame status, checked against the frame")
+            # T-1299: optional `request:` names an external request record (R-NNN).
+            if "request" in fm and not (isinstance(fm["request"], str)
+                                        and TICKET_REQUEST_RE.match(fm["request"].strip())):
+                check_violations.append(f"request: {fm['request']!r} is not a request id (R-<digits>)")
             if check_violations:
                 any_violation = True
                 for v in check_violations:
@@ -8672,9 +8681,14 @@ def maybe_meta_backup(cmd):
         if isinstance(pair, str):
             return                                      # no PRDT_REPO / node / built bridge → silent
         node, bridge = pair
+        # T-1352: stdin=DEVNULL too. A detached node that holds the user's tty
+        # as fd 0 restores, on exit, the termios it saw at start (node
+        # ResetStdio: cooked + echo) — clobbering the raw mode of the Claude
+        # Code `prdt` launched meanwhile, so every terminal reply and mouse
+        # report then echoes as `^[…` text in its input box.
         subprocess.Popen([node, bridge, "backup", str(root)],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
     except Exception:
         return
 
@@ -13480,7 +13494,7 @@ def wiki_version_edge_warnings(root, st):
 # `parent_ticket` 20 · `related_tickets` 2 · `blocks` 1 · `revises` 1 ·
 # `related` 1) — `prd_item` is E4's reserved key name (T-663 gives it a value
 # check; this slice never flags it as an unknown relation key).
-_TICKET_KNOWN_KEYS = frozenset(TICKET_INDEX_FIELDS) | {"deps", "prd_item", "also"}
+_TICKET_KNOWN_KEYS = frozenset(TICKET_INDEX_FIELDS) | {"deps", "prd_item", "also", "request"}
 
 
 def _relation_shaped(value):
@@ -14714,6 +14728,15 @@ def _track_setup_failed_path(code, tid):
     return _track_record_path(code, tid).with_name(f"{tid}.setup-failed.json")
 
 
+def _track_setup_recovery(tid, branch, wt, setup, base_flag):
+    """T-1355: what stays after a failed setup and the exact two commands that
+    make the track landable again (an install that cannot finish may empty
+    node_modules, so the tests cannot run there until setup succeeds)."""
+    again = f"prdt track merge {tid}" + (f" --base {base_flag}" if base_flag else "") + " --setup-done"
+    return (f"{branch} keeps the merge and {Path(wt) / 'node_modules'} may be emptied, so the tests cannot run "
+            f"there until setup succeeds; recover with `cd {wt} && {setup}`, then `{again}`")
+
+
 def _track_setup_failed_write(code, tid, setup):
     p = _track_setup_failed_path(code, tid)
     home = prdt_home()
@@ -15260,8 +15283,7 @@ def cmd_track_merge(args):
         else:
             cmd = failed_setup or _track_setup_cmd(root, wt) or "the setup command"
             _track_die(f"the setup step failed on an earlier merge of {tid} — the tests were not run on this tree; "
-                       f"{branch} keeps the merge and dependencies may be partially removed; "
-                       f"rerun `{cmd}` in {wt}, then merge again with --setup-done")
+                       + _track_setup_recovery(tid, branch, wt, cmd, args.base))
     lock = _track_lock(code)
     try:
         old = _tgit(["rev-parse", "--verify", "--quiet", bref], code).stdout.strip()
@@ -15281,8 +15303,7 @@ def cmd_track_merge(args):
                 if setup and _track_run(setup, wt, "setup (lockfile changed)") != 0:
                     _track_setup_failed_write(code, tid, setup)
                     _track_die(f"the setup step failed on the merged tree — {base} is unchanged; "
-                               f"{branch} keeps the merge and dependencies may be partially removed; "
-                               f"rerun `{setup}` in {wt}, then merge again with --setup-done")
+                               + _track_setup_recovery(tid, branch, wt, setup, args.base))
         if whole:
             why_whole = ("--test" if isinstance(args.test, str) and args.test.strip() else
                          "track.test" if explicit else "--full" if full else lane_note)
