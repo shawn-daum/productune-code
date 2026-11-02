@@ -375,10 +375,12 @@ const IDLE = {
   prdDetail: (lastClosed) => `${lastClosed ? `완료한 ${lastClosed} 은 왼쪽 목록에서 볼 수 있어요. ` : ''}새 버전을 시작하면 진행 중인 섹션이 생겨요.`,
   prdSideLabel: '진행 중인 섹션 없음',
   // T-1256: the last closed version's progress as at close, shown while the product is idle.
-  lastHead: (version) => `지난 버전 ${version} · 끝날 때 모습`,
+  lastHead: (version) => `완료한 버전 ${version} · 완료 시점 진행 상황`,
   lastLane: (name) => `레인 ${name}`,
-  lastGatePass: '게이트 통과',
-  lastGateOpen: '게이트 미통과',
+  lastGatePass: '합격선 통과',
+  lastGateOpen: '합격선 미통과',
+  // T-1376 A: the sentence under the last-version block (homeDetail stays for a product with no closed version).
+  lastDetail: (backlog) => `${backlog > 0 ? `backlog 티켓 ${backlog}건이 대기 중이에요. ` : ''}새 버전을 시작하면 이 화면에 그 버전의 진행 상황이 보여요.`,
 }
 
 // T-884 (T-860 / T-874): the open PRD's reading screen — outline, folds, 「결정할 것」 box,

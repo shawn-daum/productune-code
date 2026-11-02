@@ -2908,7 +2908,9 @@ function homeLineGroups(data, v, views, repoRootHref) {
   const currentArtifacts = lineArtifactEntries(data.artifacts, v, views).filter((e) => e.fields.bucket === cur)
   const currentDecisions = lineDecisionPages(data.wiki, v)
   const decisionTickets = decisionTicketsOf(idle ? homeTickets_(v) : currentTickets)
-  const idleHomeHtml = idle ? idleLastVersionHtml(v) + idleNotice(IDLE.homeHead(v.name), IDLE.homeDetail(v.tickets.included.filter((t) => t.bucket === 'backlog').length)) : ''
+  const idleLast = idle ? idleLastVersionHtml(v) : ''
+  const idleBacklog = v.tickets.included.filter((t) => t.bucket === 'backlog').length
+  const idleHomeHtml = idle ? idleLast + idleNotice(IDLE.homeHead(v.name), (idleLast ? IDLE.lastDetail : IDLE.homeDetail)(idleBacklog)) : ''
   // T-1108: an idle product has no open version, so its ticket pane lists every ticket it has (backlog + closed rounds).
   const homeTickets = idle ? [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))] : currentTickets
   const groups = [
@@ -2926,7 +2928,9 @@ function homeLineGroups(data, v, views, repoRootHref) {
 /**
  * T-1256: an idle product's last closed version as it stood at close — its id, ticket counts (the stage bar) and each
  * lane with its gate result. '' when the product has no closed version (today's idle text alone). Lanes are the
- * closed version's own (`closedLanes`, the one lane computation asked for that version).
+ * closed version's own (`closedLanes`, the one lane computation asked for that version). The lane rows size their
+ * columns to content inline (QA d-v116-t1256-qa1: at 1280px the shared `.sc-rows` 1fr column pushed the gate result to
+ * the far right); inline, so the shared stylesheet and every in-progress page stay byte-identical.
  */
 function idleLastVersionHtml(v) {
   const closed = lastClosedId(v)
@@ -2935,11 +2939,12 @@ function idleLastVersionHtml(v) {
   const lanes = (Array.isArray(v.closedLanes) ? v.closedLanes : []).filter((l) => l.linked)
   const laneRows = lanes
     .map((l) => {
-      const gate = l.besteffort ? '' : ` <span class="sc-n">${escapeHtml(l.total > 0 && l.done === l.total ? IDLE.lastGatePass : IDLE.lastGateOpen)}</span>`
+      // every row carries three cells (an empty one for a best-effort lane) so the next row's label never lands in this row's gate column
+      const gate = `<span class="sc-n">${l.besteffort ? '' : escapeHtml(l.total > 0 && l.done === l.total ? IDLE.lastGatePass : IDLE.lastGateOpen)}</span>`
       return `<div class="sc-row"><span class="sc-lab">${escapeHtml(IDLE.lastLane(l.name))}</span><span class="mono sc-n">${l.done}/${l.total}</span>${gate}</div>`
     })
     .join('')
-  return `<div class="dash-card" data-last-version="${escapeHtml(closed)}"><div class="cp-h">${escapeHtml(IDLE.lastHead(closed))}</div>${homeStageBar(tickets, '')}${laneRows ? `<div class="sc-rows">${laneRows}</div>` : ''}</div>`
+  return `<div class="dash-card" data-last-version="${escapeHtml(closed)}"><div class="cp-h">${escapeHtml(IDLE.lastHead(closed))}</div>${homeStageBar(tickets, '')}${laneRows ? `<div class="sc-rows" style="grid-template-columns:max-content max-content 1fr">${laneRows}</div>` : ''}</div>`
 }
 
 /** T-1138: an idle product's decision tickets = those of the version its decision pages use (`idleVersion`). */
@@ -2977,7 +2982,7 @@ function homeSection(data, repoRootHref) {
   const idleView = { line: null, name: data.project || '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, closedLanes: data.closedLanes }
   const idleLast = idleView.stage === 'idle' && Boolean(idleView.name) && lastClosedId(idleView) !== ''
   const progressBody = idleLast
-    ? idleLastVersionHtml(idleView) + idleNotice(IDLE.homeHead(idleView.name), IDLE.homeDetail(data.tickets.included.filter((t) => t.bucket === 'backlog').length))
+    ? idleLastVersionHtml(idleView) + idleNotice(IDLE.homeHead(idleView.name), IDLE.lastDetail(data.tickets.included.filter((t) => t.bucket === 'backlog').length))
     : `<div class="dash-grid">${homeProgressBody(data)}</div>`
   const groups = [
     { key: 'progress', label: HOME.working, bodyHtml: progressBody },
