@@ -396,3 +396,170 @@ test('hook-manifest registers it once, on Stop, matcher-less', () => {
   const regs = m.registrations.filter((r: { hooks: string[] }) => r.hooks.includes('prdt-question-check.sh'))
   expect(regs).toEqual([{ event: 'Stop', hooks: ['prdt-question-check.sh'] }])
 })
+
+describe('T-1285 — a recorded decision cited beside an ask is a re-ask (T-1313 = A)', () => {
+  // The re-ask check reads the record through the real `prdt decisions find`.
+  const PRDT = path.join(CORE_ROOT, 'scripts', 'prdt')
+  const REASK = '[prdt re-ask check]'
+  const env = (): NodeJS.ProcessEnv => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-reask-'))
+    roots.push(home)
+    return { ...ON, PRDT_HOME: home, PRDT_BIN: PRDT }
+  }
+  function record(proj: string, id: string, o: { status?: string; outcome?: string; log?: string; ago?: number } = {}) {
+    const p = path.join(proj, 'docs', 'tickets', 'v1.13', `${id}.md`)
+    fs.writeFileSync(p, ['---', `id: ${id}`, `slug: fixture-${id.toLowerCase()}`, 'type: decision', `status: ${o.status ?? 'done'}`,
+      'assignee: user', 'created: 2026-10-27', '---', '', '## problem', '', '- 다시 묻기 막는 방식', '',
+      '## outcome', '', o.outcome ?? 'A (hook 이 막음) — 사용자 「A」', '', '## log', '', o.log ?? '', ''].join('\n'))
+    const t = o.ago === undefined ? DAY_AGO : (Date.now() - o.ago) / 1000
+    fs.utimesSync(p, t, t)
+  }
+  function run(setup: (proj: string) => void, reply: string, e: NodeJS.ProcessEnv = env()) {
+    const { root, proj } = makeProject({})
+    setup(proj)
+    return runHook({
+      hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
+    }, e)
+  }
+  // observation (4) of T-1239: the PO cites the record, opens a NEW decision ticket and asks A/B again
+  const REASK_REPLY = [
+    '진행 상황이에요.',
+    '',
+    '## 다시 묻기 막는 방식',
+    '',
+    'T-1313 에 기록이 있어요. T-1400 으로 다시 여쭤요.',
+    '',
+    '| 안 | 내용 | 추천 |',
+    '|---|---|---|',
+    '| A | hook 이 막음 | ← |',
+    '| B | 규율 문구 | |',
+    '',
+    '어느 쪽으로 할까요?',
+  ].join('\n')
+  const newTicket = (proj: string) => record(proj, 'T-1400', { status: 'open', outcome: '', ago: 1_000 })
+
+  test('cites a recorded (done, answered) decision beside the options + a new decision ticket this turn → blocked, citing the record', () => {
+    const out = run((p) => { record(p, 'T-1313'); newTicket(p) }, REASK_REPLY)
+    const j = JSON.parse(out)
+    expect(j.decision).toBe('block')
+    expect(j.reason.startsWith(REASK)).toBe(true)
+    expect(j.reason).toContain('T-1313')
+    expect(j.reason).toMatch(/\(line [\d, ]+\)/)
+    expect(j.reason).not.toContain('hook 이 막음') // never echoes the reply
+  })
+
+  test('T-1365 = A — the reason is the approved To-Be wording, byte for byte', () => {
+    // docs/productune/artifacts/v1.16/lane-records-build-entry-step.md §B To-Be (467 B)
+    const TO_BE = '[prdt re-ask check] this reply asks the user (line %s) beside a decision already answered: %s (answer: `prdt decisions find <id>`). Act on the recorded answer and cite it, never ask it again; a decision ticket opened this turn for that ask → `dropped` naming the record. Keep the ask only when the record is stale or conflicting, its state changed, or a consent gate needs live words — say which beside the ask. Then send the reply again%s, every other line kept.'
+    expect(Buffer.byteLength(TO_BE)).toBe(467)
+    const reason = JSON.parse(run((p) => { record(p, 'T-1313'); newTicket(p) }, REASK_REPLY)).reason as string
+    const lines = (/\(line ([\d, ]+)\)/.exec(reason) as RegExpExecArray)[1]
+    const parts = [lines, 'T-1313', '']
+    expect(reason).toBe(TO_BE.replace(/%s/g, () => parts.shift() as string))
+  })
+
+  test('the per-product id form (T-1298) is a citable record too', () => {
+    const reply = REASK_REPLY.replace('T-1313', 'T-PRDT-7')
+    const out = run((p) => { record(p, 'T-PRDT-7'); newTicket(p) }, reply)
+    expect(JSON.parse(out).reason).toContain('T-PRDT-7')
+  })
+
+  test('the record cited with no ask (PO acts on it) → silent', () => {
+    const reply = '## 다시 묻기 막는 방식\n\nT-1313 에 기록된 대로 A 로 진행해요. hook 을 고치고 있어요.'
+    expect(run((p) => record(p, 'T-1313'), reply)).toBe('')
+  })
+
+  test('the cited decision is still open (no answer yet) → not a re-ask', () => {
+    expect(run((p) => { record(p, 'T-1313', { status: 'open', outcome: '' }); newTicket(p) }, REASK_REPLY)).toBe('')
+  })
+
+  test('a done decision whose outcome is empty key headings only → not a recorded answer', () => {
+    expect(run((p) => { record(p, 'T-1313', { outcome: '### why\n\n### what\n' }); newTicket(p) }, REASK_REPLY)).toBe('')
+  })
+
+  test('a reversed record → not a re-ask', () => {
+    expect(run((p) => { record(p, 'T-1313', { log: '- 2026-10-28 T-1399 가 이 결정을 뒤집음' }); newTicket(p) }, REASK_REPLY)).toBe('')
+  })
+
+  test('a decision closed THIS turn (just answered) → not a re-ask', () => {
+    expect(run((p) => { record(p, 'T-1313', { ago: 1_000 }); newTicket(p) }, REASK_REPLY)).toBe('')
+  })
+
+  test('the record cited in another section than the ask → not a re-ask', () => {
+    const reply = ['## 기록', '', '- T-1313 = A 로 정해져 있어요.', '', '## 새 질문', '', '배포를 오늘 할지 T-1400 에 올렸어요.', '',
+      '| 안 | 내용 | 추천 |', '|---|---|---|', '| A | 오늘 | ← |', '| B | 내일 | |', '', '어느 쪽으로 할까요?'].join('\n')
+    expect(run((p) => { record(p, 'T-1313'); newTicket(p) }, reply)).toBe('')
+  })
+
+  test('a waiting item or plain question citing the record in its own item → blocked', () => {
+    const reply = ['## 답 기다리는 것', '', '- T-1313 다시 묻기 막는 방식, hook 으로 할까요?'].join('\n')
+    const out = run((p) => record(p, 'T-1313'), reply)
+    expect(JSON.parse(out).reason.startsWith(REASK)).toBe(true)
+  })
+
+  test('no prdt CLI reachable → the re-ask check fails open (the new ticket still exempts the turn)', () => {
+    const e = { ...env(), PRDT_BIN: '/nonexistent/prdt', PATH: '/usr/bin:/bin' }
+    expect(run((p) => { record(p, 'T-1313'); newTicket(p) }, REASK_REPLY, e)).toBe('')
+  })
+
+  test('second Stop (stop_hook_active) → never a second block', () => {
+    const { root, proj } = makeProject({})
+    record(proj, 'T-1313'); newTicket(proj)
+    expect(runHook({
+      hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: true,
+      cwd: proj, transcript_path: writeTranscript(root, REASK_REPLY), last_assistant_message: REASK_REPLY,
+    }, env())).toBe('')
+  })
+})
+
+describe('T-1364 = C (threshold 4) — asks over 4+ open decisions in one reply block once', () => {
+  const BATCH = '[prdt batch-ask check]'
+  const store = (n: number): Store => Object.fromEntries(Array.from({ length: n }, (_, k) => [`T-20${k + 1}`, DEC()]))
+  const waiting = (ids: string[]) => ['## 답 기다리는 것', '', ...ids.map(id => `- ${id} 이 항목, A 로 할까요?`)].join('\n')
+
+  test('4 open decisions, each with its own ask → blocked once, naming the count', () => {
+    const { out } = stop(store(4), waiting(['T-201', 'T-202', 'T-203', 'T-204']))
+    const j = JSON.parse(out)
+    expect(j.decision).toBe('block')
+    expect(j.reason.startsWith(BATCH)).toBe(true)
+    expect(j.reason).toContain('4 open decisions')
+    expect(j.reason).not.toContain('이 항목') // never echoes the reply
+  })
+
+  test('5 asks over the same 4 ids count 4 distinct ids → still one block', () => {
+    const reply = waiting(['T-201', 'T-202', 'T-203', 'T-204', 'T-201'])
+    expect(JSON.parse(stop(store(4), reply).out).reason).toContain('4 open decisions')
+  })
+
+  test('3 open decisions with asks → no block from this check (all covered → silent)', () => {
+    expect(stop(store(3), waiting(['T-201', 'T-202', 'T-203'])).out).toBe('')
+  })
+
+  test('3 asked + a 4th open decision only cited, with no ask beside it → not counted', () => {
+    const reply = waiting(['T-201', 'T-202', 'T-203']) + '\n\n## 진행 중\n\nT-204 는 기록만 해 두었어요.'
+    expect(stop(store(4), reply).out).toBe('')
+  })
+
+  test('done or non-decision tickets beside the asks are not open decisions → not counted', () => {
+    const s: Store = { ...store(3), 'T-204': IMPL() }
+    expect(stop(s, waiting(['T-201', 'T-202', 'T-203', 'T-204'])).out).not.toContain(BATCH)
+  })
+
+  test('decision tickets opened this turn do not exempt the batch', () => {
+    const { root, proj } = makeProject(store(4))
+    const now = Date.now() / 1000
+    fs.utimesSync(path.join(proj, 'docs', 'tickets', 'v1.13', 'T-201.md'), now, now)
+    const reply = waiting(['T-201', 'T-202', 'T-203', 'T-204'])
+    const out = runHook({
+      hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
+    })
+    expect(JSON.parse(out).reason.startsWith(BATCH)).toBe(true)
+  })
+
+  test('second Stop (stop_hook_active) → never a second block', () => {
+    const reply = waiting(['T-201', 'T-202', 'T-203', 'T-204'])
+    expect(stop(store(4), reply, { stop_hook_active: true }).out).toBe('')
+  })
+})

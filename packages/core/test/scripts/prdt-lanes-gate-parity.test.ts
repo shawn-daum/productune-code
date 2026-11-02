@@ -15,7 +15,7 @@ import { findGateTicket } from '../../../viewer/lib/home-graph.mjs'
 const PRDT_CLI = path.join(path.resolve(__dirname, '..', '..'), 'scripts', 'prdt')
 const GATE = 'docs/artifacts/v0.1/g.md'
 
-type T = { id: string; status: string; deps: string[]; names: boolean }
+type T = { id: string; status: string; deps: string[]; names: boolean; lane?: string }
 const FIXTURES: Record<string, T[]> = {
   'longest chain wins over a later mention': [
     { id: 'T-001', status: 'done', deps: [], names: false }, { id: 'T-002', status: 'open', deps: ['T-001'], names: true },
@@ -26,6 +26,14 @@ const FIXTURES: Record<string, T[]> = {
   ],
   'a dropped mention is no gate': [
     { id: 'T-001', status: 'open', deps: [], names: true }, { id: 'T-002', status: 'dropped', deps: ['T-001'], names: true },
+  ],
+  // T-1359: a `lane:` record is the gate — the first record by ticket number, the body search unused
+  'the first lane record is the gate, not the longest chain naming the path': [
+    { id: 'T-001', status: 'done', deps: [], names: true }, { id: 'T-002', status: 'open', deps: ['T-001'], names: true },
+    { id: 'T-004', status: 'open', deps: [], names: false, lane: 'L2 뒤' }, { id: 'T-003', status: 'open', deps: [], names: false, lane: 'L1 앞' },
+  ],
+  'a dropped record is no gate': [
+    { id: 'T-001', status: 'dropped', deps: [], names: false, lane: 'gone' }, { id: 'T-002', status: 'open', deps: [], names: false, lane: 'kept' },
   ],
   'a dependency cycle does not hang or diverge': [
     { id: 'T-001', status: 'open', deps: ['T-002'], names: true }, { id: 'T-002', status: 'open', deps: ['T-001'], names: true },
@@ -48,12 +56,12 @@ for (const [name, tickets] of Object.entries(FIXTURES)) {
       fs.mkdirSync(dir, { recursive: true })
       for (const t of tickets) {
         fs.writeFileSync(path.join(dir, `${t.id}.md`), ['---', `id: ${t.id}`, `slug: s-${t.id.toLowerCase()}`, 'type: impl', `status: ${t.status}`, 'assignee: developer',
-          ...(t.deps.length ? [`deps: [${t.deps.join(', ')}]`] : []), 'created: 2026-10-15', '---', '', t.names ? `\`${GATE}\`` : 'x', ''].join('\n'))
+          ...(t.deps.length ? [`deps: [${t.deps.join(', ')}]`] : []), ...(t.lane ? [`lane: ${t.lane}`] : []), 'created: 2026-10-15', '---', '', t.names ? `\`${GATE}\`` : 'x', ''].join('\n'))
       }
       let raw: string
       try { raw = cli(['schedule', '--json']) } catch (e: any) { raw = e.stdout } // a cycle exits 1 but still prints the JSON
       const py = JSON.parse(raw).lanes[0].gate_ticket
-      const js = findGateTicket(tickets.map((t) => ({ frontmatter: { id: t.id, status: t.status, deps: t.deps }, body: t.names ? `\`${GATE}\`` : 'x' })), GATE)
+      const js = findGateTicket(tickets.map((t) => ({ frontmatter: { id: t.id, status: t.status, deps: t.deps, ...(t.lane ? { lane: t.lane } : {}) }, body: t.names ? `\`${GATE}\`` : 'x' })), GATE)
       expect(py).toBe(js ? js.frontmatter.id : null)
       expect(py).not.toBeNull()
     } finally { fs.rmSync(tmp, { recursive: true, force: true }) }

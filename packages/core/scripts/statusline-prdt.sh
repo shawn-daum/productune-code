@@ -515,6 +515,9 @@ def _fm_deps(head):
     return re.findall(r"T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+", m.group(1)) if m else []
 
 
+lane_records = set()  # T-1359: lines whose current version holds a live `lane:` record
+
+
 def scan(base, row):
     try:
         vdirs = sorted(d for d in os.listdir(base)
@@ -542,6 +545,9 @@ def scan(base, row):
             if s not in ("done", "open"):
                 continue
             if is_current:
+                fmb = re.match(r"---\n(.*?)\n---", head, re.S)
+                if fmb and re.search(r"^lane:[ \t]*\S", fmb.group(1), re.M):
+                    lane_records.add(row["line"])
                 row["vtotal"] += 1
                 row["vdone"] += s == "done"
                 mty = re.search(r"^(?:type|stage):\s*(\S+)", head, re.M)
@@ -860,7 +866,8 @@ links = {}  # ticket_id -> resolved viewer link target (T-805), filled in as seg
 # keeps python's bytecode cache (spawning the 20k-line `prdt` recompiled it on every
 # render). Read-only: nothing is written. A missing/stale module or any failure = no
 # lane rows (degrade silently). Cost control: the read happens only for a product in
-# stage build while the project's PRD.md carries a `합격선` heading.
+# stage build while the project's PRD.md carries a `합격선` heading, or a current-version
+# ticket carries a `lane:` record (T-1359, `scan` above).
 
 
 def _prd_has_gate_table():
@@ -879,7 +886,7 @@ def _prd_has_gate_table():
 def read_lanes():
     """{line (None = home): [lane dict]} for each build-stage product; absent = no lane rows."""
     want = [r["line"] for r in rows if token(r["st"].get("stage"), lambda v: v in STAGES) == "build"]
-    if not want or not _prd_has_gate_table():
+    if not want or not (lane_records.intersection(want) or _prd_has_gate_table()):
         return {}
     try:
         import prdt_lanes
