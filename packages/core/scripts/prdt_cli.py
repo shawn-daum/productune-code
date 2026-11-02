@@ -13291,6 +13291,7 @@ def _build_gate_met(root, line, ver_tickets, version):
                            f"{safe_label(str(e))}) — build gate unknown, Ship-entry signal not judged")
     if gate:
         # T-1214 (C2): a 합격선 lane with no gate ticket can never finish — name it.
+        # A lane record (T-1359) is its own gate ticket, so only table lanes reach this.
         unlinked = [safe_label(str(ln["name"])) for ln in gate if not ln.get("linked")]
         note = (f"stage: {version} 합격선 lane {', '.join(unlinked)} not linked (no gate path, or no "
                 f"{version} ticket names it) — Ship-entry signal not raised until it links") if unlinked else None
