@@ -15254,7 +15254,10 @@ def _track_test_map_read(code):
     out = {}
     for t, e in tests.items():
         if isinstance(e, dict):
-            out[t] = {k: {x for x in e.get(k, []) if isinstance(x, str)} for k in ("f", "d", "t")}
+            vals = [e.get(k, []) for k in ("f", "d", "t")]
+            if not all(isinstance(v, list) for v in vals):
+                return {}, "unreadable — tests are chosen by import, name and the declared lists"
+            out[t] = {k: {x for x in v if isinstance(x, str)} for k, v in zip(("f", "d", "t"), vals)}
     return out, f"{len(out)} test file(s), updated {d.get('updated', '?')}"
 
 
