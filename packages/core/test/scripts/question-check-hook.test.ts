@@ -275,6 +275,7 @@ describe('T-993 = B — which questions are asks', () => {
     ['T-1379 괜찮은지 답해 주세요', '화면 세트 배치와 위키 이동 명령 출력이 괜찮은지 답해 주세요 (T-1065)'],
     ['T-1379 해도 될지', 'PRD v1.13 완료 기준이 채워졌는지 확인하고, 배포해도 될지 알려 주세요.'],
     ['T-1379 아니면 joins the clause before', '본문을 이대로 승인할지, 아니면 빼거나 고칠 줄 번호를 알려 주세요. (T-1301)'],
+    ['T-1379 bare 답해 주세요 after approval', '이대로 괜찮으면 답해 주세요.'],
   ]
   for (const [label, reply] of blocked) {
     test(`${label} → blocked`, () => {
@@ -311,6 +312,19 @@ describe('T-993 = B — which questions are asks', () => {
     ['relayed ask (를 받고)', 'QA 가 빌드가 되는지 알려 주세요 를 받고 확인했어요.'],
     ['third-party to-do 답해 주세요', '팀장님 메일에 오늘 안에 답해 주세요 (리뷰 일정 때문).'],
     ['ASCII-quoted approval ask', "PO 가 '이 문구로 괜찮은지 알려 주세요' 라고 물었어요."],
+    // T-1379 QA grill (d-v116-t1379-qa2): a third party decides, or the reply goes to another mail
+    ['third-party subject 팀장님이', '팀장님이 어떻게 할지 알려 주세요.'],
+    ['third-party subject 고객사가', '고객사가 이 건을 어떻게 처리할지 알려 주세요.'],
+    ['conditional 나오면', '회의에서 어떻게 결정할지 나오면 알려 주세요.'],
+    ['third-party subject 인사팀이', '인사팀이 어떤 안을 채택할지 알려 주세요.'],
+    ['conditional 정해지면', '디자이너가 어느 쪽으로 갈지 정해지면 알려 주세요.'],
+    ['third-party subject 다른 팀이', '다른 팀이 A 와 B 중 무엇을 쓸지 알려 주세요.'],
+    ['third-party subject 법무팀이', '법무팀이 A 안으로 갈지 B 안으로 갈지 알려 주세요.'],
+    ['relay 께 여쭤보고', '팀장님께 진행해도 될지 여쭤보고 결과를 알려 주세요.'],
+    ['passive outcome 승인될지', '보안팀 심사에서 배포가 승인될지 알려 주세요.'],
+    ['reply to another mail (conditional)', '고객이 괜찮다고 하면 그 메일에 답해 주세요.'],
+    ['reply to another mail 동의서', '동의서 메일에 답해 주세요.'],
+    ['reply to another mail 승인 요청', '승인 요청 메일에 오늘 답해 주세요.'],
   ]
   for (const [label, reply] of silent) {
     test(`${label} → silent`, () => {
