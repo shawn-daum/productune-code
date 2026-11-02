@@ -159,7 +159,7 @@ def _index_fields(fm, keys, problems):
     return out
 
 
-TICKET_INDEX_FIELDS = ("id", "slug", "type", "status", "assignee", "feature", "created", "closed")
+TICKET_INDEX_FIELDS = ("id", "slug", "type", "status", "assignee", "feature", "created", "closed", "lane", "gate")
 
 
 # ── T-1104: the docs-layout seam — every docs/ path reader goes through here ──
@@ -394,6 +394,7 @@ def _scan_ticket_dir(root, tdir, lines, prefix):
                "status": f["status"], "assignee": norm_assignee(f["assignee"]),
                "feature": f["feature"], "deps": deps, "also": also,
                "created": f["created"], "closed": f["closed"],
+               "lane": f["lane"], "gate": f["gate"],
                "version": version, "path": (sp[len(root_prefix):] if (sp := str(p)).startswith(root_prefix) else str(p.relative_to(root)))}
         if row["type"] not in TICKET_TYPES:
             problems.append(f"type '{row['type']}' not in {'/'.join(TICKET_TYPES)}")
@@ -770,6 +771,17 @@ def _lane_gate_rows(root, st, line):
     return [(n or chr(65 + i), g, bool(n)) for i, (n, g) in enumerate(rows)]
 
 
+def _lane_records(tickets, version):
+    """[(name, gate_path_or_None, gate_ticket)] — T-1359 (design v1.16
+    lane-records-design §1): this version's open+done tickets carrying a
+    `lane:` frontmatter record, in ticket-number order. [] → the 합격선 table."""
+    recs = [t for t, (r, _p) in tickets.items()
+            if r["version"] == version and r["status"] in ("open", "done")
+            and isinstance(r.get("lane"), str) and r["lane"].strip()]
+    return [(tickets[t][0]["lane"].strip(), (tickets[t][0].get("gate") or "").strip() or None, t)
+            for t in sorted(recs, key=_ticket_num_key)]
+
+
 def _lane_longest_ending_at(ids, preds):
     """{id: node count of the longest dep chain ending at it}, cycle-safe —
     twin of home-graph.mjs `longestEndingAt`."""
@@ -849,15 +861,18 @@ def _lane_new(name, gpath, named, version, besteffort=False):
 
 
 def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
-    """[lane dict] — one per 합격선 row, then the 자투리 lane; [] when the PRD
-    has no 합격선 row (R1–R3, R7–R12). `order` = ticket ids in `prdt schedule`
+    """[lane dict] — one per lane record (T-1359: a gate ticket's `lane:`
+    frontmatter, ticket-number order), or with no record in this version one
+    per 합격선 row of the PRD table; then the 자투리 lane; [] when neither
+    exists (R1–R3, R7–R12). `order` = ticket ids in `prdt schedule`
     row order (the lane queue order, R12); None → ticket-number order.
     {name, gate_path, gate_ticket, linked, done, total, finished, tickets,
     working, next, ready, blockers:[{id, kind: decision|request}], warning,
     unnamed, besteffort}. A ticket belongs to ONE lane: the earliest row whose
     gate ticket's deps closure holds it (R8); this version's open+done tickets
     in no row's closure are the 자투리 lane (R7), present only when non-empty."""
-    rows = _lane_gate_rows(root, st, line)
+    records = _lane_records(tickets, version)
+    rows = [(n, g, True) for n, g, _t in records] if records else _lane_gate_rows(root, st, line)
     if not rows:
         return []
     pos = {t: i for i, t in enumerate(order or [])}
@@ -868,6 +883,34 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
             cache[t] = parse_frontmatter(tickets[t][1])[1] or ""
         return cache[t]
     lanes, taken, claimed = [], set(), set()
+
+    def link(lane, gate):
+        """Mark `gate` as `lane`'s gate ticket; its deps closure not yet held by
+        an earlier lane is the lane's members (R8)."""
+        taken.add(gate)
+        lane["gate_ticket"], lane["linked"] = gate, True
+        seen, stack = set(), [gate]
+        while stack:
+            t = stack.pop()
+            if t in seen or t not in tickets or tickets[t][0]["status"] == "dropped":
+                continue
+            seen.add(t)
+            stack.extend(tickets[t][0]["deps"])
+        members = [t for t in seen if t not in claimed]
+        claimed.update(seen)
+        return members
+
+    if records:
+        # T-1359: the record IS the gate ticket — no body search, always linked.
+        names = set()
+        for name, gpath, gate in records:
+            lane = _lane_new(name, gpath, True, version)
+            lanes.append(lane)
+            if name in names:
+                lane["warning"] = f"lane {name}: another lane record of {version} already has this name"
+            names.add(name)
+            _lane_fill(lane, link(lane, gate), tickets, in_flight, pos)
+        rows = []
     for name, gpath, named in rows:
         lane = _lane_new(name, gpath, named, version)
         lanes.append(lane)
@@ -883,17 +926,7 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
                 lane["warning"] = (f"lane {name}: its gate path reaches {gate}, which an earlier lane already "
                                    f"holds — not linked")
             elif gate is not None:
-                taken.add(gate)
-                lane["gate_ticket"], lane["linked"] = gate, True
-                seen, stack = set(), [gate]
-                while stack:
-                    t = stack.pop()
-                    if t in seen or t not in tickets or tickets[t][0]["status"] == "dropped":
-                        continue
-                    seen.add(t)
-                    stack.extend(tickets[t][0]["deps"])
-                members = [t for t in seen if t not in claimed]
-                claimed |= seen
+                members = link(lane, gate)
         _lane_fill(lane, members, tickets, in_flight, pos)
     rest = [t for t, (r, _p) in tickets.items()
             if r["version"] == version and r["status"] in ("open", "done") and t not in claimed]
@@ -1070,6 +1103,8 @@ def compute_schedule(root, tickets=None, line=None):
     out.update(critical_path=chain, cp_length=length if length > 0 else 0, rows=rows)
     out["lanes"] = compute_lanes(root, tickets, st, line, version, in_flight, [r["id"] for r in rows])
     if out["lanes"]:
+        # T-1365: where the lanes came from — `records` (gate tickets' `lane:`) or the PRD `table`
+        out["lanes_from"] = "records" if _lane_records(tickets, version) else "table"
         # T-1184 R10: the version total the lane sums must equal (text `total` line)
         here = [r for r, _p in tickets.values() if r["version"] == version and r["status"] in ("open", "done")]
         impl = [r for r in here if r["type"] == "impl"]
