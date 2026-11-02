@@ -3633,13 +3633,44 @@ def cmd_feedback(args):
           "inject-edit, put to the user — written only after the user approves. This command wrote only the ledger.")
 
 
+def _wiki_lint_view(root):
+    """T-1218: (pages, resolve) for `wiki_lint`. Every page once, named the way
+    the first product's view names it — never the current product's, so a
+    finding reads the same whatever po-state focuses on. `resolve(page, link)`
+    → (exists, target page or None): a bare name resolves in the view of the
+    product whose folder holds the page (a `_shared` page: the first product's),
+    a `[[<product>:name]]` link in that product's view. A target that exists
+    but is shadowed in the first product's view has no page row (None).
+    Legacy / one product: the single view, unchanged."""
+    prods = project_products(root)
+    pages = scan_wiki(root, prods[0] if prods else None)
+    if len(prods) < 2:
+        by_name = {p["name"]: p for p in pages}
+        return pages, lambda pg, l: (l in by_name, by_name.get(l))
+    by_path = {p["path"]: p for p in pages}
+    views = {}
+
+    def view(p):
+        if p not in views:
+            views[p] = {x["name"]: x for x in scan_wiki(root, p)}
+        return views[p]
+
+    def resolve(pg, l):
+        pfx, sep, rest = l.partition(":")
+        if sep and pfx in prods:
+            hit = view(pfx).get(rest)
+        else:
+            hit = view(_product_from_docs_path(root, pg["path"], prods) or prods[0]).get(l)
+        return (hit is not None, by_path.get(hit["path"]) if hit else None)
+    return pages, resolve
+
+
 def wiki_lint(root):
-    pages = scan_wiki(root)
+    pages, resolve = _wiki_lint_view(root)
     warns = []
     # unusable frontmatter shapes, named per file (T-550) — reported, never fatal
     for pg in pages:
         warns += [f"wiki: {pg['path']}: {x}" for x in pg.get("problems") or []]
-    names = {p["name"] for p in pages}
     # `machine:` prefixed links resolve against the machine store (design
     # linkage §2 C2, T-674 slice 2c) — a project-wiki page citing one is legal
     # (curate-wiki.md's own prescribed form), so it is checked, not just
@@ -3653,15 +3684,16 @@ def wiki_lint(root):
                     warns.append(f"wiki: [[{l}]] referenced from {pg['name']} does not "
                                  f"exist (machine wiki)")
                 continue
-            inbound.add(l)
-            if l not in names:
+            found, tgt = resolve(pg, l)
+            if tgt is not None:
+                inbound.add(tgt["path"])
+            if not found:
                 warns.append(f"wiki: [[{l}]] referenced from {pg['name']} does not exist")
-    by_name = {p["name"]: p for p in pages}
     for pg in pages:
-        if pg["status"] == "live" and pg["name"] not in inbound and not pg["links"]:
+        if pg["status"] == "live" and pg["path"] not in inbound and not pg["links"]:
             warns.append(f"wiki: orphan page {pg['name']} (no links in or out)")
         for l in pg["links"]:
-            tgt = mach_by_name.get(l) if l.startswith(MACHINE) else by_name.get(l)
+            tgt = mach_by_name.get(l) if l.startswith(MACHINE) else resolve(pg, l)[1]
             if tgt and tgt["status"] == "superseded" and pg["status"] == "live":
                 warns.append(f"wiki: live page {pg['name']} references superseded [[{l}]]")
     inbox = docs_path(root, "wiki") / "inbox.md"
@@ -11630,9 +11662,23 @@ def cmd_artifacts(args):
     prods = [p for i, p in enumerate(artifact_products(root))
              if i == 0 or artifacts_root(root, p).is_dir()]
     if args.action == "migrate":
+        dry = getattr(args, "dry_run", False)
+        if len(prods) > 1:
+            # All-or-nothing across products too: every product is judged (a dry
+            # run) before any is written; one blocker anywhere writes nothing.
+            judged = [(prod, *artifacts_migrate(root, dry_run=True, product=prod)) for prod in prods]
+            stopped = [prod for prod, _, c in judged if c]
+            if stopped:
+                for prod, lines, c in judged:
+                    if c:
+                        for l in lines:
+                            print(l)
+                where = ", ".join(_art_msg(root, p, "docs/artifacts/") for p in stopped)
+                print(f"artifacts: migrate stopped — blocker(s) in {where}; nothing written in any product")
+                sys.exit(1)
         code = 0
         for prod in prods:
-            lines, c = artifacts_migrate(root, dry_run=getattr(args, "dry_run", False), product=prod)
+            lines, c = artifacts_migrate(root, dry_run=dry, product=prod)
             for l in lines:
                 print(l)
             code = max(code, c)
