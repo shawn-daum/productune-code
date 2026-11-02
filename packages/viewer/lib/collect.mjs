@@ -921,7 +921,7 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
   return {
     poState,
     project: collectProjectSlug(repoRoot),
-    // T-1277: the viewer chrome's language — the project's recorded `user_lang` (BCP-47) in `.prdt/config.json`; null when unrecorded.
+    // T-1277: the viewer chrome's language — project `.prdt/config.json` user_lang, else the machine `<PRDT_HOME>/user-lang` (T-1306); null when neither is set.
     userLang: userLangOf(cfg),
     currentVersion,
     lines,
@@ -959,10 +959,22 @@ function realRootOrNull(repoRoot) {
   }
 }
 
-/** T-1277: `user_lang` of a parsed `.prdt/config.json` (a non-empty string), else null. */
+/**
+ * T-1277 · T-1306: the viewer text language — `user_lang` of a parsed `.prdt/config.json` (a non-empty
+ * string), else the machine chat language `<PRDT_HOME>/user-lang` (2-3 lowercase letters, as
+ * core settings/user-lang.ts), else null (the viewer then shows ko).
+ */
 export function userLangOf(cfg) {
   const v = cfg && typeof cfg === 'object' ? cfg.user_lang : null
-  return typeof v === 'string' && v.trim() ? v.trim() : null
+  if (typeof v === 'string' && v.trim()) return v.trim()
+  try {
+    // same resolution as defaultDisciplineRoot(): PRDT_HOME redirects the tool home
+    const home = process.env.PRDT_HOME || path.join(os.homedir(), '.prdt')
+    const m = fs.readFileSync(path.join(home, 'user-lang'), 'utf8').replace(/\s+/g, '')
+    return /^[a-z]{2,3}$/.test(m) ? m : null
+  } catch {
+    return null
+  }
 }
 
 /** `.prdt/config.json`, or null when absent or unreadable. */
