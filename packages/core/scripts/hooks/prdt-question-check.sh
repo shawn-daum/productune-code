@@ -559,36 +559,45 @@ def recorded_decisions(root, ids):
 APPROVAL_RE = re.compile(r"승인|approv", re.I)
 
 
-def body_above(lines, a, i):
-    """True when a closed, non-diagram fence lies in lines[a:i]."""
-    open_at = None
+def body_end(lines, a, i):
+    """Index of the closing line of the last closed, non-diagram fence in
+    lines[a:i]; None when there is none."""
+    open_at, last = None, None
     for k in range(a, i):
         if FENCE_RE.match(lines[k]):
             if open_at is None:
                 open_at = k
             else:
                 if not DIAGRAM_FENCE_RE.match(lines[open_at]):
-                    return True
+                    last = k
                 open_at = None
-    return False
+    return last
+
+
+def is_item_ask(lines, i, kind):
+    return kind == "waiting" or bool(LIST_ITEM_RE.match(lines[i])) or lines[i][:1].isspace()
 
 
 def ask_subject(lines, i, kind, option_ref, tickets):
-    """T-1377: the decision ids an ask is ABOUT. The decision ids on the ask's own
-    line (and, for a list item, the item's first line) name its subject; an id
-    elsewhere in the item or section is then a citation (a reason, a source).
-    None there → every id in its item or section, except an approval ask after a
-    fenced body in its section: that ask is about the body."""
+    """T-1377: the decision ids an ask is ABOUT.
+    - a list item: the decision ids on the ask's line and the item's first line;
+      none there → every id in the item. An id on an item's sub-line beside an
+      item that names its own decision is a citation (a reason).
+    - any other line: every decision id in its section, the ask line's own ids
+      included — a ticket named on the ask line never shields a decided id cited
+      in the same section. One exception: an approval ask after a fenced body is
+      about the body and what presents it, so an id cited only between the body
+      and the ask (a source of the body) is a citation."""
     a, b = ask_scope(lines, i, kind, option_ref)
     is_dec = lambda k: bool(tickets.get(k)) and tickets[k][0] == "decision"
     ids_on = lambda chunk: {m.group(1) for m in TICKET_ID_RE.finditer(chunk) if is_dec(m.group(1))}
-    own = ids_on(lines[i]) | (ids_on(lines[a]) if a != i and (lines[i][:1].isspace() or kind == "waiting"
-                                                              or LIST_ITEM_RE.match(lines[i])) else set())
-    if own:
-        return own
-    if APPROVAL_RE.search(QUOTED_RE.sub(" ", lines[i])) and body_above(lines, a, i):
-        return set()
-    return ids_on("\n".join(lines[a:b]))
+    if is_item_ask(lines, i, kind):
+        own = ids_on(lines[i]) | ids_on(lines[a])
+        return own or ids_on("\n".join(lines[a:b]))
+    e = body_end(lines, a, i) if APPROVAL_RE.search(QUOTED_RE.sub(" ", lines[i])) else None
+    if e is None:
+        return ids_on("\n".join(lines[a:b]))
+    return ids_on("\n".join(lines[a:e + 1] + lines[i:b]))
 
 
 def reask_check(root, lines, asks, tickets, turn_start):
@@ -672,10 +681,20 @@ def main():
         block("\n\n".join(reasons))
 
 
+def reasked_section(lines, i, reasked):
+    """T-1377: True when the ask's own line, or any line of its section, is held
+    by the re-ask check — one decision, one instruction: re-ask's."""
+    if i + 1 in reasked:
+        return True
+    a, b = section_bounds(lines, i)
+    return any(a < n <= b for n in reasked)
+
+
 def question_check(lines, asks, tickets, unknown, turn_start, reply, reasked):
     """T-985: the reason when an ask has no open decision ticket beside it; else
-    None. An ask the re-ask check already holds (`reasked` line numbers) is left
-    to it: the recorded answer, not a new ticket, is what that ask needs."""
+    None. An ask the re-ask check already holds (`reasked` line numbers), or one
+    in the same section as such an ask, is left to it: the recorded answer, not a
+    new ticket, is what that decision needs."""
     if any(t == "decision" and mt >= turn_start - 1 for t, _, _, mt in tickets.values()):
         return None
     open_dec = {k for k, (t, s, _, _) in tickets.items() if t == "decision" and s == "open"}
@@ -696,7 +715,7 @@ def question_check(lines, asks, tickets, unknown, turn_start, reply, reasked):
                 a, b = section_bounds(lines, i)
             found = ids_in("\n".join(lines[a:b]))
             ok = bool(found & (open_dec | open_req if kind == "waiting" else open_dec))
-        if not ok and i + 1 not in reasked:
+        if not ok and not reasked_section(lines, i, reasked):
             uncovered.append(i + 1)
     if not uncovered:
         return None
