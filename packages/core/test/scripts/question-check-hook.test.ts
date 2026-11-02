@@ -142,12 +142,18 @@ describe('T-1116 — the language clause', () => {
   }
   test('a stored language names itself in the reason', () => {
     const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, langEnv('ko'))
-    expect(JSON.parse(out).reason).toContain('again in lang=ko, opening with')
+    const r = JSON.parse(out).reason
+    expect(r).toContain('again in lang=ko, opening with')
+    // T-1302: the re-send keeps every other line; a body up for approval keeps its numbers
+    expect(r).toContain('every other line kept')
+    expect(r).toContain('never the options alone')
   })
   test('no language known → the T-990 reason, no clause', () => {
     const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, langEnv())
     const r = JSON.parse(out).reason
     expect(r).toContain('again, opening with')
+    expect(r).toContain('every other line kept')
+    expect(r).toContain('never the options alone')
     expect(r).not.toContain('lang=')
   })
   test('device language only (en-OS, nothing stored) → no clause (T-1281)', () => {
