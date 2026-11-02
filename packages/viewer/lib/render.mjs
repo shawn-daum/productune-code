@@ -1639,6 +1639,46 @@ function glossarySection(wiki) {
 // (a leading `>` block) as a note box, each `###` group as a heading pill.
 // Links inside a section body go through the same `md()` containment as
 // every other document (source dir `code/docs`).
+// T-1303 (decision T-1316 = A): the body is numbered group-line, the shape a
+// T-1302 approval body uses (contracts/tickets.md): group `**<g>. <label>**`,
+// line `<g>-<n>.` (`2-3`). A group is a `### ` heading or a plain label line
+// after a blank line (the RELEASES.md format's `요약` · lane groups); a line is
+// a top-level `- ` item. Continuation lines, fenced code and items before any
+// group keep no number.
+export const RELEASES_ANCHOR = 'code/docs/RELEASES.md' // = collect.mjs RELEASES_REL (render never imports collect)
+
+/** @param {string} body a release section body (opening `>` note already removed) */
+export function numberReleaseBody(body) {
+  let g = 0
+  let n = 0
+  let fence = null
+  let prevBlank = true
+  return String(body).split('\n').map((line) => {
+    const fm = /^\s*(`{3,}|~{3,})/.exec(line)
+    if (fence !== null || fm) {
+      if (fm) fence = fence === null ? fm[1][0] : (fm[1][0] === fence ? null : fence)
+      prevBlank = false
+      return line
+    }
+    const blank = line.trim() === ''
+    const wasBlank = prevBlank
+    prevBlank = blank
+    if (blank || /^\s/.test(line)) return line
+    const h = /^###\s+(.*)$/.exec(line)
+    if (h) { g += 1; n = 0; prevBlank = true; return `### ${g}. ${h[1]}` }
+    const item = /^([-*+])\s+(.*)$/.exec(line)
+    if (item) {
+      if (g === 0) return line
+      n += 1
+      return `${item[1]} ${g}-${n}. ${item[2]}`
+    }
+    if (!wasBlank || /^(#|>|\||<|\d+[.)]\s)/.test(line)) return line
+    g += 1
+    n = 0
+    return `**${g}. ${line.trim()}**`
+  }).join('\n')
+}
+
 function releaseBodyHtml(section, repoRootHref) {
   let body = section.body
   let note = ''
@@ -1648,7 +1688,7 @@ function releaseBodyHtml(section, repoRootHref) {
     note = `<div class="v-note">${inner.replace(/^<p>/, '').replace(/<\/p>\s*$/, '').replace(/\n/g, '<br>')}</div>\n`
     body = body.slice(quote[1].length)
   }
-  const html = md(body, 'code/docs', repoRootHref).replace(/<h3 class="pill pill-heading-3">/g, '<h3 class="pill pill-heading-2">')
+  const html = md(numberReleaseBody(body), 'code/docs', repoRootHref).replace(/<h3 class="pill pill-heading-3">/g, '<h3 class="pill pill-heading-2">')
   return `${note}${html}`
 }
 
@@ -2352,6 +2392,9 @@ export function buildAnchors(data) {
     const f = e.fields
     put(e.diskRel, { s: 'artifact', g: f.bucket, k: 'artifact', i: `${f.bucket}/${f.path}` })
   }
+  // T-1303: the release-notes view, and one version's section (`<path>#<version>`, the CLI's viewer_anchor).
+  put(RELEASES_ANCHOR, { s: 'release', g: 'all' })
+  for (const r of data.releases || []) put(`${RELEASES_ANCHOR}#${r.version}`, { s: 'release', g: 'all', k: 'release', i: r.version })
   // T-961: an added release line's items, under its `<line>/` group keys.
   for (const v of lineViews(data).slice(1)) {
     for (const t of currentVersionTickets(v.tickets, v.currentVersion)) {
