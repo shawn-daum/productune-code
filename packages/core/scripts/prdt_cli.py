@@ -7268,7 +7268,9 @@ def decisions_collect(root, words, feature=None):
                     rev = ids[0]
         recs.append({"id": row["id"], "date": row["closed"] or row["created"] or "",
                      "status": row["status"] or "-", "kind": "ticket", "items": items,
-                     "quote": quote, "slug": row["slug"], "reversed_by": rev, "text": text})
+                     "quote": quote, "slug": row["slug"], "reversed_by": rev, "text": text,
+                     # an answer = outcome text beyond empty key headings (T-1285)
+                     "answered": any(ln.strip() and not ln.lstrip().startswith("#") for ln in outcome.splitlines())})
     wdirs = [shared_docs_dir(root) / "wiki"] + [d for _, d in product_docs_dirs(root, "wiki")]
     seen = set()
     for wd in wdirs:
@@ -7290,7 +7292,8 @@ def decisions_collect(root, words, feature=None):
             recs.append({"id": p.stem, "date": str(fm.get("date") or fm.get("closed") or fm.get("created") or ""),
                          "status": st, "kind": "wiki", "items": _dec_items(body),
                          "quote": qs[0] if qs else "", "slug": str(fm.get("title") or p.stem),
-                         "reversed_by": "superseded" if st == "superseded" else "", "text": text})
+                         "reversed_by": "superseded" if st == "superseded" else "", "text": text,
+                         "answered": st != "superseded"})
     if not feature:
         lp = shared_docs_dir(root) / "wiki" / "log.md"
         if lp.is_file():
@@ -7307,7 +7310,8 @@ def decisions_collect(root, words, feature=None):
                     continue
                 its = _dec_items(m.group(2))
                 recs.append({"id": f"log.md:{n}", "date": m.group(1), "status": "log", "kind": "log",
-                             "items": its, "quote": qs[0], "slug": m.group(2), "reversed_by": "", "text": ln})
+                             "items": its, "quote": qs[0], "slug": m.group(2), "reversed_by": "", "text": ln,
+                             "answered": True})
     for r in recs:
         r["pats"] = pats
     return recs
@@ -7362,6 +7366,12 @@ def cmd_decisions(args):
     if not words and module is None:
         sys.exit("prdt decisions find: give at least one word (or --module [KIND])")
     recs = decisions_collect(root, words, args.feature)
+    if getattr(args, "json", False):
+        # T-1285: the machine form the question-check hook reads — every match, no limit
+        recs.sort(key=_dec_sort_key, reverse=True)
+        print(json.dumps([{k: r.get(k, "") for k in ("id", "kind", "status", "date", "reversed_by", "answered")}
+                          for r in recs], ensure_ascii=False))
+        return
     if module is not None:
         keyed = []
         for r in recs:
@@ -21658,6 +21668,8 @@ def main():
     p.add_argument("--feature", default=None, help="find: only tickets of this `feature`")
     p.add_argument("--module", nargs="?", const="", default=None, metavar="KIND",
                    help="find: KIND's principle and the items that followed it; bare = the kinds recorded")
+    p.add_argument("--json", action="store_true", help="find: every matching record as JSON "
+                                                      "(id · kind · status · date · reversed_by · answered) (T-1285)")
     p.set_defaults(fn=cmd_decisions)
     p = sub.add_parser("artifacts", help="sync (write the ONE docs/artifacts/manifest.json from disk) "
                                          "| check (report artifacts the bucket rule cannot place, and a "

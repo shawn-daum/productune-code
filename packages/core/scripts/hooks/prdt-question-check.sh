@@ -96,7 +96,7 @@ exit 0
 # body out of bash's parser, so `bash -n` still reads this file end to end.
 : <<'PYEOF'
 # ---- python ----
-import json, os, re, signal, stat, sys
+import json, os, re, shutil, signal, stat, subprocess, sys
 from datetime import datetime
 
 # T-1104: product-first docs layout (docs/artifacts/v1.14/product-first-docs-layout.html).
@@ -198,6 +198,18 @@ def lang_clause():
     return QUESTION_CHECK_LANG_CLAUSE % lang if lang else ""
 LIST_CAP = 5
 RUN_BUDGET_S = 5
+
+# T-1285 (mechanism T-1313 = A): an ask beside a decision the user already
+# answered. DRAFT wording — Designer `inject-edit` owns the final text.
+# %s = line numbers, record ids, language clause.
+REASK_REASON = (
+    "[prdt re-ask check] this reply asks the user (line %s) beside a decision the user already "
+    "answered: %s (`prdt decisions find <id>` shows the answer). Do not ask it again — act on the "
+    "recorded answer and cite it; a decision ticket opened this turn for the same ask → status "
+    "dropped. Only a new fact that the record did not know reopens it: name that fact beside the "
+    "ask. Then send the reply again%s, every other line kept."
+)
+DECISIONS_FIND_TIMEOUT_S = 3
 
 # What counts as a citable record id, and where its files live (T-996 = C:
 # decisions later get their own `D-NNN` records — add "D" and its dir here).
@@ -490,6 +502,65 @@ def item_bounds(lines, i):
     return start, end
 
 
+def ask_scope(lines, i, kind, option_ref):
+    """(start, end) of the lines that speak for one ask: a list item → the item;
+    anything else (an option set, a question naming an option) → its section."""
+    if kind == "waiting" or LIST_ITEM_RE.match(lines[i]) or lines[i][:1].isspace():
+        return item_bounds(lines, i)
+    return section_bounds(lines, i)
+
+
+def prdt_cli():
+    p = os.environ.get("PRDT_BIN") or os.path.join(
+        os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt"), "bin", "prdt")
+    if os.path.isfile(p) and os.access(p, os.X_OK):
+        return p
+    return shutil.which("prdt")
+
+
+def recorded_decisions(root, ids):
+    """The ids among `ids` that `prdt decisions find` reports as answered, not
+    reversed, closed (T-1313 = A). Any failure → empty (fails open)."""
+    cli = prdt_cli()
+    if not cli:
+        return set()
+    try:
+        r = subprocess.run([cli, "decisions", "find", *sorted(ids), "--json"], cwd=root, capture_output=True,
+                           text=True, timeout=DECISIONS_FIND_TIMEOUT_S, stdin=subprocess.DEVNULL)
+        recs = json.loads(r.stdout) if r.returncode == 0 else []
+    except Exception:
+        return set()
+    return {x.get("id") for x in recs if isinstance(x, dict) and x.get("id") in ids and x.get("kind") == "ticket"
+            and x.get("status") == "done" and x.get("answered") is True and not x.get("reversed_by")}
+
+
+def reask_check(root, lines, asks, tickets, turn_start):
+    """T-1285: the block reason when an ask cites, in its own item or section, a
+    decision ticket closed before this turn whose answer is on record; else None.
+    Runs before the decision-changed-this-turn exemption: opening a new decision
+    ticket for an answered question is the re-ask itself (T-1239 observation 4)."""
+    hits = {}
+    for i, kind, option_ref in asks:
+        a, b = ask_scope(lines, i, kind, option_ref)
+        for m in TICKET_ID_RE.finditer("\n".join(lines[a:b])):
+            t = tickets.get(m.group(1))
+            if t and t[0] == "decision" and t[1] == "done" and t[3] < turn_start - 1:
+                hits.setdefault(m.group(1), set()).add(i + 1)
+    if not hits:
+        return None
+    rec = recorded_decisions(root, set(hits))
+    if not rec:
+        return None
+    ln = sorted({n for k in rec for n in hits[k]})
+    shown = ", ".join(str(n) for n in ln[:LIST_CAP]) + (", +%d more" % (len(ln) - LIST_CAP) if LIST_CAP < len(ln) else "")
+    ids = sorted(rec)
+    return REASK_REASON % (shown, ", ".join(ids[:LIST_CAP]), lang_clause())
+
+
+def block(reason):
+    sys.stdout.write(json.dumps({"decision": "block", "reason": reason}))
+
+
 def main():
     ev = read_event()
     if ev is None:
@@ -514,6 +585,9 @@ def main():
     if idx is None:
         return
     tickets, unknown = idx
+    reask = reask_check(root, lines, asks, tickets, turn_start)
+    if reask:
+        return block(reask)
     if any(t == "decision" and mt >= turn_start - 1 for t, _, _, mt in tickets.values()):
         return
     open_dec = {k for k, (t, s, _, _) in tickets.items() if t == "decision" and s == "open"}
@@ -542,7 +616,7 @@ def main():
     shown = ", ".join(str(n) for n in uncovered[:LIST_CAP])
     if len(uncovered) > LIST_CAP:
         shown += ", +%d more" % (len(uncovered) - LIST_CAP)
-    sys.stdout.write(json.dumps({"decision": "block", "reason": QUESTION_CHECK_REASON % (shown, lang_clause())}))
+    block(QUESTION_CHECK_REASON % (shown, lang_clause()))
 
 
 def _out_of_budget(*_):
