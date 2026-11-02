@@ -15976,7 +15976,7 @@ def cmd_schedule(args):
             if s["cycle"] is not None:
                 sys.exit(1)
             return
-        bad = _render_schedule(s)
+        bad = _render_schedule(s, _schedule_stage(root, sel))
         _print_paused(root)
         if bad:
             sys.exit(1)
@@ -15986,10 +15986,15 @@ def cmd_schedule(args):
     for i, ln in enumerate([None] + names):
         if i:
             print()
-        bad = _render_schedule(compute_schedule(root, line=ln)) or bad
+        bad = _render_schedule(compute_schedule(root, line=ln), _schedule_stage(root, ln)) or bad
     _print_paused(root)
     if bad:
         sys.exit(1)
+
+
+def _schedule_stage(root, line):
+    """One line's po-state stage (None when unreadable)."""
+    return line_state(read_json(Path(root) / ".prdt" / "po-state.json") or {}, line)[0]
 
 
 def _owner_runs(ids, owner, lab):
@@ -16027,7 +16032,7 @@ def _render_lane(ln, rows, lab):
     return " | ".join(cells)
 
 
-def _render_lanes_schedule(s, lab):
+def _render_lanes_schedule(s, lab, stage=None):
     """Lane mode (T-1184, R6/R10): one block per lane (the 자투리 lane last holds
     what `dispatch next` listed), `lanes done:`, the total line, blocked rows
     named by lane, then waiting-on-user / in-flight over every row."""
@@ -16055,6 +16060,10 @@ def _render_lanes_schedule(s, lab):
     done = [ln for ln in lanes if ln["finished"]]
     print("lanes done: " + (" · ".join(f"{lab(ln['name'])} {ln['done']}/{ln['total']}" for ln in done)
                             if done else "(none)"))
+    if stage == "build" and s.get("lanes_from") == "table":
+        # T-1365: build-entry step 4 skipped — the lanes still come from the PRD table
+        print(f"lanes: from the PRD 합격선 table, no `lane:` record in {lab(s['version'])} — "
+              f"write the records (build-entry step 4)")
     tot = s.get("totals") or {}
     print(f"total {tot.get('done', 0)}/{tot.get('total', 0)} = lanes {sum(ln['done'] for ln in lanes)}/"
           f"{sum(ln['total'] for ln in lanes)} · impl {tot.get('impl_done', 0)}/{tot.get('impl_total', 0)}")
@@ -16071,8 +16080,9 @@ def _render_lanes_schedule(s, lab):
     return False
 
 
-def _render_schedule(s):
-    """Print one line's schedule; True when it carries a dependency cycle."""
+def _render_schedule(s, stage=None):
+    """Print one line's schedule; True when it carries a dependency cycle.
+    `stage` = that line's po-state stage (T-1365: the lane-record nudge)."""
     lab = lambda v: safe_label(str(v if v is not None else "-"))
     for m in s["missing_deps"]:
         print(f"note: {lab(m['ticket'])} deps on missing {lab(m['dep'])} — ignored")
@@ -16084,7 +16094,7 @@ def _render_schedule(s):
     print(f"schedule {lab(s['version'])} — {len(rows)} open ticket(s) in the graph")
     lanes = s.get("lanes") or []
     if lanes:
-        return _render_lanes_schedule(s, lab)
+        return _render_lanes_schedule(s, lab, stage)
     if s["critical_path"]:
         print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
     else:

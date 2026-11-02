@@ -417,6 +417,42 @@ describe.skipIf(!PYTHON3)('prdt schedule lanes from lane records (T-1359)', () =
     expect(ls[1].warning).toMatch(/same/)
   })
 
+  // T-1365 (approved wording A, docs/productune/artifacts/v1.16/lane-records-build-entry-step.md §A-2)
+  const NUDGE = 'lanes: from the PRD 합격선 table, no `lane:` record in v0.1 — write the records (build-entry step 4)'
+  const setStage = (stage: string) => {
+    const p = path.join(projectDir, '.prdt', 'po-state.json')
+    fs.writeFileSync(p, JSON.stringify({ ...JSON.parse(fs.readFileSync(p, 'utf-8')), stage }))
+  }
+
+  test('T-1365: build stage, 합격선 rows, no record → the nudge line right below `lanes done:`', () => {
+    setStage('build')
+    writePrd([rowA])
+    writeTicket('v0.1', 'T-001', { gate: GATE_A })
+    const out = run(['schedule']).out.split('\n')
+    const i = out.findIndex((l) => l.startsWith('lanes done: '))
+    expect(i).toBeGreaterThan(-1)
+    expect(out[i + 1]).toBe(NUDGE)
+    expect(out.filter((l) => l === NUDGE)).toHaveLength(1)
+    const j = JSON.parse(run(['schedule', '--json']).out)
+    expect(JSON.stringify(j)).not.toContain('build-entry step 4')
+  })
+
+  test('T-1365: no nudge once a record exists, outside build, or with no 합격선 row', () => {
+    setStage('build')
+    writePrd([rowA])
+    writeTicket('v0.1', 'T-001', { gate: GATE_A })
+    writeTicket('v0.1', 'T-002', { type: 'ops', assignee: 'po', status: 'done', extra: rec('R1', GATE_A) })
+    expect(run(['schedule']).out).not.toContain('build-entry step 4')
+    fs.rmSync(path.join(projectDir, 'docs', 'tickets', 'v0.1', 'T-002.md'))
+    setStage('define')
+    expect(run(['schedule']).out).not.toContain('build-entry step 4')
+    setStage('build')
+    writePrd([])
+    expect(run(['schedule']).out).not.toContain('build-entry step 4')
+    writePrd([rowA])
+    expect(run(['schedule']).out).toContain(NUDGE) // control: the same fixture prints it
+  })
+
   test('a lane ticket inside an earlier lane belongs to the earlier lane (R8)', () => {
     writePrd([])
     writeTicket('v0.1', 'T-001', { type: 'ops', assignee: 'po', deps: '[T-003]', extra: rec('one') })
