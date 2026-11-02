@@ -1139,7 +1139,7 @@ for k, r in enumerate(rows):
     lane_rows_k = done_more + lane_parts[k][1]
     out_rows.append((r["slug_ver"], fit(lambda lim, head=head: " | ".join(head), branch)))
     out_rows.extend((None, t) for _, t in lane_rows_k)
-if len(out_rows) > MAX_ROWS - 1:
+if len(out_rows) >= MAX_ROWS:
     keep = MAX_ROWS - 2
     out_rows = out_rows[:keep] + [(None, L("lines", n=len(out_rows) - keep))]
 out_rows.append((None, action_row()))
