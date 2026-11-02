@@ -217,12 +217,13 @@ REASK_REASON = (
 )
 # T-1285 (2) / T-1364 = C: one reply whose asks carry this many distinct OPEN
 # decision ids (each id inside an ask's own item or section) is blocked once.
-# DRAFT wording — awaiting user confirmation. %s = count, ids, language clause.
+# T-1367 = A (user-approved wording). %s = count, ids, language clause.
 BATCH_ASK_MIN = 4
 BATCH_ASK_REASON = (
     "[prdt batch-ask check] this reply asks the user about %s open decisions at once (%s). "
-    "Ask one screen-changing item at a time; put wording-only items together in one table. "
-    "Then send the reply again%s."
+    "Ask one screen-changing decision per reply, wording-only ones together in one table; "
+    "the others stay open under their tickets, cited by id with no ask beside them. "
+    "Then send the reply again%s, every other line kept."
 )
 DECISIONS_FIND_TIMEOUT_S = 3
 
