@@ -220,18 +220,19 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     }
   })
 
-  test('never more than 17 product rows: past the limit the last line rows fold into `+N products`; lane rows never fold', () => {
+  test('never more than 17 rows: product and lane rows share the cap; past it they fold into `+N more rows` (T-1330 / T-1372 2 = A, T-1374 = A)', () => {
     const names = Array.from({ length: 20 }, (_, i) => `line-${i + 1}`)
     seed({ slug: 'big', products: names.map((name) => ({ name })) },
       { stage: 'build', version: 'v1.0', products: Object.fromEntries(names.map((n) => [n, { stage: 'build', version: 'v1.0' }])) })
     const r = rows()
-    const products = r.filter((x) => !x.startsWith('lane: '))
-    expect(products).toHaveLength(17)
-    expect(r.filter((x) => x === 'lane: 자투리  0/0 | working 0')).toHaveLength(15) // one default lane row per shown product (T-1330)
-    expect(products[0]).toBe('big v1.0 | stage: build 0/0')
-    expect(products[14]).toBe('line-14 v1.0 | stage: build 0/0')
-    expect(products[15]).toBe('+6 products')
-    expect(products[16]).toBe('decision 0 | request 0')
+    expect(r).toHaveLength(17)
+    // 21 products x (product row + default lane row) = 42 body rows; 15 shown, 27 folded
+    expect(r[0]).toBe('big v1.0 | stage: build 0/0')
+    expect(r[1]).toBe('lane: 자투리  0/0 | working 0')
+    expect(r[14]).toBe('line-7 v1.0 | stage: build 0/0')
+    expect(r.filter((x) => x === 'lane: 자투리  0/0 | working 0')).toHaveLength(7)
+    expect(r[15]).toBe('+27 more rows')
+    expect(r[16]).toBe('decision 0 | request 0')
   })
 
   test('a single-line project with `lines: []` renders exactly as one with no `lines` key', () => {
