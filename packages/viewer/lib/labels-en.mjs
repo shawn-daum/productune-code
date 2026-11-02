@@ -31,6 +31,7 @@ const ENV = {
   sampleNote: 'Sample files are not counted as set or unset.',
   homeNone: 'No env file in the code folder.',
   machineScope: 'Machine scope',
+  machineNoKey: 'No keys',
   codeWins: 'Product code value wins',
   plainValue: 'plain value',
   machineEmptyHead: 'No keys are stored in machine scope.',
