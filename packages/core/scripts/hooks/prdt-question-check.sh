@@ -280,8 +280,12 @@ RHETORICAL_RE = re.compile(r"^(?:왜|어째서|why\b|how come\b)", re.I)
 CLOSING_RE = re.compile(
     r"도와\s*드릴|궁금한|더\s*필요한|질문\s*있으|어떠(?:셨|세|신|했)|어땠|괜찮으셨|마음에\s*드(?:셨|시나|세)"
     r"|anything else|any (?:other )?questions|let me know|how (?:does|did) (?:it|that|this) (?:look|feel)", re.I)
+# T-1379: `…답해 주세요` (approve by replying) and a confirm/choose clause before
+# `알려 주세요` (`괜찮은지 … 알려 주세요`, `진행할지 알려 주세요`) are asks; a bare
+# `알려 주세요` or a fact clause (`있는지 알려 주세요`) stays an information request.
 PICK_RE = re.compile(
-    r"(?:골라|정해|선택해|결정해|승인해)\s*주(?:세요|십시오)|please\s+(?:choose|pick|decide)", re.I)
+    r"(?:골라|정해|선택해|결정해|승인해|답해)\s*주(?:세요|십시오)|please\s+(?:choose|pick|decide)"
+    r"|(?:괜찮[은을]|맞는|좋[은을]|되는|[할될갈쓸을])지\s*[^.!?。\n]*?알려\s*주(?:세요|십시오)", re.I)
 OPTION_REF_RE = re.compile(r"(?<![A-Za-z0-9])[A-H](?:안)?(?=$|[\s·,와과로중를을이가/)])")
 
 
