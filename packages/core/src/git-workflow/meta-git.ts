@@ -532,6 +532,18 @@ export function readMetaAllowlist(projectDir: string): string[] {
 }
 
 /**
+ * A config `slug` as its `docs/<kebab>/` folder name — the same rule as
+ * `product_dir_name` in scripts/prdt_lanes.py (parity test:
+ * test/scripts/product-dir-name-parity.test.ts). Illegal → `product`; a
+ * layout-reserved name → `<name>-product` (T-1215).
+ */
+export function productDirName(slug: unknown): string {
+  const k = String(slug ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  if (!/^(?!v[0-9])(?!backlog$)[a-z0-9]+(?:-[a-z0-9]+)*$/.test(k)) return 'product'
+  return ['prd', 'tickets', 'artifacts', 'wiki', 'features', 'archive', 'po', 'designer', 'developer', 'qa'].includes(k) ? `${k}-product` : k
+}
+
+/**
  * T-1104 — the product-first docs layout (`docs/_shared/` present) adds
  * `docs/_shared` + `docs/<product>` per product to the defaults; the legacy
  * layout adds nothing. Products: config `slug`, config `products[].name`, then
@@ -550,7 +562,9 @@ export function productLayoutAllowlist(projectDir: string): string[] {
     if (typeof n === 'string' && re.test(n) && !names.includes(n)) names.push(n)
   }
   const cfg = readConfig(projectDir) as { slug?: unknown; products?: unknown } | null
-  add(cfg?.slug)
+  // T-1222 C5: the first product's folder is the slug through product_dir_name
+  // (`MyApp` → `docs/myapp`), never the raw slug.
+  if (typeof cfg?.slug === 'string' && cfg.slug) add(productDirName(cfg.slug))
   if (Array.isArray(cfg?.products)) for (const e of cfg.products) add((e as { name?: unknown })?.name)
   let entries: string[] = []
   try { entries = fs.readdirSync(docs).sort() } catch { entries = [] }
