@@ -195,7 +195,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(segment(out, 'dec')).toBe('0')
     expect(segment(out, 'req')).toBe('0')
     expect(out).not.toMatch(/\b(waiting|CP)\b/)
-    expect(out).toContain('| stage: build 0/0 |') // rest of the line still renders
+    expect(out).toContain('| stage: build 0/0\n') // rest of the line still renders (T-1330: no `working` cell on it)
   })
 
   test('several of each, with successors/blocks from the edges table', () => {
@@ -220,7 +220,8 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
 
     const out = runStatusline()
     const running = segment(out, 'working')
-    expect(running).toBe('T-700(developer)>T-720 T-701(qa)')
+    // T-1330: running work sits on the lane row, which lists no successors (the dec row still does)
+    expect(running).toBe('T-700(developer) T-701(qa)')
     expect(segment(out, 'dec')).toBe('T-710>T-730')
     expect(segment(out, 'req')).toBe('T-711')
     expect(out).not.toMatch(/\bwaiting\b/)
@@ -247,7 +248,8 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
         { src: 'T-497', dst: 'T-477' },
       ],
     )
-    expect(segment(runStatusline(), 'working')).toBe('T-959(designer)>T-960 T-477(qa)>T-478,T-963')
+    // T-1330: the lane row lists no successors
+    expect(segment(runStatusline(), 'working')).toBe('T-959(designer) T-477(qa)')
   })
 
   test('a stale in-flight marker ages out (never shown, never crashes, never deleted); a fresh one still shows; a stopped one is hidden', () => {
@@ -292,7 +294,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const out = runStatusline()
     const running = segment(out, 'working')
     const dec = segment(out, 'dec')
-    expect(running).toBe('T-750(developer)>T-760,T-761+1 T-751(qa) T-752(developer) +1')
+    expect(running).toBe('T-750(developer) T-751(qa) T-752(developer) +1') // T-1330: lane row, no successors
     // T-1044: the action row has its own width budget — 4 open decisions all fit, no `+1`
     expect(dec).toBe('T-770>T-780 T-771 T-772 T-773')
   })
@@ -502,16 +504,16 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const slug = path.basename(root)
     expect(plain).not.toContain(OSC8_OPEN)
     // no tickets, no branch (tmp dir is no git repo): ticket segment and branch segment degrade away
-    expect(plain).toBe(`${slug} ${VERSION} | stage: build 0/0 | working 0\ndecision 0 | request 0`)
+    expect(plain).toBe(`${slug} ${VERSION} | stage: build 0/0\nlane: 자투리  0/0 | working 0\ndecision 0 | request 0`)
 
     stubViewerHtml()
     const linked = runStatusline().trim()
     const viewer = path.join(root, '.prdt', 'scratch', 'viewer', 'viewer.html')
     expect(linked.startsWith(`${OSC8_OPEN}file://${viewer}\x1b\\${slug} ${VERSION}${OSC8_CLOSE} | stage: build 0/0`)).toBe(true)
-    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | stage: build 0/0 | working 0\ndecision 0 | request 0`)
+    expect(unwrapLinks(linked)).toBe(`${slug} ${VERSION} | stage: build 0/0\nlane: 자투리  0/0 | working 0\ndecision 0 | request 0`)
   })
 
-  test('T-984: full layout order — stage, ticket count, working, branch last, then dec · req; no current-task segment; never \u00bb', () => {
+  test('T-984/T-1330: full layout order — stage, ticket count, branch last, then the lane row, then dec · req; no current-task segment; never \u00bb', () => {
     root = makeProject('prdt-t922-full-', { ticket_id: 'T-890', slug: 'restore', assignee: 'developer' })
     fs.mkdirSync(path.join(root, 'docs', 'tickets', VERSION), { recursive: true })
     writeTicket('T-890', {}, 'open')
@@ -520,7 +522,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     execFileSync('git', ['init', '-q', '-b', 'dev', root])
     execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init'])
     const plain = unwrapLinks(runStatusline()).trim()
-    expect(plain).toBe(`${path.basename(root)} ${VERSION} | stage: build 1/2 | total tickets 1/2 | working T-890(qa) | branch: dev\ndecision 0 | request 0`)
+    expect(plain).toBe(`${path.basename(root)} ${VERSION} | stage: build 1/2 | total tickets 1/2 | branch: dev\nlane: 자투리  1/2 | working T-890(qa)\ndecision 0 | request 0`)
     expect(plain).not.toContain('\u00bb')
   })
 
@@ -540,8 +542,8 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     stubViewerHtml()
     const out = runStatusline()
     const wrapped = out.match(/\x1b\]8;;file:\/\/[^\x1b]+\x1b\\T-682\x1b\]8;;\x1b\\/g) ?? []
-    expect(wrapped.length).toBe(2) // once in working, once in dec
-    expect((unwrapLinks(out).match(/T-682/g) ?? []).length).toBe(2) // visible text only (the file URI names the id too)
+    expect(wrapped.length).toBe(3) // lane row working + lane row blocker (T-1330), then dec
+    expect((unwrapLinks(out).match(/T-682/g) ?? []).length).toBe(3) // visible text only (the file URI names the id too)
     expect(segment(out, 'dec')).toBe('T-682')
     expect(segment(out, 'working')).toBe('T-682(developer)')
   })
@@ -589,7 +591,7 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     buildIndexDb(tickets, edges)
     const out = runStatusline()
     const rows = unwrapLinks(out).trim().split('\n')
-    expect(rows).toHaveLength(2) // dec has entries → T-984 second row
+    expect(rows).toHaveLength(3) // product row · default lane row (T-1330) · dec row
     for (const row of rows) {
       expect(row.length).toBeLessThanOrEqual(200)
       expect(row).not.toContain('\u2026') // never the belt's truncation mark

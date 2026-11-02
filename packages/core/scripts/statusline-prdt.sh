@@ -10,7 +10,9 @@
 # hooks/prdt-post-dispatch.sh.
 #
 # Format (T-984, user-confirmed 2026-10-06; T-961 release lines):
-#   <label> <version> | stage: <stage> n/m | total tickets <vdone>/<vtotal> | working <ids|0> | branch: <b>   (T-1017: branch last)
+#   <label> <version> | stage: <stage> n/m | total tickets <vdone>/<vtotal> | branch: <b>   (T-1017: branch last)
+#   lane: <name>  d/t | working <ids|0> | next <id> | blockers …   (T-1147; T-1330: every stage, the
+#     only home of in-flight work — no `working` cell on the product row)
 #   T-1019: empty = `0` (never `—`), a stage without a count = `0/0`; no bar follows Hangul.
 #   dec <ids|0> | req <ids|0>
 #   T-1015: every label (branch · stage · ticket · working · persona · dec · req ·
@@ -23,8 +25,9 @@
 #   - The `dec … | req …` row is ALWAYS its own last row (`dec 0 | req 0` when
 #     empty), single-line and multi-line projects alike (T-988 = A, T-984
 #     reversed by the user 2026-10-06).
-#   - Never more than MAX_ROWS (17, measured on the user's machine) product rows; lane rows
-#     (T-1147) are never capped or folded (T-1184 R12).
+#   - Never more than MAX_ROWS (17, measured on the user's machine) rows; product and lane
+#     rows share the cap and fold past it into one `+N more rows` row (T-1330: T-1372 2 = A,
+#     T-1374 = A — n counts hidden rows); the dec/req last row always stays.
 #   - `<stage> n/m` (T-923) = done/total of this version's tickets in the current
 #     stage, by the viewer's type rule; retro · idle → 0/0. No checklist record is read.
 #   - `<label> <version>` is ONE OSC 8 link to `.prdt/scratch/viewer/viewer.html`
@@ -36,12 +39,12 @@
 #     `assignee: user` ticket that is not a decision, across EVERY version
 #     directory of every line (backlog excluded) — the same rule as the
 #     viewer Home (`waitLists`, packages/viewer/lib/home-graph.mjs, T-881).
-#   - T-965: `working` ids carry their persona abbreviated (`T-959(des)`,
-#     `T-700(dev+qa)`); a working id sits on the row of the line whose folder
-#     holds its ticket; `>` successors list ONLY tickets in that line's current
+#   - T-965: lane `working` ids carry their persona abbreviated (`T-959(des)`,
+#     `T-700(dev+qa)`); a working id sits under the product whose folder holds
+#     its ticket; `>` successors list ONLY tickets in that line's current
 #     version folder.
 #   - T-984 dropped the separate `T-NNN <task>→<persona>` current-task segment;
-#     in-flight work reads from `working`.
+#     T-1330 moved in-flight work from the product row onto the lane rows.
 # Missing pieces degrade silently (init is deterministic, so slug/stage exist from 0s).
 
 set +e
@@ -515,9 +518,6 @@ def _fm_deps(head):
     return re.findall(r"T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+", m.group(1)) if m else []
 
 
-lane_records = set()  # T-1359: lines whose current version holds a live `lane:` record
-
-
 def scan(base, row):
     try:
         vdirs = sorted(d for d in os.listdir(base)
@@ -545,9 +545,6 @@ def scan(base, row):
             if s not in ("done", "open"):
                 continue
             if is_current:
-                fmb = re.match(r"---\n(.*?)\n---", head, re.S)
-                if fmb and re.search(r"^lane:[ \t]*\S", fmb.group(1), re.M):
-                    lane_records.add(row["line"])
                 row["vtotal"] += 1
                 row["vdone"] += s == "done"
                 mty = re.search(r"^(?:type|stage):\s*(\S+)", head, re.M)
@@ -860,47 +857,43 @@ links = {}  # ticket_id -> resolved viewer link target (T-805), filled in as seg
             # strip the OSC 8 escape bytes as control characters, same as it
             # strips any other Cc/Cf/Zl/Zp — see the wrap step's own note).
 
-# ── T-1147 (v1.14 `lanes`): lane rows under a build-stage product row ─────────
-# The lane computation is `prdt_lanes.lanes_for` — the module `prdt schedule` itself
-# imports (T-1145, design R6), imported here, never re-implemented. A module import
-# keeps python's bytecode cache (spawning the 20k-line `prdt` recompiled it on every
-# render). Read-only: nothing is written. A missing/stale module or any failure = no
-# lane rows (degrade silently). Cost control: the read happens only for a product in
-# stage build while the project's PRD.md carries a `합격선` heading, or a current-version
-# ticket carries a `lane:` record (T-1359, `scan` above).
-
-
-def _prd_has_gate_table():
-    cands = [os.path.join(root, "docs", "prd", "PRD.md")]
-    cands += [os.path.join(root, "docs", p, "prd", "PRD.md") for p in ticket_prods]
-    for c in cands:
-        try:
-            # same heading test as prdt_lanes.LANE_HEADING_RE (T-1147 QA: the two must agree)
-            if any(re.match(r"^###\s+합격선(\s|$)", ln) for ln in open(c, encoding="utf-8", errors="replace").read().splitlines()):
-                return True
-        except OSError:
-            continue
-    return False
+# ── T-1147 (v1.14 `lanes`) · T-1330 (= T-1328 C): lane rows under every product row ──
+# The lane computation is `prdt_lanes.compute_schedule` — the module `prdt schedule`
+# itself imports (T-1145, design R6), imported here, never re-implemented. A module
+# import keeps python's bytecode cache (spawning the 20k-line `prdt` recompiled it on
+# every render). Read-only: nothing is written. A missing/stale module or any failure =
+# no lane rows (degrade silently). T-1330: read in every stage; a version with no gate
+# lane gets one default 자투리 lane over its open+done tickets (the module's own fill).
 
 
 def read_lanes():
-    """{line (None = home): [lane dict]} for each build-stage product; absent = no lane rows."""
-    want = [r["line"] for r in rows if token(r["st"].get("stage"), lambda v: v in STAGES) == "build"]
-    if not want or not (lane_records.intersection(want) or _prd_has_gate_table()):
+    """{line (None = home): [lane dict]} for every product, any stage; absent = no lane rows."""
+    want = [r["line"] for r in rows]
+    if not want:
         return {}
     try:
         import prdt_lanes
+        from pathlib import Path
+        tickets = prdt_lanes._schedule_tickets(Path(root))
+        in_flight = prdt_lanes._schedule_in_flight(Path(root))
     except Exception:
         return {}
     out = {}
     for ln in want:
         try:
-            lanes = prdt_lanes.lanes_for(root, ln)
+            sched = prdt_lanes.compute_schedule(root, tickets=tickets, line=ln)
+            lanes = [x for x in (sched.get("lanes") if isinstance(sched.get("lanes"), list) else [])
+                     if isinstance(x, dict)]
+            if not lanes:
+                ver = sched.get("version")
+                rest = [t for t, (rr, _p) in tickets.items() if rr["version"] == ver and rr["status"] in ("open", "done")]
+                lane = prdt_lanes._lane_new(prdt_lanes.LANE_BESTEFFORT_NAME, None, True, ver, besteffort=True)
+                prdt_lanes._lane_fill(lane, rest, tickets, in_flight,
+                                      {x.get("id"): i for i, x in enumerate(sched.get("rows") or [])})
+                lanes = [lane]
         except Exception:
             continue
-        lanes = [x for x in (lanes if isinstance(lanes, list) else []) if isinstance(x, dict)]
-        if lanes:
-            out[ln] = lanes
+        out[ln] = lanes
     return out
 
 
@@ -938,11 +931,6 @@ def fmt_group(ids, limit, succ_limit, with_persona=None):
 
 
 personas = {tid: ps for tid, ps in running}
-
-
-def working_seg(ids, limits):
-    run_lim, _, succ_lim = limits
-    return L("working") + " " + (fmt_group(ids, run_lim, succ_lim, personas) if ids else "0")
 
 
 def action_seg(wait_lim, succ_lim):
@@ -1052,7 +1040,7 @@ def lane_block(lanes, cap):
     """([finished entries], [(lane, text)]) for one product: T-1202 = B — every
     finished gate lane (never 자투리) is an `NAME d/t` entry the product's FIRST
     row carries as `done lanes: …`, table order; then one row per other lane,
-    자투리 last. No row cap, no folding (R12)."""
+    자투리 last. The row cap (MAX_ROWS) counts these rows too (T-1330)."""
     done = [x for x in lanes if x.get("finished") is True and x.get("besteffort") is not True]
     ents = [clean(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}", cap=10**6) for x in done]
     out = [(x, lane_text(x, cap)) for x in lanes if not (x.get("finished") is True and x.get("besteffort") is not True)]
@@ -1095,47 +1083,65 @@ def lane_cap():
 
 
 # T-984 layout (user-confirmed 2026-10-06):
-#   <label> <version> | stage: <stage> n/m | total tickets n/m | working … | branch: <b>   (T-1017)
+#   <label> <version> | stage: <stage> n/m | total tickets n/m | branch: <b>   (T-1017; T-1330: no working)
 # One row per line, home first, then ALWAYS one `dec … | req …` row last
 # (`dec 0 | req 0` when empty, T-1019), single-line and multi-line alike.
-# Never more than MAX_ROWS rows: past it, the last line rows fold into `+N lines`.
-line_budget = MAX_ROWS - 1
-shown = rows if len(rows) <= line_budget else rows[:line_budget - 1]
+# Never more than MAX_ROWS rows, lane rows included (T-1330 / T-1372 2 = A): past it the
+# trailing product + lane rows fold into one `+N more rows` row (T-1374 = A).
 out_rows = []
-# T-1147: parallel to `shown` — [(lane, text)] under each product row. Any lane
-# failure (stale module, odd data) = no lane rows at all; the rest stays intact.
-try:
-    lane_parts = [lane_block(lane_data.get(r["line"], []), lane_cap()) for r in shown]
-except Exception:
-    lane_parts = [([], []) for _ in shown]
 
-# T-1147 / T-1184 R12: lane rows go right under their product row — every one of
-# them: no row cap and no folding for lanes (MAX_ROWS still folds product rows).
 
-# product rows — a running dispatch stays on `working` unless a surviving lane row
-# of its product prints that id (the user must always see what is running)
-for k, r in enumerate(shown):
+def lanes_with_running(lanes, r):
+    """T-1330: the product row has no `working` cell — every running dispatch of the
+    product sits on a lane row. One no lane row holds (another version's ticket, a
+    finished lane, a lane read that failed) joins the 자투리 lane, made when absent;
+    a failed lane read leaves one default 자투리 lane over the version's counts."""
+    lanes = [dict(x) for x in lanes]
+    if not lanes:
+        lanes = [{"besteffort": True, "linked": True, "done": r["vdone"], "total": r["vtotal"], "working": []}]
+    held = {t for x in lanes if x.get("linked") and not (x.get("finished") is True and x.get("besteffort") is not True)
+            for t in _ids(x.get("working"))}
+    extra = [tid for tid, _ in running if line_of(tid) == r["line"] and tid not in held]
+    if extra:
+        be = next((x for x in lanes if x.get("besteffort") is True), None)
+        if be is None:
+            be = {"besteffort": True, "linked": True, "done": 0, "total": 0, "working": []}
+            lanes.append(be)
+        be["working"] = _ids(be.get("working")) + extra
+    return lanes
+
+
+# T-1147: parallel to `rows` — [(lane, text)] under each product row. A lane
+# rendering failure (odd data) = the default 자투리 row only; the rest stays intact.
+lane_parts = []
+for r in rows:
+    try:
+        lane_parts.append(lane_block(lanes_with_running(lane_data.get(r["line"], []), r), lane_cap()))
+    except Exception:
+        lane_parts.append(lane_block(lanes_with_running([], r), lane_cap()))
+
+# T-1147: lane rows go right under their product row; T-1330: they count toward MAX_ROWS.
+
+# product rows — T-1330: no `working` cell; running dispatches sit on lane rows
+for k, r in enumerate(rows):
     head = [r["slug_ver"]] + (home_cells() if r["line"] is None else []) + [r["stage"]]
     if r["vtotal"]:
         head.append(L("ticket", n=f"{r['vdone']}/{r['vtotal']}"))
     branch = L("branch", name=r["branch"]) if r["branch"] else ""
     # T-1202 = B: finished lanes ride the first row (after tickets, before working); what does not fit continues below
     try:
-        floor = " | ".join(head + [working_seg([], (1, 1, 0))] + ([branch] if branch else []))
+        floor = " | ".join(head + ([branch] if branch else []))
         done_seg, done_more = done_segment(lane_parts[k][0], max(lane_cap() - dw(floor) - 3, 1))
     except Exception:
         done_seg, done_more = "", []
     if done_seg:
         head.append(done_seg)
     lane_rows_k = done_more + lane_parts[k][1]
-    lane_txt = " ".join(t for _, t in lane_rows_k)
-    ids = [tid for tid, _ in running if line_of(tid) == r["line"]
-           and not re.search(r"(?<![\w-])" + re.escape(tid) + r"(?!\d)", lane_txt)]
-    out_rows.append((r["slug_ver"], fit(lambda lim, head=head, ids=ids:
-                                        " | ".join(head + [working_seg(ids, lim)]), branch)))
+    out_rows.append((r["slug_ver"], fit(lambda lim, head=head: " | ".join(head), branch)))
     out_rows.extend((None, t) for _, t in lane_rows_k)
-if len(shown) < len(rows):
-    out_rows.append((None, L("lines", n=len(rows) - len(shown))))
+if len(out_rows) >= MAX_ROWS:
+    keep = MAX_ROWS - 2
+    out_rows = out_rows[:keep] + [(None, L("lines", n=len(out_rows) - keep))]
 out_rows.append((None, action_row()))
 
 
