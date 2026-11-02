@@ -27,6 +27,7 @@ import {
   bootstrapMetaRepo,
   readMetaAllowlist,
   writeMetaAllowlist,
+  productLayoutAllowlist,
   DEFAULT_META_ALLOWLIST,
   DEFAULT_META_EXCLUDE,
 } from '../../src/git-workflow/meta-git'
@@ -544,6 +545,22 @@ test('bootstrap on a not-yet-pulled machine leaves a differing local file UNTOUC
 
 test('readMetaAllowlist falls back to the default when unset', () => {
   expect(readMetaAllowlist(projectDir)).toEqual(DEFAULT_META_ALLOWLIST)
+})
+
+test('T-1222 C5: the first product folder comes from the config slug through product_dir_name, not the raw slug', () => {
+  fs.mkdirSync(path.join(projectDir, 'docs', '_shared'), { recursive: true })
+  // docs/myapp holds only artifacts + wiki — no prd/ or tickets/, so only the slug can name it
+  fs.mkdirSync(path.join(projectDir, 'docs', 'myapp', 'artifacts'), { recursive: true })
+  fs.mkdirSync(path.join(projectDir, 'docs', 'myapp', 'wiki'), { recursive: true })
+  const cfgPath = path.join(projectDir, '.prdt', 'config.json')
+  fs.writeFileSync(cfgPath, JSON.stringify({ slug: 'MyApp' }))
+  expect(productLayoutAllowlist(projectDir)).toEqual(['docs/_shared', 'docs/myapp'])
+  expect(readMetaAllowlist(projectDir)).toContain('docs/myapp')
+  // a layout-reserved slug gets the -product suffix, an illegal one falls back to `product`
+  fs.writeFileSync(cfgPath, JSON.stringify({ slug: 'QA' }))
+  expect(productLayoutAllowlist(projectDir)).toEqual(['docs/_shared', 'docs/qa-product'])
+  fs.writeFileSync(cfgPath, JSON.stringify({ slug: '!!!' }))
+  expect(productLayoutAllowlist(projectDir)).toEqual(['docs/_shared', 'docs/product'])
 })
 
 test('writeMetaAllowlist persists into config.json and preserves other fields', () => {

@@ -762,3 +762,24 @@ describe('T-1304 — a malformed canon entry warns instead of silencing the hook
     expect(r.stderr).toContain('깨진항목')
   })
 })
+
+describe('T-1266 — the track adopt step is `merge`: land / 합치다 in that sense are hits', () => {
+  const ko = () => JSON.parse(fs.readFileSync(path.join(CANON, 'ko.json'), 'utf-8')).entries
+  const check = (text: string) => cli(['check', '--lang', 'ko', '-'], { input: text + '\n' })
+
+  test('one canon entry says merge and replaces the old 합치다 (브랜치) entry', () => {
+    const es = ko().filter((e: any) => e.say.includes('merge'))
+    expect(es.map((e: any) => e.concept)).toEqual(['land · 합치다 (git)'])
+    expect(ko().some((e: any) => e.concept === '합치다 (브랜치)')).toBe(false)
+  })
+
+  test.each(['브랜치를 합쳐요', 'dev에 합칠게요', 'T-1092 land', '트랙을 dev로 합쳐요', 'track/T-1092 land 했어요'])('hit: %s', (t) => {
+    const r = check(t)
+    expect(r.code).toBe(1)
+    expect(r.out).toMatch(/\(land · 합치다 \(git\)\) → merge/)
+  })
+
+  test.each(['의견을 합쳐 주세요', '두 표를 합친 결과', 'dev pushes land as previews', '「land」 는 팀이 붙인 이름', '`prdt track land` 는 한 버전 남아요', '착륙(land)'])('miss: %s', (t) => {
+    expect(check(t).out).not.toMatch(/land · 합치다/)
+  })
+})
