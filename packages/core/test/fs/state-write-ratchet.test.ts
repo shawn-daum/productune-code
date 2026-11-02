@@ -41,6 +41,9 @@ const PY_PRIMITIVES = new Set(['atomic_write_text', 'state_write', 'state_append
 /** Files that ARE a primitive. */
 const PRIMITIVE_FILES = new Set(['core/scripts/prdt_safe_fs.py', 'core/src/fs/state-write.ts', 'core/src/fs/atomic-write.ts'])
 
+/** T-1280: a `>` inside a quoted string literal (python or shell text) is prose, not a redirect. Each literal becomes the placeholder `Q`, so `> "$F"` still reads as a redirect. */
+const stripQuoted = (line: string) => line.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, 'Q')
+
 const isComment = (line: string) => /^\s*(#|\/\/|\*|\/\*)/.test(line)
 
 /** Count raw writes per scope: Python → `<file>::<def>`; shell/TS → `<file>`. */
@@ -60,6 +63,26 @@ export function scanPython(file: string, text: string): Record<string, number> {
 export function scanFlat(file: string, text: string, re: RegExp): Record<string, number> {
   let n = 0
   for (const line of text.split('\n')) if (!isComment(line) && re.test(line) && !/^\s*(export )?(async )?function /.test(line)) n++
+  return n ? { [file]: n } : {}
+}
+
+/** T-1283: a `#` comment tail (a `#` at line start or after whitespace, outside any quoted literal) is prose. Applied to the already quote-stripped line, so `echo "a #b" > f` keeps its redirect and `cmd > f # note` still counts the `cmd > f` before the `#`. */
+const stripCommentTail = (line: string) => line.replace(/(^|\s)#.*$/, '$1')
+
+/** Shell / embedded-Python hooks: a raw Python write, or a redirect outside any quoted literal, comment or python docstring (T-1283). */
+export function scanShell(file: string, text: string): Record<string, number> {
+  let n = 0
+  let inDoc = false
+  for (const raw of text.split('\n')) {
+    // python docstring: lines between an opening and a closing triple quote are prose; a one-line docstring is blanked
+    const marks = raw.match(/"""|'''/g)?.length ?? 0
+    if (inDoc) { if (marks % 2 === 1) inDoc = false; continue }
+    let line = raw
+    if (marks % 2 === 1) { inDoc = true; line = raw.replace(/("""|''').*$/, 'Q') }
+    else if (marks > 0) line = raw.replace(/("""|''').*?\1/g, 'Q')
+    if (isComment(line) || /^\s*(export )?(async )?function /.test(line)) continue
+    if (PY_RAW.test(line) || SH_REDIR.test(stripCommentTail(stripQuoted(line)))) n++
+  }
   return n ? { [file]: n } : {}
 }
 
@@ -83,7 +106,7 @@ function scanRepo(): Record<string, number> {
   const scripts = path.join(PKGS, 'core', 'scripts')
   // hooks and the status line carry embedded Python — counted per file
   const shell = [...walk(path.join(scripts, 'hooks'), (f) => f.endsWith('.sh')), path.join(scripts, 'statusline-prdt.sh')]
-  for (const f of shell) add(scanFlat(rel(f), read(f), new RegExp(`${PY_RAW.source}|${SH_REDIR.source}`)))
+  for (const f of shell) add(scanShell(rel(f), read(f)))
   const isSrc = (f: string) => /\.(ts|tsx|mjs)$/.test(f) && !/\.(test|spec)\.|test-fixtures|\/tests?\//.test(f)
   for (const root of [path.join(PKGS, 'core', 'src'), path.join(PKGS, 'gui', 'electron'), path.join(PKGS, 'gui', 'src'), path.join(PKGS, 'gui', 'shared'), path.join(PKGS, 'viewer')]) {
     if (!fs.existsSync(root)) continue
@@ -137,19 +160,19 @@ const ALLOW: Record<string, number> = {
   'core/scripts/hooks/prdt-audience-inject.sh': 2,
   'core/scripts/hooks/prdt-auto-open.sh': 1,
   'core/scripts/hooks/prdt-call-governor.sh': 6,
-  'core/scripts/hooks/prdt-dispatch-gate.sh': 13,
-  'core/scripts/hooks/prdt-identity-guard.sh': 3,
-  'core/scripts/hooks/prdt-inbox-inject.sh': 1,
+  'core/scripts/hooks/prdt-dispatch-gate.sh': 7, // T-1248: +1 = the waiting record `: > $PRDT_HOME/run/dispatch-gate/waiting/<slug>` (tooling-owned run/, mtime is the datum); T-1280: -6 = quoted-text `>` (prose, jq strings) no longer counted; T-1283: -1 = a `<…>` in a `#` comment tail
+  'core/scripts/hooks/prdt-identity-guard.sh': 2,
+  'core/scripts/hooks/prdt-inbox-inject.sh': 2, // T-1300: +1 = the per-session seen record under $PRDT_HOME/run/inbox-seen/ (home, never .prdt/), tmp + os.replace
   'core/scripts/hooks/prdt-message-display-autolink.sh': 2, // T-1143: embedded Python — the per-message fence stamp under $PRDT_HOME/run/message-display/ (home, never .prdt/): one `open(..., "w")` + the `os.unlink`-guarded save
   'core/scripts/hooks/prdt-overrides-inject.sh': 1,
-  'core/scripts/hooks/prdt-post-dispatch.sh': 8,
+  'core/scripts/hooks/prdt-post-dispatch.sh': 6, // T-1283: -2 = `<…>` in python docstring prose
   'core/scripts/hooks/prdt-question-check.sh': 2,
-  'core/scripts/hooks/prdt-return-check.sh': 8, // T-1173: +1 = append_inbox's leaf-O_NOFOLLOW os.open fallback (docs/_shared/wiki/inbox.md, never .prdt/), taken only when prdt_safe_fs.py is not installed — same shape as the existing fallback above it
+  'core/scripts/hooks/prdt-return-check.sh': 6, // T-1283: -2 = `<…>` in docstring prose;  T-1173: +1 = append_inbox's leaf-O_NOFOLLOW os.open fallback (docs/_shared/wiki/inbox.md, never .prdt/), taken only when prdt_safe_fs.py is not installed — same shape as the existing fallback above it
   'core/scripts/hooks/prdt-secret-guard.sh': 3, // T-1109: +1 = embedded Perl `length($n) > length($b)` in is_store_path — a comparison the SH_REDIR scan reads as a redirect, no write
   'core/scripts/hooks/prdt-session-start.sh': 4,
-  'core/scripts/hooks/prdt-user-prompt.sh': 6, // T-1081: +1 = cap_jsonl's trim of $PRDT_HOME/run/form-outline-counts.jsonl (home, never .prdt/)
+  'core/scripts/hooks/prdt-user-prompt.sh': 5, // T-1283: -1 = `<…>` in docstring prose;  T-1081: +1 = cap_jsonl's trim of $PRDT_HOME/run/form-outline-counts.jsonl (home, never .prdt/)
   'core/scripts/hooks/prdt-worktree-guard.sh': 1,
-  'core/scripts/statusline-prdt.sh': 6,
+  'core/scripts/statusline-prdt.sh': 2, // T-1283: -2 = `<…>` in python docstring prose (the T-1252 comment never counted once tails are skipped)
   'core/src/git-workflow/meta-backup.ts': 2,
   // TypeScript — core src / GUI electron / the generator's direct dev mode; targets not yet audited for .prdt/ (T-848 follow-up)
   'core/src/git-workflow/autosave.ts': 1,
@@ -161,6 +184,7 @@ const ALLOW: Record<string, number> = {
   'core/src/settings/plan-tier.ts': 1,
   'core/src/settings/register.ts': 1,
   'core/src/settings/ui-settings.ts': 1,
+  'core/src/settings/user-lang.ts': 1, // T-1281: atomic write of ~/.prdt/user-lang (machine-level, like plan-tier) — never a project's .prdt/ state
   // viewer: doctrine copy into a fresh mkdtemp dir used as the throwaway PRDT_HOME for `--plan` (T-1050) — outside any project / state dir
   'viewer/lib/discipline-load.mjs': 1,
   // viewer: appends a project realpath to $PRDT_HOME/run/open-roots (T-1191) — O_NOFOLLOW append under the user-home tooling dir, never a project's .prdt/
@@ -186,7 +210,12 @@ describe('state-write ratchet (T-908)', () => {
   test('the scanner flags raw writes and ignores the primitives', () => {
     expect(scanPython('f', 'def a():\n    p.write_text("x")\n    open(q, "w")\n    atomic_write_text(p, t)\n')).toEqual({ 'f::a': 3 })
     expect(scanPython('f', 'def a():\n    p.open("w")\n    open(str(p), "a")\n    open(p, mode="w")\n    os.open(p, os.O_WRONLY)\n    os.write(fd, b)\n    os.open(p, os.O_RDONLY)\n    open(p)\n')).toEqual({ 'f::a': 5 })
-    expect(scanFlat('s.sh', 'echo x > "$F"\necho y >> out.txt\nx 2>&1\nx >/dev/null\nx >&2\njq \'. >= 4\'\nx | jq -r .a\n', SH_REDIR)).toEqual({ 's.sh': 2 })
+    expect(scanShell('s.sh', 'echo x > "$F"\necho y >> out.txt\nx 2>&1\nx >/dev/null\nx >&2\njq \'. >= 4\'\nx | jq -r .a\n')).toEqual({ 's.sh': 2 })
+    // T-1280: `>` inside quoted text is not a write; a real redirect on the same line still is
+    expect(scanShell('q.sh', '+ "Playbook `<persona>/playbooks/<name>.md` · Read it\\n" % x\necho \'a > b\'\necho "a > b" > "$F"\nprintf "%s" "x" >>log.txt\n')).toEqual({ 'q.sh': 2 })
+    // T-1283: comment lines/tails and python docstrings are prose; a real redirect before a `#` tail still counts
+    expect(scanShell('c.sh', '# T-1: `<label> x` > y\nfoo # note <label> > z\nfoo > f # note\necho "a #b" > "$F"\nn=${#a} > out\n')).toEqual({ 'c.sh': 3 })
+    expect(scanShell('d.sh', 'def f():\n    """Reads `docs/<product>/DEPLOY.md` only\n    and `<a> b`\n    """\n    x = 1\n    """one `<a> b` line"""\n    p.write_text(t)\n')).toEqual({ 'd.sh': 1 })
     expect(scanFlat('g.ts', 'const fd = fs.openSync(p, "w")\nfs.writeSync(fd, d)\nfs.openSync(p, "r")\n', TS_RAW)).toEqual({ 'g.ts': 2 })
     expect(scanPython('f', 'def state_write(r):\n    p.write_text("x")\n')).toEqual({})
     expect(scanPython('f', 'def a():\n    # p.write_text("x")\n    state_write(root, p, t)\n    open(q)\n')).toEqual({})

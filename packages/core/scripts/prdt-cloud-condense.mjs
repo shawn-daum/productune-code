@@ -14,8 +14,23 @@ const MAX_FAILURES = 400
 const [, , file, prefix = '', ...pairs] = process.argv
 
 const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g
+// T-1211 / T-1221: the same rules, in the same order, as redact() in prdt-cloud-test.sh (which
+// runs sed under LC_ALL=C: whitespace is ASCII only) — a credential value never reaches the
+// pushed result.json, whatever field carries it. Shell is per line; the one cross-line rule is
+// an Authorization header whose value is on the next line.
+const WS = ' \\t\\r\\n\\f\\v'
+const redact = (s) => String(s)
+  .replace(new RegExp(`(:\\/\\/)[^/@${WS}]*@`, 'g'), '$1***@')
+  .replace(/(gh[opusr]_|github_pat_|glpat-)[A-Za-z0-9_]+/g, '$1***')
+  .replace(/(sk-ant-)[A-Za-z0-9_-]+/g, '$1***')
+  .replace(/(^|[^A-Za-z0-9_-])(sk-)[A-Za-z0-9_-]{8,}/g, '$1$2***')
+  .replace(/(AKIA)[0-9A-Z]{16}/g, '$1***')
+  .replace(/(xox[abpr]-)[A-Za-z0-9-]+/g, '$1***')
+  .replace(/(npm_)[A-Za-z0-9]{20,}/g, '$1***')
+  .replace(new RegExp(`([Aa]uthorization|AUTHORIZATION)([:=][ \\t\\r\\f\\v]*\\n?[ \\t\\r\\f\\v]*)[^\\n]*`, 'g'), '$1$2***')
+  .replace(new RegExp(`([Bb]earer|[Bb]asic)(?:[ \\t\\r\\f\\v\\u00a0\\u2000-\\u200a\\u202f\\u205f\\u3000])+[A-Za-z0-9._~+/=-]+`, 'g'), '$1 ***')
 const clip = (s) => {
-  const t = String(s ?? '').replace(ANSI, '')
+  const t = redact(String(s ?? '').replace(ANSI, ''))
   return t.length > MAX_MESSAGE ? t.slice(0, MAX_MESSAGE) + '…' : t
 }
 const rel = (p) => (prefix && String(p).startsWith(prefix) ? String(p).slice(prefix.length) : String(p))
@@ -23,7 +38,7 @@ const rel = (p) => (prefix && String(p).startsWith(prefix) ? String(p).slice(pre
 const out = {}
 for (const kv of pairs) {
   const i = kv.indexOf('=')
-  if (i > 0 && kv.slice(i + 1) !== '') out[kv.slice(0, i)] = kv.slice(i + 1)
+  if (i > 0 && kv.slice(i + 1) !== '') out[kv.slice(0, i)] = redact(kv.slice(i + 1))
 }
 
 let report = null

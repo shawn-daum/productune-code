@@ -41,14 +41,19 @@ afterEach(() => { fs.rmSync(prdtHome, { recursive: true, force: true }) })
 function prdt(lang: 'ko' | 'en', ...args: string[]) {
   const r = spawnSync('python3', [PRDT_CLI, ...args], {
     cwd: prdtHome, encoding: 'utf8', timeout: subprocessTimeout('cli'),
-    env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: lang },
+    env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: lang, PRDT_RESOLVER_TIMEOUT_S: RESOLVER_TIMEOUT_S },
   })
   return { status: r.status, out: r.stdout, err: r.stderr }
 }
+// T-1274: every `prdt settings|register|dispatch` call asks the register resolver (a bash+jq
+// hook, ~1 s idle) under a 10 s subprocess timeout whose expiry reads as "resolver not found"
+// — the 「prdt-audience-inject.sh 를 찾지 못했어요」 failure under load. The CLI takes its budget
+// from PRDT_RESOLVER_TIMEOUT_S; the run's load-scaled hook budget (T-1244) feeds it.
+const RESOLVER_TIMEOUT_S = String(Math.ceil(subprocessTimeout('hook') / 1000))
 const file = (name: string) => path.join(prdtHome, name)
 const read = (name: string) => (fs.existsSync(file(name)) ? fs.readFileSync(file(name), 'utf8') : null)
 const CAP_KEYS = ['load_ratio', 'mem_free_pct_min', 'inflight_max', 'suites_max', 'vms_max', 'inflight_sonnet_max', 'inflight_opus_max', 'inflight_haiku_max', 'inflight_fable_max', 'inflight_default_max'].map((k) => `dispatch.${k}`)
-const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.visual', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang', ...CAP_KEYS]
+const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.visual', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang', 'user.lang', 'priority.projects', ...CAP_KEYS]
 
 describe('message catalog', () => {
   test('ko and en carry the same keys, none empty', () => {
@@ -89,7 +94,7 @@ describe.skipIf(!READY)('prdt settings — list', () => {
     // no PRDT_LANG in this spawn: cli_lang() falls back to the persisted token
     const r = spawnSync('python3', [PRDT_CLI, 'settings', 'set', 'viewer.auto-open', 'on'], {
       cwd: prdtHome, encoding: 'utf8', timeout: subprocessTimeout('cli'),
-      env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: '' },
+      env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: '', PRDT_RESOLVER_TIMEOUT_S: RESOLVER_TIMEOUT_S },
     })
     expect(r.stdout.trim()).toBe('From now on, files handed over by PO open automatically.')
     // PRDT_LANG=ko still wins over the persisted en
@@ -97,6 +102,94 @@ describe.skipIf(!READY)('prdt settings — list', () => {
       .toBe('이제부터 PO가 건네는 파일이 자동으로 열리지 않아요.')
     expect(prdt('en', 'settings', 'unset', 'cli.lang').status).toBe(0)
     expect(read('cli-lang')).toBeNull()
+  })
+  test('user.lang: set writes user-lang, an off-shape code is refused, unset falls back to the device language (T-1116)', () => {
+    const run = (...args: string[]) => spawnSync('python3', [PRDT_CLI, ...args], {
+      cwd: prdtHome, encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      // HOME = sandbox: no macOS global-preferences plist, so the device language is LC_ALL's
+      env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: 'en', LC_ALL: 'ja_JP.UTF-8', PRDT_RESOLVER_TIMEOUT_S: RESOLVER_TIMEOUT_S },
+    })
+    const value = () => JSON.parse(run('settings', '--json').stdout).find((e: any) => e.key === 'user.lang').value
+    // T-1291: nothing stored → the screen shows what the hook uses (no check), never the device language
+    expect(value()).toBeNull()
+    expect(run('settings').stdout).toContain('none (no check)')
+    expect(run('settings', 'set', 'user.lang', 'ko').status).toBe(0)
+    expect(read('user-lang')).toBe('ko\n')
+    expect(value()).toBe('ko')
+    for (const bad of ['ko-KR', 'xx', 'yes']) {
+      expect(run('settings', 'set', 'user.lang', bad).status).toBe(1)
+      expect(read('user-lang')).toBe('ko\n')
+    }
+    // the same names and case the onboarding prompt takes
+    for (const [ans, code] of [['KO', 'ko'], ['Korean', 'ko'], ['English', 'en'], ['EN', 'en']]) {
+      expect(run('settings', 'set', 'user.lang', ans).status).toBe(0)
+      expect(read('user-lang')).toBe(code + '\n')
+    }
+    expect(run('settings', 'unset', 'user.lang').status).toBe(0)
+    expect(read('user-lang')).toBeNull()
+    expect(value()).toBeNull()
+  })
+  test('onboarding asks user.lang once: device language as default, a non-code answer keeps it (T-1116)', () => {
+    const ask = (answer: string) => spawnSync('python3', ['-c',
+      'import sys; sys.path.insert(0, sys.argv[1]); import prdt_cli as p; p.ask_user_lang_once()', path.dirname(PRDT_CLI)], {
+      input: answer + '\n', encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, LC_ALL: 'ko_KR.UTF-8' },
+    })
+    const first = ask('').stdout
+    expect(first).toContain('[ko]')
+    expect(first).toContain('대화 언어') // the ko catalog line, not a hard-coded string
+    expect(read('user-lang')).toBe('ko\n')
+    expect(ask('en').stdout).toBe('') // already stored → no question
+    expect(read('user-lang')).toBe('ko\n')
+    fs.rmSync(file('user-lang'))
+    ask('Korean')
+    expect(read('user-lang')).toBe('ko\n')
+    fs.rmSync(file('user-lang'))
+    ask('en')
+    expect(read('user-lang')).toBe('en\n')
+  })
+  test('onboarding maps a language name to its code, re-asks once on an unknown answer, stores nothing if still unknown (T-1281)', () => {
+    const ask = (...answers: string[]) => spawnSync('python3', ['-c',
+      'import sys; sys.path.insert(0, sys.argv[1]); import prdt_cli as p; p.ask_user_lang_once()', path.dirname(PRDT_CLI)], {
+      input: answers.join('\n') + '\n', encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, PRDT_LANG: 'en', LC_ALL: 'en_US.UTF-8' },
+    })
+    for (const [name, code] of [['한국어', 'ko'], ['Korean', 'ko'], ['日本語', 'ja']]) {
+      ask(name)
+      expect(read('user-lang'), name).toBe(code + '\n')
+      fs.rmSync(file('user-lang'))
+    }
+    const retry = ask('klingon!', 'ja')
+    expect(retry.stdout).toContain('language name') // the one-line reason (en catalog)
+    expect(read('user-lang')).toBe('ja\n')
+    fs.rmSync(file('user-lang'))
+    ask('klingon!', 'zzzz!')
+    expect(read('user-lang')).toBeNull() // never a value the user did not choose
+    for (const bad of ['xx', 'yes', 'no']) {
+      const r = ask(bad, 'yy')
+      expect(r.stdout, bad).toContain('language name') // retried once
+      expect(read('user-lang'), bad).toBeNull()        // 'yy' is no code either → nothing stored
+    }
+    ask('') // a bare Enter accepts the device default shown
+    expect(read('user-lang')).toBe('en\n')
+  })
+  test('Ctrl-C at the language question stops prdt update: nothing stored, nothing installed (T-1281)', () => {
+    const script = [
+      'import sys, builtins; sys.path.insert(0, sys.argv[1]); import prdt_cli as p',
+      'p.sys.stdin.isatty = lambda: True; p.sys.stdout.isatty = lambda: True',
+      'def boom(*a): raise KeyboardInterrupt',
+      'builtins.input = boom',
+      'p._run_pull_install = lambda *a, **k: print("INSTALLED")',
+      'p.cmd_update(None)',
+    ].join('\n')
+    const r = spawnSync('python3', ['-c', script, path.dirname(PRDT_CLI)], {
+      encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: prdtHome, PRDT_HOME: prdtHome, PRDT_LANG: 'en', LC_ALL: 'en_US.UTF-8' },
+    })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.stdout).toContain('Cancelled')
+    expect(r.stdout).not.toContain('INSTALLED')
+    expect(read('user-lang')).toBeNull()
   })
   test('ko table matches the approved screen', () => {
     fs.writeFileSync(file('register'), 'audience=developer\nform=outline\nstructure=planner-tables\n')
@@ -261,5 +354,109 @@ describe.skipIf(!READY)('prdt settings — dispatch cap keys (T-896)', () => {
     expect(r.status, r.err).toBe(0)
     for (const w of ['CPU load ratio', 'free memory', 'in-flight dispatches:', 'running full test suites', 'resident VMs', 'tier "sonnet"', 'to free:', 'cap key: suites_max (default)', 'prdt settings set dispatch.<key> <number>'])
       expect(r.out).toContain(w)
+  })
+})
+
+describe.skipIf(!READY)('prdt settings — priority.projects (T-1247)', () => {
+  // known projects = slugs of roots in run/open-roots (sandbox PRDT_HOME only)
+  function seedProjects(...slugs: string[]) {
+    const roots = slugs.map((slug) => {
+      const root = path.join(prdtHome, 'projects', slug)
+      fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
+      fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), '{}')
+      fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify({ slug }))
+      return root
+    })
+    fs.mkdirSync(path.join(prdtHome, 'run'), { recursive: true })
+    fs.writeFileSync(path.join(prdtHome, 'run', 'open-roots'), roots.join('\n') + '\n')
+  }
+  test('set stores the token file and prints the order (ko + en)', () => {
+    seedProjects('naro-proto', 'productune', 'ntf-pm')
+    const r = prdt('ko', 'settings', 'set', 'priority.projects', 'naro-proto,productune,ntf-pm')
+    expect(r.status, r.err).toBe(0)
+    expect(read('priority-projects')).toBe('naro-proto,productune,ntf-pm\n')
+    expect(r.out.trim().split('\n')).toEqual([
+      'priority.projects: (설정 안 됨) → naro-proto,productune,ntf-pm',
+      '순서: 1 naro-proto · 2 productune · 3 ntf-pm. 목록에 없는 프로젝트는 그 뒤에서 같은 순위예요',
+    ])
+    const e = prdt('en', 'settings', 'set', 'priority.projects', 'productune')
+    expect(e.status, e.err).toBe(0)
+    expect(e.out).toContain('priority.projects: naro-proto,productune,ntf-pm → productune')
+    expect(read('priority-projects')).toBe('productune\n')
+    const rows = JSON.parse(prdt('en', 'settings', '--json').out)
+    expect(rows.find((x: any) => x.key === 'priority.projects').value).toBe('productune')
+  })
+  test('trailing and double commas are dropped, a commas-only value is refused (T-1291)', () => {
+    seedProjects('a', 'b')
+    const r = prdt('en', 'settings', 'set', 'priority.projects', 'a,,b,')
+    expect(r.status, r.err).toBe(0)
+    expect(read('priority-projects')).toBe('a,b\n')
+    const bad = prdt('en', 'settings', 'set', 'priority.projects', ',,')
+    expect(bad.status).toBe(1)
+    expect(read('priority-projects')).toBe('a,b\n')
+  })
+  test('unset removes the file', () => {
+    seedProjects('a')
+    expect(prdt('en', 'settings', 'set', 'priority.projects', 'a').status).toBe(0)
+    expect(prdt('en', 'settings', 'unset', 'priority.projects').status).toBe(0)
+    expect(read('priority-projects')).toBeNull()
+  })
+  test('unknown name changes nothing, exits non-zero, lists known projects', () => {
+    seedProjects('a', 'b')
+    fs.writeFileSync(file('priority-projects'), 'a\n')
+    const r = prdt('ko', 'settings', 'set', 'priority.projects', 'b,zzz')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('zzz 은 이 기기에서 아는 프로젝트가 아니에요. 아무것도 바꾸지 않았어요.')
+    expect(r.err).toContain('아는 프로젝트: a · b')
+    expect(read('priority-projects')).toBe('a\n')
+  })
+  test('duplicate name changes nothing and exits non-zero', () => {
+    seedProjects('a', 'b')
+    const r = prdt('ko', 'settings', 'set', 'priority.projects', 'a,b,a')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('a 이 두 번 있어요. 아무것도 바꾸지 않았어요.')
+    expect(read('priority-projects')).toBeNull()
+  })
+  test('empty value and empty segment are refused, nothing written', () => {
+    seedProjects('a')
+    expect(prdt('en', 'settings', 'set', 'priority.projects', '  ').status).toBe(1)
+    expect(prdt('en', 'settings', 'set', 'priority.projects', ',').status).toBe(1)
+    expect(read('priority-projects')).toBeNull()
+  })
+  test('known projects also come from dispatch markers', () => {
+    seedProjects('a')
+    const root = path.join(prdtHome, 'projects', 'm')
+    fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify({ slug: 'm' }))
+    fs.mkdirSync(path.join(prdtHome, 'run', 'dispatches'), { recursive: true })
+    fs.writeFileSync(path.join(prdtHome, 'run', 'dispatches', 'x.json'), JSON.stringify({ project_root: root }))
+    expect(prdt('en', 'settings', 'set', 'priority.projects', 'm,a').status).toBe(0)
+  })
+})
+
+// T-1274: a resolver that is present but did not answer in time is reported as slow, never as
+// missing — the old line sent the user to re-run install.sh for a busy machine.
+describe.skipIf(!READY)('prdt settings — resolver timeout', () => {
+  function slow(lang: 'ko' | 'en', ...args: string[]) {
+    const r = spawnSync('python3', [PRDT_CLI, ...args], {
+      cwd: prdtHome, encoding: 'utf8', timeout: subprocessTimeout('cli'),
+      env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: DISCIPLINE, PRDT_LANG: lang, PRDT_RESOLVER_TIMEOUT_S: '0.001' },
+    })
+    return { status: r.status, err: r.stderr }
+  }
+  test('settings names the timeout, not a missing file', () => {
+    const ko = slow('ko', 'settings')
+    expect(ko.status).toBe(1)
+    expect(ko.err.trim()).toBe(catalog.ko['settings.error.resolver_timeout'].replace('{seconds}', '0.001'))
+    expect(ko.err).not.toContain('찾지 못했어요')
+    const en = slow('en', 'settings', 'set', 'register.form', 'outline')
+    expect(en.status).toBe(1)
+    expect(en.err.trim()).toBe(catalog.en['settings.error.resolver_timeout'].replace('{seconds}', '0.001'))
+  })
+  test('register names the timeout, not a missing file', () => {
+    const r = slow('en', 'register', '--list')
+    expect(r.status).toBe(1)
+    expect(r.err).toContain('did not answer within 0.001 s')
+    expect(r.err).not.toContain('not found')
   })
 })

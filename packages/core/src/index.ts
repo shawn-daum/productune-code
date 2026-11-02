@@ -43,6 +43,8 @@ export {
 } from './settings/audience-mode'
 export type { AudienceMode } from './settings/audience-mode'
 
+export { setUserLang, setUserLangIfUnset, getUserLang, userLangPath, USER_LANG_RE } from './settings/user-lang'
+
 export {
   readRegister,
   writeRegisterKey,

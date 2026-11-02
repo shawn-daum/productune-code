@@ -23,7 +23,7 @@ function put(root: string, rel: string, body: string) {
 function cli(root: string, home: string, args: string[]) {
   const r = spawnSync('python3', [PRDT_CLI, ...args], {
     cwd: root, encoding: 'utf8', timeout: 60_000,
-    env: { ...process.env, PRDT_HOME: home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0', TZ: 'UTC' },
+    env: { ...process.env, HOME: path.join(home, 'user-home'), PRDT_HOME: home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0', TZ: 'UTC' },
   })
   return { out: r.stdout, err: r.stderr, code: r.status }
 }
@@ -55,7 +55,8 @@ describe('tickets new placement (T-1084)', () => {
   test('line-prefixed --version follows the release-line rule; conflicting --product errors', () => {
     const { root, home } = project()
     expect(cli(root, home, [...base, '--version', 'arc/v2']).code).toBe(0)
-    expect(fs.existsSync(path.join(root, 'docs/tickets/arc/v2/T-001.md'))).toBe(true)
+    // T-1298: the product named by `arc/` numbers on its own counter (arc → RC).
+    expect(fs.existsSync(path.join(root, 'docs/tickets/arc/v2/T-RC-001.md'))).toBe(true)
     const bad = cli(root, home, [...base, '--product', 'arc', '--version', 'other/v2'])
     expect(bad.code).not.toBe(0)
   }, T)

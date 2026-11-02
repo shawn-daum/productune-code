@@ -70,12 +70,10 @@
 # the turn start (so a decision ticket changed earlier in a very long turn may
 # not exempt it — the stated limit).
 #
-# DEFAULT OFF (T-1001 = B). The check ships switched off until decisions get
-# their own `D-NNN` records (T-996 = C): blocking today would make every PO open
-# a heavy `type: decision` ticket for each small confirm. `PRDT_QUESTION_CHECK=on`
-# in the hook's environment turns it on (tests, dogfooding); any other value or
-# none = off. The slice that lands `prdt decisions` and adds "D" to
-# DECISION_ID_PREFIXES flips this default (docs/artifacts/v1.13/decision-records-plan.md).
+# DEFAULT ON (T-1260; user approval T-1245 1, reverses T-996/T-1001/T-1003).
+# Decision tickets stay, and a PO ask with no open decision ticket blocks once.
+# `PRDT_QUESTION_CHECK=off` in the hook's environment disables it; any other
+# value or none = on.
 #
 # THE EVENT REACHES PYTHON ON STDIN, NEVER THROUGH AN ENVIRONMENT VARIABLE
 # (T-688 개정 1: a large `last_assistant_message` in execve's environment hits
@@ -90,7 +88,7 @@ case "$EVENT_JSON" in
   *'"prdt-po"'*) ;;
   *) exit 0 ;;
 esac
-[ "${PRDT_QUESTION_CHECK:-off}" = "on" ] || exit 0
+[ "${PRDT_QUESTION_CHECK:-on}" != "off" ] || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 printf '%s' "$EVENT_JSON" | python3 -I -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
 exit 0
@@ -115,7 +113,10 @@ def _product_dir_name(slug):
     if not isinstance(slug, str) or not slug:
         return None
     k = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")
-    return k if _PROD_NAME_RE.match(k) else "product"
+    if not _PROD_NAME_RE.match(k):
+        return "product"
+    # T-1215: layout-reserved names (PRODUCT_RESERVED_NAMES in prdt_lanes.py) get a suffix
+    return k + "-product" if k in ("prd", "tickets", "artifacts", "wiki", "features", "archive", "po", "designer", "developer", "qa") else k
 
 
 def project_products(root):
@@ -159,7 +160,7 @@ def tickets_homes(root):
             + [(None, os.path.join(root, "docs", "_shared", "tickets"))])
 
 
-# Wording confirmed by user (T-990 = A, 2026-10-06).
+# Wording: T-990 = A (2026-10-06); re-send clause T-1302 (inject-edit).
 # %s = the uncovered asks' line numbers ("3, 12").
 QUESTION_CHECK_REASON = (
     "[prdt question check] this reply asks the user to choose or confirm with no open decision "
@@ -167,9 +168,34 @@ QUESTION_CHECK_REASON = (
     "option set, or an item under a waiting-for-your-answer heading — and no `type: decision` "
     "ticket was created or changed this turn. Open a `type: decision` ticket for each ask or cite "
     "its open ticket id beside it (a waiting item: `assignee: user` counts), then send the reply "
-    "again, opening with one line that the question now has its ticket — the user may already have "
-    "read this one."
+    "again%s, opening with one line that the question now has its ticket, every other line kept — a body "
+    "up for approval keeps its numbered lines (or group ranges + ticket link), never the options alone."
 )
+# T-1116: the language clause that goes after "send the reply again" (wording settled
+# under the discipline-wording module, T-1245). %s = the stored chat language; the
+# clause is empty when no language is known, so the reason is then byte-identical
+# to the T-990 text above.
+QUESTION_CHECK_LANG_CLAUSE = " in lang=%s"
+
+# T-1281: the stored chat language only — never the device language.
+USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
+
+
+def stored_user_lang():
+    home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+    try:
+        with open(os.path.join(home, "user-lang"), encoding="utf-8", errors="replace") as f:
+            v = "".join(f.read(64).split())
+    except OSError:
+        v = ""
+    return v if USER_LANG_RE.match(v) else None
+
+
+def lang_clause():
+    if not QUESTION_CHECK_LANG_CLAUSE:
+        return ""
+    lang = stored_user_lang()  # T-1281: stored only
+    return QUESTION_CHECK_LANG_CLAUSE % lang if lang else ""
 LIST_CAP = 5
 RUN_BUDGET_S = 5
 
@@ -177,8 +203,8 @@ RUN_BUDGET_S = 5
 # decisions later get their own `D-NNN` records — add "D" and its dir here).
 DECISION_ID_PREFIXES = ("T",)
 _PFX = "|".join(re.escape(p) for p in DECISION_ID_PREFIXES)
-TICKET_ID_RE = re.compile(r"(?<![A-Za-z0-9])((?:%s)-\d{1,6})(?!\d)" % _PFX)
-TICKET_FILE_RE = re.compile(r"^(?:%s)-\d{1,6}\.md$" % _PFX)
+TICKET_ID_RE = re.compile(r"(?<![A-Za-z0-9])((?:%s)-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6})(?!\d)" % _PFX)
+TICKET_FILE_RE = re.compile(r"^(?:%s)-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6}\.md$" % _PFX)
 FENCE_RE = re.compile(r"^\s*(?:`{3,}|~{3,})")
 DIAGRAM_FENCE_RE = re.compile(r"^\s*(?:`{3,}|~{3,})\s*(?:mermaid|dot|graphviz|plantuml|puml|d2)\b", re.I)
 # Text right after an option letter that makes the line a diagram edge (`A --> B`).
@@ -250,8 +276,7 @@ def project_root(cwd):
             root = d
         # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary
         if (os.path.isfile(os.path.join(d, ".git")) and os.path.basename(os.path.dirname(d)) == "tracks"
-                and os.path.basename(d)[:2] == "T-" and os.path.basename(d)[2:7].isascii()
-                and os.path.basename(d)[2:].isdigit() and len(os.path.basename(d)) <= 7):
+                and re.match(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z", os.path.basename(d))):  # T-1298: T-NNN or T-<PREFIX>-<n>
             root = None
             break
         up = os.path.dirname(d)
@@ -517,7 +542,7 @@ def main():
     shown = ", ".join(str(n) for n in uncovered[:LIST_CAP])
     if len(uncovered) > LIST_CAP:
         shown += ", +%d more" % (len(uncovered) - LIST_CAP)
-    sys.stdout.write(json.dumps({"decision": "block", "reason": QUESTION_CHECK_REASON % shown}))
+    sys.stdout.write(json.dumps({"decision": "block", "reason": QUESTION_CHECK_REASON % (shown, lang_clause())}))
 
 
 def _out_of_budget(*_):

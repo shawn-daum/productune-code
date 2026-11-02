@@ -162,7 +162,7 @@ function withTicketId(doc) {
 
 function ticketLite(doc) {
   const fm = doc.frontmatter
-  return { rel: doc.rel, frontmatter: { id: fm.id, slug: fm.slug, type: fm.type, status: fm.status, assignee: fm.assignee, feature: fm.feature, created: fm.created } }
+  return { rel: doc.rel, frontmatter: { id: fm.id, slug: fm.slug, title: fm.title, type: fm.type, status: fm.status, assignee: fm.assignee, feature: fm.feature, created: fm.created } }
 }
 
 /**
@@ -501,7 +501,7 @@ export function collectLineNames(repoRoot) {
   const out = []
   for (const e of raw) {
     const name = e && typeof e === 'object' ? e.name : undefined
-    if (typeof name === 'string' && LINE_NAME_RE.test(name) && !out.includes(name) && name !== cfg.slug) out.push(name)
+    if (typeof name === 'string' && LINE_NAME_RE.test(name) && !['prd', 'tickets', 'artifacts', 'wiki', 'features', 'archive', 'po', 'designer', 'developer', 'qa'].includes(name) && !out.includes(name) && name !== cfg.slug) out.push(name)
   }
   return out
 }
@@ -867,6 +867,32 @@ export function collectProjectSlug(repoRoot) {
   }
 }
 
+/**
+ * T-1253 (spec deployed-record-spec D4): a product's deployed record — `deployed: {version, at, ref}` in its
+ * `docs/<product>/DEPLOY.md` frontmatter (the one line `prdt deploy record` writes). Read-only. Null = no record:
+ * no file, no frontmatter, no `deployed` key, or one whose `version` is empty — a malformed record never throws.
+ * @returns {{version:string, at:string, ref:string}|null}
+ */
+export function collectDeployed(layout) {
+  let raw
+  try {
+    const file = containedFile(layout.root, layout.dir('DEPLOY.md'))
+    if (!file) return null
+    raw = fs.readFileSync(file, 'utf8')
+  } catch {
+    return null
+  }
+  const d = parseFrontmatter(raw).data.deployed
+  const text = d && typeof d === 'object' && typeof d.__raw === 'string' ? d.__raw : null
+  if (text === null) return null
+  const pairs = {}
+  for (const part of text.replace(/^\s*\{/, '').replace(/\}\s*$/, '').split(/[,\n]/)) {
+    const m = /^\s*(version|at|ref)\s*:\s*(.*?)\s*$/.exec(part)
+    if (m) pairs[m[1]] = m[2].replace(/^(["'])(.*)\1$/, '$2')
+  }
+  return pairs.version ? { version: pairs.version, at: pairs.at || '', ref: pairs.ref || '' } : null
+}
+
 /** Everything the generator needs, gathered once. */
 export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
   const poState = readPoState(repoRoot)
@@ -887,6 +913,7 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
       prd: collectPrd(repoRoot, version, { line: name, lineNames, layout: lineLayout }),
       tickets: collectTickets(repoRoot, version, { line: name, layout: lineLayout }),
       lanes: collectLanes(repoRoot, name),
+      deployed: collectDeployed(lineLayout),
       // T-958: key names + set/empty only (env-status.mjs).
       env: collectEnv(repoRoot, lineEnvDir(cfg, name)),
     }
@@ -894,8 +921,12 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
   return {
     poState,
     project: collectProjectSlug(repoRoot),
+    // T-1277: the viewer chrome's language — the project's recorded `user_lang` (BCP-47) in `.prdt/config.json`; null when unrecorded.
+    userLang: userLangOf(cfg),
     currentVersion,
     lines,
+    // T-1253: the home product's deployed record (null = none).
+    deployed: collectDeployed(layout),
     // T-1104: how this project's docs/ is laid out — render maps As-Is paths and links through it.
     docsLayout: layout,
     prd: collectPrd(repoRoot, currentVersion, { lineNames, layout }),
@@ -926,6 +957,12 @@ function realRootOrNull(repoRoot) {
   } catch {
     return null
   }
+}
+
+/** T-1277: `user_lang` of a parsed `.prdt/config.json` (a non-empty string), else null. */
+export function userLangOf(cfg) {
+  const v = cfg && typeof cfg === 'object' ? cfg.user_lang : null
+  return typeof v === 'string' && v.trim() ? v.trim() : null
 }
 
 /** `.prdt/config.json`, or null when absent or unreadable. */

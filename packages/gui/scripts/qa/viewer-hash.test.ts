@@ -10,7 +10,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { generate } from '@productune/viewer/generate.mjs'
-import { buildAnchors, maxTicketNumber, renderPage } from '@productune/viewer/lib/render.mjs'
+import { buildAnchors, maxTicketByPrefix, maxTicketNumber, renderPage } from '@productune/viewer/lib/render.mjs'
 
 const fixture = {
   poState: { stage: 'build', version: 'v1.10', current_task: null },
@@ -83,6 +83,44 @@ describe('anchor table', () => {
 
   it('max ticket number counts every listed ticket (the stale-vs-unknown line)', () => {
     expect(maxTicketNumber(fixture)).toBe(950)
+  })
+})
+
+// T-1298: per-product ids `T-<PREFIX>-<n>` have their own counter, so the
+// stale-vs-unknown line is per prefix: `#T-RCH-002` under RCH's top is stale,
+// above it unknown, and a plain T-NNN still reads the global counter.
+describe('hash notice reads product-prefixed ids (T-1298)', () => {
+  const fx = {
+    ...fixture,
+    tickets: {
+      ...fixture.tickets,
+      omitted: [...fixture.tickets.omitted, { bucket: 'v1.9', count: 1, bytes: 1, tickets: [{ rel: 'docs/tickets/v1.9/T-RCH-003.md', frontmatter: { id: 'T-RCH-003' } }] }],
+    },
+  }
+
+  it('max per counter: plain under "", each prefix under its own key', () => {
+    expect(maxTicketByPrefix(fx)).toEqual({ '': 950, RCH: 3 })
+    expect(maxTicketNumber(fx)).toBe(950)
+  })
+
+  it('the page\'s showHashNotice calls a missing T-RCH-002 stale, T-RCH-009 and T-PM-001 unknown, T-12 stale', () => {
+    const html = renderPage({ data: fx, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const data = JSON.parse(html.match(/<script[^>]*id="detail-data"[^>]*>([\s\S]*?)<\/script>/)![1])
+    expect(data.maxTicket).toEqual({ '': 950, RCH: 3 })
+    const fnSrc = html.match(/function showHashNotice\(raw\) \{[\s\S]*?\n  \}\n/)![0]
+    const verdict = (raw: string) => {
+      const out: Record<string, string> = {}
+      const notice = { hidden: true, querySelector: (sel: string) => ({ set textContent(v: string) { out[sel] = v } }) }
+      const document = { getElementById: () => notice }
+      const HASH_NOTICE = { stale: 'STALE', unknown: 'UNKNOWN' }
+      new Function('document', 'DETAIL_DATA', 'HASH_NOTICE', 'raw', `${fnSrc}; showHashNotice(raw)`)(document, data, HASH_NOTICE, raw)
+      return out['.js-notice-text']
+    }
+    expect(verdict('T-RCH-002')).toBe('STALE')
+    expect(verdict('T-RCH-009')).toBe('UNKNOWN')
+    expect(verdict('T-PM-001')).toBe('UNKNOWN')
+    expect(verdict('T-12')).toBe('STALE')
+    expect(verdict('T-999')).toBe('UNKNOWN')
   })
 })
 

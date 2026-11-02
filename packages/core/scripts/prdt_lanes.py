@@ -262,6 +262,17 @@ def product_docs_dir(root, product=None):
     return root / "docs" / (product or current_product(root) or DOCS_SHARED)
 
 
+def line_product(root, line=None):
+    """T-1214: the product folder a per-product READER computes for — `line`
+    (an added product), else the first product. Never `current_product`: what
+    po-state is focused on does not change which product a computation is about.
+    None in the legacy layout (`product_docs_dir` ignores it there)."""
+    prods = project_products(root)
+    if not prods:
+        return None
+    return line or prods[0]
+
+
 def shared_docs_dir(root):
     """`docs/_shared/` (product layout) or `docs/` (legacy)."""
     root = Path(root)
@@ -393,12 +404,21 @@ def _scan_ticket_dir(root, tdir, lines, prefix):
         yield row, p, problems
 
 
+# T-1215: top-level `docs/` names the layout owns — a product folder never takes one
+# (`docs/qa/` beside `docs/_shared/` read as a half-moved layout). KEEP the five
+# `_product_dir_name` copies (statusline · hooks) in lockstep with this tuple.
+PRODUCT_RESERVED_NAMES = ("prd", "tickets", "artifacts", "wiki", "features", "archive", "po", "designer", "developer", "qa")
+
+
 def product_dir_name(slug):
     """A config `slug` as the `docs/<kebab>/` folder name (first product, T-1104):
     lower-case, runs of non-[a-z0-9] → one hyphen; a result that is not a legal
-    product name (empty · `v<digit>…` · `backlog`) → `product`."""
+    product name (empty · `v<digit>…` · `backlog`) → `product`; a layout-reserved
+    name (`PRODUCT_RESERVED_NAMES`) → `<name>-product`."""
     k = re.sub(r"[^a-z0-9]+", "-", str(slug or "").lower()).strip("-")
-    return k if LINE_NAME_RE.match(k) else "product"
+    if not LINE_NAME_RE.match(k):
+        return "product"
+    return f"{k}-product" if k in PRODUCT_RESERVED_NAMES else k
 
 
 VERSION_ID_RE = re.compile(r"^v\d+(?:\.\d+){0,2}$", re.ASCII)
@@ -440,7 +460,8 @@ def project_lines(root):
     out, seen = [], set()
     for e in (raw if isinstance(raw, list) else []):
         name = e.get("name") if isinstance(e, dict) else None
-        if isinstance(name, str) and LINE_NAME_RE.match(name) and name not in seen and name != slug:
+        if (isinstance(name, str) and LINE_NAME_RE.match(name) and name not in PRODUCT_RESERVED_NAMES
+                and name not in seen and name != slug):
             seen.add(name)
             out.append(e)
     return out
@@ -448,6 +469,11 @@ def project_lines(root):
 
 def project_line_names(root):
     return [e["name"] for e in project_lines(root)]
+
+
+def gate_lines(root):
+    """Every line a gate runs over: the home product (None) first, then each added product."""
+    return [None] + list(project_line_names(root))
 
 
 def split_line_id(vid):
@@ -584,14 +610,18 @@ def _prd_open_section(root, st, line=None):
     (T-657's own posture: `prd_layout_warnings` is the check that judges the
     tree shape itself)."""
     root = Path(root)
-    prd_md = docs_path(root, "prd") / "PRD.md"
+    product = line_product(root, line)
+    prd_md = docs_path(root, "prd", product) / "PRD.md"
     try:
         text = prd_md.read_text(encoding="utf-8")
     except OSError:
         return None, []
     lines = _md_structural_lines(text)
     all_heads = _prd_line_headings(text, project_line_names(root))
-    heads = [(v, ln) for l, v, ln in all_heads if l == line]
+    # T-1214: product layout = one PRD.md per product, its sections headed `## v…`;
+    # legacy = one shared PRD.md, an added line's sections headed `## <line> v…`.
+    own = (None, line) if product else (line,)
+    heads = [(v, ln) for l, v, ln in all_heads if l in own]
     if not heads:
         return None, []
     st = _line_st(st, line)
@@ -845,7 +875,7 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
         if gpath:
             alt = gpath
             try:
-                alt = resolve_docs_ref(root, gpath, line) or gpath
+                alt = resolve_docs_ref(root, gpath, line_product(root, line)) or gpath
             except Exception:
                 pass
             gate = _lane_find_gate_ticket(tickets, version, [gpath, alt], body)

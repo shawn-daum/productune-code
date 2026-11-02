@@ -7,12 +7,112 @@ Version-by-version release notes for this project.
 >   git tag (`v1.4`), the first token after `## `. The updater and the viewer split
 >   sections on this line, so keep it verbatim. It is the only `#` line in a section.
 > - Optional ` — <title> (YYYY-MM-DD)` after the version token.
-> - Body: plain group labels `추가` · `변경` · `수정` · `알려진 한계`, each followed by one
->   blank line and `- ` items. Omit an empty group. `알려진 한계` only for a security limit.
+> - Body, in this order, each group a plain label line + one blank line + `- ` items:
+>   `요약` (exactly one line per lane, saying what that lane changed for the user) ·
+>   one group per lane, headed by what that lane changed for the user, same order as the summary, listing that
+>   lane's user-visible work · `큰 버그 수정` · `알려진 한계`. Omit an empty group.
+>   `알려진 한계` only for a security limit.
+> - Lanes are the version's PRD 합격선 lanes (`prdt schedule`). Work in the 자투리 lane
+>   goes under the lane it serves, or is dropped if minor.
+> - Bugs: minor fixes are omitted. List only a fix a user noticed or that guarded data
+>   or secrets.
 > - One line per item: what changed, as the user sees it. No `###`, no bold, no backticks,
 >   no reasons, no ticket ids, no commands for the reader to type.
-> - When: written at release time, in the same change that cuts the `v*` tag.
+> - When: written at release time, in the same change that cuts the `v*` tag. Show the
+>   section to the user and get confirmation before committing it.
+> - Group headings and summary prefixes name what the lane changed for the user, never
+>   the lane's internal name.
+> - Every line is checked against the closed tickets' outcome lines, not the PRD To-Be.
 > - Everything above the first `## ` line is preamble and is ignored by the parser.
+
+## v1.15 — 결정 기록 · PO 말 품질 · 프로젝트 우선순위 · 배포 기록 (2026-10-27)
+
+요약
+
+- 결정 기록 · 질문 점검: 결정이 이유 · 방식 · 답 칸으로 남고, 낱말로 찾고, 뷰어에서 한 줄씩 읽고, 결정 티켓 없이 묻는 질문은 한 번 되돌아와요
+- PO 말 품질 · 사용자 언어: 저장된 대화 언어로 PO 답을 점검하고, 옛 → 새 표기를 잡고, 티켓 제목 · 뷰어 글자가 프로젝트 언어를 따라가요
+- 프로젝트 우선순위 · 기기 부하: 우선순위가 높은 프로젝트가 테스트 자리를 먼저 받고, 합칠 때 도는 테스트가 줄고, 놀고 있는 레인은 PO 가 알아채요
+- 설치 · 업데이트 · 배포 기록: 업데이트 확인이 화살표 메뉴가 되고, 실패한 setup 이 다음 합치기에서 안내되고, 배포 버전이 기록돼 상태줄 · 뷰어에 보여요
+
+결정 기록 · 질문 점검
+
+- 결정 티켓 결과에 이유 · 방식 · 묶음 · 답 칸을 적는 틀이 생기고, 칸이 빠지면 상태 점검이 권고해요
+- 결정 티켓 · 위키 결정 페이지 · 사용자 원문 · 용어 사전을 낱말로 한 번에 찾아요
+- 뷰어 결정 화면이 번호 · 제목 · 상태 · 답을 한 줄로 보이고, 펼치면 이유 · 방식 · 답이 나와요. 질문이 여럿이면 질문마다 보이고, 기록이 없으면 「기록 없음」 이 나와요
+- 열린 결정 티켓 없이 사용자에게 묻는 PO 답이 기본으로 한 번 되돌아와요
+
+PO 말 품질 · 사용자 언어
+
+- 대화 언어를 기기에 저장하고, PO 마지막 답이 다른 언어면 한 번 되돌려요. 저장된 언어가 없는 기기는 점검이 꺼져 있다가 업데이트나 첫 설정에서 한 번 물어요
+- 산출물의 옛 → 새 전후 표기를 금지어 점검이 잡고, 옛 코드 같은 말은 잡지 않아요. 금지어 목록은 용어 사전 모양으로 바뀌었어요
+- 티켓에 사람이 읽는 제목 칸이 생겨 목록과 뷰어가 그 제목을 먼저 보여 주고, 제목은 프로젝트의 대화 언어로 써요
+- 뷰어 화면 글자가 프로젝트의 대화 언어(한국어 · 영어)를 따라가요
+- 두 번째 말투 불만이 정본 수정으로 가는 경로가 PO 규칙에 적혔어요
+
+프로젝트 우선순위 · 기기 부하
+
+- 우선순위 설정에 프로젝트 순서를 적으면, 낮은 순위의 개발 · QA 발주가 높은 순위 프로젝트의 테스트 자리를 양보하고, 안내에 자리를 쥔 프로젝트와 순위가 나와요
+- 상태줄에 프로젝트 우선순위 칸이 생겼어요
+- 합칠 때 기본으로 관련 테스트만 돌고, 전체 테스트는 레인의 마지막 합치기와 Ship 진입에서만 돌아요
+- 한도에 막힌 발주를 기다리는 명령이 한도가 풀리면 끝나 PO 를 깨우고, 우선순위 양보도 함께 기다려요
+- 할 일이 있는데 아무도 하지 않는 레인을 PO 가 한 번 되돌려 받고, 사용자가 멈춘 레인은 기록된 상태로 구분해요
+
+설치 · 업데이트 · 배포 기록
+
+- 업데이트 확인이 화살표 · Enter · Esc 메뉴가 되고, 건너뛰면 그날 다시 묻지 않아요. 터미널이 아니면 예전 그대로예요
+- 하루 한 번 업데이트 질문이 hook · 파이프 · 실패한 원격 확인에 쓰이지 않고 터미널 실행에서만 물어요
+- setup 이 실패한 track 은 다음 합치기가 테스트 전에 멈추고, setup 명령과 작업 폴더 경로를 알려 줘요
+- 세션 시작 머리말에 페르소나별 playbook 폴더 경로가 보여요
+- 제품 DEPLOY 문서에 배포 버전 · 날짜 · ref 를 남기는 기록 명령이 생겼어요
+- 배포 버전과 개발 버전이 다르면 상태줄이 「배포 vX · 개발 vY」 로 보이고, 뷰어 머리도 배포와 개발을 따로 보여요
+
+큰 버그 수정
+
+- 백업 원격 이름이 잘못 거절돼 메타 백업이 멈추던 문제
+- 대기 기록 쓰기가 링크 폴더 · 파일을 따라가던 문제, 저장소에서 온 이름이 거절 문구에 길이 제한 없이 들어가던 문제
+
+## v1.14 — 제품이 먼저인 문서 배치 · 기기 env · 레인 (2026-10-23)
+
+요약
+
+- 문서 폴더를 제품별로 나눔 · 기기 env: 제품이 하나여도 문서가 제품 폴더 아래 같은 깊이로 놓이고, 기기 env 와 뷰어 · 상태줄이 제품 여럿을 줄마다 보여 줘요
+- 레인으로 일하기: 합격선마다 레인 하나가 대화 턴과 따로 이어서 돌고, 요청은 PO 가 어느 레인에 둘지 권해요
+- 실행 속도 · 안전: prdt 실행이 빨라지고, 다른 세션이나 현재 폴더의 파일에 휘둘리던 곳이 막혔어요
+
+문서 폴더를 제품별로 나눔 · 기기 env
+
+- 문서가 공유 폴더와 제품 폴더로 나뉘고, 어느 층에 무엇이 살고 어떤 순서로 읽히는지 한 표로 정해졌어요
+- 예전 구조 프로젝트는 세션을 시작할 때 옮기기를 제안받고, 옮길 목록을 미리 본 뒤 한 번에 옮겨요. 되돌릴 수도 있어요
+- ntf-archive 가 ntf-pm 프로젝트의 한 줄이 되어, 상태줄과 뷰어 홈이 줄마다 한 행을 보여요
+- 기기 env: env 값과 사용자 정보를 기기에 한 번 저장하고, 프로젝트는 키 이름으로 가져다 써요
+- 출력에 나온 비밀값과 흔한 키 형식이 가려져요
+- 뷰어 왼쪽 위에 프로젝트 · 버전 · 단계가, 왼쪽 아래에 도구 이름과 버전이 보여요
+- 뷰어 사이드바 진행 카드가 단계 순번 · 티켓 진행 · 기다리는 결정 · 사용자 작업을 보여요
+
+레인으로 일하기
+
+- 합격선마다 레인 하나가 PO 의 대화 턴과 따로 이어서 돌아요
+- 일정 계산이 합격선마다 레인 하나를 계산하고, PO 몫 티켓도 넣어요
+- 레인 밖 요청은 PO 가 다음 버전 · 이번 버전 자투리 · 새 레인 중 하나를 권해요
+- 상태줄 build 단계에 제품마다 레인 행이 보여요
+- 기본 제공 작업자와 fork 발주도 발주 검사(모델 등급 · 자원 한도)를 받아요
+- 합격선이 충족되면 상태 점검이 Ship 진입을 권해요
+
+실행 속도 · 안전
+
+- prdt 실행이 빨라졌어요. 버전 확인이 약 0.19초에서 약 0.08초로 줄었어요
+- 다른 세션이 기기 폴더에 쓰는 일로 테스트가 실패 처리돼 넣기를 다시 돌리던 일이 없어져요
+- 현재 폴더에 같은 이름의 파일이 있어도 상태줄 · 훅 · 뷰어가 그 파일을 실행하지 않아요
+- 티켓 새로 만들기가 버전 · 백로그 · 미리보기 지정대로 동작해요
+
+큰 버그 수정
+
+- 옮기기 되돌리기가 링크 파일을 따라 밖으로 새던 문제
+- 뷰어가 잘못된 문서 경로를 만나면 생성이 멈추던 문제
+
+알려진 한계
+
+- env 실행 명령은 프로그램이 값을 바꿔서 출력하면 그 값을 가리지 못해요
 
 ## v1.13 — 기기 위키 · 화면 세트 배치 · 뷰어 읽기 개선 (2026-10-11)
 

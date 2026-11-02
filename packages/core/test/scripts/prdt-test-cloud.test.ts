@@ -207,6 +207,29 @@ echo "gh: Not Found (HTTP 404)" >&2; exit 1
     git(repo, 'remote', 'remove', 'origin')
   })
 
+  test('T-1211: a record whose ref is not ci/T-NNN/<session> is never passed to push --delete — named instead', () => {
+    clean()
+    const origin = tmp('bad-origin')
+    git(origin, 'init', '-q', '--bare', '-b', 'main')
+    git(repo, 'remote', 'add', 'origin', origin)
+    git(repo, 'push', '-q', 'origin', 'HEAD:refs/heads/main')
+    git(repo, 'push', '-q', 'origin', 'HEAD:refs/heads/dev')
+    const st = path.join(repo, '.git', 'prdt-cloud', 'runs')
+    fs.mkdirSync(st, { recursive: true })
+    const bad = ['refs/heads/main', 'refs/heads/dev', 'refs/heads/ci/T-1/../main', 'refs/tags/v1', '-d', 'refs/heads/ci/T-1/a b']
+    bad.forEach((ref, i) => fs.writeFileSync(path.join(st, `bad${i}.json`), JSON.stringify({ ref, state: 'timeout' })))
+    const notes = py(`print(json.dumps(m._cloud_clean_leftovers(m.Path(${JSON.stringify(repo)}), "o/r")))`,
+      repo, { PATH: `${bin}:${process.env.PATH}` }) as string[]
+    expect(notes).toHaveLength(bad.length)
+    for (const ref of bad) expect(notes.join('\n')).toContain(ref)
+    expect(notes.join('\n')).toContain('not a ci/T-NNN ref')
+    const refs = git(origin, 'for-each-ref', '--format=%(refname)').split('\n')
+    expect(refs).toContain('refs/heads/main')
+    expect(refs).toContain('refs/heads/dev')
+    fs.rmSync(path.join(repo, '.git', 'prdt-cloud'), { recursive: true })
+    git(repo, 'remote', 'remove', 'origin')
+  })
+
   test('doctor names a carve-out-off record and an undeleted ref', () => {
     const st = path.join(repo, '.git', 'prdt-cloud')
     fs.mkdirSync(path.join(st, 'runs'), { recursive: true })
@@ -313,6 +336,97 @@ describe('result condenser', () => {
     const missing = JSON.parse(execFileSync('node', [CONDENSE, path.join(d, 'nope.json'), ''], { cwd: d, encoding: 'utf-8' }))
     expect(missing.status).toBe('error')
   })
+})
+
+describe('T-1211 condenser redaction — failure messages and meta values', () => {
+  test('a token in a failure message or a log_tail value never reaches the output', () => {
+    const d = tmp('cond-red')
+    const fx = { numTotalTests: 1, numPassedTests: 0, numFailedTests: 1, testResults: [
+      { name: '/w/a.test.ts', status: 'failed', assertionResults: [{ fullName: 'x', status: 'failed',
+        failureMessages: ['clone https://u:ghp_FAKEfixture000@github.com/o/r failed\nAuthorization: token ghs_FAKEfixture222'] }] },
+      { name: '/w/b.test.ts', status: 'failed', message: 'github_pat_FAKEfixture333 leaked', assertionResults: [] },
+    ] }
+    fs.writeFileSync(path.join(d, 'v.json'), JSON.stringify(fx))
+    const raw = execFileSync('node', [CONDENSE, path.join(d, 'v.json'), '/w/', 'log_tail=https://user:ghp_FAKEfixture000@github.com x', 'reason=Bearer abcDEF123tok'],
+      { cwd: d, encoding: 'utf-8' })
+    for (const secret of ['ghp_FAKEfixture000', 'ghs_FAKEfixture222', 'github_pat_FAKEfixture333', 'abcDEF123tok']) expect(raw).not.toContain(secret)
+    expect(raw).toContain('***@github.com')
+  })
+})
+
+describe('T-1211 condenser redaction — CR / U+2028 end no line early', () => {
+  test('Authorization value is redacted past \\r and U+2028', () => {
+    const d = tmp('cond-cr')
+    fs.writeFileSync(path.join(d, 'v.json'), JSON.stringify({ numTotalTests: 0, testResults: [] }))
+    for (const sep of ['\r', '\u2028', '\u2029']) {
+      const raw = execFileSync('node', [CONDENSE, path.join(d, 'v.json'), '', `log_tail=header Authorization: X${sep}later=FAKEAFTERCR`], { cwd: d, encoding: 'utf-8' })
+      expect(raw).not.toContain('FAKEAFTERCR')
+    }
+  })
+})
+
+describe('T-1221 redaction — one input table through the shell copy and the JS copy', () => {
+  // fake values only; each secret must be absent from both outputs and both outputs must be equal
+  const TABLE: Array<{ name: string; input: string; secrets: string[] }> = [
+    { name: 'sk-ant key', input: 'key=sk-ant-api03-FAKEfixtureAAAA0000 end', secrets: ['FAKEfixtureAAAA0000'] },
+    { name: 'sk key', input: 'OPENAI sk-FAKEfixtureBBBB1111 end', secrets: ['FAKEfixtureBBBB1111'] },
+    { name: 'sk-proj key', input: 'sk-proj-FAKEfixture_CCCC-2222', secrets: ['FAKEfixture_CCCC-2222'] },
+    { name: 'word ending in sk- is left alone', input: 'task-runner-fixture and risk-assessment-fixture', secrets: [] },
+    { name: 'AWS access key id', input: 'id AKIAFAKEFIXTURE000000 x', secrets: ['AKIAFAKEFIXTURE000000'] },
+    { name: 'slack token', input: 'xoxb-FAKE-fixture-3333 xoxp-FAKE4444 xoxa-FAKE5555 xoxr-FAKE6666', secrets: ['FAKE-fixture-3333', 'FAKE4444', 'FAKE5555', 'FAKE6666'] },
+    { name: 'npm token', input: '//registry/:_authToken=npm_FAKEfixture0123456789abcdefABCD', secrets: ['FAKEfixture0123456789abcdefABCD'] },
+    { name: 'npm_config env name is left alone', input: 'npm_config_registry=x', secrets: [] },
+    { name: 'github token', input: 'ghp_FAKEfixture777 glpat-FAKEfixture888', secrets: ['FAKEfixture777', 'FAKEfixture888'] },
+    { name: 'URL userinfo', input: 'https://user:FAKEpw999@host/x', secrets: ['FAKEpw999'] },
+    { name: 'Authorization same line', input: 'Authorization: token FAKEtok111 more', secrets: ['FAKEtok111'] },
+    { name: 'Authorization value on the next line', input: 'Authorization:\n  FAKEnextline222\nafter', secrets: ['FAKEnextline222'] },
+    { name: 'Authorization CRLF then value', input: 'Authorization:\r\nFAKEcrlf333\nafter', secrets: ['FAKEcrlf333'] },
+    { name: 'Bearer', input: 'Bearer FAKEbearer444.x', secrets: ['FAKEbearer444'] },
+    { name: 'AUTHORIZATION value on the next line', input: 'AUTHORIZATION:\nFAKE_UPPER_NEXT\nafter', secrets: ['FAKE_UPPER_NEXT'] },
+    { name: 'lowercase authorization value on the next line', input: 'authorization=\nFAKE_LOWER_NEXT', secrets: ['FAKE_LOWER_NEXT'] },
+    { name: 'AUTHORIZATION same line', input: 'AUTHORIZATION: FAKE_UPPER_SAME', secrets: ['FAKE_UPPER_SAME'] },
+    { name: 'lowercase bearer', input: 'bearer FAKE_lower_bearer', secrets: ['FAKE_lower_bearer'] },
+    { name: 'Basic', input: 'Basic FAKEbasic666=', secrets: ['FAKEbasic666'] },
+    { name: 'lowercase basic', input: 'basic FAKE_lower_basic', secrets: ['FAKE_lower_basic'] },
+    { name: 'Bearer then NBSP', input: 'Bearer FAKE_bearer_nbsp', secrets: ['FAKE_bearer_nbsp'] },
+    { name: 'Bearer then U+2003', input: 'Bearer FAKE_bearer_emsp', secrets: ['FAKE_bearer_emsp'] },
+    { name: 'Basic then U+2003', input: 'Basic FAKE_basic_emsp', secrets: ['FAKE_basic_emsp'] },
+    { name: 'Korean after Basic is left alone', input: 'Basic 인증 실패: token abc', secrets: [] },
+    { name: 'Korean after Bearer is left alone', input: 'Bearer 토큰이 만료됨 (expired) 다시 시도', secrets: [] },
+    { name: 'Basic colon is left alone', input: 'Basic: 2', secrets: [] },
+    { name: 'basic comma is left alone', input: 'basic, expected 5 to be 6', secrets: [] },
+    { name: 'Bearer quoted is left alone', input: 'Bearer "x" y', secrets: [] },
+    { name: 'Bearer then U+3000', input: 'Bearer　FAKE_bearer_ideo', secrets: ['FAKE_bearer_ideo'] },
+    { name: 'Bearer then U+200A', input: 'Bearer FAKE_bearer_hair', secrets: ['FAKE_bearer_hair'] },
+    { name: 'Bearer then space NBSP space', input: 'Bearer   FAKE_bearer_mix', secrets: ['FAKE_bearer_mix'] },
+    { name: 'NBSP in URL userinfo', input: 'https://user name:FAKEnbsp555@host/x', secrets: ['FAKEnbsp555'] },
+  ]
+  const shellRedact = (input: string, lc?: string) => {
+    const r = spawnSync('bash', ['-c', `eval "$(sed -n '/^redact() {/,/^}/p' "${RUNNER}")"; redact`],
+      { input: input + '\n', encoding: 'utf-8', env: { ...process.env, ...(lc ? { LC_ALL: lc } : {}) } })
+    expect(r.status).toBe(0)
+    return r.stdout.replace(/\n$/, '')
+  }
+  const jsRedact = (input: string) => {
+    const d = tmp('red-js')
+    fs.writeFileSync(path.join(d, 'v.json'), JSON.stringify({ numTotalTests: 0, testResults: [] }))
+    const raw = execFileSync('node', [CONDENSE, path.join(d, 'v.json'), '', `log_tail=${input}`], { cwd: d, encoding: 'utf-8' })
+    return JSON.parse(raw).log_tail as string
+  }
+  for (const lc of ['C', 'en_US.UTF-8', undefined]) {
+    for (const row of TABLE) {
+      test(`${row.name} [LC_ALL=${lc ?? 'inherited'}]`, () => {
+        const sh = shellRedact(row.input, lc)
+        const js = jsRedact(row.input)
+        for (const secret of row.secrets) {
+          expect(sh).not.toContain(secret)
+          expect(js).not.toContain(secret)
+        }
+        expect(sh).toBe(js)
+        if (!row.secrets.length) expect(sh).toBe(row.input)
+      })
+    }
+  }
 })
 
 describe('runner push — one parentless result.json commit to ci/<T-NNN>/<session> only', () => {
@@ -457,6 +571,7 @@ printf '{"numTotalTests":1,"numPassedTests":1,"numFailedTests":0,"testResults":[
     // a stand-in setup: the real one writes the user's global git config
     // FAKE_SETUP_STDIN: a step that reads stdin (a corepack download prompt) must see EOF at once
     put('.claude/cloud-setup.sh', 'echo "setup for $1"\n[ -n "${FAKE_SETUP_HANG-}" ] && sleep 120\n'
+      + '[ -n "${FAKE_SETUP_LEAK-}" ] && { echo "$FAKE_SETUP_LEAK"; exit 1; }\n'
       + 'if [ -n "${FAKE_SETUP_STDIN-}" ]; then read -r -t 4 x; rc=$?; echo "stdin_rc=$rc corepack_prompt=${COREPACK_ENABLE_DOWNLOAD_PROMPT-unset}"; [ $rc -gt 128 ] && exit 7; [ "${COREPACK_ENABLE_DOWNLOAD_PROMPT-}" = 0 ] || exit 8; fi\n'
       + 'exit 0\n')
     put('packages/core/node_modules/.bin/vitest', FAKE_VITEST, 0o755)
@@ -508,6 +623,31 @@ printf '{"numTotalTests":1,"numPassedTests":1,"numFailedTests":0,"testResults":[
     expect(result('cse_setup_hang')).toMatchObject({ status: 'error', phase: 'setup' })
     // the page shows the setup log, not only rc=124
     expect(r.stdout).toMatch(/^PRDT_PHASE setup log\| setup for prdt-test$/m)
+  })
+
+  test('T-1211: a failed setup log pushes a redacted log_tail — no token literal in the pushed result.json', () => {
+    const leak = 'fatal: unable to access https://user:ghp_FAKEfixture000@github.com/o/r.git/ with Authorization: Bearer abcDEF123tok glpat-FAKEfixture111'
+    const r = run('cse_leak', [], { FAKE_SETUP_LEAK: leak })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.stdout).toContain('***@github.com')
+    const raw = git(origin, 'show', 'refs/heads/ci/T-1126/cse_leak:result.json')
+    for (const secret of ['ghp_FAKEfixture000', 'user:ghp_', 'abcDEF123tok', 'glpat-FAKEfixture111']) expect(raw).not.toContain(secret)
+    const res = JSON.parse(raw)
+    expect(res).toMatchObject({ status: 'error', phase: 'setup' })
+    expect(res.log_tail).toContain('***@github.com')
+  })
+
+  test('T-1211: a token straddling the 1500-byte cut is redacted before truncation', () => {
+    const tok = 'ghp_FAKEtokenLONGSECRET0123456789abcdef'
+    const bear = 'Bearer ' + 'B'.repeat(40)
+    // each secret starts 21 bytes before the 1500-byte cut (the log ends in a newline)
+    const leak = (cut: string) => 'x'.repeat(30) + ' ' + cut + ' ' + 'y'.repeat(1500 - (cut.length - 21) - 2)
+    for (const [name, cut, frags] of [['a', tok, ['ET0123456789abcdef', 'SECRET0123']], ['b', bear, ['BBBBBBBB']]] as const) {
+      const r = run(`cse_straddle_${name}`, [], { FAKE_SETUP_LEAK: leak(cut) })
+      expect(r.status, r.stderr).toBe(0)
+      const raw = git(origin, 'show', `refs/heads/ci/T-1126/cse_straddle_${name}:result.json`)
+      for (const frag of frags) expect(raw).not.toContain(frag)
+    }
   })
 
   test('a phase never waits on an inherited stdin, and corepack never prompts', () => {

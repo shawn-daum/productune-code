@@ -12,6 +12,15 @@
 # no output at all. The lines come from another project, so each is rendered
 # behind the `| ` gutter with every break class folded — data, never structure.
 #
+# T-1300: SessionStart alone missed every line sent while a PO session stayed open
+# (3 days, 3 requests). prdt-user-prompt.sh now also runs this file on each PO
+# UserPromptSubmit; that run prints ONLY the open lines this session has not
+# been shown yet, once. The record is `$PRDT_HOME/run/inbox-seen/<session_id>`
+# (tooling-owned run/): the open ids already in this session's context, written
+# by both events. Nothing new → 0 bytes; the record newer than the store → bash
+# exits before jq/python run. No session_id on a prompt → nothing (no record =
+# no way to say "once").
+#
 # fail-open: jq/python3 missing, unreadable store, unusable slug → silent exit 0.
 
 set +e
@@ -26,12 +35,21 @@ AGENT_TYPE="$(printf '%s' "$EVENT_JSON" | jq -r '.agent_type // ""' 2>/dev/null)
 EVENT_CWD="$(printf '%s' "$EVENT_JSON" | jq -r '.cwd // ""' 2>/dev/null)"
 EVENT_NAME="$(printf '%s' "$EVENT_JSON" | jq -r '.hook_event_name // "SessionStart"' 2>/dev/null)"
 [ "$AGENT_TYPE" = "prdt-po" ] || exit 0
-[ "$EVENT_NAME" = "SessionStart" ] || exit 0
+case "$EVENT_NAME" in SessionStart|UserPromptSubmit) ;; *) exit 0 ;; esac
 [ -z "$EVENT_CWD" ] && EVENT_CWD="$PWD"
+SID="$(printf '%s' "$EVENT_JSON" | jq -r '.session_id // ""' 2>/dev/null)"
+case "$SID" in *[!A-Za-z0-9_-]*) SID="" ;; esac
+[ "${#SID}" -le 64 ] || SID=""
+SEEN=""
+[ -n "$SID" ] && SEEN="${PRDT_HOME:-$HOME/.prdt}/run/inbox-seen/$SID"
+if [ "$EVENT_NAME" = "UserPromptSubmit" ]; then
+  [ -n "$SEEN" ] || exit 0
+  [ "$SEEN" -nt "$INBOX" ] && exit 0   # store unchanged since this session's last look
+fi
 
-CTX="$(python3 -I - "$INBOX" "$EVENT_CWD" <<'PY' 2>/dev/null
-import json, os, re, sys, unicodedata
-inbox, cwd = sys.argv[1], sys.argv[2]
+CTX="$(python3 -I - "$INBOX" "$EVENT_CWD" "$EVENT_NAME" "$SEEN" <<'PY' 2>/dev/null
+import json, os, re, sys, time, unicodedata
+inbox, cwd, event, seen_path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 d = os.path.realpath(cwd)
 root = None
 while True:
@@ -39,8 +57,7 @@ while True:
         root = d
     # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary
     if (os.path.isfile(os.path.join(d, ".git")) and os.path.basename(os.path.dirname(d)) == "tracks"
-            and os.path.basename(d)[:2] == "T-" and os.path.basename(d)[2:7].isascii()
-            and os.path.basename(d)[2:].isdigit() and len(os.path.basename(d)) <= 7):
+            and re.match(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z", os.path.basename(d))):  # T-1298: T-NNN or T-<PREFIX>-<n>
         root = None
         break
     up = os.path.dirname(d)
@@ -104,6 +121,38 @@ try:
             rows.append((rid, to, frm, sent, body))
 except ValueError:
     sys.exit(0)
+# T-1300: what this session was already shown. SessionStart shows every row, so
+# nothing counts as seen there; a prompt shows only rows missing from the record.
+seen = set()
+if event == "UserPromptSubmit":
+    try:
+        with open(seen_path, encoding="utf-8") as fh:
+            seen = set(fh.read(4096).split())
+    except OSError:
+        seen = set()
+shown_ids = [r[0] for r in rows]
+if seen_path:
+    # The record = the open ids now in context (decided/expired ones drop out);
+    # rewritten even when nothing is new, so the `-nt` test of the next prompt exits in bash.
+    try:
+        d = os.path.dirname(seen_path)
+        os.makedirs(d, exist_ok=True)
+        tmp = "%s.%d.tmp" % (seen_path, os.getpid())
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(shown_ids))
+        os.replace(tmp, seen_path)
+        now = time.time()
+        for n, e in enumerate(os.scandir(d)):
+            if n >= 500:
+                break
+            try:
+                if now - e.stat(follow_symlinks=False).st_mtime > 30 * 86400:
+                    os.unlink(e.path)
+            except OSError:
+                pass
+    except OSError:
+        pass
+rows = [r for r in rows if r[0] not in seen]
 if not rows:
     sys.exit(0)
 # T-1104: the wiki inbox lives in `docs/_shared/wiki/` once the project is on the product-first layout.
@@ -124,5 +173,5 @@ sys.stdout.write("\n".join(out))
 PY
 )"
 [ -n "$CTX" ] || exit 0
-printf '%s' "$CTX" | jq -Rs '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:.}}'
+printf '%s' "$CTX" | jq -Rs --arg ev "$EVENT_NAME" '{hookSpecificOutput:{hookEventName:$ev,additionalContext:.}}'
 exit 0

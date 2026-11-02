@@ -186,21 +186,21 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     expect(rows({ PRDT_LANG: 'ko' })[0]).toMatch(/총 티켓 \d+\/\d+ \| 완료된 레인: A 1\/1 \| 작업중 0/)
   })
 
-  test('T-1203: 2 completed gate lanes joined with ` · `, table order; 자투리 stays a lane row; last line unchanged', () => {
+  test('T-1203 / R10 (T-1202 = B): 2 completed gate lanes ride the FIRST row after tickets, before working — table order, ` · `-joined; 자투리 stays a lane row; last line unchanged', () => {
     const rowC = `| **합격선** | **레인 C · \`docs/artifacts/v0.1/c.md\` 가 있다** |`
     writePrd([rowA, rowB, rowC])
     ticket('T-001', { status: 'done', gate: GATE_A })
     ticket('T-002', { gate: GATE_B })
     ticket('T-003', { status: 'done', gate: 'docs/artifacts/v0.1/c.md' })
-    ticket('T-004', { status: 'done' }) // 자투리, finished — still a lane row
+    ticket('T-004', { status: 'done' }) // 자투리, finished too — still its own lane row
     setStage('build')
     const r = rows()
     expect(r).toHaveLength(4)
-    expect(r[0]).toContain(' | done lanes: A 1/1 · C 1/1 | working 0')
+    expect(r[0]).toMatch(/^proj v0\.1 \| stage: build \d+\/\d+ \| total tickets \d+\/\d+ \| done lanes: A 1\/1 · C 1\/1 \| working 0$/)
     expect(r[1]).toBe('lane: B  0/1 | next T-002(developer)')
-    expect(r[2]).toBe('lane: 자투리  1/1 | working 0')
+    expect(r[2]).toMatch(/^lane: 자투리 +1\/1/)
     expect(r[3]).toBe('decision 0 | request 0')
-    expect(rows({ PRDT_LANG: 'ko' })[0]).toContain(' | 완료된 레인: A 1/1 · C 1/1 | 작업중 0')
+    expect(rows({ PRDT_LANG: 'ko' })[0]).toMatch(/\| 총 티켓 \d+\/\d+ \| 완료된 레인: A 1\/1 · C 1\/1 \| 작업중 0$/)
   })
 
   test('F2 (QA): the finished row never truncates an entry — it continues on the next row (9 long names, COLUMNS=80)', () => {
@@ -211,8 +211,9 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     setStage('build')
     const r = rows({ COLUMNS: '80' })
     expect(r.join('\n')).not.toContain('…')
-    const doneRows = r.filter((x, i) => i > 0 && /^\S.*\d+\/\d+$/.test(x) && !x.startsWith('lane'))
-    expect(doneRows.length).toBeGreaterThan(0)
+    const doneRows = r.filter((x, i) => i > 0 && (/^\S.*\d+\/\d+$/.test(x) && !x.startsWith('lane')))
+    expect(r[0]).toContain('done lanes: 아주 긴 이름의 레인 번호 0 1/1')
+    expect(doneRows.length).toBeGreaterThan(1)
     for (let i = 0; i < 9; i++) expect(r.join('\n')).toContain(`아주 긴 이름의 레인 번호 ${i} 1/1`)
   })
 

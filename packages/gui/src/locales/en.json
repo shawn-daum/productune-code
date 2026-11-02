@@ -16,9 +16,12 @@
     "title": "Productune setup",
     "step0": {
       "label": "Step 0 / 5 — Language / 언어",
-      "description": "Choose your interface language. / GUI 화면 언어를 선택해주세요.",
+      "description": "Choose your interface language. / 화면 언어를 선택해주세요.",
       "optionEn": "English",
-      "optionKo": "한글",
+      "optionKo": "한국어",
+      "uiGroup": "Interface language",
+      "chatGroup": "Chat language",
+      "chatDescription": "Choose the chat language the PO replies in.",
       "resetCta": "Reset & start over",
       "resetToast": "Local storage cleared. Reloading…"
     },
@@ -1069,7 +1072,7 @@
       "immediateNote": "저장 시 즉시 반영됩니다 (앱 재시작 불필요). / Changes apply immediately (no restart needed).",
       "optionEn": "English",
       "optionEnDesc": "Standard interface language.",
-      "optionKo": "한글",
+      "optionKo": "한국어",
       "optionKoDesc": "한국어 인터페이스."
     },
     "audience": {
