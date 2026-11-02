@@ -863,7 +863,7 @@ function storeSection(key, { active = false, innerHtml }) {
 function versionNumericParts(id) {
   return (String(id ?? '').match(/\d+/g) || []).map(Number)
 }
-function compareVersionIdsDesc(a, b) {
+export function compareVersionIdsDesc(a, b) {
   const pa = versionNumericParts(a)
   const pb = versionNumericParts(b)
   const len = Math.max(pa.length, pb.length)
@@ -1316,10 +1316,10 @@ export const LINE_SECTIONED_STORES = ['home', 'prd', 'ticket', 'feature', 'artif
  */
 export function lineViews(data) {
   if (!Array.isArray(data.lines) || data.lines.length === 0) return []
-  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes, deployed: data.deployed || null }
+  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes, closedLanes: data.closedLanes, deployed: data.deployed || null }
   return [
     home,
-    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes, deployed: l.deployed || null })),
+    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes, closedLanes: l.closedLanes, deployed: l.deployed || null })),
   ]
 }
 
@@ -2926,13 +2926,13 @@ function homeLineGroups(data, v, views, repoRootHref) {
 /**
  * T-1256: an idle product's last closed version as it stood at close — its id, ticket counts (the stage bar) and each
  * lane with its gate result. '' when the product has no closed version (today's idle text alone). Lanes are the
- * po-state-retained version's (the one lane computation), so they show only when that is the closed version.
+ * closed version's own (`closedLanes`, the one lane computation asked for that version).
  */
 function idleLastVersionHtml(v) {
   const closed = lastClosedId(v)
   if (!closed) return ''
   const tickets = homeTickets_({ ...v, currentVersion: closed })
-  const lanes = (Array.isArray(v.lanes) ? v.lanes : []).filter((l) => sameVersion(v.currentVersion, closed) && l.linked)
+  const lanes = (Array.isArray(v.closedLanes) ? v.closedLanes : []).filter((l) => l.linked)
   const laneRows = lanes
     .map((l) => {
       const gate = l.besteffort ? '' : ` <span class="sc-n">${escapeHtml(l.total > 0 && l.done === l.total ? IDLE.lastGatePass : IDLE.lastGateOpen)}</span>`
@@ -2973,8 +2973,14 @@ function homeSection(data, repoRootHref) {
   const currentArtifacts = currentArtifactEntries(data.artifacts, data.currentVersion)
   const currentDecisions = currentDecisionPages(data.wiki, data.currentVersion)
   const decisionTickets = decisionTicketsOf(currentTickets)
+  // T-1256: an idle single-product page shows the last closed version like a multi-product idle line does (only when a closed version exists).
+  const idleView = { line: null, name: data.project || '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, closedLanes: data.closedLanes }
+  const idleLast = idleView.stage === 'idle' && Boolean(idleView.name) && lastClosedId(idleView) !== ''
+  const progressBody = idleLast
+    ? idleLastVersionHtml(idleView) + idleNotice(IDLE.homeHead(idleView.name), IDLE.homeDetail(data.tickets.included.filter((t) => t.bucket === 'backlog').length))
+    : `<div class="dash-grid">${homeProgressBody(data)}</div>`
   const groups = [
-    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: progressBody },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },

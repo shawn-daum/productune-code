@@ -66,3 +66,58 @@ describe('T-1256 unchanged cases', () => {
     expect(html).not.toContain('data-last-version')
   })
 })
+
+// T-1256 round 2: lanes of a closed version whose section left PRD.md (PRD table fallback from prd/versions/), and the single-product page.
+const GATE = 'docs/gates/a.md'
+const rows = `### 합격선\n\n| 항목 | 문언 |\n|:--|:--|\n| **합격선** | **레인 A · \`${GATE}\` 가 돈다** |\n\n`
+function tk(id: string, status: string, extra = '', body = 'body') {
+  return `---\nid: ${id}\nslug: s-${id}\ntype: impl\nstatus: ${status}\nassignee: developer\n${extra}---\n${body}\n`
+}
+function single(opts: { stage: string; closed: boolean }) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-idle-single-')))
+  write(root, '.prdt/config.json', JSON.stringify({ slug: 'demo' }))
+  write(root, '.prdt/po-state.json', JSON.stringify({ schema_version: 1, stage: opts.stage, version: 'v1.1', current_task: null }))
+  write(root, 'docs/prd/PRD.md', opts.stage === 'idle' ? '# PRD\n\nhead\n' : `# PRD\n\nhead\n\n## v1.1 — round\n\n${rows}#### a — A\n`)
+  if (opts.closed) write(root, 'docs/prd/versions/v1.1.md', `## v1.1 — closed\n\n${rows}`)
+  write(root, 'docs/tickets/v1.1/T-5.md', tk('T-5', 'done'))
+  write(root, 'docs/tickets/v1.1/T-7.md', tk('T-7', 'done', 'deps: [T-5]\n', `gate ${GATE}`))
+  write(root, 'docs/tickets/backlog/T-8.md', tk('T-8', 'open'))
+  return render(collectAll(root, { disciplineRoot: path.join(root, 'no-discipline') }))
+}
+
+describe('T-1256 lanes of a closed version from prd/versions/', () => {
+  it('multi-product idle: PRD-table lane of the closed version shows with its gate result', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-idle-vers-')))
+    write(root, '.prdt/config.json', JSON.stringify({ slug: 'ntf-pm', products: [{ name: 'ntf-archive' }] }))
+    write(root, '.prdt/po-state.json', JSON.stringify({ schema_version: 1, stage: 'ship', version: 'v2.2', current_task: null, products: { 'ntf-archive': { stage: 'idle', version: 'v1.1' } } }))
+    write(root, 'docs/prd/PRD.md', '# PRD\n\nhead\n\n## v2.2 — round\n\n#### a — Item A\n')
+    write(root, 'docs/prd/versions/ntf-archive/v1.1.md', `## ntf-archive v1.1 — closed\n\n${rows}`)
+    write(root, 'docs/tickets/ntf-archive/v1.1/T-5.md', tk('T-5', 'done'))
+    write(root, 'docs/tickets/ntf-archive/v1.1/T-7.md', tk('T-7', 'done', 'deps: [T-5]\n', `gate ${GATE}`))
+    const p = progress(render(collectAll(root, { disciplineRoot: path.join(root, 'no-discipline') })))
+    expect(p).toContain('레인 A')
+    expect(p).toContain('2/2')
+    expect(p).toContain('게이트 통과')
+  })
+  it('lanes_for with no version is unchanged: current version still from the open section', () => {
+    const html = single({ stage: 'build', closed: false })
+    expect(html).toContain('레인')
+    expect(html).not.toContain('data-last-version')
+  })
+})
+
+describe('T-1256 single-product page', () => {
+  it('idle with a closed version shows the last-version block, lanes and the backlog line', () => {
+    const html = single({ stage: 'idle', closed: true })
+    const p = progress(html)
+    expect(p).toContain('v1.1')
+    expect(p).toContain('티켓 완료 2/2')
+    expect(p).toContain('레인 A')
+    expect(p).toContain('게이트 통과')
+    expect(html).toContain('demo 는 지금 진행 중인 버전이 없어요.')
+    expect(html).toContain('backlog 티켓 1건이 대기 중이에요.')
+  })
+  it('idle without a closed version has no last-version block', () => {
+    expect(single({ stage: 'idle', closed: false })).not.toContain('data-last-version')
+  })
+})
