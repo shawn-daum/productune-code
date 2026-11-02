@@ -146,7 +146,9 @@
 #
 # DEPLOY (T-1173 rule 3): EVERY session. A deploy-shaped Bash command (see
 #   deploy_shape) while po-state stage is define/build and the wiki log.md has
-#   no N/A-skip line naming the version → deny. Replaces the prompt-wording
+#   no N/A-skip line naming the version → deny. Multi-product (T-1222): the
+#   current task's product stage (`products.<p>`), or every product's when no
+#   task is current. Replaces the prompt-wording
 #   tripwire prdt-user-prompt.sh used to print (S30).
 #
 # Fails OPEN everywhere: python3 missing, unparsable JSON, no project, an
@@ -1019,6 +1021,16 @@ def git_head_branch(repo):
     return None
 
 
+def _log_skips(log, version):
+    """True when the wiki log holds an `N/A-skip` line naming `version`."""
+    vre = re.compile(re.escape(version) + r"(?![0-9.]*[0-9])")
+    try:
+        with open(log, encoding="utf-8", errors="replace") as f:
+            return any("N/A-skip" in line and vre.search(line) for line in f)
+    except Exception:
+        return False
+
+
 def deploy_gate(start):
     """(stage, version) when a deploy from `start` must wait for ship entry,
     else None. Cached per project root."""
@@ -1031,20 +1043,33 @@ def deploy_gate(start):
     try:
         with open(os.path.join(proot, ".prdt", "po-state.json"), encoding="utf-8") as f:
             st = json.load(f)
-        stage = st.get("stage") if isinstance(st, dict) else None
-        version = st.get("version") if isinstance(st, dict) else None
-        if stage in ("define", "build"):
-            res = (stage, version if isinstance(version, str) else "")
-            shared_dir = os.path.join(proot, "docs", "_shared")
-            log = os.path.join(shared_dir if os.path.isdir(shared_dir) else os.path.join(proot, "docs"),
-                               "wiki", "log.md")
-            if res[1] and re.fullmatch(r"v[0-9]+(?:\.[0-9]+){0,2}", res[1]):
-                vre = re.compile(re.escape(res[1]) + r"(?![0-9.]*[0-9])")
-                with open(log, encoding="utf-8", errors="replace") as f:
-                    for line in f:
-                        if "N/A-skip" in line and vre.search(line):
-                            res = None
-                            break
+        st = st if isinstance(st, dict) else {}
+        # T-1222 C7: top-level stage · version = the first product; an added
+        # product's live in `products.<p>` (pre-v1.14 `lines`). The deploy's
+        # product = current_task's (`product` absent = first product); no
+        # current task = unknown → every product is checked.
+        cands = [(st.get("stage"), st.get("version"))]
+        pk = "products" if "products" in st or "lines" not in st else "lines"
+        prods = st.get(pk) if isinstance(st.get(pk), dict) else {}
+        ct = st.get("current_task")
+        if isinstance(ct, dict):
+            p = ct.get("product")
+            if isinstance(p, str) and p:
+                ent = prods.get(p)
+                cands = [(ent.get("stage"), ent.get("version"))] if isinstance(ent, dict) else []
+        else:
+            cands += [(e.get("stage"), e.get("version")) for _, e in sorted(prods.items()) if isinstance(e, dict)]
+        shared_dir = os.path.join(proot, "docs", "_shared")
+        log = os.path.join(shared_dir if os.path.isdir(shared_dir) else os.path.join(proot, "docs"),
+                           "wiki", "log.md")
+        for stage, version in cands:
+            if stage not in ("define", "build"):
+                continue
+            v = version if isinstance(version, str) else ""
+            if v and re.fullmatch(r"v[0-9]+(?:\.[0-9]+){0,2}", v) and _log_skips(log, v):
+                continue
+            res = (stage, v)
+            break
     except Exception:
         pass
     _stage_cache[proot] = res
@@ -1071,14 +1096,49 @@ def deny_deploy(gate, how):
     sys.exit(0)
 
 
+# T-1222 C6: package runners that run a bin by name. `npx`-style take the bin as
+# their first operand; `pnpm`/`yarn`/`npm`/`bun` only behind a run subcommand.
+_RUNNERS_DIRECT = ("npx", "bunx", "pnpx")
+_RUNNERS_SUB = {"pnpm": ("dlx", "exec"), "yarn": ("dlx", "exec"), "npm": ("exec", "x"), "bun": ("x",)}
+# runner flags that take the next token as their value (`npx -p vercel vercel …`)
+_RUNNER_VALUE_FLAGS = ("-p", "--package", "-C", "--dir", "--cwd", "--filter", "-F", "--prefix", "-w", "--workspace")
+
+
+def unwrap_runner(name, args):
+    """(bin, its args) when `name args` runs a package bin through a runner,
+    else (name, args) unchanged. Peels nested runners (`npm exec -- pnpx vercel`)."""
+    for _ in range(4):
+        if name not in _RUNNERS_DIRECT and name not in _RUNNERS_SUB:
+            break
+        want_sub = name in _RUNNERS_SUB
+        k, hit = 0, None
+        while k < len(args):
+            a = args[k]
+            if a == "--":
+                k += 1
+                continue
+            if a.startswith("-"):
+                k += 2 if (a in _RUNNER_VALUE_FLAGS and "=" not in a) else 1
+                continue
+            if want_sub:
+                if a not in _RUNNERS_SUB[name]:
+                    break
+                want_sub = False
+                k += 1
+                continue
+            hit = k
+            break
+        if hit is None:
+            break
+        name, args = os.path.basename(args[hit]).split("@", 1)[0], [a for a in args[hit + 1:] if a != "--"]
+    return name, args
+
+
 def deploy_shape(name, args, ecwd, heads):
     """(start-dir, description) when this simple command deploys, else None.
     `heads` = branch a `git checkout|switch` earlier in the same command left
     checked out, keyed by realpath of the repo dir."""
-    if name in ("npx", "bunx") and args:
-        rest = [a for a in args if not a.startswith("-")]
-        if rest:
-            name, args = os.path.basename(rest[0]).split("@", 1)[0], args[args.index(rest[0]) + 1:]
+    name, args = unwrap_runner(name, args)
     if name == "vercel":
         ops = [a for a in args if not a.startswith("-")]
         if (any(a in ("--prod", "--production", "--target=production") for a in args)
