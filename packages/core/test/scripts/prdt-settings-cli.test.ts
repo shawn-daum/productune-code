@@ -53,7 +53,7 @@ const RESOLVER_TIMEOUT_S = String(Math.ceil(subprocessTimeout('hook') / 1000))
 const file = (name: string) => path.join(prdtHome, name)
 const read = (name: string) => (fs.existsSync(file(name)) ? fs.readFileSync(file(name), 'utf8') : null)
 const CAP_KEYS = ['load_ratio', 'mem_free_pct_min', 'inflight_max', 'suites_max', 'vms_max', 'inflight_sonnet_max', 'inflight_opus_max', 'inflight_haiku_max', 'inflight_fable_max', 'inflight_default_max'].map((k) => `dispatch.${k}`)
-const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.visual', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang', 'user.lang', 'priority.projects', ...CAP_KEYS]
+const KEYS = ['register.audience', 'register.form', 'register.structure', 'register.visual', 'register.address', 'viewer.auto-open', 'plan.tier', 'cli.lang', 'user.lang', 'priority.projects', 'rider.stages', ...CAP_KEYS]
 
 describe('message catalog', () => {
   test('ko and en carry the same keys, none empty', () => {
@@ -431,6 +431,39 @@ describe.skipIf(!READY)('prdt settings — priority.projects (T-1247)', () => {
     fs.mkdirSync(path.join(prdtHome, 'run', 'dispatches'), { recursive: true })
     fs.writeFileSync(path.join(prdtHome, 'run', 'dispatches', 'x.json'), JSON.stringify({ project_root: root }))
     expect(prdt('en', 'settings', 'set', 'priority.projects', 'm,a').status).toBe(0)
+  })
+})
+
+describe.skipIf(!READY)('prdt settings — rider.stages (T-1094)', () => {
+  test('default is build with no file; set stores the canonical stage list', () => {
+    let rows = JSON.parse(prdt('en', 'settings', '--json').out)
+    expect(rows.find((x: any) => x.key === 'rider.stages').value).toBe('build')
+    expect(read('rider-stages')).toBeNull()
+    const r = prdt('en', 'settings', 'set', 'rider.stages', 'build, define')
+    expect(r.status, r.err).toBe(0)
+    expect(read('rider-stages')).toBe('define,build\n')
+    rows = JSON.parse(prdt('en', 'settings', '--json').out)
+    expect(rows.find((x: any) => x.key === 'rider.stages').value).toBe('define,build')
+    expect(prdt('en', 'settings', 'set', 'rider.stages', 'define').status).toBe(0)
+    expect(read('rider-stages')).toBe('define\n')
+  })
+  test('a stage outside define/build, a duplicate-only or empty list is refused, file untouched', () => {
+    fs.writeFileSync(file('rider-stages'), 'define\n')
+    for (const v of ['ship', 'build,retro', 'definee', ',', '  ']) {
+      const r = prdt('en', 'settings', 'set', 'rider.stages', v)
+      expect(r.status, v).toBe(1)
+      expect(read('rider-stages')).toBe('define\n')
+    }
+    expect(prdt('en', 'settings', 'set', 'rider.stages', 'ship').err).toContain('define')
+  })
+  test('unset removes the file and reads back as build; an off-shape file reads as build', () => {
+    expect(prdt('en', 'settings', 'set', 'rider.stages', 'define,build').status).toBe(0)
+    const u = prdt('en', 'settings', 'unset', 'rider.stages')
+    expect(u.status, u.err).toBe(0)
+    expect(read('rider-stages')).toBeNull()
+    fs.writeFileSync(file('rider-stages'), 'define,ship\n')
+    const rows = JSON.parse(prdt('en', 'settings', '--json').out)
+    expect(rows.find((x: any) => x.key === 'rider.stages').value).toBe('build')
   })
 })
 
