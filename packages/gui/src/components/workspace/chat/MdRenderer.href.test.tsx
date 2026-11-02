@@ -90,3 +90,31 @@ test('MdRenderer rendered DOM: javascript: href does NOT survive (XSS posture pi
   )
   expect(html).not.toContain('href="javascript:')
 })
+
+// ── T-1157 QA rework: code forms render no ticket link and no raw link syntax ─
+
+const render = (text: string) =>
+  renderToStaticMarkup(createElement(MdRenderer, { text: linkifyText(text) }))
+
+test.each([
+  ['whole inline code span holding only an id', 'see `T-1157` now'],
+  ['tilde fence', '~~~\nT-1157\n~~~'],
+  ['backtick fence without a language', '```\nT-1157\n```'],
+  ['multi-line inline code span', 'run `T-1157\nT-12` here'],
+  ['indented code block', 'intro\n\n    T-1157\n'],
+  ['filename-like id', 'open T-1157.json now'],
+])('MdRenderer: %s renders no ticket link (T-1157)', (_label, text) => {
+  const html = render(text)
+  expect(html).not.toContain('ptn:ticket')
+  expect(html).not.toContain('cursor:pointer')
+  expect(html).toContain('T-1157')
+})
+
+test('MdRenderer: a whole-span file:// target in inline code stays clickable (T-346 kept)', () => {
+  const html = render('see `file:///Users/dev/proj/docs/artifacts/a.html`')
+  expect(html).toContain('cursor:pointer')
+})
+
+test('MdRenderer: a bare id in prose still renders a ticket link (T-1157)', () => {
+  expect(render('T-1157 끝났어요')).toContain('href="ptn:ticket/T-1157"')
+})
