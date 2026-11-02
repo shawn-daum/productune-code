@@ -1051,10 +1051,17 @@ type Sample = () => void
 
 /** Median wall time (ms) of each named sampler, the samplers run in
  *  alternation round by round so every one of them sees the same load. */
-function interleavedMedians(samplers: Record<string, Sample>, rounds: number): Record<string, number> {
+function interleavedMedians(
+  samplers: Record<string, Sample>, rounds: number,
+  until?: { minRounds: number; deadlineMs: number },
+): Record<string, number> {
   const times: Record<string, number[]> = {}
   for (const k of Object.keys(samplers)) times[k] = []
+  const start = Date.now()
   for (let r = 0; r < rounds; r++) {
+    // T-1366: past `minRounds`, stop sampling once the wall-clock deadline is
+    // spent — fewer rounds under load, never a test-budget death.
+    if (until && r >= until.minRounds && Date.now() - start >= until.deadlineMs) break
     for (const [k, fn] of Object.entries(samplers)) {
       const t0 = process.hrtime.bigint()
       fn()
@@ -1077,10 +1084,18 @@ function bareBash(payload: unknown): void {
   expect(res.status).toBe(0)
 }
 
+// T-1366: the miss row's 200 rounds are 400 spawns — 30 s alone at load 11/14
+// (2026-11-02), past its 15 s × scale test budget once load climbs after the
+// scale was pinned. The rounds now stop at a deadline of hook-tier × ½ (= ⅓ of
+// the test budget, same scale), never below 31: the ratio is still two
+// interleaved same-run medians, only the sample count shrinks under load.
+const MISS_MIN_ROUNDS = 31
+
 describe('latency', () => {
   test('a miss (no target substring anywhere in the payload) costs no fork — median stays under 2× a bare bash reading the same stdin', () => {
     const payload = readEvent('src/index.ts')
-    const m = interleavedMedians({ hook: () => run(payload), bare: () => bareBash(payload) }, 200)
+    const m = interleavedMedians({ hook: () => run(payload), bare: () => bareBash(payload) }, 200,
+      { minRounds: MISS_MIN_ROUNDS, deadlineMs: subprocessTimeout('hook') / 2 })
     expect(m.hook / m.bare, `hook ${m.hook.toFixed(2)} ms vs bare bash ${m.bare.toFixed(2)} ms`).toBeLessThan(2)
   })
 })
