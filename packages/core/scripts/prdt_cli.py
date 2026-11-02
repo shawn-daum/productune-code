@@ -14704,6 +14704,15 @@ def _track_setup_failed_path(code, tid):
     return _track_record_path(code, tid).with_name(f"{tid}.setup-failed.json")
 
 
+def _track_setup_recovery(tid, branch, wt, setup, base_flag):
+    """T-1355: what stays after a failed setup and the exact two commands that
+    make the track landable again (an install that cannot finish may empty
+    node_modules, so the tests cannot run there until setup succeeds)."""
+    again = f"prdt track merge {tid}" + (f" --base {base_flag}" if base_flag else "") + " --setup-done"
+    return (f"{branch} keeps the merge and {Path(wt) / 'node_modules'} may be emptied, so the tests cannot run "
+            f"there until setup succeeds; recover with `cd {wt} && {setup}`, then `{again}`")
+
+
 def _track_setup_failed_write(code, tid, setup):
     p = _track_setup_failed_path(code, tid)
     home = prdt_home()
@@ -15250,8 +15259,7 @@ def cmd_track_merge(args):
         else:
             cmd = failed_setup or _track_setup_cmd(root, wt) or "the setup command"
             _track_die(f"the setup step failed on an earlier merge of {tid} — the tests were not run on this tree; "
-                       f"{branch} keeps the merge and dependencies may be partially removed; "
-                       f"rerun `{cmd}` in {wt}, then merge again with --setup-done")
+                       + _track_setup_recovery(tid, branch, wt, cmd, args.base))
     lock = _track_lock(code)
     try:
         old = _tgit(["rev-parse", "--verify", "--quiet", bref], code).stdout.strip()
@@ -15271,8 +15279,7 @@ def cmd_track_merge(args):
                 if setup and _track_run(setup, wt, "setup (lockfile changed)") != 0:
                     _track_setup_failed_write(code, tid, setup)
                     _track_die(f"the setup step failed on the merged tree — {base} is unchanged; "
-                               f"{branch} keeps the merge and dependencies may be partially removed; "
-                               f"rerun `{setup}` in {wt}, then merge again with --setup-done")
+                               + _track_setup_recovery(tid, branch, wt, setup, args.base))
         if whole:
             why_whole = ("--test" if isinstance(args.test, str) and args.test.strip() else
                          "track.test" if explicit else "--full" if full else lane_note)
