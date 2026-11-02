@@ -166,7 +166,28 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     expect(rows()[1]).toBe('lane: A  0/2 | blocker T-001(request)')
   })
 
-  test('R10 (T-1202 = B): finished gate lanes ride the FIRST row after tickets, before working — table order, ` · `-joined; 자투리 stays a lane row', () => {
+  test('T-1203: 0 completed gate lanes — the first line has no completed-lanes segment', () => {
+    writePrd([rowA])
+    ticket('T-001', { gate: GATE_A })
+    setStage('build')
+    const r = rows({ PRDT_LANG: 'ko' })
+    expect(r[0]).not.toContain('완료된 레인')
+    expect(r[1]).toContain('레인: A  0/1')
+  })
+
+  test('T-1203: 1 completed gate lane — `| done lanes: A 1/1` right after the ticket total, before working; no lane row for it', () => {
+    writePrd([rowA, rowB])
+    ticket('T-001', { status: 'done', gate: GATE_A })
+    ticket('T-002', { gate: GATE_B })
+    setStage('build')
+    const r = rows()
+    expect(r[0]).toMatch(/total tickets \d+\/\d+ \| done lanes: A 1\/1 \| working 0/)
+    expect(r.filter(x => x.startsWith('lane: A'))).toEqual([])
+    expect(r[1]).toBe('lane: B  0/1 | next T-002(developer)')
+    expect(rows({ PRDT_LANG: 'ko' })[0]).toMatch(/총 티켓 \d+\/\d+ \| 완료된 레인: A 1\/1 \| 작업중 0/)
+  })
+
+  test('T-1203 / R10 (T-1202 = B): 2 completed gate lanes ride the FIRST row after tickets, before working — table order, ` · `-joined; 자투리 stays a lane row; last line unchanged', () => {
     const rowC = `| **합격선** | **레인 C · \`docs/artifacts/v0.1/c.md\` 가 있다** |`
     writePrd([rowA, rowB, rowC])
     ticket('T-001', { status: 'done', gate: GATE_A })
@@ -179,6 +200,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     expect(r[0]).toMatch(/^proj v0\.1 \| stage: build \d+\/\d+ \| total tickets \d+\/\d+ \| done lanes: A 1\/1 · C 1\/1 \| working 0$/)
     expect(r[1]).toBe('lane: B  0/1 | next T-002(developer)')
     expect(r[2]).toMatch(/^lane: 자투리 +1\/1/)
+    expect(r[3]).toBe('decision 0 | request 0')
     expect(rows({ PRDT_LANG: 'ko' })[0]).toMatch(/\| 총 티켓 \d+\/\d+ \| 완료된 레인: A 1\/1 · C 1\/1 \| 작업중 0$/)
   })
 

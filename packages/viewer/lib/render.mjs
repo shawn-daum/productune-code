@@ -761,16 +761,16 @@ function fmtBytes(n) {
 // 621-627) — doctrine #2, don't re-draw what is already signed off.
 // T-880 = A: 현재 버전(home) · PRD · 티켓 · 위키 · 기능 · 아티팩트 · 용어 사전 ·
 // 릴리즈 노트 · 규율 — the discipline store (T-886) lands last, after 'release'.
-// T-1047: env has no activity-bar item — it is the last current-version sidebar item (after 결정).
-const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release', 'disc']
+// T-1047: env has no activity-bar item — it is a current-version sidebar item (after 결정).
+// T-1255: 용어 사전 left the activity bar too — it is the current-version sidebar item right under env.
+const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'release', 'disc']
 const STORE_ICON_PATHS = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
   prd: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/>',
   ticket: '<path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/>',
   wiki: '<path d="M12 7c-2-2-5-3-9-3v14c4 0 7 1 9 3 2-2 5-3 9-3V4c-4 0-7 1-9 3Z"/><path d="M12 7v14"/>',
   feature: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22V4"/>',
-  // T-883: copied from the approved mockup (define-screen-set.html 「용어 사전」 · 「릴리즈 노트」 activity buttons).
-  glossary: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m8 13 4-7 4 7"/><path d="M9.1 11h5.7"/>',
+  // T-883: copied from the approved mockup (define-screen-set.html 「릴리즈 노트」 activity button).
   release: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
   // T-886: copied from the approved screen set (define-screen-set.html 「규율」 activity button).
   disc: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
@@ -1564,7 +1564,7 @@ function wikiSection(pages) {
   return storeSection('wiki', { innerHtml: wikiStoreInner(pages) })
 }
 
-// ---------- glossary store (T-883) ----------
+// ---------- glossary (T-883; T-1255: a 현재 버전 group under env, no store of its own) ----------
 // Source: the wiki's `term` documents (data.wiki, type: term) — no second
 // copy; the wiki store still lists them too. Table 용어 · 분류 · 정의 (the
 // 분류 chip is the first `tags` value, the 정의 is the document's h1 after
@@ -1591,12 +1591,10 @@ function termParts(p) {
   return { id, name, gloss, lead, def, rest, category: tags.length ? String(tags[0]) : '' }
 }
 
-function glossaryStoreInner(wiki) {
+/** T-1255: the 현재 버전 sidebar's 용어 사전 item — the T-883 table (or its empty note) unchanged; `.gl` scopes its CSS. */
+function glossaryGroup(wiki) {
   const pages = termPages(wiki)
-  if (pages.length === 0) {
-    const groups = [{ key: 'all', label: '', count: 0, bodyHtml: `<p class="v-note">${GLOSSARY.empty}</p>` }]
-    return groupedStore({ sidebarSubLabel: GLOSSARY.sidebarLabel, crumbLabel: GLOSSARY.sidebarLabel, groups, noGroupUnit: GLOSSARY.countUnit })
-  }
+  if (pages.length === 0) return { key: 'glossary', label: STORE_LABEL.glossary, count: 0, bodyHtml: `<div class="gl"><p class="v-note">${GLOSSARY.empty}</p></div>` }
   const rows = pages.map((p) => {
     const t = termParts(p)
     const chip = t.category ? `<span class="kp kp-component">${escapeHtml(t.category)}</span>` : '—'
@@ -1605,10 +1603,9 @@ function glossaryStoreInner(wiki) {
       `<td>${chip}</td><td class="def-col">${escapeHtml(t.def)}</td></tr>\n`
   }).join('')
   const head = `<tr>${GLOSSARY.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr>`
-  const bodyHtml = `<div class="count-line section-meta"><span class="count-badge">${escapeHtml(GLOSSARY.countLabel)} <b>${pages.length}</b>${escapeHtml(GLOSSARY.countUnit)}</span></div>\n` +
-    `<div class="table-wrap"><table class="t-gl"><thead>${head}</thead><tbody>\n${rows}</tbody></table></div>\n`
-  const groups = [{ key: 'all', label: '', count: pages.length, bodyHtml }]
-  return groupedStore({ sidebarSubLabel: GLOSSARY.sidebarLabel, crumbLabel: GLOSSARY.sidebarLabel, groups, noGroupUnit: GLOSSARY.countUnit })
+  const bodyHtml = `<div class="gl"><div class="count-line section-meta"><span class="count-badge">${escapeHtml(GLOSSARY.countLabel)} <b>${pages.length}</b>${escapeHtml(GLOSSARY.countUnit)}</span></div>\n` +
+    `<div class="table-wrap"><table class="t-gl"><thead>${head}</thead><tbody>\n${rows}</tbody></table></div>\n</div>`
+  return { key: 'glossary', label: STORE_LABEL.glossary, count: pages.length, bodyHtml }
 }
 
 function glossaryDetailEntries(wiki, repoRootHref) {
@@ -1622,14 +1619,10 @@ function glossaryDetailEntries(wiki, repoRootHref) {
       '</div>'
     entries[t.id] = {
       title: t.gloss ? `${t.name} · ${t.gloss}` : t.name,
-      html: `${t.lead ? `<p class="def-lead">${escapeHtml(t.lead)}</p>` : ''}${meta}<div class="detail-doc rb">${md(t.rest, path.dirname(p.rel), repoRootHref)}</div>`,
+      html: `<div class="gl">${t.lead ? `<p class="def-lead">${escapeHtml(t.lead)}</p>` : ''}${meta}<div class="detail-doc rb">${md(t.rest, path.dirname(p.rel), repoRootHref)}</div></div>`,
     }
   }
   return entries
-}
-
-function glossarySection(wiki) {
-  return storeSection('glossary', { innerHtml: glossaryStoreInner(wiki) })
 }
 
 // ---------- release-notes store (T-883) ----------
@@ -2019,6 +2012,7 @@ function featureEvidence(e, anchors) {
 
 /** Detail order (T-808 outcome): definition and 「연관 기능」 first, then the spec body (spec file present) or 근거 티켓. */
 // T-883: feature keys whose detail carries a 「읽기」 field, and the store each opens.
+// T-1255: 용어 사전 is the 현재 버전 store's `glossary` group.
 const FEATURE_READ_STORE = { glossary: 'glossary', 'release-notes': 'release' }
 
 function featureReadField(data, e) {
@@ -2027,7 +2021,8 @@ function featureReadField(data, e) {
   const count = store === 'glossary' ? termPages(data.wiki).length : (data.releases || []).length
   const unit = store === 'glossary' ? GLOSSARY.countUnit : RELEASE.countUnit
   const text = readFieldValue(STORE_LABEL[store], count, unit)
-  return `<button type="button" class="area-a read-link" data-open-store="${store}">${escapeHtml(text)}</button>`
+  const target = store === 'glossary' ? 'data-open-store="home" data-open-group="glossary"' : `data-open-store="${store}"`
+  return `<button type="button" class="area-a read-link" ${target}>${escapeHtml(text)}</button>`
 }
 
 /** T-964: inline `code` spans in guide text (screen strings · commands stay code-shaped). */
@@ -2923,6 +2918,7 @@ function homeLineGroups(data, v, views, repoRootHref) {
     { key: 'ticket', label: STORE_LABEL.ticket, count: homeTickets.length, bodyHtml: ticketRowsTable(homeTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
     envGroup(envOfView(data, v), ENV.emptyHead, v.line ? null : data.machineEnv, envWhere(data, v.line)),
+    glossaryGroup(data.wiki),
   ]
   return { groups, defaultKey: 'progress' }
 }
@@ -2965,6 +2961,7 @@ function homeSection(data, repoRootHref) {
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
     envGroup(data.env, ENV.homeNone, data.machineEnv, envWhere(data, null)),
+    glossaryGroup(data.wiki),
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
   const heading = `${STORE_LABEL.home} · ${data.currentVersion}`
@@ -3486,32 +3483,32 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .store-section[data-store="feature"] .ev-text code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
 .store-section[data-store="feature"] .read-link { font-size: 12px; font-weight: 600; }
 /* T-883: glossary + release-notes screens (approved mockup docs/artifacts/v1.12/define-screen-set.html) */
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) table { table-layout: fixed; }
-.store-section[data-store="glossary"] table.t-gl th:nth-child(1) { width: 230px; }
-.store-section[data-store="glossary"] table.t-gl th:nth-child(2) { width: 112px; }
+:is(.gl, .store-section[data-store="release"]) table { table-layout: fixed; }
+.gl table.t-gl th:nth-child(1) { width: 230px; }
+.gl table.t-gl th:nth-child(2) { width: 112px; }
 .store-section[data-store="release"] table.t-rel th:nth-child(1) { width: 112px; }
 .store-section[data-store="release"] table.t-rel th:nth-child(3) { width: 112px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) th.num-col, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.num-col { text-align: right; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.num-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .nm { font-weight: 600; display: block; }
-.store-section[data-store="glossary"] .nm-gloss { display: block; font-size: 11.5px; color: var(--text-quaternary); margin-top: 1px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.def-col { color: var(--text-secondary); line-height: 1.5; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.t-title { color: var(--text-primary); font-size: 13px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .ver { font-family: var(--font-mono); font-weight: 600; font-size: 12.5px; color: var(--text-primary); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-field-value.ver { font-size: 12.5px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .count-line { display: flex; align-items: baseline; gap: var(--space-12); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row.is-open td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .def-lead { font-size: 14.5px; line-height: 1.65; color: var(--text-primary); margin: 0 0 var(--space-16); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb p { margin: 0 0 var(--space-12); font-size: 13.5px; line-height: 1.7; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb ul { margin: 0 0 var(--space-8); padding-left: 20px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb li { margin: 0 0 var(--space-6); font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb li b { color: var(--text-primary); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb code { background: var(--bg-surface-on); padding: 0 4px; border-radius: var(--radius-4); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill { display: block; width: max-content; max-width: 100%; margin: var(--space-24) 0 var(--space-8); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill:first-child, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note + h3.pill { margin-top: var(--space-16); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note { font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 var(--space-4); }
-@media (prefers-reduced-motion: reduce) { :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row td { transition: none; } }
+:is(.gl, .store-section[data-store="release"]) th.num-col, :is(.gl, .store-section[data-store="release"]) td.num-col { text-align: right; }
+:is(.gl, .store-section[data-store="release"]) td.num-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
+:is(.gl, .store-section[data-store="release"]) .nm { font-weight: 600; display: block; }
+.gl .nm-gloss { display: block; font-size: 11.5px; color: var(--text-quaternary); margin-top: 1px; }
+:is(.gl, .store-section[data-store="release"]) td.def-col { color: var(--text-secondary); line-height: 1.5; }
+:is(.gl, .store-section[data-store="release"]) td.t-title { color: var(--text-primary); font-size: 13px; }
+:is(.gl, .store-section[data-store="release"]) .ver { font-family: var(--font-mono); font-weight: 600; font-size: 12.5px; color: var(--text-primary); }
+:is(.gl, .store-section[data-store="release"]) .detail-field-value.ver { font-size: 12.5px; }
+:is(.gl, .store-section[data-store="release"]) .count-line { display: flex; align-items: baseline; gap: var(--space-12); }
+:is(.gl, .store-section[data-store="release"]) .detail-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+:is(.gl, .store-section[data-store="release"]) .detail-row.is-open td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+:is(.gl, .store-section[data-store="release"]) .def-lead { font-size: 14.5px; line-height: 1.65; color: var(--text-primary); margin: 0 0 var(--space-16); }
+:is(.gl, .store-section[data-store="release"]) .rb p { margin: 0 0 var(--space-12); font-size: 13.5px; line-height: 1.7; }
+:is(.gl, .store-section[data-store="release"]) .rb ul { margin: 0 0 var(--space-8); padding-left: 20px; }
+:is(.gl, .store-section[data-store="release"]) .rb li { margin: 0 0 var(--space-6); font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
+:is(.gl, .store-section[data-store="release"]) .rb li b { color: var(--text-primary); }
+:is(.gl, .store-section[data-store="release"]) .rb code { background: var(--bg-surface-on); padding: 0 4px; border-radius: var(--radius-4); }
+:is(.gl, .store-section[data-store="release"]) .rb h3.pill { display: block; width: max-content; max-width: 100%; margin: var(--space-24) 0 var(--space-8); }
+:is(.gl, .store-section[data-store="release"]) .rb h3.pill:first-child, :is(.gl, .store-section[data-store="release"]) .rb .v-note + h3.pill { margin-top: var(--space-16); }
+:is(.gl, .store-section[data-store="release"]) .rb .v-note { font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 var(--space-4); }
+@media (prefers-reduced-motion: reduce) { :is(.gl, .store-section[data-store="release"]) .detail-row td { transition: none; } }
 /* T-958: env screen (approved screen set docs/artifacts/v1.13/define-screen-set.html #screen-env; the Home env block left 진행 상황 in T-1191 / T-1179 C) */
 .nav-item.nav-dim:not(.active) span:first-child { color: var(--text-tertiary); }
 .env-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 4px; }
@@ -4471,7 +4468,6 @@ ${ticketSection(data.tickets, data.currentVersion, views)}
 ${wikiSection(data.wiki)}
 ${featuresSection(data)}
 ${artifactsSection(data.artifacts, data.currentVersion, views)}
-${glossarySection(data.wiki)}
 ${releaseSection(data.releases || [])}
 ${discSection(discipline, data.disciplineLoad || null)}`
   const detailScript = detailDataScript(detailData)
