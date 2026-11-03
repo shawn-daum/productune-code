@@ -45,6 +45,7 @@ fs.writeFileSync(path.join(FAKE_DIR, 'claude'), [
   'cat >/dev/null',
   '[ -n "$QC_FAKE_CALLS" ] && echo call >> "$QC_FAKE_CALLS"',
   '[ -n "$QC_FAKE_ARGS" ] && printf \'%s\\n\' "$@" > "$QC_FAKE_ARGS"',
+  '[ -n "$QC_FAKE_WHERE" ] && { echo "cmux=$CMUX_CLAUDE_HOOKS_DISABLED"; echo "cwd=$PWD"; echo "entries=$(ls -A | wc -l | tr -d \' \')"; } > "$QC_FAKE_WHERE"',
   'case "$QC_FAKE_MODE" in',
   '  error) echo \'{"type":"result","subtype":"success","is_error":true,"result":"Not logged in"}\'; exit 1;;',
   '  garbage) echo \'not json\'; exit 0;;',
@@ -301,7 +302,7 @@ describe('T-1379 — the model judge: who pays, how it fails, what is kept of it
     for (const f of ['--no-session-persistence', '--strict-mcp-config', '--json-schema', '--system-prompt']) expect(args).toContain(f)
     expect(args[args.indexOf('--tools') + 1]).toBe('')
     expect(args[args.indexOf('--setting-sources') + 1]).toBe('')
-    expect(logOf(env)).toMatch(/judge=ok asks=1 ms=\d+/)
+    expect(logOf(env)).toMatch(/judge=ok asks=1 tries=1 ms=\d+/)
   })
 
   test('worker and plain-session Stops never call the judge', () => {
@@ -324,7 +325,7 @@ describe('T-1379 — the model judge: who pays, how it fails, what is kept of it
   })
 
   const failing: Array<[string, NodeJS.ProcessEnv, RegExp]> = [
-    ['an error result (no auth)', { QC_FAKE_MODE: 'error', QC_FAKE_ASKS: '3' }, /judge=fail reason=error-result exit=1/],
+    ['an error result (no auth), tried twice', { QC_FAKE_MODE: 'error', QC_FAKE_ASKS: '3' }, /judge=fail reason=error-result .*exit=1 tries=2/],
     ['an unreadable answer', { QC_FAKE_MODE: 'garbage', QC_FAKE_ASKS: '3' }, /judge=fail reason=unreadable exit=0/],
     ['no claude CLI on PATH', { PATH: '/usr/bin:/bin', QC_FAKE_ASKS: '3' }, /judge=skip reason=no-claude-cli/],
   ]
@@ -335,6 +336,32 @@ describe('T-1379 — the model judge: who pays, how it fails, what is kept of it
       expect(logOf(env)).toMatch(line)
     })
   }
+
+  test('an error result is retried once, never more; an unreadable answer is not retried', () => {
+    const e1 = fresh({ QC_FAKE_MODE: 'error', QC_FAKE_ASKS: '3' })
+    stop({}, ASK, {}, {}, e1)
+    expect(calls(e1)).toBe(2)
+    const e2 = fresh({ QC_FAKE_MODE: 'garbage', QC_FAKE_ASKS: '3' })
+    stop({}, ASK, {}, {}, e2)
+    expect(calls(e2)).toBe(1)
+  })
+
+  test('the judge runs from an empty dir, removed after, with cmux hooks off', () => {
+    const env = fresh({ QC_FAKE_ASKS: '3' })
+    env.QC_FAKE_WHERE = path.join(env.PRDT_HOME as string, 'where')
+    stop({}, ASK, {}, {}, env)
+    const w = fs.readFileSync(env.QC_FAKE_WHERE, 'utf8')
+    expect(w).toContain('cmux=1')
+    expect(w).toContain('entries=0')
+    const cwd = (/cwd=(.*)/.exec(w) as RegExpExecArray)[1]
+    expect(cwd).toContain('prdt-qc-judge-')
+    expect(fs.existsSync(cwd)).toBe(false)
+  })
+
+  test('an empty line the judge names is never an ask line', () => {
+    expect(stop({}, ASK, {}, {}, J([2])).out).toBe('')
+    expect(blockedLines(stop({}, ASK, {}, {}, J([2, 3])).out)).toEqual([3])
+  })
 
   test('judged lines out of range are ignored; none left → silent', () => {
     expect(stop({}, ASK, {}, {}, J([0, 99])).out).toBe('')
