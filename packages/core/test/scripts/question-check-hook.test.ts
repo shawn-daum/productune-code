@@ -25,15 +25,48 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawnSync } from 'child_process'
-import { test, expect, describe, afterEach } from 'vitest'
+import { test, expect, describe, afterEach, afterAll } from 'vitest'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-question-check.sh')
 const MANIFEST = path.join(CORE_ROOT, 'scripts', 'hook-manifest.json')
 const FIXTURES = path.join(CORE_ROOT, 'test', 'fixtures', 'question-check')
 const TAG = '[prdt question check]'
+
+// T-1379 (T-1380 = D): which lines are asks is a MODEL judgment (`claude -p`). Tests
+// stub it: a fake `claude` first on PATH answers the line numbers in QC_FAKE_ASKS
+// (QC_FAKE_MODE=error|garbage → a failed judge), records each call in QC_FAKE_CALLS
+// and its argv in QC_FAKE_ARGS. The judgment itself is evaluated outside the unit
+// suite (T-1379 log: QA sentence sets + recorded-reply replay); here everything
+// around it is pinned.
+const FAKE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-fake-claude-'))
+fs.writeFileSync(path.join(FAKE_DIR, 'claude'), [
+  '#!/bin/bash',
+  'cat >/dev/null',
+  '[ -n "$QC_FAKE_CALLS" ] && echo call >> "$QC_FAKE_CALLS"',
+  '[ -n "$QC_FAKE_ARGS" ] && printf \'%s\\n\' "$@" > "$QC_FAKE_ARGS"',
+  '[ -n "$QC_FAKE_WHERE" ] && { echo "cmux=$CMUX_CLAUDE_HOOKS_DISABLED"; echo "cwd=$PWD"; echo "entries=$(ls -A | wc -l | tr -d \' \')"; } > "$QC_FAKE_WHERE"',
+  'case "$QC_FAKE_MODE" in',
+  '  error) echo \'{"type":"result","subtype":"success","is_error":true,"result":"Not logged in"}\'; exit 1;;',
+  '  garbage) echo \'not json\'; exit 0;;',
+  'esac',
+  'printf \'{"type":"result","subtype":"success","is_error":false,"structured_output":{"asks":[%s]}}\\n\' "$QC_FAKE_ASKS"',
+  '',
+].join('\n'), { mode: 0o755 })
+const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-home-'))
+afterAll(() => {
+  fs.rmSync(FAKE_DIR, { recursive: true, force: true })
+  fs.rmSync(FAKE_HOME, { recursive: true, force: true })
+})
 // T-1260: the hook is ON by default; `off` disables it. Behaviour tests pin it on explicitly.
-const ON = { ...process.env, PRDT_QUESTION_CHECK: 'on' }
+const ON: NodeJS.ProcessEnv = {
+  ...process.env, PRDT_QUESTION_CHECK: 'on', PATH: `${FAKE_DIR}:${process.env.PATH}`,
+  PRDT_HOME: FAKE_HOME, QC_FAKE_ASKS: '', QC_FAKE_MODE: '',
+}
+/** env whose stubbed judge answers these (1-based) line numbers. */
+const J = (lines: number[], base: NodeJS.ProcessEnv = ON): NodeJS.ProcessEnv => ({ ...base, QC_FAKE_ASKS: lines.join(',') })
+/** Stub judgment for short inline replies: every line holding a `?` or 주세요. */
+const QJ = (reply: string) => reply.split('\n').flatMap((l, k) => (/[?？]|주세요/.test(l) ? [k + 1] : []))
 
 const roots: string[] = []
 afterEach(() => {
@@ -108,26 +141,27 @@ const IMPL = (status = 'open'): Ticket => ({ type: 'impl', status })
 const DEC = (status = 'open'): Ticket => ({ type: 'decision', status, assignee: 'user' })
 
 describe('flagged — real ticketless asks of 2026-10-06', () => {
-  const cases: Array<[string, Store, number[]]> = [
+  // [fixture, store, judged ask lines, blocked lines]
+  const cases: Array<[string, Store, number[], number[]]> = [
     // two questions in the 답 기다리는 것 list, no ticket cited; T-982 open elsewhere doesn't count
-    ['flagged-statusline-two-rows', { 'T-975': IMPL(), 'T-982': DEC() }, [12, 13]],
+    ['flagged-statusline-two-rows', { 'T-975': IMPL(), 'T-982': DEC() }, [12, 13], [12, 13]],
     // the 「이 기기에 설치할까요?」 heading + two uncited waiting items; T-974 (open decision)
     // cited in the SAME list covers only its own item
-    ['flagged-install-on-this-machine', { 'T-974': DEC(), 'T-479': IMPL('done') }, [22, 33, 35]],
+    ['flagged-install-on-this-machine', { 'T-974': DEC(), 'T-479': IMPL('done') }, [22, 33, 34, 35], [22, 33, 35]],
     // 「정본으로 넣을까요?」 — T-949 is cited in the reply but is a design ticket
-    ['flagged-t949-canon', { 'T-949': { type: 'design', status: 'open' } }, [26]],
-    ['flagged-install-after-qa', { 'T-974': DEC(), 'T-479': IMPL(), 'T-938': IMPL() }, [29]],
-    ['flagged-t949-waiting-item', { 'T-949': { type: 'design', status: 'open' }, 'T-960': IMPL(), 'T-975': IMPL() }, [24]],
+    ['flagged-t949-canon', { 'T-949': { type: 'design', status: 'open' } }, [26], [26]],
+    ['flagged-install-after-qa', { 'T-974': DEC(), 'T-479': IMPL(), 'T-938': IMPL() }, [28, 29], [29]],
+    ['flagged-t949-waiting-item', { 'T-949': { type: 'design', status: 'open' }, 'T-960': IMPL(), 'T-975': IMPL() }, [24], [24]],
   ]
-  for (const [name, store, lines] of cases) {
+  for (const [name, store, judged, lines] of cases) {
     test(`${name} → blocked once, lines ${lines.join(',')}`, () => {
-      const { out } = stop(store, fx(name))
+      const { out } = stop(store, fx(name), {}, {}, J(judged))
       expect(blockedLines(out)).toEqual(lines)
     })
   }
 
   test('the reason never echoes the reply text', () => {
-    const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'))
+    const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, J([22, 33, 34, 35]))
     expect(JSON.parse(out).reason).not.toContain('설치')
   })
 })
@@ -138,7 +172,7 @@ describe('T-1116 — the language clause', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-lang-'))
     roots.push(home)
     if (userLang) fs.writeFileSync(path.join(home, 'user-lang'), userLang + '\n')
-    return { ...ON, HOME: home, PRDT_HOME: home, LC_ALL: '', LC_MESSAGES: '', LANG: 'C' }
+    return J([22, 33, 34, 35], { ...ON, HOME: home, PRDT_HOME: home, LC_ALL: '', LC_MESSAGES: '', LANG: 'C' })
   }
   test('a stored language names itself in the reason', () => {
     const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, langEnv('ko'))
@@ -163,43 +197,33 @@ describe('T-1116 — the language clause', () => {
 })
 
 describe('compliant — asks backed by an open decision ticket, and reports', () => {
-  const cases: Array<[string, Store]> = [
-    ['compliant-t982-options', { 'T-982': DEC(), 'T-961': IMPL() }],
-    ['compliant-t984-options', { 'T-984': DEC(), 'T-960': IMPL(), 'T-961': IMPL() }],
+  // [fixture, store, judged ask lines]
+  const cases: Array<[string, Store, number[]]> = [
+    ['compliant-t982-options', { 'T-982': DEC(), 'T-961': IMPL() }, [28, 39]],
+    ['compliant-t984-options', { 'T-984': DEC(), 'T-960': IMPL(), 'T-961': IMPL() }, [6, 26]],
     // quotes 「"이 기기에 설치할까요?"」 as a report of the miss — quoted asks are not asks
-    ['compliant-t986-options-quoted-asks', { 'T-986': DEC(), 'T-985': IMPL(), 'T-984': DEC('done'), 'T-869': IMPL('done') }],
-    ['compliant-t987-t988-options', { 'T-986': DEC(), 'T-987': DEC(), 'T-988': DEC(), 'T-961': IMPL() }],
-    ['compliant-t987-t988-waiting', { 'T-986': DEC('done'), 'T-985': IMPL(), 'T-987': DEC(), 'T-988': DEC() }],
+    ['compliant-t986-options-quoted-asks', { 'T-986': DEC(), 'T-985': IMPL(), 'T-984': DEC('done'), 'T-869': IMPL('done') }, [24, 42]],
+    ['compliant-t987-t988-options', { 'T-986': DEC(), 'T-987': DEC(), 'T-988': DEC(), 'T-961': IMPL() }, [20, 36, 53, 54, 55]],
+    ['compliant-t987-t988-waiting', { 'T-986': DEC('done'), 'T-985': IMPL(), 'T-987': DEC(), 'T-988': DEC() }, [22, 23]],
     // T-987 closed this reply; T-988 (open) carries the options and the closing pick question
-    ['compliant-t988-examples', { 'T-987': DEC('done'), 'T-988': DEC(), 'T-949': { type: 'design', status: 'done' } }],
-    ['compliant-t988-pick-imperative', { 'T-985': IMPL(), 'T-988': DEC() }],
-    ['report-only', { 'T-988': DEC('done'), 'T-984': DEC('done'), 'T-961': IMPL() }],
-    ['report-only-short', { 'T-960': IMPL(), 'T-961': IMPL() }],
+    ['compliant-t988-examples', { 'T-987': DEC('done'), 'T-988': DEC(), 'T-949': { type: 'design', status: 'done' } }, [8, 55]],
+    ['compliant-t988-pick-imperative', { 'T-985': IMPL(), 'T-988': DEC() }, [2]],
+    ['report-only', { 'T-988': DEC('done'), 'T-984': DEC('done'), 'T-961': IMPL() }, []],
+    ['report-only-short', { 'T-960': IMPL(), 'T-961': IMPL() }, []],
   ]
-  for (const [name, store] of cases) {
+  for (const [name, store, judged] of cases) {
     test(`${name} → silent`, () => {
-      expect(stop(store, fx(name)).out).toBe('')
+      expect(stop(store, fx(name), {}, {}, J(judged)).out).toBe('')
     })
   }
 
   test('the same options reply is blocked once its ticket is no longer open — the citation is what covers it', () => {
-    const { out } = stop({ 'T-984': DEC('done') }, fx('compliant-t984-options'))
+    const { out } = stop({ 'T-984': DEC('done') }, fx('compliant-t984-options'), {}, {}, J([6, 26]))
     expect(blockedLines(out).length).toBeGreaterThan(0)
   })
 
-  test('rhetorical and closing questions ask nothing to decide', () => {
-    const reply = [
-      '왜 이렇게 됐을까요? 원인은 캐시 파일이에요.',
-      '',
-      '- 테스트 2,820개 통과했어요.',
-      '- 더 도와드릴 게 있을까요?',
-      '- 기능 화면은 보시고 어떠셨어요?',
-    ].join('\n')
-    expect(stop({}, reply).out).toBe('')
-  })
-
-  test('an English choose question without a ticket is flagged', () => {
-    const { out } = stop({}, 'Tests are green.\n\nShould I install it on this machine now?')
+  test('an English ask the judge names, with no ticket → flagged', () => {
+    const { out } = stop({}, 'Tests are green.\n\nShould I install it on this machine now?', {}, {}, J([3]))
     expect(blockedLines(out)).toEqual([3])
   })
 })
@@ -207,6 +231,7 @@ describe('compliant — asks backed by an open decision ticket, and reports', ()
 describe('gating', () => {
   const flagged = () => fx('flagged-t949-canon')
   const store: Store = { 'T-949': { type: 'design', status: 'open' } }
+  const G = J([26])
 
   test('default ON (T-1260): unset blocks; `off` alone disables', () => {
     const { root, proj } = makeProject(store)
@@ -214,7 +239,7 @@ describe('gating', () => {
       session_id: 's', hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, flagged()), last_assistant_message: flagged(),
     })
-    const { PRDT_QUESTION_CHECK: _drop, ...bare } = process.env
+    const { PRDT_QUESTION_CHECK: _drop, ...bare } = G
     for (const env of [bare, { ...bare, PRDT_QUESTION_CHECK: 'on' }]) {
       expect(blockedLines(execFileSync('bash', [HOOK], { input: event, encoding: 'utf8', env }))).toEqual([26])
     }
@@ -222,12 +247,12 @@ describe('gating', () => {
   })
 
   test('second consecutive Stop (stop_hook_active) → never a second block', () => {
-    expect(stop(store, flagged(), { stop_hook_active: true }).out).toBe('')
+    expect(stop(store, flagged(), { stop_hook_active: true }, {}, G).out).toBe('')
   })
 
   test('worker turns are never checked', () => {
-    expect(stop(store, flagged(), { agent_type: 'prdt-developer' }).out).toBe('')
-    expect(stop(store, flagged(), { agent_type: undefined }).out).toBe('')
+    expect(stop(store, flagged(), { agent_type: 'prdt-developer' }, {}, G).out).toBe('')
+    expect(stop(store, flagged(), { agent_type: undefined }, {}, G).out).toBe('')
   })
 
   test('a decision ticket created this turn → no block', () => {
@@ -238,93 +263,132 @@ describe('gating', () => {
     const out = runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
-    })
+    }, G)
     expect(out).toBe('')
   })
 
   test('falls back to the transcript when the event has no last_assistant_message', () => {
-    const { out } = stop(store, flagged(), { last_assistant_message: undefined })
+    const { out } = stop(store, flagged(), { last_assistant_message: undefined }, {}, G)
     expect(blockedLines(out)).toEqual([26])
   })
 
   test('outside a prdt project, or with no readable transcript → silent (fails open)', () => {
-    expect(stop(store, flagged(), {}, { prdt: false }).out).toBe('')
-    expect(stop(store, flagged(), { transcript_path: '/nonexistent/x.jsonl' }).out).toBe('')
+    expect(stop(store, flagged(), {}, { prdt: false }, G).out).toBe('')
+    expect(stop(store, flagged(), { transcript_path: '/nonexistent/x.jsonl' }, {}, G).out).toBe('')
     expect(execFileSync('bash', [HOOK], { input: 'not json "prdt-po"', encoding: 'utf8', env: ON })).toBe('')
   })
 })
 
-describe('T-993 = B — which questions are asks', () => {
-  const blocked: Array<[string, string]> = [
-    ['read-back confirm', '상태줄을 두 줄로 나누는 걸로 이해했는데 맞나요?'],
-    ['yes/no confirm', '테스트 통과했어요. 이 기기에 설치할까요?'],
-    ['permission confirm', '운영 DB에 이 값으로 써도 되나요?'],
-    ['either/or with a request ending', '이대로 쓸까요, 아니면 션님 문장으로 주시겠어요?'],
-    ['English choice', 'Do you want the two-row layout or the single row?'],
-    ['English which-should', 'Which one should we start with?'],
-    ['English shall-we mid-sentence', 'Tests are green, so shall we ship it today?'],
-    ['English read-back', 'You want the empty row hidden. Is that right?'],
+describe('T-1379 — the model judge: who pays, how it fails, what is kept of its answer', () => {
+  const ASK = '테스트 통과했어요.\n\n사용자가 볼 화면을 A 와 B 중 어느 쪽으로 할지 알려 주세요.'
+  const logOf = (env: NodeJS.ProcessEnv) => {
+    const p = path.join(env.PRDT_HOME as string, 'run', 'question-check.log')
+    return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : ''
+  }
+  const fresh = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-judge-'))
+    roots.push(home)
+    return { ...ON, PRDT_HOME: home, QC_FAKE_CALLS: path.join(home, 'calls'), QC_FAKE_ARGS: path.join(home, 'args'), ...extra }
+  }
+  const calls = (env: NodeJS.ProcessEnv) =>
+    fs.existsSync(env.QC_FAKE_CALLS as string) ? fs.readFileSync(env.QC_FAKE_CALLS as string, 'utf8').trim().split('\n').length : 0
+
+  test('a PO Stop asks the judge once — no tools, no settings, no session record — and logs the outcome', () => {
+    const env = fresh({ QC_FAKE_ASKS: '3' })
+    expect(blockedLines(stop({}, ASK, {}, {}, env).out)).toEqual([3])
+    expect(calls(env)).toBe(1)
+    const args = fs.readFileSync(env.QC_FAKE_ARGS as string, 'utf8').split('\n')
+    expect(args.slice(0, 3)).toEqual(['-p', '--model', 'haiku'])
+    for (const f of ['--no-session-persistence', '--strict-mcp-config', '--json-schema', '--system-prompt']) expect(args).toContain(f)
+    expect(args[args.indexOf('--tools') + 1]).toBe('')
+    expect(args[args.indexOf('--setting-sources') + 1]).toBe('')
+    expect(logOf(env)).toMatch(/judge=ok asks=1 tries=1 ms=\d+/)
+  })
+
+  test('worker and plain-session Stops never call the judge', () => {
+    const env = fresh({ QC_FAKE_ASKS: '3' })
+    expect(stop({}, ASK, { agent_type: 'prdt-developer' }, {}, env).out).toBe('')
+    expect(stop({}, ASK, { agent_type: undefined }, {}, env).out).toBe('')
+    expect(stop({}, ASK, { stop_hook_active: true }, {}, env).out).toBe('')
+    expect(calls(env)).toBe(0)
+  })
+
+  test('a decision ticket changed this turn and no decision cited → nothing could block, no judge call', () => {
+    const env = fresh({ QC_FAKE_ASKS: '3' })
+    const { root, proj } = makeProject({})
+    fs.writeFileSync(path.join(proj, 'docs', 'tickets', 'v1.13', 'T-990.md'), '---\nid: T-990\ntype: decision\nstatus: open\nassignee: user\n---\n')
+    expect(runHook({
+      hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: proj, transcript_path: writeTranscript(root, ASK), last_assistant_message: ASK,
+    }, env)).toBe('')
+    expect(calls(env)).toBe(0)
+  })
+
+  const failing: Array<[string, NodeJS.ProcessEnv, RegExp]> = [
+    ['an error result (no auth), tried twice', { QC_FAKE_MODE: 'error', QC_FAKE_ASKS: '3' }, /judge=fail reason=error-result .*exit=1 tries=2/],
+    ['an unreadable answer', { QC_FAKE_MODE: 'garbage', QC_FAKE_ASKS: '3' }, /judge=fail reason=unreadable exit=0/],
+    ['no claude CLI on PATH', { PATH: '/usr/bin:/bin', QC_FAKE_ASKS: '3' }, /judge=skip reason=no-claude-cli/],
   ]
-  for (const [label, reply] of blocked) {
-    test(`${label} → blocked`, () => {
-      expect(blockedLines(stop({}, reply).out)).toEqual([1])
+  for (const [label, extra, line] of failing) {
+    test(`${label} → fails open (no block), with a log line`, () => {
+      const env = fresh(extra)
+      expect(stop({}, ASK, {}, {}, env).out).toBe('')
+      expect(logOf(env)).toMatch(line)
     })
   }
 
-  const silent: Array<[string, string]> = [
-    ['offer', '목업을 만들었어요. 뷰어를 열어 드릴까요?'],
-    ['offer, informal', '요청 문장을 써 드릴까?'],
-    ['information request', '로그에 찍힌 에러 줄을 붙여 주시겠어요?'],
-    ['information request (can you)', '임시 채널 ID를 알려 주실 수 있을까요?'],
-    ['fact question', '리뷰 수집은 구글만 되나요?'],
-    ['English fact question with or', 'Is the bucket in dev or only in prd?'],
-    ['English which-fact', 'Which version are you running?'],
-    ['English offer', 'Would you like me to open the viewer?'],
-    ['feedback', '화면 보시고 어떠셨어요?'],
-  ]
-  for (const [label, reply] of silent) {
-    test(`${label} → silent`, () => {
-      expect(stop({}, reply).out).toBe('')
-    })
-  }
-})
-
-describe('option sets — only a laid-out choice counts', () => {
-  test('an A/B/C-keyed status table with no recommendation or option marker → silent', () => {
-    const reply = [
-      '**게이트 2 현황**', '',
-      '| 갈래 | 상태 |', '|---|---|',
-      '| **A 분류기** | A1 · A2 · A3 전부 실측 |',
-      '| **B 판정** | 비어 있음 — 세션 대기 |',
-      '| **C 실행 가능성** | iOS · Android 둘 다 통과 |', '',
-      'B만 남았어요. 결과가 나오면 바로 세션 열게요.',
-    ].join('\n')
-    expect(stop({}, reply).out).toBe('')
+  test('an error result is retried once, never more; an unreadable answer is not retried', () => {
+    const e1 = fresh({ QC_FAKE_MODE: 'error', QC_FAKE_ASKS: '3' })
+    stop({}, ASK, {}, {}, e1)
+    expect(calls(e1)).toBe(2)
+    const e2 = fresh({ QC_FAKE_MODE: 'garbage', QC_FAKE_ASKS: '3' })
+    stop({}, ASK, {}, {}, e2)
+    expect(calls(e2)).toBe(1)
   })
 
-  test('arrow diagram lines and a mermaid fence are not options', () => {
-    const reply = [
-      '흐름은 이래요. 추천 경로는 위쪽이에요.', '',
-      'A --> B', 'B -> C', '',
-      '```mermaid', 'graph TD', 'A[시작] --> B[끝]', 'A', 'B', '```', '',
-      '끝났어요.',
-    ].join('\n')
-    expect(stop({}, reply).out).toBe('')
+  test('the judge runs from an empty dir, removed after, with cmux hooks off', () => {
+    const env = fresh({ QC_FAKE_ASKS: '3' })
+    env.QC_FAKE_WHERE = path.join(env.PRDT_HOME as string, 'where')
+    stop({}, ASK, {}, {}, env)
+    const w = fs.readFileSync(env.QC_FAKE_WHERE, 'utf8')
+    expect(w).toContain('cmux=1')
+    expect(w).toContain('entries=0')
+    const cwd = (/cwd=(.*)/.exec(w) as RegExpExecArray)[1]
+    expect(cwd).toContain('prdt-qc-judge-')
+    expect(fs.existsSync(cwd)).toBe(false)
   })
 
-  test('the same table with a recommendation beside it is an option set → blocked', () => {
-    const reply = [
-      '| 안 | 내용 |', '|---|---|',
-      '| A. 탭바 + my 화면 | 시안대로 |',
-      '| B. 지금 구조에서 처리 | 작아요 |', '',
-      'B를 추천해요.',
-    ].join('\n')
-    expect(blockedLines(stop({}, reply).out)).toEqual([3])
+  test('an empty line the judge names is never an ask line', () => {
+    expect(stop({}, ASK, {}, {}, J([2])).out).toBe('')
+    expect(blockedLines(stop({}, ASK, {}, {}, J([2, 3])).out)).toEqual([3])
+  })
+
+  test('judged lines out of range are ignored; none left → silent', () => {
+    expect(stop({}, ASK, {}, {}, J([0, 99])).out).toBe('')
+  })
+
+  test('a judged line inside a code fence or a blockquote is dropped; a fenced option line is kept', () => {
+    const reply = ['예시예요.', '```', '이 문구로 괜찮은지 알려 주세요.', '```', '> 진행할지 알려 주세요.', '', '```', 'A  초안대로 ← 추천', 'B  고쳐서', '```'].join('\n')
+    expect(blockedLines(stop({}, reply, {}, {}, J([3, 5, 8])).out)).toEqual([8])
+  })
+
+  test('kind comes from structure: an option line or option-letter ask is covered by any open decision in the reply', () => {
+    const reply = ['## 화면', '', '| 안 | 내용 |', '|---|---|', '| A. 탭바 | 시안대로 |', '| B. 지금 구조 | 작아요 |', '',
+      '## 근거', '', 'T-301 에 올렸어요.'].join('\n')
+    expect(stop({ 'T-301': DEC() }, reply, {}, {}, J([5])).out).toBe('')
+    expect(blockedLines(stop({}, reply, {}, {}, J([5])).out)).toEqual([5])
+  })
+
+  test('a waiting item is covered by an open assignee:user ticket in its own item', () => {
+    const reply = ['## 답 기다리는 것', '', '- T-302 배포 계정 만들어 주시기', '- 화면 문구 확인']
+      .join('\n')
+    expect(blockedLines(stop({ 'T-302': { type: 'impl', status: 'open', assignee: 'user' } }, reply, {}, {}, J([3, 4])).out)).toEqual([4])
   })
 })
 
 describe('fails open on unreadable inputs, never hangs', () => {
   const ask = '- [T-977] 이 기기에 설치할까요?'
+  const A1 = J([1])
 
   test('a cited ticket that cannot be read → silent', () => {
     const { root, proj } = makeProject({ 'T-977': DEC() })
@@ -334,7 +398,7 @@ describe('fails open on unreadable inputs, never hangs', () => {
       const out = runHook({
         hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
         cwd: proj, transcript_path: writeTranscript(root, ask), last_assistant_message: ask,
-      })
+      }, A1)
       expect(out).toBe('')
     } finally {
       fs.chmodSync(p, 0o644)
@@ -349,7 +413,7 @@ describe('fails open on unreadable inputs, never hangs', () => {
     const out = runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, ask), last_assistant_message: ask,
-    })
+    }, A1)
     expect(out).toBe('')
     expect(Date.now() - t0).toBeLessThan(10_000)
   })
@@ -362,7 +426,7 @@ describe('fails open on unreadable inputs, never hangs', () => {
       const out = runHook({
         hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
         cwd: proj, transcript_path: writeTranscript(root, ask), last_assistant_message: ask,
-      })
+      }, A1)
       expect(out).toBe('')
     } finally {
       fs.chmodSync(dir, 0o755)
@@ -385,7 +449,7 @@ describe('fails open on unreadable inputs, never hangs', () => {
     const out = runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: p, last_assistant_message: reply,
-    })
+    }, A1)
     expect(blockedLines(out)).toEqual([1])
   })
 })
@@ -420,7 +484,7 @@ describe('T-1285 — a recorded decision cited beside an ask is a re-ask (T-1313
     return runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
-    }, e)
+    }, J(QJ(reply), e))
   }
   // observation (4) of T-1239: the PO cites the record, opens a NEW decision ticket and asks A/B again
   const REASK_REPLY = [
@@ -499,7 +563,7 @@ describe('T-1285 — a recorded decision cited beside an ask is a re-ask (T-1313
   })
 
   test('no prdt CLI reachable → the re-ask check fails open (the new ticket still exempts the turn)', () => {
-    const e = { ...env(), PRDT_BIN: '/nonexistent/prdt', PATH: '/usr/bin:/bin' }
+    const e = { ...env(), PRDT_BIN: '/nonexistent/prdt', PATH: `${FAKE_DIR}:/usr/bin:/bin` }
     expect(run((p) => { record(p, 'T-1313'); newTicket(p) }, REASK_REPLY, e)).toBe('')
   })
 
@@ -516,10 +580,11 @@ describe('T-1285 — a recorded decision cited beside an ask is a re-ask (T-1313
 describe('T-1364 = C (threshold 4) — asks over 4+ open decisions in one reply block once', () => {
   const BATCH = '[prdt batch-ask check]'
   const store = (n: number): Store => Object.fromEntries(Array.from({ length: n }, (_, k) => [`T-20${k + 1}`, DEC()]))
+  const sb = (st: Store, reply: string, extra: Record<string, unknown> = {}) => stop(st, reply, extra, {}, J(QJ(reply)))
   const waiting = (ids: string[]) => ['## 답 기다리는 것', '', ...ids.map(id => `- ${id} 이 항목, A 로 할까요?`)].join('\n')
 
   test('4 open decisions, each with its own ask → blocked once, naming the count', () => {
-    const { out } = stop(store(4), waiting(['T-201', 'T-202', 'T-203', 'T-204']))
+    const { out } = sb(store(4), waiting(['T-201', 'T-202', 'T-203', 'T-204']))
     const j = JSON.parse(out)
     expect(j.decision).toBe('block')
     expect(j.reason.startsWith(BATCH)).toBe(true)
@@ -529,21 +594,21 @@ describe('T-1364 = C (threshold 4) — asks over 4+ open decisions in one reply 
 
   test('5 asks over the same 4 ids count 4 distinct ids → still one block', () => {
     const reply = waiting(['T-201', 'T-202', 'T-203', 'T-204', 'T-201'])
-    expect(JSON.parse(stop(store(4), reply).out).reason).toContain('4 open decisions')
+    expect(JSON.parse(sb(store(4), reply).out).reason).toContain('4 open decisions')
   })
 
   test('3 open decisions with asks → no block from this check (all covered → silent)', () => {
-    expect(stop(store(3), waiting(['T-201', 'T-202', 'T-203'])).out).toBe('')
+    expect(sb(store(3), waiting(['T-201', 'T-202', 'T-203'])).out).toBe('')
   })
 
   test('3 asked + a 4th open decision only cited, with no ask beside it → not counted', () => {
     const reply = waiting(['T-201', 'T-202', 'T-203']) + '\n\n## 진행 중\n\nT-204 는 기록만 해 두었어요.'
-    expect(stop(store(4), reply).out).toBe('')
+    expect(sb(store(4), reply).out).toBe('')
   })
 
   test('done or non-decision tickets beside the asks are not open decisions → not counted', () => {
     const s: Store = { ...store(3), 'T-204': IMPL() }
-    expect(stop(s, waiting(['T-201', 'T-202', 'T-203', 'T-204'])).out).not.toContain(BATCH)
+    expect(sb(s, waiting(['T-201', 'T-202', 'T-203', 'T-204'])).out).not.toContain(BATCH)
   })
 
   test('decision tickets opened this turn do not exempt the batch', () => {
@@ -554,13 +619,13 @@ describe('T-1364 = C (threshold 4) — asks over 4+ open decisions in one reply 
     const out = runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
-    })
+    }, J(QJ(reply)))
     expect(JSON.parse(out).reason.startsWith(BATCH)).toBe(true)
   })
 
   test('second Stop (stop_hook_active) → never a second block', () => {
     const reply = waiting(['T-201', 'T-202', 'T-203', 'T-204'])
-    expect(stop(store(4), reply, { stop_hook_active: true }).out).toBe('')
+    expect(sb(store(4), reply, { stop_hook_active: true }).out).toBe('')
   })
 })
 
@@ -586,6 +651,10 @@ describe('T-1377 — L1 replays: re-ask only on the recorded decision itself, ne
   const T001 = (proj: string) => decision(proj, 'T-001', 'theme-follows-system', 'done',
     '폰 설정을 따른다 — 사용자 「처음부터 아무것도 안 만지고 쓰게 하고 싶어. 설정 화면 늘어나는 거 싫다. 어두운 건 폰 설정 따라가면 돼」', 86_400_000)
   const R2_OPENED = ['T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011']
+  // the asks of each fixture, as the judge is stubbed to name them
+  const FX_ASKS: Record<string, number[]> = {
+    'reask-r1': [5], 'reask-r1b': [3], 'batch-r2': [4, 8, 12, 17, 22, 26, 30, 35, 40, 45], 'approval-r3': [13],
+  }
   function replay(name: string, setup: (proj: string) => void) {
     const reply = fx(name)
     const { root, proj } = makeProject({})
@@ -593,7 +662,7 @@ describe('T-1377 — L1 replays: re-ask only on the recorded decision itself, ne
     const out = runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
-    }, env())
+    }, J(FX_ASKS[name], env()))
     return out ? (JSON.parse(out).reason as string) : ''
   }
 
@@ -628,13 +697,15 @@ describe('T-1377 — L1 replays: re-ask only on the recorded decision itself, ne
 
   test('several checks applying in one Stop → the reason carries each, none dropped', () => {
     // r1's re-ask of T-001 + r3's ticketless approval in one reply, in separate sections
-    const reply = fx('reask-r1') + '\n## 릴리스 노트\n\n' + fx('approval-r3')
+    const head = fx('reask-r1') + '\n## 릴리스 노트\n\n'
+    const reply = head + fx('approval-r3')
+    const off = head.split('\n').length - 1
     const { root, proj } = makeProject({})
     T001(proj)
     const out = runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
-    }, env())
+    }, J([5, off + 13], env()))
     const both = JSON.parse(out).reason as string
     expect(both.startsWith(REASK)).toBe(true)
     expect(both).toContain('\n\n' + TAG)
@@ -649,7 +720,7 @@ describe('T-1377 — L1 replays: re-ask only on the recorded decision itself, ne
     const out = runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
-    }, env())
+    }, J(QJ(reply), env()))
     return out ? (JSON.parse(out).reason as string) : ''
   }
   const DECIDED = '다크모드는 T-001 에서 폰 설정을 따르기로 정하셨어요.'
