@@ -812,7 +812,7 @@ export function pageIdentityOf(data) {
   const idle = stage === 'idle' || !version
   if (idle) return { project, version, stage, idle, toolVersion, card: null }
   const currentTickets = currentVersionTickets(data.tickets, version)
-  const seg = stageSegments(currentTickets).find((x) => x.stage === stage)
+  const seg = stageSegments(currentTickets, data.stageHistory).find((x) => x.stage === stage)
   const stageDone = seg ? seg.tickets.filter((t) => t.done).length : 0
   const stageTotal = seg ? seg.tickets.length : 0
   const { done, total } = versionProgressCounts(currentTickets)
@@ -1318,10 +1318,10 @@ export const LINE_SECTIONED_STORES = ['home', 'prd', 'ticket', 'feature', 'artif
  */
 export function lineViews(data) {
   if (!Array.isArray(data.lines) || data.lines.length === 0) return []
-  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes, closedLanes: data.closedLanes, deployed: data.deployed || null }
+  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes, closedLanes: data.closedLanes, deployed: data.deployed || null, stageHistory: data.stageHistory || [] }
   return [
     home,
-    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes, closedLanes: l.closedLanes, deployed: l.deployed || null })),
+    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes, closedLanes: l.closedLanes, deployed: l.deployed || null, stageHistory: l.stageHistory || [] })),
   ]
 }
 
@@ -1356,7 +1356,7 @@ function productRowsOf(data, selected) {
 
 /** `data` with tickets · PRD · version · stage scoped to one line. */
 function lineData(data, v) {
-  return { ...data, tickets: v.tickets, prd: v.prd, lanes: v.lanes, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, project: v.name || data.project, deployed: v.deployed || null, productRows: productRowsOf(data, v), listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
+  return { ...data, tickets: v.tickets, prd: v.prd, lanes: v.lanes, stageHistory: v.stageHistory || [], currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, project: v.name || data.project, deployed: v.deployed || null, productRows: productRowsOf(data, v), listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
 }
 
 /** Flattens per-line `{groups, defaultKey}` into one group list: keys prefixed `<line>/` (home line bare), the first group of each line carrying the section head. `defaultKey` = the home line's default. */
@@ -2619,9 +2619,9 @@ function stageSquare(t) {
   return `<span class="stage-sq${t.done ? ' sq-done' : ''}" title="${escapeHtml(t.id)}"></span>`
 }
 
-function homeStageBar(currentTickets, stage) {
+function homeStageBar(currentTickets, stage, history = []) {
   const { done, total } = versionProgressCounts(currentTickets)
-  const segs = stageSegments(currentTickets)
+  const segs = stageSegments(currentTickets, history)
   const labelOf = (seg) => {
     const cur = seg.stage === stage
     return `<span class="sb-lab${cur ? ' sb-lab-cur' : ''}">${seg.stage}${cur ? `<span class="sb-here">${HOME.here}</span>` : ''} <span class="sb-n">${HOME.stageTickets(seg.tickets.length)}</span></span>`
@@ -2911,7 +2911,7 @@ function homeProgressBody(data) {
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
 ${homeDeployHead(data)}
-${homeStageBar(currentTickets, data.poState?.stage || '?')}
+${homeStageBar(currentTickets, data.poState?.stage || '?', data.stageHistory)}
 <div class="sc sc-grid">${homeWaits(data)}${homeScope(data, currentTickets)}</div>
 ${homeDependency(data, currentTickets)}
 </div>`

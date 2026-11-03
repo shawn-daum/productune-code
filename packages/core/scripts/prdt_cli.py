@@ -18,6 +18,7 @@ _HERE = os.path.dirname(os.path.realpath(__file__))
 if _HERE not in sys.path:
     sys.path.append(_HERE)
 from prdt_lanes import (
+    COUNTED_STAGES,
     meta_git_dir,
     _scrubbed_git_env,
     _git,
@@ -5628,7 +5629,7 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # `tickets new`'s frontmatter-key order (contracts §Tickets): id · slug · type ·
 # status · assignee · feature? · prd_item? · deps? · created · closed? — a
 # fresh ticket never carries `closed`.
-TICKET_FRONTMATTER_ORDER = ("id", "slug", "title", "type", "status", "assignee", "feature",
+TICKET_FRONTMATTER_ORDER = ("id", "slug", "title", "type", "stage", "status", "assignee", "feature",
                             "prd_item", "deps", "created")
 
 
@@ -5709,10 +5710,20 @@ def cmd_tickets_new(args, root):
             version = current_version_id(root, line)
         except ValueError as e:
             sys.exit(f"prdt tickets new: {e} — no ticket written")
+    # T-1384 (T-1385 = A): a ticket born in its product's open version records the stage
+    # po-state holds now, so the stage counts (statusline · viewer, `ticket_stage`) place it
+    # where it was made. Backlog, another version, or a retro · idle stage → no key.
+    stage_now = None
+    try:
+        if version == current_version_id(root, line):
+            s_ = line_state(read_json(root / ".prdt" / "po-state.json"), line)[0]
+            stage_now = s_ if s_ in COUNTED_STAGES else None
+    except ValueError:
+        stage_now = None
     # `type: decision` forces `assignee: user` (contracts §Tickets) — never a
     # CLI choice, the same way the frame itself is never a per-ticket choice.
     assignee = "user" if ttype == "decision" else (args.assignee or "po")
-    fm = {"id": tid, "slug": args.slug, "title": title, "type": ttype, "status": "open", "assignee": assignee,
+    fm = {"id": tid, "slug": args.slug, "title": title, "type": ttype, "stage": stage_now, "status": "open", "assignee": assignee,
           "feature": args.feature, "prd_item": args.prd_item,
           "deps": "[" + ", ".join(args.deps) + "]" if args.deps else None,
           # The MACHINE's local date, not UTC (T-685 fix — PO-observed at
