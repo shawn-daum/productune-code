@@ -9,4 +9,4 @@
 | readiness-dispatch | Ship entry (build believed complete, before deploy) | opus/medium |
 | resource-sweep | stage entry · VM-boot `needs_info` · closing a resource-holding ticket | opus/medium |
 | retro | Retro entry · user asks to close out a version | opus/medium |
-| spare-capacity | stage `build` — turn close or a return while a lane shows `next`/`ready` · your own merge or full suite · a 자투리 ticket closes | opus/medium |
+| spare-capacity | stage in `rider.stages` (default `build`) — turn close or a return while a lane shows `next`/`ready` · your own merge or full suite · a 자투리 ticket closes | opus/medium |
