@@ -1516,7 +1516,8 @@ def ticket_stage(fm_stage, created, ttype, history):
     `stage_of_type` (the later of the two, define < build < ship) — (no key, no history, created before the version's first recorded stage,
     or a retro · idle answer), the type rule `stage_of_type`."""
     if fm_stage in COUNTED_STAGES:
-        return fm_stage
+        # T-1386 = B: an explicit key obeys the same floor — never earlier than the type's stage
+        return max(fm_stage, stage_of_type(ttype), key=COUNTED_STAGES.index)
     day = created[:10] if isinstance(created, str) else ""
     if _DAY_RE.fullmatch(day):
         hit = None

@@ -23,7 +23,7 @@ import { execFileSync } from 'node:child_process'
 import { describe, it, expect } from 'vitest'
 import { GUI_ROOT } from '@productune/viewer/generate.mjs'
 import { versionProgressCounts } from '@productune/viewer/lib/render.mjs'
-import { stageOfTicketType, stageSegments } from '@productune/viewer/lib/home-graph.mjs'
+import { stageOfTicket, stageOfTicketType, stageSegments } from '@productune/viewer/lib/home-graph.mjs'
 import { collectStageHistory } from '@productune/viewer/lib/collect.mjs'
 
 // T-718: statusline-prdt.sh lives at `packages/core/scripts/…` — a SIBLING of
@@ -237,5 +237,37 @@ describe.skipIf(!PYTHON3)('stage counts by the created stage — statusline and 
     } finally {
       fs.rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+// T-1386 = B (QA d-v116-t1384-qa1): the floor max(stage, stage of type) holds for an explicit
+// `stage:` key too — type x own stage x history grid, Python and JS against one oracle.
+describe.skipIf(!PYTHON3)('floor over the type x stage grid, own key included (T-1386)', () => {
+  const ORDER = ['define', 'build', 'ship']
+  const TYPES = ['design', 'decision', 'impl', 'bugfix', 'qa', 'ops', 'other', '']
+  const OWN = [null, ...ORDER]
+  const HIST: Array<[string, string][]> = [[], [['2026-01-10', 'define']], [['2026-01-10', 'build']], [['2026-01-10', 'ship']]]
+  const typeStage = (t: string) => (t === 'design' || t === 'decision' ? 'define' : t === 'qa' || t === 'ops' ? 'ship' : 'build')
+  const cases = TYPES.flatMap((t) => OWN.flatMap((own) => HIST.map((h) => ({ t, own, h }))))
+  const oracle = ({ t, own, h }: (typeof cases)[number]) => {
+    const floor = typeStage(t)
+    const base = own ?? (h.length ? h[h.length - 1][1] : floor)
+    return ORDER[Math.max(ORDER.indexOf(base), ORDER.indexOf(floor))]
+  }
+  it('Python ticket_stage and JS stageOfTicket never go below the type stage', () => {
+    const py = execFileSync('python3', ['-I', '-c', [
+      'import sys, json; sys.path.insert(0, sys.argv[1]); import prdt_lanes as p',
+      'c = json.load(sys.stdin)',
+      "print(json.dumps([p.ticket_stage(x['own'], '2026-01-15', x['t'], x['h']) for x in c]))",
+    ].join('\n'), SCRIPTS_DIR], { input: JSON.stringify(cases), encoding: 'utf8' })
+    const pyOut: string[] = JSON.parse(py)
+    const bad: string[] = []
+    cases.forEach((c, i) => {
+      const want = oracle(c)
+      const js = stageOfTicket({ type: c.t, created: '2026-01-15', ...(c.own ? { stage: c.own } : {}) }, c.h)
+      if (pyOut[i] !== want) bad.push(`py ${JSON.stringify(c)} -> ${pyOut[i]} want ${want}`)
+      if (js !== want) bad.push(`js ${JSON.stringify(c)} -> ${js} want ${want}`)
+    })
+    expect(bad).toEqual([])
   })
 })
