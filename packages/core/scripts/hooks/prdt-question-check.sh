@@ -423,14 +423,21 @@ JUDGE_SYSTEM_PROMPT = (
     "- each item listed under a heading saying it waits for the user's answer.\n"
     "These are not asks:\n"
     "- asking the user for a fact or information (an address, a log, whether something works on their "
-    "machine, their schedule, a version, how to do something);\n"
+    "machine, their schedule, a version, how to do something, a name they remember): 「이름이 떠오르시면 "
+    "알려 주세요」, 「에러 메시지를 알려 주세요」;\n"
+    "- asking the user to look at, try or check something and report what they see: 「화면에 버튼이 "
+    "보이는지 봐 주세요」, 「다시 열어서 확인해 주세요」;\n"
+    "- telling the user how to do a step: 「거기서 Submit 만 눌러 주시면 돼요」, 「터미널에서 이 명령을 "
+    "실행해 주세요」;\n"
     "- asking what someone else (a manager, another team, a customer) decided or will decide, or asking "
     "the user to ask, tell or reply to someone else;\n"
     "- offers (「열어 드릴까요?」, \"Would you like me to...\"), feedback or closing questions "
     "(「어떠셨어요?」), rhetorical questions;\n"
     "- a question or request that is quoted, reported, given as an example, inside code or a "
     "blockquote;\n"
-    "- a status table or report, and what the assistant says it will do next.\n"
+    "- a status table, report or status line, and what the assistant says it will do or show next "
+    "(「다음에 보여 드릴게요」);\n"
+    "- an empty line.\n"
     "Lines come as `N| text`. Answer with the ask line numbers; [] when there is none."
 )
 JUDGE_SCHEMA = '{"type":"object","properties":{"asks":{"type":"array","items":{"type":"integer"}}},"required":["asks"]}'
@@ -487,28 +494,14 @@ def judge_input(lines):
     return "\n".join(head + ["…"] + list(reversed(tail)))
 
 
-def judge_asks(lines):
-    """The 0-based indexes of the lines the model judges asks; None when the
-    judge could not answer (fails open, logged)."""
-    cli = shutil.which("claude")
-    if not cli:
-        judge_log("judge=skip reason=no-claude-cli")
-        return None
-    cmd = [cli, "-p", "--model", JUDGE_MODEL, "--setting-sources", "", "--tools", "", "--strict-mcp-config",
-           "--no-session-persistence", "--disable-slash-commands", "--output-format", "json",
-           "--json-schema", JUDGE_SCHEMA, "--system-prompt", JUDGE_SYSTEM_PROMPT]
-    env = dict(os.environ, PRDT_QUESTION_CHECK="off")
-    t0 = time.monotonic()
-    ms = lambda: int((time.monotonic() - t0) * 1000)
+def _judge_once(cmd, env, text, timeout, cwd):
+    """(result dict | None, failure reason | None, exit code)."""
     try:
-        r = subprocess.run(cmd, input=judge_input(lines), capture_output=True, text=True, env=env,
-                           timeout=JUDGE_TIMEOUT_S, cwd=tempfile.gettempdir())
+        r = subprocess.run(cmd, input=text, capture_output=True, text=True, env=env, timeout=timeout, cwd=cwd)
     except subprocess.TimeoutExpired:
-        judge_log("judge=fail reason=timeout ms=%d" % ms())
-        return None
+        return None, "timeout", None
     except Exception as e:
-        judge_log("judge=fail reason=%s ms=%d" % (type(e).__name__, ms()))
-        return None
+        return None, type(e).__name__, None
     out = None
     try:
         out = json.loads(r.stdout)
@@ -520,13 +513,51 @@ def judge_asks(lines):
             raise ValueError("no-asks-list")
     except Exception as e:
         why = str(e) if isinstance(e, ValueError) and str(e) in ("error-result", "no-asks-list") else "unreadable"
-        detail = ""
         if isinstance(out, dict):   # the CLI's own status fields, never the reply or a credential
-            detail = " subtype=%s api_status=%s" % (str(out.get("subtype"))[:40], str(out.get("api_error_status"))[:40])
-        judge_log("judge=fail reason=%s exit=%s%s ms=%d" % (why, r.returncode, detail, ms()))
+            why += " subtype=%s api_status=%s" % (str(out.get("subtype"))[:40], str(out.get("api_error_status"))[:40])
+        return None, why, r.returncode
+    return nums, None, r.returncode
+
+
+def judge_asks(lines):
+    """The 0-based indexes of the lines the model judges asks; None when the
+    judge could not answer (fails open, logged). An error result (seen as an
+    intermittent `Not logged in`) is tried once more inside the same
+    JUDGE_TIMEOUT_S. The call runs from an empty dir (the CLI lists its cwd)
+    with cmux's injected hooks off (CMUX_CLAUDE_HOOKS_DISABLED: the cmux shim
+    on PATH otherwise adds its own SessionStart/Stop hooks, ~10 s a call)."""
+    cli = shutil.which("claude")
+    if not cli:
+        judge_log("judge=skip reason=no-claude-cli")
+        return None
+    cmd = [cli, "-p", "--model", JUDGE_MODEL, "--setting-sources", "", "--tools", "", "--strict-mcp-config",
+           "--no-session-persistence", "--disable-slash-commands", "--output-format", "json",
+           "--json-schema", JUDGE_SCHEMA, "--system-prompt", JUDGE_SYSTEM_PROMPT]
+    env = dict(os.environ, PRDT_QUESTION_CHECK="off", CMUX_CLAUDE_HOOKS_DISABLED="1")
+    text = judge_input(lines)
+    t0 = time.monotonic()
+    ms = lambda: int((time.monotonic() - t0) * 1000)
+    try:
+        cwd = tempfile.mkdtemp(prefix="prdt-qc-judge-")
+    except OSError as e:
+        judge_log("judge=fail reason=no-empty-dir:%s ms=%d" % (type(e).__name__, ms()))
+        return None
+    try:
+        tries = 0
+        while True:
+            tries += 1
+            left = JUDGE_TIMEOUT_S - (time.monotonic() - t0)
+            nums, why, rc = _judge_once(cmd, env, text, left, cwd)
+            if why and why.startswith("error-result") and tries < 2 and JUDGE_TIMEOUT_S - (time.monotonic() - t0) > 3:
+                continue
+            break
+    finally:
+        shutil.rmtree(cwd, ignore_errors=True)
+    if why:
+        judge_log("judge=fail reason=%s exit=%s tries=%d ms=%d" % (why, rc, tries, ms()))
         return None
     idx = sorted({n - 1 for n in nums if 1 <= n <= len(lines)})
-    judge_log("judge=ok asks=%d ms=%d" % (len(idx), ms()))
+    judge_log("judge=ok asks=%d tries=%d ms=%d" % (len(idx), tries, ms()))
     return idx
 
 
@@ -542,7 +573,7 @@ def ask_kinds(lines, idx):
             in_fence = not in_fence
         elif not in_fence and HEADING_RE.match(ln):
             section_waiting = bool(WAITING_HEADING_RE.search(ln))
-        if i not in want:
+        if i not in want or not ln.strip():   # an empty line is never an ask line
             continue
         # a code fence or a blockquote reports or shows text, it asks nothing —
         # except an option line, which counts fenced or not (T-985)
