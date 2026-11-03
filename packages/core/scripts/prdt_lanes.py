@@ -663,9 +663,64 @@ def _dispatch_transcript(data):
     return str(hits[0]) if hits else None
 
 
+def _ts(v):
+    try:
+        return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def _worker_past_stop(data):
+    """T-1387: True when the worker transcript has an `assistant` record at least
+    one second past `stopped_at` (second-truncated, so the final turn's own
+    second never counts). SubagentStop stamps `stopped_at` even when another
+    SubagentStop hook (prdt-return-check.sh) BLOCKS that stop and the worker runs
+    on with no new SubagentStart — measured 2026-11-03, d-v116-t1094-dev2. A
+    later SubagentStop re-stamps (prdt-post-dispatch.sh marker_stop), so a worker
+    that truly finished has no assistant record past its last stamp.
+    Reads the transcript tail backwards, stopping at the first record older
+    than the stop; an mtime before the threshold skips the read."""
+    stop = _ts(data.get("stopped_at") or "")
+    t = _dispatch_transcript(data)
+    if stop is None or not t:
+        return False
+    limit = stop + 1
+    try:
+        if os.path.getmtime(t) < limit:
+            return False
+        size = os.path.getsize(t)
+        with open(t, "rb") as f:
+            span = 65536
+            while True:
+                start = max(0, size - span)
+                f.seek(start)
+                lines = f.read(size - start).split(b"\n")
+                if start > 0:
+                    lines = lines[1:]  # first piece may be a partial line
+                for raw in reversed(lines):
+                    if not raw.strip():
+                        continue
+                    try:
+                        rec = json.loads(raw)
+                    except Exception:
+                        continue
+                    ts = _ts(rec.get("timestamp")) if isinstance(rec, dict) and isinstance(rec.get("timestamp"), str) else None
+                    if ts is None:
+                        continue
+                    if ts < stop:
+                        return False
+                    if rec.get("type") == "assistant" and ts >= limit:
+                        return True
+                if start == 0:
+                    return False
+                span *= 4
+    except OSError:
+        return False
+
+
 def _dispatch_state(data, now):
     """The gate's verdict for one marker: `live` (counted) or why it is not."""
-    if data.get("stopped_at"):
+    if data.get("stopped_at") and not _worker_past_stop(data):
         return "stopped"
     try:
         since = datetime.strptime(data.get("since") or "", "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)

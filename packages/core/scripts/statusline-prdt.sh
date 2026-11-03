@@ -6,6 +6,8 @@
 # a small, idempotent, derived-artifact write (doctrine #6: a tool maintains
 # what it can generate), never project state, and never the full viewer
 # regeneration those commands also do (see `viewer_jump_path` below for why).
+# T-1382: a dec/req id links `at/progress/T-NNN.html` instead — the viewer on
+# home/progress with that ticket's detail open — written here the same way.
 # The state/cost recording that full's statusline smuggled in lives in
 # hooks/prdt-post-dispatch.sh.
 #
@@ -761,9 +763,14 @@ def ticket_path(con, tid):
 # CLI's own tests (prdt-tickets-link.test.ts) or this file's move, not before.
 VIEWER_HTML_REL = os.path.join(".prdt", "scratch", "viewer", "viewer.html")
 VIEWER_JUMP_REL = os.path.join(".prdt", "scratch", "viewer", "at")
+# T-1382: a dec/req id opens the viewer on home/progress with that ticket's
+# detail over it, so closing the detail returns to progress. Its own folder:
+# `at/T-NNN.html` stays the `#id` page the generator and `prdt tickets --link`
+# share (and prune), never rewritten here.
+VIEWER_PROGRESS_SUB = "progress"
 
 
-def viewer_jump_path(tid):
+def viewer_jump_path(tid, progress=False):
     """The forwarding page for `tid` — same path and same two-line
     redirect-to-`viewer.html#id` body `viewer_jump()` (scripts/prdt) writes —
     or None when no viewer has ever been generated for this project (a jump
@@ -782,11 +789,17 @@ def viewer_jump_path(tid):
     is no hash-suffix branch to mirror."""
     if not os.path.isfile(os.path.join(root, VIEWER_HTML_REL)):
         return None
-    jdir = os.path.join(root, VIEWER_JUMP_REL)
-    page = os.path.join(jdir, f"{tid}.html")
-    body = ('<!doctype html><meta charset="utf-8">'
-            f'<meta http-equiv="refresh" content="0;url=../viewer.html#{tid}">'
-            f'<a href="../viewer.html#{tid}">viewer.html#{tid}</a>\n')
+    parts = VIEWER_JUMP_REL.split(os.sep) + ([VIEWER_PROGRESS_SUB] if progress else [])
+    page = os.path.join(root, *parts, f"{tid}.html")
+    if progress:
+        url = f"../../viewer.html?view=home&amp;group=progress&amp;kind=ticket&amp;id={tid}"
+        body = ('<!doctype html><meta charset="utf-8">'
+                f'<meta http-equiv="refresh" content="0;url={url}">'
+                f'<a href="{url}">viewer.html#{tid}</a>\n')
+    else:
+        body = ('<!doctype html><meta charset="utf-8">'
+                f'<meta http-equiv="refresh" content="0;url=../viewer.html#{tid}">'
+                f'<a href="../viewer.html#{tid}">viewer.html#{tid}</a>\n')
     # T-842: `.prdt/scratch/**` may hold a committed symlink. T-906: the walk
     # and the write are the shared prdt_safe_fs module's — every component of
     # .prdt/scratch/viewer/at opened with O_NOFOLLOW (a link anywhere → no link
@@ -802,7 +815,7 @@ def viewer_jump_path(tid):
         return None
     fd = None
     try:
-        fd = _sfs.open_dir(root, VIEWER_JUMP_REL.split(os.sep), create=True)
+        fd = _sfs.open_dir(root, parts, create=True)
         if not _stub_current(fd, f"{tid}.html", body):
             _sfs.write_atomic(fd, f"{tid}.html", body)
     except OSError:
@@ -833,19 +846,20 @@ def _stub_current(dfd, name, body):
         os.close(fd)
 
 
-_link_memo = {}  # T-1081: tid -> link target, resolved once per render
+_link_memo = {}  # T-1081: (tid, progress) -> link target, resolved once per render
 
 
-def ticket_link_target(con, tid):
+def ticket_link_target(con, tid, progress=False):
     """Memoized per id for the render (T-1081): action_row() rebuilds its
     segments once per (limit, successor tier) candidate, and every rebuild
     asks for the same ids again — the answer cannot change within one render."""
-    if tid not in _link_memo:
-        _link_memo[tid] = _ticket_link_target(con, tid)
-    return _link_memo[tid]
+    key = (tid, progress)
+    if key not in _link_memo:
+        _link_memo[key] = _ticket_link_target(con, tid, progress)
+    return _link_memo[key]
 
 
-def _ticket_link_target(con, tid):
+def _ticket_link_target(con, tid, progress=False):
     """The OSC 8 link target for `tid`: `ticket_path()` still gates existence
     + path safety exactly as before (an id the index doesn't know, or whose
     path carries a control byte, links to nothing at all — unchanged); once
@@ -858,7 +872,7 @@ def _ticket_link_target(con, tid):
         # failed the path-safety gate stays refused.
         if tid not in tid_status or _index_has_row(con, tid):
             return None
-    return viewer_jump_path(tid)
+    return viewer_jump_path(tid, progress)
 
 
 def _index_has_row(con, tid):
@@ -937,7 +951,7 @@ def fmt_group(ids, limit, succ_limit, with_persona=None):
     shown, extra = collapse(ids, limit)
     bits = []
     for tid in shown:
-        links[tid] = ticket_link_target(idx, tid)
+        links[tid] = ticket_link_target(idx, tid, progress=True)  # T-1382: the dec/req id itself
         seg = tid
         if with_persona is not None and with_persona.get(tid):
             seg += "(" + "+".join(persona_label(x) for x in with_persona[tid]) + ")"
@@ -1042,7 +1056,7 @@ def lane_text(lane, cap):
             shown, extra = collapse(blockers, blk_lim)
             bits = []
             for t, kind in shown:
-                links.setdefault(t, ticket_link_target(idx, t))
+                links.setdefault(t, ticket_link_target(idx, t, progress=True))  # T-1382: a dec/req blocker
                 bits.append(f"{t}({L('decision' if kind == 'decision' else 'request')})")
             if extra:
                 bits.append(f"+{extra}")

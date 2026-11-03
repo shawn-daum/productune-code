@@ -1240,8 +1240,33 @@ try:
 except Exception:
     _dec = _req = None
 
+# ── T-1094: rider.stages — the stages spare-capacity rider fill runs in ─────────
+# Set by `prdt settings set rider.stages <stages>` into `$PRDT_HOME/rider-stages`.
+# Surfaced only when it differs from the default (build only): 0 B on a default
+# machine. An off-shape file reads as the default, and only canonical domain
+# tokens are ever emitted, never the file's bytes.
+# KEEP in lockstep with `_rider_stages_canon` / RIDER_STAGE_DOMAIN in prdt_cli.py.
+RIDER_STAGE_DOMAIN = ("define", "build")
+
+
+def rider_stages():
+    home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+    try:
+        with open(os.path.join(home, "rider-stages"), errors="replace") as f:
+            raw = "".join(f.read(256).split())
+    except OSError:
+        return None
+    names = set(raw.split(",")) - {""}
+    if not names or not names <= set(RIDER_STAGE_DOMAIN):
+        return None
+    v = ",".join(s for s in RIDER_STAGE_DOMAIN if s in names)
+    return None if v == "build" else v
+
+
+_rider = rider_stages()
 lines = [f"[prdt state] stage={stage} · version={version} · current_task={task}"
-         f" · dec={fmt_waiting(_dec)} · req={fmt_waiting(_req)}"]
+         f" · dec={fmt_waiting(_dec)} · req={fmt_waiting(_req)}"
+         + (f" · rider.stages={_rider}" if _rider else "")]
 
 # ── T-586: register binding — ONE line, from the resolver, every prompt ────────
 # The register object (`~/.prdt/register`: audience · form · structure · address)

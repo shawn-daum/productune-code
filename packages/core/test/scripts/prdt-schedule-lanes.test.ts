@@ -261,6 +261,46 @@ describe.skipIf(!PYTHON3)('prdt schedule lanes', () => {
     expect(a.next).toEqual([])
   })
 
+  // T-1387: SubagentStop stamps `stopped_at` even when another Stop hook blocks that
+  // stop (measured 2026-11-03: the worker kept running). The worker's own transcript
+  // tells: an assistant record after the stop second means it is still at work.
+  const iso = (ms: number) => new Date(ms).toISOString()
+  const sec = (ms: number) => iso(ms).replace(/\.\d{3}Z$/, 'Z')
+  function stoppedMarker(ticket: string, stoppedMs: number, records: string[]) {
+    const md = path.join(prdtHome, 'run', 'dispatches')
+    fs.mkdirSync(md, { recursive: true })
+    const transcript = path.join(tmpRoot, `agent-${ticket}.jsonl`)
+    fs.writeFileSync(transcript, records.join('\n') + '\n')
+    fs.writeFileSync(path.join(md, `${ticket}.json`), JSON.stringify({
+      agent_id: `a-${ticket}`, persona: 'developer', ticket_id: ticket, dispatch_id: `d-${ticket}`,
+      project_root: fs.realpathSync(projectDir), since: sec(stoppedMs - 20 * 60 * 1000), transcript,
+      stopped_at: sec(stoppedMs),
+    }))
+  }
+  const rec = (type: string, ms: number) => JSON.stringify({ type, timestamp: iso(ms), message: { model: 'claude-x' } })
+
+  test('T-1387: a stopped marker whose worker wrote an assistant record after the stop is `working`', () => {
+    writePrd([rowA])
+    writeTicket('v0.1', 'T-001', { gate: GATE_A, deps: '[T-002]' })
+    writeTicket('v0.1', 'T-002', {})
+    const stop = Date.now() - 60 * 1000
+    stoppedMarker('T-002', stop, [rec('assistant', stop - 900), rec('user', stop + 800), rec('assistant', stop + 3000), rec('attachment', stop + 4000)])
+    const [a] = lanes()
+    expect(a.working).toEqual(['T-002'])
+    expect(run(['schedule']).out).toMatch(/^lane A 0\/2 \| working T-002 \(developer\)$/m)
+  })
+
+  test('T-1387: a worker that truly finished (records after the stop are not assistant turns) leaves `working`', () => {
+    writePrd([rowA])
+    writeTicket('v0.1', 'T-001', { gate: GATE_A, deps: '[T-002]' })
+    writeTicket('v0.1', 'T-002', {})
+    const stop = Date.now() - 60 * 1000
+    // the final assistant record lands inside the stop's own second (stopped_at is second-truncated)
+    stoppedMarker('T-002', stop, [rec('assistant', stop - 5000), rec('assistant', Math.floor(stop / 1000) * 1000 + 900), rec('attachment', stop + 2000), rec('user', stop + 2500)])
+    const [a] = lanes()
+    expect(a.working).toEqual([])
+  })
+
   test('no 합격선 table: no lanes, text output has no lane lines and keeps the critical path', () => {
     writePrd([])
     writeTicket('v0.1', 'T-001', {})

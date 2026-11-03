@@ -1,16 +1,17 @@
 ---
 name: spare-capacity
 persona: po
-when: "stage `build` — turn close or a return while a lane shows `next`/`ready` · your own merge or full suite · a 자투리 ticket closes"
+when: "stage in `rider.stages` (default `build`) — turn close or a return while a lane shows `next`/`ready` · your own merge or full suite · a 자투리 ticket closes"
 model_floor: opus
 effort: medium
 ---
 # Spare capacity — the lane loop
 
-Default, never a judgment call: a gate lane with a `next`/`ready` row and nothing in flight is the deviation. One session; never a session per lane.
+Default, never a judgment call; stages = `rider.stages` of `[prdt state]`, absent = `build`. A gate lane with a `next`/`ready` row and nothing in flight is the deviation. One session; never a session per lane.
 
 ## Fill
 - Every turn close and every return, dispatch in `prdt schedule` order: (1) `first pick` · (2) each gate lane's `next`/`ready` tickets, lane order · (3) 자투리's · (4) then one backlog pull (§Pull). Gate met (`build-entry` §Gate met) → (4) never runs.
+- Listed stage ≠ `build` (`define`): only `rider: true` rows fill — (1)–(3) rows without it wait.
 - Every dispatch goes out in the background; its return re-runs Fill. A `(po)` row is your own act, done now: a long run (merge · full suite · `prdt doctor`) → Bash `run_in_background`, fill, then wait — never a foreground merge.
 - Full test suite = one machine slot (`suites_max`, developer/qa only), held by a merge: designer rows and impl rows on related tests (`contracts/definition-of-done.md`) go out beside it; full suite only at merge.
 - Each fill: `change_meta.files` (from `touches` when recorded) overlaps no live dispatch's `files` — same path, or a `/`-dir holding it; overlap → skip to the next row; empty `files` → not filled.
