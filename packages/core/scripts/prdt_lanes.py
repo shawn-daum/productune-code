@@ -1160,7 +1160,8 @@ def compute_schedule(root, tickets=None, line=None):
 
 
 # ── meta git: the trust check and the one runner (moved from prdt_cli for T-1384 —
-# the statusline and the viewer import this module and never the CLI) ──
+# the stage history read below runs meta git from the statusline and the viewer, which
+# import this module and never the CLI) ──
 def meta_git_dir(root):
     return Path(root) / ".prdt" / "meta.git"
 
@@ -1323,3 +1324,125 @@ def meta_git_trust_problem(root):
                         break
     _meta_trust_cache[key] = prob
     return prob
+
+
+# ── T-1384 (decision T-1385 = A): a ticket counts in the stage it was created in ──
+# Readers: statusline-prdt.sh (`stage n/m`) and the viewer stage bar (collect.mjs →
+# home-graph.mjs `stageOfTicket`, the JS twin of `ticket_stage` — parity test:
+# packages/gui/scripts/qa/type-to-stage-parity.test.ts).
+COUNTED_STAGES = ("define", "build", "ship")
+STAGE_DEFINE_TYPES = ("design", "decision")
+STAGE_SHIP_TYPES = ("qa", "ops")
+_DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def stage_of_type(ttype):
+    """The pre-T-1384 rule, now the fallback: design · decision → define, qa · ops → ship,
+    every other type → build."""
+    if ttype in STAGE_DEFINE_TYPES:
+        return "define"
+    if ttype in STAGE_SHIP_TYPES:
+        return "ship"
+    return "build"
+
+
+def stage_history(root, line=None, version=None, limit=400):
+    """[[YYYY-MM-DD, stage], …] oldest-first: each day po-state's stage for (`line`,
+    `version`) changed, while po-state named that version. `version` is the bare id
+    (`v1.16`); None = the line's current one.
+    Source: the meta repo's history of `.prdt/po-state.json` (the record `_build_entry_date`
+    reads; po-state keeps no history of its own). A snapshot lands at or after the stage
+    write, so a day here is the write's day or later. The walk runs newest-first and
+    stops at the first snapshot naming another version. Committer dates are LOCAL days,
+    the calendar a ticket's `created` uses (T-1210). No meta repo, an untrusted one
+    (`meta_git_trust_problem`), or any git failure → []. Read-only."""
+    root = Path(root)
+    gd = meta_git_dir(root)
+    if not (gd / "HEAD").exists() or meta_git_trust_problem(root):
+        return []
+    if version is None:
+        _s, vid, _c = line_state(read_json(root / ".prdt" / "po-state.json"), line)
+        version = split_line_id(vid)[1] if vid else None
+    if not version:
+        return []
+    want = join_line_id(line, version)
+    base = [*META_GIT_HARDEN, "-c", "log.showSignature=false", "--git-dir", str(gd)]
+    # `log -n N -- <path>` walks back until N snapshots touch po-state: a version holds a
+    # few, so read a small window and widen it only while every snapshot read still names
+    # this version (measured on this repo, 8k meta commits: -n5 0.11 s, -n20 0.42 s).
+    n = 4
+    while True:
+        seen, done = _stage_snapshots(root, base, min(n, int(limit)), line, want)
+        if seen is None:
+            return []
+        if done or n >= int(limit):
+            break
+        n *= 4
+    hist_out = []
+    for day, stage in reversed(seen):
+        if not hist_out or hist_out[-1][1] != stage:
+            hist_out.append([day, stage])
+    return hist_out
+
+
+def _stage_snapshots(root, base, n, line, want):
+    """([(day, stage)] newest-first while po-state names `want`, done) over the newest `n`
+    po-state snapshots; done = a snapshot naming another version ended the run, or fewer
+    than `n` exist. (None, True) on any git failure."""
+    try:
+        r = _git([*base, "log", f"-n{n}", "--date=format-local:%Y-%m-%d",
+                  "--format=%H %cd", "--", ".prdt/po-state.json"], root)
+        if r.returncode != 0:
+            return None, True
+        commits = [row.split(" ", 1) for row in r.stdout.splitlines() if " " in row]
+        if not commits:
+            return [], True
+        b = subprocess.run(["git", *base, "cat-file", "--batch"], cwd=str(root),
+                           env=_scrubbed_git_env(), capture_output=True, timeout=10,
+                           input="".join(f"{sha}:.prdt/po-state.json\n" for sha, _d in commits).encode())
+        if b.returncode != 0:
+            return None, True
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None, True
+    out, pos, seen = b.stdout, 0, []
+    for _sha, day in commits:
+        nl = out.find(b"\n", pos)
+        if nl < 0:
+            return seen, True
+        head = out[pos:nl].split()
+        pos = nl + 1
+        hist = None
+        if len(head) == 3 and head[1] == b"blob":
+            size = int(head[2])
+            try:
+                hist = json.loads(out[pos:pos + size].decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                hist = None
+            pos += size + 1
+        stage, ver, _c = line_state(hist, line)
+        if ver != want:
+            return seen, True
+        if isinstance(stage, str) and _DAY_RE.fullmatch(day[:10] if day else ""):
+            seen.append((day[:10], stage))
+    return seen, len(commits) < n
+
+
+def ticket_stage(fm_stage, created, ttype, history):
+    """The stage a ticket counts in (T-1385 = A): its own `stage:` when that is
+    define · build · ship; else the stage po-state held on its `created` day (the last
+    `history` change on or before that day — a same-day change wins); else, when neither
+    decides it (no key, no history, created before the version's first recorded stage,
+    or a retro · idle answer), the type rule `stage_of_type`."""
+    if fm_stage in COUNTED_STAGES:
+        return fm_stage
+    day = created[:10] if isinstance(created, str) else ""
+    if _DAY_RE.fullmatch(day):
+        hit = None
+        for d, s in history or ():
+            if d <= day:
+                hit = s
+            else:
+                break
+        if hit in COUNTED_STAGES:
+            return hit
+    return stage_of_type(ttype)

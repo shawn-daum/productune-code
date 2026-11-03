@@ -23,7 +23,8 @@ import { execFileSync } from 'node:child_process'
 import { describe, it, expect } from 'vitest'
 import { GUI_ROOT } from '@productune/viewer/generate.mjs'
 import { versionProgressCounts } from '@productune/viewer/lib/render.mjs'
-import { stageOfTicketType } from '@productune/viewer/lib/home-graph.mjs'
+import { stageOfTicketType, stageSegments } from '@productune/viewer/lib/home-graph.mjs'
+import { collectStageHistory } from '@productune/viewer/lib/collect.mjs'
 
 // T-718: statusline-prdt.sh lives at `packages/core/scripts/…` — a SIBLING of
 // this package (`packages/gui`) under `packages/`, found relative to
@@ -145,5 +146,95 @@ describe.skipIf(!PYTHON3)('viewer version-progress counting parity with statusli
     expect(shellSrc).not.toMatch(/TYPE_TO_STAGE\.get/)
     const renderSrc = fs.readFileSync(RENDER_PATH, 'utf8')
     expect(renderSrc).not.toMatch(/export const TYPE_TO_STAGE/)
+  })
+})
+
+// T-1384 (T-1385 = A): a ticket counts in the stage it was created in — its own `stage:`,
+// else po-state's stage on its `created` day (the meta repo's po-state history), else the
+// type rule. Both real implementations over one fixture with a real meta repo.
+const SCRIPTS_DIR = path.join(GUI_ROOT, '../core/scripts')
+const CREATED_FIXTURE = [
+  { id: 'T-1', type: 'decision', status: 'done', created: '2026-01-05' }, // before any record → type → define
+  { id: 'T-2', type: 'decision', status: 'open', created: '2026-01-15' }, // define
+  { id: 'T-3', type: 'decision', status: 'done', created: '2026-01-20' }, // build-entry day → build
+  { id: 'T-4', type: 'design', status: 'open', created: '2026-01-25' }, // build
+  { id: 'T-5', type: 'impl', status: 'open', created: '2026-01-12' }, // define
+  { id: 'T-6', type: 'qa', status: 'open', created: '2026-01-21' }, // build
+  { id: 'T-7', type: 'impl', status: 'done', created: '2026-01-25', stage: 'ship' }, // own key
+  { id: 'T-8', type: 'ops', status: 'open', created: '2026-01-02' }, // before any record → type → ship
+  { id: 'T-9', type: 'decision', status: 'dropped', created: '2026-01-25' },
+]
+const CREATED_EXPECT: Record<string, [number, number]> = { define: [1, 3], build: [1, 3], ship: [1, 2], retro: [0, 0] }
+
+function git(root: string, args: string[], env: Record<string, string> = {}, input?: string) {
+  return execFileSync('git', ['--git-dir', path.join(root, '.prdt', 'meta.git'), '--work-tree', root, ...args], {
+    cwd: root, encoding: 'utf8', input, env: { PATH: process.env.PATH || '', HOME: root, GIT_CONFIG_NOSYSTEM: '1', ...env },
+  })
+}
+
+function createdFixture(): string {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1384-')))
+  fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
+  execFileSync('git', ['init', '-q', '--bare', path.join(root, '.prdt', 'meta.git')], { env: { PATH: process.env.PATH || '', HOME: root } })
+  const snap = (stage: string, day: string) => {
+    fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage, version: VERSION, current_task: null }))
+    git(root, ['add', '.prdt/po-state.json'])
+    const when = `${day}T12:00:00`
+    git(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', stage], { GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when })
+  }
+  snap('retro', '2026-01-01')
+  // the previous version's snapshot above names no v9.8 — the walk stops there
+  fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage: 'retro', version: 'v9.7', current_task: null }))
+  git(root, ['add', '.prdt/po-state.json'])
+  git(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'prev'], { GIT_AUTHOR_DATE: '2026-01-03T12:00:00', GIT_COMMITTER_DATE: '2026-01-03T12:00:00' })
+  snap('define', '2026-01-10')
+  snap('build', '2026-01-20')
+  const ticketDir = path.join(root, 'docs', 'tickets', VERSION)
+  fs.mkdirSync(ticketDir, { recursive: true })
+  for (const t of CREATED_FIXTURE) {
+    fs.writeFileSync(path.join(ticketDir, `${t.id}.md`),
+      `---\nid: ${t.id}\nslug: s-${t.id.toLowerCase()}\ntype: ${t.type}\n${t.stage ? `stage: ${t.stage}\n` : ''}status: ${t.status}\nassignee: developer\ncreated: ${t.created}\n---\n\nbody\n`)
+  }
+  return root
+}
+
+describe.skipIf(!PYTHON3)('stage counts by the created stage — statusline and viewer agree (T-1384)', () => {
+  it.each(['define', 'build', 'ship', 'retro'])('stage %s', (stage) => {
+    const root = createdFixture()
+    try {
+      const st = JSON.parse(fs.readFileSync(path.join(root, '.prdt', 'po-state.json'), 'utf8'))
+      fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ ...st, stage }))
+      const out = execFileSync('bash', [STATUSLINE_PATH], {
+        input: JSON.stringify({ workspace: { current_dir: root } }), encoding: 'utf8',
+        env: { ...process.env, HOME: root, PRDT_HOME: path.join(root, 'ph'), PRDT_LANG: 'en' },
+      })
+      const m = new RegExp(`\\| stage: ${stage} (\\d+)/(\\d+) \\|`).exec(out)
+      expect(m, out).not.toBeNull()
+      const history = collectStageHistory(root, null, { scriptsDir: SCRIPTS_DIR })
+      expect(history).toEqual([['2026-01-10', 'define'], ['2026-01-20', 'build']])
+      const tickets = CREATED_FIXTURE.map((t) => ({ frontmatter: { id: t.id, type: t.type, status: t.status, created: t.created, ...(t.stage ? { stage: t.stage } : {}) } }))
+      const seg = stageSegments(tickets, history).find((x) => x.stage === stage)!
+      const viewer = [seg.tickets.filter((t) => t.done).length, seg.tickets.length]
+      expect(viewer).toEqual(CREATED_EXPECT[stage])
+      expect([Number(m![1]), Number(m![2])]).toEqual(viewer)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('prdt tickets new writes the product stage only into the open version', () => {
+    const root = createdFixture()
+    try {
+      const env = { ...process.env, HOME: root, PRDT_HOME: path.join(root, 'ph') }
+      const prdt = path.join(SCRIPTS_DIR, 'prdt')
+      execFileSync('python3', [prdt, 'tickets', 'new', '--type', 'decision', '--slug', 'in-build'], { cwd: root, env, encoding: 'utf8' })
+      execFileSync('python3', [prdt, 'tickets', 'new', '--type', 'impl', '--slug', 'later', '--backlog'], { cwd: root, env, encoding: 'utf8' })
+      const cur = fs.readdirSync(path.join(root, 'docs', 'tickets', VERSION)).map((f) => fs.readFileSync(path.join(root, 'docs', 'tickets', VERSION, f), 'utf8')).find((t) => /slug: in-build/.test(t))!
+      expect(cur).toMatch(/^type: decision\nstage: build\nstatus: open$/m)
+      const bl = fs.readdirSync(path.join(root, 'docs', 'tickets', 'backlog')).map((f) => fs.readFileSync(path.join(root, 'docs', 'tickets', 'backlog', f), 'utf8'))[0]
+      expect(bl).not.toMatch(/^stage:/m)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 })
