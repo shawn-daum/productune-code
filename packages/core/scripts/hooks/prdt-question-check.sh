@@ -12,26 +12,35 @@
 # or cites the ticket and re-replies before the turn ends.
 #
 # WHAT IT DOES. On the PO's final reply of a turn it finds the ASKS — the places
-# that ask the user to choose or confirm — and blocks the stop ONCE when an ask
-# has no decision ticket behind it. Which questions are asks is T-993 = B: a
-# choice between options, a yes/no confirmation and a read-back confirmation
+# that ask the user to choose, approve or confirm — and blocks the stop ONCE when
+# an ask has no decision ticket behind it. Which questions are asks is T-993 = B:
+# a choice between options, a yes/no confirmation and a read-back confirmation
 # need a ticket; an offer (`열어 드릴까요?`), an information request (`알려
-# 주시겠어요?`, a `…되나요?` fact question, an English `X or Y?` fact question)
-# and a feedback or closing question (`어떠셨어요?`) do not.
-#   question    a `?` sentence in a choose/confirm form (`…할까요?`, `…해도
-#               될까요?`, `…맞나요?`, `어느 쪽…?`, `Should I …?`, `Which … should
-#               we …?`, `Do you want A or B?`), outside code fences, blockquotes,
-#               inline code and quoted spans (a quoted question is a report of
-#               one, not an ask). Rhetorical (`왜 …?`) questions are not asks.
-#   pick        an imperative choose form (`골라 주세요`, `정해 주세요`).
-#   options     a laid-out option set: an `A` line followed later by a `B`
-#               line (`A  초안대로`, `- **A** …`, `| A … |`), fenced or not, that
-#               carries a recommendation or option marker (`추천`, `←`,
-#               `recommend`, `선택지`) — an A/B/C-keyed status table without one
-#               is not an option set. A diagram edge (`A --> B`) and a
-#               mermaid/dot/plantuml fence are never option lines.
-#   waiting     an item under a "waiting for your answer" heading
-#               (`답 기다리는 것`, `결정 대기`, `Waiting on you`).
+# 주시겠어요?`, a `…되나요?` fact question) and a feedback or closing question
+# (`어떠셨어요?`) do not.
+#
+# A MODEL JUDGES WHICH LINES ARE ASKS (T-1379, decision T-1380 = D). Three rounds
+# of sentence patterns traded missed asks for false blocks (「팀장님이 어떻게 할지
+# 알려 주세요」 vs 「사용자가 볼 화면을 A 와 B 중 어느 쪽으로 할지 알려 주세요」), so
+# the reply goes, line-numbered, to a small model (`claude -p --model haiku`, no
+# tools, no settings, no session record) with JUDGE_SYSTEM_PROMPT, and its answer
+# is the list of ask line numbers. The judge prompt goes to that separate call
+# only, never into the PO's input. Everything after it stays deterministic: each
+# judged line gets its kind from the reply's own structure —
+#   waiting     a top-level list item under a "waiting for your answer" heading
+#               (`답 기다리는 것`, `결정 대기`, `Waiting on you`);
+#   options     an option line (`A  초안대로`, `- **A** …`, `| A … |`);
+#   question    any other line; it names an option when it carries an option
+#               letter (`A와 B 중…`).
+# WHO PAYS. Only a PO Stop that could block calls the model: the fork-0 `case`
+# drops every other Stop before python3 starts, and a PO Stop after a decision
+# ticket changed this turn calls it only when the reply cites a ticket the
+# re-ask or batch-ask check could act on (judge_needed).
+# THE JUDGE FAILS OPEN, VISIBLY. No `claude` on PATH, a timeout (JUDGE_TIMEOUT_S),
+# a non-zero exit, an error result (no auth) or an unreadable answer → no asks,
+# no block, and one line in $PRDT_HOME/run/question-check.log (also stderr,
+# which the harness shows in its debug log). Every call, failed or not, logs
+# its outcome and duration there.
 # An ask is COVERED when the reply cites an OPEN `type: decision` ticket for it:
 #   options, and a question/pick that names an option letter (`A와 B 중…`),
 #     → any open decision id anywhere in the reply (the options belong to the
@@ -101,7 +110,7 @@ exit 0
 # body out of bash's parser, so `bash -n` still reads this file end to end.
 : <<'PYEOF'
 # ---- python ----
-import json, os, re, shutil, signal, stat, subprocess, sys
+import json, os, re, shutil, signal, stat, subprocess, sys, tempfile, time
 from datetime import datetime
 
 # T-1104: product-first docs layout (docs/artifacts/v1.14/product-first-docs-layout.html).
@@ -235,13 +244,6 @@ TICKET_ID_RE = re.compile(r"(?<![A-Za-z0-9])((?:%s)-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1
 TICKET_FILE_RE = re.compile(r"^(?:%s)-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6}\.md$" % _PFX)
 FENCE_RE = re.compile(r"^\s*(?:`{3,}|~{3,})")
 DIAGRAM_FENCE_RE = re.compile(r"^\s*(?:`{3,}|~{3,})\s*(?:mermaid|dot|graphviz|plantuml|puml|d2)\b", re.I)
-# Text right after an option letter that makes the line a diagram edge (`A --> B`).
-EDGE_AFTER_RE = re.compile(r"^\s*(?:-{1,3}>|={1,3}>|-\.|<-|--|→|⟶|⇒)")
-# An option set is an ask only when it carries one of these.
-OPTION_MARK_RE = re.compile(
-    r"추천|권(?:장|고|해|함|하)|←|recommend|선택지|\boptions?\b|\|\s*안\s*\|"
-    r"|어느\s*쪽|중\s*(?:어느|하나)|골라|고르|정해\s*주|정하|할지|답\s*주|말씀해\s*주"
-    r"|(?<![A-Za-z0-9])[A-H]\s*(?:로|으로)\s*(?:갈|갑|가|할|하)|아니면\s*\**[A-H](?![A-Za-z0-9])", re.I)
 HEADING_RE = re.compile(r"^\s*(?:#{1,6}\s+\S|\*\*[^*].*\*\*\s*:?\s*$)")
 WAITING_HEADING_RE = re.compile(
     r"답\s*(?:을\s*)?기다리|결정\s*대기|waiting\s+(?:on|for)\s+(?:you|your)", re.I)
@@ -253,35 +255,6 @@ OPTION_LINE_RE = re.compile(
 # Spans whose `?` is not an ask: inline code and quoted text.
 QUOTED_RE = re.compile(
     r"`[^`\n]*`|\*\"[^\"\n]*\"\*|\"[^\"\n]*\"|“[^”\n]*”|「[^」\n]*」|『[^』\n]*』|‘[^’\n]*’")
-QUESTION_RE = re.compile(r"([^.!?。？\n]*)[?？]")
-LEAD_JUNK_RE = re.compile(r"^[\s\-*+•·>|#\d.)]*(?:\*\*)?\s*")
-# T-993 = B. Choose / yes-no confirm / read-back confirm endings.
-KO_ASK_END_RE = re.compile(
-    r"(?:까요|까|래요|을래|겠어요|겠습니까|맞나요|맞죠|맞을까요|맞아요|맞으세요|맞습니까"
-    r"|괜찮나요|괜찮을까요|괜찮으세요|괜찮으신가요|도\s*되나요|도\s*돼요|좋나요|원하세요|원하시나요)"
-    r"\s*\)?\s*$")
-# Offers and information requests that share those endings — not asks (T-993 B).
-KO_NOT_ASK_RE = re.compile(
-    r"드릴까요?\s*\)?\s*$|드릴게요\s*$"            # offer: 열어 드릴까요?
-    r"|주\s*(?:시겠어요|시겠습니까|겠어요|실래요|실\s*수\s*있을까요)\s*\)?\s*$")  # request: 알려 주시겠어요?
-KO_EITHER_RE = re.compile(r"아니면|(?:까요|래요|을래)\s*,")
-KO_ASK_ANY_RE = re.compile(r"까요|래요|을래|겠어요|겠습니까")
-KO_CHOICE_RE = re.compile(r"어느\s*(?:쪽|것|걸|안)|어떤\s*(?:걸|것|쪽|안)|중\s*(?:어느|무엇|뭐|하나)|중에서")
-# English: a yes/no or read-back confirm, or a choice addressed to the user.
-EN_CONFIRM_RE = re.compile(
-    r"\b(?:should|shall)\s+(?:i|we)\b|\b(?:ok|okay|alright|fine)\s+(?:to|if)\b"
-    r"|\bis\s+(?:it|that|this)\s+(?:ok|okay|alright|right|correct|what you)\b"
-    r"|\b(?:can|may)\s+i\s+(?:go ahead|proceed)\b|\b(?:go ahead|proceed)\s*(?:with\b|$)"
-    r"|\b(?:am i|did i get (?:it|that|this))\s+(?:right|correct)\b|\bsounds?\s+(?:right|good)\s*$", re.I)
-EN_CHOOSE_RE = re.compile(
-    r"\bwhich\b.*\b(?:should|shall|do you|would you|prefer|want|go with|pick)\b"
-    r"|\b(?:should|shall|do you want|would you (?:like|prefer)|want me to|prefer)\b.*\bor\b", re.I)
-RHETORICAL_RE = re.compile(r"^(?:왜|어째서|why\b|how come\b)", re.I)
-CLOSING_RE = re.compile(
-    r"도와\s*드릴|궁금한|더\s*필요한|질문\s*있으|어떠(?:셨|세|신|했)|어땠|괜찮으셨|마음에\s*드(?:셨|시나|세)"
-    r"|anything else|any (?:other )?questions|let me know|how (?:does|did) (?:it|that|this) (?:look|feel)", re.I)
-PICK_RE = re.compile(
-    r"(?:골라|정해|선택해|결정해|승인해)\s*주(?:세요|십시오)|please\s+(?:choose|pick|decide)", re.I)
 OPTION_REF_RE = re.compile(r"(?<![A-Za-z0-9])[A-H](?:안)?(?=$|[\s·,와과로중를을이가/)])")
 
 
@@ -433,70 +406,200 @@ def ticket_index(root):
     return out, unknown
 
 
-def classify_question(seg):
-    """True when the sentence before a `?` asks the user to choose or confirm."""
-    seg = LEAD_JUNK_RE.sub("", seg).strip().rstrip("*").strip()
-    if not seg or RHETORICAL_RE.search(seg) or CLOSING_RE.search(seg):
-        return False
-    if KO_CHOICE_RE.search(seg) or EN_CHOOSE_RE.search(seg) or EN_CONFIRM_RE.search(seg):
-        return True
-    # `이대로 쓸까요, 아니면 … 주시겠어요?` — an either/or is a choice whatever its ending
-    if KO_EITHER_RE.search(seg) and KO_ASK_ANY_RE.search(seg):
-        return True
-    return bool(KO_ASK_END_RE.search(seg)) and not KO_NOT_ASK_RE.search(seg)
+# T-1379 (T-1380 = D): the judge. Model-facing text for a separate `claude -p`
+# call, never injected into the PO's input.
+JUDGE_SYSTEM_PROMPT = (
+    "You check one chat reply that an AI product owner is about to send to its user, the person it "
+    "works for. Find every line where the reply asks THAT USER to decide something: choose between "
+    "options, approve or confirm a plan, draft, wording or action, say whether to go ahead, or confirm "
+    "a read-back the assistant needs before it continues.\n"
+    "These are asks, whatever their wording and even when what is decided is meant for other people "
+    "(a screen users will see, a mail customers will get):\n"
+    "- a question or request whose answer is the user's own choice or approval: 「A 와 B 중 어느 쪽으로 "
+    "할지 알려 주세요」, 「이 문구로 괜찮은지 알려 주세요」, 「이대로 괜찮으면 답해 주세요」, 「설치할까요?」, "
+    "「승인해 주세요」, \"Should I ship it?\", \"Is that right?\";\n"
+    "- options laid out for the user to pick from (A / B lines with a recommendation): give the first "
+    "option line;\n"
+    "- each item listed under a heading saying it waits for the user's answer.\n"
+    "These are not asks:\n"
+    "- asking the user for a fact or information (an address, a log, whether something works on their "
+    "machine, their schedule, a version, how to do something, a name they remember): 「이름이 떠오르시면 "
+    "알려 주세요」, 「에러 메시지를 알려 주세요」;\n"
+    "- asking the user to look at, try or check something and report what they see: 「화면에 버튼이 "
+    "보이는지 봐 주세요」, 「다시 열어서 확인해 주세요」;\n"
+    "- telling the user how to do a step: 「거기서 Submit 만 눌러 주시면 돼요」, 「터미널에서 이 명령을 "
+    "실행해 주세요」;\n"
+    "- asking what someone else (a manager, another team, a customer) decided or will decide, or asking "
+    "the user to ask, tell or reply to someone else;\n"
+    "- offers (「열어 드릴까요?」, \"Would you like me to...\"), feedback or closing questions "
+    "(「어떠셨어요?」), rhetorical questions;\n"
+    "- a question or request that is quoted, reported, given as an example, inside code or a "
+    "blockquote;\n"
+    "- a status table, report or status line, and what the assistant says it will do or show next "
+    "(「다음에 보여 드릴게요」);\n"
+    "- an empty line.\n"
+    "Lines come as `N| text`. Answer with the ask line numbers; [] when there is none."
+)
+JUDGE_SCHEMA = '{"type":"object","properties":{"asks":{"type":"array","items":{"type":"integer"}}},"required":["asks"]}'
+JUDGE_MODEL = "haiku"
+JUDGE_TIMEOUT_S = 25
+JUDGE_HEAD_CHARS = 4000     # a longer reply is sent as its head + tail, line numbers kept
+JUDGE_TAIL_CHARS = 16000
+JUDGE_LOG = "question-check.log"
+JUDGE_LOG_KEEP = 500
 
 
-def find_asks(text):
-    """[(line_idx, kind, option_ref)] — kind ∈ question|pick|options|waiting."""
-    lines = text.split("\n")
+def judge_log(msg):
+    """One line per judge call in $PRDT_HOME/run/question-check.log (newest
+    JUDGE_LOG_KEEP kept) and on stderr. Never raises."""
+    line = "%s %s" % (datetime.now().astimezone().isoformat(timespec="seconds"), msg)
+    try:
+        sys.stderr.write("prdt-question-check: %s\n" % msg)
+    except Exception:
+        pass
+    try:
+        home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+        d = os.path.join(home, "run")
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, JUDGE_LOG)
+        try:
+            with open(p, encoding="utf-8", errors="replace") as f:
+                old = f.read().splitlines()[-(JUDGE_LOG_KEEP - 1):]
+        except OSError:
+            old = []
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("\n".join(old + [line]) + "\n")
+    except Exception:
+        pass
+
+
+def judge_input(lines):
+    """The reply as `N| text` lines; past JUDGE_HEAD_CHARS + JUDGE_TAIL_CHARS the
+    middle is left out (one `…` line), every kept line keeps its own number."""
+    numbered = ["%d| %s" % (k + 1, ln) for k, ln in enumerate(lines)]
+    if sum(len(x) + 1 for x in numbered) <= JUDGE_HEAD_CHARS + JUDGE_TAIL_CHARS:
+        return "\n".join(numbered)
+    head, n = [], 0
+    for x in numbered:
+        if JUDGE_HEAD_CHARS < n + len(x) + 1:
+            break
+        head.append(x)
+        n += len(x) + 1
+    tail, n = [], 0
+    for x in reversed(numbered[len(head):]):
+        if JUDGE_TAIL_CHARS < n + len(x) + 1:
+            break
+        tail.append(x)
+        n += len(x) + 1
+    return "\n".join(head + ["…"] + list(reversed(tail)))
+
+
+def _judge_once(cmd, env, text, timeout, cwd):
+    """(result dict | None, failure reason | None, exit code)."""
+    try:
+        r = subprocess.run(cmd, input=text, capture_output=True, text=True, env=env, timeout=timeout, cwd=cwd)
+    except subprocess.TimeoutExpired:
+        return None, "timeout", None
+    except Exception as e:
+        return None, type(e).__name__, None
+    out = None
+    try:
+        out = json.loads(r.stdout)
+        if not isinstance(out, dict) or out.get("is_error"):
+            raise ValueError("error-result")
+        so = out.get("structured_output")
+        nums = so.get("asks") if isinstance(so, dict) else None
+        if not isinstance(nums, list) or not all(isinstance(n, int) and not isinstance(n, bool) for n in nums):
+            raise ValueError("no-asks-list")
+    except Exception as e:
+        why = str(e) if isinstance(e, ValueError) and str(e) in ("error-result", "no-asks-list") else "unreadable"
+        if isinstance(out, dict):   # the CLI's own status fields, never the reply or a credential
+            why += " subtype=%s api_status=%s" % (str(out.get("subtype"))[:40], str(out.get("api_error_status"))[:40])
+        return None, why, r.returncode
+    return nums, None, r.returncode
+
+
+def judge_asks(lines):
+    """The 0-based indexes of the lines the model judges asks; None when the
+    judge could not answer (fails open, logged). An error result (seen as an
+    intermittent `Not logged in`) is tried once more inside the same
+    JUDGE_TIMEOUT_S. The call runs from an empty dir (the CLI lists its cwd)
+    with cmux's injected hooks off (CMUX_CLAUDE_HOOKS_DISABLED: the cmux shim
+    on PATH otherwise adds its own SessionStart/Stop hooks, ~10 s a call)."""
+    cli = shutil.which("claude")
+    if not cli:
+        judge_log("judge=skip reason=no-claude-cli")
+        return None
+    cmd = [cli, "-p", "--model", JUDGE_MODEL, "--setting-sources", "", "--tools", "", "--strict-mcp-config",
+           "--no-session-persistence", "--disable-slash-commands", "--output-format", "json",
+           "--json-schema", JUDGE_SCHEMA, "--system-prompt", JUDGE_SYSTEM_PROMPT]
+    env = dict(os.environ, PRDT_QUESTION_CHECK="off", CMUX_CLAUDE_HOOKS_DISABLED="1")
+    text = judge_input(lines)
+    t0 = time.monotonic()
+    ms = lambda: int((time.monotonic() - t0) * 1000)
+    try:
+        cwd = tempfile.mkdtemp(prefix="prdt-qc-judge-")
+    except OSError as e:
+        judge_log("judge=fail reason=no-empty-dir:%s ms=%d" % (type(e).__name__, ms()))
+        return None
+    try:
+        tries = 0
+        while True:
+            tries += 1
+            left = JUDGE_TIMEOUT_S - (time.monotonic() - t0)
+            nums, why, rc = _judge_once(cmd, env, text, left, cwd)
+            if why and why.startswith("error-result") and tries < 2 and JUDGE_TIMEOUT_S - (time.monotonic() - t0) > 3:
+                continue
+            break
+    finally:
+        shutil.rmtree(cwd, ignore_errors=True)
+    if why:
+        judge_log("judge=fail reason=%s exit=%s tries=%d ms=%d" % (why, rc, tries, ms()))
+        return None
+    idx = sorted({n - 1 for n in nums if 1 <= n <= len(lines)})
+    judge_log("judge=ok asks=%d tries=%d ms=%d" % (len(idx), tries, ms()))
+    return idx
+
+
+def ask_kinds(lines, idx):
+    """[(line_idx, kind, option_ref)] for the judged ask lines — kind ∈
+    question|options|waiting, read from the reply's own structure."""
+    want = set(idx)
     asks = []
     in_fence = False
-    in_diagram = False
     section_waiting = False
-    opt_block = []      # option letters seen in the current block, with line idx
-    def flush_options():
-        letters = [l for l, _ in opt_block]
-        if "A" in letters and "B" in letters[letters.index("A") + 1:]:
-            a = opt_block[letters.index("A")][1]
-            # a status table keyed A/B/C carries no recommendation / option
-            # marker in or right around it (header row above, a few lines after)
-            if OPTION_MARK_RE.search("\n".join(lines[max(0, a - 3):opt_block[-1][1] + 9])):
-                asks.append((a, "options", True))
-        opt_block.clear()
     for i, ln in enumerate(lines):
         if FENCE_RE.match(ln):
-            if not in_fence:
-                in_diagram = bool(DIAGRAM_FENCE_RE.match(ln))
             in_fence = not in_fence
-            continue
-        m = None if in_diagram and in_fence else OPTION_LINE_RE.match(ln)
-        if m and not EDGE_AFTER_RE.match(ln[m.end():]):
-            # T-1377: an `A` after an A…B pair opens the next option set — ten
-            # items each laid out A/B are ten asks, each scoped to its own item
-            letters = [l for l, _ in opt_block]
-            if m.group(1) == "A" and "A" in letters and "B" in letters[letters.index("A") + 1:]:
-                flush_options()
-            opt_block.append((m.group(1), i))
-        if in_fence:
-            continue
-        if HEADING_RE.match(ln):
-            flush_options()
+        elif not in_fence and HEADING_RE.match(ln):
             section_waiting = bool(WAITING_HEADING_RE.search(ln))
-        if ln.lstrip().startswith(">"):
+        if i not in want or not ln.strip():   # an empty line is never an ask line
             continue
-        clean = QUOTED_RE.sub(" ", ln)
-        if section_waiting and LIST_ITEM_RE.match(ln) and not ln[:1].isspace():
+        # a code fence or a blockquote reports or shows text, it asks nothing —
+        # except an option line, which counts fenced or not (T-985)
+        if (in_fence or FENCE_RE.match(ln) or ln.lstrip().startswith(">")) and not OPTION_LINE_RE.match(ln):
+            continue
+        if section_waiting and not in_fence and LIST_ITEM_RE.match(ln) and not ln[:1].isspace():
             asks.append((i, "waiting", False))
-            continue
-        for q in QUESTION_RE.finditer(clean):
-            if classify_question(q.group(1)):
-                asks.append((i, "question", bool(OPTION_REF_RE.search(q.group(1)))))
-                break
+        elif OPTION_LINE_RE.match(ln):
+            asks.append((i, "options", True))
         else:
-            if PICK_RE.search(clean):
-                asks.append((i, "pick", bool(OPTION_REF_RE.search(clean))))
-    flush_options()
-    return lines, asks
+            asks.append((i, "question", bool(OPTION_REF_RE.search(QUOTED_RE.sub(" ", ln)))))
+    return asks
+
+
+def judge_needed(reply, tickets, turn_start):
+    """False when no check could block whatever the judge says: a decision
+    ticket changed this turn (question check exempt) and the reply cites no
+    decision the re-ask check could act on and fewer than BATCH_ASK_MIN open
+    ones — the model call is then skipped."""
+    if not any(t == "decision" and mt >= turn_start - 1 for t, _, _, mt in tickets.values()):
+        return True
+    cited = {m.group(1) for m in TICKET_ID_RE.finditer(reply)}
+    dec = [tickets[k] for k in cited if k in tickets and tickets[k][0] == "decision"]
+    if any(s == "done" and mt < turn_start - 1 for _, s, _, mt in dec):
+        return True
+    return sum(1 for _, s, _, _ in dec if s == "open") >= BATCH_ASK_MIN
 
 
 def section_bounds(lines, i):
@@ -509,7 +612,7 @@ def section_bounds(lines, i):
         if not in_fence and HEADING_RE.match(ln):
             heads.append(k)
     start = max([h for h in heads if h <= i], default=0)
-    end = min([h for h in heads if h > i], default=len(lines))
+    end = min([h for h in heads if i < h], default=len(lines))
     return start, end
 
 
@@ -664,13 +767,19 @@ def main():
         reply = transcript_text
     if not (isinstance(reply, str) and reply.strip()):
         return
-    lines, asks = find_asks(reply)
-    if not asks or turn_start is None:
+    if turn_start is None:
         return
     idx = ticket_index(root)
     if idx is None:
         return
     tickets, unknown = idx
+    if not judge_needed(reply, tickets, turn_start):
+        return
+    lines = reply.split("\n")
+    judged = judge_asks(lines)
+    if not judged:
+        return
+    asks = ask_kinds(lines, judged)
     # T-1377: every check that applies speaks in the one block, none hides another.
     reask, reasked = reask_check(root, lines, asks, tickets, turn_start)
     reasons = [r for r in (reask, batch_check(lines, asks, tickets)) if r]
@@ -721,7 +830,7 @@ def question_check(lines, asks, tickets, unknown, turn_start, reply, reasked):
         return None
     uncovered = sorted(set(uncovered))
     shown = ", ".join(str(n) for n in uncovered[:LIST_CAP])
-    if len(uncovered) > LIST_CAP:
+    if LIST_CAP < len(uncovered):
         shown += ", +%d more" % (len(uncovered) - LIST_CAP)
     return QUESTION_CHECK_REASON % (shown, lang_clause())
 
@@ -732,7 +841,7 @@ def _out_of_budget(*_):
 
 try:
     signal.signal(signal.SIGALRM, _out_of_budget)
-    signal.alarm(RUN_BUDGET_S)
+    signal.alarm(RUN_BUDGET_S + JUDGE_TIMEOUT_S)
     main()
 except BaseException:
     pass
