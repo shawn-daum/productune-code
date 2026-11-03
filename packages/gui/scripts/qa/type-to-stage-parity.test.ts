@@ -158,13 +158,14 @@ const CREATED_FIXTURE = [
   { id: 'T-2', type: 'decision', status: 'open', created: '2026-01-15' }, // define
   { id: 'T-3', type: 'decision', status: 'done', created: '2026-01-20' }, // build-entry day → build
   { id: 'T-4', type: 'design', status: 'open', created: '2026-01-25' }, // build
-  { id: 'T-5', type: 'impl', status: 'open', created: '2026-01-12' }, // define
+  { id: 'T-5', type: 'impl', status: 'open', created: '2026-01-12' }, // created in define, type build → build (T-1386 = B)
   { id: 'T-6', type: 'qa', status: 'open', created: '2026-01-21' }, // build
   { id: 'T-7', type: 'impl', status: 'done', created: '2026-01-25', stage: 'ship' }, // own key
   { id: 'T-8', type: 'ops', status: 'open', created: '2026-01-02' }, // before any record → type → ship
+  { id: 'T-10', type: 'ops', status: 'open', created: '2026-01-11' }, // created in define, type ship → ship (B)
   { id: 'T-9', type: 'decision', status: 'dropped', created: '2026-01-25' },
 ]
-const CREATED_EXPECT: Record<string, [number, number]> = { define: [1, 3], build: [1, 3], ship: [1, 2], retro: [0, 0] }
+const CREATED_EXPECT: Record<string, [number, number]> = { define: [1, 2], build: [1, 4], ship: [1, 3], retro: [0, 0] }
 
 function git(root: string, args: string[], env: Record<string, string> = {}, input?: string) {
   return execFileSync('git', ['--git-dir', path.join(root, '.prdt', 'meta.git'), '--work-tree', root, ...args], {

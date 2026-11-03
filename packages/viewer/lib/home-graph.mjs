@@ -48,7 +48,12 @@ export function stageOfTicket(fm, history = []) {
       if (d <= day) hit = s
       else break
     }
-    if (COUNTED_STAGES.has(hit)) return hit
+    if (COUNTED_STAGES.has(hit)) {
+      // T-1386 = B: never earlier than the type's stage (define < build < ship)
+      const order = ['define', 'build', 'ship']
+      const byType = stageOfTicketType(fm && fm.type)
+      return order.indexOf(byType) > order.indexOf(hit) ? byType : hit
+    }
   }
   return stageOfTicketType(fm && fm.type)
 }

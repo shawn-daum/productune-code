@@ -1431,7 +1431,8 @@ def ticket_stage(fm_stage, created, ttype, history):
     """The stage a ticket counts in (T-1385 = A): its own `stage:` when that is
     define · build · ship; else the stage po-state held on its `created` day (the last
     `history` change on or before that day — a same-day change wins); else, when neither
-    decides it (no key, no history, created before the version's first recorded stage,
+    decides it — and, T-1386 = B, never a stage earlier than
+    `stage_of_type` (the later of the two, define < build < ship) — (no key, no history, created before the version's first recorded stage,
     or a retro · idle answer), the type rule `stage_of_type`."""
     if fm_stage in COUNTED_STAGES:
         return fm_stage
@@ -1444,5 +1445,7 @@ def ticket_stage(fm_stage, created, ttype, history):
             else:
                 break
         if hit in COUNTED_STAGES:
-            return hit
+            # T-1386 = B: never earlier than the type's stage (define < build < ship)
+            by_type = stage_of_type(ttype)
+            return max(hit, by_type, key=COUNTED_STAGES.index)
     return stage_of_type(ttype)
