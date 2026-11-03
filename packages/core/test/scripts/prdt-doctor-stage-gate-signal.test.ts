@@ -23,11 +23,11 @@ let tmpRoot: string
 let projectDir: string
 let prdtHome: string
 
-function run(args: string[], tier: 'cli' | 'doctor' = 'cli'): string {
+function run(args: string[], tier: 'cli' | 'doctor' = 'cli', extraEnv: Record<string, string> = {}): string {
   try {
     return execFileSync('python3', [PRDT_CLI, ...args], {
       cwd: projectDir, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: subprocessTimeout(tier), env: { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en', PRDT_META_BACKUP: '0' },
+      timeout: subprocessTimeout(tier), env: { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en', PRDT_META_BACKUP: '0', ...extraEnv },
     })
   } catch (e: any) {
     return (e.stdout ?? '') + (e.stderr ?? '')
@@ -61,9 +61,10 @@ function setStage(stage: string) {
   fs.writeFileSync(p, JSON.stringify(st))
 }
 
-// Snapshot po-state into the meta repo the way the meta auto-save does, dated `day`.
+// Snapshot po-state into the meta repo the way the meta auto-save does, dated `day`
+// (a bare YYYY-MM-DD → noon KST; a full ISO timestamp is used as given).
 function commitMeta(day: string) {
-  const date = `${day}T12:00:00+09:00`
+  const date = day.length === 10 ? `${day}T12:00:00+09:00` : day
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
     '--git-dir', path.join(projectDir, '.prdt', 'meta.git'), '--work-tree', projectDir,
     'commit', '-q', '-m', 'meta auto-save', '--', '.prdt/po-state.json'],
@@ -146,6 +147,30 @@ describe.skipIf(!PYTHON3)('prdt doctor — build stage signal reads the gate (T-
     writeTicket('v0.1', 'T-001', { status: 'open', created: '2026-10-15' })
     writeTicket('v0.1', 'T-002', { status: 'done', created: '2026-10-16' })
     expect(run(['doctor'], 'doctor')).not.toMatch(SIGNAL)
+  })
+
+  // T-1210 (a): a malformed `created` compared as a string fell outside the slice
+  // ('2026-10-9' > '2026-10-15') and the signal fired with no word.
+  test('no gate line: an open ticket with a malformed created counts inside the slice, and doctor names it', () => {
+    writePrd([])
+    setStage('build')
+    commitMeta('2026-10-15')
+    writeTicket('v0.1', 'T-001', { status: 'done', created: '2026-10-15' })
+    writeTicket('v0.1', 'T-002', { status: 'open', created: '2026-10-9' })
+    const out = run(['doctor'], 'doctor')
+    expect(out).not.toMatch(SIGNAL)
+    expect(out).toMatch(/stage: v0\.1 build-entry slice counts T-002 .*created/)
+  })
+
+  // T-1210 (b): a meta commit dated in UTC (10-14 15:30Z = 10-15 00:30 KST) read as
+  // 10-14 dropped the open ticket created 10-15 from the slice.
+  test('no gate line: a UTC-dated meta commit is read in local time before taking the build-entry day', () => {
+    writePrd([])
+    setStage('build')
+    commitMeta('2026-10-14T15:30:00Z')
+    writeTicket('v0.1', 'T-001', { status: 'done', created: '2026-10-14' })
+    writeTicket('v0.1', 'T-002', { status: 'open', created: '2026-10-15' })
+    expect(run(['doctor'], 'doctor', { TZ: 'Asia/Seoul' })).not.toMatch(SIGNAL)
   })
 
   // T-1274: one `prdt doctor` per test — two in one test ran ~35 s under 7 concurrent

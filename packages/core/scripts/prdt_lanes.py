@@ -750,11 +750,50 @@ LANE_BESTEFFORT_NAME = "자투리"
 LANE_HEADING_RE = re.compile(r"^###\s+합격선(\s|$)")
 
 
-def _lane_gate_rows(root, st, line):
+def _closed_section_body(root, line, version):
+    """T-1256: [(line_no, line)] of the PRD section of a CLOSED `version` (id as a
+    ticket row carries it, `<line>/` prefix for an added line): the `## v…` section
+    still in PRD.md, else the closed round file `prd/versions/[<line>/]<v>.md`
+    (immutable, written at close). [] when neither exists."""
+    root = Path(root)
+    ln_, bare = split_line_id(version)
+    line = line or ln_
+    product = line_product(root, line)
+    prd_dir = docs_path(root, "prd", product)
+    key = _version_id_canon(bare)
+    try:
+        text = (prd_dir / "PRD.md").read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    if text and key is not None:
+        all_heads = _prd_line_headings(text, project_line_names(root))
+        own = (None, line) if product else (line,)
+        heads = [(v, ln) for l, v, ln in all_heads if l in own]
+        chosen = next((h for h in heads if _version_id_canon(h[0]) == key), None)
+        if chosen is not None:
+            later = sorted(ln for _, _, ln in all_heads if ln > chosen[1])
+            end_ln = later[0] if later else None
+            return [(ln, t) for ln, t in _md_structural_lines(text)
+                    if ln > chosen[1] and (end_ln is None or ln < end_ln)]
+    vdir = prd_dir / "versions"
+    if line and not product:
+        vdir = vdir / line
+    try:
+        vtext = (vdir / f"{bare}.md").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return _md_structural_lines(vtext)
+
+
+def _lane_gate_rows(root, st, line, closed_version=None):
     """[(name, gate_path_or_None, named)] — one per 합격선 row of the open PRD
     section's `### 합격선` table, in table order (R1); `named` False = the
-    A · B · C fallback (R11)."""
-    _v, body = _prd_open_section(root, st, line)
+    A · B · C fallback (R11). `closed_version` (T-1256) reads that closed
+    version's section instead of the open one."""
+    if closed_version:
+        body = _closed_section_body(root, line, closed_version)
+    else:
+        _v, body = _prd_open_section(root, st, line)
     rows, inside = [], False
     for _ln, text in body:
         if text.startswith("#"):
@@ -860,7 +899,7 @@ def _lane_new(name, gpath, named, version, besteffort=False):
             "unnamed": not named, "besteffort": besteffort, "_version": version}
 
 
-def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
+def compute_lanes(root, tickets, st, line, version, in_flight, order=None, closed=False):
     """[lane dict] — one per lane record (T-1359: a gate ticket's `lane:`
     frontmatter, ticket-number order), or with no record in this version one
     per 합격선 row of the PRD table; then the 자투리 lane; [] when neither
@@ -872,7 +911,7 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
     gate ticket's deps closure holds it (R8); this version's open+done tickets
     in no row's closure are the 자투리 lane (R7), present only when non-empty."""
     records = _lane_records(tickets, version)
-    rows = [(n, g, True) for n, g, _t in records] if records else _lane_gate_rows(root, st, line)
+    rows = [(n, g, True) for n, g, _t in records] if records else _lane_gate_rows(root, st, line, version if closed else None)
     if not rows:
         return []
     pos = {t: i for i, t in enumerate(order or [])}
@@ -937,10 +976,17 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
     return lanes
 
 
-def lanes_for(root, line=None):
+def lanes_for(root, line=None, version=None):
     """[lane dict] of one product (`line` None = the home product) — the statusline's read.
     Same inputs `compute_schedule` hands `compute_lanes`, so `prdt schedule --json`'s `lanes`
     and this are one computation (T-1184: the schedule itself, so a lane queue has its order)."""
+    if version:
+        # T-1256: a CLOSED version's lanes as at close (viewer idle home) — gate-ticket `lane:`
+        # records first, else its `### 합격선` table from PRD.md or `prd/versions/`. Nothing in
+        # flight, no queue order. `version` None = the unchanged current-version read above.
+        root = Path(root)
+        st = read_json(root / ".prdt" / "po-state.json") or {}
+        return compute_lanes(root, _schedule_tickets(root), st, line, version, set(), closed=True)
     return compute_schedule(Path(root), line=line)["lanes"]
 
 

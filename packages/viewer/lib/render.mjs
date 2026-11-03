@@ -761,19 +761,21 @@ function fmtBytes(n) {
 // 621-627) — doctrine #2, don't re-draw what is already signed off.
 // T-880 = A: 현재 버전(home) · PRD · 티켓 · 위키 · 기능 · 아티팩트 · 용어 사전 ·
 // 릴리즈 노트 · 규율 — the discipline store (T-886) lands last, after 'release'.
-// T-1047: env has no activity-bar item — it is the last current-version sidebar item (after 결정).
-const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release', 'disc']
+// T-1227: env is an activity-bar store again (approved v1.14 screen set, env-machine-placement) — sidebar = a group per product + machine scope, one item per file.
+// T-1255: 용어 사전 left the activity bar too — it is the current-version sidebar item right under env.
+const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'env', 'release', 'disc']
 const STORE_ICON_PATHS = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
   prd: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/>',
   ticket: '<path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/>',
   wiki: '<path d="M12 7c-2-2-5-3-9-3v14c4 0 7 1 9 3 2-2 5-3 9-3V4c-4 0-7 1-9 3Z"/><path d="M12 7v14"/>',
   feature: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22V4"/>',
-  // T-883: copied from the approved mockup (define-screen-set.html 「용어 사전」 · 「릴리즈 노트」 activity buttons).
-  glossary: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m8 13 4-7 4 7"/><path d="M9.1 11h5.7"/>',
+  // T-883: copied from the approved mockup (define-screen-set.html 「릴리즈 노트」 activity button).
   release: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
   // T-886: copied from the approved screen set (define-screen-set.html 「규율」 activity button).
   disc: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+  // T-1227: copied from the approved v1.14 screen set (screen-env-viewer 「env」 activity button).
+  env: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M16 7l3 3M19 4l2 2"/>',
   artifact:
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
 }
@@ -863,7 +865,7 @@ function storeSection(key, { active = false, innerHtml }) {
 function versionNumericParts(id) {
   return (String(id ?? '').match(/\d+/g) || []).map(Number)
 }
-function compareVersionIdsDesc(a, b) {
+export function compareVersionIdsDesc(a, b) {
   const pa = versionNumericParts(a)
   const pb = versionNumericParts(b)
   const len = Math.max(pa.length, pb.length)
@@ -1316,10 +1318,10 @@ export const LINE_SECTIONED_STORES = ['home', 'prd', 'ticket', 'feature', 'artif
  */
 export function lineViews(data) {
   if (!Array.isArray(data.lines) || data.lines.length === 0) return []
-  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes, deployed: data.deployed || null }
+  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes, closedLanes: data.closedLanes, deployed: data.deployed || null }
   return [
     home,
-    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes, deployed: l.deployed || null })),
+    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes, closedLanes: l.closedLanes, deployed: l.deployed || null })),
   ]
 }
 
@@ -1410,7 +1412,7 @@ function allLineTickets(data) {
 // its own, so it cannot guess one.
 // T-958: `alwaysButtons` keeps a one-group sidebar clickable (env: one file is
 // still a file row, never 「그룹 없음」); a group's `dim` greys its row.
-function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey, topHtml = '', alwaysButtons = false }) {
+function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey, topHtml = '', alwaysButtons = false, noCard = false }) {
   const singleGroup = groups.length === 1 && !alwaysButtons
   const defaultIndex = defaultKey === undefined ? 0 : Math.max(0, groups.findIndex((g) => g.key === defaultKey))
   const identity = pageIdentity
@@ -1434,7 +1436,7 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', d
           const crumbAttr = g.crumb ? ` data-crumb="${escapeHtml(g.crumb)}"` : ''
           const dim = g.dim ? ' nav-dim' : ''
           // T-1165: the progress card sits right under the home store's 진행 상황 item.
-          const card = g.key === 'progress' && !cardPlaced ? ((cardPlaced = true), sidebarCardHtml(identity?.card, g.key)) : ''
+          const card = !noCard && g.key === 'progress' && !cardPlaced ? ((cardPlaced = true), sidebarCardHtml(identity?.card, g.key)) : ''
           return `${head}<button type="button" class="nav-item nav-item-clickable${dim}${active}" data-group-select="${escapeHtml(g.key)}"${crumbAttr}><span>${escapeHtml(g.label)}</span>${countHtml}</button>${card}`
         })
         .join('\n')
@@ -1443,7 +1445,7 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', d
   const sidebar = `<nav class="sidebar">
 ${identity ? sidebarIdentityHtml(identity) : '<div class="sidebar-title">productune</div>'}
 <div class="sidebar-sub">${escapeHtml(sidebarSubLabel)}</div>
-${!cardPlaced && !groups.some((g) => g.key === 'progress') ? sidebarCardHtml(identity?.card) : ''}
+${!noCard && !cardPlaced && !groups.some((g) => g.key === 'progress') ? sidebarCardHtml(identity?.card) : ''}
 ${sidebarButtons}
 ${tool ? `<div class="sidebar-foot"><span class="foot-tool" title="${escapeHtml(IDENTITY.toolTitle)}">${escapeHtml(tool)}</span></div>` : ''}
 </nav>`
@@ -1564,7 +1566,7 @@ function wikiSection(pages) {
   return storeSection('wiki', { innerHtml: wikiStoreInner(pages) })
 }
 
-// ---------- glossary store (T-883) ----------
+// ---------- glossary (T-883; T-1255: a 현재 버전 group under env, no store of its own) ----------
 // Source: the wiki's `term` documents (data.wiki, type: term) — no second
 // copy; the wiki store still lists them too. Table 용어 · 분류 · 정의 (the
 // 분류 chip is the first `tags` value, the 정의 is the document's h1 after
@@ -1591,12 +1593,10 @@ function termParts(p) {
   return { id, name, gloss, lead, def, rest, category: tags.length ? String(tags[0]) : '' }
 }
 
-function glossaryStoreInner(wiki) {
+/** T-1255: the 현재 버전 sidebar's 용어 사전 item — the T-883 table (or its empty note) unchanged; `.gl` scopes its CSS. */
+function glossaryGroup(wiki) {
   const pages = termPages(wiki)
-  if (pages.length === 0) {
-    const groups = [{ key: 'all', label: '', count: 0, bodyHtml: `<p class="v-note">${GLOSSARY.empty}</p>` }]
-    return groupedStore({ sidebarSubLabel: GLOSSARY.sidebarLabel, crumbLabel: GLOSSARY.sidebarLabel, groups, noGroupUnit: GLOSSARY.countUnit })
-  }
+  if (pages.length === 0) return { key: 'glossary', label: STORE_LABEL.glossary, count: 0, bodyHtml: `<div class="gl"><p class="v-note">${GLOSSARY.empty}</p></div>` }
   const rows = pages.map((p) => {
     const t = termParts(p)
     const chip = t.category ? `<span class="kp kp-component">${escapeHtml(t.category)}</span>` : '—'
@@ -1605,10 +1605,9 @@ function glossaryStoreInner(wiki) {
       `<td>${chip}</td><td class="def-col">${escapeHtml(t.def)}</td></tr>\n`
   }).join('')
   const head = `<tr>${GLOSSARY.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr>`
-  const bodyHtml = `<div class="count-line section-meta"><span class="count-badge">${escapeHtml(GLOSSARY.countLabel)} <b>${pages.length}</b>${escapeHtml(GLOSSARY.countUnit)}</span></div>\n` +
-    `<div class="table-wrap"><table class="t-gl"><thead>${head}</thead><tbody>\n${rows}</tbody></table></div>\n`
-  const groups = [{ key: 'all', label: '', count: pages.length, bodyHtml }]
-  return groupedStore({ sidebarSubLabel: GLOSSARY.sidebarLabel, crumbLabel: GLOSSARY.sidebarLabel, groups, noGroupUnit: GLOSSARY.countUnit })
+  const bodyHtml = `<div class="gl"><div class="count-line section-meta"><span class="count-badge">${escapeHtml(GLOSSARY.countLabel)} <b>${pages.length}</b>${escapeHtml(GLOSSARY.countUnit)}</span></div>\n` +
+    `<div class="table-wrap"><table class="t-gl"><thead>${head}</thead><tbody>\n${rows}</tbody></table></div>\n</div>`
+  return { key: 'glossary', label: STORE_LABEL.glossary, count: pages.length, bodyHtml }
 }
 
 function glossaryDetailEntries(wiki, repoRootHref) {
@@ -1622,14 +1621,10 @@ function glossaryDetailEntries(wiki, repoRootHref) {
       '</div>'
     entries[t.id] = {
       title: t.gloss ? `${t.name} · ${t.gloss}` : t.name,
-      html: `${t.lead ? `<p class="def-lead">${escapeHtml(t.lead)}</p>` : ''}${meta}<div class="detail-doc rb">${md(t.rest, path.dirname(p.rel), repoRootHref)}</div>`,
+      html: `<div class="gl">${t.lead ? `<p class="def-lead">${escapeHtml(t.lead)}</p>` : ''}${meta}<div class="detail-doc rb">${md(t.rest, path.dirname(p.rel), repoRootHref)}</div></div>`,
     }
   }
   return entries
-}
-
-function glossarySection(wiki) {
-  return storeSection('glossary', { innerHtml: glossaryStoreInner(wiki) })
 }
 
 // ---------- release-notes store (T-883) ----------
@@ -1639,6 +1634,46 @@ function glossarySection(wiki) {
 // (a leading `>` block) as a note box, each `###` group as a heading pill.
 // Links inside a section body go through the same `md()` containment as
 // every other document (source dir `code/docs`).
+// T-1303 (decision T-1316 = A): the body is numbered group-line, the shape a
+// T-1302 approval body uses (contracts/tickets.md): group `**<g>. <label>**`,
+// line `<g>-<n>.` (`2-3`). A group is a `### ` heading or a plain label line
+// after a blank line (the RELEASES.md format's `요약` · lane groups); a line is
+// a top-level `- ` item. Continuation lines, fenced code and items before any
+// group keep no number.
+export const RELEASES_ANCHOR = 'code/docs/RELEASES.md' // = collect.mjs RELEASES_REL (render never imports collect)
+
+/** @param {string} body a release section body (opening `>` note already removed) */
+export function numberReleaseBody(body) {
+  let g = 0
+  let n = 0
+  let fence = null
+  let prevBlank = true
+  return String(body).split('\n').map((line) => {
+    const fm = /^\s*(`{3,}|~{3,})/.exec(line)
+    if (fence !== null || fm) {
+      if (fm) fence = fence === null ? fm[1][0] : (fm[1][0] === fence ? null : fence)
+      prevBlank = false
+      return line
+    }
+    const blank = line.trim() === ''
+    const wasBlank = prevBlank
+    prevBlank = blank
+    if (blank || /^\s/.test(line)) return line
+    const h = /^###\s+(.*)$/.exec(line)
+    if (h) { g += 1; n = 0; prevBlank = true; return `### ${g}. ${h[1]}` }
+    const item = /^([-*+])\s+(.*)$/.exec(line)
+    if (item) {
+      if (g === 0) return line
+      n += 1
+      return `${item[1]} ${g}-${n}. ${item[2]}`
+    }
+    if (!wasBlank || /^(#|>|\||<|\d+[.)]\s)/.test(line)) return line
+    g += 1
+    n = 0
+    return `**${g}. ${line.trim()}**`
+  }).join('\n')
+}
+
 function releaseBodyHtml(section, repoRootHref) {
   let body = section.body
   let note = ''
@@ -1648,7 +1683,7 @@ function releaseBodyHtml(section, repoRootHref) {
     note = `<div class="v-note">${inner.replace(/^<p>/, '').replace(/<\/p>\s*$/, '').replace(/\n/g, '<br>')}</div>\n`
     body = body.slice(quote[1].length)
   }
-  const html = md(body, 'code/docs', repoRootHref).replace(/<h3 class="pill pill-heading-3">/g, '<h3 class="pill pill-heading-2">')
+  const html = md(numberReleaseBody(body), 'code/docs', repoRootHref).replace(/<h3 class="pill pill-heading-3">/g, '<h3 class="pill pill-heading-2">')
   return `${note}${html}`
 }
 
@@ -1979,6 +2014,7 @@ function featureEvidence(e, anchors) {
 
 /** Detail order (T-808 outcome): definition and 「연관 기능」 first, then the spec body (spec file present) or 근거 티켓. */
 // T-883: feature keys whose detail carries a 「읽기」 field, and the store each opens.
+// T-1255: 용어 사전 is the 현재 버전 store's `glossary` group.
 const FEATURE_READ_STORE = { glossary: 'glossary', 'release-notes': 'release' }
 
 function featureReadField(data, e) {
@@ -1987,7 +2023,8 @@ function featureReadField(data, e) {
   const count = store === 'glossary' ? termPages(data.wiki).length : (data.releases || []).length
   const unit = store === 'glossary' ? GLOSSARY.countUnit : RELEASE.countUnit
   const text = readFieldValue(STORE_LABEL[store], count, unit)
-  return `<button type="button" class="area-a read-link" data-open-store="${store}">${escapeHtml(text)}</button>`
+  const target = store === 'glossary' ? 'data-open-store="home" data-open-group="glossary"' : `data-open-store="${store}"`
+  return `<button type="button" class="area-a read-link" ${target}>${escapeHtml(text)}</button>`
 }
 
 /** T-964: inline `code` spans in guide text (screen strings · commands stay code-shaped). */
@@ -2352,6 +2389,9 @@ export function buildAnchors(data) {
     const f = e.fields
     put(e.diskRel, { s: 'artifact', g: f.bucket, k: 'artifact', i: `${f.bucket}/${f.path}` })
   }
+  // T-1303: the release-notes view, and one version's section (`<path>#<version>`, the CLI's viewer_anchor).
+  put(RELEASES_ANCHOR, { s: 'release', g: 'all' })
+  for (const r of data.releases || []) put(`${RELEASES_ANCHOR}#${r.version}`, { s: 'release', g: 'all', k: 'release', i: r.version })
   // T-961: an added release line's items, under its `<line>/` group keys.
   for (const v of lineViews(data).slice(1)) {
     for (const t of currentVersionTickets(v.tickets, v.currentVersion)) {
@@ -2494,24 +2534,40 @@ function envFileBody(f, dir, where) {
     `<p class="env-note">${f.sample ? ENV.sampleNote : ENV.note}</p>${envActions(f, where)}<div class="erows">${rows}</div></div>`
 }
 
-/** One current-version sidebar group per view: env = the last item (after 결정), its count = env file count (samples included). */
-function envGroup(env, emptyHead, machine, where) {
-  const machineHtml = machineEnvBody(machine)
-  if (!env || env.files.length === 0) {
-    const body = `<div class="env-nofile"><b>${escapeHtml(emptyHead)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
-    return { key: 'env', label: STORE_LABEL.env, count: 0, bodyHtml: body + machineHtml }
+/**
+ * T-1227: the env store (approved v1.14 screen set, screen-env-viewer). Sidebar = one group per
+ * product (its env files, or one dim 「env 파일 없음」 item) then the machine-scope group (`.env`, or
+ * one dim 「키 없음」 item); one item per file, its count = the file's key count; the body of an item is
+ * that file's card only.
+ */
+function envSection(data) {
+  const views = lineViews(data)
+  const single = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', prd: data.prd }
+  const groups = lineSectioned(views.length > 0 ? views : [single], (v) => {
+    const env = envOfView(data, v)
+    const dim = isIdleView(v)
+    const where = envWhere(data, v.line)
+    if (!env || env.files.length === 0) {
+      const body = `<div class="env-nofile"><b>${escapeHtml(views.length > 0 ? ENV.emptyHead : ENV.homeNone)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
+      return { groups: [{ key: 'none', label: ENV.noFile, dim: true, bodyHtml: body }] }
+    }
+    return { groups: env.files.map((f) => ({ key: f.name, label: f.sample ? `${f.name} · ${ENV.sample}` : f.name, count: f.keys.length, dim, bodyHtml: envFileBody(f, env.dir, where && { ...where, absDir: env.absDir }) })) }
+  })
+  // A single-product page has no LINES_SCRIPT, so no data-crumb: the crumb stays the plain item label (as after any switch).
+  if (views.length === 0) groups.forEach((g) => delete g.crumb)
+  const machine = data.machineEnv
+  if (machine) {
+    const head = { label: ENV.machineScope, stage: machine.dir }
+    if (machine.keys.length === 0) {
+      const body = `<div class="env-nofile"><b>${ENV.machineEmptyHead}</b><span>${escapeHtml(ENV.machineEmptyDetail)}</span></div>`
+      groups.push({ key: '@machine', label: ENV.machineNoKey, dim: true, ...(views.length > 0 ? { crumb: ENV.machineScope } : {}), head, bodyHtml: body })
+    } else {
+      groups.push({ key: '@machine', label: '.env', count: machine.keys.length, ...(views.length > 0 ? { crumb: `${ENV.machineScope} · .env` } : {}), head, bodyHtml: envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir) })
+    }
   }
-  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir, where && { ...where, absDir: env.absDir })).join('\n') + machineHtml }
-}
-
-/** T-1109: the machine-scope section (~/.prdt/env/.env) — names, 설정됨 / 비어 있음, 제품 코드 값이 우선; none stored → the empty card. Absent `machine` (a single-file render) → nothing. */
-function machineEnvBody(machine) {
-  if (!machine) return ''
-  const head = `<div class="env-scope">${ENV.machineScope}</div>`
-  if (machine.keys.length === 0) {
-    return `${head}<div class="env-nofile"><b>${ENV.machineEmptyHead}</b><span>${escapeHtml(ENV.machineEmptyDetail)}</span></div>`
-  }
-  return head + envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir)
+  // approved.png state #1: the machine-scope .env is preselected when it holds keys; no progress card in this store.
+  const defaultKey = machine && machine.keys.length > 0 ? '@machine' : undefined
+  return storeSection('env', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.env, crumbLabel: STORE_LABEL.env, groups, defaultKey, alwaysButtons: true, noCard: true }) })
 }
 
 // ---------- home: the in-progress version's workspace (T-666 slice 2a) ----------
@@ -2870,7 +2926,9 @@ function homeLineGroups(data, v, views, repoRootHref) {
   const currentArtifacts = lineArtifactEntries(data.artifacts, v, views).filter((e) => e.fields.bucket === cur)
   const currentDecisions = lineDecisionPages(data.wiki, v)
   const decisionTickets = decisionTicketsOf(idle ? homeTickets_(v) : currentTickets)
-  const idleHomeHtml = idle ? idleNotice(IDLE.homeHead(v.name), IDLE.homeDetail(v.tickets.included.filter((t) => t.bucket === 'backlog').length)) : ''
+  const idleLast = idle ? idleLastVersionHtml(v) : ''
+  const idleBacklog = v.tickets.included.filter((t) => t.bucket === 'backlog').length
+  const idleHomeHtml = idle ? idleLast + idleNotice(IDLE.homeHead(v.name), (idleLast ? IDLE.lastDetail : IDLE.homeDetail)(idleBacklog)) : ''
   // T-1108: an idle product has no open version, so its ticket pane lists every ticket it has (backlog + closed rounds).
   const homeTickets = idle ? [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))] : currentTickets
   const groups = [
@@ -2879,9 +2937,31 @@ function homeLineGroups(data, v, views, repoRootHref) {
     { key: 'prd', label: STORE_LABEL.prd, count: idle ? lastClosedId(v) : v.currentVersion, bodyHtml: idle ? idleNotice(IDLE.prdHead(v.name), IDLE.prdDetail()) : prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: homeTickets.length, bodyHtml: ticketRowsTable(homeTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
-    envGroup(envOfView(data, v), ENV.emptyHead, v.line ? null : data.machineEnv, envWhere(data, v.line)),
+    glossaryGroup(data.wiki),
   ]
   return { groups, defaultKey: 'progress' }
+}
+
+/**
+ * T-1256: an idle product's last closed version as it stood at close — its id, ticket counts (the stage bar) and each
+ * lane with its gate result. '' when the product has no closed version (today's idle text alone). Lanes are the
+ * closed version's own (`closedLanes`, the one lane computation asked for that version). The lane rows size their
+ * columns to content inline (QA d-v116-t1256-qa1: at 1280px the shared `.sc-rows` 1fr column pushed the gate result to
+ * the far right); inline, so the shared stylesheet and every in-progress page stay byte-identical.
+ */
+function idleLastVersionHtml(v) {
+  const closed = lastClosedId(v)
+  if (!closed) return ''
+  const tickets = homeTickets_({ ...v, currentVersion: closed })
+  const lanes = (Array.isArray(v.closedLanes) ? v.closedLanes : []).filter((l) => l.linked)
+  const laneRows = lanes
+    .map((l) => {
+      // every row carries three cells (an empty one for a best-effort lane) so the next row's label never lands in this row's gate column
+      const gate = `<span class="sc-n">${l.besteffort ? '' : escapeHtml(l.total > 0 && l.done === l.total ? IDLE.lastGatePass : IDLE.lastGateOpen)}</span>`
+      return `<div class="sc-row"><span class="sc-lab">${escapeHtml(IDLE.lastLane(l.name))}</span><span class="mono sc-n">${l.done}/${l.total}</span>${gate}</div>`
+    })
+    .join('')
+  return `<div class="dash-card" data-last-version="${escapeHtml(closed)}"><div class="cp-h">${escapeHtml(IDLE.lastHead(closed))}</div>${homeStageBar(tickets, '')}${laneRows ? `<div class="sc-rows" style="grid-template-columns:max-content max-content 1fr">${laneRows}</div>` : ''}</div>`
 }
 
 /** T-1138: an idle product's decision tickets = those of the version its decision pages use (`idleVersion`). */
@@ -2915,13 +2995,19 @@ function homeSection(data, repoRootHref) {
   const currentArtifacts = currentArtifactEntries(data.artifacts, data.currentVersion)
   const currentDecisions = currentDecisionPages(data.wiki, data.currentVersion)
   const decisionTickets = decisionTicketsOf(currentTickets)
+  // T-1256: an idle single-product page shows the last closed version like a multi-product idle line does (only when a closed version exists).
+  const idleView = { line: null, name: data.project || '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, closedLanes: data.closedLanes }
+  const idleLast = idleView.stage === 'idle' && Boolean(idleView.name) && lastClosedId(idleView) !== ''
+  const progressBody = idleLast
+    ? idleLastVersionHtml(idleView) + idleNotice(IDLE.homeHead(idleView.name), IDLE.lastDetail(data.tickets.included.filter((t) => t.bucket === 'backlog').length))
+    : `<div class="dash-grid">${homeProgressBody(data)}</div>`
   const groups = [
-    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: progressBody },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
-    envGroup(data.env, ENV.homeNone, data.machineEnv, envWhere(data, null)),
+    glossaryGroup(data.wiki),
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
   const heading = `${STORE_LABEL.home} · ${data.currentVersion}`
@@ -3443,32 +3529,32 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .store-section[data-store="feature"] .ev-text code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
 .store-section[data-store="feature"] .read-link { font-size: 12px; font-weight: 600; }
 /* T-883: glossary + release-notes screens (approved mockup docs/artifacts/v1.12/define-screen-set.html) */
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) table { table-layout: fixed; }
-.store-section[data-store="glossary"] table.t-gl th:nth-child(1) { width: 230px; }
-.store-section[data-store="glossary"] table.t-gl th:nth-child(2) { width: 112px; }
+:is(.gl, .store-section[data-store="release"]) table { table-layout: fixed; }
+.gl table.t-gl th:nth-child(1) { width: 230px; }
+.gl table.t-gl th:nth-child(2) { width: 112px; }
 .store-section[data-store="release"] table.t-rel th:nth-child(1) { width: 112px; }
 .store-section[data-store="release"] table.t-rel th:nth-child(3) { width: 112px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) th.num-col, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.num-col { text-align: right; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.num-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .nm { font-weight: 600; display: block; }
-.store-section[data-store="glossary"] .nm-gloss { display: block; font-size: 11.5px; color: var(--text-quaternary); margin-top: 1px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.def-col { color: var(--text-secondary); line-height: 1.5; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.t-title { color: var(--text-primary); font-size: 13px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .ver { font-family: var(--font-mono); font-weight: 600; font-size: 12.5px; color: var(--text-primary); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-field-value.ver { font-size: 12.5px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .count-line { display: flex; align-items: baseline; gap: var(--space-12); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row.is-open td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .def-lead { font-size: 14.5px; line-height: 1.65; color: var(--text-primary); margin: 0 0 var(--space-16); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb p { margin: 0 0 var(--space-12); font-size: 13.5px; line-height: 1.7; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb ul { margin: 0 0 var(--space-8); padding-left: 20px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb li { margin: 0 0 var(--space-6); font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb li b { color: var(--text-primary); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb code { background: var(--bg-surface-on); padding: 0 4px; border-radius: var(--radius-4); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill { display: block; width: max-content; max-width: 100%; margin: var(--space-24) 0 var(--space-8); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill:first-child, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note + h3.pill { margin-top: var(--space-16); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note { font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 var(--space-4); }
-@media (prefers-reduced-motion: reduce) { :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row td { transition: none; } }
+:is(.gl, .store-section[data-store="release"]) th.num-col, :is(.gl, .store-section[data-store="release"]) td.num-col { text-align: right; }
+:is(.gl, .store-section[data-store="release"]) td.num-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
+:is(.gl, .store-section[data-store="release"]) .nm { font-weight: 600; display: block; }
+.gl .nm-gloss { display: block; font-size: 11.5px; color: var(--text-quaternary); margin-top: 1px; }
+:is(.gl, .store-section[data-store="release"]) td.def-col { color: var(--text-secondary); line-height: 1.5; }
+:is(.gl, .store-section[data-store="release"]) td.t-title { color: var(--text-primary); font-size: 13px; }
+:is(.gl, .store-section[data-store="release"]) .ver { font-family: var(--font-mono); font-weight: 600; font-size: 12.5px; color: var(--text-primary); }
+:is(.gl, .store-section[data-store="release"]) .detail-field-value.ver { font-size: 12.5px; }
+:is(.gl, .store-section[data-store="release"]) .count-line { display: flex; align-items: baseline; gap: var(--space-12); }
+:is(.gl, .store-section[data-store="release"]) .detail-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+:is(.gl, .store-section[data-store="release"]) .detail-row.is-open td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+:is(.gl, .store-section[data-store="release"]) .def-lead { font-size: 14.5px; line-height: 1.65; color: var(--text-primary); margin: 0 0 var(--space-16); }
+:is(.gl, .store-section[data-store="release"]) .rb p { margin: 0 0 var(--space-12); font-size: 13.5px; line-height: 1.7; }
+:is(.gl, .store-section[data-store="release"]) .rb ul { margin: 0 0 var(--space-8); padding-left: 20px; }
+:is(.gl, .store-section[data-store="release"]) .rb li { margin: 0 0 var(--space-6); font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
+:is(.gl, .store-section[data-store="release"]) .rb li b { color: var(--text-primary); }
+:is(.gl, .store-section[data-store="release"]) .rb code { background: var(--bg-surface-on); padding: 0 4px; border-radius: var(--radius-4); }
+:is(.gl, .store-section[data-store="release"]) .rb h3.pill { display: block; width: max-content; max-width: 100%; margin: var(--space-24) 0 var(--space-8); }
+:is(.gl, .store-section[data-store="release"]) .rb h3.pill:first-child, :is(.gl, .store-section[data-store="release"]) .rb .v-note + h3.pill { margin-top: var(--space-16); }
+:is(.gl, .store-section[data-store="release"]) .rb .v-note { font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 var(--space-4); }
+@media (prefers-reduced-motion: reduce) { :is(.gl, .store-section[data-store="release"]) .detail-row td { transition: none; } }
 /* T-958: env screen (approved screen set docs/artifacts/v1.13/define-screen-set.html #screen-env; the Home env block left 진행 상황 in T-1191 / T-1179 C) */
 .nav-item.nav-dim:not(.active) span:first-child { color: var(--text-tertiary); }
 .env-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 4px; }
@@ -3484,7 +3570,6 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .est.off { color: var(--text-tertiary); border-style: dashed; }
 .env-nofile { display: flex; flex-direction: column; gap: 4px; padding: 18px; border: 1px dashed var(--border-inline); border-radius: 10px; color: var(--text-tertiary); font-size: 12.5px; }
 .env-nofile b { color: var(--text-primary); font-size: 13px; }
-.env-scope { margin: 18px 0 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .tagw { font-family: var(--font-family); font-size: 10.5px; color: var(--text-tertiary); border: 1px solid var(--border-inline); border-radius: 100px; padding: 0 7px; margin-left: 8px; white-space: nowrap; }
 .env-card + .env-card { margin-top: 12px; }
 /* T-1191: a file card's open controls — link-styled, the same accent link look as .env-go had */
@@ -3978,12 +4063,6 @@ ${PRD_READING_SCRIPT}
     var view = p.get('view');
     if (!view) return false;
     var group = p.get('group');
-    if (view === 'env') {
-      // T-1047: env is a current-version item now; an old ?view=env&group=<line>/<file> link lands on that line's env item.
-      var cut = group ? group.lastIndexOf('/') : -1;
-      view = 'home';
-      group = (cut === -1 ? '' : group.slice(0, cut + 1)) + 'env';
-    }
     var section = findByAttr('.store-section', 'data-store', view);
     if (!section) return false;
     clearHashMarks();
@@ -4387,7 +4466,7 @@ export function renderPage({
   // bodies never sit in this page, so the page itself cannot tell.
   pastMermaid = false,
 }) {
-  // T-1277: the chrome language is the project's user_lang (data.userLang, collect.mjs); unset or unknown → ko.
+  // T-1277: the chrome language is data.userLang (project user_lang, else machine user-lang; collect.mjs); unset or unknown → ko.
   setViewerLang(data.userLang)
   const bundle = scriptBundle(viewerLang)
   pageViewerAbsPath = viewerAbsPath
@@ -4428,7 +4507,7 @@ ${ticketSection(data.tickets, data.currentVersion, views)}
 ${wikiSection(data.wiki)}
 ${featuresSection(data)}
 ${artifactsSection(data.artifacts, data.currentVersion, views)}
-${glossarySection(data.wiki)}
+${envSection(data)}
 ${releaseSection(data.releases || [])}
 ${discSection(discipline, data.disciplineLoad || null)}`
   const detailScript = detailDataScript(detailData)
@@ -4448,7 +4527,7 @@ ${discSection(discipline, data.disciplineLoad || null)}`
 <style>
 ${fontFaceCss}
 ${TEMPLATE_CSS}
-${emitRootThemeCss(dark, light)}${views.length > 0 ? LINES_CSS : ''}${mm ? MERMAID_CSS : ''}
+${emitRootThemeCss(dark, light)}${LINES_CSS}${mm ? MERMAID_CSS : ''}
 </style>
 </head>
 <body>

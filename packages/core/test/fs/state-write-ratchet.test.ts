@@ -155,6 +155,8 @@ const ALLOW: Record<string, number> = {
   'core/scripts/prdt::_index_db_prepare': 1,
   'core/scripts/prdt::_track_lock': 2,
   'core/scripts/prdt::_resource_lock': 1,
+  // T-1286: the test-read tracer, created O_EXCL ('x') in a fresh mkdtemp dir of its own — outside any project / state dir
+  'core/scripts/prdt::_track_trace_env': 1,
   'core/scripts/prdt::main': 1,
   // hook / status-line shell: `>` `>>` redirects (temp files, stderr captures, per-session stamps) — not audited for .prdt targets; hooks write project state through prdt_safe_fs.py
   'core/scripts/hooks/prdt-audience-inject.sh': 2,
@@ -170,7 +172,7 @@ const ALLOW: Record<string, number> = {
   'core/scripts/hooks/prdt-return-check.sh': 6, // T-1283: -2 = `<…>` in docstring prose;  T-1173: +1 = append_inbox's leaf-O_NOFOLLOW os.open fallback (docs/_shared/wiki/inbox.md, never .prdt/), taken only when prdt_safe_fs.py is not installed — same shape as the existing fallback above it
   'core/scripts/hooks/prdt-secret-guard.sh': 3, // T-1109: +1 = embedded Perl `length($n) > length($b)` in is_store_path — a comparison the SH_REDIR scan reads as a redirect, no write
   'core/scripts/hooks/prdt-session-start.sh': 4,
-  'core/scripts/hooks/prdt-user-prompt.sh': 5, // T-1283: -1 = `<…>` in docstring prose;  T-1081: +1 = cap_jsonl's trim of $PRDT_HOME/run/form-outline-counts.jsonl (home, never .prdt/)
+  'core/scripts/hooks/prdt-user-prompt.sh': 6, // T-1307: +1 = note_chat_lang's write of $PRDT_HOME/run/session-lang/<sid> (home, never .prdt/); T-1283: -1 = `<…>` in docstring prose;  T-1081: +1 = cap_jsonl's trim of $PRDT_HOME/run/form-outline-counts.jsonl (home, never .prdt/)
   'core/scripts/hooks/prdt-worktree-guard.sh': 1,
   'core/scripts/statusline-prdt.sh': 2, // T-1283: -2 = `<…>` in python docstring prose (the T-1252 comment never counted once tails are skipped)
   'core/src/git-workflow/meta-backup.ts': 2,
