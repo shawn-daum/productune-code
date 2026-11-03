@@ -3622,6 +3622,11 @@ ${DISCIPLINE_LOAD_CSS}
   .frame-main-col { flex: 0 0 auto; min-height: 420px; overflow: visible; width: 100%; }
   .main-inner { min-width: 0; }
   .table-wrap { overflow-x: auto; }
+  /* T-1391: the fixed 230 + 112 px term/category columns left the 정의 column ~48px at 390 — one glyph a line. Phone: narrower leading columns, a table floor so 정의 keeps >= 220px (the wrap scrolls sideways), Korean wraps by phrase. */
+  .gl table.t-gl { min-width: 480px; }
+  .gl table.t-gl th:nth-child(1) { width: 150px; }
+  .gl table.t-gl th:nth-child(2) { width: 96px; }
+  .gl td.def-col { word-break: keep-all; overflow-wrap: break-word; }
   .frame-body { padding: var(--space-16) var(--space-12); overflow: visible; }
   .dash-card { padding: var(--space-12); }
   .sc-grid { grid-template-columns: 1fr; }
