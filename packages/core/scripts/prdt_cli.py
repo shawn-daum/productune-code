@@ -5083,6 +5083,20 @@ AUTO_OPEN_DOMAIN = ("on", "off")
 # the legal set prdt-plan-tier-inject.sh's `case` and settings/plan-tier.ts accept
 PLAN_TIER_DOMAIN = ("max-x20", "team-premium", "other")
 CLI_LANG_DOMAIN = ("ko", "en")
+# T-1094: the stages the PO's spare-capacity rider fill runs in. Ship stays out
+# (its patch loop has its own rules). Stored canonical (stage order) in
+# `$PRDT_HOME/rider-stages`; no file or an off-shape one = the default, build only.
+# KEEP in lockstep with `rider_stages` in hooks/prdt-user-prompt.sh.
+RIDER_STAGE_DOMAIN = ("define", "build")
+RIDER_STAGES_DEFAULT = "build"
+
+
+def _rider_stages_canon(value):
+    """'build, define' → 'define,build'; None when empty or any name is outside the domain."""
+    names = {n.strip() for n in value.split(",")} - {""}
+    if not names or not names <= set(RIDER_STAGE_DOMAIN):
+        return None
+    return ",".join(s for s in RIDER_STAGE_DOMAIN if s in names)
 
 
 def cli_lang():
@@ -5412,6 +5426,14 @@ def settings_entries(droot):
         "check": lambda v: None, "refuse": _priority_refuse, "report": _priority_report,
         "get": lambda: _read_token("priority-projects") or None,
         "put": lambda v: _write_token("priority-projects", v if v is None else ",".join(_priority_names(v))),
+    })
+    # T-1094: which stages rider fill runs in; read by prdt-user-prompt.sh's state line.
+    entries.append({
+        "key": "rider.stages", "kind": "text", "domain": None,
+        "shape": "comma-separated stages from: " + ", ".join(RIDER_STAGE_DOMAIN),
+        "check": lambda v: None if _rider_stages_canon(v) else "shape",
+        "get": lambda: _rider_stages_canon(_read_token("rider-stages")) or RIDER_STAGES_DEFAULT,
+        "put": lambda v: _write_token("rider-stages", v if v is None else _rider_stages_canon(v)),
     })
     for ck in DISPATCH_CAP_KEYS:
         entries.append({

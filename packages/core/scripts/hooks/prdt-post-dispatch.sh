@@ -391,6 +391,9 @@ def _append_line(path, text):
 #                    visible on a machine whose settings.json predates the
 #                    SubagentStart registration in hook-manifest.json.
 #   SubagentStop   → `stopped_at` stamped; the file STAYS for the resume case.
+#                    T-1387: a LATER SubagentStop re-stamps it — a stop another
+#                    SubagentStop hook blocked did not end the worker (readers:
+#                    prdt_lanes._worker_past_stop).
 #   prune          → F10: THIS hook (the tooling that owns `run/`) removes
 #                    marker files from disk, at every event it handles, once
 #                    `stopped_at` — or `since`, for a marker that never saw a
@@ -896,12 +899,16 @@ def marker_lock():
 
 
 def marker_stop(aid):
+    """T-1387: every SubagentStop stamps its own time, an earlier stamp included.
+    A SubagentStop another hook on the same registration blocks (prdt-return-check
+    .sh) leaves the worker running with no new SubagentStart — measured 2026-11-03,
+    d-v116-t1094-dev2 — so an earlier stamp is not the end; the LAST stop is."""
     if not aid:
         return
     try:
         with marker_lock():
             data = marker_load(aid)
-            if data is not None and not data.get("stopped_at"):
+            if data is not None:
                 data["stopped_at"] = now
                 marker_save(data)
     except Exception:
