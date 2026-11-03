@@ -13,7 +13,9 @@
 # compute_schedule`, imported — never re-derived) for every product in stage
 # `build`, and blocks the stop ONCE when a GATE lane (a 합격선 row, never the
 # 자투리 lane) is IDLE:
-#   - linked, not finished, nothing in flight (`working` empty), a `ready` row;
+#   - linked, not finished, nothing in flight (`working` empty), a `ready` row
+#     owned by a worker (designer · developer · qa — T-1381: a `po` row has no
+#     worker to dispatch);
 #   - not stopped by the user's need — its head (the lane's first open ticket in
 #     `prdt schedule` row order) is an open decision or `assignee: user`
 #     request (`waiting-user` row);
@@ -174,13 +176,19 @@ def idle_lanes(pl, root):
         for ln in s.get("lanes") or []:
             if ln.get("besteffort") or not ln.get("linked") or ln.get("finished"):
                 continue
-            if ln.get("working") or not ln.get("ready"):
+            if ln.get("working"):
+                continue
+            # T-1381: a ready row owned by the PO (or any non-worker) has no worker to
+            # dispatch — only designer/developer/qa rows (SCHEDULE_DISPATCHABLE) count.
+            owner = ln.get("ready_owner") or {}
+            ready = [t for t in ln.get("ready") or [] if owner.get(t) in pl.SCHEDULE_DISPATCHABLE]
+            if not ready:
                 continue
             members = set(ln.get("tickets") or [])
             head = next((t for t in order if t in members), None)
             if head is not None and state.get(head) == "waiting-user":
                 continue
-            out.append((ln["name"], list(ln["ready"])))
+            out.append((ln["name"], ready))
     return out
 
 

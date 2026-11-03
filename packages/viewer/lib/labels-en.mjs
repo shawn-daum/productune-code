@@ -31,6 +31,7 @@ const ENV = {
   sampleNote: 'Sample files are not counted as set or unset.',
   homeNone: 'No env file in the code folder.',
   machineScope: 'Machine scope',
+  machineNoKey: 'No keys',
   codeWins: 'Product code value wins',
   plainValue: 'plain value',
   machineEmptyHead: 'No keys are stored in machine scope.',
@@ -264,6 +265,11 @@ const IDLE = {
   prdHead: (name) => `${name} has no PRD section in progress.`,
   prdDetail: (lastClosed) => `${lastClosed ? `The finished ${lastClosed} is in the list on the left. ` : ''}An in-progress section appears once a new version starts.`,
   prdSideLabel: 'No section in progress',
+  lastHead: (version) => `Finished version ${version} · progress at completion`,
+  lastLane: (name) => `Lane ${name}`,
+  lastGatePass: 'Gate passed',
+  lastGateOpen: 'Gate not passed',
+  lastDetail: (backlog) => `${backlog > 0 ? `${backlog} backlog ticket${backlog === 1 ? ' is' : 's are'} waiting. ` : ''}Once a new version starts, this screen shows that version's progress.`,
 }
 
 const PRD_READING = {

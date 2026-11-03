@@ -53,6 +53,7 @@ const ENV = {
   sampleNote: '견본 파일은 설정 여부를 세지 않아요.',
   homeNone: '코드 폴더에 env 파일이 없어요.',
   machineScope: '기기 범위',
+  machineNoKey: '키 없음',
   codeWins: '제품 코드 값이 우선',
   plainValue: '보통 값',
   machineEmptyHead: '기기 범위에 저장된 키가 없어요.',
@@ -374,6 +375,13 @@ const IDLE = {
   prdHead: (name) => `${name} 는 진행 중인 PRD 섹션이 없어요.`,
   prdDetail: (lastClosed) => `${lastClosed ? `완료한 ${lastClosed} 은 왼쪽 목록에서 볼 수 있어요. ` : ''}새 버전을 시작하면 진행 중인 섹션이 생겨요.`,
   prdSideLabel: '진행 중인 섹션 없음',
+  // T-1256: the last closed version's progress as at close, shown while the product is idle.
+  lastHead: (version) => `완료한 버전 ${version} · 완료 시점 진행 상황`,
+  lastLane: (name) => `레인 ${name}`,
+  lastGatePass: '합격선 통과',
+  lastGateOpen: '합격선 미통과',
+  // T-1376 A: the sentence under the last-version block (homeDetail stays for a product with no closed version).
+  lastDetail: (backlog) => `${backlog > 0 ? `backlog 티켓 ${backlog}건이 대기 중이에요. ` : ''}새 버전을 시작하면 이 화면에 그 버전의 진행 상황이 보여요.`,
 }
 
 // T-884 (T-860 / T-874): the open PRD's reading screen — outline, folds, 「결정할 것」 box,

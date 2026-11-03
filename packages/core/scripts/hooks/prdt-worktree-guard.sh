@@ -146,7 +146,10 @@
 #
 # DEPLOY (T-1173 rule 3): EVERY session. A deploy-shaped Bash command (see
 #   deploy_shape) while po-state stage is define/build and the wiki log.md has
-#   no N/A-skip line naming the version → deny. Replaces the prompt-wording
+#   no N/A-skip line naming the version → deny. Multi-product (T-1222): the
+#   current task's product stage (`products.<p>`); no current task or a
+#   product name it cannot place → the top level and every product (fails
+#   closed). Replaces the prompt-wording
 #   tripwire prdt-user-prompt.sh used to print (S30).
 #
 # Fails OPEN everywhere: python3 missing, unparsable JSON, no project, an
@@ -1019,6 +1022,30 @@ def git_head_branch(repo):
     return None
 
 
+def _log_skips(log, version):
+    """True when the wiki log holds an `N/A-skip` line naming `version`."""
+    vre = re.compile(re.escape(version) + r"(?![0-9.]*[0-9])")
+    try:
+        with open(log, encoding="utf-8", errors="replace") as f:
+            return any("N/A-skip" in line and vre.search(line) for line in f)
+    except Exception:
+        return False
+
+
+def first_product_names(proot):
+    """Names po-state `current_task.product` may give the first product: the
+    config `slug` and its `docs/<kebab>/` folder form. A spelling this misses
+    (a reserved slug's `<name>-product`) only widens the gate to every product."""
+    try:
+        with open(os.path.join(proot, ".prdt", "config.json"), encoding="utf-8") as f:
+            slug = json.load(f).get("slug")
+    except Exception:
+        return ()
+    if not isinstance(slug, str) or not slug:
+        return ()
+    return (slug, re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-"))
+
+
 def deploy_gate(start):
     """(stage, version) when a deploy from `start` must wait for ship entry,
     else None. Cached per project root."""
@@ -1031,20 +1058,36 @@ def deploy_gate(start):
     try:
         with open(os.path.join(proot, ".prdt", "po-state.json"), encoding="utf-8") as f:
             st = json.load(f)
-        stage = st.get("stage") if isinstance(st, dict) else None
-        version = st.get("version") if isinstance(st, dict) else None
-        if stage in ("define", "build"):
-            res = (stage, version if isinstance(version, str) else "")
-            shared_dir = os.path.join(proot, "docs", "_shared")
-            log = os.path.join(shared_dir if os.path.isdir(shared_dir) else os.path.join(proot, "docs"),
-                               "wiki", "log.md")
-            if res[1] and re.fullmatch(r"v[0-9]+(?:\.[0-9]+){0,2}", res[1]):
-                vre = re.compile(re.escape(res[1]) + r"(?![0-9.]*[0-9])")
-                with open(log, encoding="utf-8", errors="replace") as f:
-                    for line in f:
-                        if "N/A-skip" in line and vre.search(line):
-                            res = None
-                            break
+        st = st if isinstance(st, dict) else {}
+        # T-1222 C7: top-level stage · version = the first product; an added
+        # product's live in `products.<p>` (pre-v1.14 `lines`). The deploy's
+        # product = current_task's `product` (pre-v1.14 `line`); absent or
+        # naming the first product → the top level; naming an added product →
+        # its entry. Anything else — no current task, a name the guard cannot
+        # place — fails closed: the top level and every product are checked.
+        top = (st.get("stage"), st.get("version"))
+        pk = "products" if "products" in st or "lines" not in st else "lines"
+        prods = st.get(pk) if isinstance(st.get(pk), dict) else {}
+        every = [top] + [(e.get("stage"), e.get("version")) for _, e in sorted(prods.items()) if isinstance(e, dict)]
+        cands = every
+        ct = st.get("current_task")
+        if isinstance(ct, dict):
+            p = ct.get("product") if "product" in ct else ct.get("line")
+            if p is None or p == "" or p in first_product_names(proot):
+                cands = [top]
+            elif isinstance(p, str) and isinstance(prods.get(p), dict):
+                cands = [(prods[p].get("stage"), prods[p].get("version"))]
+        shared_dir = os.path.join(proot, "docs", "_shared")
+        log = os.path.join(shared_dir if os.path.isdir(shared_dir) else os.path.join(proot, "docs"),
+                           "wiki", "log.md")
+        for stage, version in cands:
+            if stage not in ("define", "build"):
+                continue
+            v = version if isinstance(version, str) else ""
+            if v and re.fullmatch(r"v[0-9]+(?:\.[0-9]+){0,2}", v) and _log_skips(log, v):
+                continue
+            res = (stage, v)
+            break
     except Exception:
         pass
     _stage_cache[proot] = res
@@ -1071,17 +1114,118 @@ def deny_deploy(gate, how):
     sys.exit(0)
 
 
+# T-1222 C6: package runners that run a bin by name, one row per runner:
+# (subcommands after which the next operand is the bin, flags that take the
+# next token as their value, flags whose value is a shell command string,
+# whether a bare first operand is itself the bin — `pnpm vercel`, `yarn vercel`).
+# A flag in neither list may or may not take a value (pnpm `-w` does not, npm
+# `-w` does): both readings are tried, so an unlisted flag never hides the bin.
+_NPM_VAL = ("-p", "--package", "-w", "--workspace", "--prefix", "--registry", "--userconfig", "--cache",
+            "--loglevel", "--script-shell", "--node-options")
+_PNPM_VAL = ("-C", "--dir", "--filter", "-F", "--filter-prod", "--registry", "--reporter", "--loglevel",
+             "--package", "--workspace-concurrency", "--changed-files-ignore-pattern", "--test-pattern")
+_YARN_VAL = ("--cwd", "--registry", "-p", "--package", "--modules-folder", "--cache-folder", "--mutex",
+             "--network-timeout")
+_BUN_VAL = ("--cwd", "-p", "--package", "-c", "--config", "--registry")
+_RUNNERS = {
+    "npx": ((), _NPM_VAL, ("-c", "--call"), True),
+    "npm": (("exec", "x"), _NPM_VAL, ("-c", "--call"), False),
+    "pnpx": ((), _PNPM_VAL, ("-c", "--shell-mode"), True),
+    "pnpm": (("dlx", "exec", "run"), _PNPM_VAL, ("-c", "--shell-mode"), True),
+    "yarn": (("dlx", "exec", "run"), _YARN_VAL, (), True),
+    "bunx": ((), _BUN_VAL, (), True),
+    "bun": (("x", "run"), _BUN_VAL, (), True),
+}
+# a runner's operand subcommand that takes one more operand before the bin
+_RUNNER_SUB_VALUE = {"yarn": ("workspace",)}
+# package name → the bin it installs, where they differ
+_PKG_BIN = {"netlify-cli": "netlify"}
+
+
+def _bin_name(tok):
+    """`vercel@33` · `@scope/x@1` · `./node_modules/.bin/vercel` → the bin name."""
+    b = os.path.basename(tok).split("@", 1)[0]
+    return _PKG_BIN.get(b, b)
+
+
+def unwrap_runner(name, args, depth=0):
+    """([(bin, its args)], [shell script]) for `name args`: every bin a package
+    runner may run here (one reading per ambiguous flag), and every shell
+    string it runs (`npm exec -c '…'`). A non-runner → ([(name, args)], [])."""
+    if name not in _RUNNERS or depth > 4:
+        return [(name, args)], []
+    subs, vals, shells, bare = _RUNNERS[name]
+    sub_vals = _RUNNER_SUB_VALUE.get(name, ())
+    bins, scripts, seen = [], [], set()
+    todo = [(0, False)]  # (index, a bin-running subcommand was seen)
+    while todo:
+        k, sub_seen = todo.pop()
+        if (k, sub_seen) in seen or len(seen) > 256:
+            continue
+        seen.add((k, sub_seen))
+        if k >= len(args):
+            continue
+        a = args[k]
+        if a == "--":
+            todo.append((k + 1, sub_seen))
+            continue
+        if a.startswith("-"):
+            flag = a.split("=", 1)[0]
+            if flag in shells:
+                if "=" in a:
+                    scripts.append(a.split("=", 1)[1])
+                elif k + 1 < len(args):
+                    scripts.append(args[k + 1])
+                continue
+            if "=" in a:
+                todo.append((k + 1, sub_seen))
+            elif flag in vals:
+                todo.append((k + 2, sub_seen))
+            else:  # unlisted: read as boolean AND as value-taking
+                todo += [(k + 1, sub_seen), (k + 2, sub_seen)]
+            continue
+        if not sub_seen and a in sub_vals:
+            todo.append((k + 2, sub_seen))
+            continue
+        if not sub_seen and a in subs:
+            todo.append((k + 1, True))
+            continue
+        if not sub_seen and not bare and subs:
+            continue
+        nb, na = _bin_name(a), [x for x in args[k + 1:] if x != "--"]
+        b2, s2 = unwrap_runner(nb, na, depth + 1)
+        bins.extend(b2)
+        scripts.extend(s2)
+    return bins, scripts
+
+
+_NOT_PROD = ("false", "0", "no", "off")
+
+
+def _prod_flag(args, flags):
+    """True when `args` holds one of `flags`, bare or `=<value>` other than false."""
+    for a in args:
+        f, eq, v = a.partition("=")
+        if f in flags and (not eq or v.strip().lower() not in _NOT_PROD):
+            return True
+    return False
+
+
 def deploy_shape(name, args, ecwd, heads):
     """(start-dir, description) when this simple command deploys, else None.
     `heads` = branch a `git checkout|switch` earlier in the same command left
     checked out, keyed by realpath of the repo dir."""
-    if name in ("npx", "bunx") and args:
-        rest = [a for a in args if not a.startswith("-")]
-        if rest:
-            name, args = os.path.basename(rest[0]).split("@", 1)[0], args[args.index(rest[0]) + 1:]
+    if name in _RUNNERS:
+        bins, _ = unwrap_runner(name, args)
+        for bn, ba in bins:
+            if bn not in _RUNNERS:
+                r = deploy_shape(bn, ba, ecwd, heads)
+                if r:
+                    return r
+        return None
     if name == "vercel":
         ops = [a for a in args if not a.startswith("-")]
-        if (any(a in ("--prod", "--production", "--target=production") for a in args)
+        if (_prod_flag(args, ("--prod", "--production")) or "--target=production" in args
                 or any(args[k] == "--target" and k + 1 < len(args) and args[k + 1] == "production"
                        for k in range(len(args)))
                 or (ops and ops[0] == "promote")):
@@ -1089,7 +1233,7 @@ def deploy_shape(name, args, ecwd, heads):
         return None
     if name == "netlify":
         ops = [a for a in args if not a.startswith("-")]
-        if ops and ops[0] == "deploy" and any(a in ("--prod", "--prodIfUnlocked") for a in args):
+        if ops and ops[0] == "deploy" and _prod_flag(args, ("--prod", "--prodIfUnlocked")):
             return ecwd, "Bash netlify deploy --prod"
         return None
     if name == "gh":
@@ -1386,6 +1530,10 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch, lv=None):
             pa = [a for a in (args if name == "prdt" else args[args.index(ops[0]) + 1:]) if not a.startswith("-")]
             if len(pa) >= 2 and pa[0] == "track" and pa[1] in ("open", "merge", "land", "drop") and same_home(env):
                 deny_tracks(tracks_abs, f"Bash prdt track {pa[1]} (a PO command)")
+        if name in _RUNNERS:
+            # T-1222: `npm exec -c '…'` · `npx -c '…'` run a shell string, read like `bash -c`
+            for scr in unwrap_runner(name, args)[1]:
+                run_command(scr, ecwd, depth + 1, dict(env), dict(env), dict(lv))
         dep = deploy_shape(name, args, ecwd, heads)
         if dep:
             gate = deploy_gate(dep[0] or cwd)
