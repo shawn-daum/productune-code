@@ -140,6 +140,14 @@ function jumpPagePath(id: string): string {
   return path.join(root, '.prdt', 'scratch', 'viewer', 'at', `${id}.html`)
 }
 
+/** T-1382: the page a dec/req id links — home/progress with the ticket's detail open. */
+function progressPagePath(id: string): string {
+  return path.join(root, '.prdt', 'scratch', 'viewer', 'at', 'progress', `${id}.html`)
+}
+function progressUrl(id: string): string {
+  return `../../viewer.html?view=home&amp;group=progress&amp;kind=ticket&amp;id=${id}`
+}
+
 function runStatusline(columns?: number): string {
   const env: NodeJS.ProcessEnv = { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en' }
   if (columns === undefined) delete env.COLUMNS
@@ -374,7 +382,35 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     const out = runStatusline()
     expect(segment(out, 'dec')).toBe('T-901')
     expect(out).toMatch(/\x1b\]8;;file:\/\/[^\x1b]+\x1b\\T-901\x1b\]8;;\x1b\\/)
-    expect(fs.readFileSync(jumpPagePath('T-901'), 'utf-8')).toContain('url=../viewer.html#T-901')
+    expect(fs.readFileSync(progressPagePath('T-901'), 'utf-8')).toContain(progressUrl('T-901'))
+  })
+
+  test('T-1382: a dec/req link opens the viewer on home/progress with that ticket open; a working id keeps the #id page', () => {
+    writeTicket('T-901', { type: 'decision' })
+    writeTicket('T-903', { assignee: 'user' })
+    writeMarker({ agentId: 'linked', ticketId: 'T-682', ageMs: 60_000 })
+    buildIndexDb([
+      { id: 'T-682', relPath: 'docs/tickets/v9.9/T-682.md' },
+      { id: 'T-901', relPath: 'docs/tickets/v9.9/T-901.md' },
+      { id: 'T-903', relPath: 'docs/tickets/v9.9/T-903.md' },
+    ], [])
+    stubViewerHtml()
+    // the generator's own `at/T-901.html` (`#id` form, shared with `prdt tickets --link`) is never rewritten
+    const shared = jumpPagePath('T-901')
+    fs.mkdirSync(path.dirname(shared), { recursive: true })
+    const sharedBody = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=../viewer.html#T-901"><a href="../viewer.html#T-901">viewer.html#T-901</a>\n'
+    fs.writeFileSync(shared, sharedBody)
+    const out = runStatusline()
+    for (const id of ['T-901', 'T-903']) {
+      const page = progressPagePath(id)
+      expect(out).toContain(`\x1b]8;;file://${page}\x1b\\${id}\x1b]8;;\x1b\\`)
+      const body = fs.readFileSync(page, 'utf-8')
+      expect(body).toContain(`content="0;url=${progressUrl(id)}"`)
+      expect(body).toContain(`<a href="${progressUrl(id)}">`)
+    }
+    expect(fs.readFileSync(shared, 'utf-8')).toBe(sharedBody)
+    expect(out).toContain(`\x1b]8;;file://${jumpPagePath('T-682')}\x1b\\T-682`)
+    expect(fs.readFileSync(jumpPagePath('T-682'), 'utf-8')).toContain('url=../viewer.html#T-682')
   })
 
   test('T-842: a committed symlink at viewer/at/ is never written through — the victim keeps its bytes and the id renders unlinked', () => {
@@ -644,13 +680,13 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
       expect(segment(first.out, 'dec')).toMatch(/\+\d+$/) // overflowed: the candidate walk ran
       expect(first.writes.length).toBeGreaterThan(0)
       expect(new Set(first.writes).size).toBe(first.writes.length) // never the same stub twice
-      for (const w of first.writes) expect(fs.existsSync(jumpPagePath(w.replace(/\.html$/, '')))).toBe(true)
+      for (const w of first.writes) expect(fs.existsSync(progressPagePath(w.replace(/\.html$/, '')))).toBe(true)
       const second = render()
       expect(second.writes).toEqual([]) // every stub already current
       expect(second.out).toBe(first.out) // byte-identical for the same state
-      fs.writeFileSync(jumpPagePath('T-100'), 'stale\n')
+      fs.writeFileSync(progressPagePath('T-100'), 'stale\n')
       expect(render().writes).toEqual(['T-100.html'])
-      expect(fs.readFileSync(jumpPagePath('T-100'), 'utf-8')).toContain('url=../viewer.html#T-100')
+      expect(fs.readFileSync(progressPagePath('T-100'), 'utf-8')).toContain(progressUrl('T-100'))
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
