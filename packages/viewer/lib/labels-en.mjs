@@ -265,6 +265,11 @@ const IDLE = {
   prdHead: (name) => `${name} has no PRD section in progress.`,
   prdDetail: (lastClosed) => `${lastClosed ? `The finished ${lastClosed} is in the list on the left. ` : ''}An in-progress section appears once a new version starts.`,
   prdSideLabel: 'No section in progress',
+  lastHead: (version) => `Finished version ${version} · progress at completion`,
+  lastLane: (name) => `Lane ${name}`,
+  lastGatePass: 'Gate passed',
+  lastGateOpen: 'Gate not passed',
+  lastDetail: (backlog) => `${backlog > 0 ? `${backlog} backlog ticket${backlog === 1 ? ' is' : 's are'} waiting. ` : ''}Once a new version starts, this screen shows that version's progress.`,
 }
 
 const PRD_READING = {
