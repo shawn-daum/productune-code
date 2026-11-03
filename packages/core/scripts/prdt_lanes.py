@@ -1358,7 +1358,7 @@ def stage_history(root, line=None, version=None, limit=400):
     (`meta_git_trust_problem`), or any git failure → []. Read-only."""
     root = Path(root)
     gd = meta_git_dir(root)
-    if not (gd / "HEAD").exists() or meta_git_trust_problem(root):
+    if not (gd / "HEAD").exists():
         return []
     if version is None:
         _s, vid, _c = line_state(read_json(root / ".prdt" / "po-state.json"), line)
@@ -1366,6 +1366,13 @@ def stage_history(root, line=None, version=None, limit=400):
     if not version:
         return []
     want = join_line_id(line, version)
+    # A hit runs no git, so it is safe before the trust check (only trusted runs fill it).
+    ckey = _stage_cache_key(gd, int(limit))
+    cached = _stage_cache_get(gd, want, ckey)
+    if cached is not None:
+        return cached
+    if meta_git_trust_problem(root):
+        return []
     base = [*META_GIT_HARDEN, "-c", "log.showSignature=false", "--git-dir", str(gd)]
     # `log -n N -- <path>` walks back until N snapshots touch po-state: a version holds a
     # few, so read a small window and widen it only while every snapshot read still names
@@ -1382,7 +1389,81 @@ def stage_history(root, line=None, version=None, limit=400):
     for day, stage in reversed(seen):
         if not hist_out or hist_out[-1][1] != stage:
             hist_out.append([day, stage])
+    _stage_cache_put(gd, want, ckey, hist_out)
     return hist_out
+
+
+# T-1384 follow-up: the git walk above costs ~0.7 s cold, and the statusline runs once per
+# call. The answer changes only when the meta repo's branch moves, so it is cached per
+# (meta.git, line+version) under a per-user temp dir, keyed by the stat of HEAD, the ref
+# HEAD names and packed-refs (a commit rewrites the ref file → new key). A failed or
+# unreadable cache is a miss, never an error; only trusted-repo results are ever stored.
+def _stage_cache_key(gd, limit):
+    parts = [str(limit)]
+    try:
+        names = ["HEAD", "packed-refs"]
+        head = (gd / "HEAD").read_text(errors="replace").strip()
+        if head.startswith("ref: "):
+            names.append(head[5:].strip())
+        parts.append(head)
+        for n in names:
+            try:
+                st = os.stat(gd / n)
+                parts.append(f"{n}:{st.st_mtime_ns}:{st.st_size}")
+            except OSError:
+                parts.append(f"{n}:-")
+    except OSError:
+        return None
+    return "|".join(parts)
+
+
+def _stage_cache_path(gd):
+    import hashlib
+    import tempfile
+    h = hashlib.sha1(str(Path(gd).resolve()).encode()).hexdigest()[:16]
+    d = Path(tempfile.gettempdir()) / f"prdt-stage-hist-{os.getuid()}"
+    return d, d / f"{h}.json"
+
+
+def _stage_cache_get(gd, want, ckey):
+    if ckey is None:
+        return None
+    try:
+        _d, f = _stage_cache_path(gd)
+        st = os.stat(f)
+        if st.st_uid != os.getuid():
+            return None
+        ent = json.loads(f.read_text()).get(want)
+        if not isinstance(ent, dict) or ent.get("key") != ckey:
+            return None
+        hist = ent.get("hist")
+        if isinstance(hist, list) and all(
+                isinstance(r, list) and len(r) == 2 and all(isinstance(x, str) for x in r)
+                for r in hist):
+            return hist
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def _stage_cache_put(gd, want, ckey, hist):
+    if ckey is None:
+        return
+    try:
+        d, f = _stage_cache_path(gd)
+        d.mkdir(mode=0o700, exist_ok=True)
+        try:
+            data = json.loads(f.read_text())
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        data[want] = {"key": ckey, "hist": hist}
+        tmp = f.with_name(f"{f.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data))
+        os.replace(tmp, f)
+    except (OSError, ValueError, TypeError):
+        pass
 
 
 def _stage_snapshots(root, base, n, line, want):
