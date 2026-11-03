@@ -481,13 +481,13 @@ def judge_input(lines):
         return "\n".join(numbered)
     head, n = [], 0
     for x in numbered:
-        if n + len(x) + 1 > JUDGE_HEAD_CHARS:
+        if JUDGE_HEAD_CHARS < n + len(x) + 1:
             break
         head.append(x)
         n += len(x) + 1
     tail, n = [], 0
     for x in reversed(numbered[len(head):]):
-        if n + len(x) + 1 > JUDGE_TAIL_CHARS:
+        if JUDGE_TAIL_CHARS < n + len(x) + 1:
             break
         tail.append(x)
         n += len(x) + 1
@@ -612,7 +612,7 @@ def section_bounds(lines, i):
         if not in_fence and HEADING_RE.match(ln):
             heads.append(k)
     start = max([h for h in heads if h <= i], default=0)
-    end = min([h for h in heads if h > i], default=len(lines))
+    end = min([h for h in heads if i < h], default=len(lines))
     return start, end
 
 
@@ -830,7 +830,7 @@ def question_check(lines, asks, tickets, unknown, turn_start, reply, reasked):
         return None
     uncovered = sorted(set(uncovered))
     shown = ", ".join(str(n) for n in uncovered[:LIST_CAP])
-    if len(uncovered) > LIST_CAP:
+    if LIST_CAP < len(uncovered):
         shown += ", +%d more" % (len(uncovered) - LIST_CAP)
     return QUESTION_CHECK_REASON % (shown, lang_clause())
 
