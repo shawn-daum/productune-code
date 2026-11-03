@@ -40,7 +40,10 @@ function dayOf(v) {
 
 export function stageOfTicket(fm, history = []) {
   const own = fm && fm.stage
-  if (COUNTED_STAGES.has(own)) return own
+  const order = ['define', 'build', 'ship']
+  const byType = stageOfTicketType(fm && fm.type)
+  // T-1386 = B: an explicit key obeys the same floor — never earlier than the type's stage
+  if (COUNTED_STAGES.has(own)) return order.indexOf(byType) > order.indexOf(own) ? byType : own
   const day = dayOf(fm && fm.created)
   if (day) {
     let hit = null
@@ -50,8 +53,6 @@ export function stageOfTicket(fm, history = []) {
     }
     if (COUNTED_STAGES.has(hit)) {
       // T-1386 = B: never earlier than the type's stage (define < build < ship)
-      const order = ['define', 'build', 'ship']
-      const byType = stageOfTicketType(fm && fm.type)
       return order.indexOf(byType) > order.indexOf(hit) ? byType : hit
     }
   }

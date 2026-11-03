@@ -397,8 +397,11 @@ def ticket_stage_of(row, head):
             row["stage_hist"] = _pl.stage_history(root, row["line"], row["version"])
         except Exception:
             row["stage_hist"] = []
-    return _pl.ticket_stage(mst.group(1) if mst else None, mcr.group(1) if mcr else None,
-                            ttype, row["stage_hist"])
+    try:
+        return _pl.ticket_stage(mst.group(1) if mst else None, mcr.group(1) if mcr else None,
+                                ttype, row["stage_hist"])
+    except Exception:
+        return stage_of_type(ttype)
 
 
 # Rows this statusline may print — measured on the user's machine 2026-10-06:
