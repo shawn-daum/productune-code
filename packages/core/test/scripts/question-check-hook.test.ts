@@ -913,3 +913,100 @@ describe('T-1389 — PostToolUse first (the reply draft of `prdt wordlist check 
     expect(post(p, heredoc('다크모드는 T-001 대로 진행할게요.'), env([]))).toBeNull()
   })
 })
+
+describe('T-1428 — a confirm request on a body is an ask even when the judge misses it', () => {
+  // L1 observation (3) (decision-approval-observation.md, 재관측 2026-11-03): r3 ff50718c and
+  // r3b b2007d0d asked to confirm a release-note body with no decision ticket and nothing
+  // blocked. Their confirm lines are read deterministically beside the judge: the judge is
+  // stubbed to MISS them here ([]), so only CONFIRM_ASK_RE can find them.
+  const PRDT = path.join(CORE_ROOT, 'scripts', 'prdt')
+  const REASK = '[prdt re-ask check]'
+  const env = (asks: number[] = [], extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-t1428-'))
+    roots.push(home)
+    return J(asks, { ...ON, PRDT_HOME: home, PRDT_BIN: PRDT, ...extra })
+  }
+  function decision(proj: string, id: string, status: string, ago: number) {
+    const p = path.join(proj, 'docs', 'tickets', 'v1.13', `${id}.md`)
+    fs.writeFileSync(p, ['---', `id: ${id}`, `slug: s-${id.toLowerCase()}`, 'type: decision', `status: ${status}`, 'assignee: user',
+      'created: 2026-11-01', '---', '', '## problem', '', '- x', '', '## outcome', '',
+      status === 'done' ? '폰 설정을 따른다 — 사용자 「폰 설정 따라가면 돼」' : '', '', '## log', '', ''].join('\n'))
+    const t = (Date.now() - ago) / 1000
+    fs.utimesSync(p, t, t)
+  }
+  function run(reply: string, fill: (proj: string) => void, e: NodeJS.ProcessEnv) {
+    const { root, proj } = makeProject({})
+    fill(proj)
+    const out = runHook({
+      hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
+    }, e)
+    return out
+  }
+  const none = () => {}
+  const T001 = (p: string) => decision(p, 'T-001', 'done', 86_400_000)
+  const lineOf = (reply: string, needle: string) => reply.split('\n').findIndex(l => l.includes(needle)) + 1
+
+  const observed: Array<[string, string]> = [
+    ['approval-r3-reply', '이대로 괜찮으면 이 메시지에 답해 주세요'],
+    ['approval-r3b-which-lines', '이 문구로 괜찮은지, 고칠 줄이 있는지 알려 주세요'],
+  ]
+  for (const [name, needle] of observed) {
+    test(`${name}: 「${needle}」, no decision ticket, judge missed it → flagged on that line`, () => {
+      const reply = fx(name)
+      expect(blockedLines(run(reply, none, env()))).toEqual([lineOf(reply, needle)])
+    })
+
+    test(`${name}: T-001 (answered) cited as the body's source → question check, never re-ask`, () => {
+      const reply = fx(name)
+      const reason = JSON.parse(run(reply, T001, env([lineOf(reply, needle)]))).reason as string
+      expect(reason.startsWith(TAG)).toBe(true)
+      expect(reason).not.toContain(REASK)
+    })
+
+    test(`${name}: an open decision id cited beside the confirm request → silent`, () => {
+      const reply = fx(name).replace(needle, `${needle} (T-002)`)
+      expect(run(reply, (p) => { T001(p); decision(p, 'T-002', 'open', 86_400_000) }, env())).toBe('')
+    })
+  }
+
+  test.each([
+    '이대로 괜찮으면 답해 주세요.',
+    '아래 내용이 맞는지 답해 주세요.',
+    '이 초안으로 좋으면 승인해 주세요.',
+    '위 문구가 괜찮으시면 알려 주세요.',
+  ])('other confirm-request forms are asks: %s', (ask) => {
+    const reply = ['초안이에요.', '```', '- 한 줄', '```', ask].join('\n')
+    expect(blockedLines(run(reply, none, env()))).toEqual([5])
+  })
+
+  test.each([
+    ['quoted', '지난번에 「이대로 괜찮으면 이 메시지에 답해 주세요」 로 물었는데 막히지 않았어요.'],
+    ['a blockquote', '> 이대로 괜찮으면 이 메시지에 답해 주세요.'],
+    ['inside a fence', '```\n이대로 괜찮으면 이 메시지에 답해 주세요.\n```'],
+    ['inline code', '문구 `이대로 괜찮으면 답해 주세요` 를 판정해요.'],
+    ['an information request', '이 경로가 맞는지 알려 주세요.'],
+    ['no answer asked', '이대로 괜찮으면 따로 답하지 않으셔도 돼요.'],
+    ['a look-and-report', '화면이 괜찮은지 직접 봐 주세요.'],
+  ])('not a confirm request: %s', (_label, text) => {
+    expect(run(['보고예요.', '', text].join('\n'), none, env())).toBe('')
+  })
+
+  test('the judge failing does not drop a deterministic confirm request', () => {
+    const reply = fx('approval-r3-reply')
+    const out = run(reply, none, env([], { QC_FAKE_MODE: 'error' }))
+    expect(blockedLines(out)).toEqual([lineOf(reply, '이대로 괜찮으면')])
+  })
+
+  test('no existing fixture gains a confirm-request line the judge stubs did not name', () => {
+    // replay: every pre-T-1428 fixture, judge stubbed to [] — only approval-r3 holds such a line
+    // (13, already judged an ask in the L1 replay above); every other one stays silent.
+    const old = fs.readdirSync(FIXTURES).filter(f => f.endsWith('.md') && !f.startsWith('approval-r3-') && !f.startsWith('approval-r3b-'))
+    const hit: string[] = []
+    for (const f of old) {
+      const reply = fx(f.slice(0, -3))
+      if (run(reply, none, env())) hit.push(f)
+    }
+    expect(hit).toEqual(['approval-r3.md'])
+  })
+})

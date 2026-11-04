@@ -48,6 +48,9 @@
 # drops every other Stop before python3 starts, and a PO Stop after a decision
 # ticket changed this turn calls it only when the reply cites a ticket the
 # re-ask or batch-ask check could act on (judge_needed).
+# ONE DETERMINISTIC FORM BESIDE THE JUDGE (T-1428): a confirm request on a body
+# (CONFIRM_ASK_RE: 「이대로 괜찮으면 … 답해 주세요」, 「이 문구로 괜찮은지 … 알려 주세요」)
+# is an ask line whatever the judge answers, a failed judge included.
 # THE JUDGE FAILS OPEN, VISIBLY. No `claude` on PATH, a timeout (JUDGE_TIMEOUT_S),
 # a non-zero exit, an error result (no auth) or an unreadable answer → no asks,
 # no block, and one line in $PRDT_HOME/run/question-check.log (also stderr,
@@ -674,6 +677,33 @@ def recorded_decisions(root, ids):
 
 # T-1377: an ask approving a body shown above it in its section (a fenced draft).
 APPROVAL_RE = re.compile(r"승인|컨펌|approv|confirm", re.I)
+# T-1428: a confirm request on a body, read deterministically beside the judge — the
+# L1 observation (3) sentences 「이대로 괜찮으면 이 메시지에 답해 주세요」 · 「이 문구로
+# 괜찮은지, 고칠 줄이 있는지 알려 주세요」 went unasked when the model missed them. A
+# reference to the body (이대로 · 이 문구 · 위 내용 …), then 괜찮/맞/좋 + a condition or
+# whether ending, then an answer verb + 주-, all inside one sentence. Matched on the line
+# with QUOTED_RE spans blanked; fenced and blockquoted lines are never read. It also
+# counts as an approval ask for the re-ask subject (body_end).
+CONFIRM_ASK_RE = re.compile(
+    r"(?:이대로|이렇게|그대로|(?:이|위|아래|위의|아래의)\s*(?:문구|내용|초안|본문|문장|글|안|노트|버전|목록|표|계획))"
+    r"[^.?!\n]{0,40}?(?:괜찮|맞|좋)(?:으시면|으면|다면|은지|는지|을지)"
+    r"[^.?!\n]{0,60}?(?:답|알려|말씀|회신|승인|컨펌|확정)\s*(?:해\s*)?(?:주세요|주시겠어요|주실래요|주셔도|주시면|줘)"
+)
+
+
+def confirm_ask_lines(lines):
+    """T-1428: 0-based indexes of the lines CONFIRM_ASK_RE reads as a confirm request,
+    outside fences and blockquotes, quoted spans blanked."""
+    out, in_fence = [], False
+    for i, ln in enumerate(lines):
+        if FENCE_RE.match(ln):
+            in_fence = not in_fence
+            continue
+        if in_fence or ln.lstrip().startswith(">"):
+            continue
+        if CONFIRM_ASK_RE.search(QUOTED_RE.sub(" ", ln)):
+            out.append(i)
+    return out
 
 
 def body_end(lines, a, i):
@@ -711,7 +741,8 @@ def ask_subject(lines, i, kind, option_ref, tickets):
     if is_item_ask(lines, i, kind):
         own = ids_on(lines[i]) | ids_on(lines[a])
         return own or ids_on("\n".join(lines[a:b]))
-    e = body_end(lines, a, i) if APPROVAL_RE.search(QUOTED_RE.sub(" ", lines[i])) else None
+    bare = QUOTED_RE.sub(" ", lines[i])
+    e = body_end(lines, a, i) if APPROVAL_RE.search(bare) or CONFIRM_ASK_RE.search(bare) else None
     if e is None:
         return ids_on("\n".join(lines[a:b]))
     return ids_on("\n".join(lines[a:e + 1] + lines[i:b]))
@@ -781,7 +812,8 @@ def findings(root, reply, turn_start):
     if not judge_needed(reply, tickets, turn_start):
         return []
     lines = reply.split("\n")
-    judged = judge_asks(lines)
+    # T-1428: the deterministic confirm requests join the judged lines, judge failed or not.
+    judged = sorted(set(judge_asks(lines) or []) | set(confirm_ask_lines(lines)))
     if not judged:
         return []
     asks = ask_kinds(lines, judged)
