@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
 # prdt — unticketed-question check (T-985; where to enforce: T-986 = B).
-# Registered on Stop (matcher-less: Stop takes none). Acts for the PO only
-# (`agent_type` == `prdt-po`); every other Stop — a worker, a plain session —
-# exits silently.
+# Registered on Stop (matcher-less: Stop takes none) and on PostToolUse (matcher
+# `Bash`). Acts for the PO only (`agent_type` == `prdt-po`); every other event —
+# a worker, a plain session — exits silently.
+#
+# POSTTOOLUSE FIRST, STOP LAST (T-1389; the language check's pattern, T-1307).
+# The PO checks its reply draft with `prdt wordlist check … -` before sending it
+# (the `[prdt reply]` hot line asks for that on every tool call). On the
+# PostToolUse of that Bash call this hook runs the same checks below on the DRAFT
+# (the heredoc body or the quoted string piped to it) and returns what it finds as
+# PostToolUse additionalContext, so the first full reply is written right. Each
+# finding (re-ask per record ids, batch per id set, question once) is reported at
+# most once per turn (turn = `prompt_id`, else the last prompt record of the
+# transcript), recorded in $PRDT_HOME/run/question-check/turns/<session>.json.
+# Stop stays the last resort: it judges the FINAL reply as before and blocks only
+# when that reply still breaks a check — a reply that complies is never blocked.
 #
 # WHY. PO habit says a 2+-path fork becomes a `type: decision` ticket the moment
 # it is raised, but nothing noticed when a PO asked the user to choose or confirm
@@ -66,7 +78,7 @@
 #
 # THE REASON CARRIES LINE NUMBERS, NEVER REPLY TEXT. Same discipline as the
 # register check: the PO gets which lines, not its own words echoed back.
-# WORDING: QUESTION_CHECK_REASON below is the user-confirmed wording (T-990 = A).
+# WORDING: the three reasons + DRAFT_TAIL / SENT_TAIL are the user-confirmed T-1390 wording (T-1425 = A).
 #
 # TICKET IDS ARE PLUGGABLE. DECISION_ID_PREFIXES / TICKET_DIRS name what counts
 # as a citable record (`T-NNN` under docs/tickets today; T-996 = C moves
@@ -102,6 +114,10 @@ case "$EVENT_JSON" in
   *'"prdt-po"'*) ;;
   *) exit 0 ;;
 esac
+# T-1389: a PostToolUse leaves here unless it can carry a reply draft.
+case "$EVENT_JSON" in
+  *'"PostToolUse"'*) case "$EVENT_JSON" in *'wordlist'*) ;; *) exit 0 ;; esac ;;
+esac
 [ "${PRDT_QUESTION_CHECK:-on}" != "off" ] || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 printf '%s' "$EVENT_JSON" | python3 -I -c "$(sed -n '/^# ---- python ----$/,$p' "$0" | sed '$d')"
@@ -110,7 +126,7 @@ exit 0
 # body out of bash's parser, so `bash -n` still reads this file end to end.
 : <<'PYEOF'
 # ---- python ----
-import json, os, re, shutil, signal, stat, subprocess, sys, tempfile, time
+import hashlib, json, os, re, shutil, signal, stat, subprocess, sys, tempfile, time
 from datetime import datetime
 
 # T-1104: product-first docs layout (docs/artifacts/v1.14/product-first-docs-layout.html).
@@ -177,19 +193,18 @@ def tickets_homes(root):
 # Wording: T-990 = A (2026-10-06); re-send clause T-1302 (inject-edit).
 # %s = the uncovered asks' line numbers ("3, 12").
 QUESTION_CHECK_REASON = (
-    "[prdt question check] this reply asks the user to choose or confirm with no open decision "
-    "ticket cited beside the ask (line %s) — a choose/confirm question, a pick request, an A/B "
-    "option set, or an item under a waiting-for-your-answer heading — and no `type: decision` "
-    "ticket was created or changed this turn. Open a `type: decision` ticket for each ask or cite "
-    "its open ticket id beside it (a waiting item: `assignee: user` counts), then send the reply "
-    "again%s, opening with one line that the question now has its ticket, every other line kept — a body "
-    "to confirm keeps its numbered lines (or group ranges + ticket link), never the options alone."
+    "[prdt question check] line %s asks the user to choose or confirm (a pick, an A/B option set, an item "
+    "under a waiting-for-your-answer heading) with no open `type: decision` id beside it. Open one per ask "
+    "(a waiting item: `assignee: user` counts; a body to confirm goes in it, numbered) and cite its id beside the ask."
 )
-# T-1116: the language clause that goes after "send the reply again" (wording settled
-# under the discipline-wording module, T-1245). %s = the stored chat language; the
-# clause is empty when no language is known, so the reason is then byte-identical
-# to the T-990 text above.
+# T-1116: the language clause (since T-1390 inside SENT_TAIL, Stop only; wording settled
+# under the discipline-wording module, T-1245). %s = the stored chat language; empty when none is known.
 QUESTION_CHECK_LANG_CLAUSE = " in lang=%s"
+# T-1390 (T-1425 = A): the one closing line per output — the draft is fixed before it
+# is sent (PostToolUse; the `[prdt reply]` line of that moment carries the language),
+# the sent reply stays and only the fix is sent (Stop; %s = the language clause).
+DRAFT_TAIL = "Fix the draft before you send it."
+SENT_TAIL = "The sent reply stays: send only the fix%s, never the reply again."
 
 # T-1281: the stored chat language only — never the device language.
 USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
@@ -218,21 +233,18 @@ RUN_BUDGET_S = 5
 # docs/productune/artifacts/v1.16/lane-records-build-entry-step.md §B To-Be).
 # %s = line numbers, record ids, language clause.
 REASK_REASON = (
-    "[prdt re-ask check] this reply asks the user (line %s) beside a decision already answered: %s "
-    "(answer: `prdt decisions find <id>`). Act on the recorded answer and cite it, never ask it again; "
-    "a decision ticket opened this turn for that ask → `dropped` naming the record. Keep the ask only "
-    "when the record is stale or conflicting, its state changed, or a consent gate needs live words "
-    "— say which beside the ask. Then send the reply again%s, every other line kept."
+    "[prdt re-ask check] line %s asks again a decision already answered: %s (`prdt decisions find <id>`). "
+    "Act on the recorded answer and cite it; a ticket opened this turn for that ask → `dropped` naming the "
+    "record. Ask again only when the record is stale or conflicting, its state changed, or a consent gate "
+    "needs live words — say which."
 )
 # T-1285 (2) / T-1364 = C: one reply whose asks carry this many distinct OPEN
 # decision ids (each id inside an ask's own item or section) is blocked once.
 # T-1367 = A (user-approved wording). %s = count, ids, language clause.
 BATCH_ASK_MIN = 4
 BATCH_ASK_REASON = (
-    "[prdt batch-ask check] this reply asks the user about %s open decisions at once (%s). "
-    "Ask one screen-changing decision per reply, wording-only ones together in one table; "
-    "the others stay open under their tickets, cited by id with no ask beside them. "
-    "Then send the reply again%s, every other line kept."
+    "[prdt batch-ask check] %s open decisions asked at once (%s). Ask the one screen-changing decision, "
+    "wording-only ones in one table; the rest stay open, cited by id, no ask."
 )
 DECISIONS_FIND_TIMEOUT_S = 3
 
@@ -716,14 +728,14 @@ def reask_check(root, lines, asks, tickets, turn_start):
             if t[1] == "done" and t[3] < turn_start - 1:
                 hits.setdefault(k, set()).add(i + 1)
     if not hits:
-        return None, set()
+        return None, set(), []
     rec = recorded_decisions(root, set(hits))
     if not rec:
-        return None, set()
+        return None, set(), []
     ln = sorted({n for k in rec for n in hits[k]})
     shown = ", ".join(str(n) for n in ln[:LIST_CAP]) + (", +%d more" % (len(ln) - LIST_CAP) if LIST_CAP < len(ln) else "")
     ids = sorted(rec)
-    return REASK_REASON % (shown, ", ".join(ids[:LIST_CAP]), lang_clause()), set(ln)
+    return REASK_REASON % (shown, ", ".join(ids[:LIST_CAP])), set(ln), ids
 
 
 def batch_check(lines, asks, tickets):
@@ -740,26 +752,157 @@ def batch_check(lines, asks, tickets):
             if t and t[0] == "decision" and t[1] == "open":
                 asked.add(m.group(1))
     if len(asked) < BATCH_ASK_MIN:
-        return None
+        return None, []
     ids = sorted(asked)
     shown = ", ".join(ids[:LIST_CAP]) + (", +%d more" % (len(ids) - LIST_CAP) if LIST_CAP < len(ids) else "")
-    return BATCH_ASK_REASON % (len(ids), shown, lang_clause())
+    return BATCH_ASK_REASON % (len(ids), shown), ids
 
 
 def block(reason):
     sys.stdout.write(json.dumps({"decision": "block", "reason": reason}))
 
 
+def findings(root, reply, turn_start):
+    """[(key, reason)] — every check that applies to `reply`, in block order
+    (re-ask, batch-ask, question). `key` names the violation for the once-per-turn
+    PostToolUse report (T-1389). [] when nothing applies or anything fails open."""
+    idx = ticket_index(root)
+    if idx is None:
+        return []
+    tickets, unknown = idx
+    if not judge_needed(reply, tickets, turn_start):
+        return []
+    lines = reply.split("\n")
+    judged = judge_asks(lines)
+    if not judged:
+        return []
+    asks = ask_kinds(lines, judged)
+    # T-1377: every check that applies speaks in the one block, none hides another.
+    out = []
+    reask, reasked, reask_ids = reask_check(root, lines, asks, tickets, turn_start)
+    if reask:
+        out.append(("reask:" + ",".join(reask_ids), reask))
+    batch, batch_ids = batch_check(lines, asks, tickets)
+    if batch:
+        out.append(("batch:" + ",".join(batch_ids), batch))
+    question = question_check(lines, asks, tickets, unknown, turn_start, reply, reasked)
+    if question:
+        out.append(("question", question))
+    return out
+
+
+# T-1389: the reply draft a `prdt wordlist check … -` Bash call reads on stdin.
+WORDLIST_STDIN_RE = re.compile(r"prdt\s+wordlist\s+check\b[^\n|;&]*?\s-(?=\s|$|[;&|)])")
+HEREDOC_RE = re.compile(r"<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n(.*?)\n[ \t]*\2[ \t]*(?:\n|$)", re.S)
+DQ_RE = re.compile(r'"((?:[^"\\]|\\.)*)"', re.S)
+SQ_RE = re.compile(r"'([^']*)'", re.S)
+
+
+def wordlist_draft(command):
+    """The draft text of a `prdt wordlist check … -` command: the longest heredoc
+    body, else the longest quoted string (double-quoted escapes undone); None
+    when the command is not that check or carries no draft."""
+    if not (isinstance(command, str) and WORDLIST_STDIN_RE.search(command)):
+        return None
+    bodies = [m.group(3) for m in HEREDOC_RE.finditer(command)]
+    if not bodies:
+        bodies = [re.sub(r'\\([\\"$`])', r"\1", m.group(1)) for m in DQ_RE.finditer(command)]
+        bodies += [m.group(1) for m in SQ_RE.finditer(command)]
+    bodies = [b for b in bodies if b.strip()]
+    return max(bodies, key=len) if bodies else None
+
+
+def turn_key(ev):
+    """The turn this event belongs to: `prompt_id`, else a hash of the last
+    main-session prompt record in the transcript tail; None when neither."""
+    pid = ev.get("prompt_id")
+    if isinstance(pid, str) and pid:
+        return "p:" + pid
+    try:
+        path = ev.get("transcript_path")
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            f.seek(max(0, size - TAIL_MAX))
+            raw = f.read().decode("utf-8", "replace").split("\n")
+        for jl in reversed(raw):
+            jl = jl.strip()
+            if not jl:
+                continue
+            try:
+                rec = json.loads(jl)
+            except Exception:
+                continue
+            if isinstance(rec, dict) and _is_prompt_record(rec):
+                return "t:" + hashlib.sha256(jl.encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        return None
+    return None
+
+
+def unreported(ev, keys):
+    """T-1389: the keys not yet reported this turn, recorded as reported now.
+    No turn known → every key (nothing to dedupe against)."""
+    turn = turn_key(ev)
+    if turn is None:
+        return list(keys)
+    sid = re.sub(r"[^A-Za-z0-9_-]", "_", str(ev.get("session_id") or "nosession"))[:80]
+    home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+    d = os.path.join(home, "run", "question-check", "turns")
+    p = os.path.join(d, sid + ".json")
+    try:
+        with open(p, encoding="utf-8") as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        st = {}
+    sent = st.get("sent") if isinstance(st, dict) and st.get("turn") == turn else None
+    sent = [k for k in sent if isinstance(k, str)] if isinstance(sent, list) else []
+    new = [k for k in keys if k not in sent]
+    if new:
+        try:
+            os.makedirs(d, exist_ok=True)
+            tmp = "%s.tmp%d" % (p, os.getpid())
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"turn": turn, "sent": sent + new}, f)
+            os.replace(tmp, p)
+        except OSError:
+            pass
+    return new
+
+
+def post_tool_main(ev, root):
+    """T-1389: the checks on the draft a `prdt wordlist check -` call read,
+    reported once per finding per turn as PostToolUse additionalContext."""
+    if ev.get("tool_name") != "Bash":
+        return
+    ti = ev.get("tool_input")
+    draft = wordlist_draft(ti.get("command") if isinstance(ti, dict) else None)
+    if not draft:
+        return
+    turn_start, _ = scan_transcript(ev.get("transcript_path"))
+    if turn_start is None:
+        return
+    found = findings(root, draft, turn_start)
+    new = set(unreported(ev, [k for k, _ in found]))
+    reasons = [r for k, r in found if k in new]
+    if reasons:
+        sys.stdout.write(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse", "additionalContext": "\n\n".join(reasons) + "\n" + DRAFT_TAIL}}))
+
+
 def main():
     ev = read_event()
     if ev is None:
         return
-    if ev.get("hook_event_name") != "Stop" or ev.get("agent_type") != "prdt-po":
-        return
-    if ev.get("stop_hook_active") is True:
+    event = ev.get("hook_event_name")
+    if event not in ("Stop", "PostToolUse") or ev.get("agent_type") != "prdt-po":
         return
     root = project_root(ev.get("cwd"))
     if not root:
+        return
+    if event == "PostToolUse":
+        post_tool_main(ev, root)
+        return
+    if ev.get("stop_hook_active") is True:
         return
     turn_start, transcript_text = scan_transcript(ev.get("transcript_path"))
     reply = ev.get("last_assistant_message")
@@ -769,25 +912,11 @@ def main():
         return
     if turn_start is None:
         return
-    idx = ticket_index(root)
-    if idx is None:
-        return
-    tickets, unknown = idx
-    if not judge_needed(reply, tickets, turn_start):
-        return
-    lines = reply.split("\n")
-    judged = judge_asks(lines)
-    if not judged:
-        return
-    asks = ask_kinds(lines, judged)
-    # T-1377: every check that applies speaks in the one block, none hides another.
-    reask, reasked = reask_check(root, lines, asks, tickets, turn_start)
-    reasons = [r for r in (reask, batch_check(lines, asks, tickets)) if r]
-    question = question_check(lines, asks, tickets, unknown, turn_start, reply, reasked)
-    if question:
-        reasons.append(question)
+    # Stop is the last resort (T-1389): the final reply is judged in full, and a
+    # reply that complies gets no output whatever was reported on PostToolUse.
+    reasons = [r for _, r in findings(root, reply, turn_start)]
     if reasons:
-        block("\n\n".join(reasons))
+        block("\n\n".join(reasons) + "\n" + SENT_TAIL % lang_clause())
 
 
 def reasked_section(lines, i, reasked):
@@ -832,7 +961,7 @@ def question_check(lines, asks, tickets, unknown, turn_start, reply, reasked):
     shown = ", ".join(str(n) for n in uncovered[:LIST_CAP])
     if LIST_CAP < len(uncovered):
         shown += ", +%d more" % (len(uncovered) - LIST_CAP)
-    return QUESTION_CHECK_REASON % (shown, lang_clause())
+    return QUESTION_CHECK_REASON % shown
 
 
 def _out_of_budget(*_):
