@@ -37,8 +37,18 @@
 #   - no `prdt dispatch wait` running FOR THIS PROJECT: each wait writes its own
 #     marker `<PRDT_HOME>/run/lane-waits/<project key>/<pid>.json`; a live pid
 #     whose command line is still `prdt dispatch wait` counts, another
-#     project's wait never does.
+#     project's wait never does;
+#   - T-1427: a `ready` row whose work already left the worker does not count —
+#     a `prdt track merge` of it is running (the merge lock's pid, its args), or
+#     its latest dispatch marker is a finished `qa` dispatch whose envelope
+#     passed every `results[]` row (`prdt_lanes.settled_tickets`).
 # The reason names the idle lanes and their `ready` ids.
+#
+# COST (T-1427). The schedule is recomputed only when its inputs changed: the
+# idle lanes are kept in $PRDT_HOME/run/lane-check/schedule/<project key>.json
+# under `prdt_lanes.schedule_inputs_key` (ticket and PRD file stats, po-state,
+# config, the live dispatch set), so a newly idle lane still shows on the first
+# call after it went idle. Pause, wait and settled rows are read fresh each call.
 #
 # ONE BLOCK, NEVER TWO. `stop_hook_active` (true on the Stop that follows a
 # block) makes this hook exit silently — the harness's own loop guard, the same
@@ -171,7 +181,46 @@ def wait_running(root):
     return False
 
 
+def schedule_cache_path(root):
+    return os.path.join(prdt_home(), "run", "lane-check", "schedule", run_key(root) + ".json")
+
+
 def idle_lanes(pl, root):
+    """T-1427: the schedule is recomputed only when its inputs changed
+    (`prdt_lanes.schedule_inputs_key` — ticket and PRD file stats, po-state,
+    config, the live dispatch set); otherwise the last result for the same key
+    is reused. Rows whose work already left the worker (`settled_tickets`: a
+    track merge running, a QA that passed) are then dropped, read fresh every call."""
+    key = pl.schedule_inputs_key(root, pl._schedule_in_flight(root))
+    p = schedule_cache_path(root)
+    lanes = None
+    try:
+        with open(p, encoding="utf-8") as f:
+            c = json.load(f)
+        if isinstance(c, dict) and c.get("key") == key and isinstance(c.get("idle"), list):
+            lanes = [(n, list(ids)) for n, ids in c["idle"]]
+    except (OSError, ValueError, TypeError):
+        lanes = None
+    if lanes is None:
+        lanes = compute_idle_lanes(pl, root)
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            tmp = "%s.tmp%d" % (p, os.getpid())
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"key": key, "idle": lanes}, f, ensure_ascii=False)
+            os.replace(tmp, p)
+        except OSError:
+            pass
+    settled = pl.settled_tickets(root, {t for _n, ids in lanes for t in ids})
+    out = []
+    for n, ids in lanes:
+        ready = [t for t in ids if t not in settled]
+        if ready:
+            out.append((n, ready))
+    return out
+
+
+def compute_idle_lanes(pl, root):
     st = pl.read_json(os.path.join(root, ".prdt", "po-state.json")) or {}
     out = []
     for line in pl.gate_lines(root):

@@ -342,6 +342,86 @@ describe('T-1389 — PostToolUse first, Stop as the last resort', () => {
   })
 })
 
+describe('T-1427 — silent while a track merges or after QA passed; the schedule reused until its inputs change', () => {
+  type P = { proj: string; home: string; bin: string; root: string }
+  function post(p: P, prompt = 'p1') {
+    const ev = { session_id: 's1', prompt_id: prompt, hook_event_name: 'PostToolUse', agent_type: 'prdt-po', tool_name: 'Read',
+      tool_input: {}, cwd: p.proj }
+    const r = spawnSync('bash', [HOOK], { input: JSON.stringify(ev), encoding: 'utf8', timeout: subprocessTimeout('hook'),
+      env: { ...process.env, PRDT_HOME: p.home, PATH: `${p.bin}:${process.env.PATH}` } })
+    expect(r.status).toBe(0)
+    return r.stdout ? (JSON.parse(r.stdout).hookSpecificOutput.additionalContext as string) : ''
+  }
+  const iso = (ms = 0) => new Date(Date.now() + ms).toISOString().replace(/\.\d+Z$/, 'Z')
+  /** A finished QA dispatch on `tid` whose worker transcript ends in `envelope` (a SubagentHandback call). */
+  function qaMarker(p: P, tid: string, envelope: Record<string, unknown>, name = 'qa.json') {
+    const d = path.join(p.home, 'run', 'dispatches')
+    fs.mkdirSync(d, { recursive: true })
+    const t = path.join(p.root, `qa-${name}.jsonl`)
+    fs.writeFileSync(t, JSON.stringify({ type: 'assistant', message: { content: [
+      { type: 'tool_use', name: 'SubagentHandback', input: { message: JSON.stringify(envelope) } }] } }) + '\n')
+    fs.writeFileSync(path.join(d, name), JSON.stringify({ project_root: p.proj, ticket_id: tid, persona: 'qa',
+      since: iso(-60_000), stopped_at: iso(5_000), transcript: t }))
+  }
+  const PASS = { persona: 'qa', results: [{ item: 'a', verdict: 'pass', evidence: 'x' }, { item: 'b', verdict: 'pass', evidence: 'y' }] }
+
+  test('a ready row whose track merge is running → that lane is silent, the other still reported', () => {
+    const p = makeProject(BASE)
+    fs.mkdirSync(path.join(p.proj, '.git'), { recursive: true })
+    fs.writeFileSync(path.join(p.proj, '.git', 'prdt-track-land.lock'), `${process.pid}\n`)
+    stubPs(p.bin, '/usr/bin/python3 /Users/x/.prdt/bin/prdt track merge --base dev T-010\n')
+    const ctx = post(p)
+    expect(ctx).toContain('L1 결정/질문: T-002')
+    expect(ctx).not.toContain('T-010')
+    // the merge ended (lock gone) → reported again on the next call
+    fs.rmSync(path.join(p.proj, '.git', 'prdt-track-land.lock'))
+    expect(post(p)).toContain('L2: T-010')
+  })
+
+  test('a lock of a dead pid, or a merge of another ticket, silences nothing', () => {
+    const p = makeProject(BASE)
+    fs.mkdirSync(path.join(p.proj, '.git'), { recursive: true })
+    fs.writeFileSync(path.join(p.proj, '.git', 'prdt-track-land.lock'), `${process.pid}\n`)
+    stubPs(p.bin, '/usr/bin/python3 /Users/x/.prdt/bin/prdt track merge T-999\n')
+    expect(post(p)).toContain('L2: T-010')
+  })
+
+  test('a ready row whose latest dispatch is a QA that passed every row → silent; a failed QA still reported', () => {
+    const p = makeProject(BASE)
+    qaMarker(p, 'T-010', PASS)
+    qaMarker(p, 'T-002', { persona: 'qa', results: [{ item: 'a', verdict: 'pass' }, { item: 'b', verdict: 'fail' }] }, 'qa2.json')
+    const ctx = post(p)
+    expect(ctx).toContain('L1 결정/질문: T-002')
+    expect(ctx).not.toContain('T-010')
+  })
+
+  test('a QA pass followed by a newer developer dispatch no longer silences the row', () => {
+    const p = makeProject(BASE)
+    qaMarker(p, 'T-010', PASS)
+    const d = path.join(p.home, 'run', 'dispatches')
+    fs.writeFileSync(path.join(d, 'dev.json'), JSON.stringify({ project_root: p.proj, ticket_id: 'T-010', persona: 'developer',
+      since: iso(-1_000), stopped_at: iso(-500) }))
+    expect(post(p)).toContain('L2: T-010')
+  })
+
+  test('the cached schedule is reused, and a lane that went idle shows on the very next call', () => {
+    const p = makeProject(BASE)
+    const d = path.join(p.home, 'run', 'dispatches')
+    fs.mkdirSync(d, { recursive: true })
+    fs.writeFileSync(path.join(d, 'b.json'), JSON.stringify({ project_root: p.proj, ticket_id: 'T-010', persona: 'developer',
+      since: iso() }))
+    expect(post(p)).not.toContain('T-010')
+    const cacheDir = path.join(p.home, 'run', 'lane-check', 'schedule')
+    expect(fs.readdirSync(cacheDir).length).toBe(1)
+    fs.rmSync(path.join(d, 'b.json'))           // the dispatch ended → L2 idle now
+    expect(post(p)).toContain('L2: T-010')
+    // a ticket edit (T-002 done) changes the inputs → L1 now offers its gate T-001
+    const t2 = path.join(p.proj, 'docs', 'tickets', 'v0.1', 'T-002.md')
+    fs.writeFileSync(t2, fs.readFileSync(t2, 'utf8').replace('status: open', 'status: done'))
+    expect(post(p, 'p2')).toContain('L1 결정/질문: T-001')
+  })
+})
+
 describe('prdt dispatch wait', () => {
   function stubGate(home: string, counter: string, overUntil: number) {
     fs.mkdirSync(path.join(home, 'hooks'), { recursive: true })

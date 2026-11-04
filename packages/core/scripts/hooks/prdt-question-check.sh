@@ -68,8 +68,10 @@
 #
 # BATCH ASK (T-1364 = C). Before that exemption, a reply whose asks carry
 # BATCH_ASK_MIN (4) or more distinct open decision ids — each id inside an
-# ask's own item or section; an id cited with no ask beside it is not counted —
-# is blocked once, so the PO asks one screen-changing item at a time.
+# ask's own item or section, an item's section heading line included (T-1426:
+# `**N. title (T-nnn)**` above its option items); an id cited with no ask beside
+# it is not counted — is blocked once, so the PO asks one screen-changing item
+# at a time.
 #
 # ONE BLOCK, NEVER TWO. `stop_hook_active` is the harness's own loop guard:
 # false on the first Stop, true on the Stop that follows a block. On true this
@@ -747,7 +749,13 @@ def batch_check(lines, asks, tickets):
     asked = set()
     for i, kind, option_ref in asks:
         a, b = ask_scope(lines, i, kind, option_ref)
-        for m in TICKET_ID_RE.finditer("\n".join(lines[a:b])):
+        chunk = lines[a:b]
+        # T-1426: an item's ask also speaks for the heading line of its section —
+        # `**N. title (T-nnn)**` above `- A …` option items names the decision there.
+        h, _ = section_bounds(lines, i)
+        if h < a and HEADING_RE.match(lines[h]):
+            chunk = [lines[h]] + chunk
+        for m in TICKET_ID_RE.finditer("\n".join(chunk)):
             t = tickets.get(m.group(1))
             if t and t[0] == "decision" and t[1] == "open":
                 asked.add(m.group(1))

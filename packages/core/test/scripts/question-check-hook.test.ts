@@ -631,6 +631,52 @@ describe('T-1364 = C (threshold 4) — asks over 4+ open decisions in one reply 
   })
 })
 
+describe('T-1426 — the batch-ask check counts a decision id written in the heading above its option items', () => {
+  // Rebuilt from QA d-v116-t1389-1390-qa1 replay r2c: 11 asks, each decision id in a
+  // `**N. title (T-nnn)**` heading, the option lines `- A. …` below it (column 0, so
+  // each option is its own list item and the item alone never held the id).
+  const BATCH = '[prdt batch-ask check]'
+  const ids = Array.from({ length: 11 }, (_, k) => `T-${102 + k}`)
+  const store: Store = Object.fromEntries(ids.map(id => [id, DEC()]))
+  const R2C_ASKS = [4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54] // the first option line of each item
+  const reasonOf = (out: string) => (out ? (JSON.parse(out).reason as string) : '')
+
+  test('r2c layout — 11 open decisions named in headings → batch-ask block naming 11', () => {
+    const reason = reasonOf(stop(store, fx('batch-r2c-headings'), {}, {}, J(R2C_ASKS)).out)
+    expect(reason.startsWith(BATCH)).toBe(true)
+    expect(reason).toContain('11 open decisions')
+  })
+
+  test('the same layout with indented option lines → still flagged', () => {
+    const reply = fx('batch-r2c-headings').replace(/^- /gm, '  - ')
+    const reason = reasonOf(stop(store, reply, {}, {}, J(R2C_ASKS)).out)
+    expect(reason.startsWith(BATCH)).toBe(true)
+    expect(reason).toContain('11 open decisions')
+  })
+
+  test('old layout — the id inside the option item → still flagged', () => {
+    const reply = ids.slice(0, 7).map((id, k) => `${k + 1}. 항목 ${k + 1} (${id})\n - A. 첫 안\n - B. 둘째 안`).join('\n') +
+      '\n번호와 고른 선택지로 답해주세요.'
+    const asks = reply.split('\n').flatMap((l, k) => (/^ - A\./.test(l) ? [k + 1] : []))
+    const reason = reasonOf(stop(store, reply, {}, {}, J(asks)).out)
+    expect(reason.startsWith(BATCH)).toBe(true)
+    expect(reason).toContain('7 open decisions')
+  })
+
+  test('one decision asked with a table under its heading → not flagged', () => {
+    const reply = ['**1. 저장 방식 (T-102)**', '', '| 안 | 내용 |', '|---|---|', '| A | 자동 저장 |', '| B | 저장 버튼 |', '',
+      'A 와 B 중 어느 쪽으로 할지 알려 주세요.'].join('\n')
+    expect(stop(store, reply, {}, {}, J([5, 8])).out).toBe('')
+  })
+
+  test('ids in headings with no ask beside them → not counted', () => {
+    const report = ids.slice(0, 6).map((id, k) => `**${k + 1}. 진행 중 항목 (${id})**\n- 개발 중이에요.`).join('\n\n')
+    const reply = report + '\n\n**7. 저장 방식 (T-108)**\n- A. 자동 저장\n- B. 저장 버튼'
+    const asks = [reply.split('\n').indexOf('- A. 자동 저장') + 1]
+    expect(stop(store, reply, {}, {}, J(asks)).out).not.toContain(BATCH)
+  })
+})
+
 describe('T-1377 — L1 replays: re-ask only on the recorded decision itself, never hiding batch-ask or question check', () => {
   // Verbatim first replies of docs/productune/artifacts/v1.16/decision-approval-observation.md
   // (1) r1 / r1b, (2) r2, (3) r3, against the scratch project `memo` as it stood:
