@@ -196,7 +196,7 @@ export function collectMachineEnv(home, productEnv) {
   } catch {}
   const code = new Set()
   for (const f of (productEnv && productEnv.files) || []) if (!f.sample) for (const k of f.keys) if (k.set) code.add(k.name)
-  return { dir: '~/.prdt/env', keys: (keys || []).map((k) => ({ name: k.name, set: k.set, codeWins: k.set && code.has(k.name), ...(k.plain && k.set ? { plain: true } : {}) })) }
+  return { dir: '~/.prdt/env', absDir: dir, keys: (keys || []).map((k) => ({ name: k.name, set: k.set, codeWins: k.set && code.has(k.name), ...(k.plain && k.set ? { plain: true } : {}) })) }
 }
 
 /** The home line's code folder: config `code.dir` (relative, never climbing out), default `code`; the project root itself when that folder does not exist (a non-split project). */

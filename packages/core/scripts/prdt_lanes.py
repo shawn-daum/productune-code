@@ -6,7 +6,7 @@ it (schedule · dispatch gate) and so does statusline-prdt.sh — python caches 
 module's bytecode (a main script gets no .pyc), so a lane read no longer compiles
 the whole CLI. Read-only: it writes nothing. Mirrored beside `prdt` by install.sh.
 """
-import json, math, os, re
+import json, math, os, re, stat, subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1212,3 +1212,377 @@ def compute_schedule(root, tickets=None, line=None):
         out["totals"] = {"done": sum(r["status"] == "done" for r in here), "total": len(here),
                          "impl_done": sum(r["status"] == "done" for r in impl), "impl_total": len(impl)}
     return out
+
+
+# ── meta git: the trust check and the one runner (moved from prdt_cli for T-1384 —
+# the stage history read below runs meta git from the statusline and the viewer, which
+# import this module and never the CLI) ──
+def meta_git_dir(root):
+    return Path(root) / ".prdt" / "meta.git"
+
+
+def _scrubbed_git_env():
+    """No GIT_* inheritance — inside a code-repo hook, GIT_INDEX_FILE etc. would
+    redirect meta git at the CODE repo's index (meta-git.ts T-364 QA-HIGH)."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def _git(args, cwd, timeout=10):
+    return subprocess.run(["git", *args], cwd=str(cwd), env=_scrubbed_git_env(),
+                          capture_output=True, text=True, timeout=timeout)
+
+
+# T-848: `.prdt/meta.git` sits in the project tree, so a cloned repository can
+# carry one — config, hooks and all. Observed by running (git 2.54): a carried
+# `core.fsmonitor`, `core.hooksPath`, `$GIT_DIR/hooks/*`, an `include.path`, and a
+# `filter.<x>.clean` named by `$GIT_DIR/info/attributes` each RUN a command on
+# plain `status` / `add` / `commit`. Two layers, same on the TS side
+# (meta-git.ts metaGit — keep both in step):
+#  1. every meta git run pins the hook / fsmonitor / signing knobs on the
+#     command line (command-line config outranks every file);
+#  2. before any run, the repo's own config must hold only keys prdt or
+#     `prdt meta remote add` write — a driver key (filter / diff / merge /
+#     pager / editor / sshCommand / gpg / credential / alias / include / …)
+#     can't be neutralised by name, so an unknown key refuses the run.
+META_GIT_HARDEN = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+                   "-c", "commit.gpgsign=false"]
+_META_CONFIG_ALLOWED = re.compile(
+    r"(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase"
+    r"|precomposeunicode|symlinks|worktree|hookspath)"
+    r"|extensions\.(objectformat|refstorage)"
+    r"|user\.(name|email)|commit\.gpgsign|push\.(followtags|default)"
+    r"|remote\..+\.(url|pushurl|fetch)|branch\..+\.(remote|merge))")
+_meta_trust_cache = {}
+_META_URL_SCHEMES = {"https", "http", "ssh", "git", "git+ssh", "ssh+git", "ftp", "ftps"}
+
+
+# T-917 (user decision T-913 = A): a meta backup remote is a NETWORK remote only.
+# A push to a local repository runs THAT repository's hooks on this machine
+# (`-c core.hooksPath=/dev/null` never reaches the receiving side), so every
+# local path is refused — relative, absolute, `~`, `file://` — inside the
+# project or not. Shared fixture list with meta-git.ts metaRemoteUrlProblem:
+# test/fixtures/meta-remote-urls.json (keep both sides in step).
+META_LOCAL_REMOTE_RULE = "meta backup allows only network remotes (https, ssh, git or user@host:path)"
+
+
+def _meta_remote_url_problem(url):
+    """None for a network remote URL git reaches over https/http/ssh/git (or
+    scp-like `user@host:path`), else why not: a `<helper>::` transport or a
+    non-network `<scheme>://` (runs `git-remote-<x>`; `ext::` runs its
+    argument), or any local path (its hooks run on push)."""
+    if "::" in url.split("/", 1)[0]:
+        return "a remote-helper URL"
+    m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*)://", url)
+    if m:
+        scheme = m.group(1).lower()
+        if scheme in _META_URL_SCHEMES:
+            return None
+        if scheme != "file":
+            return "a remote-helper URL"
+    elif re.match(r"^[^/]+:", url):
+        return None  # scp-like host:path — git's own rule: a colon before any slash
+    return "a local path — " + META_LOCAL_REMOTE_RULE
+
+
+def _meta_gitfile_problem(gd):
+    """`.prdt/meta.git` as a FILE: git follows a `gitdir: <path>` file to a
+    repository anywhere — never handed to git."""
+    try:
+        with open(gd, "rb") as fh:
+            head = fh.read(4096).decode("utf-8", "replace")
+    except OSError:
+        head = ""
+    if head.startswith("gitdir:"):
+        tgt = head[len("gitdir:"):].strip().splitlines()[0] if head[len("gitdir:"):].strip() else "?"
+        return f".prdt/meta.git is a file pointing elsewhere (gitdir: {tgt})"
+    return ".prdt/meta.git is a file, not a directory"
+
+
+def meta_repo_present(root):
+    """Something stands at `.prdt/meta.git` that a meta command must answer for:
+    a repo (HEAD) or a non-directory there (a gitfile / symlink — refused by
+    meta_git_trust_problem, never silently 'not split')."""
+    gd = meta_git_dir(Path(root))
+    if (gd / "HEAD").exists() or (os.path.lexists(gd) and not gd.is_dir()) or gd.is_symlink():
+        return True
+    # refs/ or objects/ without a HEAD is still something to answer for — the
+    # trust check says "has refs but no config" (T-848 fix2)
+    return (gd / "refs").exists() or (gd / "objects").exists()
+
+
+def meta_git_trust_problem(root):
+    """None when `.prdt/meta.git` may be handed to git, else why not (one
+    English line). Never raises; never runs a command the repo could name
+    (`git config --file` reads one file and follows no include).
+    Order (T-848 fix1): every structural check runs BEFORE the 'no config yet'
+    answer — a config-less repo with a `commondir` reads ITS config instead."""
+    root = Path(root)
+    gd = meta_git_dir(root)
+    for p in (root / ".prdt", gd):
+        try:
+            st_ = os.lstat(p)
+        except FileNotFoundError:
+            return None  # no meta repo yet — nothing to trust
+        except OSError:
+            return f"cannot inspect {p.relative_to(root)}"
+        if stat.S_ISLNK(st_.st_mode):
+            return f"{p.relative_to(root)} is a symbolic link"
+    if not stat.S_ISDIR(os.lstat(gd).st_mode):
+        return _meta_gitfile_problem(gd)
+    for name in ("commondir", "config.worktree"):
+        if os.path.lexists(gd / name):
+            return f".prdt/meta.git/{name} exists"
+    try:
+        if stat.S_ISLNK(os.lstat(gd / "config").st_mode):
+            return ".prdt/meta.git/config is a symbolic link"
+    except FileNotFoundError:
+        for name in ("HEAD", "objects", "refs"):
+            if os.path.lexists(gd / name):
+                return f".prdt/meta.git has {name} but no config"
+        return None  # empty / not-yet-initialised dir — git sees no repo there
+    except OSError:
+        return "cannot inspect .prdt/meta.git/config"
+    try:
+        st = os.stat(gd / "config")
+        key = (str(gd), st.st_ino, st.st_size, st.st_mtime_ns)
+    except OSError:
+        return "cannot read .prdt/meta.git/config"
+    if key in _meta_trust_cache:
+        return _meta_trust_cache[key]
+    r = _git(["config", "--file", str(gd / "config"), "--no-includes", "--list", "-z"], root)
+    if r.returncode != 0:
+        prob = "cannot parse .prdt/meta.git/config"
+    else:
+        prob = None
+        for ent in r.stdout.split("\0"):
+            if not ent:
+                continue
+            k, _, v = ent.partition("\n")
+            if not _META_CONFIG_ALLOWED.fullmatch(k):
+                prob = f".prdt/meta.git/config sets {k}"
+                break
+            if k.endswith((".url", ".pushurl")) and k.startswith("remote."):
+                why = _meta_remote_url_problem(v)
+                if why:
+                    prob = f".prdt/meta.git/config {k} ({v}) is {why}"
+                    break
+        if prob is None:
+            # branch.<b>.remote may name a URL/path instead of a remote (T-848 fix1)
+            ents = [e.partition("\n") for e in r.stdout.split("\0") if e]
+            names = {m.group(1) for k, _, _ in ents
+                     for m in [re.fullmatch(r"remote\.(.+)\.(?:url|pushurl|fetch)", k)] if m}
+            for k, _, v in ents:
+                if k.startswith("branch.") and k.endswith(".remote") and v not in names:
+                    why = _meta_remote_url_problem(v)
+                    if why:
+                        prob = f".prdt/meta.git/config {k} ({v}) is {why}"
+                        break
+    _meta_trust_cache[key] = prob
+    return prob
+
+
+# ── T-1384 (decision T-1385 = A): a ticket counts in the stage it was created in ──
+# Readers: statusline-prdt.sh (`stage n/m`) and the viewer stage bar (collect.mjs →
+# home-graph.mjs `stageOfTicket`, the JS twin of `ticket_stage` — parity test:
+# packages/gui/scripts/qa/type-to-stage-parity.test.ts).
+COUNTED_STAGES = ("define", "build", "ship")
+STAGE_DEFINE_TYPES = ("design", "decision")
+STAGE_SHIP_TYPES = ("qa", "ops")
+_DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def stage_of_type(ttype):
+    """The pre-T-1384 rule, now the fallback: design · decision → define, qa · ops → ship,
+    every other type → build."""
+    if ttype in STAGE_DEFINE_TYPES:
+        return "define"
+    if ttype in STAGE_SHIP_TYPES:
+        return "ship"
+    return "build"
+
+
+def stage_history(root, line=None, version=None, limit=400):
+    """[[YYYY-MM-DD, stage], …] oldest-first: each day po-state's stage for (`line`,
+    `version`) changed, while po-state named that version. `version` is the bare id
+    (`v1.16`); None = the line's current one.
+    Source: the meta repo's history of `.prdt/po-state.json` (the record `_build_entry_date`
+    reads; po-state keeps no history of its own). A snapshot lands at or after the stage
+    write, so a day here is the write's day or later. The walk runs newest-first and
+    stops at the first snapshot naming another version. Committer dates are LOCAL days,
+    the calendar a ticket's `created` uses (T-1210). No meta repo, an untrusted one
+    (`meta_git_trust_problem`), or any git failure → []. Read-only."""
+    root = Path(root)
+    gd = meta_git_dir(root)
+    if not (gd / "HEAD").exists():
+        return []
+    if version is None:
+        _s, vid, _c = line_state(read_json(root / ".prdt" / "po-state.json"), line)
+        version = split_line_id(vid)[1] if vid else None
+    if not version:
+        return []
+    want = join_line_id(line, version)
+    # A hit runs no git, so it is safe before the trust check (only trusted runs fill it).
+    ckey = _stage_cache_key(gd, int(limit))
+    cached = _stage_cache_get(gd, want, ckey)
+    if cached is not None:
+        return cached
+    if meta_git_trust_problem(root):
+        return []
+    base = [*META_GIT_HARDEN, "-c", "log.showSignature=false", "--git-dir", str(gd)]
+    # `log -n N -- <path>` walks back until N snapshots touch po-state: a version holds a
+    # few, so read a small window and widen it only while every snapshot read still names
+    # this version (measured on this repo, 8k meta commits: -n5 0.11 s, -n20 0.42 s).
+    n = 4
+    while True:
+        seen, done = _stage_snapshots(root, base, min(n, int(limit)), line, want)
+        if seen is None:
+            return []
+        if done or n >= int(limit):
+            break
+        n *= 4
+    hist_out = []
+    for day, stage in reversed(seen):
+        if not hist_out or hist_out[-1][1] != stage:
+            hist_out.append([day, stage])
+    _stage_cache_put(gd, want, ckey, hist_out)
+    return hist_out
+
+
+# T-1384 follow-up: the git walk above costs ~0.7 s cold, and the statusline runs once per
+# call. The answer changes only when the meta repo's branch moves, so it is cached per
+# (meta.git, line+version) under a per-user temp dir, keyed by the stat of HEAD, the ref
+# HEAD names and packed-refs (a commit rewrites the ref file → new key). A failed or
+# unreadable cache is a miss, never an error; only trusted-repo results are ever stored.
+def _stage_cache_key(gd, limit):
+    parts = [str(limit)]
+    try:
+        names = ["HEAD", "packed-refs"]
+        head = (gd / "HEAD").read_text(errors="replace").strip()
+        if head.startswith("ref: "):
+            names.append(head[5:].strip())
+        parts.append(head)
+        for n in names:
+            try:
+                st = os.stat(gd / n)
+                parts.append(f"{n}:{st.st_mtime_ns}:{st.st_size}")
+            except OSError:
+                parts.append(f"{n}:-")
+    except OSError:
+        return None
+    return "|".join(parts)
+
+
+def _stage_cache_path(gd):
+    import hashlib
+    import tempfile
+    h = hashlib.sha1(str(Path(gd).resolve()).encode()).hexdigest()[:16]
+    d = Path(tempfile.gettempdir()) / f"prdt-stage-hist-{os.getuid()}"
+    return d, d / f"{h}.json"
+
+
+def _stage_cache_get(gd, want, ckey):
+    if ckey is None:
+        return None
+    try:
+        _d, f = _stage_cache_path(gd)
+        st = os.stat(f)
+        if st.st_uid != os.getuid():
+            return None
+        ent = json.loads(f.read_text()).get(want)
+        if not isinstance(ent, dict) or ent.get("key") != ckey:
+            return None
+        hist = ent.get("hist")
+        if isinstance(hist, list) and all(
+                isinstance(r, list) and len(r) == 2 and all(isinstance(x, str) for x in r)
+                for r in hist):
+            return hist
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def _stage_cache_put(gd, want, ckey, hist):
+    if ckey is None:
+        return
+    try:
+        d, f = _stage_cache_path(gd)
+        d.mkdir(mode=0o700, exist_ok=True)
+        try:
+            data = json.loads(f.read_text())
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        data[want] = {"key": ckey, "hist": hist}
+        tmp = f.with_name(f"{f.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data))
+        os.replace(tmp, f)
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _stage_snapshots(root, base, n, line, want):
+    """([(day, stage)] newest-first while po-state names `want`, done) over the newest `n`
+    po-state snapshots; done = a snapshot naming another version ended the run, or fewer
+    than `n` exist. (None, True) on any git failure."""
+    try:
+        r = _git([*base, "log", f"-n{n}", "--date=format-local:%Y-%m-%d",
+                  "--format=%H %cd", "--", ".prdt/po-state.json"], root)
+        if r.returncode != 0:
+            return None, True
+        commits = [row.split(" ", 1) for row in r.stdout.splitlines() if " " in row]
+        if not commits:
+            return [], True
+        b = subprocess.run(["git", *base, "cat-file", "--batch"], cwd=str(root),
+                           env=_scrubbed_git_env(), capture_output=True, timeout=10,
+                           input="".join(f"{sha}:.prdt/po-state.json\n" for sha, _d in commits).encode())
+        if b.returncode != 0:
+            return None, True
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None, True
+    out, pos, seen = b.stdout, 0, []
+    for _sha, day in commits:
+        nl = out.find(b"\n", pos)
+        if nl < 0:
+            return seen, True
+        head = out[pos:nl].split()
+        pos = nl + 1
+        hist = None
+        if len(head) == 3 and head[1] == b"blob":
+            size = int(head[2])
+            try:
+                hist = json.loads(out[pos:pos + size].decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                hist = None
+            pos += size + 1
+        stage, ver, _c = line_state(hist, line)
+        if ver != want:
+            return seen, True
+        if isinstance(stage, str) and _DAY_RE.fullmatch(day[:10] if day else ""):
+            seen.append((day[:10], stage))
+    return seen, len(commits) < n
+
+
+def ticket_stage(fm_stage, created, ttype, history):
+    """The stage a ticket counts in (T-1385 = A): its own `stage:` when that is
+    define · build · ship; else the stage po-state held on its `created` day (the last
+    `history` change on or before that day — a same-day change wins); else, when neither
+    decides it — and, T-1386 = B, never a stage earlier than
+    `stage_of_type` (the later of the two, define < build < ship) — (no key, no history, created before the version's first recorded stage,
+    or a retro · idle answer), the type rule `stage_of_type`."""
+    if fm_stage in COUNTED_STAGES:
+        # T-1386 = B: an explicit key obeys the same floor — never earlier than the type's stage
+        return max(fm_stage, stage_of_type(ttype), key=COUNTED_STAGES.index)
+    day = created[:10] if isinstance(created, str) else ""
+    if _DAY_RE.fullmatch(day):
+        hit = None
+        for d, s in history or ():
+            if d <= day:
+                hit = s
+            else:
+                break
+        if hit in COUNTED_STAGES:
+            # T-1386 = B: never earlier than the type's stage (define < build < ship)
+            by_type = stage_of_type(ttype)
+            return max(hit, by_type, key=COUNTED_STAGES.index)
+    return stage_of_type(ttype)

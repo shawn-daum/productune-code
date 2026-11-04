@@ -4,6 +4,7 @@
 Called by the `prdt-open.app` applet (prdt-url-scheme.sh) with one URL:
 
     prdt://open-env?root=<project root>&file=<env file name>[&line=<line>]
+    prdt://open-env?scope=machine          (T-1395: only <PRDT_HOME>/env/.env)
 
 Threat model: ANY web page can hand the browser a `prdt://` URL. So the URL
 names no path. It names a project root, a release line and a file NAME, and
@@ -109,6 +110,20 @@ def _code_dir(root, cfg, line):
     return None
 
 
+def _machine_env():
+    """T-1395: the machine-scope store `<PRDT_HOME>/env/.env` — the one path a link may name without a project root."""
+    d = os.path.join(_home(), "env")
+    try:
+        if stat.S_ISLNK(os.lstat(d).st_mode):
+            raise Refused("machine env folder is a symlink")
+    except OSError:
+        raise Refused("machine env file missing")
+    target = os.path.join(os.path.realpath(d), ".env")
+    if not _regular(target):
+        raise Refused("machine env file missing, or not a regular file")
+    return target
+
+
 def resolve(url):
     if not isinstance(url, str) or len(url) > 4096 or "\x00" in url:
         raise Refused("not a prdt link")
@@ -119,6 +134,8 @@ def resolve(url):
         q = parse_qs(parts.query, keep_blank_values=True, strict_parsing=True)
     except ValueError:
         raise Refused("malformed query")
+    if q == {"scope": ["machine"]}:
+        return _machine_env()
     if set(q) - {"root", "file", "line"} or "root" not in q or "file" not in q or any(len(v) != 1 for v in q.values()):
         raise Refused("query keys must be root · file · line, once each")
     root, name, line = q["root"][0], q["file"][0], q.get("line", [""])[0]
