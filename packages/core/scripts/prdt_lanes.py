@@ -776,6 +776,172 @@ def _schedule_in_flight(root):
     return hits
 
 
+def schedule_inputs_key(root, in_flight):
+    """T-1427: a digest of everything `compute_schedule` reads, cheap to take
+    (stats, no file bodies): every ticket md and PRD md (path · mtime_ns · size),
+    `.prdt/po-state.json` · `.prdt/config.json`, and the live dispatch set
+    `in_flight` (it carries the time-based liveness). Same key → same schedule."""
+    import hashlib
+    root = Path(root)
+    h = hashlib.sha256()
+
+    def add(p):
+        try:
+            st = os.stat(p)
+            h.update(("%s\0%d\0%d\n" % (p, st.st_mtime_ns, st.st_size)).encode("utf-8", "replace"))
+        except OSError:
+            h.update(("%s\0-\n" % p).encode("utf-8", "replace"))
+
+    add(root / ".prdt" / "po-state.json")
+    add(root / ".prdt" / "config.json")
+    dirs = [d for _p, d in product_docs_dirs(root, "tickets")] + [d for _p, d in product_docs_dirs(root, "prd")]
+    dirs.append(shared_docs_dir(root) / "prd")
+    for base in dirs:
+        for d, sub, files in os.walk(base):
+            sub.sort()
+            for fn in sorted(files):
+                if fn.endswith(".md"):
+                    add(os.path.join(d, fn))
+    h.update(json.dumps(sorted((k, v or "") for k, v in in_flight.items())).encode("utf-8"))
+    return h.hexdigest()[:32]
+
+
+# T-1427 (T-1390 acceptance 3): a ready row whose work already left the worker —
+# its track is merging into its base, or its latest dispatch is a QA that passed.
+TRACK_LAND_LOCK = "prdt-track-land.lock"   # = prdt_cli TRACK_LOCK
+TRACK_MERGE_ARGS_RE = re.compile(r"\btrack\s+(?:merge|land)\b(.*)")
+TICKET_ARG_RE = re.compile(r"(?<![A-Za-z0-9-])(T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6})(?!\d)")
+
+
+def _code_git_common_dir(root):
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    d = cfg.get("code", {}).get("dir") if isinstance(cfg, dict) and isinstance(cfg.get("code"), dict) else None
+    code = Path(root) / d.strip() if isinstance(d, str) and d.strip() and not os.path.isabs(d.strip()) \
+        and ".." not in re.split(r"[/\\]+", d.strip()) else Path(root)
+    g = code / ".git"
+    if g.is_dir():
+        return g
+    try:   # a worktree checkout: `.git` is a file naming its gitdir, whose `commondir` names the shared one
+        m = re.match(r"gitdir:\s*(.+)", g.read_text(encoding="utf-8").strip())
+        gd = Path(m.group(1)) if m else None
+        if gd is not None and not gd.is_absolute():
+            gd = (code / gd).resolve()
+        cd = (gd / "commondir").read_text(encoding="utf-8").strip() if gd is not None else ""
+        return (gd / cd).resolve() if cd else gd
+    except (OSError, AttributeError):
+        return None
+
+
+def _merging_ticket(root):
+    """The ticket a live `prdt track merge` (or `land`) of this project's code repo
+    is merging now — read from the merge lock's pid and that process's arguments —
+    or None."""
+    gd = _code_git_common_dir(root)
+    if gd is None:
+        return None
+    try:
+        pid = int((gd / TRACK_LAND_LOCK).read_text(encoding="utf-8").split()[0])
+        if pid <= 0:
+            return None
+        os.kill(pid, 0)
+        args = subprocess.run(["ps", "-p", str(pid), "-o", "args="], capture_output=True, text=True,
+                              timeout=2).stdout
+    except PermissionError:
+        return None
+    except Exception:
+        return None
+    m = TRACK_MERGE_ARGS_RE.search(args)
+    t = TICKET_ARG_RE.search(m.group(1)) if m else None
+    return t.group(1) if t else None
+
+
+def _final_envelope(transcript):
+    """The worker's last return envelope (dict) from its transcript tail, or None:
+    the text of the last assistant record, or its SubagentHandback message."""
+    try:
+        size = os.path.getsize(transcript)
+        with open(transcript, "rb") as f:
+            f.seek(max(0, size - 262144))
+            raw = f.read().decode("utf-8", "replace").split("\n")
+    except OSError:
+        return None
+    for jl in reversed(raw):
+        if '"assistant"' not in jl:
+            continue
+        try:
+            rec = json.loads(jl)
+        except Exception:
+            continue
+        if not (isinstance(rec, dict) and rec.get("type") == "assistant"):
+            continue
+        c = (rec.get("message") or {}).get("content") if isinstance(rec.get("message"), dict) else None
+        if not isinstance(c, list):
+            continue
+        txt = "".join(b.get("text") or "" for b in c if isinstance(b, dict) and b.get("type") == "text")
+        if not txt.strip():
+            hb = [b for b in c if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "SubagentHandback"]
+            txt = (hb[0].get("input") or {}).get("message") or "" if hb else ""
+        if not txt.strip():
+            continue
+        try:
+            env = json.loads(txt[txt.index("{"):txt.rindex("}") + 1])
+        except Exception:
+            return None
+        return env if isinstance(env, dict) else None
+    return None
+
+
+def _qa_passed(env):
+    """A QA envelope whose every `results[]` row is `pass` and that is not
+    blocked, refused or waiting on information."""
+    if not isinstance(env, dict) or any(env.get(k) for k in ("blocked", "refused", "needs_info")):
+        return False
+    rows = env.get("results")
+    return isinstance(rows, list) and bool(rows) and all(
+        isinstance(r, dict) and r.get("verdict") == "pass" for r in rows)
+
+
+def settled_tickets(root, ids):
+    """T-1427: {ticket id: "merging" | "qa-passed"} among `ids` — a track merge of
+    that ticket is running now, or the ticket's latest dispatch marker for this
+    project is a finished `qa` dispatch whose return passed every row."""
+    ids = set(ids or ())
+    out = {}
+    if not ids:
+        return out
+    m = _merging_ticket(root)
+    if m in ids:
+        out[m] = "merging"
+    d = prdt_home() / "run" / "dispatches"
+    latest = {}
+    here = Path(root).resolve()
+    try:
+        files = sorted(d.glob("*.json"))
+    except OSError:
+        files = []
+    for f in files:
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or data.get("ticket_id") not in ids or data.get("ticket_id") in out:
+                continue
+            pr = data.get("project_root")
+            if not isinstance(pr, str) or Path(pr).resolve() != here:
+                continue
+        except Exception:
+            continue
+        since = _ts(data.get("since") or "") or 0
+        tid = data["ticket_id"]
+        if tid not in latest or since > latest[tid][0]:
+            latest[tid] = (since, data)
+    for tid, (_s, data) in latest.items():
+        if data.get("persona") != "qa" or not data.get("stopped_at") or _worker_past_stop(data):
+            continue
+        t = _dispatch_transcript(data)
+        if t and _qa_passed(_final_envelope(t)):
+            out[tid] = "qa-passed"
+    return out
+
+
 def _schedule_tickets(root):
     """{id: (row, path)} over every ticket md — first file wins per id."""
     tickets = {}

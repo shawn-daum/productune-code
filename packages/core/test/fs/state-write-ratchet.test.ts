@@ -165,7 +165,7 @@ const ALLOW: Record<string, number> = {
   'core/scripts/hooks/prdt-dispatch-gate.sh': 7, // T-1248: +1 = the waiting record `: > $PRDT_HOME/run/dispatch-gate/waiting/<slug>` (tooling-owned run/, mtime is the datum); T-1280: -6 = quoted-text `>` (prose, jq strings) no longer counted; T-1283: -1 = a `<…>` in a `#` comment tail
   'core/scripts/hooks/prdt-identity-guard.sh': 2,
   'core/scripts/hooks/prdt-inbox-inject.sh': 2, // T-1300: +1 = the per-session seen record under $PRDT_HOME/run/inbox-seen/ (home, never .prdt/), tmp + os.replace
-  'core/scripts/hooks/prdt-lane-check.sh': 1, // T-1389: the once-per-turn report record under $PRDT_HOME/run/lane-check/turns/<sid>.json (home, never .prdt/), tmp + os.replace
+  'core/scripts/hooks/prdt-lane-check.sh': 2, // T-1389: the once-per-turn report record under $PRDT_HOME/run/lane-check/turns/<sid>.json; T-1427: the schedule cache $PRDT_HOME/run/lane-check/schedule/<key>.json (home, never .prdt/), both tmp + os.replace
   'core/scripts/hooks/prdt-message-display-autolink.sh': 2, // T-1143: embedded Python — the per-message fence stamp under $PRDT_HOME/run/message-display/ (home, never .prdt/): one `open(..., "w")` + the `os.unlink`-guarded save
   'core/scripts/hooks/prdt-overrides-inject.sh': 1,
   'core/scripts/hooks/prdt-post-dispatch.sh': 6, // T-1283: -2 = `<…>` in python docstring prose
