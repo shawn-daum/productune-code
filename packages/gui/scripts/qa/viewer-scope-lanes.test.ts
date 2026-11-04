@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { collectAll, collectLanes } from '@productune/viewer/lib/collect.mjs'
-import { renderPage, scopeItemName } from '@productune/viewer/lib/render.mjs'
+import { renderPage } from '@productune/viewer/lib/render.mjs'
 
 const page = (data: unknown) => renderPage({ data, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' } as never)
 
@@ -41,72 +41,47 @@ function project(): string {
   return root
 }
 
-describe('T-1180: scope item names', () => {
-  it('strips trailing (T-…) refs, keeps a clock time whole, splits on a real colon', () => {
-    expect(scopeItemName('버전 문장 문체 (T-749)')).toBe('버전 문장 문체')
-    expect(scopeItemName('이름 (T-67 · T-57) (T-704)')).toBe('이름')
-    expect(scopeItemName('05:20 데일리가 끝까지 돈다 (T-67)')).toBe('05:20 데일리가 끝까지 돈다')
-    expect(scopeItemName('항목: 설명이 길게 이어진다')).toBe('항목')
-  })
-})
-
-describe('T-1180: scope rows by lane + one-line explainer', () => {
+describe('T-1415: scope block, one line per lane', () => {
   const root = project()
   const data = collectAll(root)
   const html = page(data)
-  const scope = html.slice(html.indexOf('class="cp-h">스코프'))
+  const scope = /<div class="sc-e">[\s\S]*?<\/div><\/div><\/div>/.exec(html)![0]
+  const rows = [...scope.matchAll(/<div class="e-row"><span class="e-lab" title="([^"]*)">[^<]*<\/span><span class="e-sq">(.*?)<\/span><span class="mono e-n">(\d+\/\d+)<\/span><\/div>/g)].map((m) => ({ name: m[1], sq: [...m[2].matchAll(/data-detail-id="([^"]+)"/g)].map((x) => x[1]), n: m[3] }))
 
   it('collectLanes returns the prdt_lanes computation (no second copy)', () => {
     const lanes = collectLanes(root)
     expect(lanes.map((l) => [l.name, l.linked, l.tickets])).toEqual([['A', true, ['T-1', 'T-2']], ['B', true, ['T-3', 'T-5']], ['자투리', true, ['T-4', 'T-6']]])
   })
 
-  it('T-1184: 자투리 counts as a lane when placing an item (the lane holding most of its tickets)', () => {
-    const iB = scope.indexOf('레인 B')
-    const iJ = scope.indexOf('레인 자투리')
-    const iNo = scope.indexOf('레인에 묶이지 않은 항목')
-    expect(iJ).toBeGreaterThan(iB)
-    expect(iNo).toBeGreaterThan(iJ)
-    const iY = scope.indexOf('합격선 밖 작은 일')
-    expect(iY).toBeGreaterThan(iJ)
-    expect(iY).toBeLessThan(iNo)
-    expect(scope.slice(iJ, iJ + 200)).toMatch(/1\/2/)
+  it('one line per lane, in lane order, with the lane\'s own n/m (= prdt schedule lane numbers)', () => {
+    const lanes = collectLanes(root)
+    expect(rows.map((r) => r.name)).toEqual(lanes.map((l) => l.name))
+    expect(rows.map((r) => r.n)).toEqual(lanes.map((l) => `${l.done}/${l.total}`))
+    expect(rows.map((r) => r.n)).toEqual(['1/2', '0/2', '1/2'])
   })
 
-  it('T-1184: the page states how lane head numbers relate to the item rows', () => {
-    expect(scope).toContain('레인 숫자 = 그 레인 티켓 전체 · 항목 숫자 = 그 항목 티켓 · 항목은 티켓이 가장 많은 레인 아래')
-    const flat = page({ ...data, lanes: [] })
-    expect(flat).not.toContain('레인 숫자 =')
+  it('squares are the lane\'s tickets, done first; every square is a ticket button', () => {
+    expect(rows.map((r) => r.sq)).toEqual([['T-1', 'T-2'], ['T-3', 'T-5'], ['T-6', 'T-4']])
+    expect(scope).toMatch(/<span class="stage-sq sc-btn sq-done" data-detail-kind="ticket" data-detail-id="T-1" role="button" tabindex="0"/)
   })
 
-  it('T-1184: Korean names wrap at word gaps only (.sc-lab word-break: keep-all)', () => {
-    expect(/\.sc-lab \{[^}]*\}/.exec(html)![0]).toContain('word-break: keep-all')
+  it('no item rows, no out-of-item row, no notes, no second number per line', () => {
+    for (const gone of ['첫째 항목의 아주 긴 이름', 'PRD 항목 밖 티켓', '결정 ', '레인 숫자 =', '항목별 숫자', '레인에 묶이지 않은 항목', 'sc-grp', 'sc-why', 'sc-sep']) expect(scope).not.toContain(gone)
+    expect([...scope.matchAll(/class="mono e-n"/g)]).toHaveLength(3)
   })
 
-  it('groups each item under its lane head; unreached items under the last head', () => {
-    const iA = scope.indexOf('레인 A')
-    const iB = scope.indexOf('레인 B')
-    const iNo = scope.indexOf('레인에 묶이지 않은 항목')
-    expect(iA).toBeGreaterThan(-1)
-    expect(iB).toBeGreaterThan(iA)
-    expect(iNo).toBeGreaterThan(iB)
-    expect(scope.indexOf('첫째 항목의 아주 긴 이름도 끝까지 보인다')).toBeGreaterThan(iA)
-    expect(scope.indexOf('첫째 항목의 아주 긴 이름도 끝까지 보인다')).toBeLessThan(iB)
-    expect(scope.indexOf('05:20 데일리가 끝까지 돈다')).toBeGreaterThan(iB)
-    expect(scope.indexOf('어느 레인에도 안 걸린 항목')).toBeGreaterThan(iNo)
-    expect(scope).not.toContain('(T-1 · T-2)</span>')
+  it('only the lane line is loud: lane name bold primary; block title small and quiet; names never clipped', () => {
+    const css = (sel: string) => new RegExp(`(?:^|\\n)${sel.replace(/[.]/g, '\\.')} \\{([^}]*)\\}`).exec(html)?.[1] ?? ''
+    expect(css('.e-lab')).toMatch(/font-weight: 700/)
+    expect(css('.e-lab')).toContain('color: var(--text-primary)')
+    expect(css('.e-lab')).toContain('word-break: keep-all')
+    expect(css('.e-lab')).not.toMatch(/nowrap|ellipsis|overflow: hidden/)
+    expect(css('.sc-e .cp-h')).toContain('font-size: 11px')
+    expect(css('.sc-e .cp-h')).toContain('var(--text-quaternary)')
   })
 
-  it('names are never clipped (no nowrap / ellipsis on the name cell)', () => {
-    const css = /\.sc-lab \{[^}]*\}/.exec(html)![0]
-    expect(css).not.toMatch(/nowrap|ellipsis|overflow: hidden/)
-    expect(/\.sc-rows \{[^}]*\}/.exec(html)![0]).toContain('fit-content(calc(100% - 140px))')
-  })
-
-  it('without lanes the rows stay flat', () => {
-    const flat = page({ ...data, lanes: [] })
-    expect(flat).not.toContain('class="sc-grp"')
-    expect(flat).toContain('첫째 항목의 아주 긴 이름도 끝까지 보인다')
+  it('390px: name and number on the first row, squares on a second row', () => {
+    expect(html).toMatch(/@media \(max-width: 600px\) \{ \.e-row \{ grid-template-columns: minmax\(0, 1fr\) auto; \} \.e-row \.e-sq \{ grid-column: 1 \/ -1; grid-row: 2;/)
   })
 })
 
@@ -120,17 +95,5 @@ describe('T-1180: sidebar progress card opens 진행 상황', () => {
   it('click and Enter / Space route to selectStore(home) + selectGroup', () => {
     expect(html).toContain("ev.target.closest('[data-card-open]')")
     expect(html).toContain("ev.target.matches('[data-card-open]')")
-  })
-})
-
-describe('T-1184 F4: scope rule line and group heads never break mid-word', () => {
-  const html = page(collectAll(project()))
-  const decl = (sel: string) => {
-    const m = html.match(new RegExp(`(?:^|\\n)${sel.replace(/\./g, '\\.')}\\s*\\{([^}]*)\\}`))
-    return m ? m[1] : ''
-  }
-  it('.sc-why and .sc-grp use word-break: keep-all', () => {
-    expect(decl('.sc-why')).toContain('word-break: keep-all')
-    expect(decl('.sc-grp')).toContain('word-break: keep-all')
   })
 })

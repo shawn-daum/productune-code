@@ -25,7 +25,6 @@ export let noGroupLabel = ko.noGroupLabel
 export let ENV = ko.ENV
 export let PAGE = ko.PAGE
 export let HOME = ko.HOME
-export let PROGRESS_OUT_OF_SCOPE_LABEL = ko.PROGRESS_OUT_OF_SCOPE_LABEL
 export let DETAIL_FIELD_LABELS = ko.DETAIL_FIELD_LABELS
 export let TICKET = ko.TICKET
 export let WIKI = ko.WIKI
@@ -55,7 +54,7 @@ export function setViewerLang(l) {
   current = c
   lang = key
   ;({
-    STORE_LABEL, COMMON, noGroupLabel, ENV, PAGE, HOME, PROGRESS_OUT_OF_SCOPE_LABEL, DETAIL_FIELD_LABELS, TICKET, WIKI, FEATURE,
+    STORE_LABEL, COMMON, noGroupLabel, ENV, PAGE, HOME, DETAIL_FIELD_LABELS, TICKET, WIKI, FEATURE,
     GLOSSARY, RELEASE, DISCIPLINE, DISCIPLINE_LOAD, readFieldValue, ARTIFACT, PRD, IDLE, PRD_READING, FRAME, FILE_HREF_NOTE,
     HASH_NOTICE, IDENTITY, THEME_TOGGLE, OPTION_CARD, LINKS,
   } = c)

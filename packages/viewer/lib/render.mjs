@@ -28,7 +28,6 @@ import { IDLE,
   COMMON,
   PAGE,
   HOME,
-  PROGRESS_OUT_OF_SCOPE_LABEL,
   DETAIL_FIELD_LABELS,
   TICKET,
   WIKI,
@@ -1002,26 +1001,6 @@ function decisionRowsTable(tickets, pages) {
 /** Home's artifact group — the literal bucket match home has always used (T-713 scope note in `homeSection`); shared with the anchor table (T-792). */
 function currentArtifactEntries(artifacts, currentVersion) {
   return artifacts.entries.filter((e) => e.fields.bucket === currentVersion)
-}
-
-/**
- * A ticket's `prd_item` (`"<version>#<key>"`) resolved against `currentVersion`
- * by the SAME numeric equality (T-713), rather than a literal string-prefix
- * check — a ticket written against its own bucket's directory spelling
- * (`v1.10.0#viewer`) still resolves to its PRD-item row even when that
- * spelling differs textually from po-state's version string (`v1.10`).
- * `null` when there is no `#`, or the version part is not the current
- * version — same "trailing row" fallback as before.
- * @param {string} prdItem
- * @param {string} currentVersion
- * @returns {string|null}
- */
-function prdItemKey(prdItem, currentVersion) {
-  const hashIdx = prdItem.indexOf('#')
-  if (hashIdx === -1) return null
-  const versionPart = prdItem.slice(0, hashIdx)
-  if (!sameVersion(versionPart, currentVersion)) return null
-  return prdItem.slice(hashIdx + 1)
 }
 
 function statusPillClass(status) {
@@ -2651,87 +2630,27 @@ function ticketButtonAttrs(id) {
 }
 
 /**
- * T-1180: a scope row's name — the heading label up to its colon (a colon between digits is a clock time, never a
- * split: 「05:20 …」), minus the trailing ticket refs `(T-…)` the PRD appends. Never shortened further; the full heading stays the tooltip.
+ * T-1415 (shape E, mock scope-numbers-mock-e.html): one line per lane of the version — lane name, the lane's squares, the
+ * lane's ticket number n/m. The number is the lane's own (`prdt schedule` · statusline: `done`/`total`), one basis for the block.
+ * No gate lanes → one default line holding every ticket of the version.
  */
-export function scopeItemName(label) {
-  const plain = String(label).replace(/`/g, '')
-  const m = /(?<!\d)[:：]|[:：](?!\d)/.exec(plain)
-  const head = (m ? plain.slice(0, m.index) : plain).trim()
-  const name = head.replace(/(?:\s*\(T-[^)]*\))+\s*$/, '').trim()
-  return name || head || plain.trim()
-}
-
-/** 스코프: one row per PRD item of the open section (label up to its colon; the full heading is the tooltip), then the 「PRD 항목 밖 티켓」 block (work tickets only; T-1046). */
 function homeScope(data, currentTickets) {
   const openItems = data.prd.openItems || []
-  const byItem = new Map(openItems.map((i) => [i.key, []]))
-  const outOfScope = []
-  // T-1046: a malformed `prd_item` (no `<version>#<key>` shape) is named in the definition line; decision tickets (T-1051 = A) are only counted for the note.
-  let malformed = 0
-  let decisions = 0
-  const fixCount = new Map()
-  for (const t of currentTickets) {
-    if (t.frontmatter.status !== 'open' && t.frontmatter.status !== 'done') continue
-    const raw = typeof t.frontmatter.prd_item === 'string' ? t.frontmatter.prd_item : ''
-    const key = prdItemKey(raw, data.currentVersion)
-    if (key && byItem.has(key)) byItem.get(key).push(t)
-    else if (!raw.includes('#') && byItem.has(raw)) {
-      // A bare key that is exactly an open-section key: counted under that item, flagged 「형식 고치기」 (doctor keeps warning).
-      byItem.get(raw).push(t)
-      fixCount.set(raw, (fixCount.get(raw) || 0) + 1)
-    } else {
-      // Decision tickets record user choices, not scope work — never counted outside the items.
-      if (t.frontmatter.type === 'decision') { decisions += 1; continue }
-      outOfScope.push(t)
-      if (raw !== '' && !/^[^#]+#[^#]+$/.test(raw)) malformed += 1
-    }
-  }
-  const row = (label, title, tickets, extra = '', fix = 0) => {
-    const sorted = [...tickets.filter((t) => t.frontmatter.status === 'done'), ...tickets.filter((t) => t.frontmatter.status !== 'done')]
+  const work = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
+  const byId = new Map(work.map((t) => [t.frontmatter.id, t]))
+  const lanes = Array.isArray(data.lanes) ? data.lanes : []
+  const lines = lanes.length > 0
+    ? lanes.map((l) => ({ name: l.name, tickets: l.tickets.map((id) => byId.get(id)).filter(Boolean), done: l.done, total: l.total }))
+    : [{ name: HOME.scopeDefaultLane, tickets: work, done: work.filter((t) => t.frontmatter.status === 'done').length, total: work.length }]
+  const row = (l) => {
+    const sorted = [...l.tickets.filter((t) => t.frontmatter.status === 'done'), ...l.tickets.filter((t) => t.frontmatter.status !== 'done')]
       .sort((x, y) => (x.frontmatter.status === 'done' ? 0 : 1) - (y.frontmatter.status === 'done' ? 0 : 1) || compareTicketIds(x.frontmatter.id, y.frontmatter.id))
-    const done = tickets.filter((t) => t.frontmatter.status === 'done').length
     const sq = sorted
       .map((t) => `<span class="stage-sq sc-btn${t.frontmatter.status === 'done' ? ' sq-done' : ''}" ${ticketButtonAttrs(t.frontmatter.id)} aria-label="${escapeHtml(t.frontmatter.id)}" title="${escapeHtml(t.frontmatter.id)}"></span>`)
       .join('')
-    const fixTag = fix > 0 ? `<span class="sc-fix" title="${escapeHtml(HOME.scopeFixTitle)}">${escapeHtml(HOME.scopeFixTag(fix))}</span>` : ''
-    return `<div class="sc-row${extra}"><span class="sc-lab" title="${escapeHtml(title)}">${escapeHtml(label)}</span><span class="sc-sq">${sq}${fixTag}</span><span class="mono sc-n">${done}/${tickets.length}</span></div>`
+    return `<div class="e-row"><span class="e-lab" title="${escapeHtml(l.name)}">${escapeHtml(l.name)}</span><span class="e-sq">${sq}</span><span class="mono e-n">${l.done}/${l.total}</span></div>`
   }
-  const items = openItems.map((i) => ({ key: i.key, tickets: byItem.get(i.key), html: row(scopeItemName(i.label), i.label.replace(/`/g, ''), byItem.get(i.key), '', fixCount.get(i.key) || 0) }))
-  // T-1180: under their 합격선 lane (the one lane computation: prdt_lanes) — an item goes to the lane holding most of its tickets, ties to the earlier lane.
-  // T-1184: prdt_lanes now returns the 자투리 lane too (last), so it counts like any lane; an item no lane reaches stays lane-less.
-  const lanes = Array.isArray(data.lanes) ? data.lanes : []
-  const groups = lanes.map((l) => ({ head: HOME.scopeLane(l.name), count: l.linked ? `${l.done}/${l.total}` : '', rows: [] }))
-  const loose = []
-  for (const it of items) {
-    const ids = it.tickets.map((t) => t.frontmatter.id)
-    let best = -1
-    let bestN = 0
-    lanes.forEach((l, i) => {
-      const n = ids.filter((id) => l.tickets.includes(id)).length
-      if (n > bestN) { best = i; bestN = n }
-    })
-    if (best >= 0) groups[best].rows.push(it.html)
-    else loose.push(it.html)
-  }
-  if (loose.length > 0 && groups.length > 0) groups.push({ head: HOME.scopeNoLane, count: '', rows: loose })
-  const grouped = groups.length > 0 ? groups.filter((g) => g.rows.length > 0 || g.head !== HOME.scopeNoLane) : []
-  const bodyRows = grouped.length > 0
-    ? grouped.map((g) => `<div class="sc-grp">${escapeHtml(g.head)}${g.count ? ` <span class="mono sc-n">${escapeHtml(g.count)}</span>` : ''}</div>${g.rows.join('')}`).join('')
-    : items.map((it) => it.html).join('')
-  // T-1046: its own block under a divider; the row never disappears (0 shows 「없음」).
-  const listKey = `${data.listPrefix || ''}${currentTicketBucketKey(data.tickets, data.currentVersion)}`
-  const link = (text, store, key) => `<button type="button" class="sc-why-link" data-open-store="${store}" data-open-group="${escapeHtml(key)}">${escapeHtml(text)}</button>`
-  const outRow = outOfScope.length > 0
-    ? row(PROGRESS_OUT_OF_SCOPE_LABEL, PROGRESS_OUT_OF_SCOPE_LABEL, outOfScope, ' sc-out')
-    : `<div class="sc-row sc-out"><span class="sc-lab">${escapeHtml(PROGRESS_OUT_OF_SCOPE_LABEL)}</span><span class="sc-sq"><span class="cp-empty">${escapeHtml(HOME.scopeOutEmpty)}</span></span><span class="mono sc-n">0</span></div>`
-  // T-1180: one line — why outside · decisions left out · links.
-  const whyParts = []
-  if (outOfScope.length > 0) whyParts.push(`${escapeHtml(HOME.scopeOutDef)}${malformed > 0 ? ` ${link(HOME.scopeMalformed(malformed), 'ticket', listKey)}` : ''}`)
-  if (decisions > 0) whyParts.push(`${escapeHtml(HOME.scopeDecisionNote(decisions))} · ${link(HOME.scopeDecisionLink, 'home', `${data.listPrefix || ''}decision`)}`)
-  const whyHtml = whyParts.length > 0 ? `<p class="sc-why">${whyParts.join(' · ')}</p>` : ''
-  const ruleHtml = grouped.length > 0 ? `<p class="sc-why">${escapeHtml(HOME.scopeLaneRule)}</p>` : ''
-  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div><div class="sc-rows">${bodyRows}<div class="sc-sep"></div>${outRow}</div>${ruleHtml}${whyHtml}</div>`
+  return `<div class="sc-e"><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div><div class="e-rows">${lines.map(row).join('')}</div></div>`
 }
 
 /** dec · req wait lists of `data.tickets`; the sidebar card (T-1165) and Home's wait block share this one call. */
@@ -3231,12 +3150,18 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .sc-row { display: contents; }
 .sc-lab { font-size: 12px; color: var(--text-secondary); padding: 3px 0; line-height: 1.45; word-break: keep-all; overflow-wrap: anywhere; }
 .sc-sq, .sc-n { padding: 3px 0; }
-.sc-grp { grid-column: 1 / -1; font-size: 11px; font-weight: 600; color: var(--text-tertiary); word-break: keep-all; overflow-wrap: break-word; margin: var(--space-10) 0 1px; }
-.sc-grp:first-child { margin-top: 0; }
-.sc-sep { grid-column: 1 / -1; border-top: 1px dashed var(--border-item); margin: var(--space-10) 0 var(--space-4); }
-.sc-out .sc-lab { color: var(--text-primary); font-weight: 600; }
 .sc-sq { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-width: 0; }
 .sc-n { font-size: 10.5px; color: var(--text-tertiary); }
+.sc-e .cp-h { font-size: 11px; font-weight: 600; color: var(--text-quaternary); letter-spacing: .04em; margin: 0 0 var(--space-4); }
+.sc-e .cp-sub { font-size: 11px; color: var(--text-quaternary); }
+.e-rows { border-top: 1px solid var(--border-section); }
+.e-row { display: grid; grid-template-columns: 11.5em minmax(0, 1fr) 3.4em; column-gap: var(--space-10); align-items: start; padding: var(--space-8) 0; border-bottom: 1px solid var(--border-item); }
+.e-lab { font-size: 13px; font-weight: 700; color: var(--text-primary); line-height: 1.45; word-break: keep-all; overflow-wrap: anywhere; }
+.e-sq { display: flex; flex-wrap: wrap; gap: 3px; align-content: flex-start; min-width: 0; padding: 4px 0 0; }
+.e-n { font-size: 12.5px; font-weight: 700; color: var(--text-primary); text-align: right; white-space: nowrap; line-height: 1.45; }
+.e-sq .stage-sq { cursor: pointer; }
+.stage-sq.sc-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 1px; }
+@media (max-width: 600px) { .e-row { grid-template-columns: minmax(0, 1fr) auto; } .e-row .e-sq { grid-column: 1 / -1; grid-row: 2; padding-top: 6px; } .e-row .e-n { grid-column: 2; grid-row: 1; } .e-lab { grid-column: 1; grid-row: 1; } }
 .sc-btn { cursor: pointer; }
 .sc-btn.is-open { outline: 2px solid var(--text-primary); outline-offset: 1px; }
 .sc-waits { min-width: 0; display: flex; flex-direction: column; gap: var(--space-16); border-right: 1px solid var(--border-item); padding-right: var(--space-24); }
@@ -3244,9 +3169,6 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .cp-h { font-size: 12px; font-weight: 600; color: var(--text-primary); margin: 0 0 var(--space-10); display: flex; align-items: baseline; gap: var(--space-8); flex-wrap: wrap; }
 .cp-sub { font-weight: 400; color: var(--text-tertiary); font-size: 11.5px; }
 .cp-n { font-size: 10.5px; color: var(--text-quaternary); font-weight: 400; }
-.sc-fix { font-size: 10.5px; color: var(--text-tertiary); border: 1px dashed var(--border-item); border-radius: 8px; padding: 0 6px; margin-left: var(--space-4); }
-.sc-why { font-size: 11.5px; color: var(--text-tertiary); word-break: keep-all; overflow-wrap: break-word; margin: var(--space-8) 0 0; }
-.sc-why-link { font: inherit; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
 .cp-empty { font-size: 11.5px; color: var(--text-tertiary); margin: var(--space-4) 0 0; }
 .cp-wlist { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .cp-went { font: inherit; font-size: 12px; text-align: left; display: inline-flex; align-items: center; gap: 6px; background: var(--bg-surface-base); color: var(--text-primary); border: 1px solid var(--border-inline); border-radius: var(--radius-8); padding: 4px 8px; cursor: pointer; }
