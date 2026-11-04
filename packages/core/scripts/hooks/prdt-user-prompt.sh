@@ -513,6 +513,9 @@ def session_lang():
 # text a word count cannot weigh) is never checked.
 LANG_SCRIPT = {"ko": "hangul", "en": "latin"}
 LANG_MIN_WORDS = 8        # fewer prose words left → a link block / code reply, not judged
+# T-1428: the mid-turn check (PostToolUse) judges from 3 words — the L1 observation (5)
+# text 「Verify and commit.」 went unjudged under 8. The final reply (Stop) keeps 8.
+LANG_MIDTURN_MIN_WORDS = 3
 LANG_MIN_SHARE = 0.2      # target-script share of the prose words below this → drift
 LANG_MAX_CHARS = 16000    # only the reply's head is judged: bounded time on a huge reply
 # Spans that are not prose: inline code, markdown links and images, autolinks/tags,
@@ -538,9 +541,9 @@ def _word_script(w):
     return "latin" if any("a" <= c.lower() <= "z" for c in w) else None
 
 
-def lang_drift(reply, lang):
+def lang_drift(reply, lang, min_words=LANG_MIN_WORDS):
     """True when `reply`'s prose — fences, blockquotes and LANG_DROP_RE spans
-    removed — holds LANG_MIN_WORDS+ words and under LANG_MIN_SHARE of them are in
+    removed — holds `min_words`+ words and under LANG_MIN_SHARE of them are in
     `lang`'s script. False for an unlisted language and for a short remainder."""
     target = LANG_SCRIPT.get(lang)
     if not target or not isinstance(reply, str):
@@ -561,7 +564,7 @@ def lang_drift(reply, lang):
                 if s:
                     counts[s] += 1
     total = counts["hangul"] + counts["latin"]
-    return total >= LANG_MIN_WORDS and counts[target] / total < LANG_MIN_SHARE
+    return total >= min_words and counts[target] / total < LANG_MIN_SHARE
 
 
 FORM_OUTLINE_TAIL_CHUNK = 256 * 1024
@@ -808,7 +811,8 @@ def post_tool_main():
     try:
         lang = session_lang()
         if lang in LANG_SCRIPT and lang_drift(
-                prose_before_tool(ev.get("transcript_path"), ev.get("tool_use_id")), lang):
+                prose_before_tool(ev.get("transcript_path"), ev.get("tool_use_id")), lang,
+                LANG_MIDTURN_MIN_WORDS):
             ctx += "\n" + LANG_MIDTURN_NOTICE % lang
     except Exception:
         pass

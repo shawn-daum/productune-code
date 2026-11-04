@@ -113,10 +113,38 @@ describe('mid-turn prose in another language is caught at the next tool call', (
     expect(post(sb, 't2')).toBe(HOT_KO)
   })
 
-  test('short narration, sidechain text, unknown tool id, missing transcript → hot line only', () => {
+  // T-1428: L1 observation (5) — 「Verify and commit.」 (3 words) right after a worker return
+  // went unjudged under the 8-word floor. Mid-turn text is judged from 3 words.
+  test.each([
+    'Verify and commit.',
+    'Let me check the file.',
+    'Now QA grill on the discipline diff.',
+  ])('short English mid-turn text, user-lang=ko → the mid-turn notice: %s', text => {
     const sb = sandbox('ko')
-    write(sb, [userPrompt('진행해줘'), aText('Let me check the file.'), aTool('t1')])
+    write(sb, [userPrompt('README 한 줄 넣어줘'), aTool('t1'), toolResult('t1', 'worker return'), aText(text), aTool('t2')])
+    expect(post(sb, 't2')).toBe(HOT_KO + '\n' + NOTICE('ko'))
+  })
+
+  test.each([
+    ['two words', 'Checking now.'],
+    ['ids, paths, code and quoted text carry the English', 'T-1428 `git commit -m fix` packages/core/x.sh "Verify and commit." 확인'],
+    ['a fenced block', '```\nVerify and commit the change now.\n```'],
+    ['Korean with English terms', 'QA grill 발주할게요.'],
+  ])('short mid-turn text with %s → hot line only', (_label, text) => {
+    const sb = sandbox('ko')
+    write(sb, [userPrompt('진행해줘'), aText(text), aTool('t1')])
     expect(post(sb, 't1')).toBe(HOT_KO)
+  })
+
+  test('user asked for English this session → short English mid-turn text passes', () => {
+    const sb = sandbox('ko')
+    run(sb, { hook_event_name: 'UserPromptSubmit', prompt: 'please reply in English from now on', session_id: 's1' })
+    write(sb, [userPrompt('please reply in English from now on'), aText('Verify and commit.'), aTool('t1')])
+    expect(post(sb, 't1')).toBe(HOT_EN)
+  })
+
+  test('sidechain text, unknown tool id, missing transcript → hot line only', () => {
+    const sb = sandbox('ko')
     write(sb, [userPrompt('진행해줘'), aText(ENGLISH_AFTER_WORKER, true), aTool('t1')])
     expect(post(sb, 't1')).toBe(HOT_KO)
     write(sb, [userPrompt('진행해줘'), aText(ENGLISH_AFTER_WORKER), aTool('t1')])
