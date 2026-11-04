@@ -165,10 +165,11 @@ const ALLOW: Record<string, number> = {
   'core/scripts/hooks/prdt-dispatch-gate.sh': 7, // T-1248: +1 = the waiting record `: > $PRDT_HOME/run/dispatch-gate/waiting/<slug>` (tooling-owned run/, mtime is the datum); T-1280: -6 = quoted-text `>` (prose, jq strings) no longer counted; T-1283: -1 = a `<…>` in a `#` comment tail
   'core/scripts/hooks/prdt-identity-guard.sh': 2,
   'core/scripts/hooks/prdt-inbox-inject.sh': 2, // T-1300: +1 = the per-session seen record under $PRDT_HOME/run/inbox-seen/ (home, never .prdt/), tmp + os.replace
+  'core/scripts/hooks/prdt-lane-check.sh': 1, // T-1389: the once-per-turn report record under $PRDT_HOME/run/lane-check/turns/<sid>.json (home, never .prdt/), tmp + os.replace
   'core/scripts/hooks/prdt-message-display-autolink.sh': 2, // T-1143: embedded Python — the per-message fence stamp under $PRDT_HOME/run/message-display/ (home, never .prdt/): one `open(..., "w")` + the `os.unlink`-guarded save
   'core/scripts/hooks/prdt-overrides-inject.sh': 1,
   'core/scripts/hooks/prdt-post-dispatch.sh': 6, // T-1283: -2 = `<…>` in python docstring prose
-  'core/scripts/hooks/prdt-question-check.sh': 1, // T-1379: the judge log's one `open(..., "w")` under $PRDT_HOME/run/ (home, never .prdt/); the 4 other hits were Python `>` comparisons, rewritten as `<`
+  'core/scripts/hooks/prdt-question-check.sh': 2, // T-1389: +1 = the once-per-turn report record under $PRDT_HOME/run/question-check/turns/<sid>.json (home, never .prdt/), tmp + os.replace; T-1379: the judge log's one `open(..., "w")` under $PRDT_HOME/run/ (home, never .prdt/); the 4 other hits were Python `>` comparisons, rewritten as `<`
   'core/scripts/hooks/prdt-return-check.sh': 6, // T-1283: -2 = `<…>` in docstring prose;  T-1173: +1 = append_inbox's leaf-O_NOFOLLOW os.open fallback (docs/_shared/wiki/inbox.md, never .prdt/), taken only when prdt_safe_fs.py is not installed — same shape as the existing fallback above it
   'core/scripts/hooks/prdt-secret-guard.sh': 3, // T-1109: +1 = embedded Perl `length($n) > length($b)` in is_store_path — a comparison the SH_REDIR scan reads as a redirect, no write
   'core/scripts/hooks/prdt-session-start.sh': 4,

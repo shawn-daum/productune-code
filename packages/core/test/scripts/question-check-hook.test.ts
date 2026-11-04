@@ -129,7 +129,7 @@ function blockedLines(out: string): number[] {
   const j = JSON.parse(out)
   expect(j.decision).toBe('block')
   expect(j.reason.startsWith(TAG)).toBe(true)
-  const m = /\(line ([\d, ]+)\)/.exec(j.reason)
+  const m = /^\[prdt question check\] line ([\d, ]+(?:, \+\d+ more)?) asks/.exec(j.reason)
   expect(m, j.reason).not.toBeNull()
   return (m as RegExpExecArray)[1].split(',').map(s => Number(s.trim()))
 }
@@ -177,17 +177,14 @@ describe('T-1116 — the language clause', () => {
   test('a stored language names itself in the reason', () => {
     const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, langEnv('ko'))
     const r = JSON.parse(out).reason
-    expect(r).toContain('again in lang=ko, opening with')
-    // T-1302: the re-send keeps every other line; a body up for approval keeps its numbers
-    expect(r).toContain('every other line kept')
-    expect(r).toContain('never the options alone')
+    // T-1390 (T-1425 = A): the language rides the one Stop closing line, the sent reply stays
+    expect(r.endsWith('\nThe sent reply stays: send only the fix in lang=ko, never the reply again.')).toBe(true)
+    expect(r).toContain('a body to confirm goes in it, numbered')
   })
   test('no language known → the T-990 reason, no clause', () => {
     const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, langEnv())
     const r = JSON.parse(out).reason
-    expect(r).toContain('again, opening with')
-    expect(r).toContain('every other line kept')
-    expect(r).toContain('never the options alone')
+    expect(r.endsWith('\nThe sent reply stays: send only the fix, never the reply again.')).toBe(true)
     expect(r).not.toContain('lang=')
   })
   test('device language only (en-OS, nothing stored) → no clause (T-1281)', () => {
@@ -454,11 +451,14 @@ describe('fails open on unreadable inputs, never hangs', () => {
   })
 })
 
-test('hook-manifest registers it once, on Stop, matcher-less', () => {
+test('hook-manifest registers it on PostToolUse (Bash) first and on Stop, matcher-less, as the last resort (T-1389)', () => {
   const m = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'))
   expect(m.basenames).toContain('prdt-question-check.sh')
   const regs = m.registrations.filter((r: { hooks: string[] }) => r.hooks.includes('prdt-question-check.sh'))
-  expect(regs).toEqual([{ event: 'Stop', hooks: ['prdt-question-check.sh'] }])
+  expect(regs).toEqual([
+    { event: 'Stop', hooks: ['prdt-question-check.sh'] },
+    { event: 'PostToolUse', matcher: 'Bash', hooks: ['prdt-question-check.sh'] },
+  ])
 })
 
 describe('T-1285 — a recorded decision cited beside an ask is a re-ask (T-1313 = A)', () => {
@@ -509,18 +509,20 @@ describe('T-1285 — a recorded decision cited beside an ask is a re-ask (T-1313
     expect(j.decision).toBe('block')
     expect(j.reason.startsWith(REASK)).toBe(true)
     expect(j.reason).toContain('T-1313')
-    expect(j.reason).toMatch(/\(line [\d, ]+\)/)
+    expect(j.reason).toMatch(/ line [\d, ]+ asks again/)
     expect(j.reason).not.toContain('hook 이 막음') // never echoes the reply
   })
 
-  test('T-1365 = A — the reason is the approved To-Be wording, byte for byte', () => {
-    // docs/productune/artifacts/v1.16/lane-records-build-entry-step.md §B To-Be (467 B)
-    const TO_BE = '[prdt re-ask check] this reply asks the user (line %s) beside a decision already answered: %s (answer: `prdt decisions find <id>`). Act on the recorded answer and cite it, never ask it again; a decision ticket opened this turn for that ask → `dropped` naming the record. Keep the ask only when the record is stale or conflicting, its state changed, or a consent gate needs live words — say which beside the ask. Then send the reply again%s, every other line kept.'
-    expect(Buffer.byteLength(TO_BE)).toBe(467)
+  test('T-1390 (T-1425 = A) — the reason is the approved wording, byte for byte, plus the Stop closing line', () => {
+    // docs/productune/artifacts/v1.16/t1390-wording-draft.md §2 (337 B) + §4 SENT_TAIL (65 B)
+    const TO_BE = '[prdt re-ask check] line %s asks again a decision already answered: %s (`prdt decisions find <id>`). Act on the recorded answer and cite it; a ticket opened this turn for that ask → `dropped` naming the record. Ask again only when the record is stale or conflicting, its state changed, or a consent gate needs live words — say which.'
+    const SENT = 'The sent reply stays: send only the fix%s, never the reply again.'
+    expect(Buffer.byteLength(TO_BE)).toBe(337)
+    expect(Buffer.byteLength(SENT)).toBe(65)
     const reason = JSON.parse(run((p) => { record(p, 'T-1313'); newTicket(p) }, REASK_REPLY)).reason as string
-    const lines = (/\(line ([\d, ]+)\)/.exec(reason) as RegExpExecArray)[1]
-    const parts = [lines, 'T-1313', '']
-    expect(reason).toBe(TO_BE.replace(/%s/g, () => parts.shift() as string))
+    const lines = (/^\[prdt re-ask check\] line ([\d, ]+) asks/.exec(reason) as RegExpExecArray)[1]
+    const parts = [lines, 'T-1313']
+    expect(reason).toBe(TO_BE.replace(/%s/g, () => parts.shift() as string) + '\n' + SENT.replace('%s', ''))
   })
 
   test('the per-product id form (T-1298) is a citable record too', () => {
@@ -752,5 +754,116 @@ describe('T-1377 — L1 replays: re-ask only on the recorded decision itself, ne
     const reason = inline(reply, false)
     expect(reason.startsWith(REASK)).toBe(true)
     expect(reason).not.toContain(TAG)
+  })
+})
+
+describe('T-1389 — PostToolUse first (the reply draft of `prdt wordlist check -`), Stop as the last resort', () => {
+  // The L1 replays of decision-approval-observation.md (1) r1 and (2) r2: in both, the PO
+  // ran `prdt wordlist check --lang ko -` on its draft before replying (r1 printf, r2 heredoc).
+  const PRDT = path.join(CORE_ROOT, 'scripts', 'prdt')
+  const REASK = '[prdt re-ask check]'
+  const BATCH = '[prdt batch-ask check]'
+  const env = (asks: number[]): NodeJS.ProcessEnv => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-ptu-'))
+    roots.push(home)
+    return J(asks, { ...ON, PRDT_HOME: home, PRDT_BIN: PRDT, QC_FAKE_CALLS: path.join(home, 'calls') })
+  }
+  const calls = (e: NodeJS.ProcessEnv) =>
+    fs.existsSync(e.QC_FAKE_CALLS as string) ? fs.readFileSync(e.QC_FAKE_CALLS as string, 'utf8').trim().split('\n').length : 0
+  function decision(proj: string, id: string, status: string, outcome: string, ago: number) {
+    const p = path.join(proj, 'docs', 'tickets', 'v1.13', `${id}.md`)
+    fs.writeFileSync(p, ['---', `id: ${id}`, `slug: s-${id.toLowerCase()}`, 'type: decision', `status: ${status}`, 'assignee: user',
+      'created: 2026-11-01', '---', '', '## problem', '', '- x', '', '## outcome', '', outcome, '', '## log', '', ''].join('\n'))
+    const t = (Date.now() - ago) / 1000
+    fs.utimesSync(p, t, t)
+  }
+  const T001 = (proj: string) => decision(proj, 'T-001', 'done', '폰 설정을 따른다 — 사용자 「폰 설정 따라가면 돼」', 86_400_000)
+  const heredoc = (draft: string) => `prdt wordlist check --lang ko - <<'EOF'\n${draft}\nEOF`
+  function setup(fill: (proj: string) => void) {
+    const { root, proj } = makeProject({})
+    fill(proj)
+    return { root, proj, transcript_path: writeTranscript(root, 'x') }
+  }
+  function post(p: { proj: string; transcript_path: string }, command: string, e: NodeJS.ProcessEnv, extra: Record<string, unknown> = {}) {
+    const out = runHook({
+      session_id: 's1', prompt_id: 'p1', hook_event_name: 'PostToolUse', agent_type: 'prdt-po', tool_name: 'Bash',
+      tool_input: { command }, tool_response: { stdout: '' }, tool_use_id: 'tu', cwd: p.proj, transcript_path: p.transcript_path, ...extra,
+    }, e)
+    return out ? (JSON.parse(out).hookSpecificOutput as { hookEventName: string; additionalContext: string }) : null
+  }
+  function stopAfter(p: { proj: string; transcript_path: string }, reply: string, e: NodeJS.ProcessEnv) {
+    const out = runHook({
+      session_id: 's1', prompt_id: 'p1', hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: p.proj, transcript_path: p.transcript_path, last_assistant_message: reply,
+    }, e)
+    return out ? JSON.parse(out) : null
+  }
+
+  test('(1) r1 draft piped by printf → the re-ask finding arrives on PostToolUse, never a block', () => {
+    const p = setup(T001)
+    const draft = fx('reask-r1').trimEnd()
+    const cmd = `printf '%s\\n' "${draft.replace(/"/g, '\\"')}" | prdt wordlist check --lang ko -`
+    const ctx = post(p, cmd, env([5]))
+    expect(ctx?.hookEventName).toBe('PostToolUse')
+    expect(ctx?.additionalContext.startsWith(REASK)).toBe(true)
+    expect(ctx?.additionalContext).toContain('T-001')
+    // T-1390: the draft closing line, once, no language (the `[prdt reply]` line carries it)
+    expect(ctx?.additionalContext.endsWith('\nFix the draft before you send it.')).toBe(true)
+    expect(ctx?.additionalContext.split('Fix the draft').length).toBe(2)
+  })
+
+  test('(2) r2 draft in a heredoc → the batch-ask finding arrives on PostToolUse', () => {
+    const p = setup((proj) => {
+      T001(proj)
+      for (const id of ['T-002', 'T-003', 'T-004', 'T-005', 'T-006', 'T-007', 'T-008', 'T-009', 'T-010', 'T-011']) decision(proj, id, 'open', '', 1_000)
+    })
+    const ctx = post(p, heredoc(fx('batch-r2').trimEnd()), env([4, 8, 12, 17, 22, 26, 30, 35, 40, 45]))
+    expect(ctx?.additionalContext.startsWith(BATCH)).toBe(true)
+    expect(ctx?.additionalContext).toContain('10 open decisions')
+    expect(ctx?.additionalContext).not.toContain(REASK)
+  })
+
+  test('the same finding is reported once per turn; a new turn reports it again', () => {
+    const p = setup(T001)
+    const e = env([5])
+    const cmd = heredoc(fx('reask-r1').trimEnd())
+    expect(post(p, cmd, e)?.additionalContext).toContain(REASK)
+    expect(post(p, cmd, e)).toBeNull()
+    expect(post(p, cmd, e, { prompt_id: 'p2' })?.additionalContext).toContain(REASK)
+  })
+
+  test('no prompt_id → the transcript\'s last prompt names the turn, still once', () => {
+    const p = setup(T001)
+    const e = env([5])
+    const cmd = heredoc(fx('reask-r1').trimEnd())
+    expect(post(p, cmd, e, { prompt_id: undefined })?.additionalContext).toContain(REASK)
+    expect(post(p, cmd, e, { prompt_id: undefined })).toBeNull()
+  })
+
+  test('Stop is the last resort: a final reply that complies after the report is not blocked; one that still re-asks is', () => {
+    const p = setup(T001)
+    const e = env([5])
+    expect(post(p, heredoc(fx('reask-r1').trimEnd()), e)?.additionalContext).toContain(REASK)
+    // the reply the PO then writes acts on T-001 and asks nothing (judge: no ask lines)
+    const ok = '다크모드는 T-001 에서 정하신 대로 폰 설정을 따라가게 진행할게요.'
+    expect(stopAfter(p, ok, { ...e, QC_FAKE_ASKS: '' })).toBeNull()
+    const still = stopAfter(p, fx('reask-r1'), e)
+    expect(still.decision).toBe('block')
+    expect(still.reason.startsWith(REASK)).toBe(true)
+  })
+
+  test('a Bash call that is not a stdin wordlist check, a worker, or a non-Bash tool → silent, no judge call', () => {
+    const p = setup(T001)
+    const e = env([5])
+    expect(post(p, 'prdt wordlist check docs/x.md', e)).toBeNull()
+    expect(post(p, 'git status', e)).toBeNull()
+    expect(post(p, heredoc(fx('reask-r1').trimEnd()), e, { agent_type: 'prdt-developer' })).toBeNull()
+    expect(post(p, heredoc(fx('reask-r1').trimEnd()), e, { tool_name: 'Read' })).toBeNull()
+    expect(calls(e)).toBe(0)
+  })
+
+  test('a compliant draft → silent on PostToolUse', () => {
+    const p = setup(T001)
+    expect(post(p, heredoc('다크모드는 T-001 대로 진행할게요.'), env([]))).toBeNull()
   })
 })
