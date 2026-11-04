@@ -178,10 +178,12 @@ describe('render — one sidebar section per line', () => {
     for (const store of ['wiki', 'release', 'disc']) expect(sidebar(store), store).not.toContain('ls-h')
   })
 
-  it("T-1255: each line's 현재 버전 sidebar lists 용어 사전 right after its 결정 (T-1227: env moved to its own store)", () => {
+  it("T-1255: each line's 현재 버전 sidebar lists its env group right after 결정, then 용어 사전 (T-1397)", () => {
     const keys = [...sidebar('home').matchAll(/data-group-select="([^"]+)"/g)].map((m) => m[1])
-    expect(keys[keys.indexOf('decision') + 1]).toBe('glossary')
-    expect(keys[keys.indexOf('ntf-archive/decision') + 1]).toBe('ntf-archive/glossary')
+    expect(keys[keys.indexOf('decision') + 1]).toBe('env')
+    expect(keys[keys.indexOf('env') + 1]).toBe('glossary')
+    expect(keys[keys.indexOf('ntf-archive/decision') + 1]).toBe('ntf-archive/env')
+    expect(keys[keys.indexOf('ntf-archive/env') + 1]).toBe('ntf-archive/glossary')
     expect(pane('home', 'glossary')).toContain('용어')
   })
 
