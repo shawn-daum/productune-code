@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 # prdt — idle gate lane check (T-1272).
-# Registered on Stop (matcher-less: Stop takes none). Acts for the PO only
-# (`agent_type` == `prdt-po`); every other Stop — a worker, a plain session —
+# Registered on PostToolUse and Stop, both matcher-less. Acts for the PO only
+# (`agent_type` == `prdt-po`); every other event — a worker, a plain session —
 # exits silently.
+#
+# POSTTOOLUSE FIRST, STOP LAST (T-1389; the language check's pattern, T-1307).
+# After a PO tool call the same idle-lane test below runs and its reason is
+# returned as PostToolUse additionalContext, once per turn for the same lanes and
+# ids (turn = `prompt_id`, else the last prompt record of the transcript; state in
+# $PRDT_HOME/run/lane-check/turns/<session>.json), so the PO dispatches before it
+# writes its reply. Stop stays the last resort: it blocks only when a lane is
+# still idle AND the final reply does not name it after that report (the reason's
+# own way out: a skipped row or a stopped lane gets one reply line naming it). A
+# turn with no PostToolUse report blocks at Stop exactly as before.
 #
 # WHY. The lane loop (`spare-capacity` playbook) lived only in text the PO reads:
 # Fill ran on a turn close or a worker return, and when every live job was long
@@ -60,14 +70,11 @@ exit 0
 # ---- python ----
 import hashlib, json, os, re, signal, subprocess, sys, unicodedata
 
-# WORDING: designer inject-edit (T-1272, settled 2026-10-26).
+# WORDING: designer inject-edit (T-1272; shortened T-1390, T-1425 = A).
 # %s = the idle lanes with their ready ids ("L1: T-1270, T-1271 · L3: T-1268").
 LANE_CHECK_REASON = (
-    "[prdt lane check] idle gate lane — a `next`/`ready` row, nothing in flight, no user stop: %s. "
-    "Dispatch its next row now, in the background (`spare-capacity` playbook §Fill). Dispatch gate "
-    "WAITING deny → Bash `prdt dispatch wait` with `run_in_background`; its exit re-runs Fill — never "
-    "wait for a return. Row skipped for file overlap with a live dispatch, or lane the user stopped → "
-    "one reply line naming it."
+    "[prdt lane check] idle gate lane: %s. Dispatch its next row now, in the background (`spare-capacity` "
+    "§Fill); then one reply line names what went out, a row skipped for file overlap, or a lane the user stopped."
 )
 LIST_CAP = 5
 RUN_BUDGET_S = 5
@@ -207,13 +214,82 @@ def cap(items):
     return shown + (", +%d more" % (len(items) - LIST_CAP) if LIST_CAP < len(items) else "")
 
 
+def turn_key(ev):
+    """The turn this event belongs to: `prompt_id`, else a hash of the last
+    main-session user prompt record in the transcript tail; None when neither."""
+    pid = ev.get("prompt_id")
+    if isinstance(pid, str) and pid:
+        return "p:" + pid
+    try:
+        path = ev.get("transcript_path")
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            f.seek(max(0, size - 2 * 1024 * 1024))
+            raw = f.read().decode("utf-8", "replace").split("\n")
+        for jl in reversed(raw):
+            jl = jl.strip()
+            if not jl:
+                continue
+            try:
+                rec = json.loads(jl)
+            except Exception:
+                continue
+            if not (isinstance(rec, dict) and rec.get("type") == "user" and rec.get("isSidechain") is False):
+                continue
+            msg = rec.get("message")
+            c = msg.get("content") if isinstance(msg, dict) else None
+            if (isinstance(c, str) and c.strip()) or (isinstance(c, list) and any(
+                    isinstance(b, dict) and b.get("type") == "text" for b in c)):
+                return "t:" + hashlib.sha256(jl.encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        return None
+    return None
+
+
+def turn_state_path(ev):
+    sid = re.sub(r"[^A-Za-z0-9_-]", "_", str(ev.get("session_id") or "nosession"))[:80]
+    return os.path.join(prdt_home(), "run", "lane-check", "turns", sid + ".json")
+
+
+def reported_this_turn(ev, turn):
+    """The signatures PostToolUse reported in `turn` ([] for another turn or none)."""
+    try:
+        with open(turn_state_path(ev), encoding="utf-8") as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        return []
+    sent = st.get("sent") if isinstance(st, dict) and st.get("turn") == turn else None
+    return [k for k in sent if isinstance(k, str)] if isinstance(sent, list) else []
+
+
+def mark_reported(ev, turn, sent):
+    p = turn_state_path(ev)
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        tmp = "%s.tmp%d" % (p, os.getpid())
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"turn": turn, "sent": sent}, f)
+        os.replace(tmp, p)
+    except OSError:
+        pass
+
+
+def names_every_lane(reply, idle):
+    """The final reply names each idle lane, by its name or one of its ready ids."""
+    if not (isinstance(reply, str) and reply.strip()):
+        return False
+    return all(n in reply or any(re.search(r"(?<![A-Za-z0-9-])%s(?!\d)" % re.escape(t), reply) for t in ids)
+               for n, ids in idle)
+
+
 def main():
     ev = read_event()
     if ev is None:
         return
-    if ev.get("hook_event_name") != "Stop" or ev.get("agent_type") != "prdt-po":
+    event = ev.get("hook_event_name")
+    if event not in ("Stop", "PostToolUse") or ev.get("agent_type") != "prdt-po":
         return
-    if ev.get("stop_hook_active") is True:
+    if event == "Stop" and ev.get("stop_hook_active") is True:
         return
     root = project_root(ev.get("cwd"))
     if not root:
@@ -233,7 +309,24 @@ def main():
         return
     parts = ["%s: %s" % (safe_label(n), cap(ids)) for n, ids in idle]
     lanes = " · ".join(parts[:LIST_CAP]) + (" · +%d more" % (len(parts) - LIST_CAP) if LIST_CAP < len(parts) else "")
-    sys.stdout.write(json.dumps({"decision": "block", "reason": LANE_CHECK_REASON % lanes}, ensure_ascii=False))
+    reason = LANE_CHECK_REASON % lanes
+    turn = turn_key(ev)
+    if event == "PostToolUse":
+        # T-1389: reported once per turn for the same idle lanes and ids.
+        sig = hashlib.sha256(lanes.encode("utf-8")).hexdigest()[:16]
+        if turn is not None:
+            sent = reported_this_turn(ev, turn)
+            if sig in sent:
+                return
+            mark_reported(ev, turn, sent + [sig])
+        sys.stdout.write(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse", "additionalContext": reason}}, ensure_ascii=False))
+        return
+    # Stop, the last resort: after a PostToolUse report this turn, a reply that
+    # names every idle lane (the reason's one-reply-line way out) is not blocked.
+    if turn is not None and reported_this_turn(ev, turn) and names_every_lane(ev.get("last_assistant_message"), idle):
+        return
+    sys.stdout.write(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
 
 
 def _out_of_budget(*_):

@@ -278,6 +278,68 @@ describe('prdt-lane-check.sh', () => {
     expect(stops.map((r: any) => r.hooks[0])).toEqual(['prdt-question-check.sh', 'prdt-lane-check.sh', 'prdt-user-prompt.sh'])
     expect(stops[1].matcher).toBeUndefined()
   })
+
+  test('T-1389: also registered on PostToolUse, matcher-less, once', () => {
+    const m = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'))
+    const regs = m.registrations.filter((r: any) => r.hooks.includes('prdt-lane-check.sh'))
+    expect(regs).toEqual([{ event: 'Stop', hooks: ['prdt-lane-check.sh'] }, { event: 'PostToolUse', hooks: ['prdt-lane-check.sh'] }])
+  })
+})
+
+describe('T-1389 — PostToolUse first, Stop as the last resort', () => {
+  function post(p: { proj: string; home: string; bin: string; root: string }, extra: Record<string, unknown> = {}) {
+    const ev = { session_id: 's1', prompt_id: 'p1', hook_event_name: 'PostToolUse', agent_type: 'prdt-po', tool_name: 'Read',
+      tool_input: {}, cwd: p.proj, transcript_path: transcript(p.root, 'T-001 진행해줘'), ...extra }
+    const r = spawnSync('bash', [HOOK], { input: JSON.stringify(ev), encoding: 'utf8', timeout: subprocessTimeout('hook'),
+      env: { ...process.env, PRDT_HOME: p.home, PATH: `${p.bin}:${process.env.PATH}` } })
+    expect(r.status).toBe(0)
+    return r.stdout ? JSON.parse(r.stdout).hookSpecificOutput : null
+  }
+  function stop(p: { proj: string; home: string; bin: string; root: string }, reply: string) {
+    const ev = { session_id: 's1', prompt_id: 'p1', hook_event_name: 'Stop', agent_type: 'prdt-po', cwd: p.proj, stop_hook_active: false,
+      transcript_path: transcript(p.root, 'T-001 진행해줘'), last_assistant_message: reply }
+    const r = spawnSync('bash', [HOOK], { input: JSON.stringify(ev), encoding: 'utf8', timeout: subprocessTimeout('hook'),
+      env: { ...process.env, PRDT_HOME: p.home, PATH: `${p.bin}:${process.env.PATH}` } })
+    return r.stdout ? JSON.parse(r.stdout) : null
+  }
+
+  test('an idle lane is reported on PostToolUse as additionalContext, the Stop reason byte for byte, never a block', () => {
+    const p = makeProject(BASE)
+    const ctx = post(p)
+    expect(ctx.hookEventName).toBe('PostToolUse')
+    expect(ctx.additionalContext).toBe(JSON.parse(runHook(p)).reason)
+  })
+
+  test('the same idle lanes are reported once per turn; a new turn or a changed lane set reports again', () => {
+    const p = makeProject(BASE)
+    expect(post(p)).not.toBeNull()
+    expect(post(p)).toBeNull()
+    expect(post(p, { prompt_id: 'p2' })).not.toBeNull()
+    cli(p, ['lanes', 'pause', 'L1'])
+    expect(post(p, { prompt_id: 'p2' }).additionalContext).not.toContain('L1 결정/질문:')
+  })
+
+  test('no prompt_id → the transcript\'s last prompt names the turn, still once', () => {
+    const p = makeProject(BASE)
+    expect(post(p, { prompt_id: undefined })).not.toBeNull()
+    expect(post(p, { prompt_id: undefined })).toBeNull()
+  })
+
+  test('Stop after the report: a reply naming every idle lane passes; one naming none still blocks', () => {
+    const p = makeProject(BASE)
+    post(p)
+    expect(stop(p, 'T-002 는 live 발주와 파일이 겹쳐 건너뛰었어요. L2 는 멈춰 두라고 하셨어요.')).toBeNull()
+    expect(stop(p, 'T-002 는 건너뛰었어요.').decision).toBe('block')
+  })
+
+  test('Stop with no report this turn blocks as before, even when the reply names the lanes', () => {
+    const p = makeProject(BASE)
+    expect(stop(p, 'T-002 · T-010 건너뛰었어요.').decision).toBe('block')
+  })
+
+  test('a worker PostToolUse is silent', () => {
+    expect(post(makeProject(BASE), { agent_type: 'prdt-developer' })).toBeNull()
+  })
 })
 
 describe('prdt dispatch wait', () => {
