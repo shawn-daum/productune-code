@@ -65,16 +65,7 @@ const HOME = {
   stageDone: (done, total) => `Tickets done ${done}/${total}`,
   scope: 'Scope',
   scopeSub: (n) => `${n} PRD items this version`,
-  scopeOutDef: 'prd_item is empty or matches no item',
-  scopeOutEmpty: 'None',
-  scopeMalformed: (n) => `${n} malformed ticket${n === 1 ? '' : 's'}`,
-  scopeDecisionNote: (n) => `${n} decision${n === 1 ? '' : 's'} left out`,
-  scopeDecisionLink: 'Decision list',
-  scopeLane: (name) => `Lane ${name}`,
-  scopeNoLane: 'Items not tied to a lane',
-  scopeLaneRule: 'Lane count = all tickets of that lane · item count = that item\'s tickets · an item sits under the lane with most of its tickets',
-  scopeFixTag: (n) => `Fix format ${n}`,
-  scopeFixTitle: 'Only a key is written, without a version. Fix it to the <version>#<key> form.',
+  scopeDefaultLane: 'This version',
   waitDec: 'Waiting for my decision',
   waitDecEmpty: 'No decision is waiting.',
   waitReq: 'Waiting for user work',
@@ -95,7 +86,6 @@ const HOME = {
   nodeOpen: (id) => `Open ${id} details`,
 }
 
-const PROGRESS_OUT_OF_SCOPE_LABEL = 'Tickets outside PRD items'
 
 const DETAIL_FIELD_LABELS = {
   type: 'Type',
@@ -364,7 +354,7 @@ const LINKS = {
 }
 
 export default {
-  STORE_LABEL, COMMON, noGroupLabel, ENV, PAGE, HOME, PROGRESS_OUT_OF_SCOPE_LABEL, DETAIL_FIELD_LABELS, TICKET, WIKI, FEATURE,
+  STORE_LABEL, COMMON, noGroupLabel, ENV, PAGE, HOME, DETAIL_FIELD_LABELS, TICKET, WIKI, FEATURE,
   GLOSSARY, RELEASE, DISCIPLINE, DISCIPLINE_LOAD, readFieldValue, ARTIFACT, PRD, IDLE, PRD_READING, FRAME, FILE_HREF_NOTE,
   HASH_NOTICE, IDENTITY, THEME_TOGGLE, OPTION_CARD, LINKS,
 }

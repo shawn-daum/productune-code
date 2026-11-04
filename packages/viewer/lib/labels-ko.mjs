@@ -99,19 +99,7 @@ const HOME = {
   stageDone: (done, total) => `티켓 완료 ${done}/${total}`,
   scope: '스코프',
   scopeSub: (n) => `이번 버전 PRD ${n}항목`,
-  // T-1046 → T-1180: the 「PRD 항목 밖 티켓」 block's explainer is ONE line: why a ticket is outside · decisions left out (count) · link to them.
-  scopeOutDef: 'prd_item 이 비었거나 맞는 항목 없음',
-  scopeOutEmpty: '없음',
-  scopeMalformed: (n) => `형식이 틀린 티켓 ${n}건`,
-  scopeDecisionNote: (n) => `결정 ${n}건 제외`,
-  scopeDecisionLink: '결정 목록',
-  // T-1180: scope rows grouped under their 합격선 lane (gate row); items no lane's tickets reach sit under the last head.
-  scopeLane: (name) => `레인 ${name}`,
-  scopeNoLane: '레인에 묶이지 않은 항목',
-  // T-1184 (T-1180 QA): the lane head counts every ticket of the lane, an item row only its own — said once under the rows.
-  scopeLaneRule: '레인 숫자 = 그 레인 티켓 전체 · 항목 숫자 = 그 항목 티켓 · 항목은 티켓이 가장 많은 레인 아래',
-  scopeFixTag: (n) => `형식 고치기 ${n}`,
-  scopeFixTitle: '버전 없이 키만 적혀 있어요. <버전>#<키> 형식으로 고쳐 주세요.',
+  scopeDefaultLane: '이번 버전',
   waitDec: '결정사항',
   waitDecEmpty: '기다리는 결정이 없어요.',
   waitReq: '요청사항',
@@ -147,7 +135,6 @@ const HOME = {
 // no PRD heading to read a label from, so it keeps its own hardcoded label,
 // same as every other genuine UI copy string in this file (§A keep, PRD.md's
 // own existing "항목 밖" idiom reused verbatim).
-const PROGRESS_OUT_OF_SCOPE_LABEL = 'PRD 항목 밖 티켓'
 
 // T-705 §B: spec_since 라벨을 영문 키 그대로 노출하던 것을 '시작 버전'으로.
 const DETAIL_FIELD_LABELS = {
@@ -518,7 +505,7 @@ const LINKS = {
 }
 
 export default {
-  STORE_LABEL, COMMON, noGroupLabel, ENV, PAGE, HOME, PROGRESS_OUT_OF_SCOPE_LABEL, DETAIL_FIELD_LABELS, TICKET, WIKI, FEATURE,
+  STORE_LABEL, COMMON, noGroupLabel, ENV, PAGE, HOME, DETAIL_FIELD_LABELS, TICKET, WIKI, FEATURE,
   GLOSSARY, RELEASE, DISCIPLINE, DISCIPLINE_LOAD, readFieldValue, ARTIFACT, PRD, IDLE, PRD_READING, FRAME, FILE_HREF_NOTE,
   HASH_NOTICE, IDENTITY, THEME_TOGGLE, OPTION_CARD, LINKS,
 }

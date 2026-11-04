@@ -197,8 +197,9 @@ describe('render — one sidebar section per line', () => {
     expect(arch).toContain('title="T-202"')
     expect(arch).not.toContain('title="T-101"')
     expect(arch).toContain('티켓 완료 1/3')
-    // scope rows from that line's own PRD section
-    expect(arch).toContain('Archive item A')
+    // T-1415: the scope block is one line per lane of that line (default lane here), its sub-title counts that line's own PRD section
+    expect(arch).toContain('이번 버전 PRD 2항목')
+    expect(home).toContain('이번 버전 PRD 1항목')
     expect(arch).not.toContain('Home item A')
     // waits: the line's own user decision
     expect(arch).toContain('data-detail-id="T-203"')
