@@ -2513,8 +2513,8 @@ function envSetCount(f) {
  *  file NAME only — the URL handler (packages/core/scripts/prdt_open_url.py) rebuilds the path from
  *  that project's own config, so a link can name nothing but an env file in a code folder. */
 function envActions(f, where) {
-  if (!where || !where.root || !where.absDir) return ''
-  const q = [`root=${encodeURIComponent(where.root)}`, ...(where.line ? [`line=${encodeURIComponent(where.line)}`] : []), `file=${encodeURIComponent(f.name)}`].join('&')
+  if (!where || !where.absDir || (!where.machine && !where.root)) return ''
+  const q = where.machine ? 'scope=machine' : [`root=${encodeURIComponent(where.root)}`, ...(where.line ? [`line=${encodeURIComponent(where.line)}`] : []), `file=${encodeURIComponent(f.name)}`].join('&')
   const abs = `${where.absDir}/${f.name}`
   const vscode = where.vscode ? `<a class="env-act" href="${escapeHtml(`vscode://file${abs.split('/').map(encodeURIComponent).join('/')}`)}">${ENV.openVsCode}</a>` : ''
   return `<div class="env-acts"><a class="env-act" href="${escapeHtml(`prdt://open-env?${q}`)}">${ENV.openEditor}</a>${vscode}` +
@@ -2562,12 +2562,22 @@ function envSection(data) {
       const body = `<div class="env-nofile"><b>${ENV.machineEmptyHead}</b><span>${escapeHtml(ENV.machineEmptyDetail)}</span></div>`
       groups.push({ key: '@machine', label: ENV.machineNoKey, dim: true, ...(views.length > 0 ? { crumb: ENV.machineScope } : {}), head, bodyHtml: body })
     } else {
-      groups.push({ key: '@machine', label: '.env', count: machine.keys.length, ...(views.length > 0 ? { crumb: `${ENV.machineScope} · .env` } : {}), head, bodyHtml: envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir) })
+      groups.push({ key: '@machine', label: '.env', count: machine.keys.length, ...(views.length > 0 ? { crumb: `${ENV.machineScope} · .env` } : {}), head, bodyHtml: envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir, machine.absDir ? { machine: true, vscode: !!(data.editors && data.editors.vscode), absDir: machine.absDir } : null) })
     }
   }
   // approved.png state #1: the machine-scope .env is preselected when it holds keys; no progress card in this store.
   const defaultKey = machine && machine.keys.length > 0 ? '@machine' : undefined
   return storeSection('env', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.env, crumbLabel: STORE_LABEL.env, groups, defaultKey, alwaysButtons: true, noCard: true }) })
+}
+
+/** T-1397: a product's env group in the home left panel — its env files' cards (key names + set state, no open controls), or the env screen's empty text. */
+function homeEnvGroup(data, v, hasLines) {
+  const env = envOfView(data, v)
+  const files = (env && env.files) || []
+  const bodyHtml = files.length === 0
+    ? `<div class="env-nofile"><b>${escapeHtml(hasLines ? ENV.emptyHead : ENV.homeNone)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
+    : files.map((f) => envFileBody(f, env.dir)).join('')
+  return { key: 'env', label: STORE_LABEL.env, count: files.length, bodyHtml }
 }
 
 // ---------- home: the in-progress version's workspace (T-666 slice 2a) ----------
@@ -2937,6 +2947,7 @@ function homeLineGroups(data, v, views, repoRootHref) {
     { key: 'prd', label: STORE_LABEL.prd, count: idle ? lastClosedId(v) : v.currentVersion, bodyHtml: idle ? idleNotice(IDLE.prdHead(v.name), IDLE.prdDetail()) : prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: homeTickets.length, bodyHtml: ticketRowsTable(homeTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
+    homeEnvGroup(data, v, true),
     glossaryGroup(data.wiki),
   ]
   return { groups, defaultKey: 'progress' }
@@ -3007,6 +3018,7 @@ function homeSection(data, repoRootHref) {
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
+    homeEnvGroup(data, { line: null }, false),
     glossaryGroup(data.wiki),
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
