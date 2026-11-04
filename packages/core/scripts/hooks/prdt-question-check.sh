@@ -183,7 +183,7 @@ QUESTION_CHECK_REASON = (
     "ticket was created or changed this turn. Open a `type: decision` ticket for each ask or cite "
     "its open ticket id beside it (a waiting item: `assignee: user` counts), then send the reply "
     "again%s, opening with one line that the question now has its ticket, every other line kept — a body "
-    "up for approval keeps its numbered lines (or group ranges + ticket link), never the options alone."
+    "to confirm keeps its numbered lines (or group ranges + ticket link), never the options alone."
 )
 # T-1116: the language clause that goes after "send the reply again" (wording settled
 # under the discipline-wording module, T-1245). %s = the stored chat language; the
@@ -417,7 +417,7 @@ JUDGE_SYSTEM_PROMPT = (
     "(a screen users will see, a mail customers will get):\n"
     "- a question or request whose answer is the user's own choice or approval: 「A 와 B 중 어느 쪽으로 "
     "할지 알려 주세요」, 「이 문구로 괜찮은지 알려 주세요」, 「이대로 괜찮으면 답해 주세요」, 「설치할까요?」, "
-    "「승인해 주세요」, \"Should I ship it?\", \"Is that right?\";\n"
+    "「승인해 주세요」, 「컨펌해 주세요」, \"Should I ship it?\", \"Is that right?\";\n"
     "- options laid out for the user to pick from (A / B lines with a recommendation): give the first "
     "option line;\n"
     "- each item listed under a heading saying it waits for the user's answer.\n"
@@ -659,7 +659,7 @@ def recorded_decisions(root, ids):
 
 
 # T-1377: an ask approving a body shown above it in its section (a fenced draft).
-APPROVAL_RE = re.compile(r"승인|approv", re.I)
+APPROVAL_RE = re.compile(r"승인|컨펌|approv|confirm", re.I)
 
 
 def body_end(lines, a, i):

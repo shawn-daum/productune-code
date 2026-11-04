@@ -302,7 +302,7 @@ const PRD_READING = {
   toBeSection: /^To-Be(\s|$)/,
   questionsSection: /^Open Questions(\s|$)/,
   whatSection: /^What(\s|$)/,
-  reviewGroup: /승인|approv/i,
+  reviewGroup: /승인|컨펌|approv|confirm/i,
 }
 
 const FRAME = {
