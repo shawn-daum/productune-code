@@ -158,17 +158,17 @@ describe('env item + Home env block — several lines', () => {
   const envStore = (h = html) => h.split('id="store-env"')[1].split('</section>')[0]
   const envPane = (group: string, h = html) => envStore(h).split(`data-group="${group}">`)[1].split('<div class="view-pane')[0]
 
-  it('T-1227: env is an activity-bar store after 아티팩트; home has no env item', () => {
+  it('T-1227: env is an activity-bar store after 아티팩트; T-1397: home also lists a per-product env group', () => {
     const order = [...html.matchAll(/class="activity-btn[^"]*" data-store="([a-z]+)"/g)].map((m) => m[1])
     expect(order).toEqual(['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'env', 'release', 'disc'])
-    expect(home()).not.toContain('data-group-select="env"')
-    expect(home()).not.toContain('data-group-select="ntf-archive/env"')
+    expect(home()).toContain('data-group-select="env"')
+    expect(home()).toContain('data-group-select="ntf-archive/env"')
   })
 
-  it('current-version sidebar: 용어 사전 follows 결정 on each line (the slot env had)', () => {
+  it('current-version sidebar: env follows 결정, 용어 사전 follows env on each line (T-1397)', () => {
     const side = home().split('<nav class="sidebar">')[1].split('</nav>')[0]
-    expect(side).toMatch(/data-group-select="ntf-archive\/decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="ntf-archive\/glossary"/)
-    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="glossary"/)
+    expect(side).toMatch(/data-group-select="ntf-archive\/decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="ntf-archive\/env"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="ntf-archive\/glossary"/)
+    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="glossary"/)
   })
 
   it('env sidebar: a group per product, one item per file (samples included, counted by keys); no progress card', () => {
@@ -259,7 +259,7 @@ describe('env item — single-line project', () => {
   })
   afterAll(() => fs.rmSync(root, { recursive: true, force: true }))
 
-  it('env store: one product group with its one file item; home has no env item and 용어 사전 follows 결정; 진행 상황 has no env block', () => {
+  it('env store: one product group with its one file item; home lists its own env group (T-1397) between 결정 and 용어 사전; 진행 상황 has no env block', () => {
     const html = render(collectAll(root, { disciplineRoot: root }))
     const store = html.split('id="store-env"')[1].split('</section>')[0]
     expect(store.split('<nav class="sidebar">')[1].split('</nav>')[0]).toMatch(/<div class="ls-h"><b>shop v2\.2<\/b><span class="ls-st">build<\/span><\/div>\s*<button[^>]*data-group-select="\.env\.local"[^>]*><span>\.env\.local<\/span><span class="nav-item-count">2<\/span>/)
@@ -267,8 +267,7 @@ describe('env item — single-line project', () => {
     const home = html.split('id="store-home"')[1].split('</section>')[0]
     const side = home.split('<nav class="sidebar">')[1].split('</nav>')[0]
     expect(side).not.toContain('ls-h')
-    expect(side).not.toContain('data-group-select="env"')
-    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="glossary"/)
+    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="glossary"/)
     expect(home).not.toContain('env-blk')
     expect(store).toContain(`prdt://open-env?root=${encodeURIComponent(fs.realpathSync(root))}&amp;file=.env.local`)
     expect(html).not.toContain(SENTINEL)
@@ -309,7 +308,7 @@ describe('machine-scope env (T-1109)', () => {
     const home = fs.mkdtempSync(path.join(tmp, 'h-'))
     write(home, 'env/.env', `A='${SENTINEL}'\nB='${SENTINEL}'\nC=\nD='${SENTINEL}'\n`)
     const m = collectMachineEnv(home, productEnv(`A=${SENTINEL}\nB=\nC=x\n`))
-    expect(m).toEqual({ dir: '~/.prdt/env', keys: [
+    expect(m).toEqual({ dir: '~/.prdt/env', absDir: expect.any(String), keys: [
       { name: 'A', set: true, codeWins: true }, { name: 'B', set: true, codeWins: false },
       { name: 'C', set: false, codeWins: false }, { name: 'D', set: true, codeWins: false },
     ] })
@@ -382,9 +381,10 @@ describe('machine-scope env (T-1109)', () => {
       expect(withKeys).toContain('<code>GOOGLE_OIDC_CLIENT_ID</code><span class="tagw">제품 코드 값이 우선</span>')
       expect(withKeys).toContain('<code>PUSH_CERT_PASSWORD</code><span class="est off">비어 있음</span>')
       expect(withKeys + none).not.toContain(SENTINEL)
-      // T-1191: the machine store is the user's own `prdt env set` — no open link on its card
+      // T-1395: the machine store's card carries the open links (the URL names only scope=machine, no path)
       const machineCard = withKeys.split('id="store-env"')[1].split('data-group="@machine">')[1].split('<div class="view-pane')[0]
-      expect(machineCard).not.toContain('env-act')
+      expect(machineCard).toContain('<a class="env-act" href="prdt://open-env?scope=machine">')
+      expect(machineCard).toContain(`data-env-copy="${path.join(home, 'env')}/.env"`)
     } finally {
       if (prev === undefined) delete process.env.PRDT_HOME
       else process.env.PRDT_HOME = prev

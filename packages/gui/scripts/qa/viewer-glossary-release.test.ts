@@ -108,10 +108,10 @@ describe('activity bar (T-880 = A)', () => {
 })
 
 describe('용어 사전 (T-883 · T-1255 in 현재 버전)', () => {
-  it('sits in the 현재 버전 sidebar right after 결정 (the slot env had), and has no store of its own', () => {
+  it('sits in the 현재 버전 sidebar after the env group that follows 결정 (T-1397), and has no store of its own', () => {
     const html = render(data())
     const keys = homeGroupKeys(html)
-    expect(keys.slice(-2)).toEqual(['decision', 'glossary'])
+    expect(keys.slice(-3)).toEqual(['decision', 'env', 'glossary'])
     expect(html).toContain('data-group-select="glossary"><span>용어 사전</span><span class="nav-item-count">2</span></button>')
     expect(html).not.toContain('data-store="glossary"')
     expect(html).not.toContain('id="store-glossary"')
@@ -125,10 +125,10 @@ describe('용어 사전 (T-883 · T-1255 in 현재 버전)', () => {
     expect(sec).not.toContain('fact--x')
   })
 
-  it('an idle product still lists its terms after 결정', () => {
+  it('an idle product still lists its terms after 결정 and env', () => {
     const d = { ...data(), currentVersion: '', poState: { stage: 'idle' } }
     const html = render(d)
-    expect(homeGroupKeys(html).slice(-2)).toEqual(['decision', 'glossary'])
+    expect(homeGroupKeys(html).slice(-3)).toEqual(['decision', 'env', 'glossary'])
     expect(glossaryPane(html)).toContain('<span class="count-badge">용어 <b>2</b>개</span>')
   })
 
