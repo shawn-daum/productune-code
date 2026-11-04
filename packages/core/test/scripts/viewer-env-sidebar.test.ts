@@ -54,10 +54,24 @@ describe.skipIf(!HAS_DEPS)('viewer env screen — sidebar per file (T-1227)', ()
     empty = render(null)
   }, 120000)
 
-  test('env is its own activity-bar store, not a home sidebar item', () => {
+  test('env stays an activity-bar store; T-1397: home has a per-product env group (names + state only), no env block in progress', () => {
     expect(html).toMatch(/<button[^>]*class="activity-btn[^"]*"[^>]*data-store="env"/)
-    expect(items(section(html, 'home')).some((i) => i.label === 'env')).toBe(false)
-    expect(section(html, 'home')).not.toContain('env-card')
+    const home = section(html, 'home')
+    expect(items(home).filter((i) => i.label === 'env').length).toBe(2) // one per product
+    expect(items(home).filter((i) => i.label === 'env').map((i) => pane(home, i.key)).join('')).toContain('env-card')
+    expect(home).not.toContain('data-env-copy')
+    expect(home).not.toContain('PLACEHOLDER_ONE=')
+    expect(home).toContain('이 제품에는 env 파일이 없어요.')
+    const progress = items(home).filter((i) => i.label === '진행 상황').map((i) => pane(home, i.key)).join('')
+    expect(progress).not.toContain('env-card')
+  })
+
+  test('T-1395: the machine-scope card carries the three open controls, link names no path', () => {
+    const sec = section(html, 'env')
+    const machine = pane(sec, items(sec).pop()!.key)
+    expect(machine).toContain('href="prdt://open-env?scope=machine"')
+    expect(machine).toContain('data-env-copy=')
+    expect(machine).not.toContain('placeholder')
   })
 
   test('sidebar = a group per product and the machine scope, one item per file', () => {

@@ -130,6 +130,18 @@ describe('prdt_open_url.py — resolves only an env file in a prdt project code 
     }
   })
 
+  test('T-1395: scope=machine opens only PRDT_HOME/env/.env; any other shape is refused', () => {
+    expect(check('prdt://open-env?scope=machine').code).toBe(1) // no file yet
+    write('prdt/env/.env', 'K=1\n')
+    expect(check('prdt://open-env?scope=machine')).toMatchObject({ code: 0, out: path.join(prdtHome, 'env', '.env') })
+    for (const u of ['prdt://open-env?scope=machine&file=.env', 'prdt://open-env?scope=machine&root=' + encodeURIComponent(root),
+      'prdt://open-env?scope=other', 'prdt://open-env?scope=machine&scope=machine', 'prdt://open-env?scope=machine#f']) expect(check(u).code, u).toBe(1)
+    fs.rmSync(path.join(prdtHome, 'env', '.env'))
+    fs.symlinkSync(path.join(base, 'secret.txt'), path.join(prdtHome, 'env', '.env'))
+    expect(check('prdt://open-env?scope=machine').code).toBe(1)
+    fs.rmSync(path.join(prdtHome, 'env'), { recursive: true })
+  })
+
   test('every refusal is logged under PRDT_HOME/run, the URL capped', () => {
     check(link({ root, file: 'x'.repeat(1000) }))
     const log = fs.readFileSync(path.join(prdtHome, 'run', 'open-url.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
