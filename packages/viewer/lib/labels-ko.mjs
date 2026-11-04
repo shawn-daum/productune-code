@@ -352,7 +352,7 @@ const ARTIFACT = {
   // T-705 §E: 원문 '이 버킷에는 산출물이 없다.'의 목업 실측 문안(둘째 줄 포함, §A keep).
   empty: '아직 아티팩트가 없어요.<br><span style="font-size:11px;">버전이 열리면 이 버킷에 manifest.json 이 생겨요.</span>',
   // T-705 §B: raw f.status 를 pill 없이 그대로 찍던 것 → pill + 한글 텍스트.
-  statusText: { pending: '대기', approved: '승인', archived: '보관' },
+  statusText: { pending: '대기', approved: '컨펌', archived: '보관' },
   countUnit: '건',
 }
 
@@ -401,7 +401,7 @@ const PRD_READING = {
   noDecide: '지금 정할 것이 없어요.',
   noQuestions: '남은 질문이 없어요.',
   noTickets: '기다리는 결정 티켓이 없어요.',
-  reviewQuestions: (n) => `화면 승인 때 볼 것 ${n}건`,
+  reviewQuestions: (n) => `화면 컨펌 때 볼 것 ${n}건`,
   cardsHeading: (n) => `항목 ${n}개`,
   lineCount: (n) => `${n}줄`,
   // T-928 (approved mockup docs/artifacts/v1.13/define-screen-set.html #screen-prd): the head's
@@ -425,7 +425,7 @@ const PRD_READING = {
   toBeSection: /^To-Be(\s|$)/,
   questionsSection: /^Open Questions(\s|$)/,
   whatSection: /^What(\s|$)/,
-  reviewGroup: /승인/,
+  reviewGroup: /승인|컨펌/,
 }
 
 // ---------- interaction script strings (embedded into the browser-side JS

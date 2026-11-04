@@ -3479,7 +3479,7 @@ def cmd_feedback(args):
     for r in rs:
         print(_feedback_row_line(r))
     print("Proposing a rule for this is the PO's next step: quadrant + persona + a line drafted by designer "
-          "inject-edit, put to the user — written only after the user approves. This command wrote only the ledger.")
+          "inject-edit, put to the user — written only after the user confirms. This command wrote only the ledger.")
 
 
 def _wiki_lint_view(root):

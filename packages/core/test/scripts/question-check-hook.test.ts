@@ -733,6 +733,10 @@ describe('T-1377 — L1 replays: re-ask only on the recorded decision itself, ne
     ['c — a fenced draft re-deciding T-001, approval with no new id',
       [DECIDED, '', ...DRAFT, '', '이 초안대로 앱 안 테마 설정을 넣는 걸 승인해 주실까요?'].join('\n'), false],
     ['c2 — the same, an imperative approval', [DECIDED, '', ...DRAFT, '', '이 초안대로 넣어도 되는지 승인해 주세요.'].join('\n'), false],
+    ['c4 — a fenced draft re-deciding T-001, 컨펌 ask naming the new ticket',
+      [DECIDED, '', ...DRAFT, '', '이 초안(T-012)대로 앱 안 테마 설정을 넣는 걸 컨펌해 주세요.'].join('\n'), true],
+    ['c5 — the same, 컨펌 ask with no new id', [DECIDED, '', ...DRAFT, '', '이 초안대로 넣어도 되는지 컨펌해 주세요.'].join('\n'), false],
+    ['c6 — the same, an English confirm ask', [DECIDED, '', ...DRAFT, '', 'Can you confirm this draft?'].join('\n'), false],
   ]
   for (const [label, reply, withT012] of cases) {
     test(`${label} → re-ask on T-001 only`, () => {
