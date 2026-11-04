@@ -15,7 +15,7 @@ export const HOME_STAGES = ['define', 'build', 'ship', 'retro']
 
 // PRD v1.12 §home-progress: 설계 · 결정 티켓은 define, 배포와 배포 전 점검 ·
 // 배포 뒤 확인(qa · ops)은 ship, 구현(and any other type) 은 build; retro 는
-// 티켓이 없다. A ticket has no stage field, so the stage bar reads the type.
+// 티켓이 없다. The type rule is the fallback of `stageOfTicket` (T-1384).
 const DEFINE_TYPES = new Set(['design', 'decision'])
 const SHIP_TYPES = new Set(['qa', 'ops'])
 
@@ -23,6 +23,40 @@ export function stageOfTicketType(type) {
   if (DEFINE_TYPES.has(type)) return 'define'
   if (SHIP_TYPES.has(type)) return 'ship'
   return 'build'
+}
+
+// T-1384 (decision T-1385 = A): a ticket counts in the stage it was created in — its own
+// `stage:` (written by `prdt tickets new`), else the stage po-state held on its `created`
+// day (`history` = prdt_lanes.stage_history: [[YYYY-MM-DD, stage], …] oldest-first, a
+// same-day change wins), else the type rule. JS twin of prdt_lanes.ticket_stage — the
+// statusline's rule (parity test: type-to-stage-parity).
+const COUNTED_STAGES = new Set(['define', 'build', 'ship'])
+
+function dayOf(v) {
+  if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10)
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(typeof v === 'string' ? v.trim() : '')
+  return m ? m[1] : ''
+}
+
+export function stageOfTicket(fm, history = []) {
+  const own = fm && fm.stage
+  const order = ['define', 'build', 'ship']
+  const byType = stageOfTicketType(fm && fm.type)
+  // T-1386 = B: an explicit key obeys the same floor — never earlier than the type's stage
+  if (COUNTED_STAGES.has(own)) return order.indexOf(byType) > order.indexOf(own) ? byType : own
+  const day = dayOf(fm && fm.created)
+  if (day) {
+    let hit = null
+    for (const [d, s] of Array.isArray(history) ? history : []) {
+      if (d <= day) hit = s
+      else break
+    }
+    if (COUNTED_STAGES.has(hit)) {
+      // T-1386 = B: never earlier than the type's stage (define < build < ship)
+      return order.indexOf(byType) > order.indexOf(hit) ? byType : hit
+    }
+  }
+  return stageOfTicketType(fm && fm.type)
 }
 
 export function ticketNumber(id) {
@@ -49,10 +83,10 @@ export function ticketDeps(fm) {
  * Only open + done tickets are counted (the same set as the statusline's
  * done/total — `versionProgressCounts`).
  */
-export function stageSegments(currentTickets) {
+export function stageSegments(currentTickets, history = []) {
   const counted = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
   return HOME_STAGES.map((stage) => {
-    const inStage = counted.filter((t) => stage !== 'retro' && stageOfTicketType(t.frontmatter.type) === stage)
+    const inStage = counted.filter((t) => stage !== 'retro' && stageOfTicket(t.frontmatter, history) === stage)
     const mk = (t) => ({ id: t.frontmatter.id, done: t.frontmatter.status === 'done' })
     const done = inStage.filter((t) => t.frontmatter.status === 'done').map(mk).sort((a, b) => compareTicketIds(a.id, b.id))
     const open = inStage.filter((t) => t.frontmatter.status === 'open').map(mk).sort((a, b) => compareTicketIds(a.id, b.id))

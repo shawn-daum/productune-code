@@ -366,19 +366,44 @@ def home_cells():
 # KEEP LINE_NAME_RE and the declared-line filter in lockstep with
 # LINE_NAME_RE / project_lines in scripts/prdt.
 LINE_NAME_RE = re.compile(r"\A(?!v[0-9])(?!backlog\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
-# T-923: `<stage> n/m` = done/total of the current version's tickets that belong
-# to the current stage. KEEP stage_of_type in lockstep with `stageOfTicketType`
-# in packages/viewer/lib/home-graph.mjs (parity test: statusline-stage-parity).
-STAGE_DEFINE_TYPES = ("design", "decision")
-STAGE_SHIP_TYPES = ("qa", "ops")
+# T-923 / T-1384: `<stage> n/m` = done/total of the current version's tickets that count
+# in the current stage — the ticket's own `stage:`, else the stage po-state held on its
+# `created` day, else the type rule (`prdt_lanes.ticket_stage`, the one rule; the viewer's
+# JS twin is `stageOfTicket` in packages/viewer/lib/home-graph.mjs — parity test:
+# type-to-stage-parity). The module missing → the type rule alone.
+try:
+    import prdt_lanes as _pl
+except Exception:
+    _pl = None
 
 
 def stage_of_type(t):
-    if t in STAGE_DEFINE_TYPES:
+    if t in ("design", "decision"):
         return "define"
-    if t in STAGE_SHIP_TYPES:
+    if t in ("qa", "ops"):
         return "ship"
     return "build"
+
+
+def ticket_stage_of(row, head):
+    fm = re.match(r"---\n(.*?)\n---", head, re.S)
+    block = fm.group(1) if fm else ""
+    mty = re.search(r"^type:\s*(\S+)", block, re.M)
+    mst = re.search(r"^stage:\s*(\S+)", block, re.M)
+    mcr = re.search(r"^created:\s*[\"']?(\d{4}-\d{2}-\d{2})", block, re.M)
+    ttype = mty.group(1) if mty else ""
+    if _pl is None:
+        return stage_of_type(ttype)
+    if "stage_hist" not in row:
+        try:
+            row["stage_hist"] = _pl.stage_history(root, row["line"], row["version"])
+        except Exception:
+            row["stage_hist"] = []
+    try:
+        return _pl.ticket_stage(mst.group(1) if mst else None, mcr.group(1) if mcr else None,
+                                ttype, row["stage_hist"])
+    except Exception:
+        return stage_of_type(ttype)
 
 
 # Rows this statusline may print — measured on the user's machine 2026-10-06:
@@ -549,8 +574,7 @@ def scan(base, row):
             if is_current:
                 row["vtotal"] += 1
                 row["vdone"] += s == "done"
-                mty = re.search(r"^(?:type|stage):\s*(\S+)", head, re.M)
-                stg = stage_of_type(mty.group(1) if mty else "")
+                stg = ticket_stage_of(row, head)
                 row["stotal"][stg] = row["stotal"].get(stg, 0) + 1
                 row["sdone"][stg] = row["sdone"].get(stg, 0) + (s == "done")
             tid = fn[:-3]

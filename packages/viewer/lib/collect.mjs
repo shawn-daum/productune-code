@@ -725,6 +725,26 @@ export function collectLanes(repoRoot, line = null, { version = '', scriptsDir =
 }
 
 /**
+ * T-1384: when po-state's stage changed during one product's open version — `prdt_lanes.stage_history`
+ * ([[YYYY-MM-DD, stage], …] oldest-first, read from the meta repo's po-state history), the record the
+ * stage bar places a ticket without its own `stage:` by. Read-only; any failure is `[]` (the type rule).
+ * @returns {Array<[string, string]>}
+ */
+export function collectStageHistory(repoRoot, line = null, { scriptsDir = path.join(INSTALL_ROOT, 'packages/core/scripts') } = {}) {
+  if (!fs.existsSync(path.join(scriptsDir, 'prdt_lanes.py'))) return []
+  // -I: as collectLanes — the sibling module is put on sys.path in code (T-1195).
+  const code = 'import sys,json\nsys.path.insert(0,sys.argv[3])\nimport prdt_lanes as m\nprint(json.dumps(m.stage_history(sys.argv[1], sys.argv[2] or None)))'
+  try {
+    const r = spawnSync('python3', ['-I', '-c', code, repoRoot, line || '', scriptsDir], { encoding: 'utf8', timeout: 20000, cwd: repoRoot, env: process.env })
+    if (r.status !== 0) return []
+    const h = JSON.parse(r.stdout)
+    return Array.isArray(h) ? h.filter((x) => Array.isArray(x) && typeof x[0] === 'string' && typeof x[1] === 'string').map((x) => [x[0], x[1]]) : []
+  } catch {
+    return []
+  }
+}
+
+/**
  * T-1256: an idle product's last closed version's lanes as at close ([] when the product is not idle or has no closed
  * round). `prd.closed` names the rounds; the version is line-prefixed the way a ticket row carries it.
  */
@@ -924,6 +944,7 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
       prd,
       tickets: collectTickets(repoRoot, version, { line: name, layout: lineLayout }),
       lanes: collectLanes(repoRoot, name),
+      stageHistory: collectStageHistory(repoRoot, name),
       ...(stage === 'idle' ? { closedLanes: collectClosedLanes(repoRoot, name, stage, prd) } : {}),
       deployed: collectDeployed(lineLayout),
       // T-958: key names + set/empty only (env-status.mjs).
@@ -945,6 +966,7 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
     prd: homePrd,
     tickets: collectTickets(repoRoot, currentVersion, { exclude: lineNames, layout }),
     lanes: collectLanes(repoRoot),
+    stageHistory: collectStageHistory(repoRoot),
     ...(poState.stage === 'idle' ? { closedLanes: collectClosedLanes(repoRoot, null, poState.stage, homePrd) } : {}),
     wiki: collectWiki(repoRoot, layout),
     features: collectFeatures(repoRoot, layout),
