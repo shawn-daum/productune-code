@@ -1,7 +1,7 @@
 ---
 name: brand-assets
 persona: designer
-when: "DS settled and logo/favicon/og:image missing · brand refresh (approved reversal)"
+when: "DS settled + logo/favicon/og:image missing · brand refresh (confirmed reversal)"
 model_floor: sonnet
 effort: medium
 ---
