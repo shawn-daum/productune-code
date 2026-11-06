@@ -25,6 +25,15 @@ Version-by-version release notes for this project.
 > - Every line is checked against the closed tickets' outcome lines, not the PRD To-Be.
 > - Everything above the first `## ` line is preamble and is ignored by the parser.
 
+## v1.16.1 — 상태줄 · 레인 검사 · 뷰어 버전 · 시험 환경 (2026-11-06)
+
+1. 요약
+
+- 1-1 상태줄: 줄 수가 많아 접힐 때도 진행 중인 발주 번호가 보이는 레인 줄은 접지 않아요
+- 1-2 레인 검사: 레인 이름을 낱말 경계로만 찾아서 L10 이 L1 로 세어지지 않아요
+- 1-3 뷰어 버전: 릴리스 노트에서 세 자리 버전 (v1.12.0) 으로 부르면 두 자리 절 (v1.12) 과 같은 버전으로 열려요 (v1.12.1 은 다른 버전이에요)
+- 1-4 시험 환경: 시험이 기기에 설정된 prdt 홈 경로 값을 물려받아 실제 폴더에 쓰지 않아요
+
 ## v1.16 — 결정 · 컨펌 · PO 말 · 여러 제품 · 확인한 이름과 화면 · 레인 기록 (2026-11-06)
 
 1. 요약

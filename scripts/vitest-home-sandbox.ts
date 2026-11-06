@@ -143,6 +143,15 @@ const sandbox = fs.mkdtempSync(path.join(SANDBOX_ROOT, `${process.pid}-`))
 
 process.env.PRODUCTUNE_REAL_HOME ??= os.homedir()
 process.env.HOME = sandbox
+// T-1450: `prdt` reads $PRDT_HOME before $HOME/.prdt, so repointing HOME alone left
+// an exported PRDT_HOME aimed at the real (or any inherited) directory. UNSET it,
+// not repoint it: with it unset `prdt` falls back to $HOME/.prdt, which is the
+// sandbox here and the test's own fake home wherever a test passes `HOME: home`
+// to a subprocess (measured: repointing PRDT_HOME at <sandbox>/.prdt made
+// prdt-update-cmd ignore the `home/.prdt/user-lang` it seeds and fail 3 tests).
+// The real-home tripwire watches the inherited value separately
+// (isolation-rules.cjs ambientPrdtHome()).
+delete process.env.PRDT_HOME
 
 process.on('exit', () => {
   try { fs.rmSync(sandbox, { recursive: true, force: true }) } catch { /* the sweep gets it next run */ }
