@@ -1,3 +1,4 @@
+// prdt-vitest-guard (track merge skips this config: not a package)
 // T-1417: refuse a vitest run that is not rooted in a package.
 //
 // vitest looks for its config UPWARD from the cwd. Started from `code/` or
