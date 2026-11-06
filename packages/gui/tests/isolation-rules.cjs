@@ -147,6 +147,28 @@ function realHome() {
   return REAL_HOME
 }
 
+// ── the ambient PRDT_HOME, frozen (T-1450) ──────────────────────────────────
+//
+// `prdt` resolves its state dir from `$PRDT_HOME` before `$HOME/.prdt`, so a run
+// started from a shell that exports it wrote user-lang, run/open-roots,
+// run/hook-guard/*.json and run/dispatches.lock into THAT directory while HOME
+// was already sandboxed. The sandbox now repoints it; this is the detection
+// side: the value the run was STARTED with, captured at first load (the main
+// process, before any worker's sandbox exists) so the tripwire can fingerprint
+// that target. A value already inside a repo sandbox (a nested run, a worker)
+// is not an ambient one and is dropped.
+const AMBIENT_PRDT_HOME = (() => {
+  const v = process.env.PRDT_HOME
+  if (!v) return null
+  const abs = path.resolve(v)
+  if (abs.split(path.sep).some((seg) => SANDBOX_DIR_NAMES.includes(seg))) return null
+  return abs
+})()
+
+function ambientPrdtHome() {
+  return AMBIENT_PRDT_HOME
+}
+
 /** Real-home paths that must never be written by a test, in any layer. */
 function protectedRealPaths() {
   const h = realHome()
@@ -1189,6 +1211,7 @@ module.exports = {
   IsolationViolation,
   WindowRuleViolation,
   realHome,
+  ambientPrdtHome,
   protectedRealPaths,
   insideRealHome,
   resolveRealPath,

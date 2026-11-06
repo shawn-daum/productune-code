@@ -311,7 +311,7 @@ const crypto = require('crypto')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { containmentKey, realHome } = require('./isolation-rules.cjs')
+const { containmentKey, realHome, ambientPrdtHome } = require('./isolation-rules.cjs')
 
 /**
  * Entry budget for one snapshot, in place of a depth limit.
@@ -387,6 +387,14 @@ function tripwireSizeOnlyPaths() {
 /** The covered surfaces. See the header for why exactly these. */
 function tripwireSurfaces() {
   const h = realHome()
+  // T-1450: the PRDT_HOME the run was started with is a surface too. Skipped when
+  // it is the real `~/.prdt` (or inside it) — already covered, and its tooling-
+  // owned `run/` carve-out must keep applying there. Any other target gets the
+  // full walk, `run/` included: a write there is test damage, not governor churn.
+  const ambient = ambientPrdtHome()
+  const realPrdt = path.join(h, '.prdt')
+  const ambientSurface =
+    ambient && ambient !== realPrdt && !ambient.startsWith(realPrdt + path.sep) ? [ambient] : []
   return [
     path.join(h, '.productune'),
     path.join(h, '.prdt'),
@@ -395,6 +403,7 @@ function tripwireSurfaces() {
     // S10: the third root. Neither HOME nor --user-data-dir moves these.
     ...tripwireSizeOnlyPaths(),
     path.join(h, 'Library', 'Caches', 'electron'),
+    ...ambientSurface,
   ]
 }
 
