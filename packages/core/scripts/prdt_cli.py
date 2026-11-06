@@ -6547,6 +6547,22 @@ def viewer_release_missing_message(ver, versions):
     return f"prdt viewer: {VIEWER_RELEASES_REL} 에 {ver} 절이 없어요. 있는 절: {shown}"
 
 
+def viewer_release_match(ver, versions):
+    """T-1444: the file's own `## <version>` token that names the same release as
+    `ver`, or None. Same-version = the missing components filled with zero
+    (contracts §Fixed paths: `v1.12` ≡ `v1.12.0`); `v1.12.1` stays another one."""
+    def key(v):
+        m = re.fullmatch(r"v?(\d+(?:\.\d+){0,2})", (v or "").strip(), re.ASCII)
+        if not m:
+            return None
+        parts = [int(x) for x in m.group(1).split(".")]
+        return tuple(parts + [0] * (3 - len(parts)))
+    if ver in versions:
+        return ver
+    k = key(ver)
+    return next((v for v in versions if k is not None and key(v) == k), None)
+
+
 def viewer_release_versions(root):
     """The `## <version>` tokens of the viewer's RELEASES.md in file order, or
     None when that file is missing or unreadable."""
@@ -6585,7 +6601,8 @@ def viewer_anchor(root, target):
         # opens the view itself (the page has no anchor for it).
         if not p.is_file():
             return None
-        return f"{real}#{frag}" if frag and frag in (viewer_release_versions(root) or []) else real
+        hit = viewer_release_match(frag, viewer_release_versions(root) or []) if frag else None
+        return f"{real}#{hit}" if hit else real
     # T-973: an artifact is carried by manifest membership, any extension
     # (the page's buildAnchors keys every manifest entry); everything else
     # the viewer carries is a markdown file that must exist — a path to
@@ -6790,10 +6807,11 @@ def cmd_viewer(args):
         versions = viewer_release_versions(root)
         if versions is None:
             sys.exit(f"prdt viewer: {VIEWER_RELEASES_REL} 파일이 없어서 릴리스 노트 링크를 만들지 않았어요.")
-        if ver not in versions:
+        hit = viewer_release_match(ver, versions)
+        if hit is None:
             sys.exit(viewer_release_missing_message(ver, versions))
         f = Path(root) / VIEWER_RELEASES_REL
-        t = f"{f}#{ver}"
+        t = f"{f}#{hit}"
         targets.append(t)
         labels[t] = str(f)
     for t in targets:
@@ -6808,7 +6826,7 @@ def cmd_viewer(args):
             except ValueError:
                 is_rel = False
             versions = viewer_release_versions(root) if is_rel else None
-            if versions is not None and frag not in versions:
+            if versions is not None and viewer_release_match(frag, versions) is None:
                 sys.exit(viewer_release_missing_message(frag, versions))
     if not targets:
         problem = viewer_scratch_problem(root)
