@@ -15,6 +15,7 @@
         "test/scripts/no-unsafe-tmp-write.test.ts",
         "test/scripts/prdt-doctor-discipline-delivery.test.ts",
         "test/scripts/prdt-wiki-machine-store.test.ts",
+        "test/scripts/question-check-hook.test.ts",
         "test/scripts/session-start-parts.test.ts",
         "test/scripts/session-start-self-load.test.ts"
       ],
