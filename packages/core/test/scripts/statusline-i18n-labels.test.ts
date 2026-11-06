@@ -106,7 +106,8 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     seedFull()
     const rows = run({}).split('\n')
     expect(rows).toEqual([
-      'proj v1.13 | 단계: 개발 1/3 | 총 티켓 1/4 | 작업중 T-2(developer+QA) T-1(designer)',
+      'proj v1.13 | 단계: 개발 1/3 | 총 티켓 1/4',
+      '레인: 자투리  1/4 | 작업 T-1(designer) T-2(developer+QA) | 블로커 T-3(결정사항) T-4(요청사항)',
       '결정사항 T-3 | 요청사항 T-4',
     ])
   })
@@ -114,7 +115,8 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
   test('en (PRDT_LANG=en): English labels, last-row separator is `|`', () => {
     seedFull()
     expect(run({ PRDT_LANG: 'en' }).split('\n')).toEqual([
-      'proj v1.13 | stage: build 1/3 | total tickets 1/4 | working T-2(developer+qa) T-1(designer)',
+      'proj v1.13 | stage: build 1/3 | total tickets 1/4',
+      'lane: 자투리  1/4 | working T-1(designer) T-2(developer+qa) | blocker T-3(decision) T-4(request)',
       'decision T-3 | request T-4',
     ])
   })
@@ -122,10 +124,10 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
   test('the device token `cli-lang` selects en; PRDT_LANG=ko* overrides the token; OS LANG is never read', () => {
     seedFull()
     fs.writeFileSync(path.join(prdtHome, 'cli-lang'), 'en\n')
-    expect(run({ LANG: 'ko_KR.UTF-8' }).split('\n')[1]).toBe('decision T-3 | request T-4')
-    expect(run({ PRDT_LANG: 'ko_KR.UTF-8' }).split('\n')[1]).toBe('결정사항 T-3 | 요청사항 T-4')
+    expect(run({ LANG: 'ko_KR.UTF-8' }).split('\n')[2]).toBe('decision T-3 | request T-4')
+    expect(run({ PRDT_LANG: 'ko_KR.UTF-8' }).split('\n')[2]).toBe('결정사항 T-3 | 요청사항 T-4')
     fs.rmSync(path.join(prdtHome, 'cli-lang'))
-    expect(run({ LANG: 'en_US.UTF-8' }).split('\n')[1]).toBe('결정사항 T-3 | 요청사항 T-4')
+    expect(run({ LANG: 'en_US.UTF-8' }).split('\n')[2]).toBe('결정사항 T-3 | 요청사항 T-4')
   })
 
   test.each([
@@ -133,8 +135,9 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     ['retro', '회고', 'retro'], ['idle', '유휴', 'idle'],
   ])('stage %s → ko %s / en %s', (stage, ko, en) => {
     fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage, version: 'v1.13' }))
-    expect(run({ PRDT_LANG: 'ko' }).split('\n')[0]).toBe(`proj v1.13 | 단계: ${ko} 0/0 | 작업중 0`)
-    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe(`proj v1.13 | stage: ${en} 0/0 | working 0`)
+    // T-1330: no `working` cell on the product row; the default lane row shows in every stage
+    expect(run({ PRDT_LANG: 'ko' }).split('\n').slice(0, 2)).toEqual([`proj v1.13 | 단계: ${ko} 0/0`, '레인: 자투리  0/0 | 작업 0'])
+    expect(run({ PRDT_LANG: 'en' }).split('\n').slice(0, 2)).toEqual([`proj v1.13 | stage: ${en} 0/0`, 'lane: 자투리  0/0 | working 0'])
   })
 
   test('persona labels: po / user in both languages; branch label with the branch name kept', () => {
@@ -144,8 +147,8 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     marker('T-6', 'user', 50_000)
     execFileSync('git', ['init', '-q', '-b', 'dev'], { cwd: root })
     execFileSync('git', ['-c', 'user.email=u@test', '-c', 'user.name=u', 'commit', '-q', '--allow-empty', '-m', 'i'], { cwd: root })
-    expect(run({ PRDT_LANG: 'ko' }).split('\n')[0]).toBe('proj v1.13 | 단계: 개발 0/2 | 총 티켓 0/2 | 작업중 T-5(PO) T-6(user) | 브랜치: dev')
-    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toBe('proj v1.13 | stage: build 0/2 | total tickets 0/2 | working T-5(po) T-6(user) | branch: dev')
+    expect(run({ PRDT_LANG: 'ko' }).split('\n').slice(0, 2)).toEqual(['proj v1.13 | 단계: 개발 0/2 | 총 티켓 0/2 | 브랜치: dev', '레인: 자투리  0/2 | 작업 T-5(PO) T-6(user)'])
+    expect(run({ PRDT_LANG: 'en' }).split('\n').slice(0, 2)).toEqual(['proj v1.13 | stage: build 0/2 | total tickets 0/2 | branch: dev', 'lane: 자투리  0/2 | working T-5(po) T-6(user)'])
   })
 
   test('T-1019: no ` | ` follows a Hangul character or `—` in any ko row; separator stays one-space; empty = 0', () => {
@@ -163,7 +166,9 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
       expect(plain).not.toContain('\u2014')
     }
     expect(fixtures[1].split('\n')[0]).toContain('단계: 유휴 0/0 | ')
-    expect(run({ PRDT_LANG: 'en' }).split('\n')[0]).toContain('stage: idle 0/0 | total tickets 1/4 | working T-2')
+    const idleEn = run({ PRDT_LANG: 'en' }).split('\n')
+    expect(idleEn[0]).toContain('stage: idle 0/0 | total tickets 1/4 | branch: dev')
+    expect(idleEn[1]).toContain('lane: 자투리  1/4 | working T-1(designer) T-2')
   })
 
   test('T-1017: a long branch stays whole and last when the working segment has to give way', () => {
@@ -179,7 +184,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     expect(cols(en)).toBeLessThanOrEqual(200)
   })
 
-  test('folded rows: `+N 제품` (ko) / `+N products` (en)', () => {
+  test('folded rows: `외 N줄` (ko) / `+N more rows` (en) count hidden rows (T-1374 = A)', () => {
     const names = Array.from({ length: 20 }, (_, i) => `l${String(i).padStart(2, '0')}`)
     fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify({ slug: 'big', lines: names.map((name) => ({ name })) }))
     fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({
@@ -188,9 +193,12 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     }))
     const ko = run({ PRDT_LANG: 'ko' }).split('\n')
     const en = run({ PRDT_LANG: 'en' }).split('\n')
+    // lane rows count toward the 17-row cap (T-1372 2 = A): 42 body rows, 15 shown, 27 folded
     expect(ko).toHaveLength(17)
-    expect(ko[15]).toBe('+6 제품')
-    expect(en[15]).toBe('+6 products')
+    expect(en).toHaveLength(17)
+    expect(ko.filter((r) => r.startsWith('레인: '))).toHaveLength(7)
+    expect(ko[15]).toBe('외 27줄')
+    expect(en[15]).toBe('+27 more rows')
     expect(ko[16]).toBe('결정사항 0 | 요청사항 0')
   })
 
@@ -225,12 +233,10 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     const en = run({ PRDT_LANG: 'en' }).split('\n')
     for (const r of ko) expect(cols(r)).toBeLessThanOrEqual(200)
     for (const r of en) expect(cols(r)).toBeLessThanOrEqual(200)
-    // Under a character count the widest tier (3 ids, 2 successors each) would
-    // fit; in columns it is over 200, so ko must tighten to the next tier.
-    const widest = ko[0].replace(/\u2026$/, '')
-    expect(ko[0]).not.toContain('T-9001') // a 2nd successor only shows at the widest tier
-    expect(ko[0]).not.toContain('\u2026')
-    expect(cols(widest)).toBeLessThanOrEqual(200)
+    // T-1330: the running ids left the product row for the lane row, which shows no successors
+    expect(ko[0]).not.toMatch(/T-75\d|T-900\d/)
+    expect(ko[1]).toMatch(/^레인: 자투리 {2}0\/3 \| 작업 T-750\(\S+\) T-751\(\S+\) T-752\(\S+\)$/)
+    expect(ko[1]).not.toContain('T-9001')
     expect(ko[0].length).toBeLessThan(cols(ko[0]))
   })
 })

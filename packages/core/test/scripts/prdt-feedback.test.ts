@@ -274,7 +274,7 @@ describe('consent gate — the trigger proposes nothing by itself', () => {
     const fire = fb(productune, 'record', 'po', 'voice-figurative', '--ticket', 'T-509', '--quote', T509_QUOTE)
     expect(fire.out).toContain('recurrence trigger')
     expect(fire.out).toContain('wrote only the ledger')
-    expect(fire.out).toContain('the user approves')
+    expect(fire.out).toContain('the user confirms')
     expect({ o: snap(path.join(home, 'overrides')), d: snap(path.join(home, 'discipline')),
       a: snap(origin), b: snap(productune) }).toEqual(before)
   })

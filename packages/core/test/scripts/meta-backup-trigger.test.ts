@@ -44,13 +44,15 @@ function makeFakeRepo(): string {
   fs.writeFileSync(
     path.join(repo, 'dist', 'bin', 'meta-cli.cjs'),
     `require('fs').appendFileSync(${JSON.stringify(callsLog)}, process.argv.slice(2).join(' ') + '\\n')\n` +
-    `process.stdout.write('{"ok":true}\\n')\n`,
+    `process.stdout.write('{"ok":true}\\n')\n` +
+    // T-1352: what fd 0 the detached tick inherited (dev:ino:rdev).
+    `{ const st = require('fs').fstatSync(0); require('fs').writeFileSync(${JSON.stringify(path.join(repo, 'stdin.txt'))}, st.dev + ':' + st.ino + ':' + st.rdev) }\n`,
   )
   return repo
 }
 
-/** ~/.prdt/prdt.env in the sandboxed HOME, pointing PRDT_REPO at the fake repo. */
-function pointPrdtEnvAt(repo: string, home = process.env.HOME as string): void {
+/** ~/.prdt/prdt.env in this test's own HOME (beforeEach), pointing PRDT_REPO at the fake repo. */
+function pointPrdtEnvAt(repo: string, home = ownHome as string): void {
   fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
   fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${repo}\n`)
 }
@@ -72,8 +74,8 @@ async function waitForCalls(n: number, ms = 4000): Promise<string[]> {
 
 // The developer's shell may carry the kill switch (PRDT_META_BACKUP=0 — the
 // standing rule while this mechanism is under review): these tests assert the
-// spawn itself, so they turn the switch ON explicitly. Safe: HOME is the vitest
-// sandbox, so `~/.prdt/prdt.env` resolves to the FAKE bridge above and the tick
+// spawn itself, so they turn the switch ON explicitly. Safe: HOME is this file's own
+// temp home (beforeEach), so `~/.prdt/prdt.env` resolves to the FAKE bridge above and the tick
 // runs against the fixture project — no real bridge, no real remote, no network.
 const ARMED = { PRDT_META_BACKUP: '1' }
 
@@ -91,7 +93,18 @@ function metaGit(args: string[]): string {
   }).trim()
 }
 
+// T-1417: every test gets a HOME this file created, and only that directory is
+// ever removed. The old afterEach deleted `$HOME/.prdt/prdt.env` and trusted the
+// vitest HOME sandbox to make that path a fake one — a run that skipped the
+// package config (2026-11-04, vitest started from code/packages) deleted the
+// real ~/.prdt/prdt.env instead.
+let ownHome: string | undefined
+let savedHome: string | undefined
+
 beforeEach(() => {
+  savedHome = process.env.HOME
+  ownHome = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t504-home-'))
+  process.env.HOME = ownHome
   projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t504-proj-'))
   fakeRepo = makeFakeRepo()
 })
@@ -99,7 +112,9 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(projectDir, { recursive: true, force: true })
   fs.rmSync(fakeRepo, { recursive: true, force: true })
-  try { fs.rmSync(path.join(process.env.HOME as string, '.prdt', 'prdt.env'), { force: true }) } catch { /* sandbox home */ }
+  if (ownHome) fs.rmSync(ownHome, { recursive: true, force: true })
+  ownHome = undefined
+  process.env.HOME = savedHome
 })
 
 describe.skipIf(!PYTHON3 || !NODE)('prdt CLI main — detached backup tick (T-504)', () => {
@@ -127,6 +142,36 @@ describe.skipIf(!PYTHON3 || !NODE)('prdt CLI main — detached backup tick (T-50
     runPrdt(['meta', 'remote'])
     await new Promise((r) => setTimeout(r, 300))
     expect(calls().filter((l) => l.startsWith('backup '))).toHaveLength(1)
+  })
+
+  // T-1352: a detached node bridge holding the user's tty as fd 0 restores the
+  // termios it saw at ITS start when it exits (node ResetStdio) — cooked + echo
+  // — under the Claude Code that `prdt` launched meanwhile in raw mode; every
+  // terminal reply and mouse report then echoes as `^[…` text in the input box.
+  // The tick must never inherit the caller's stdin.
+  test('the detached tick does not inherit the caller stdin (fd 0 is /dev/null)', async () => {
+    execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
+      cwd: projectDir, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    pointPrdtEnvAt(fakeRepo)
+    const stdinFile = path.join(projectDir, 'caller-stdin.txt')
+    fs.writeFileSync(stdinFile, '')
+    const fd = fs.openSync(stdinFile, 'r')
+    try {
+      spawnSync('python3', [PRDT_CLI, 'tickets'], {
+        cwd: projectDir, stdio: [fd, 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
+        env: { ...process.env, ...ARMED },
+      })
+    } finally { fs.closeSync(fd) }
+    expect(await waitForCalls(1)).toHaveLength(1)
+    const stdinTxt = path.join(fakeRepo, 'stdin.txt')
+    const t0 = Date.now()
+    while (!fs.existsSync(stdinTxt) && Date.now() - t0 < 4000) await new Promise((r) => setTimeout(r, 50))
+    const caller = fs.statSync(stdinFile)
+    const devnull = fs.statSync('/dev/null')
+    const got = fs.readFileSync(stdinTxt, 'utf8')
+    expect(got).not.toBe(`${caller.dev}:${caller.ino}:${caller.rdev}`)
+    expect(got).toBe(`${devnull.dev}:${devnull.ino}:${devnull.rdev}`)
   })
 
   test('no meta split → no spawn', async () => {

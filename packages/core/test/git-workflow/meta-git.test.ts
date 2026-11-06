@@ -14,7 +14,7 @@ import fs from 'fs'
 import os from 'os'
 import crypto from 'crypto'
 import { execFileSync } from 'child_process'
-import { test, expect, beforeEach, afterEach } from 'vitest'
+import { test, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest'
 import {
   initMetaRepo,
   metaRepoExists,
@@ -27,6 +27,7 @@ import {
   bootstrapMetaRepo,
   readMetaAllowlist,
   writeMetaAllowlist,
+  productLayoutAllowlist,
   DEFAULT_META_ALLOWLIST,
   DEFAULT_META_EXCLUDE,
 } from '../../src/git-workflow/meta-git'
@@ -63,8 +64,7 @@ async function withEnv(vars: Record<string, string>, fn: () => Promise<void>): P
 }
 
 /** A prdt project = a code git repo with an initial code commit. */
-function makeProject(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-'))
+function buildProject(root: string): void {
   git(['init', '-q'], root)
   git(['config', 'user.email', 'code@test'], root)
   git(['config', 'user.name', 'code'], root)
@@ -79,6 +79,20 @@ function makeProject(): string {
   fs.writeFileSync(path.join(root, 'docs', 'prd', 'PRD.md'), '# PRD\n')
   git(['add', 'packages/app.ts'], root)
   git(['commit', '-qm', 'code init'], root)
+}
+
+// T-1274: the project (a code repo, 6 git spawns) is identical for every test — built
+// once per file, copied per test. The copy carries no absolute path (a plain repo).
+let template: string
+beforeAll(() => {
+  template = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-tpl-'))
+  buildProject(template)
+})
+afterAll(() => { fs.rmSync(template, { recursive: true, force: true }) })
+
+function makeProject(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-'))
+  fs.cpSync(template, root, { recursive: true, verbatimSymlinks: true })
   return root
 }
 
@@ -531,6 +545,22 @@ test('bootstrap on a not-yet-pulled machine leaves a differing local file UNTOUC
 
 test('readMetaAllowlist falls back to the default when unset', () => {
   expect(readMetaAllowlist(projectDir)).toEqual(DEFAULT_META_ALLOWLIST)
+})
+
+test('T-1222 C5: the first product folder comes from the config slug through product_dir_name, not the raw slug', () => {
+  fs.mkdirSync(path.join(projectDir, 'docs', '_shared'), { recursive: true })
+  // docs/myapp holds only artifacts + wiki — no prd/ or tickets/, so only the slug can name it
+  fs.mkdirSync(path.join(projectDir, 'docs', 'myapp', 'artifacts'), { recursive: true })
+  fs.mkdirSync(path.join(projectDir, 'docs', 'myapp', 'wiki'), { recursive: true })
+  const cfgPath = path.join(projectDir, '.prdt', 'config.json')
+  fs.writeFileSync(cfgPath, JSON.stringify({ slug: 'MyApp' }))
+  expect(productLayoutAllowlist(projectDir)).toEqual(['docs/_shared', 'docs/myapp'])
+  expect(readMetaAllowlist(projectDir)).toContain('docs/myapp')
+  // a layout-reserved slug gets the -product suffix, an illegal one falls back to `product`
+  fs.writeFileSync(cfgPath, JSON.stringify({ slug: 'QA' }))
+  expect(productLayoutAllowlist(projectDir)).toEqual(['docs/_shared', 'docs/qa-product'])
+  fs.writeFileSync(cfgPath, JSON.stringify({ slug: '!!!' }))
+  expect(productLayoutAllowlist(projectDir)).toEqual(['docs/_shared', 'docs/product'])
 })
 
 test('writeMetaAllowlist persists into config.json and preserves other fields', () => {

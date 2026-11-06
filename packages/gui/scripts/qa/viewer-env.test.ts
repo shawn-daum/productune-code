@@ -154,22 +154,31 @@ describe('env item + Home env block — several lines', () => {
   afterAll(() => fs.rmSync(base, { recursive: true, force: true }))
 
   const home = () => html.split('id="store-home"')[1].split('</section>')[0]
-  const envPane = (line: string) => home().split(`data-group="${line}env">`)[1].split('<div class="view-pane')[0]
+  // T-1227: env is its own store; a pane = one file (group key `<line>/<file>`, the home line's bare, `none` = no file).
+  const envStore = (h = html) => h.split('id="store-env"')[1].split('</section>')[0]
+  const envPane = (group: string, h = html) => envStore(h).split(`data-group="${group}">`)[1].split('<div class="view-pane')[0]
 
-  it('the activity bar has no env item and the page has no env store', () => {
+  it('T-1227: env is an activity-bar store after 아티팩트; T-1397: home also lists a per-product env group', () => {
     const order = [...html.matchAll(/class="activity-btn[^"]*" data-store="([a-z]+)"/g)].map((m) => m[1])
-    expect(order).not.toContain('env')
-    expect(html).not.toContain('id="store-env"')
+    expect(order).toEqual(['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'env', 'release', 'disc'])
+    expect(home()).toContain('data-group-select="env"')
+    expect(home()).toContain('data-group-select="ntf-archive/env"')
   })
 
-  it('current-version sidebar: env is the last item of each line, counted by env files (samples included)', () => {
+  it('current-version sidebar: env follows 결정, 용어 사전 follows env on each line (T-1397)', () => {
     const side = home().split('<nav class="sidebar">')[1].split('</nav>')[0]
-    expect(side).toMatch(/data-group-select="ntf-archive\/decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="ntf-archive\/env"[^>]*><span>env<\/span><span class="nav-item-count">2<\/span><\/button>\s*(?:<div class="sidebar-foot">[\s\S]*?<\/div>\s*)?$/)
-    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*><span>env<\/span><span class="nav-item-count">0<\/span><\/button>\s*<div class="ls-h"><b>ntf-archive/)
+    expect(side).toMatch(/data-group-select="ntf-archive\/decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="ntf-archive\/env"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="ntf-archive\/glossary"/)
+    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="glossary"/)
+  })
+
+  it('env sidebar: a group per product, one item per file (samples included, counted by keys); no progress card', () => {
+    const side = envStore().split('<nav class="sidebar">')[1].split('</nav>')[0]
+    expect(side).not.toContain('class="sp"')
+    expect(side).toMatch(/<div class="ls-h"><b>ntf-pm v2\.2<\/b>[\s\S]*?data-group-select="none"[\s\S]*?<div class="ls-h"><b>ntf-archive v1\.2<\/b>[\s\S]*?data-group-select="ntf-archive\/\.env\.local"[^>]*><span>\.env\.local<\/span><span class="nav-item-count">4<\/span><\/button>\s*<button[^>]*data-group-select="ntf-archive\/\.env\.example"[^>]*><span>\.env\.example · 견본<\/span><span class="nav-item-count">4<\/span>/)
   })
 
   it('env pane: every file card shows its key names by default (samples too) — no eye toggle, no value, length or edit control', () => {
-    const pane = envPane('ntf-archive/')
+    const pane = envPane('ntf-archive/.env.local') + envPane('ntf-archive/.env.example')
     expect(pane).toContain('<b>.env.local</b><span class="env-dir">../ntf-archive/code</span>')
     expect(pane).toContain('<div class="erow"><code>POSTGRES_URL</code><span class="est on">설정됨</span></div>')
     expect(pane).toContain('<div class="erow"><code>CRON_SECRET</code><span class="est off">비어 있음</span></div>')
@@ -193,7 +202,7 @@ describe('env item + Home env block — several lines', () => {
     const realRoot = fs.realpathSync(root)
     const realFile = path.join(fs.realpathSync(path.join(base, 'ntf-archive/code')), '.env.local')
     const noCode = render({ ...data, editors: { vscode: false } })
-    const cards = noCode.split(`data-group="ntf-archive/env">`)[1].split('<div class="view-pane')[0].split('<div class="dash-card env-card">').slice(1)
+    const cards = [envPane('ntf-archive/.env.local', noCode), envPane('ntf-archive/.env.example', noCode)]
     const q = (file: string) => `prdt://open-env?root=${encodeURIComponent(realRoot)}&amp;line=ntf-archive&amp;file=${encodeURIComponent(file)}`
     expect(cards[0]).toContain(`<a class="env-act" href="${q('.env.local')}">텍스트 편집기로 열기</a>`)
     expect(cards[1]).toContain(`<a class="env-act" href="${q('.env.example')}">텍스트 편집기로 열기</a>`)
@@ -201,10 +210,11 @@ describe('env item + Home env block — several lines', () => {
     // VS Code: the button follows data.editors.vscode
     expect(noCode).not.toContain('vscode://')
     const withCode = render({ ...data, editors: { vscode: true } })
-    const vs = withCode.split(`data-group="ntf-archive/env">`)[1].split('<div class="view-pane')[0]
+    const vs = envPane('ntf-archive/.env.local', withCode)
     expect(vs).toContain(`<a class="env-act" href="vscode://file${realFile.split('/').map(encodeURIComponent).join('/')}">VS Code 로 열기</a>`)
     // the home line (no env file) and the machine card carry no open control
-    expect(envPane('')).not.toContain('env-act')
+    expect(envPane('none')).not.toContain('env-act')
+    expect(envPane('@machine')).not.toContain('env-act')
   })
 
   it('T-1191: the copy handler writes the path to the clipboard', () => {
@@ -212,15 +222,16 @@ describe('env item + Home env block — several lines', () => {
   })
 
   it('a line without env files: the empty state names the folder and names searched', () => {
-    const none = envPane('')
+    const none = envPane('none')
     expect(none).toContain('이 제품에는 env 파일이 없어요.')
     expect(none).toContain('찾은 폴더: code · 찾은 이름: .env · .env.*')
     expect(none).not.toContain('—')
   })
 
-  it('old ?view=env links still land on the env item of that line', () => {
-    expect(html).toContain("if (view === 'env') {")
-    expect(html).toContain("group = (cut === -1 ? '' : group.slice(0, cut + 1)) + 'env';")
+  it('T-1227: old ?view=env&group=<line>/<file> links open that file in the env store; no redirect to home remains', () => {
+    expect(html).not.toContain("if (view === 'env') {")
+    expect(html).toContain("if (group && findByAttr('.view-pane', 'data-group', group, section)) selectGroup(section, group);")
+    expect(envStore()).toContain('data-group="ntf-archive/.env.local"')
   })
 
   it('T-1179 C: 진행 상황 carries no env block on any line', () => {
@@ -248,15 +259,17 @@ describe('env item — single-line project', () => {
   })
   afterAll(() => fs.rmSync(root, { recursive: true, force: true }))
 
-  it('no section heads; env is the last sidebar item counting its one file; 진행 상황 has no env block', () => {
+  it('env store: one product group with its one file item; home lists its own env group (T-1397) between 결정 and 용어 사전; 진행 상황 has no env block', () => {
     const html = render(collectAll(root, { disciplineRoot: root }))
-    expect(html).not.toContain('id="store-env"')
+    const store = html.split('id="store-env"')[1].split('</section>')[0]
+    expect(store.split('<nav class="sidebar">')[1].split('</nav>')[0]).toMatch(/<div class="ls-h"><b>shop v2\.2<\/b><span class="ls-st">build<\/span><\/div>\s*<button[^>]*data-group-select="\.env\.local"[^>]*><span>\.env\.local<\/span><span class="nav-item-count">2<\/span>/)
+    expect(html).toContain('.ls-h {')
     const home = html.split('id="store-home"')[1].split('</section>')[0]
     const side = home.split('<nav class="sidebar">')[1].split('</nav>')[0]
     expect(side).not.toContain('ls-h')
-    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*><span>env<\/span><span class="nav-item-count">1<\/span><\/button>\s*(?:<div class="sidebar-foot">[\s\S]*?<\/div>\s*)?$/)
+    expect(side).toMatch(/data-group-select="decision"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="env"[^>]*>[\s\S]*?<\/button>\s*<button[^>]*data-group-select="glossary"/)
     expect(home).not.toContain('env-blk')
-    expect(home).toContain(`prdt://open-env?root=${encodeURIComponent(fs.realpathSync(root))}&amp;file=.env.local`)
+    expect(store).toContain(`prdt://open-env?root=${encodeURIComponent(fs.realpathSync(root))}&amp;file=.env.local`)
     expect(html).not.toContain(SENTINEL)
   })
 
@@ -295,7 +308,7 @@ describe('machine-scope env (T-1109)', () => {
     const home = fs.mkdtempSync(path.join(tmp, 'h-'))
     write(home, 'env/.env', `A='${SENTINEL}'\nB='${SENTINEL}'\nC=\nD='${SENTINEL}'\n`)
     const m = collectMachineEnv(home, productEnv(`A=${SENTINEL}\nB=\nC=x\n`))
-    expect(m).toEqual({ dir: '~/.prdt/env', keys: [
+    expect(m).toEqual({ dir: '~/.prdt/env', absDir: expect.any(String), keys: [
       { name: 'A', set: true, codeWins: true }, { name: 'B', set: true, codeWins: false },
       { name: 'C', set: false, codeWins: false }, { name: 'D', set: true, codeWins: false },
     ] })
@@ -368,9 +381,10 @@ describe('machine-scope env (T-1109)', () => {
       expect(withKeys).toContain('<code>GOOGLE_OIDC_CLIENT_ID</code><span class="tagw">제품 코드 값이 우선</span>')
       expect(withKeys).toContain('<code>PUSH_CERT_PASSWORD</code><span class="est off">비어 있음</span>')
       expect(withKeys + none).not.toContain(SENTINEL)
-      // T-1191: the machine store is the user's own `prdt env set` — no open link on its card
-      const machineCard = withKeys.split('<div class="env-scope">')[1]
-      expect(machineCard).not.toContain('env-act')
+      // T-1395: the machine store's card carries the open links (the URL names only scope=machine, no path)
+      const machineCard = withKeys.split('id="store-env"')[1].split('data-group="@machine">')[1].split('<div class="view-pane')[0]
+      expect(machineCard).toContain('<a class="env-act" href="prdt://open-env?scope=machine">')
+      expect(machineCard).toContain(`data-env-copy="${path.join(home, 'env')}/.env"`)
     } finally {
       if (prev === undefined) delete process.env.PRDT_HOME
       else process.env.PRDT_HOME = prev

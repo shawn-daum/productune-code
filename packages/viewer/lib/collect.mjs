@@ -56,7 +56,7 @@ import { createDocsLayout } from './docs-layout.mjs'
 // a ticket bucket directory spelled differently from po-state's own version
 // string (`v1.10.0` on disk vs `v1.10` in `.prdt/po-state.json`) is still the
 // same version. No cycle: render.mjs never imports collect.mjs.
-import { sameVersion, decodePathSegments } from './render.mjs'
+import { sameVersion, decodePathSegments, compareVersionIdsDesc } from './render.mjs'
 
 // T-912 F1: every read under the repo root passes through realpath containment
 // (the RELEASES.md / discipline rule, T-883 / T-842 class): a path whose REAL
@@ -162,7 +162,7 @@ function withTicketId(doc) {
 
 function ticketLite(doc) {
   const fm = doc.frontmatter
-  return { rel: doc.rel, frontmatter: { id: fm.id, slug: fm.slug, type: fm.type, status: fm.status, assignee: fm.assignee, feature: fm.feature, created: fm.created } }
+  return { rel: doc.rel, frontmatter: { id: fm.id, slug: fm.slug, title: fm.title, type: fm.type, status: fm.status, assignee: fm.assignee, feature: fm.feature, created: fm.created } }
 }
 
 /**
@@ -703,13 +703,13 @@ export const INSTALL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.
  * (no python3, not a prdt project, bad PRD) is `[]`, which the scope block draws as no lanes.
  * @returns {Array<{name: string, linked: boolean, done: number, total: number, tickets: string[]}>}
  */
-export function collectLanes(repoRoot, line = null, { scriptsDir = path.join(INSTALL_ROOT, 'packages/core/scripts') } = {}) {
+export function collectLanes(repoRoot, line = null, { version = '', scriptsDir = path.join(INSTALL_ROOT, 'packages/core/scripts') } = {}) {
   if (!fs.existsSync(path.join(scriptsDir, 'prdt_lanes.py'))) return []
   // -I: neither the cwd (the project root) nor PYTHONPATH reaches sys.path, so the sibling module is
   // put there in code — a project-root prdt_lanes.py / json.py is never imported (T-1195).
-  const code = 'import sys,json\nsys.path.insert(0,sys.argv[3])\nimport prdt_lanes as m\nprint(json.dumps(m.lanes_for(sys.argv[1], sys.argv[2] or None), ensure_ascii=False))'
+  const code = 'import sys,json\nsys.path.insert(0,sys.argv[3])\nimport prdt_lanes as m\nprint(json.dumps(m.lanes_for(sys.argv[1], sys.argv[2] or None, sys.argv[4] or None), ensure_ascii=False))'
   try {
-    const r = spawnSync('python3', ['-I', '-c', code, repoRoot, line || '', scriptsDir], {
+    const r = spawnSync('python3', ['-I', '-c', code, repoRoot, line || '', scriptsDir, version], {
       encoding: 'utf8',
       timeout: 20000,
       cwd: repoRoot,
@@ -718,10 +718,40 @@ export function collectLanes(repoRoot, line = null, { scriptsDir = path.join(INS
     if (r.status !== 0) return []
     const lanes = JSON.parse(r.stdout)
     if (!Array.isArray(lanes)) return []
-    return lanes.map((l) => ({ name: String(l.name), linked: l.linked === true, done: Number(l.done) || 0, total: Number(l.total) || 0, tickets: Array.isArray(l.tickets) ? l.tickets.map(String) : [] }))
+    return lanes.map((l) => ({ name: String(l.name), linked: l.linked === true, besteffort: l.besteffort === true, done: Number(l.done) || 0, total: Number(l.total) || 0, tickets: Array.isArray(l.tickets) ? l.tickets.map(String) : [] }))
   } catch {
     return []
   }
+}
+
+/**
+ * T-1384: when po-state's stage changed during one product's open version — `prdt_lanes.stage_history`
+ * ([[YYYY-MM-DD, stage], …] oldest-first, read from the meta repo's po-state history), the record the
+ * stage bar places a ticket without its own `stage:` by. Read-only; any failure is `[]` (the type rule).
+ * @returns {Array<[string, string]>}
+ */
+export function collectStageHistory(repoRoot, line = null, { scriptsDir = path.join(INSTALL_ROOT, 'packages/core/scripts') } = {}) {
+  if (!fs.existsSync(path.join(scriptsDir, 'prdt_lanes.py'))) return []
+  // -I: as collectLanes — the sibling module is put on sys.path in code (T-1195).
+  const code = 'import sys,json\nsys.path.insert(0,sys.argv[3])\nimport prdt_lanes as m\nprint(json.dumps(m.stage_history(sys.argv[1], sys.argv[2] or None)))'
+  try {
+    const r = spawnSync('python3', ['-I', '-c', code, repoRoot, line || '', scriptsDir], { encoding: 'utf8', timeout: 20000, cwd: repoRoot, env: process.env })
+    if (r.status !== 0) return []
+    const h = JSON.parse(r.stdout)
+    return Array.isArray(h) ? h.filter((x) => Array.isArray(x) && typeof x[0] === 'string' && typeof x[1] === 'string').map((x) => [x[0], x[1]]) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * T-1256: an idle product's last closed version's lanes as at close ([] when the product is not idle or has no closed
+ * round). `prd.closed` names the rounds; the version is line-prefixed the way a ticket row carries it.
+ */
+export function collectClosedLanes(repoRoot, line, stage, prd) {
+  if (stage !== 'idle') return []
+  const last = [...prd.closed].map((c) => c.name.replace(/\.md$/, '')).sort(compareVersionIdsDesc)[0]
+  return last ? collectLanes(repoRoot, line, { version: line ? `${line}/${last}` : last }) : []
 }
 
 export function collectToolVersion(installRoot = INSTALL_ROOT) {
@@ -867,6 +897,32 @@ export function collectProjectSlug(repoRoot) {
   }
 }
 
+/**
+ * T-1253 (spec deployed-record-spec D4): a product's deployed record — `deployed: {version, at, ref}` in its
+ * `docs/<product>/DEPLOY.md` frontmatter (the one line `prdt deploy record` writes). Read-only. Null = no record:
+ * no file, no frontmatter, no `deployed` key, or one whose `version` is empty — a malformed record never throws.
+ * @returns {{version:string, at:string, ref:string}|null}
+ */
+export function collectDeployed(layout) {
+  let raw
+  try {
+    const file = containedFile(layout.root, layout.dir('DEPLOY.md'))
+    if (!file) return null
+    raw = fs.readFileSync(file, 'utf8')
+  } catch {
+    return null
+  }
+  const d = parseFrontmatter(raw).data.deployed
+  const text = d && typeof d === 'object' && typeof d.__raw === 'string' ? d.__raw : null
+  if (text === null) return null
+  const pairs = {}
+  for (const part of text.replace(/^\s*\{/, '').replace(/\}\s*$/, '').split(/[,\n]/)) {
+    const m = /^\s*(version|at|ref)\s*:\s*(.*?)\s*$/.exec(part)
+    if (m) pairs[m[1]] = m[2].replace(/^(["'])(.*)\1$/, '$2')
+  }
+  return pairs.version ? { version: pairs.version, at: pairs.at || '', ref: pairs.ref || '' } : null
+}
+
 /** Everything the generator needs, gathered once. */
 export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
   const poState = readPoState(repoRoot)
@@ -880,27 +936,38 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
   const lines = lineNames.map((name) => {
     const { stage, version } = lineState(poState, name)
     const lineLayout = layout.layout === 'product' ? createDocsLayout(repoRoot, name) : layout
+    const prd = collectPrd(repoRoot, version, { line: name, lineNames, layout: lineLayout })
     return {
       name,
       stage,
       version,
-      prd: collectPrd(repoRoot, version, { line: name, lineNames, layout: lineLayout }),
+      prd,
       tickets: collectTickets(repoRoot, version, { line: name, layout: lineLayout }),
       lanes: collectLanes(repoRoot, name),
+      stageHistory: collectStageHistory(repoRoot, name),
+      ...(stage === 'idle' ? { closedLanes: collectClosedLanes(repoRoot, name, stage, prd) } : {}),
+      deployed: collectDeployed(lineLayout),
       // T-958: key names + set/empty only (env-status.mjs).
       env: collectEnv(repoRoot, lineEnvDir(cfg, name)),
     }
   })
+  const homePrd = collectPrd(repoRoot, currentVersion, { lineNames, layout })
   return {
     poState,
     project: collectProjectSlug(repoRoot),
+    // T-1277: the viewer chrome's language — project `.prdt/config.json` user_lang, else the machine `<PRDT_HOME>/user-lang` (T-1306); null when neither is set.
+    userLang: userLangOf(cfg),
     currentVersion,
     lines,
+    // T-1253: the home product's deployed record (null = none).
+    deployed: collectDeployed(layout),
     // T-1104: how this project's docs/ is laid out — render maps As-Is paths and links through it.
     docsLayout: layout,
-    prd: collectPrd(repoRoot, currentVersion, { lineNames, layout }),
+    prd: homePrd,
     tickets: collectTickets(repoRoot, currentVersion, { exclude: lineNames, layout }),
     lanes: collectLanes(repoRoot),
+    stageHistory: collectStageHistory(repoRoot),
+    ...(poState.stage === 'idle' ? { closedLanes: collectClosedLanes(repoRoot, null, poState.stage, homePrd) } : {}),
     wiki: collectWiki(repoRoot, layout),
     features: collectFeatures(repoRoot, layout),
     featureTaxonomy: collectFeatureTaxonomy(repoRoot),
@@ -923,6 +990,24 @@ export function collectAll(repoRoot, { disciplineRoot, toolRoot } = {}) {
 function realRootOrNull(repoRoot) {
   try {
     return fs.realpathSync(repoRoot)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * T-1277 · T-1306: the viewer text language — `user_lang` of a parsed `.prdt/config.json` (a non-empty
+ * string), else the machine chat language `<PRDT_HOME>/user-lang` (2-3 lowercase letters, as
+ * core settings/user-lang.ts), else null (the viewer then shows ko).
+ */
+export function userLangOf(cfg) {
+  const v = cfg && typeof cfg === 'object' ? cfg.user_lang : null
+  if (typeof v === 'string' && v.trim()) return v.trim()
+  try {
+    // same resolution as defaultDisciplineRoot(): PRDT_HOME redirects the tool home
+    const home = process.env.PRDT_HOME || path.join(os.homedir(), '.prdt')
+    const m = fs.readFileSync(path.join(home, 'user-lang'), 'utf8').replace(/\s+/g, '')
+    return /^[a-z]{2,3}$/.test(m) ? m : null
   } catch {
     return null
   }

@@ -111,10 +111,10 @@ def tickets_homes(root):
 RUN_BUDGET_S = 4
 STATE_MAX_AGE_S = 86400
 
-ID_RE = re.compile(r"(?<![A-Za-z0-9_.\\-])(T-(?:PATCH-)?\d{1,6})(?![\d_]|-\w|\.(?:md|html)\b|[A-Za-z])")
+ID_RE = re.compile(r"(?<![A-Za-z0-9_.\\-])(T-(?:PATCH-|[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6})(?![\d_]|-\w|\.(?:md|html)\b|[A-Za-z])")
 # A whitespace-delimited token with a `/` is a path (blanked) unless it opens with
 # slash-joined ticket ids (`T-976/T-977`, T-899 fix): those ids are mentions.
-PAIR_RUN_RE = re.compile(r"^[(\[{\"'<*_]*T-(?:PATCH-)?\d{1,6}(?:/T-(?:PATCH-)?\d{1,6})+(?![\d/A-Za-z.])")
+PAIR_RUN_RE = re.compile(r"^[(\[{\"'<*_]*T-(?:PATCH-|[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6}(?:/T-(?:PATCH-|[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6})+(?![\d/A-Za-z.])")
 FENCE_OPEN_RE = re.compile(r"^ {0,3}((?:`{3,})|(?:~{3,}))(.*)$")
 CODE_SPAN_RE = re.compile(r"(`+)(?:(?!\1).)+?\1", re.S)
 LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)\n]*)\)")
@@ -128,8 +128,7 @@ def project_root(cwd):
             root = d
         # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary
         if (os.path.isfile(os.path.join(d, ".git")) and os.path.basename(os.path.dirname(d)) == "tracks"
-                and os.path.basename(d)[:2] == "T-" and os.path.basename(d)[2:7].isascii()
-                and os.path.basename(d)[2:].isdigit() and len(os.path.basename(d)) <= 7):
+                and re.match(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z", os.path.basename(d))):  # T-1298: T-NNN or T-<PREFIX>-<n>
             root = None
             break
         up = os.path.dirname(d)
@@ -153,7 +152,7 @@ def ticket_ids(root):
             if d[len(base):].count(os.sep) >= 3:
                 dirs[:] = []
             for fn in files:
-                m = re.match(r"^(T-(?:PATCH-)?\d{1,6})\.md$", fn)
+                m = re.match(r"^(T-(?:PATCH-|[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6})\.md$", fn)
                 if m:
                     out.setdefault(m.group(1), os.path.join(d, fn))
     return None if broken else out
@@ -193,7 +192,7 @@ def make_dest_of(root, known):
 
     def dest_of(tid):
         stub = os.path.join(viewer, "at", tid + ".html")
-        if have_viewer and re.fullmatch(r"T-\d+", tid) and os.path.isfile(stub):
+        if have_viewer and re.fullmatch(r"T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+", tid) and os.path.isfile(stub):
             return stub
         return known[tid]
     return dest_of

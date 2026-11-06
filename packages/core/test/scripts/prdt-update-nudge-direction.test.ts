@@ -27,6 +27,10 @@ import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
+// T-1100: remote_ahead's git calls cap at 2 s; under machine load that returns None.
+// Child processes inherit this load-scaled budget (default stays 2 s in production).
+process.env.PRDT_REMOTE_AHEAD_TIMEOUT_S = String(subprocessTimeout('quick') / 1000)
+
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
 
@@ -120,6 +124,12 @@ print(json.dumps(${expr}))
 
 const aheadOf = (clone: string) => py(`m.remote_ahead(${JSON.stringify(clone)})`)
 
+// T-1281: a stored chat language, so a tty `cmd_update` asks nothing before the update menu
+function pinnedPrdtHome(): string {
+  const d = fs.mkdtempSync(path.join(tmpRoot, 'prdthome-'))
+  fs.writeFileSync(path.join(d, 'user-lang'), 'ko\n')
+  return d
+}
 beforeEach(() => { tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-nudge-'))) })
 afterEach(() => { fs.rmSync(tmpRoot, { recursive: true, force: true }) })
 
@@ -269,6 +279,45 @@ describe.skipIf(!PYTHON3)('T-749 · releases_pending_between — notes for every
 })
 
 describe.skipIf(!PYTHON3)('T-456/T-749 · maybe_prompt_update end to end (fake HOME, no gum needed)', () => {
+  const fakeHome = (clone: string): string => {
+    const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
+    fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
+    return home
+  }
+  const stateOf = (home: string) => path.join(home, '.prdt', 'update-state.json')
+  /** One maybe_prompt_update call against `home`; `tty` shims isatty() on both streams, else plain pipes. */
+  function driveNudge(home: string, o: { tty: boolean; answer?: string; errTty?: boolean }): { stdout: string; stderr: string } {
+    const shim = o.tty ? `
+class Tty:
+    def __init__(self, s): self._s = s
+    def isatty(self): return True
+    def __getattr__(self, n): return getattr(self._s, n)
+sys.stdin = Tty(io.StringIO(${JSON.stringify(o.answer ?? '')}))
+sys.stdout = Tty(sys.stdout)
+` : o.errTty ? `
+class Tty:
+    def __init__(self, s): self._s = s
+    def isatty(self): return True
+    def __getattr__(self, n): return getattr(self._s, n)
+sys.stderr = Tty(sys.stderr)
+` : ''
+    const script = `
+import importlib.util, importlib.machinery, sys, io
+loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
+spec = importlib.util.spec_from_loader("prdt_mod", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+${shim}
+m.maybe_prompt_update("status")
+`
+    const r = spawnSync('python3', ['-c', script], {
+      encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
+      env: { ...process.env, HOME: home, CI: '' },
+    })
+    return { stdout: r.stdout, stderr: r.stderr }
+  }
+
   /**
    * Drive the real entry point against a fixture clone with HOME repointed at a
    * temp dir. stdin/stdout are shimmed to report isatty() so the non-tty
@@ -363,32 +412,80 @@ m.maybe_prompt_update("status")
     expect(fs.existsSync(path.join(home, '.prdt', 'update-state.json'))).toBe(false)
   })
 
-  test('non-tty (piped, no CI) → one line naming the pending version on STDERR, stdout stays clean (T-785 F3)', () => {
+  test('non-tty (piped, no CI) → silent on both streams, no state written (T-1100; the T-785 F3 stderr line is gone)', () => {
     const { origin, clone } = makeRemoteAndClone()
     advanceOrigin(origin, ['v1.6', 'v1.5'])
-    const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
-    fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
-    fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
-    const script = `
-import importlib.util, importlib.machinery
-loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
-spec = importlib.util.spec_from_loader("prdt_mod", loader)
-m = importlib.util.module_from_spec(spec)
-loader.exec_module(m)
-m.maybe_prompt_update("status")   # stdout is a pipe here → not a tty
-`
-    // T-785 F3: a piped/captured stdout (the auto-open hook's own \`| head -1\`,
-    // any \`$(prdt …)\`) must never receive this line INSTEAD of the line the
-    // caller actually asked for — it now goes to stderr whenever stdout is not
-    // a real terminal, plain execFileSync (both streams piped) included.
-    const r = spawnSync('python3', ['-c', script], {
-      encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
-      env: { ...process.env, HOME: home, CI: '' },
-    })
-    expect(r.stdout.trim()).toBe('')
-    expect(r.stderr.trim()).toBe('업데이트 가능: v1.5 → v1.6 — 묻지 않아요(비대화형 실행). 설치하려면 `prdt update` 를 직접 실행하세요.')
-    // the once-a-day slot IS consumed (a real network check ran) — unlike CI
-    expect(fs.existsSync(path.join(home, '.prdt', 'update-state.json'))).toBe(true)
+    const home = fakeHome(clone)
+    const r = driveNudge(home, { tty: false })
+    expect(r.stdout).toBe('')
+    expect(r.stderr).toBe('')
+    expect(fs.existsSync(stateOf(home))).toBe(false)
+  })
+
+  // T-1100 regression (1)(2)(3): the day's slot is spent only by a run that could
+  // prompt AND reached a verdict — never by a hook / pipe run, never by a failed check.
+  test('T-1100 (1): a non-tty run, then a tty run the same day → the tty run prompts', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, ['v1.6', 'v1.5'])
+    const home = fakeHome(clone) // one HOME across both runs, hook-first-then-terminal order
+    const hook = driveNudge(home, { tty: false })
+    expect(hook.stdout + hook.stderr).toBe('')
+    expect(fs.existsSync(stateOf(home))).toBe(false)
+    const term = driveNudge(home, { tty: true, answer: '2\n' })
+    expect(term.stdout).toContain('설치됨 v1.5 → 새 버전 v1.6')
+    expect(term.stdout).toContain('건너뜁니다')
+    expect(JSON.parse(fs.readFileSync(stateOf(home), 'utf-8')).last_check_basis).toBe('local')
+  })
+
+  test('T-1100 (2): a tty run that prompted → no second prompt that day (not even after a non-tty run)', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, ['v1.6', 'v1.5'])
+    const home = fakeHome(clone)
+    expect(driveNudge(home, { tty: true, answer: '2\n' }).stdout).toContain('새 버전 v1.6')
+    expect(driveNudge(home, { tty: true, answer: '2\n' }).stdout).toBe('')
+    expect(driveNudge(home, { tty: false }).stdout).toBe('')
+  })
+
+  test('T-1100 (3): offline then online the same day → the online run prompts', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, ['v1.6', 'v1.5'])
+    const home = fakeHome(clone)
+    git(clone, 'remote', 'set-url', 'origin', path.join(tmpRoot, 'gone.git')) // offline-equivalent
+    const off = driveNudge(home, { tty: true, answer: '2\n' })
+    expect(off.stdout).toBe('')
+    expect(fs.existsSync(stateOf(home))).toBe(false) // failed check leaves the slot unspent
+    git(clone, 'remote', 'set-url', 'origin', origin) // back online
+    const on = driveNudge(home, { tty: true, answer: '2\n' })
+    expect(on.stdout).toContain('설치됨 v1.5 → 새 버전 v1.6')
+    expect(fs.existsSync(stateOf(home))).toBe(true)
+  })
+
+  test('T-1100: piped inside a terminal (stdout pipe, stderr tty) with a known update → one stderr line, state untouched; hook-shaped run silent', () => {
+    const { origin, clone } = makeRemoteAndClone()
+    advanceOrigin(origin, ['v1.6', 'v1.5'])
+    const home = fakeHome(clone)
+    // before any tty run no update is known: nothing printed, nothing written
+    const cold = driveNudge(home, { tty: false, errTty: true })
+    expect(cold.stdout + cold.stderr).toBe('')
+    expect(fs.existsSync(stateOf(home))).toBe(false)
+    driveNudge(home, { tty: true, answer: '2\n' }) // a tty run records the known update
+    const before = fs.readFileSync(stateOf(home), 'utf-8')
+    expect(JSON.parse(before).known_update).toEqual({ new: 'v1.6' })
+    const piped = driveNudge(home, { tty: false, errTty: true })
+    expect(piped.stdout).toBe('')
+    expect(piped.stderr).toContain('v1.5')
+    expect(piped.stderr).toContain('v1.6')
+    expect(fs.readFileSync(stateOf(home), 'utf-8')).toBe(before)
+    const hook = driveNudge(home, { tty: false })
+    expect(hook.stdout + hook.stderr).toBe('')
+    expect(fs.readFileSync(stateOf(home), 'utf-8')).toBe(before)
+  })
+
+  test('T-1100: a tty run whose check reached "nothing to offer" spends the slot', () => {
+    const { clone } = makeRemoteAndClone() // up to date
+    const home = fakeHome(clone)
+    expect(driveNudge(home, { tty: true }).stdout).toBe('')
+    expect(fs.existsSync(stateOf(home))).toBe(true)
   })
 
   test('no gum/fzf on PATH at all → the prompt still renders (T-749 dropped the dependency)', () => {
@@ -596,28 +693,6 @@ m._render_update_notes(msgs, "v1.5", ${JSON.stringify(POISON_VERSION)}, [section
     expect(out).toContain('body line with BEL')
   })
 
-  test('non-tty nudge line (F3 path): a poisoned remote version is stripped on stderr', () => {
-    const { origin, clone } = makeRemoteAndClone()
-    advanceOrigin(origin, [POISON_VERSION, 'v1.5'])
-    const home = fs.mkdtempSync(path.join(tmpRoot, 'home-'))
-    fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
-    fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${clone}\n`)
-    const script = `
-import importlib.util, importlib.machinery
-loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
-spec = importlib.util.spec_from_loader("prdt_mod", loader)
-m = importlib.util.module_from_spec(spec)
-loader.exec_module(m)
-m.maybe_prompt_update("status")
-`
-    const r = spawnSync('python3', ['-c', script], {
-      encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
-      env: { ...process.env, HOME: home, PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')), CI: '' },
-    })
-    expect(HAS_RAW_CONTROL.test(r.stderr)).toBe(false)
-    expect(r.stderr).toContain('v1.6[31m')
-  })
-
   test('cmd_update — its OWN non-tty branch (bypasses _render_update_notes entirely) strips the remote version too', () => {
     const { origin, clone } = makeRemoteAndClone()
     advanceOrigin(origin, [POISON_VERSION, 'v1.5'])
@@ -634,7 +709,7 @@ m.cmd_update(None)   # stdin/stdout are real pipes here -> not a tty, hits cmd_u
 `
     const r = spawnSync('python3', ['-c', script], {
       encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
-      env: { ...process.env, HOME: home, PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')), CI: '' },
+      env: { ...process.env, HOME: home, PRDT_HOME: pinnedPrdtHome(), CI: '' },
     })
     expect(r.status).toBe(0)
     expect(HAS_RAW_CONTROL.test(r.stdout)).toBe(false)
@@ -665,7 +740,7 @@ m.maybe_prompt_update("status")
 `
     const out = execFileSync('python3', ['-c', script], {
       encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
-      env: { ...process.env, HOME: home, PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')), CI: '' },
+      env: { ...process.env, HOME: home, PRDT_HOME: pinnedPrdtHome(), CI: '' },
     })
     expect(out).toContain('EXECV_CALLED')
     expect(HAS_RAW_CONTROL.test(out)).toBe(false)
@@ -693,7 +768,7 @@ m.cmd_update(None)
 `
     const out2 = execFileSync('python3', ['-c', script2], {
       encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
-      env: { ...process.env, HOME: home2, PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')), CI: '' },
+      env: { ...process.env, HOME: home2, PRDT_HOME: pinnedPrdtHome(), CI: '' },
     })
     expect(HAS_RAW_CONTROL.test(out2)).toBe(false)
     expect(out2).toContain('v1.6[31m')
@@ -726,14 +801,50 @@ describe.skipIf(!PYTHON3)('T-785 F3 / code review #1 · skip_update_nudge (main(
    * project-less fixture, but `main()` decides skip_update_nudge and (when
    * applicable) calls `maybe_prompt_update` BEFORE that dispatch, so the
    * assertion under test is already settled by then. */
-  function runCli(args: string[], home: string): void {
-    spawnSync('python3', [PRDT_CLI, ...args], {
+  // T-1231: the tty prompt is an arrow menu that flushes type-ahead (a reflexive Enter must not
+  // install), so the answer is sent only once the menu is drawn: Down + Enter = skip. Exits when
+  // the child does; a child that never draws a menu is simply reaped.
+  const TTY_DRIVER = `
+import os, pty, sys, select, time
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+buf, sent, end = b"", False, time.time() + 40
+while time.time() < end:
+    if select.select([fd], [], [], 0.1)[0]:
+        try:
+            d = os.read(fd, 4096)
+        except OSError:
+            break
+        if not d:
+            break
+        buf += d
+        if not sent and "❯".encode() in buf:
+            time.sleep(0.2)
+            os.write(fd, b"\\x1b[B\\r")
+            sent = True
+    elif os.waitpid(pid, os.WNOHANG)[0]:
+        sys.exit(0)
+try:
+    os.waitpid(pid, 0)
+except ChildProcessError:
+    pass
+`
+
+  function runCli(args: string[], home: string, tty = true): void {
+    // T-1100: the nudge only fires for a tty run, so the default drives the CLI under a
+    // real pty (pty.spawn gives the child a tty on stdin AND stdout); the answer Down+Enter is
+    // fed on the parent's stdin so a prompt, if one appears, ends in skip.
+    const cmd = tty
+      ? ['python3', '-c', TTY_DRIVER, 'python3', PRDT_CLI, ...args]
+      : ['python3', PRDT_CLI, ...args]
+    spawnSync(cmd[0], cmd.slice(1), {
       encoding: 'utf-8',
       cwd: tmpRoot,
-      timeout: subprocessTimeout('cli'),
+            timeout: subprocessTimeout('cli'),
       env: {
         ...process.env, HOME: home,
-        PRDT_HOME: fs.mkdtempSync(path.join(tmpRoot, 'prdthome-')),
+        PRDT_HOME: pinnedPrdtHome(),
         CI: '', PRDT_META_BACKUP: '0',
       },
     })
@@ -830,24 +941,30 @@ print(json.dumps(${expr}))
       const t = new Date(Date.now() - ageDays * 86400_000)
       fs.utimesSync(sf, t, t)
       const script = `
-import importlib.util, importlib.machinery
+import importlib.util, importlib.machinery, sys, io
 loader = importlib.machinery.SourceFileLoader("prdt_mod", ${JSON.stringify(PRDT_CLI)})
 spec = importlib.util.spec_from_loader("prdt_mod", loader)
 m = importlib.util.module_from_spec(spec)
 loader.exec_module(m)
+class Tty:                       # T-1100: only a tty run checks
+    def __init__(self, s): self._s = s
+    def isatty(self): return True
+    def __getattr__(self, n): return getattr(self._s, n)
+sys.stdin = Tty(io.StringIO("2\\n"))
+sys.stdout = Tty(sys.stdout)
 m.maybe_prompt_update("status")
 `
       const r = spawnSync('python3', ['-c', script], {
         encoding: 'utf-8', cwd: tmpRoot, timeout: subprocessTimeout('cli'),
         env: { ...process.env, HOME: home, CI: '', TZ: 'Asia/Seoul' },
       })
-      return { err: r.stderr.trim(), state: JSON.parse(fs.readFileSync(sf, 'utf-8')) }
+      return { err: r.stdout.trim(), state: JSON.parse(fs.readFileSync(sf, 'utf-8')) }
     }
     const fresh = run(`{"last_check": "2000-01-01"}`, 0) // mtime = now → same local day
     expect(fresh.err).toBe('')
     expect(fresh.state.last_check_basis).toBeUndefined()
     const stale = run(`{"last_check": "2000-01-01"}`, 2) // mtime two days old → due
-    expect(stale.err).toContain('업데이트 가능')
+    expect(stale.err).toContain('새 버전 v1.6')
     expect(stale.state.last_check_basis).toBe('local')
   })
 })

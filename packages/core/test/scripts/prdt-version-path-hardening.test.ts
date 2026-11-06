@@ -32,7 +32,7 @@ function put(root: string, rel: string, body: string) {
 }
 
 function env(home: string): NodeJS.ProcessEnv {
-  return { ...process.env, PRDT_HOME: home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0', TZ: 'UTC' }
+  return { ...process.env, HOME: path.join(home, 'user-home'), PRDT_HOME: home, PRDT_LANG: 'en', PRDT_META_BACKUP: '0', TZ: 'UTC' }
 }
 
 function cli(root: string, home: string, args: string[]) {
@@ -104,7 +104,8 @@ describe('po-state version → ticket path (reviewer repro)', () => {
     expect(cli(root, home, ['tickets', 'new', '--type', 'impl', '--slug', 'a']).code).toBe(0)
     expect(cli(root, home, ['tickets', 'new', '--line', 'arc', '--type', 'impl', '--slug', 'b']).code).toBe(0)
     expect(fs.existsSync(path.join(root, 'docs/tickets/v1.0.1/T-001.md'))).toBe(true)
-    expect(fs.existsSync(path.join(root, 'docs/tickets/arc/v2/T-002.md'))).toBe(true)
+    // T-1298: home without --product keeps T-NNN; the named added product arc numbers on its own (RC).
+    expect(fs.existsSync(path.join(root, 'docs/tickets/arc/v2/T-RC-001.md'))).toBe(true)
     const p = py(`root = Path(sys.argv[2]); print(json.dumps([m.current_version_id(root), m.current_version_id(root, "arc")]))`,
       [root])
     expect(p).toEqual(['v1.0.1', 'arc/v2'])

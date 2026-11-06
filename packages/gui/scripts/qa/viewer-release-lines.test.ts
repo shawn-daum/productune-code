@@ -174,8 +174,17 @@ describe('render — one sidebar section per line', () => {
     }
   })
 
-  it('용어 · 규율 · 위키 · 릴리스 노트 sidebars carry no line section', () => {
-    for (const store of ['wiki', 'glossary', 'release', 'disc']) expect(sidebar(store), store).not.toContain('ls-h')
+  it('규율 · 위키 · 릴리스 노트 sidebars carry no line section', () => {
+    for (const store of ['wiki', 'release', 'disc']) expect(sidebar(store), store).not.toContain('ls-h')
+  })
+
+  it("T-1255: each line's 현재 버전 sidebar lists its env group right after 결정, then 용어 사전 (T-1397)", () => {
+    const keys = [...sidebar('home').matchAll(/data-group-select="([^"]+)"/g)].map((m) => m[1])
+    expect(keys[keys.indexOf('decision') + 1]).toBe('env')
+    expect(keys[keys.indexOf('env') + 1]).toBe('glossary')
+    expect(keys[keys.indexOf('ntf-archive/decision') + 1]).toBe('ntf-archive/env')
+    expect(keys[keys.indexOf('ntf-archive/env') + 1]).toBe('ntf-archive/glossary')
+    expect(pane('home', 'glossary')).toContain('용어')
   })
 
   it("each line's 진행 상황 is the Home blocks scoped to that line's tickets", () => {
@@ -188,8 +197,9 @@ describe('render — one sidebar section per line', () => {
     expect(arch).toContain('title="T-202"')
     expect(arch).not.toContain('title="T-101"')
     expect(arch).toContain('티켓 완료 1/3')
-    // scope rows from that line's own PRD section
-    expect(arch).toContain('Archive item A')
+    // T-1415: the scope block is one line per lane of that line (default lane here), its sub-title counts that line's own PRD section
+    expect(arch).toContain('이번 버전 PRD 2항목')
+    expect(home).toContain('이번 버전 PRD 1항목')
     expect(arch).not.toContain('Home item A')
     // waits: the line's own user decision
     expect(arch).toContain('data-detail-id="T-203"')
@@ -243,7 +253,7 @@ describe('render — one sidebar section per line', () => {
     expect(Object.keys(blob.ticket)).toEqual(expect.arrayContaining(['T-101', 'T-201', 'T-204', 'T-205']))
     expect(blob.ticket['T-201'].path).toBe('docs/tickets/ntf-archive/v1.2/T-201.md')
     expect(blob.feature['ntf-archive/search']).toBeTruthy()
-    expect(blob.maxTicket).toBe(205)
+    expect(blob.maxTicket).toEqual({ "": 205 })   // T-1298: per counter, plain ids under ""
   })
 })
 
@@ -299,13 +309,14 @@ describe('multi-line project without features.taxonomy — docs/features specs (
 })
 
 describe('single-line project — no section heads, unchanged output', () => {
-  it('lineViews is empty and no line markup, CSS or script appears', () => {
+  it('lineViews is empty and no line script or data-crumb appears; head markup only in the env store', () => {
     const one = { ...data, lines: [] }
     expect(lineViews(one)).toEqual([])
     const h = render(one)
-    expect(h).not.toContain('class="ls-h"')
+    // T-1227: the env store heads its products even for one product, so the head CSS is always emitted; other stores carry none
+    const nonEnv = h.replace(/<section[^>]*data-store="env"[\s\S]*?<\/section>/, '')
+    expect(nonEnv).not.toContain('class="ls-h"')
     expect(h).not.toContain('data-crumb=')
-    expect(h).not.toContain('.ls-h {')
   })
 
   it.skipIf(!META_ROOT)(`real productune corpus: no lines, and the lines path is inert (${META_SKIP_REASON ?? 'meta root found'})`, () => {
@@ -314,6 +325,6 @@ describe('single-line project — no section heads, unchanged output', () => {
     const a = render(real)
     const { lines: _drop, ...noKey } = real
     expect(a).toBe(render(noKey))
-    expect(a).not.toContain('class="ls-h"')
+    expect(a.replace(/<section[^>]*data-store="env"[\s\S]*?<\/section>/, '')).not.toContain('class="ls-h"')
   })
 })

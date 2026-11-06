@@ -15,7 +15,7 @@ Producer-side checklist: read the DS (`design.md`, both scopes), scan the BUILT 
 3. **Color** — brand palette holds in critical UI; no framework-default colors leaking in.
 4. **Components** — core components match the DS recipes (shape, radius, states); one-off variants flagged.
 5. **Assets** — logo present and referenced · favicon · og:image · title/description/OG meta tags.
-6. **Hi-fi match** — build matches the approved hi-fi where one exists (none produced → this item N/A, keep checking the rest).
+6. **Hi-fi match** — build matches the confirmed hi-fi where one exists (none produced → this item N/A, keep checking the rest).
 7. **Anti-default** — entry/critical screens pass the `style-library/anti-default.md` self-check; forced signature on a calm utility surface is a demerit too.
 
 ## Rules

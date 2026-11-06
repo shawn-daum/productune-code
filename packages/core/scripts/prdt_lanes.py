@@ -6,7 +6,7 @@ it (schedule · dispatch gate) and so does statusline-prdt.sh — python caches 
 module's bytecode (a main script gets no .pyc), so a lane read no longer compiles
 the whole CLI. Read-only: it writes nothing. Mirrored beside `prdt` by install.sh.
 """
-import json, math, os, re
+import json, math, os, re, stat, subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -159,7 +159,7 @@ def _index_fields(fm, keys, problems):
     return out
 
 
-TICKET_INDEX_FIELDS = ("id", "slug", "type", "status", "assignee", "feature", "created", "closed")
+TICKET_INDEX_FIELDS = ("id", "slug", "type", "status", "assignee", "feature", "created", "closed", "lane", "gate")
 
 
 # ── T-1104: the docs-layout seam — every docs/ path reader goes through here ──
@@ -394,6 +394,7 @@ def _scan_ticket_dir(root, tdir, lines, prefix):
                "status": f["status"], "assignee": norm_assignee(f["assignee"]),
                "feature": f["feature"], "deps": deps, "also": also,
                "created": f["created"], "closed": f["closed"],
+               "lane": f["lane"], "gate": f["gate"],
                "version": version, "path": (sp[len(root_prefix):] if (sp := str(p)).startswith(root_prefix) else str(p.relative_to(root)))}
         if row["type"] not in TICKET_TYPES:
             problems.append(f"type '{row['type']}' not in {'/'.join(TICKET_TYPES)}")
@@ -469,6 +470,11 @@ def project_lines(root):
 
 def project_line_names(root):
     return [e["name"] for e in project_lines(root)]
+
+
+def gate_lines(root):
+    """Every line a gate runs over: the home product (None) first, then each added product."""
+    return [None] + list(project_line_names(root))
 
 
 def split_line_id(vid):
@@ -657,9 +663,64 @@ def _dispatch_transcript(data):
     return str(hits[0]) if hits else None
 
 
+def _ts(v):
+    try:
+        return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def _worker_past_stop(data):
+    """T-1387: True when the worker transcript has an `assistant` record at least
+    one second past `stopped_at` (second-truncated, so the final turn's own
+    second never counts). SubagentStop stamps `stopped_at` even when another
+    SubagentStop hook (prdt-return-check.sh) BLOCKS that stop and the worker runs
+    on with no new SubagentStart — measured 2026-11-03, d-v116-t1094-dev2. A
+    later SubagentStop re-stamps (prdt-post-dispatch.sh marker_stop), so a worker
+    that truly finished has no assistant record past its last stamp.
+    Reads the transcript tail backwards, stopping at the first record older
+    than the stop; an mtime before the threshold skips the read."""
+    stop = _ts(data.get("stopped_at") or "")
+    t = _dispatch_transcript(data)
+    if stop is None or not t:
+        return False
+    limit = stop + 1
+    try:
+        if os.path.getmtime(t) < limit:
+            return False
+        size = os.path.getsize(t)
+        with open(t, "rb") as f:
+            span = 65536
+            while True:
+                start = max(0, size - span)
+                f.seek(start)
+                lines = f.read(size - start).split(b"\n")
+                if start > 0:
+                    lines = lines[1:]  # first piece may be a partial line
+                for raw in reversed(lines):
+                    if not raw.strip():
+                        continue
+                    try:
+                        rec = json.loads(raw)
+                    except Exception:
+                        continue
+                    ts = _ts(rec.get("timestamp")) if isinstance(rec, dict) and isinstance(rec.get("timestamp"), str) else None
+                    if ts is None:
+                        continue
+                    if ts < stop:
+                        return False
+                    if rec.get("type") == "assistant" and ts >= limit:
+                        return True
+                if start == 0:
+                    return False
+                span *= 4
+    except OSError:
+        return False
+
+
 def _dispatch_state(data, now):
     """The gate's verdict for one marker: `live` (counted) or why it is not."""
-    if data.get("stopped_at"):
+    if data.get("stopped_at") and not _worker_past_stop(data):
         return "stopped"
     try:
         since = datetime.strptime(data.get("since") or "", "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
@@ -715,6 +776,172 @@ def _schedule_in_flight(root):
     return hits
 
 
+def schedule_inputs_key(root, in_flight):
+    """T-1427: a digest of everything `compute_schedule` reads, cheap to take
+    (stats, no file bodies): every ticket md and PRD md (path · mtime_ns · size),
+    `.prdt/po-state.json` · `.prdt/config.json`, and the live dispatch set
+    `in_flight` (it carries the time-based liveness). Same key → same schedule."""
+    import hashlib
+    root = Path(root)
+    h = hashlib.sha256()
+
+    def add(p):
+        try:
+            st = os.stat(p)
+            h.update(("%s\0%d\0%d\n" % (p, st.st_mtime_ns, st.st_size)).encode("utf-8", "replace"))
+        except OSError:
+            h.update(("%s\0-\n" % p).encode("utf-8", "replace"))
+
+    add(root / ".prdt" / "po-state.json")
+    add(root / ".prdt" / "config.json")
+    dirs = [d for _p, d in product_docs_dirs(root, "tickets")] + [d for _p, d in product_docs_dirs(root, "prd")]
+    dirs.append(shared_docs_dir(root) / "prd")
+    for base in dirs:
+        for d, sub, files in os.walk(base):
+            sub.sort()
+            for fn in sorted(files):
+                if fn.endswith(".md"):
+                    add(os.path.join(d, fn))
+    h.update(json.dumps(sorted((k, v or "") for k, v in in_flight.items())).encode("utf-8"))
+    return h.hexdigest()[:32]
+
+
+# T-1427 (T-1390 acceptance 3): a ready row whose work already left the worker —
+# its track is merging into its base, or its latest dispatch is a QA that passed.
+TRACK_LAND_LOCK = "prdt-track-land.lock"   # = prdt_cli TRACK_LOCK
+TRACK_MERGE_ARGS_RE = re.compile(r"\btrack\s+(?:merge|land)\b(.*)")
+TICKET_ARG_RE = re.compile(r"(?<![A-Za-z0-9-])(T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6})(?!\d)")
+
+
+def _code_git_common_dir(root):
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    d = cfg.get("code", {}).get("dir") if isinstance(cfg, dict) and isinstance(cfg.get("code"), dict) else None
+    code = Path(root) / d.strip() if isinstance(d, str) and d.strip() and not os.path.isabs(d.strip()) \
+        and ".." not in re.split(r"[/\\]+", d.strip()) else Path(root)
+    g = code / ".git"
+    if g.is_dir():
+        return g
+    try:   # a worktree checkout: `.git` is a file naming its gitdir, whose `commondir` names the shared one
+        m = re.match(r"gitdir:\s*(.+)", g.read_text(encoding="utf-8").strip())
+        gd = Path(m.group(1)) if m else None
+        if gd is not None and not gd.is_absolute():
+            gd = (code / gd).resolve()
+        cd = (gd / "commondir").read_text(encoding="utf-8").strip() if gd is not None else ""
+        return (gd / cd).resolve() if cd else gd
+    except (OSError, AttributeError):
+        return None
+
+
+def _merging_ticket(root):
+    """The ticket a live `prdt track merge` (or `land`) of this project's code repo
+    is merging now — read from the merge lock's pid and that process's arguments —
+    or None."""
+    gd = _code_git_common_dir(root)
+    if gd is None:
+        return None
+    try:
+        pid = int((gd / TRACK_LAND_LOCK).read_text(encoding="utf-8").split()[0])
+        if pid <= 0:
+            return None
+        os.kill(pid, 0)
+        args = subprocess.run(["ps", "-p", str(pid), "-o", "args="], capture_output=True, text=True,
+                              timeout=2).stdout
+    except PermissionError:
+        return None
+    except Exception:
+        return None
+    m = TRACK_MERGE_ARGS_RE.search(args)
+    t = TICKET_ARG_RE.search(m.group(1)) if m else None
+    return t.group(1) if t else None
+
+
+def _final_envelope(transcript):
+    """The worker's last return envelope (dict) from its transcript tail, or None:
+    the text of the last assistant record, or its SubagentHandback message."""
+    try:
+        size = os.path.getsize(transcript)
+        with open(transcript, "rb") as f:
+            f.seek(max(0, size - 262144))
+            raw = f.read().decode("utf-8", "replace").split("\n")
+    except OSError:
+        return None
+    for jl in reversed(raw):
+        if '"assistant"' not in jl:
+            continue
+        try:
+            rec = json.loads(jl)
+        except Exception:
+            continue
+        if not (isinstance(rec, dict) and rec.get("type") == "assistant"):
+            continue
+        c = (rec.get("message") or {}).get("content") if isinstance(rec.get("message"), dict) else None
+        if not isinstance(c, list):
+            continue
+        txt = "".join(b.get("text") or "" for b in c if isinstance(b, dict) and b.get("type") == "text")
+        if not txt.strip():
+            hb = [b for b in c if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "SubagentHandback"]
+            txt = (hb[0].get("input") or {}).get("message") or "" if hb else ""
+        if not txt.strip():
+            continue
+        try:
+            env = json.loads(txt[txt.index("{"):txt.rindex("}") + 1])
+        except Exception:
+            return None
+        return env if isinstance(env, dict) else None
+    return None
+
+
+def _qa_passed(env):
+    """A QA envelope whose every `results[]` row is `pass` and that is not
+    blocked, refused or waiting on information."""
+    if not isinstance(env, dict) or any(env.get(k) for k in ("blocked", "refused", "needs_info")):
+        return False
+    rows = env.get("results")
+    return isinstance(rows, list) and bool(rows) and all(
+        isinstance(r, dict) and r.get("verdict") == "pass" for r in rows)
+
+
+def settled_tickets(root, ids):
+    """T-1427: {ticket id: "merging" | "qa-passed"} among `ids` — a track merge of
+    that ticket is running now, or the ticket's latest dispatch marker for this
+    project is a finished `qa` dispatch whose return passed every row."""
+    ids = set(ids or ())
+    out = {}
+    if not ids:
+        return out
+    m = _merging_ticket(root)
+    if m in ids:
+        out[m] = "merging"
+    d = prdt_home() / "run" / "dispatches"
+    latest = {}
+    here = Path(root).resolve()
+    try:
+        files = sorted(d.glob("*.json"))
+    except OSError:
+        files = []
+    for f in files:
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or data.get("ticket_id") not in ids or data.get("ticket_id") in out:
+                continue
+            pr = data.get("project_root")
+            if not isinstance(pr, str) or Path(pr).resolve() != here:
+                continue
+        except Exception:
+            continue
+        since = _ts(data.get("since") or "") or 0
+        tid = data["ticket_id"]
+        if tid not in latest or since > latest[tid][0]:
+            latest[tid] = (since, data)
+    for tid, (_s, data) in latest.items():
+        if data.get("persona") != "qa" or not data.get("stopped_at") or _worker_past_stop(data):
+            continue
+        t = _dispatch_transcript(data)
+        if t and _qa_passed(_final_envelope(t)):
+            out[tid] = "qa-passed"
+    return out
+
+
 def _schedule_tickets(root):
     """{id: (row, path)} over every ticket md — first file wins per id."""
     tickets = {}
@@ -744,11 +971,50 @@ LANE_BESTEFFORT_NAME = "자투리"
 LANE_HEADING_RE = re.compile(r"^###\s+합격선(\s|$)")
 
 
-def _lane_gate_rows(root, st, line):
+def _closed_section_body(root, line, version):
+    """T-1256: [(line_no, line)] of the PRD section of a CLOSED `version` (id as a
+    ticket row carries it, `<line>/` prefix for an added line): the `## v…` section
+    still in PRD.md, else the closed round file `prd/versions/[<line>/]<v>.md`
+    (immutable, written at close). [] when neither exists."""
+    root = Path(root)
+    ln_, bare = split_line_id(version)
+    line = line or ln_
+    product = line_product(root, line)
+    prd_dir = docs_path(root, "prd", product)
+    key = _version_id_canon(bare)
+    try:
+        text = (prd_dir / "PRD.md").read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    if text and key is not None:
+        all_heads = _prd_line_headings(text, project_line_names(root))
+        own = (None, line) if product else (line,)
+        heads = [(v, ln) for l, v, ln in all_heads if l in own]
+        chosen = next((h for h in heads if _version_id_canon(h[0]) == key), None)
+        if chosen is not None:
+            later = sorted(ln for _, _, ln in all_heads if ln > chosen[1])
+            end_ln = later[0] if later else None
+            return [(ln, t) for ln, t in _md_structural_lines(text)
+                    if ln > chosen[1] and (end_ln is None or ln < end_ln)]
+    vdir = prd_dir / "versions"
+    if line and not product:
+        vdir = vdir / line
+    try:
+        vtext = (vdir / f"{bare}.md").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return _md_structural_lines(vtext)
+
+
+def _lane_gate_rows(root, st, line, closed_version=None):
     """[(name, gate_path_or_None, named)] — one per 합격선 row of the open PRD
     section's `### 합격선` table, in table order (R1); `named` False = the
-    A · B · C fallback (R11)."""
-    _v, body = _prd_open_section(root, st, line)
+    A · B · C fallback (R11). `closed_version` (T-1256) reads that closed
+    version's section instead of the open one."""
+    if closed_version:
+        body = _closed_section_body(root, line, closed_version)
+    else:
+        _v, body = _prd_open_section(root, st, line)
     rows, inside = [], False
     for _ln, text in body:
         if text.startswith("#"):
@@ -763,6 +1029,17 @@ def _lane_gate_rows(root, st, line):
         pm = LANE_GATE_PATH_RE.search(text)
         rows.append((m.group(1) if m else None, pm.group(1) if pm else None))
     return [(n or chr(65 + i), g, bool(n)) for i, (n, g) in enumerate(rows)]
+
+
+def _lane_records(tickets, version):
+    """[(name, gate_path_or_None, gate_ticket)] — T-1359 (design v1.16
+    lane-records-design §1): this version's open+done tickets carrying a
+    `lane:` frontmatter record, in ticket-number order. [] → the 합격선 table."""
+    recs = [t for t, (r, _p) in tickets.items()
+            if r["version"] == version and r["status"] in ("open", "done")
+            and isinstance(r.get("lane"), str) and r["lane"].strip()]
+    return [(tickets[t][0]["lane"].strip(), (tickets[t][0].get("gate") or "").strip() or None, t)
+            for t in sorted(recs, key=_ticket_num_key)]
 
 
 def _lane_longest_ending_at(ids, preds):
@@ -843,16 +1120,19 @@ def _lane_new(name, gpath, named, version, besteffort=False):
             "unnamed": not named, "besteffort": besteffort, "_version": version}
 
 
-def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
-    """[lane dict] — one per 합격선 row, then the 자투리 lane; [] when the PRD
-    has no 합격선 row (R1–R3, R7–R12). `order` = ticket ids in `prdt schedule`
+def compute_lanes(root, tickets, st, line, version, in_flight, order=None, closed=False):
+    """[lane dict] — one per lane record (T-1359: a gate ticket's `lane:`
+    frontmatter, ticket-number order), or with no record in this version one
+    per 합격선 row of the PRD table; then the 자투리 lane; [] when neither
+    exists (R1–R3, R7–R12). `order` = ticket ids in `prdt schedule`
     row order (the lane queue order, R12); None → ticket-number order.
     {name, gate_path, gate_ticket, linked, done, total, finished, tickets,
     working, next, ready, blockers:[{id, kind: decision|request}], warning,
     unnamed, besteffort}. A ticket belongs to ONE lane: the earliest row whose
     gate ticket's deps closure holds it (R8); this version's open+done tickets
     in no row's closure are the 자투리 lane (R7), present only when non-empty."""
-    rows = _lane_gate_rows(root, st, line)
+    records = _lane_records(tickets, version)
+    rows = [(n, g, True) for n, g, _t in records] if records else _lane_gate_rows(root, st, line, version if closed else None)
     if not rows:
         return []
     pos = {t: i for i, t in enumerate(order or [])}
@@ -863,6 +1143,34 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
             cache[t] = parse_frontmatter(tickets[t][1])[1] or ""
         return cache[t]
     lanes, taken, claimed = [], set(), set()
+
+    def link(lane, gate):
+        """Mark `gate` as `lane`'s gate ticket; its deps closure not yet held by
+        an earlier lane is the lane's members (R8)."""
+        taken.add(gate)
+        lane["gate_ticket"], lane["linked"] = gate, True
+        seen, stack = set(), [gate]
+        while stack:
+            t = stack.pop()
+            if t in seen or t not in tickets or tickets[t][0]["status"] == "dropped":
+                continue
+            seen.add(t)
+            stack.extend(tickets[t][0]["deps"])
+        members = [t for t in seen if t not in claimed]
+        claimed.update(seen)
+        return members
+
+    if records:
+        # T-1359: the record IS the gate ticket — no body search, always linked.
+        names = set()
+        for name, gpath, gate in records:
+            lane = _lane_new(name, gpath, True, version)
+            lanes.append(lane)
+            if name in names:
+                lane["warning"] = f"lane {name}: another lane record of {version} already has this name"
+            names.add(name)
+            _lane_fill(lane, link(lane, gate), tickets, in_flight, pos)
+        rows = []
     for name, gpath, named in rows:
         lane = _lane_new(name, gpath, named, version)
         lanes.append(lane)
@@ -878,17 +1186,7 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
                 lane["warning"] = (f"lane {name}: its gate path reaches {gate}, which an earlier lane already "
                                    f"holds — not linked")
             elif gate is not None:
-                taken.add(gate)
-                lane["gate_ticket"], lane["linked"] = gate, True
-                seen, stack = set(), [gate]
-                while stack:
-                    t = stack.pop()
-                    if t in seen or t not in tickets or tickets[t][0]["status"] == "dropped":
-                        continue
-                    seen.add(t)
-                    stack.extend(tickets[t][0]["deps"])
-                members = [t for t in seen if t not in claimed]
-                claimed |= seen
+                members = link(lane, gate)
         _lane_fill(lane, members, tickets, in_flight, pos)
     rest = [t for t, (r, _p) in tickets.items()
             if r["version"] == version and r["status"] in ("open", "done") and t not in claimed]
@@ -899,10 +1197,17 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None):
     return lanes
 
 
-def lanes_for(root, line=None):
+def lanes_for(root, line=None, version=None):
     """[lane dict] of one product (`line` None = the home product) — the statusline's read.
     Same inputs `compute_schedule` hands `compute_lanes`, so `prdt schedule --json`'s `lanes`
     and this are one computation (T-1184: the schedule itself, so a lane queue has its order)."""
+    if version:
+        # T-1256: a CLOSED version's lanes as at close (viewer idle home) — gate-ticket `lane:`
+        # records first, else its `### 합격선` table from PRD.md or `prd/versions/`. Nothing in
+        # flight, no queue order. `version` None = the unchanged current-version read above.
+        root = Path(root)
+        st = read_json(root / ".prdt" / "po-state.json") or {}
+        return compute_lanes(root, _schedule_tickets(root), st, line, version, set(), closed=True)
     return compute_schedule(Path(root), line=line)["lanes"]
 
 
@@ -1065,9 +1370,385 @@ def compute_schedule(root, tickets=None, line=None):
     out.update(critical_path=chain, cp_length=length if length > 0 else 0, rows=rows)
     out["lanes"] = compute_lanes(root, tickets, st, line, version, in_flight, [r["id"] for r in rows])
     if out["lanes"]:
+        # T-1365: where the lanes came from — `records` (gate tickets' `lane:`) or the PRD `table`
+        out["lanes_from"] = "records" if _lane_records(tickets, version) else "table"
         # T-1184 R10: the version total the lane sums must equal (text `total` line)
         here = [r for r, _p in tickets.values() if r["version"] == version and r["status"] in ("open", "done")]
         impl = [r for r in here if r["type"] == "impl"]
         out["totals"] = {"done": sum(r["status"] == "done" for r in here), "total": len(here),
                          "impl_done": sum(r["status"] == "done" for r in impl), "impl_total": len(impl)}
     return out
+
+
+# ── meta git: the trust check and the one runner (moved from prdt_cli for T-1384 —
+# the stage history read below runs meta git from the statusline and the viewer, which
+# import this module and never the CLI) ──
+def meta_git_dir(root):
+    return Path(root) / ".prdt" / "meta.git"
+
+
+def _scrubbed_git_env():
+    """No GIT_* inheritance — inside a code-repo hook, GIT_INDEX_FILE etc. would
+    redirect meta git at the CODE repo's index (meta-git.ts T-364 QA-HIGH)."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def _git(args, cwd, timeout=10):
+    return subprocess.run(["git", *args], cwd=str(cwd), env=_scrubbed_git_env(),
+                          capture_output=True, text=True, timeout=timeout)
+
+
+# T-848: `.prdt/meta.git` sits in the project tree, so a cloned repository can
+# carry one — config, hooks and all. Observed by running (git 2.54): a carried
+# `core.fsmonitor`, `core.hooksPath`, `$GIT_DIR/hooks/*`, an `include.path`, and a
+# `filter.<x>.clean` named by `$GIT_DIR/info/attributes` each RUN a command on
+# plain `status` / `add` / `commit`. Two layers, same on the TS side
+# (meta-git.ts metaGit — keep both in step):
+#  1. every meta git run pins the hook / fsmonitor / signing knobs on the
+#     command line (command-line config outranks every file);
+#  2. before any run, the repo's own config must hold only keys prdt or
+#     `prdt meta remote add` write — a driver key (filter / diff / merge /
+#     pager / editor / sshCommand / gpg / credential / alias / include / …)
+#     can't be neutralised by name, so an unknown key refuses the run.
+META_GIT_HARDEN = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+                   "-c", "commit.gpgsign=false"]
+_META_CONFIG_ALLOWED = re.compile(
+    r"(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase"
+    r"|precomposeunicode|symlinks|worktree|hookspath)"
+    r"|extensions\.(objectformat|refstorage)"
+    r"|user\.(name|email)|commit\.gpgsign|push\.(followtags|default)"
+    r"|remote\..+\.(url|pushurl|fetch)|branch\..+\.(remote|merge))")
+_meta_trust_cache = {}
+_META_URL_SCHEMES = {"https", "http", "ssh", "git", "git+ssh", "ssh+git", "ftp", "ftps"}
+
+
+# T-917 (user decision T-913 = A): a meta backup remote is a NETWORK remote only.
+# A push to a local repository runs THAT repository's hooks on this machine
+# (`-c core.hooksPath=/dev/null` never reaches the receiving side), so every
+# local path is refused — relative, absolute, `~`, `file://` — inside the
+# project or not. Shared fixture list with meta-git.ts metaRemoteUrlProblem:
+# test/fixtures/meta-remote-urls.json (keep both sides in step).
+META_LOCAL_REMOTE_RULE = "meta backup allows only network remotes (https, ssh, git or user@host:path)"
+
+
+def _meta_remote_url_problem(url):
+    """None for a network remote URL git reaches over https/http/ssh/git (or
+    scp-like `user@host:path`), else why not: a `<helper>::` transport or a
+    non-network `<scheme>://` (runs `git-remote-<x>`; `ext::` runs its
+    argument), or any local path (its hooks run on push)."""
+    if "::" in url.split("/", 1)[0]:
+        return "a remote-helper URL"
+    m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*)://", url)
+    if m:
+        scheme = m.group(1).lower()
+        if scheme in _META_URL_SCHEMES:
+            return None
+        if scheme != "file":
+            return "a remote-helper URL"
+    elif re.match(r"^[^/]+:", url):
+        return None  # scp-like host:path — git's own rule: a colon before any slash
+    return "a local path — " + META_LOCAL_REMOTE_RULE
+
+
+def _meta_gitfile_problem(gd):
+    """`.prdt/meta.git` as a FILE: git follows a `gitdir: <path>` file to a
+    repository anywhere — never handed to git."""
+    try:
+        with open(gd, "rb") as fh:
+            head = fh.read(4096).decode("utf-8", "replace")
+    except OSError:
+        head = ""
+    if head.startswith("gitdir:"):
+        tgt = head[len("gitdir:"):].strip().splitlines()[0] if head[len("gitdir:"):].strip() else "?"
+        return f".prdt/meta.git is a file pointing elsewhere (gitdir: {tgt})"
+    return ".prdt/meta.git is a file, not a directory"
+
+
+def meta_repo_present(root):
+    """Something stands at `.prdt/meta.git` that a meta command must answer for:
+    a repo (HEAD) or a non-directory there (a gitfile / symlink — refused by
+    meta_git_trust_problem, never silently 'not split')."""
+    gd = meta_git_dir(Path(root))
+    if (gd / "HEAD").exists() or (os.path.lexists(gd) and not gd.is_dir()) or gd.is_symlink():
+        return True
+    # refs/ or objects/ without a HEAD is still something to answer for — the
+    # trust check says "has refs but no config" (T-848 fix2)
+    return (gd / "refs").exists() or (gd / "objects").exists()
+
+
+def meta_git_trust_problem(root):
+    """None when `.prdt/meta.git` may be handed to git, else why not (one
+    English line). Never raises; never runs a command the repo could name
+    (`git config --file` reads one file and follows no include).
+    Order (T-848 fix1): every structural check runs BEFORE the 'no config yet'
+    answer — a config-less repo with a `commondir` reads ITS config instead."""
+    root = Path(root)
+    gd = meta_git_dir(root)
+    for p in (root / ".prdt", gd):
+        try:
+            st_ = os.lstat(p)
+        except FileNotFoundError:
+            return None  # no meta repo yet — nothing to trust
+        except OSError:
+            return f"cannot inspect {p.relative_to(root)}"
+        if stat.S_ISLNK(st_.st_mode):
+            return f"{p.relative_to(root)} is a symbolic link"
+    if not stat.S_ISDIR(os.lstat(gd).st_mode):
+        return _meta_gitfile_problem(gd)
+    for name in ("commondir", "config.worktree"):
+        if os.path.lexists(gd / name):
+            return f".prdt/meta.git/{name} exists"
+    try:
+        if stat.S_ISLNK(os.lstat(gd / "config").st_mode):
+            return ".prdt/meta.git/config is a symbolic link"
+    except FileNotFoundError:
+        for name in ("HEAD", "objects", "refs"):
+            if os.path.lexists(gd / name):
+                return f".prdt/meta.git has {name} but no config"
+        return None  # empty / not-yet-initialised dir — git sees no repo there
+    except OSError:
+        return "cannot inspect .prdt/meta.git/config"
+    try:
+        st = os.stat(gd / "config")
+        key = (str(gd), st.st_ino, st.st_size, st.st_mtime_ns)
+    except OSError:
+        return "cannot read .prdt/meta.git/config"
+    if key in _meta_trust_cache:
+        return _meta_trust_cache[key]
+    r = _git(["config", "--file", str(gd / "config"), "--no-includes", "--list", "-z"], root)
+    if r.returncode != 0:
+        prob = "cannot parse .prdt/meta.git/config"
+    else:
+        prob = None
+        for ent in r.stdout.split("\0"):
+            if not ent:
+                continue
+            k, _, v = ent.partition("\n")
+            if not _META_CONFIG_ALLOWED.fullmatch(k):
+                prob = f".prdt/meta.git/config sets {k}"
+                break
+            if k.endswith((".url", ".pushurl")) and k.startswith("remote."):
+                why = _meta_remote_url_problem(v)
+                if why:
+                    prob = f".prdt/meta.git/config {k} ({v}) is {why}"
+                    break
+        if prob is None:
+            # branch.<b>.remote may name a URL/path instead of a remote (T-848 fix1)
+            ents = [e.partition("\n") for e in r.stdout.split("\0") if e]
+            names = {m.group(1) for k, _, _ in ents
+                     for m in [re.fullmatch(r"remote\.(.+)\.(?:url|pushurl|fetch)", k)] if m}
+            for k, _, v in ents:
+                if k.startswith("branch.") and k.endswith(".remote") and v not in names:
+                    why = _meta_remote_url_problem(v)
+                    if why:
+                        prob = f".prdt/meta.git/config {k} ({v}) is {why}"
+                        break
+    _meta_trust_cache[key] = prob
+    return prob
+
+
+# ── T-1384 (decision T-1385 = A): a ticket counts in the stage it was created in ──
+# Readers: statusline-prdt.sh (`stage n/m`) and the viewer stage bar (collect.mjs →
+# home-graph.mjs `stageOfTicket`, the JS twin of `ticket_stage` — parity test:
+# packages/gui/scripts/qa/type-to-stage-parity.test.ts).
+COUNTED_STAGES = ("define", "build", "ship")
+STAGE_DEFINE_TYPES = ("design", "decision")
+STAGE_SHIP_TYPES = ("qa", "ops")
+_DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def stage_of_type(ttype):
+    """The pre-T-1384 rule, now the fallback: design · decision → define, qa · ops → ship,
+    every other type → build."""
+    if ttype in STAGE_DEFINE_TYPES:
+        return "define"
+    if ttype in STAGE_SHIP_TYPES:
+        return "ship"
+    return "build"
+
+
+def stage_history(root, line=None, version=None, limit=400):
+    """[[YYYY-MM-DD, stage], …] oldest-first: each day po-state's stage for (`line`,
+    `version`) changed, while po-state named that version. `version` is the bare id
+    (`v1.16`); None = the line's current one.
+    Source: the meta repo's history of `.prdt/po-state.json` (the record `_build_entry_date`
+    reads; po-state keeps no history of its own). A snapshot lands at or after the stage
+    write, so a day here is the write's day or later. The walk runs newest-first and
+    stops at the first snapshot naming another version. Committer dates are LOCAL days,
+    the calendar a ticket's `created` uses (T-1210). No meta repo, an untrusted one
+    (`meta_git_trust_problem`), or any git failure → []. Read-only."""
+    root = Path(root)
+    gd = meta_git_dir(root)
+    if not (gd / "HEAD").exists():
+        return []
+    if version is None:
+        _s, vid, _c = line_state(read_json(root / ".prdt" / "po-state.json"), line)
+        version = split_line_id(vid)[1] if vid else None
+    if not version:
+        return []
+    want = join_line_id(line, version)
+    # A hit runs no git, so it is safe before the trust check (only trusted runs fill it).
+    ckey = _stage_cache_key(gd, int(limit))
+    cached = _stage_cache_get(gd, want, ckey)
+    if cached is not None:
+        return cached
+    if meta_git_trust_problem(root):
+        return []
+    base = [*META_GIT_HARDEN, "-c", "log.showSignature=false", "--git-dir", str(gd)]
+    # `log -n N -- <path>` walks back until N snapshots touch po-state: a version holds a
+    # few, so read a small window and widen it only while every snapshot read still names
+    # this version (measured on this repo, 8k meta commits: -n5 0.11 s, -n20 0.42 s).
+    n = 4
+    while True:
+        seen, done = _stage_snapshots(root, base, min(n, int(limit)), line, want)
+        if seen is None:
+            return []
+        if done or n >= int(limit):
+            break
+        n *= 4
+    hist_out = []
+    for day, stage in reversed(seen):
+        if not hist_out or hist_out[-1][1] != stage:
+            hist_out.append([day, stage])
+    _stage_cache_put(gd, want, ckey, hist_out)
+    return hist_out
+
+
+# T-1384 follow-up: the git walk above costs ~0.7 s cold, and the statusline runs once per
+# call. The answer changes only when the meta repo's branch moves, so it is cached per
+# (meta.git, line+version) under a per-user temp dir, keyed by the stat of HEAD, the ref
+# HEAD names and packed-refs (a commit rewrites the ref file → new key). A failed or
+# unreadable cache is a miss, never an error; only trusted-repo results are ever stored.
+def _stage_cache_key(gd, limit):
+    parts = [str(limit)]
+    try:
+        names = ["HEAD", "packed-refs"]
+        head = (gd / "HEAD").read_text(errors="replace").strip()
+        if head.startswith("ref: "):
+            names.append(head[5:].strip())
+        parts.append(head)
+        for n in names:
+            try:
+                st = os.stat(gd / n)
+                parts.append(f"{n}:{st.st_mtime_ns}:{st.st_size}")
+            except OSError:
+                parts.append(f"{n}:-")
+    except OSError:
+        return None
+    return "|".join(parts)
+
+
+def _stage_cache_path(gd):
+    import hashlib
+    import tempfile
+    h = hashlib.sha1(str(Path(gd).resolve()).encode()).hexdigest()[:16]
+    d = Path(tempfile.gettempdir()) / f"prdt-stage-hist-{os.getuid()}"
+    return d, d / f"{h}.json"
+
+
+def _stage_cache_get(gd, want, ckey):
+    if ckey is None:
+        return None
+    try:
+        _d, f = _stage_cache_path(gd)
+        st = os.stat(f)
+        if st.st_uid != os.getuid():
+            return None
+        ent = json.loads(f.read_text()).get(want)
+        if not isinstance(ent, dict) or ent.get("key") != ckey:
+            return None
+        hist = ent.get("hist")
+        if isinstance(hist, list) and all(
+                isinstance(r, list) and len(r) == 2 and all(isinstance(x, str) for x in r)
+                for r in hist):
+            return hist
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def _stage_cache_put(gd, want, ckey, hist):
+    if ckey is None:
+        return
+    try:
+        d, f = _stage_cache_path(gd)
+        d.mkdir(mode=0o700, exist_ok=True)
+        try:
+            data = json.loads(f.read_text())
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        data[want] = {"key": ckey, "hist": hist}
+        tmp = f.with_name(f"{f.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data))
+        os.replace(tmp, f)
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _stage_snapshots(root, base, n, line, want):
+    """([(day, stage)] newest-first while po-state names `want`, done) over the newest `n`
+    po-state snapshots; done = a snapshot naming another version ended the run, or fewer
+    than `n` exist. (None, True) on any git failure."""
+    try:
+        r = _git([*base, "log", f"-n{n}", "--date=format-local:%Y-%m-%d",
+                  "--format=%H %cd", "--", ".prdt/po-state.json"], root)
+        if r.returncode != 0:
+            return None, True
+        commits = [row.split(" ", 1) for row in r.stdout.splitlines() if " " in row]
+        if not commits:
+            return [], True
+        b = subprocess.run(["git", *base, "cat-file", "--batch"], cwd=str(root),
+                           env=_scrubbed_git_env(), capture_output=True, timeout=10,
+                           input="".join(f"{sha}:.prdt/po-state.json\n" for sha, _d in commits).encode())
+        if b.returncode != 0:
+            return None, True
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None, True
+    out, pos, seen = b.stdout, 0, []
+    for _sha, day in commits:
+        nl = out.find(b"\n", pos)
+        if nl < 0:
+            return seen, True
+        head = out[pos:nl].split()
+        pos = nl + 1
+        hist = None
+        if len(head) == 3 and head[1] == b"blob":
+            size = int(head[2])
+            try:
+                hist = json.loads(out[pos:pos + size].decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                hist = None
+            pos += size + 1
+        stage, ver, _c = line_state(hist, line)
+        if ver != want:
+            return seen, True
+        if isinstance(stage, str) and _DAY_RE.fullmatch(day[:10] if day else ""):
+            seen.append((day[:10], stage))
+    return seen, len(commits) < n
+
+
+def ticket_stage(fm_stage, created, ttype, history):
+    """The stage a ticket counts in (T-1385 = A): its own `stage:` when that is
+    define · build · ship; else the stage po-state held on its `created` day (the last
+    `history` change on or before that day — a same-day change wins); else, when neither
+    decides it — and, T-1386 = B, never a stage earlier than
+    `stage_of_type` (the later of the two, define < build < ship) — (no key, no history, created before the version's first recorded stage,
+    or a retro · idle answer), the type rule `stage_of_type`."""
+    if fm_stage in COUNTED_STAGES:
+        # T-1386 = B: an explicit key obeys the same floor — never earlier than the type's stage
+        return max(fm_stage, stage_of_type(ttype), key=COUNTED_STAGES.index)
+    day = created[:10] if isinstance(created, str) else ""
+    if _DAY_RE.fullmatch(day):
+        hit = None
+        for d, s in history or ():
+            if d <= day:
+                hit = s
+            else:
+                break
+        if hit in COUNTED_STAGES:
+            # T-1386 = B: never earlier than the type's stage (define < build < ship)
+            by_type = stage_of_type(ttype)
+            return max(hit, by_type, key=COUNTED_STAGES.index)
+    return stage_of_type(ttype)

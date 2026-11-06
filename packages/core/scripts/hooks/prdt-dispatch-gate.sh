@@ -313,6 +313,16 @@ done
 # same IN-or-OUT test prdt-call-governor.sh makes (it never reads the file, so
 # it needs neither the outermost-wins rule nor a realpath — T-484/T-493).
 [ -n "$DIR" ] || exit 0
+# T-1305: str_take keeps the JSON escapes of the value (`\n`, `\\`, `\uXXXX`
+# …), so a folder name holding a newline reached the up-walk as the literal
+# text `\n`, matched no directory, and the whole gate went silent (the
+# priority-yield notice included). Decode the value — one jq fork, and only
+# when a backslash is present; a decode failure leaves DIR empty (silent, as
+# before). The `x` sentinel keeps a trailing newline in the name.
+case "$DIR" in
+  *\\*) DIR="$(jq -jn --arg s "\"$DIR\"" '$s | fromjson | strings' 2>/dev/null; printf x)"; DIR="${DIR%x}"
+        [ -n "$DIR" ] || exit 0 ;;
+esac
 # `${DIR%/*}` returns a slash-less string UNCHANGED, not empty, so a relative
 # DIR would never shrink and the loop below would spin to the hook timeout.
 # The harness always sends an absolute cwd, so this is unreached in practice —
@@ -519,7 +529,7 @@ def want_ticket:
   | if ($s | type) == "string" and ($s | test("^prdt-(designer|developer)$")) and $c != null
        and (($c.slug // null) | type) == "string" and ($c.slug | test("^[a-z0-9]+(-[a-z0-9]+)*$"))
        and (($c.prd_path // null) | type) == "string" and ($c.prd_path | test("^docs/([a-z0-9-]+/)?prd/PRD\\.md#v[0-9]+\\.[0-9]+$"))
-    then "\($c.slug) \($c.prd_path) \([.tool_input.prompt | scan("T-[0-9]+")] | unique | .[:8] | join(" "))" else "" end;
+    then "\($c.slug) \($c.prd_path) \([.tool_input.prompt | scan("T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]+")] | unique | .[:8] | join(" "))" else "" end;
 
 # T-695: two lines — does the resource cap apply to this call (any Agent
 # dispatch on PreToolUse — T-1171 dropped the `prdt-*` restriction), and the `[ctx]` verdict above (deny · warn ·
@@ -712,7 +722,7 @@ if [ -n "$WANT_TICKET" ]; then
         ' "$T_HITS" 2>/dev/null)"
         if [ -n "$T_VERDICT" ]; then
           T_ID="${T_HITS##*/}"; T_ID="${T_ID%.md}"
-          case "$T_ID" in T-[0-9]*) case "${T_ID#T-}" in *[!0-9]*) T_ID="this ticket" ;; esac ;; *) T_ID="this ticket" ;; esac
+          [[ "$T_ID" =~ ^T-([BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]+$ ]] || T_ID="this ticket"   # T-1298: T-NNN or T-<PREFIX>-<n>
           case "$T_VERDICT" in
             purpose) T_MISS="no user quote under \`### 목적\` (the user's purpose)"
                      T_NEXT="their reason already in their own words → quote it under \`### 목적\`; else ask why it matters, end your turn, quote the answer there. Your \`### 확인\` quote is a go-ahead (\"일단 시안 가져와봐\") → retitle it \`### 확인 (바로 진행)\` instead. Then re-dispatch." ;;
@@ -733,6 +743,12 @@ if [ -n "$WANT_TICKET" ]; then
 fi
 else   # T-893 report mode: no dispatch to judge
   GATE=""; WANT_MODEL="default"; WANT_PERSONA=""; WANT_CO=""; WANT_FILES=""; DIR=""; SID=""
+  # T-1290: `prdt dispatch wait --persona developer|qa` hands its persona and project root, so the
+  # T-1248 priority yield is computed for THAT dispatch kind (a bare report has neither and shows
+  # only the machine axes). Report mode judges and writes nothing either way.
+  case "${PRDT_GATE_PERSONA:-}" in developer|qa)
+    case "${PRDT_GATE_PROJECT_ROOT:-}" in /*) WANT_PERSONA="$PRDT_GATE_PERSONA"; DIR="$PRDT_GATE_PROJECT_ROOT" ;; esac ;;
+  esac
 fi
 
 # ── T-695: machine resource cap ───────────────────────────────────────────────
@@ -938,7 +954,7 @@ if [ -z "$MARK_BAD" ] && [ ${#MARK_FILES[@]} -gt 0 ]; then
         | {id: ((.agent_id // "") | tostring), t: ((.transcript // "") | tostring), age: ($now - $s),
            persona: ((.persona // "") | tostring), root: ((.project_root // "") | tostring),
            co: (if (.checkout | type) == "string" then .checkout else "" end),
-           ticket: ((.ticket_id // "") | tostring | if test("^T-[0-9]{1,5}$") then . else "" end),
+           ticket: ((.ticket_id // "") | tostring | if test("^T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}$") then . else "" end),
            model: (((.model // "default") | tostring) as $mm
                    | if ($mm | test("^(sonnet|opus|haiku|fable)$")) then $mm else "default" end),
            did: (if (.dispatch_id | type) == "string" then .dispatch_id else "" end),
@@ -1036,6 +1052,74 @@ if [ -e "$CAPSF" ]; then
   [ -n "$CAPS" ] || { CAPS='{}'; CAPS_BAD=1; }
 fi
 
+# ── T-1248: test-slot order follows the machine's project priority list ─────
+# `$PRDT_HOME/priority-projects` (T-1247, comma-separated slugs, first goes
+# first). No list / empty / a non-test-running dispatch → nothing below runs a
+# fork or touches a file, and the output is byte-identical to before. Projects
+# are matched by their explicit `.prdt/config.json` `slug` (as the statusline's
+# rank cell does). Records: `$PRDT_HOME/run/dispatch-gate/waiting/<slug>` (tooling
+# owned `run/`, no carve-out) — written when a listed project's developer/qa
+# dispatch is held by the suites/load axes or by the yield below, cleared when
+# that project's developer/qa dispatch passes, ignored after PRIO_WAIT_MIN min.
+#
+# Wording settled by inject-edit d-v115-t1248-des1, unchanged (taken from the
+# approved define-screen-set slot-wait state). Placeholders: {holder} {hrank}
+# {me} {myrank} {order}.
+PRIO_TXT_HELD='held by {holder} (priority {hrank})'
+PRIO_TXT_CLAIMED='claimed by {holder} (priority {hrank}, waiting)'
+PRIO_TXT_AFTER='{me} is priority {myrank} and goes after it.'
+PRIO_TXT_AFTER_UNLISTED='{me} is not on the priority list and goes after it.'
+PRIO_TXT_NEXT='next in line: {order}'
+PRIO_WAIT_MIN=10
+
+prio_slug_of() {   # dir → explicit config slug of the nearest project up-walk, "" if none
+  local d="$1" s=""
+  while [ -n "$d" ] && [ "$d" != "/" ]; do
+    if [ -f "$d/.prdt/config.json" ]; then
+      s="$(jq -r '.slug // "" | strings' "$d/.prdt/config.json" 2>/dev/null)"
+      break
+    fi
+    d="${d%/*}"
+  done
+  # T-1294: a slug names a file under run/ — charset + length like the CLI's
+  # safe_label; anything else is treated as no slug (never a path piece).
+  case "$s" in *[!A-Za-z0-9._-]*|"."|"..") s="" ;; esac
+  [ "${#s}" -le 60 ] || s=""
+  printf '%s' "$s"
+}
+prio_label() {   # T-1294: repo-sourced name on a gate line — charset + 60-char clip (CLI safe_label)
+  printf '%s' "$1" | LC_ALL=C tr -c 'A-Za-z0-9._-' '_' | cut -c1-60
+}
+
+PRIO_NAMES="[]"; PRIO_ME=""; PRIO_RUN="[]"; PRIO_WAIT="[]"; PRIO_ACTIVE=""
+PRIO_WDIR="$PRDT_ROOT/run/dispatch-gate/waiting"
+if [ -r "$PRDT_ROOT/priority-projects" ]; then
+  PRIO_RAW="$(tr -d '[:space:]' < "$PRDT_ROOT/priority-projects" 2>/dev/null)"
+  PRIO_NAMES="$(printf '%s' "$PRIO_RAW" | jq -Rc 'split(",") | map(select(test("^[A-Za-z0-9._-]+$"))) | reduce .[] as $n ([]; if index($n) then . else . + [$n] end)' 2>/dev/null)"
+  case "$PRIO_NAMES" in '['*'"'*']') PRIO_ACTIVE=1 ;; *) PRIO_NAMES="[]" ;; esac
+fi
+if [ -n "$PRIO_ACTIVE" ] && { [ -n "$WANT_PERSONA" ] || [ -n "$CAPS_REPORT" ]; }; then
+  PRIO_ME="$(prio_slug_of "$PROJ_ROOT")"
+  # running full suites, attributed to a project by the entry process's cwd
+  if [ -n "$WANT_PERSONA" ]; then
+    PRIO_PIDS="$(ps -axo pid=,args= 2>/dev/null | grep -E 'vitest' | jq -Rr 'sub("^\\s*(?<p>[0-9]+)\\s+"; "\(.p)\u0001") | select(test("^[0-9]+\u0001")) | split("\u0001") as $a | select($a[1] | test("^(\\S*/)?node(js|[0-9]+)?(\\s+-\\S*)*\\s+\\S*/(vitest/vitest\\.mjs|\\.bin/vitest)(\\s|$)") and (test("\\.test\\.[cm]?[jt]sx?") | not)) | $a[0]' 2>/dev/null | paste -sd, -)"
+    if [ -n "$PRIO_PIDS" ]; then
+      PRIO_SLUGS=""
+      while IFS= read -r PRIO_CWD; do
+        [ -n "$PRIO_CWD" ] || continue
+        PRIO_SLUGS="$PRIO_SLUGS$(prio_slug_of "$PRIO_CWD")"$'\n'
+      done < <(lsof -a -d cwd -p "$PRIO_PIDS" -Fn 2>/dev/null | sed -n 's/^n//p')
+      PRIO_RUN="$(printf '%s' "$PRIO_SLUGS" | jq -Rsc 'split("\n") | map(select(length > 0)) | unique' 2>/dev/null)"
+      [ -n "$PRIO_RUN" ] || PRIO_RUN="[]"
+    fi
+  fi
+  # waiting records — fresh only, listed slugs only
+  if [ -d "$PRIO_WDIR" ]; then
+    PRIO_WAIT="$(find "$PRIO_WDIR" -type f -mmin "-$PRIO_WAIT_MIN" 2>/dev/null | sed 's|.*/||' | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null)"
+    [ -n "$PRIO_WAIT" ] || PRIO_WAIT="[]"
+  fi
+fi
+
 IFS= read -r -d '' RPROG <<'JQ'
 def r2: (. * 100 | round) / 100;
 # T-775: a checkout's identity — "code" for the shared code checkout (spelled
@@ -1069,6 +1153,8 @@ def meta_doc($root; $code_rel; $allow):
     and any($allow[]; . as $a | ($a | sub("/+$"; "")) as $a | $a != "" and ($r == $a or ($r | startswith($a + "/"))));
 def meta_only($root; $code_rel; $allow):
   type == "array" and length > 0 and all(.[]; meta_doc($root; $code_rel; $allow));
+# T-1248: fill `{name}` placeholders of an injected-text template.
+def fill($m): reduce ($m | to_entries[]) as $e (.; gsub("\\{\($e.key)\\}"; $e.value));
 def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
   permissionDecision: "deny", permissionDecisionReason: $why}};
 
@@ -1195,7 +1281,26 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
 # the WAITING line.
 | ($want_persona != "") as $runs_suites
 | (if $runs_suites then "\($want_persona) dispatch" else "no-suite dispatch" end) as $kind
-| ($axes | map(select(.over and (($runs_suites or (.suite // false | not)))))) as $over
+| ($axes | map(select(.over and (($runs_suites or (.suite // false | not)))))) as $over0
+# T-1248: test-slot order. Listed + my rank finite or unlisted; a higher project
+# Q (rank < mine) is a holder with a running suite (its cwd) or only a fresh
+# waiting record. occupied = running suites + holders that only wait.
+| ($prio_names | length) as $pn
+| (if $pn > 0 and $runs_suites and $live_cands != null then
+     ($prio_names | index($prio_me)) as $mi
+     | (if $mi == null then $pn else $mi end) as $mr
+     | ($prio_names | to_entries | map(select(.key < $mr))) as $higher
+     | ($higher | map(select(.value as $v | $prio_run | index($v) != null))) as $hrun
+     | ($higher | map(select(.value as $v | ($prio_run | index($v) == null) and ($prio_wait | index($v) != null)))) as $hwait
+     | (($suites // 0) + ($hwait | length)) as $occ
+     | (($hrun + $hwait) | sort_by(.key) | first) as $h
+     | if $h != null and $occ >= $cap.suites_max then
+         {holder: $h.value, hrank: ($h.key + 1), run: (($hrun | length) > 0 and ($hrun | map(.key) | index($h.key) != null)),
+          listed: ($mi != null), myrank: (($mi // 0) + 1)}
+       else null end
+   else null end) as $yield
+| ($axes | map(select((.over and (($runs_suites or (.suite // false | not)))) or ($yield != null and .k == "suites")))) as $over
+| ([$prio_wait[] as $w | ($prio_names | index($w)) as $i | select($i != null) | {k: $i, t: "\($w) (priority \($i + 1))"}] | sort_by(.k) | map(.t)) as $prio_next
 | ($want_persona == "qa" and (($want_files | try fromjson catch null) | meta_only($proj_root; $code_rel; $allow))) as $self_meta
 | (if $want_persona == "" or $self_meta or $live_cands == null then [] else
      (if $want_co == "" then "code" else ($want_co | norm_co($proj_root; $code_abs)) end) as $mine
@@ -1213,19 +1318,23 @@ def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
 # T-893: one line, user-approved wording — over-cap axes only; the full
 # measurement, sources and remedies are `prdt dispatch caps` (report mode below).
 | (if ($over | length) == 0 then "" else
-     deny("[prdt dispatch gate] WAITING — not spawned (\($kind)): " + ($over | map(.short) | join(", "))
-          + ". Re-dispatch the same prompt once freed; detail: `prdt dispatch caps`."
+     deny("[prdt dispatch gate] WAITING — not spawned (\($kind)): "
+          + ($over | map(.short + (if $yield != null and .k == "suites" then ", " + ((if $yield.run then $txt_held else $txt_claimed end) | fill({holder: $yield.holder, hrank: ($yield.hrank | tostring)})) else "" end)) | join(", "))
+          + "."
+          + (if $yield == null then "" else " " + ((if $yield.listed then $txt_after else $txt_after_unlisted end) | fill({me: $prio_me_name, myrank: ($yield.myrank | tostring)})) end)
+          + " Re-dispatch the same prompt once freed — `prdt dispatch wait` (Bash, `run_in_background`) exits when it is; detail: `prdt dispatch caps`."
           + (if $note == "" then "" else "\n" + $note end)) | tojson end) as $deny
 | ($axes | map(
-     "\(if .over then "OVER " elif .ok then "ok   " else "?    " end) \(.name): \(if .ok then "\(.val) / \(.cap)" else "unmeasured" end)"
+     "\(if .over or ($yield != null and .k == "suites") then "OVER " elif .ok then "ok   " else "?    " end) \(.name): \(if .ok then "\(.val) / \(.cap)" else "unmeasured" end)"
      + "\n       applies to: \(if .suite // false then "developer, qa dispatches (test-running work)" else "every dispatch" end)"
      + "\n       cap key: \(.key) (\(.src)) · source: \(.how)"
-     + "\n       to free: \(.free)") | join("\n")) as $axes_text
+     + "\n       to free: \(.free)"
+     + (if .k == "suites" and ($prio_next | length) > 0 then "\n       " + ($txt_next | fill({order: ($prio_next | join(", then "))})) else "" end)) | join("\n")) as $axes_text
 | ("[prdt dispatch gate] caps — measured now, machine-wide; over a cap = the gate denies a dispatch it applies to until it clears (T-1004: CPU load and full test suites apply only to developer/qa dispatches; the rest are checked on memory, in-flight count and VMs).\n"
    + $axes_text
    + "\nCap keys (numbers only; default in prdt-dispatch-gate.sh, override `$PRDT_HOME/dispatch-caps.json`): load_ratio · mem_free_pct_min · inflight_max · suites_max · vms_max · inflight_sonnet_max · inflight_opus_max · inflight_haiku_max · inflight_fable_max · inflight_default_max. Change with `prdt settings set dispatch.<key> <number>`, remove with `prdt settings unset dispatch.<key>`."
    + (if $caps_bad == "1" then "\n`dispatch-caps.json` is not a JSON object of numbers — defaults in force." else "" end)) as $report_text
-| if $report == "1" then $report_text else "\($unm | join(","))\n\(if $co_deny != "" then $co_deny else $deny end)\n\($note)\nend" end
+| if $report == "1" then $report_text else "\($unm | join(","))\n\(if $co_deny != "" then $co_deny else $deny end)\n\($note)\n\(if $co_deny == "" and ($over | any(.k == "suites" or .k == "load")) then "1" else "" end)\nend" end
 JQ
 
 RES="$(jq -rn \
@@ -1236,6 +1345,10 @@ RES="$(jq -rn \
   --arg want_model "$WANT_MODEL" --arg report "$CAPS_REPORT" \
   --arg want_persona "$WANT_PERSONA" --arg want_co "$WANT_CO" --arg proj_root "$PROJ_ROOT" --arg code_abs "$CODE_ABS" \
   --arg want_files "$WANT_FILES" --arg code_rel "$CODE_REL" --argjson allow "$META_ALLOW" \
+  --argjson prio_names "$PRIO_NAMES" --argjson prio_run "$PRIO_RUN" --argjson prio_wait "$PRIO_WAIT" \
+  --arg prio_me "$PRIO_ME" --arg prio_me_name "${PRIO_ME:-$(prio_label "${PROJ_ROOT##*/}")}" \
+  --arg txt_held "$PRIO_TXT_HELD" --arg txt_claimed "$PRIO_TXT_CLAIMED" --arg txt_after "$PRIO_TXT_AFTER" \
+  --arg txt_after_unlisted "$PRIO_TXT_AFTER_UNLISTED" --arg txt_next "$PRIO_TXT_NEXT" \
   "$RPROG" 2>/dev/null)"
 
 if [ -n "$CAPS_REPORT" ]; then
@@ -1298,12 +1411,25 @@ if [ -z "$RES" ]; then
 fi
 UNM="${RES%%$'\n'*}"; REST="${RES#*$'\n'}"
 DENY="${REST%%$'\n'*}"; REST="${REST#*$'\n'}"
-NOTE="${REST%%$'\n'*}"
+NOTE="${REST%%$'\n'*}"; REST="${REST#*$'\n'}"
+PRIO_HELD="${REST%%$'\n'*}"
 
+# T-1248: a listed project's dispatch held on the suites/load axes leaves a
+# waiting record (mtime = last held); one that passes clears it. No list, an
+# unlisted project or a non-test-running dispatch: no file is touched.
+prio_listed() { [ -n "$PRIO_ACTIVE" ] && [ -n "$WANT_PERSONA" ] && [ -n "$PRIO_ME" ] \
+  && case "$PRIO_NAMES" in *"\"$PRIO_ME\""*) true ;; *) false ;; esac; }
 if [ -n "$DENY" ]; then
+  if [ -n "$PRIO_HELD" ] && prio_listed; then
+    # T-1294: never follow a symlink (same `[ -L ]` pattern as prdt-call-governor.sh).
+    if [ ! -L "${PRIO_WDIR%/*}" ] && [ ! -L "$PRIO_WDIR" ] && [ ! -L "$PRIO_WDIR/$PRIO_ME" ]; then
+      { mkdir -p "$PRIO_WDIR" && : > "$PRIO_WDIR/$PRIO_ME"; } 2>/dev/null
+    fi
+  fi
   printf '%s\n' "$DENY"
   exit 0
 fi
+prio_listed && rm -f "$PRIO_WDIR/$PRIO_ME" 2>/dev/null
 SCHED_WARN="$(schedule_record)"
 
 # Unmeasured: say it once per session. The session id is a file-name token

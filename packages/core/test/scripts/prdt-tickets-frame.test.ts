@@ -72,14 +72,14 @@ function ticketPath(version: string, id: string): string {
 }
 
 function writeTicket(version: string, id: string, opts: {
-  type?: string; status?: string; assignee?: string; created?: string; body: string
+  type?: string; status?: string; assignee?: string; created?: string; extra?: string[]; body: string
 }) {
   const dir = path.join(projectDir, 'docs', 'tickets', version)
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(ticketPath(version, id), [
     '---', `id: ${id}`, `slug: fixture-${id.toLowerCase()}`, `type: ${opts.type ?? 'impl'}`,
     `status: ${opts.status ?? 'open'}`, `assignee: ${opts.assignee ?? 'developer'}`,
-    `created: ${opts.created ?? '2026-09-24'}`, '---', '', opts.body,
+    `created: ${opts.created ?? '2026-09-24'}`, ...(opts.extra ?? []), '---', '', opts.body,
   ].join('\n'))
 }
 
@@ -187,6 +187,28 @@ describe.skipIf(!PYTHON3)('prdt tickets new', () => {
     const id = out.match(/^\[(T-\d+)\]/)![1]
     const { out: checkOut } = runPrdtAllowFail(['tickets', 'fmt', id, '--check'])
     expect(checkOut).not.toMatch(/options/)
+  })
+
+  // T-1258 (L1 I2): decision outcome scaffolds the four `###` keys.
+  test('type: decision scaffolds ### why/how/module/what under outcome; fmt --check accepts them; non-decision has none', () => {
+    runInit()
+    const out = runPrdt(['tickets', 'new', '--type', 'decision', '--slug', 'keyed-fork']).trim()
+    const text = fs.readFileSync(out.match(/\(file:\/\/(.+)\)$/)![1], 'utf-8')
+    const outcome = text.split(/^## outcome$/m)[1].split(/^## /m)[0]
+    expect([...outcome.matchAll(/^### (.+)$/gm)].map((m) => m[1])).toEqual(['why', 'how', 'module', 'what'])
+    const id = out.match(/^\[(T-\d+)\]/)![1]
+    expect(runPrdtAllowFail(['tickets', 'fmt', id, '--check']).out).not.toMatch(/outcome|stray heading/)
+    const impl = runPrdt(['tickets', 'new', '--type', 'impl', '--slug', 'plain-one']).trim()
+    expect(fs.readFileSync(impl.match(/\(file:\/\/(.+)\)$/)![1], 'utf-8')).not.toMatch(/^### /m)
+  })
+
+  test('T-1258: a done decision whose outcome is only the bare scaffold still fails "done requires outcome"', () => {
+    const res = runInit()
+    writeTicket(res.version, 'T-792', {
+      type: 'decision', assignee: 'user', status: 'done', created: '2026-10-26',
+      body: '## problem\nfork\n\n## options\n| 선택지 | recommend |\n|---|---|\n| A | x |\n\n## acceptance\nok\n\n## outcome\n### why\n\n### how\n\n### module\n\n### what\n',
+    })
+    expect(runPrdtAllowFail(['tickets', 'fmt', 'T-792', '--check']).out).toMatch(/done requires `outcome`/)
   })
 
   test('rejects a missing/invalid type or slug', () => {
@@ -337,6 +359,24 @@ describe.skipIf(!PYTHON3)('prdt tickets fmt', () => {
     const { out, status } = runPrdtAllowFail(['tickets', 'fmt', 'T-711', '--check'])
     expect(status).not.toBe(0)
     expect(out).toMatch(/T-711:.*created is missing or malformed/)
+  })
+
+  // ── T-1299: optional frontmatter key `request: R-NNN` (an external request
+  // record's id) is canonical — `--check` accepts it and reports a value that
+  // is not R-<digits>.
+  test('T-1299: `request: R-NNN` passes --check; a malformed request value is reported', () => {
+    const res = runInit()
+    const body = '## problem\nx\n\n## acceptance\ny\n'
+    writeTicket(res.version, 'T-720', { extra: ['request: R-012'], body })
+    const ok = runPrdtAllowFail(['tickets', 'fmt', 'T-720', '--check'])
+    expect(ok.status).toBe(0)
+    expect(ok.out).toMatch(/T-720: ok/)
+    for (const [id, bad] of [['T-721', 'r-12'], ['T-722', 'R-'], ['T-723', 'REQ-12'], ['T-724', 'R-12a']]) {
+      writeTicket(res.version, id, { extra: [`request: ${bad}`], body })
+      const r = runPrdtAllowFail(['tickets', 'fmt', id, '--check'])
+      expect(r.status).not.toBe(0)
+      expect(r.out).toMatch(new RegExp(`${id}:.*request.*R-<digits>`))
+    }
   })
 
   test('older tickets (created before the frame landing date) pass untouched', () => {
