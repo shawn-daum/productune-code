@@ -1010,3 +1010,68 @@ describe('T-1428 — a confirm request on a body is an ask even when the judge m
     expect(hit).toEqual(['approval-r3.md'])
   })
 })
+
+describe('T-1429 — a confirm request on a new body that cites a done decision only as its basis is never a re-ask', () => {
+  // QA re-observation 2026-11-04 (2) (3), decision-approval-observation.md: r3_1 68499f08 and
+  // r3_2 110d98ef asked to confirm release-note text, citing T-001 (done) as its basis; the
+  // re-ask check blocked 2/2 live and 4/4 in replay with the REAL judge, while the T-1428 tests
+  // passed. Cause: logic the T-1428 fixtures never reached — 「확정할까요」 matched no approval
+  // word, the judge also names line 1 (above the body), and r3_2 cites T-001 inside the body,
+  // so each ask's subject fell back to the whole section. The judge outputs below are the ones
+  // the real judge gave on these replies (question-check.log, QA and this ticket's replay).
+  const PRDT = path.join(CORE_ROOT, 'scripts', 'prdt')
+  const REASK = '[prdt re-ask check]'
+  const env = (asks: number[]): NodeJS.ProcessEnv => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-t1429-'))
+    roots.push(home)
+    return J(asks, { ...ON, PRDT_HOME: home, PRDT_BIN: PRDT })
+  }
+  function T001(proj: string) {
+    const p = path.join(proj, 'docs', 'tickets', 'v1.13', 'T-001.md')
+    fs.writeFileSync(p, ['---', 'id: T-001', 'slug: theme-follows-system', 'type: decision', 'status: done', 'assignee: user',
+      'created: 2026-11-01', '---', '', '## problem', '', '- 다크모드', '', '## outcome', '',
+      '폰 설정을 따른다 — 사용자 「처음부터 아무것도 안 만지고 쓰게 하고 싶어. 설정 화면 늘어나는 거 싫다. 어두운 건 폰 설정 따라가면 돼」',
+      '', '## log', '', ''].join('\n'))
+    fs.utimesSync(p, DAY_AGO, DAY_AGO)
+  }
+  function reasonOf(reply: string, asks: number[]): string {
+    const { root, proj } = makeProject({})
+    T001(proj)
+    const out = runHook({
+      hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
+    }, env(asks))
+    return out ? (JSON.parse(out).reason as string) : ''
+  }
+
+  test.each([
+    ['approval-r3-cited-t001-1', [18], '18'],   // 「이 문구 그대로 확정할까요?」, T-001 cited in a note after the body
+    ['approval-r3-cited-t001-2', [1, 17], '1, 17'],   // 「확인해 주시면」 above the body + 「이대로 괜찮으면 알려 주세요」, T-001 inside the body
+  ] as Array<[string, number[], string]>)('%s: real-judge asks %j → question check on those lines, no re-ask', (name, asks, shown) => {
+    const reason = reasonOf(fx(name), asks)
+    expect(reason).not.toContain(REASK)
+    expect(reason.startsWith(`${TAG} line ${shown} asks`)).toBe(true)
+  })
+
+  test('the deterministic confirm line alone (judge missed every line) → question check, no re-ask', () => {
+    const reason = reasonOf(fx('approval-r3-cited-t001-2'), [])
+    expect(reason).not.toContain(REASK)
+    expect(reason.startsWith(`${TAG} line 17 asks`)).toBe(true)
+  })
+
+  test.each([
+    ['reask-r1-reobs-1', [5], '5'],
+    ['reask-r1-reobs-2', [10], '10'],
+  ] as Array<[string, number[], string]>)('%s: a true re-ask of T-001 (no body) keeps its re-ask finding', (name, asks, shown) => {
+    expect(reasonOf(fx(name), asks).startsWith(`${REASK} line ${shown} asks again`)).toBe(true)
+  })
+
+  const BODY = ['```', '## v1.0', '- 어두운 화면은 폰 설정을 따른다.', '```']
+  test.each([
+    ['named on the confirm line itself', ['초안이에요.', ...BODY, 'T-001 을 이 문구로 확정할까요?']],
+    ['named in the text presenting the body', ['T-001 을 바꾼 새 안이에요.', ...BODY, '이 문구 그대로 확정할까요?']],
+    ['a decision ask with no body word beside a body', ['초안이에요.', ...BODY, 'T-001 에 따라 썼어요.', '이 결정을 바꿀지 골라 주세요.']],
+  ])('a done decision %s → still a re-ask', (_label, lines) => {
+    expect(reasonOf((lines as string[]).join('\n'), [(lines as string[]).length])).toContain(REASK)
+  })
+})
