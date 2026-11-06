@@ -15107,12 +15107,28 @@ def _lockfile_sig(wt):
 TRACK_VITEST_CONFIGS = ("vitest.config.ts", "vitest.config.mts", "vitest.config.js", "vitest.config.mjs")
 
 
+# T-1417: code/vitest.config.ts and code/packages/vitest.config.ts refuse a bare vitest run; they
+# are not packages. Each carries the marker in its first line; the T-1417 original first line is
+# accepted too, so a worktree cut before the marker landed is skipped as well.
+TRACK_VITEST_GUARD_MARKERS = ("prdt-vitest-guard", "// T-1417:")
+
+
+def _track_is_vitest_guard(cfg):
+    try:
+        with open(cfg, encoding="utf-8", errors="replace") as fh:
+            first = fh.readline()
+        return any(k in first for k in TRACK_VITEST_GUARD_MARKERS)
+    except OSError:
+        return False
+
+
 def _track_vitest_pkgs(wt):
-    """Directories under the worktree holding a vitest config (node_modules and .git skipped)."""
+    """Directories under the worktree holding a real vitest config (node_modules and .git skipped;
+    a directory whose only config is a T-1417 guard config is not a package)."""
     out = []
     for d, dirs, files in os.walk(str(wt)):
         dirs[:] = [x for x in dirs if x not in ("node_modules", ".git")]
-        if any(f in files for f in TRACK_VITEST_CONFIGS):
+        if any(f in files and not _track_is_vitest_guard(os.path.join(d, f)) for f in TRACK_VITEST_CONFIGS):
             out.append(Path(d))
     return sorted(out)
 
