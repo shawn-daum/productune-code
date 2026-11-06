@@ -91,6 +91,27 @@ describe.skipIf(!PYTHON3 || !VIEWER_READY)('prdt viewer → release notes (T-130
     expect(link(run(['viewer', '--no-open', '--release', '1.15']).stdout).label).toBe('code/docs/RELEASES.md#v1.15')
   })
 
+  test('T-1444: v1.15 and v1.15.0 are the same release (missing components read as zero), v1.15.1 is not', () => {
+    writeReleases(RELEASES('## v1.12.0 — 세 자리 (2026-10-01)\n\n요약\n\n- 세 자리 줄\n\n'))
+    const reach = (f: string[]) => {
+      const r = run(['viewer', '--no-open', ...f])
+      expect(r.status, r.stderr).toBe(0)
+      return fs.readFileSync(link(r.stdout).dest, 'utf-8')
+    }
+    // three-digit id → two-digit section, both forms
+    expect(reach(['--release', 'v1.15.0'])).toContain('RELEASES.md%23v1.15"')
+    expect(reach(['code/docs/RELEASES.md#v1.15.0'])).toContain('RELEASES.md%23v1.15"')
+    // two-digit id → three-digit section (the reverse)
+    expect(reach(['--release', 'v1.12'])).toContain('RELEASES.md%23v1.12.0"')
+    expect(reach(['code/docs/RELEASES.md#v1.12'])).toContain('RELEASES.md%23v1.12.0"')
+    // a different patch is another version; a really missing one keeps the approved line
+    for (const f of [['--release', 'v1.15.1'], ['code/docs/RELEASES.md#v1.15.1'], ['--release', 'v1.12.1']]) {
+      const r = run(['viewer', '--no-open', ...f])
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain('절이 없어요. 있는 절: v1.12.0 · v1.15')
+    }
+  })
+
   test('a version with no section → exit 1, the approved line, no link (--release and path#version alike)', () => {
     writeReleases(RELEASES())
     const forms = [['--release', 'v9.9'], ['code/docs/RELEASES.md#v9.9']]
