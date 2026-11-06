@@ -91,13 +91,27 @@ describe.skipIf(!PYTHON3 || !VIEWER_READY)('prdt viewer → release notes (T-130
     expect(link(run(['viewer', '--no-open', '--release', '1.15']).stdout).label).toBe('code/docs/RELEASES.md#v1.15')
   })
 
-  test('a version with no section → exit 1 naming the versions there, no link', () => {
+  test('a version with no section → exit 1, the approved line, no link (--release and path#version alike)', () => {
     writeReleases(RELEASES())
-    const r = run(['viewer', '--no-open', '--release', 'v9.9'])
-    expect(r.status).toBe(1)
-    expect(r.stdout).not.toContain('file://')
-    expect(r.stderr).toContain('v9.9')
-    expect(r.stderr).toContain('v1.15')
+    const forms = [['--release', 'v9.9'], ['code/docs/RELEASES.md#v9.9']]
+    const lines = forms.map((f) => {
+      const r = run(['viewer', '--no-open', ...f])
+      expect(r.status).toBe(1)
+      expect(r.stdout).not.toContain('file://')
+      expect(r.stderr).toContain('prdt viewer: code/docs/RELEASES.md 에 v9.9 절이 없어요. 있는 절: v1.15')
+      return r.stderr
+    })
+    expect(lines[0]).toBe(lines[1])
+  })
+
+  test('path with an existing version → link only, exit 0; path alone unchanged', () => {
+    writeReleases(RELEASES())
+    const a = run(['viewer', '--no-open', 'code/docs/RELEASES.md#v1.15'])
+    expect(a.status).toBe(0)
+    expect(a.stderr).not.toContain('절이 없어요')
+    const b = run(['viewer', '--no-open', 'code/docs/RELEASES.md'])
+    expect(b.status).toBe(0)
+    expect(link(b.stdout).label).toBe('code/docs/RELEASES.md')
   })
 
   test('no RELEASES.md → exit 1, no link', () => {
