@@ -25,11 +25,13 @@
 #
 # WHAT IT DOES. On the PO's final reply of a turn it finds the ASKS — the places
 # that ask the user to choose, approve or confirm — and blocks the stop ONCE when
-# an ask has no decision ticket behind it. Which questions are asks is T-993 = B:
-# a choice between options, a yes/no confirmation and a read-back confirmation
-# need a ticket; an offer (`열어 드릴까요?`), an information request (`알려
-# 주시겠어요?`, a `…되나요?` fact question) and a feedback or closing question
-# (`어떠셨어요?`) do not.
+# an ask has no decision ticket behind it. Which questions are asks is T-993 = B,
+# narrowed by T-1465: a choice between options, an approval (a drafted body, or an
+# action that needs the user's consent: install, push, deploy, delete) and a
+# read-back confirmation need a ticket; a proceed-confirm (only whether the
+# assistant starts its own next in-scope step: `지금 Define을 시작할까요?`), an offer
+# (`열어 드릴까요?`), an information request (`알려 주시겠어요?`, a `…되나요?` fact
+# question) and a feedback or closing question (`어떠셨어요?`) do not.
 #
 # A MODEL JUDGES WHICH LINES ARE ASKS (T-1379, decision T-1380 = D). Three rounds
 # of sentence patterns traded missed asks for false blocks (「팀장님이 어떻게 할지
@@ -428,7 +430,7 @@ def ticket_index(root):
 JUDGE_SYSTEM_PROMPT = (
     "You check one chat reply that an AI product owner is about to send to its user, the person it "
     "works for. Find every line where the reply asks THAT USER to decide something: choose between "
-    "options, approve or confirm a plan, draft, wording or action, say whether to go ahead, or confirm "
+    "options, approve a plan, draft, wording or an action that needs the user's consent, or confirm "
     "a read-back the assistant needs before it continues.\n"
     "These are asks, whatever their wording and even when what is decided is meant for other people "
     "(a screen users will see, a mail customers will get):\n"
@@ -448,6 +450,14 @@ JUDGE_SYSTEM_PROMPT = (
     "실행해 주세요」;\n"
     "- asking what someone else (a manager, another team, a customer) decided or will decide, or asking "
     "the user to ask, tell or reply to someone else;\n"
+    "- a proceed-confirm: a line only asking whether the assistant should start or continue its OWN next "
+    "step inside the work already agreed (「지금 v1.17 Define을 시작할까요?」, 「진행할까요?」, 「이어서 "
+    "할까요?」, \"Shall I start the next step?\"). No alternatives are offered and nothing needs the "
+    "user's consent. Boundary: it is still an ask when it offers alternatives, asks approval of a "
+    "drafted body, or the action needs the user's consent (install, push, deploy, destructive git, "
+    "deleting, sending to other people, spending money);\n"
+    "- a statement that cites an earlier decision or ticket id (T-1362) to say it is settled, kept, or "
+    "will not be asked again (「T-1362 는 다시 묻지 않아요」): it asks nothing, even beside an id;\n"
     "- offers (「열어 드릴까요?」, \"Would you like me to...\"), feedback or closing questions "
     "(「어떠셨어요?」), rhetorical questions;\n"
     "- a question or request that is quoted, reported, given as an example, inside code or a "
@@ -743,6 +753,31 @@ def is_item_ask(lines, i, kind):
     return kind == "waiting" or bool(LIST_ITEM_RE.match(lines[i])) or lines[i][:1].isspace()
 
 
+# T-1465: a read-back ask (「읽은 내용이 맞나요?」) checks the assistant's own reading of the
+# user's words; it is not a re-choice of an earlier decision, so only its own paragraph speaks for it.
+READBACK_RE = re.compile(r"맞(?:나요|는지|으면|습니까|을까요)|is that right|did I (?:read|get)", re.I)
+
+
+def has_heading_before(lines, i):
+    in_fence = False
+    for k in range(i + 1):
+        if FENCE_RE.match(lines[k]):
+            in_fence = not in_fence
+        elif not in_fence and HEADING_RE.match(lines[k]):
+            return True
+    return False
+
+
+def paragraph_bounds(lines, i):
+    a = i
+    while a > 0 and lines[a - 1].strip():
+        a -= 1
+    b = i + 1
+    while b < len(lines) and lines[b].strip():
+        b += 1
+    return a, b
+
+
 def ask_subject(lines, i, kind, option_ref, tickets):
     """T-1377: the decision ids an ask is ABOUT.
     - a list item: the decision ids on the ask's line and the item's first line;
@@ -762,6 +797,13 @@ def ask_subject(lines, i, kind, option_ref, tickets):
     if is_item_ask(lines, i, kind):
         own = ids_on(lines[i]) | ids_on(lines[a])
         return own or ids_on("\n".join(lines[a:b]))
+    if kind != "options" and not option_ref and READBACK_RE.search(QUOTED_RE.sub(" ", lines[i])) \
+            and not has_heading_before(lines, i) \
+            and not any(LIST_ITEM_RE.match(ln) or FENCE_RE.match(ln) for ln in lines):
+        # T-1465: a heading-less reply (bold `**질문:**` lead-ins are not headings) with no
+        # option list or fenced body has no section: a read-back ask speaks for its own
+        # paragraph, never for every id in the reply. Other asks keep the whole-reply scope.
+        a, b = paragraph_bounds(lines, i)
     bare = QUOTED_RE.sub(" ", lines[i])
     bodies = [f for f in body_fences(lines, a, b) if not f[0] <= i <= f[1]]
     if not bodies or not (APPROVAL_RE.search(bare) or CONFIRM_ASK_RE.search(bare) or BODY_ASK_RE.search(bare)):
