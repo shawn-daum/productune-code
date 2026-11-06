@@ -48,7 +48,7 @@ prdt tickets [--ready|--backlog|--version v1|--feature auth]
 prdt tickets --link T-NNN   # 그 티켓이 선택된 뷰어를 여는 file:// 링크 (기본 자동 오픈, --no-open이면 링크만)
 prdt viewer [TARGET ...]    # 정적 뷰어 생성 — TARGET(티켓 id·문서 경로)이 선택된 채로 열림
 prdt schedule                # 열린 티켓을 critical path 순으로 잰 다음 발주 순서 — 읽기 전용, 아무것도 쓰지 않음
-prdt track open|review|land|drop T-NNN  # 트랙별 worktree(tracks/T-NNN, branch track/T-NNN) — land는 테스트 뒤 base로 fast-forward, drop은 폐기, 둘 다 push 안 함
+prdt track open|review|merge|drop T-NNN  # 트랙별 worktree(tracks/T-NNN, branch track/T-NNN) — merge는 테스트 뒤 base로 fast-forward, drop은 폐기, 둘 다 push 안 함 (land는 merge의 옛 이름 별칭, v1.17에서 제거)
 prdt history                # 버전별 티켓 집계 + retro 포인터
 prdt wordlist check <파일|->   # UX 문구 금지 목록 검사: 줄:칸: 낱말 → 대체어 (export --format json|lines = 제품 프롬프트용 목록)
 prdt settings [set <키> <값>|unset <키>]  # register.*·viewer.auto-open·plan.tier 등 기기 설정 한 곳 (prdt register set도 그대로 동작)
