@@ -235,6 +235,21 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     expect(r[16]).toBe('decision 0 | request 0')
   })
 
+  test('T-1442: folding never hides a lane row that carries a running dispatch id', () => {
+    const names = Array.from({ length: 20 }, (_, i) => `line-${i + 1}`)
+    seed({ slug: 'big', products: names.map((name) => ({ name })) },
+      { stage: 'build', version: 'v1.0', products: Object.fromEntries(names.map((n) => [n, { stage: 'build', version: 'v1.0' }])) })
+    ticket('line-20/v1.0', 'T-9020')
+    marker('T-9020')
+    const r = rows()
+    const running = r.filter((x) => x.includes('T-9020'))
+    expect(running).toHaveLength(1)
+    expect(running[0]).toContain('working')
+    expect(r.at(-1)).toBe('decision 0 | request 0')
+    // 42 body rows: 15 kept + the running one kept, the rest folded
+    expect(r.find((x) => /^\+\d+ more rows$/.test(x))).toBe('+26 more rows')
+  })
+
   test('a single-line project with `lines: []` renders exactly as one with no `lines` key', () => {
     seed({ slug: 'p' }, { stage: 'build', version: 'v1.0' })
     const before = rows()
