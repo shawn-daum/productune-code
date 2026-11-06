@@ -51,8 +51,8 @@ function makeFakeRepo(): string {
   return repo
 }
 
-/** ~/.prdt/prdt.env in the sandboxed HOME, pointing PRDT_REPO at the fake repo. */
-function pointPrdtEnvAt(repo: string, home = process.env.HOME as string): void {
+/** ~/.prdt/prdt.env in this test's own HOME (beforeEach), pointing PRDT_REPO at the fake repo. */
+function pointPrdtEnvAt(repo: string, home = ownHome as string): void {
   fs.mkdirSync(path.join(home, '.prdt'), { recursive: true })
   fs.writeFileSync(path.join(home, '.prdt', 'prdt.env'), `PRDT_REPO=${repo}\n`)
 }
@@ -74,8 +74,8 @@ async function waitForCalls(n: number, ms = 4000): Promise<string[]> {
 
 // The developer's shell may carry the kill switch (PRDT_META_BACKUP=0 — the
 // standing rule while this mechanism is under review): these tests assert the
-// spawn itself, so they turn the switch ON explicitly. Safe: HOME is the vitest
-// sandbox, so `~/.prdt/prdt.env` resolves to the FAKE bridge above and the tick
+// spawn itself, so they turn the switch ON explicitly. Safe: HOME is this file's own
+// temp home (beforeEach), so `~/.prdt/prdt.env` resolves to the FAKE bridge above and the tick
 // runs against the fixture project — no real bridge, no real remote, no network.
 const ARMED = { PRDT_META_BACKUP: '1' }
 
@@ -93,7 +93,18 @@ function metaGit(args: string[]): string {
   }).trim()
 }
 
+// T-1417: every test gets a HOME this file created, and only that directory is
+// ever removed. The old afterEach deleted `$HOME/.prdt/prdt.env` and trusted the
+// vitest HOME sandbox to make that path a fake one — a run that skipped the
+// package config (2026-11-04, vitest started from code/packages) deleted the
+// real ~/.prdt/prdt.env instead.
+let ownHome: string | undefined
+let savedHome: string | undefined
+
 beforeEach(() => {
+  savedHome = process.env.HOME
+  ownHome = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t504-home-'))
+  process.env.HOME = ownHome
   projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t504-proj-'))
   fakeRepo = makeFakeRepo()
 })
@@ -101,7 +112,9 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(projectDir, { recursive: true, force: true })
   fs.rmSync(fakeRepo, { recursive: true, force: true })
-  try { fs.rmSync(path.join(process.env.HOME as string, '.prdt', 'prdt.env'), { force: true }) } catch { /* sandbox home */ }
+  if (ownHome) fs.rmSync(ownHome, { recursive: true, force: true })
+  ownHome = undefined
+  process.env.HOME = savedHome
 })
 
 describe.skipIf(!PYTHON3 || !NODE)('prdt CLI main — detached backup tick (T-504)', () => {
