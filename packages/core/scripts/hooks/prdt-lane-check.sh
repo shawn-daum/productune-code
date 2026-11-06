@@ -327,7 +327,8 @@ def names_every_lane(reply, idle):
     """The final reply names each idle lane, by its name or one of its ready ids."""
     if not (isinstance(reply, str) and reply.strip()):
         return False
-    return all(n in reply or any(re.search(r"(?<![A-Za-z0-9-])%s(?!\d)" % re.escape(t), reply) for t in ids)
+    return all(re.search(r"(?<![A-Za-z0-9-])%s(?![A-Za-z0-9])" % re.escape(n), reply)
+               or any(re.search(r"(?<![A-Za-z0-9-])%s(?!\d)" % re.escape(t), reply) for t in ids)
                for n, ids in idle)
 
 
