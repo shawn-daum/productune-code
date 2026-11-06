@@ -34,7 +34,7 @@ beforeAll(() => {
 describe('T-1108 idle product copy', () => {
   it('Home names the product, the backlog count and the next step', () => {
     expect(html).toContain('ntf-archive 는 지금 진행 중인 버전이 없어요.')
-    expect(html).toContain('backlog 티켓 2건이 대기 중이에요. 새 버전을 시작하면 이 화면에 진행 상황이 보여요.')
+    expect(html).toContain('backlog 티켓 2건이 대기 중이에요. 새 버전을 시작하면 이 화면에 그 버전의 진행 상황이 보여요.')
   })
   it('the PRD store names the last closed version and the sidebar row reads 진행 중인 섹션 없음', () => {
     expect(html).toContain('ntf-archive 는 진행 중인 PRD 섹션이 없어요.')

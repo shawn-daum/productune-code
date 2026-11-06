@@ -1,0 +1,35 @@
+{
+  "_doc": "T-1268. A `prdt track land` whose diff touches any path in a package's `scans` ALWAYS runs that package's `tests` (tests that read a SOURCE directory by listing it — a change there is reached by no import and no name), and a diff touching the package itself ALSO runs the package's own extra test steps (core: schema-v-guard.mjs). `exempt` = reviewed test files that list a sandbox they built, not repo source. test/scripts/directory-scanner-list.test.ts keeps this honest: it fails when a test file reads a source dir and is in neither list.",
+  "packages": {
+    "packages/core": {
+      "scans": ["packages/core", "packages/gui", "packages/viewer"],
+      "tests": [
+        "test/agents-stubs.test.ts",
+        "test/core-src-tmp-symlink.test.ts",
+        "test/discipline/contracts-annexes.test.ts",
+        "test/fs/state-write-ratchet.test.ts",
+        "test/schema-v-guard.test.ts",
+        "test/scripts/audience-inject-hook.test.ts",
+        "test/scripts/directory-scanner-list.test.ts",
+        "test/scripts/install-register-tmp-symlink.test.ts",
+        "test/scripts/no-unsafe-tmp-write.test.ts",
+        "test/scripts/prdt-doctor-discipline-delivery.test.ts",
+        "test/scripts/prdt-wiki-machine-store.test.ts",
+        "test/scripts/question-check-hook.test.ts",
+        "test/scripts/session-start-parts.test.ts",
+        "test/scripts/session-start-self-load.test.ts"
+      ],
+      "exempt": {}
+    },
+    "packages/gui": {
+      "scans": ["packages/gui"],
+      "tests": [
+        "scripts/qa/viewer-discipline-load.test.ts"
+      ],
+      "exempt": {
+        "electron/ipc/onboarding.downgrade.test.ts": "lists the .claude/agents of a sandbox home it built, not a repo directory",
+        "electron/prdt-bootstrap.test.ts": "lists the .prdt and .claude/agents trees of two sandbox homes it bootstrapped, not a repo directory"
+      }
+    }
+  }
+}

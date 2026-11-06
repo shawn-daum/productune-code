@@ -1,13 +1,13 @@
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|refs|reindex|lint|promote) · tickets · schedule · track (open|review|land) · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint|promote) · tickets · schedule · track (open|review|merge) · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
 # T-1170: this is the CLI body; the `prdt` launcher beside it runs it from the bytecode cache
 # in the launcher's own namespace (`__file__` / `__name__` are the launcher's). Never run it directly.
-import argparse, contextlib, difflib, errno, fcntl, hashlib, json, math, os, re, shlex, shutil, sqlite3, stat, statistics, subprocess, sys, unicodedata
+import argparse, contextlib, difflib, errno, fcntl, fnmatch, hashlib, json, math, os, re, shlex, shutil, sqlite3, stat, statistics, subprocess, sys, unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -18,6 +18,19 @@ _HERE = os.path.dirname(os.path.realpath(__file__))
 if _HERE not in sys.path:
     sys.path.append(_HERE)
 from prdt_lanes import (
+    COUNTED_STAGES,
+    meta_git_dir,
+    _scrubbed_git_env,
+    _git,
+    META_GIT_HARDEN,
+    _META_CONFIG_ALLOWED,
+    _meta_trust_cache,
+    _META_URL_SCHEMES,
+    META_LOCAL_REMOTE_RULE,
+    _meta_remote_url_problem,
+    _meta_gitfile_problem,
+    meta_repo_present,
+    meta_git_trust_problem,
     DISPATCH_GRACE_S,
     DISPATCH_IDLE_MIN,
     DISPATCH_STALE_HOURS,
@@ -81,6 +94,7 @@ from prdt_lanes import (
     product_docs_dir,
     product_docs_dirs,
     project_line_names,
+    gate_lines,
     project_lines,
     project_products,
     read_json,
@@ -147,6 +161,17 @@ TICKET_OPTIONS_TABLE_SCAFFOLD = (
     "| | | | | |\n"
     "| | | | | |\n"
 )
+# T-1258 (L1 I2, user approval T-1245): a `decision` ticket's `outcome` carries
+# four `###` keys — why (the fork's cause) · how (the principle the chosen answer
+# follows) · module (the shared principle/term group) · what (the act it ends in).
+# `###`, so the H2 frame in `fmt_ticket_body` is untouched; `new` scaffolds them,
+# doctor warns (advisory) on a decision closed after TICKET_DECISION_OUTCOME_LANDING_DATE
+# whose `outcome` lacks any. A scaffold of bare headings is NOT a filled outcome.
+TICKET_DECISION_OUTCOME_KEYS = ("why", "how", "module", "what")
+TICKET_DECISION_OUTCOME_LANDING_DATE = "2026-10-26"
+TICKET_DECISION_OUTCOME_SCAFFOLD = "".join(f"### {k}\n\n" for k in TICKET_DECISION_OUTCOME_KEYS)
+_DECISION_OUTCOME_HEADING_RE = re.compile(
+    r"^### (%s)[ \t]*$" % "|".join(TICKET_DECISION_OUTCOME_KEYS), re.M)
 
 
 
@@ -287,7 +312,7 @@ def find_project_root(start=None):
     return hit
 
 
-_TRACK_DIR_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+_TRACK_DIR_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")  # T-1298: T-NNN or T-<PREFIX>-<n>
 
 
 def _inside_track_worktree(p):
@@ -925,14 +950,16 @@ def wiki_store_pages(wdir, relative_to=None, prefix="", reserved=(), no_links_be
     return pages
 
 
-def scan_wiki(root):
+def scan_wiki(root, product=None):
     # T-1104 (layer table: wiki — every layer read; same page name → product ›
     # _shared). The current product's pages keep their bare names (a
     # `[[retro--v1.10]]` from a _shared page still resolves); another
     # product's carry `<product>:`. Legacy → docs/wiki alone, unchanged.
+    # T-1218: `product` = the product a reader resolves names for (a file in
+    # docs/<p>/ reads p's view), in place of the current product.
     pages = list(wiki_store_pages(shared_docs_dir(root) / "wiki", relative_to=root,
                                   no_links_below=Path(root)))
-    cur = current_product(root)
+    cur = product or current_product(root)
     for prod in project_products(root):
         wdir = Path(root) / "docs" / prod / "wiki"
         if not wdir.is_dir():
@@ -1293,170 +1320,6 @@ def trust_accept_project(root):
         set_trust_accepted(p)
 
 
-def meta_git_dir(root):
-    return Path(root) / ".prdt" / "meta.git"
-
-
-def _scrubbed_git_env():
-    """No GIT_* inheritance — inside a code-repo hook, GIT_INDEX_FILE etc. would
-    redirect meta git at the CODE repo's index (meta-git.ts T-364 QA-HIGH)."""
-    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-
-
-def _git(args, cwd):
-    return subprocess.run(["git", *args], cwd=str(cwd), env=_scrubbed_git_env(),
-                          capture_output=True, text=True, timeout=10)
-
-
-# T-848: `.prdt/meta.git` sits in the project tree, so a cloned repository can
-# carry one — config, hooks and all. Observed by running (git 2.54): a carried
-# `core.fsmonitor`, `core.hooksPath`, `$GIT_DIR/hooks/*`, an `include.path`, and a
-# `filter.<x>.clean` named by `$GIT_DIR/info/attributes` each RUN a command on
-# plain `status` / `add` / `commit`. Two layers, same on the TS side
-# (meta-git.ts metaGit — keep both in step):
-#  1. every meta git run pins the hook / fsmonitor / signing knobs on the
-#     command line (command-line config outranks every file);
-#  2. before any run, the repo's own config must hold only keys prdt or
-#     `prdt meta remote add` write — a driver key (filter / diff / merge /
-#     pager / editor / sshCommand / gpg / credential / alias / include / …)
-#     can't be neutralised by name, so an unknown key refuses the run.
-META_GIT_HARDEN = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
-                   "-c", "commit.gpgsign=false"]
-_META_CONFIG_ALLOWED = re.compile(
-    r"(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase"
-    r"|precomposeunicode|symlinks|worktree|hookspath)"
-    r"|extensions\.(objectformat|refstorage)"
-    r"|user\.(name|email)|commit\.gpgsign|push\.(followtags|default)"
-    r"|remote\..+\.(url|pushurl|fetch)|branch\..+\.(remote|merge))")
-_meta_trust_cache = {}
-_META_URL_SCHEMES = {"https", "http", "ssh", "git", "git+ssh", "ssh+git", "ftp", "ftps"}
-
-
-# T-917 (user decision T-913 = A): a meta backup remote is a NETWORK remote only.
-# A push to a local repository runs THAT repository's hooks on this machine
-# (`-c core.hooksPath=/dev/null` never reaches the receiving side), so every
-# local path is refused — relative, absolute, `~`, `file://` — inside the
-# project or not. Shared fixture list with meta-git.ts metaRemoteUrlProblem:
-# test/fixtures/meta-remote-urls.json (keep both sides in step).
-META_LOCAL_REMOTE_RULE = "meta backup allows only network remotes (https, ssh, git or user@host:path)"
-
-
-def _meta_remote_url_problem(url):
-    """None for a network remote URL git reaches over https/http/ssh/git (or
-    scp-like `user@host:path`), else why not: a `<helper>::` transport or a
-    non-network `<scheme>://` (runs `git-remote-<x>`; `ext::` runs its
-    argument), or any local path (its hooks run on push)."""
-    if "::" in url.split("/", 1)[0]:
-        return "a remote-helper URL"
-    m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*)://", url)
-    if m:
-        scheme = m.group(1).lower()
-        if scheme in _META_URL_SCHEMES:
-            return None
-        if scheme != "file":
-            return "a remote-helper URL"
-    elif re.match(r"^[^/]+:", url):
-        return None  # scp-like host:path — git's own rule: a colon before any slash
-    return "a local path — " + META_LOCAL_REMOTE_RULE
-
-
-def _meta_gitfile_problem(gd):
-    """`.prdt/meta.git` as a FILE: git follows a `gitdir: <path>` file to a
-    repository anywhere — never handed to git."""
-    try:
-        with open(gd, "rb") as fh:
-            head = fh.read(4096).decode("utf-8", "replace")
-    except OSError:
-        head = ""
-    if head.startswith("gitdir:"):
-        tgt = head[len("gitdir:"):].strip().splitlines()[0] if head[len("gitdir:"):].strip() else "?"
-        return f".prdt/meta.git is a file pointing elsewhere (gitdir: {tgt})"
-    return ".prdt/meta.git is a file, not a directory"
-
-
-def meta_repo_present(root):
-    """Something stands at `.prdt/meta.git` that a meta command must answer for:
-    a repo (HEAD) or a non-directory there (a gitfile / symlink — refused by
-    meta_git_trust_problem, never silently 'not split')."""
-    gd = meta_git_dir(Path(root))
-    if (gd / "HEAD").exists() or (os.path.lexists(gd) and not gd.is_dir()) or gd.is_symlink():
-        return True
-    # refs/ or objects/ without a HEAD is still something to answer for — the
-    # trust check says "has refs but no config" (T-848 fix2)
-    return (gd / "refs").exists() or (gd / "objects").exists()
-
-
-def meta_git_trust_problem(root):
-    """None when `.prdt/meta.git` may be handed to git, else why not (one
-    English line). Never raises; never runs a command the repo could name
-    (`git config --file` reads one file and follows no include).
-    Order (T-848 fix1): every structural check runs BEFORE the 'no config yet'
-    answer — a config-less repo with a `commondir` reads ITS config instead."""
-    root = Path(root)
-    gd = meta_git_dir(root)
-    for p in (root / ".prdt", gd):
-        try:
-            st_ = os.lstat(p)
-        except FileNotFoundError:
-            return None  # no meta repo yet — nothing to trust
-        except OSError:
-            return f"cannot inspect {p.relative_to(root)}"
-        if stat.S_ISLNK(st_.st_mode):
-            return f"{p.relative_to(root)} is a symbolic link"
-    if not stat.S_ISDIR(os.lstat(gd).st_mode):
-        return _meta_gitfile_problem(gd)
-    for name in ("commondir", "config.worktree"):
-        if os.path.lexists(gd / name):
-            return f".prdt/meta.git/{name} exists"
-    try:
-        if stat.S_ISLNK(os.lstat(gd / "config").st_mode):
-            return ".prdt/meta.git/config is a symbolic link"
-    except FileNotFoundError:
-        for name in ("HEAD", "objects", "refs"):
-            if os.path.lexists(gd / name):
-                return f".prdt/meta.git has {name} but no config"
-        return None  # empty / not-yet-initialised dir — git sees no repo there
-    except OSError:
-        return "cannot inspect .prdt/meta.git/config"
-    try:
-        st = os.stat(gd / "config")
-        key = (str(gd), st.st_ino, st.st_size, st.st_mtime_ns)
-    except OSError:
-        return "cannot read .prdt/meta.git/config"
-    if key in _meta_trust_cache:
-        return _meta_trust_cache[key]
-    r = _git(["config", "--file", str(gd / "config"), "--no-includes", "--list", "-z"], root)
-    if r.returncode != 0:
-        prob = "cannot parse .prdt/meta.git/config"
-    else:
-        prob = None
-        for ent in r.stdout.split("\0"):
-            if not ent:
-                continue
-            k, _, v = ent.partition("\n")
-            if not _META_CONFIG_ALLOWED.fullmatch(k):
-                prob = f".prdt/meta.git/config sets {k}"
-                break
-            if k.endswith((".url", ".pushurl")) and k.startswith("remote."):
-                why = _meta_remote_url_problem(v)
-                if why:
-                    prob = f".prdt/meta.git/config {k} ({v}) is {why}"
-                    break
-        if prob is None:
-            # branch.<b>.remote may name a URL/path instead of a remote (T-848 fix1)
-            ents = [e.partition("\n") for e in r.stdout.split("\0") if e]
-            names = {m.group(1) for k, _, _ in ents
-                     for m in [re.fullmatch(r"remote\.(.+)\.(?:url|pushurl|fetch)", k)] if m}
-            for k, _, v in ents:
-                if k.startswith("branch.") and k.endswith(".remote") and v not in names:
-                    why = _meta_remote_url_problem(v)
-                    if why:
-                        prob = f".prdt/meta.git/config {k} ({v}) is {why}"
-                        break
-    _meta_trust_cache[key] = prob
-    return prob
-
-
 def meta_git_refusal(prob):
     if META_LOCAL_REMOTE_RULE in prob:
         # T-917: an older prdt accepted a local backup remote, so this one may be
@@ -1467,6 +1330,20 @@ def meta_git_refusal(prob):
     return ("prdt does not run git on this project's .prdt/meta.git: " + prob
             + " — prdt never writes this, so it may have come with a cloned "
               "repository. Check it, remove it, then run `prdt doctor`.")
+
+
+def _legal_remote_name(name):
+    """In-process mirror of git `check-ref-format --allow-onelevel` (and of core's
+    isLegalRemoteName, meta-backup.ts) — no subprocess, so load or a trust refusal
+    can never report a legal name as illegal (T-1278). At least as strict as git.
+    Whitespace = ASCII only (ord <= 0x20), git's own rule, same as the TS side."""
+    if not name or name.startswith("-") or name == "@" or ".." in name or "@{" in name:
+        return False
+    if name.endswith(".") or name.startswith("/") or name.endswith("/"):
+        return False
+    if any(ord(c) <= 0x20 or ord(c) == 0x7f or c in "~^:?*[\\" for c in name):
+        return False
+    return all(c and not c.startswith(".") and not c.endswith(".lock") for c in name.split("/"))
 
 
 def _meta_git(root, args):
@@ -1556,8 +1433,7 @@ def meta_backup_lag_warnings(root):
     # tick (it has nothing to push to), a flag-/refspec-shaped one is refused by
     # the tick — either way doctor says so here, latch or no latch.
     auto = _meta_backup_remote_name(root)
-    if auto.startswith("-") or any(c in auto for c in ":\t \n") or \
-            _meta_git(root, ["check-ref-format", "--allow-onelevel", auto]).returncode != 0:
+    if not _legal_remote_name(auto):
         warns.append(f"meta: `meta.backup_remote` = {auto!r} is not a legal remote name — the automatic backup "
                      f"refuses it; set .prdt/config.json meta.backup_remote to one of: {', '.join(remotes)}")
     elif auto not in remotes:
@@ -2645,6 +2521,7 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     if interactive and sys.stdin.isatty():
         slug = input(f"project slug [{slug}]: ").strip() or slug
         version = prompt_version(version)
+        ask_user_lang_once()
     prdt.mkdir(exist_ok=True)
     # Field-preserving config write (T-365): a partial project may already
     # carry config.json (e.g. meta.allowlist) — merge, never rebuild from
@@ -3360,7 +3237,7 @@ def cmd_inbox(args):
                          "state": "open", "decided": "", "text": text})
             _inbox_write(rows)
         print(f"sent {rid} → {to}: {text}")
-        print(f"{to}'s PO sees it at its next session start; it decides adoption there.")
+        print(f"{to}'s PO sees it on its next prompt (an open session) or at its next session start; it decides adoption there.")
         return
     if action in ("adopt", "decline"):
         if len(args.rest) != 1:
@@ -3602,16 +3479,47 @@ def cmd_feedback(args):
     for r in rs:
         print(_feedback_row_line(r))
     print("Proposing a rule for this is the PO's next step: quadrant + persona + a line drafted by designer "
-          "inject-edit, put to the user — written only after the user approves. This command wrote only the ledger.")
+          "inject-edit, put to the user — written only after the user confirms. This command wrote only the ledger.")
+
+
+def _wiki_lint_view(root):
+    """T-1218: (pages, resolve) for `wiki_lint`. Every page once, named the way
+    the first product's view names it — never the current product's, so a
+    finding reads the same whatever po-state focuses on. `resolve(page, link)`
+    → (exists, target page or None): a bare name resolves in the view of the
+    product whose folder holds the page (a `_shared` page: the first product's),
+    a `[[<product>:name]]` link in that product's view. A target that exists
+    but is shadowed in the first product's view has no page row (None).
+    Legacy / one product: the single view, unchanged."""
+    prods = project_products(root)
+    pages = scan_wiki(root, prods[0] if prods else None)
+    if len(prods) < 2:
+        by_name = {p["name"]: p for p in pages}
+        return pages, lambda pg, l: (l in by_name, by_name.get(l))
+    by_path = {p["path"]: p for p in pages}
+    views = {}
+
+    def view(p):
+        if p not in views:
+            views[p] = {x["name"]: x for x in scan_wiki(root, p)}
+        return views[p]
+
+    def resolve(pg, l):
+        pfx, sep, rest = l.partition(":")
+        if sep and pfx in prods:
+            hit = view(pfx).get(rest)
+        else:
+            hit = view(_product_from_docs_path(root, pg["path"], prods) or prods[0]).get(l)
+        return (hit is not None, by_path.get(hit["path"]) if hit else None)
+    return pages, resolve
 
 
 def wiki_lint(root):
-    pages = scan_wiki(root)
+    pages, resolve = _wiki_lint_view(root)
     warns = []
     # unusable frontmatter shapes, named per file (T-550) — reported, never fatal
     for pg in pages:
         warns += [f"wiki: {pg['path']}: {x}" for x in pg.get("problems") or []]
-    names = {p["name"] for p in pages}
     # `machine:` prefixed links resolve against the machine store (design
     # linkage §2 C2, T-674 slice 2c) — a project-wiki page citing one is legal
     # (curate-wiki.md's own prescribed form), so it is checked, not just
@@ -3625,15 +3533,16 @@ def wiki_lint(root):
                     warns.append(f"wiki: [[{l}]] referenced from {pg['name']} does not "
                                  f"exist (machine wiki)")
                 continue
-            inbound.add(l)
-            if l not in names:
+            found, tgt = resolve(pg, l)
+            if tgt is not None:
+                inbound.add(tgt["path"])
+            if not found:
                 warns.append(f"wiki: [[{l}]] referenced from {pg['name']} does not exist")
-    by_name = {p["name"]: p for p in pages}
     for pg in pages:
-        if pg["status"] == "live" and pg["name"] not in inbound and not pg["links"]:
+        if pg["status"] == "live" and pg["path"] not in inbound and not pg["links"]:
             warns.append(f"wiki: orphan page {pg['name']} (no links in or out)")
         for l in pg["links"]:
-            tgt = mach_by_name.get(l) if l.startswith(MACHINE) else by_name.get(l)
+            tgt = mach_by_name.get(l) if l.startswith(MACHINE) else resolve(pg, l)[1]
             if tgt and tgt["status"] == "superseded" and pg["status"] == "live":
                 warns.append(f"wiki: live page {pg['name']} references superseded [[{l}]]")
     inbox = docs_path(root, "wiki") / "inbox.md"
@@ -4933,13 +4842,45 @@ def _register_hook_path():
     return None
 
 
+def _resolver_timeout_s():
+    """The resolver call's budget: 10 s, or `PRDT_RESOLVER_TIMEOUT_S` when set (T-1274 —
+    one resolver run is ~1 s of jq spawns idle and passes 10 s on a loaded machine, and a
+    timeout reads as `None`, i.e. "resolver not found"; the test harness scales it)."""
+    try:
+        v = float(os.environ.get("PRDT_RESOLVER_TIMEOUT_S", ""))
+        return v if v > 0 else 10
+    except ValueError:
+        return 10
+
+
+# Why the last `register_query` returned None: "missing" (no hook file, or an answer
+# that could not be read — a pre-T-586 mirror) or "timeout" (the hook is there but did
+# not finish inside `_resolver_timeout_s()`). T-1274: a timeout used to be reported as
+# "not found — re-run install.sh", sending the person to reinstall on a busy machine.
+_REGISTER_FAILURE = {"reason": None}
+
+
+def register_failure_reason():
+    return _REGISTER_FAILURE["reason"] or "missing"
+
+
+def _register_not_found_exit():
+    if register_failure_reason() == "timeout":
+        sys.exit(f"prdt register: resolver (prdt-audience-inject.sh) did not answer within "
+                 f"{_resolver_timeout_s():g} s — the file is there; retry when the machine is less busy")
+    sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+
+
 def register_query(mode, droot=None):
     """Ask the resolver — `--list` (the domain) or `--resolve` (values + warnings).
     The hook is the single source of truth for what is legal; this CLI never
-    re-implements the domain. None when the hook is absent or its answer could
-    not be read (a pre-T-586 mirror prints nothing for either flag)."""
+    re-implements the domain. None when the hook is absent, its answer could
+    not be read (a pre-T-586 mirror prints nothing for either flag), or it timed
+    out — `register_failure_reason()` tells which."""
+    _REGISTER_FAILURE["reason"] = None
     hook = _register_hook_path()
     if hook is None:
+        _REGISTER_FAILURE["reason"] = "missing"
         return None
     env = dict(os.environ)
     env["PRDT_HOME"] = str(prdt_home())
@@ -4947,11 +4888,17 @@ def register_query(mode, droot=None):
         env["PRDT_DISCIPLINE"] = str(droot)
     try:
         r = subprocess.run(["bash", str(hook), mode], capture_output=True, text=True,
-                           stdin=subprocess.DEVNULL, env=env, timeout=10)
+                           stdin=subprocess.DEVNULL, env=env, timeout=_resolver_timeout_s())
         out = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
-        return out if isinstance(out, dict) else None
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        _REGISTER_FAILURE["reason"] = "timeout"
         return None
+    except (OSError, ValueError):
+        out = None
+    if not isinstance(out, dict):
+        _REGISTER_FAILURE["reason"] = "missing"
+        return None
+    return out
 
 
 REGISTER_BODY_FM_KEYS = ("key", "value", "governs")
@@ -4966,6 +4913,9 @@ def register_warnings(droot):
     warns = []
     res = register_query("--resolve", droot)
     if res is None:
+        if register_failure_reason() == "timeout":
+            return Skipped(f"register resolver (prdt-audience-inject.sh) did not answer within "
+                           f"{_resolver_timeout_s():g} s — the machine is busy; re-run prdt doctor later")
         return Skipped("register resolver (prdt-audience-inject.sh) not found or pre-T-586 — "
                        "re-run install.sh")
     for w in res.get("warnings") or []:
@@ -5051,7 +5001,7 @@ def cmd_register(args):
     if args.list:
         dom = register_query("--list", droot)
         if dom is None:
-            sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+            _register_not_found_exit()
         if args.json:
             print(json.dumps(dom, ensure_ascii=False))
             return
@@ -5068,7 +5018,7 @@ def cmd_register(args):
     if action == "show":
         res = register_query("--resolve", droot)
         if res is None:
-            sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+            _register_not_found_exit()
         if args.json:
             print(json.dumps(res, ensure_ascii=False))
             return
@@ -5098,7 +5048,7 @@ def cmd_register(args):
             sys.exit(f"prdt register: set refuses an empty value for `{key}` — use `prdt register unset {key}` to remove it")
         dom = register_query("--list", droot)
         if dom is None:
-            sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+            _register_not_found_exit()
         spec = next((k for k in dom["keys"] if k["key"] == key), None)
         if spec is None:
             sys.exit(f"prdt register: unknown key `{key}` — keys: "
@@ -5133,6 +5083,20 @@ AUTO_OPEN_DOMAIN = ("on", "off")
 # the legal set prdt-plan-tier-inject.sh's `case` and settings/plan-tier.ts accept
 PLAN_TIER_DOMAIN = ("max-x20", "team-premium", "other")
 CLI_LANG_DOMAIN = ("ko", "en")
+# T-1094: the stages the PO's spare-capacity rider fill runs in. Ship stays out
+# (its patch loop has its own rules). Stored canonical (stage order) in
+# `$PRDT_HOME/rider-stages`; no file or an off-shape one = the default, build only.
+# KEEP in lockstep with `rider_stages` in hooks/prdt-user-prompt.sh.
+RIDER_STAGE_DOMAIN = ("define", "build")
+RIDER_STAGES_DEFAULT = "build"
+
+
+def _rider_stages_canon(value):
+    """'build, define' → 'define,build'; None when empty or any name is outside the domain."""
+    names = {n.strip() for n in value.split(",")} - {""}
+    if not names or not names <= set(RIDER_STAGE_DOMAIN):
+        return None
+    return ",".join(s for s in RIDER_STAGE_DOMAIN if s in names)
 
 
 def cli_lang():
@@ -5182,6 +5146,84 @@ def _read_token(name):
         return "".join(_token_file(name).read_text(encoding="utf-8", errors="replace").split())
     except OSError:
         return ""
+
+
+USER_LANG_RE = re.compile(r"\A[a-z]{2,3}\Z")
+# T-1281: the codes a user may CHOOSE (onboarding answer · `settings set user.lang`);
+# reading a stored value stays shape-only (USER_LANG_RE). Pinned list: the languages
+# the catalogs/wordlists cover plus common ISO 639-1 codes.
+USER_LANG_CODES = frozenset("ko en ja zh es fr de pt ru it ar hi vi th id tr nl pl sv uk he fa".split())
+
+
+def _lang_primary(tag):
+    """'ko-KR' · 'ko_KR.UTF-8' · 'ko' → 'ko'; None when `tag` opens with no 2-3 letter subtag."""
+    m = re.match(r"\s*([A-Za-z]{2,3})(?:[-_.@]|\s*\Z)", tag) if isinstance(tag, str) else None
+    return m.group(1).lower() if m else None
+
+
+def device_lang():
+    """The OS language: macOS AppleLanguages[0] (global preferences plist), else
+    LC_ALL · LC_MESSAGES · LANG. None when none of them names a language.
+    KEEP in lockstep with `device_lang` in hooks/prdt-user-prompt.sh (T-1116)."""
+    try:
+        import plistlib
+        p = Path.home() / "Library" / "Preferences" / ".GlobalPreferences.plist"
+        with open(p, "rb") as f:
+            langs = plistlib.load(f).get("AppleLanguages")
+        if isinstance(langs, list) and langs and _lang_primary(langs[0]):
+            return _lang_primary(langs[0])
+    except Exception:
+        pass
+    for k in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        v = _lang_primary(os.environ.get(k) or "")
+        if v:
+            return v
+    return None
+
+
+def stored_user_lang():
+    """The chat language the hooks read (`~/.prdt/user-lang`); None when nothing valid is stored.
+    The device language is only the onboarding default — no hook falls back to it (T-1281)."""
+    v = _read_token("user-lang")
+    return v if USER_LANG_RE.match(v) else None
+
+
+# Language names a user may type (non-ASCII as escapes: the settings code holds no literal).
+LANG_NAMES = {
+    "ko": "ko", "korean": "ko", "\ud55c\uad6d\uc5b4": "ko", "\ud55c\uae00": "ko", "\ud55c\uad6d\ub9d0": "ko",
+    "en": "en", "english": "en", "\uc601\uc5b4": "en", "\uc601\ubb38": "en",
+    "ja": "ja", "japanese": "ja", "\u65e5\u672c\u8a9e": "ja", "\uc77c\ubcf8\uc5b4": "ja", "\u306b\u307b\u3093\u3054": "ja",
+    "zh": "zh", "chinese": "zh", "\u4e2d\u6587": "zh", "\uc911\uad6d\uc5b4": "zh",
+}
+
+
+def lang_answer_code(ans):
+    """An answer → a language code (a code itself, or a common language name); None when neither."""
+    a = _ascii_strip(ans).lower()
+    if a in LANG_NAMES:
+        return LANG_NAMES[a]
+    return a if a in USER_LANG_CODES else None
+
+
+def ask_user_lang_once():
+    """T-1116 onboarding: ask the chat language once per machine — only while
+    `~/.prdt/user-lang` holds no valid value. A bare Enter accepts the device
+    language shown as the default; a language name maps to its code; any other
+    answer is re-asked once with a one-line reason, then nothing is stored
+    (T-1281: never a value the user did not choose). KeyboardInterrupt propagates."""
+    if USER_LANG_RE.match(_read_token("user-lang")):
+        return
+    m = load_messages()
+    default = device_lang()
+    default = default if default in USER_LANG_CODES else "en"
+    for attempt in range(2):
+        if attempt:
+            print(msg(m, "lang.ask.retry"))
+        raw = input(msg(m, "lang.ask.prompt", default=default))
+        code = default if not _ascii_strip(raw) else lang_answer_code(raw)
+        if code:
+            _write_token("user-lang", code)
+            return
 
 
 def _write_token(name, value):
@@ -5258,6 +5300,62 @@ def _dispatch_cap_put(key, text):
     atomic_write_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n", mode=0o644)
 
 
+# T-1247: `priority.projects` — project slugs, first listed goes first. Known
+# projects = slugs of the roots tooling already saw on this machine (no registry):
+# run/open-roots lines + run/dispatches/*.json `project_root` + the cwd project.
+def _known_project_roots():
+    roots = set()
+    try:
+        for ln in (prdt_home() / "run" / "open-roots").read_text(encoding="utf-8", errors="replace").split("\n"):
+            if ln.strip():
+                roots.add(ln.strip())
+    except OSError:
+        pass
+    d = prdt_home() / "run" / "dispatches"
+    if d.is_dir():
+        for f in d.glob("*.json"):
+            try:
+                pr = (json.loads(f.read_text(encoding="utf-8")) or {}).get("project_root")
+            except Exception:
+                continue
+            if isinstance(pr, str) and pr:
+                roots.add(pr)
+    cwd_root = find_project_root()
+    if cwd_root:
+        roots.add(str(cwd_root))
+    return roots
+
+
+def _known_project_slugs():
+    slugs = {project_slug(r) for r in _known_project_roots()}
+    return sorted(x for x in slugs if x)
+
+
+def _priority_names(value):
+    return [n for n in (x.strip() for x in value.split(",")) if n]
+
+
+def _priority_refuse(value):
+    """(catalog key, fields) for the first failing set check, else None."""
+    names = _priority_names(value)
+    if not names:
+        return "settings.error.empty", {"key": "priority.projects"}
+    known = _known_project_slugs()
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        return "settings.error.priority.unknown", {"names": ", ".join(unknown), "known": " · ".join(known)}
+    for i, n in enumerate(names):
+        if n in names[:i]:
+            return "settings.error.priority.duplicate", {"name": n}
+    return None
+
+
+def _priority_report(m, key, before, now):
+    order = " · ".join(f"{i} {n}" for i, n in enumerate(now.split(","), 1))
+    return [msg(m, "settings.priority.after", key=key, before=before, now=now),
+            msg(m, "settings.priority.order", order=order)]
+
+
 def settings_entries(droot):
     """Every machine setting: key · kind (enum|text) · domain/shape · get() ·
     put(value or None to reset). None when the register resolver is absent."""
@@ -5265,16 +5363,29 @@ def settings_entries(droot):
     if dom is None:
         return None
     entries = []
+    # T-1274: one `--resolve` answers every register.* get() until a register put
+    # changes the file — a listing used to run the resolver once per register key
+    # (5 runs of ~0.3–1 s idle, ×10 on a loaded machine), each with the same answer.
+    resolved = {}
+
+    def reg_values():
+        if "values" not in resolved:
+            resolved["values"] = (register_query("--resolve", droot) or {}).get("values") or {}
+        return resolved["values"]
 
     def reg_get(k):
-        return lambda: ((register_query("--resolve", droot) or {}).get("values") or {}).get(k)
+        return lambda: reg_values().get(k)
+
+    def reg_put(k, v):
+        resolved.clear()
+        return register_write(dom, k, v or "")
 
     for spec in dom["keys"]:
         k = spec["key"]
         entries.append({
             "key": f"register.{k}", "kind": spec["kind"], "domain": spec.get("domain"),
             "shape": spec.get("shape"), "check": (lambda v, spec=spec: register_value_error(spec, v)),
-            "get": reg_get(k), "put": (lambda v, k=k: register_write(dom, k, v or "")),
+            "get": reg_get(k), "put": (lambda v, k=k: reg_put(k, v)),
         })
     # prdt-auto-open.sh: exactly "off" (whitespace-stripped) disables; anything
     # else — missing file included — is on.
@@ -5299,6 +5410,31 @@ def settings_entries(droot):
         "get": lambda: "en" if _read_token("cli-lang") == "en" else "ko",
         "put": lambda v: _write_token("cli-lang", v),
     })
+    # T-1116: the user's chat language — machine-level, asked once (`prdt init`),
+    # read by the PO hooks; never collected → the device language.
+    entries.append({
+        "key": "user.lang", "kind": "text", "domain": None,
+        "shape": "a language code: " + ", ".join(sorted(USER_LANG_CODES)),
+        "check": lambda v: None if lang_answer_code(v) else "shape",
+        "get": stored_user_lang,
+        "none_key": "settings.value.none.user.lang",
+        "put": lambda v: _write_token("user-lang", v if v is None else lang_answer_code(v)),
+    })
+    entries.append({
+        "key": "priority.projects", "kind": "text", "domain": None,
+        "shape": "comma-separated project slugs",
+        "check": lambda v: None, "refuse": _priority_refuse, "report": _priority_report,
+        "get": lambda: _read_token("priority-projects") or None,
+        "put": lambda v: _write_token("priority-projects", v if v is None else ",".join(_priority_names(v))),
+    })
+    # T-1094: which stages rider fill runs in; read by prdt-user-prompt.sh's state line.
+    entries.append({
+        "key": "rider.stages", "kind": "text", "domain": None,
+        "shape": "comma-separated stages from: " + ", ".join(RIDER_STAGE_DOMAIN),
+        "check": lambda v: None if _rider_stages_canon(v) else "shape",
+        "get": lambda: _rider_stages_canon(_read_token("rider-stages")) or RIDER_STAGES_DEFAULT,
+        "put": lambda v: _write_token("rider-stages", v if v is None else _rider_stages_canon(v)),
+    })
     for ck in DISPATCH_CAP_KEYS:
         entries.append({
             "key": f"dispatch.{ck}", "kind": "number", "domain": None,
@@ -5322,9 +5458,11 @@ def cmd_settings(args):
     m = load_messages()
     entries = settings_entries(discipline_root())
     if entries is None:
+        if register_failure_reason() == "timeout":
+            sys.exit(msg(m, "settings.error.resolver_timeout", seconds=f"{_resolver_timeout_s():g}"))
         sys.exit(msg(m, "settings.error.resolver"))
     none = msg(m, "settings.value.none")
-    shown = lambda v: none if v is None else v
+    shown = lambda v, e=None: (msg(m, e["none_key"]) if e and e.get("none_key") else none) if v is None else v
     action = args.action or "list"
     rest = list(args.rest or [])
     if action not in ("list", "set", "unset"):
@@ -5335,7 +5473,7 @@ def cmd_settings(args):
     if action == "list":
         if rest:
             sys.exit(msg(m, "settings.error.usage"))
-        rows = [(e["key"], shown(e["get"]()), msg(m, f"settings.list.desc.{e['key']}")) for e in entries]
+        rows = [(e["key"], shown(e["get"](), e), msg(m, f"settings.list.desc.{e['key']}")) for e in entries]
         if args.json:
             print(json.dumps([{"key": e["key"], "value": e["get"](), "domain": e.get("domain"),
                                "shape": e.get("shape")} for e in entries], ensure_ascii=False))
@@ -5355,10 +5493,10 @@ def cmd_settings(args):
     entry = next((e for e in entries if e["key"] == key), None)
     if entry is None:
         sys.exit(msg(m, "settings.error.badkey", key=key, keys=", ".join(e["key"] for e in entries)))
-    current = shown(entry["get"]())
+    current = shown(entry["get"](), entry)
     if action == "unset":
         entry["put"](None)
-        print(msg(m, "settings.change.unset", key=key, value=shown(entry["get"]())))
+        print(msg(m, "settings.change.unset", key=key, value=shown(entry["get"](), entry)))
         return
     value = _ascii_strip(rest[1])
     if not value:
@@ -5370,16 +5508,24 @@ def cmd_settings(args):
     if bad:
         sys.exit(msg(m, "settings.error.badshape", key=key, value=value, current=current,
                      shape=entry.get("shape") or ""))
+    refuse = entry.get("refuse") and entry["refuse"](value)
+    if refuse:
+        sys.exit(msg(m, refuse[0], **refuse[1]))
     entry["put"](value)
-    now = shown(entry["get"]())
+    now = shown(entry["get"](), entry)
+    if entry.get("report"):
+        for line in entry["report"](m, key, current, now):
+            print(line)
+        return
     polished = f"settings.{key}.{now}"
     print(msg(m, polished) if polished in m else msg(m, "settings.change.done", key=key, value=now))
 
 
 # ── tickets / history ─────────────────────────────────────────────────────────
 
-def next_ticket_id(root):
-    """The next `T-NNN` — a global counter unique across every ticket dir
+def next_ticket_id(root, prefix=None):
+    """The next `T-NNN` (`prefix` given → the next `T-<prefix>-NNN`, that
+    product's own counter, T-1298) — a global counter unique across every ticket dir
     (contracts §Tickets: "moving a file never renumbers it"), so this reads
     every dir under `docs/tickets/` (current version · backlog · older
     versions), never just the current one. Both the FILENAME and the
@@ -5389,7 +5535,7 @@ def next_ticket_id(root):
     from reissuing it."""
     # T-1104: one number space per project — every product's dir + _shared.
     max_n = 0
-    idre = re.compile(r"^T-(\d+)$")
+    idre = re.compile(rf"^T-{prefix}-(\d+)$" if prefix else r"^T-(\d+)$")
     for _prod, tdir in product_docs_dirs(root, "tickets"):
         if not tdir.is_dir():
             continue
@@ -5406,7 +5552,73 @@ def next_ticket_id(root):
     # Contracts §Tickets: "the `T-NNN` form … at least three digits, zero-
     # padded: a first ticket is `T-001`" — `:03d` pads to 3 and widens on its
     # own once the counter needs more (T-685 fix; PO-observed `T-1`).
-    return f"T-{max_n + 1:03d}"
+    return f"T-{prefix}-{max_n + 1:03d}" if prefix else f"T-{max_n + 1:03d}"
+
+
+# T-1298 (format: T-1314 = 1) — per-product ticket ids `T-<PREFIX>-<n>`. PREFIX is
+# consonants only, so it never reads as a legacy id part (`T-P4-120`, `T-PATCH-281`).
+TICKET_PREFIX_RE = re.compile(r"\A[BCDFGHJKLMNPQRSTVWXYZ]{1,8}\Z")
+
+
+def _claude_project_roots():
+    """Every directory key of `~/.claude.json projects` — Claude Code's own list of
+    the folders it ran in, which `prdt init` also writes for each project it sets
+    up (`set_trust_accepted`). A project never opened since is still listed here;
+    run/open-roots and dispatch markers only hold the recent ones."""
+    data = read_json(Path.home() / ".claude.json")
+    projs = data.get("projects") if isinstance(data, dict) else None
+    return {k for k in (projs if isinstance(projs, dict) else ()) if isinstance(k, str) and k.startswith("/")}
+
+
+def _machine_ticket_prefixes(root):
+    """Every prefix recorded in `.prdt/config.json ticket_prefixes` of the projects
+    on this machine: the roots tooling has seen (`_known_project_roots`) plus every
+    folder in `~/.claude.json projects`, this one included."""
+    seen = set()
+    for r in _known_project_roots() | _claude_project_roots() | {str(root)}:
+        cfg = read_json(Path(r) / ".prdt" / "config.json")
+        tp = cfg.get("ticket_prefixes") if isinstance(cfg, dict) else None
+        for v in (tp.values() if isinstance(tp, dict) else ()):
+            if isinstance(v, str) and TICKET_PREFIX_RE.match(v):
+                seen.add(v)
+    return seen
+
+
+def ticket_prefix(root, product, names, persist=True):
+    """The fixed id prefix of `product` (one of `names`, the project's products).
+    Recorded → that value, never re-derived. Else: the name minus the leading part
+    every product name shares (cut at a hyphen), vowels dropped, the first 3
+    letters; a prefix any project on this machine already holds → one consonant
+    more. Recorded in `.prdt/config.json ticket_prefixes` unless `persist` is off."""
+    cfg_path = Path(root) / ".prdt" / "config.json"
+    cfg = read_json(cfg_path)
+    if not isinstance(cfg, dict):
+        sys.exit("prdt tickets new: .prdt/config.json is unreadable — no ticket written")
+    tp = cfg.get("ticket_prefixes")
+    if tp is not None and not isinstance(tp, dict):
+        sys.exit("prdt tickets new: .prdt/config.json `ticket_prefixes` is not an object — no ticket written")
+    tp = tp or {}
+    if product in tp:
+        fixed = tp[product]
+        if not (isinstance(fixed, str) and TICKET_PREFIX_RE.match(fixed)):
+            sys.exit(f"prdt tickets new: .prdt/config.json `ticket_prefixes.{safe_label(product)}` "
+                     f"is not 1–8 upper-case consonants — no ticket written")
+        return fixed
+    common = os.path.commonprefix(list(names)) if len(names) > 1 else ""
+    common = common[:common.rfind("-") + 1]
+    cons = [c.upper() for c in product[len(common):] if c.isascii() and c.isalpha() and c.lower() not in "aeiou"]
+    taken = _machine_ticket_prefixes(root)
+    pick = next((c for c in ("".join(cons[:n]) for n in range(min(3, len(cons)), min(len(cons), 8) + 1))
+                 if c and c not in taken), None)
+    if pick is None:
+        sys.exit(f"prdt tickets new: no free id prefix for product {safe_label(product)} — every consonant "
+                 f"prefix of its name is held by a project on this machine. Record one by hand in "
+                 f".prdt/config.json, e.g. \"ticket_prefixes\": {{\"{safe_label(product)}\": \"<1–8 upper-case "
+                 f"consonants no other project uses>\"}}, then re-run — no ticket written")
+    if persist:
+        cfg["ticket_prefixes"] = {**tp, product: pick}
+        state_write(root, cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+    return pick
 
 
 def current_version_id(root, line=None):
@@ -5439,7 +5651,7 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # `tickets new`'s frontmatter-key order (contracts §Tickets): id · slug · type ·
 # status · assignee · feature? · prd_item? · deps? · created · closed? — a
 # fresh ticket never carries `closed`.
-TICKET_FRONTMATTER_ORDER = ("id", "slug", "type", "status", "assignee", "feature",
+TICKET_FRONTMATTER_ORDER = ("id", "slug", "title", "type", "stage", "status", "assignee", "feature",
                             "prd_item", "deps", "created")
 
 
@@ -5470,7 +5682,12 @@ def cmd_tickets_new(args, root):
     if not args.slug or not SLUG_RE.match(args.slug):
         sys.exit("prdt tickets new: --slug is required and must be kebab-case (a-z0-9, hyphen-separated)")
     ttype = args.type
-    tid = next_ticket_id(root)
+    # T-1276: `title` is optional free text in the project's user_lang — any
+    # language, never matched against a script or wordlist; only the
+    # frontmatter's one-line shape is enforced.
+    title = (getattr(args, "title", None) or "").strip() or None
+    if title and any(c in title for c in "\r\n"):
+        sys.exit("prdt tickets new: --title must be a single line")
     line = getattr(args, "line", None)
     # T-1084: an explicit placement. `--backlog` → backlog/; `--version [<product>/]vX.Y`
     # → that version's folder (created if absent). A product prefix on --version is
@@ -5490,12 +5707,24 @@ def cmd_tickets_new(args, root):
         if not is_version_path_id(bare):
             sys.exit(f"prdt tickets new: --version '{safe_label(str(explicit))}' is not a version id "
                      f"(v<N>[.<m>[.<p>]] or backlog) — no ticket written")
+    # T-1298: a product named by --product OR by --version's `<product>/` part.
+    asked_product = line
     if line is not None and line not in project_line_names(root):
         if line == _resource_project_slug(root):
             line = None
         else:
             sys.exit(f"prdt tickets new: --product {safe_label(line)} is not a product declared in "
                      f".prdt/config.json `products`")
+    # T-1298: `--product` in a project of two or more products → that product's own
+    # counter `T-<PREFIX>-<n>`; otherwise the one global `T-NNN` counter as before.
+    added = project_line_names(root)
+    if asked_product is not None and added:
+        home = product_dir_name(_resource_project_slug(root))
+        prod = line if line is not None else home
+        tid = next_ticket_id(root, ticket_prefix(root, prod, [home] + added,
+                                                 persist=not getattr(args, "dry_run", False)))
+    else:
+        tid = next_ticket_id(root)
     if explicit:
         version = join_line_id(line, split_line_id(explicit)[1])
     else:
@@ -5503,10 +5732,20 @@ def cmd_tickets_new(args, root):
             version = current_version_id(root, line)
         except ValueError as e:
             sys.exit(f"prdt tickets new: {e} — no ticket written")
+    # T-1384 (T-1385 = A): a ticket born in its product's open version records the stage
+    # po-state holds now, so the stage counts (statusline · viewer, `ticket_stage`) place it
+    # where it was made. Backlog, another version, or a retro · idle stage → no key.
+    stage_now = None
+    try:
+        if version == current_version_id(root, line):
+            s_ = line_state(read_json(root / ".prdt" / "po-state.json"), line)[0]
+            stage_now = s_ if s_ in COUNTED_STAGES else None
+    except ValueError:
+        stage_now = None
     # `type: decision` forces `assignee: user` (contracts §Tickets) — never a
     # CLI choice, the same way the frame itself is never a per-ticket choice.
     assignee = "user" if ttype == "decision" else (args.assignee or "po")
-    fm = {"id": tid, "slug": args.slug, "type": ttype, "status": "open", "assignee": assignee,
+    fm = {"id": tid, "slug": args.slug, "title": title, "type": ttype, "stage": stage_now, "status": "open", "assignee": assignee,
           "feature": args.feature, "prd_item": args.prd_item,
           "deps": "[" + ", ".join(args.deps) + "]" if args.deps else None,
           # The MACHINE's local date, not UTC (T-685 fix — PO-observed at
@@ -5527,6 +5766,8 @@ def cmd_tickets_new(args, root):
     def _section(k):
         if k == "options" and ttype == "decision":
             return f"## options\n\n{TICKET_OPTIONS_TABLE_SCAFFOLD}\n"
+        if k == "outcome" and ttype == "decision":
+            return f"## outcome\n\n{TICKET_DECISION_OUTCOME_SCAFFOLD}"
         return f"## {k}\n\n"
     body = "".join(_section(k) for k in body_keys)
     text = "\n".join(fm_lines) + "\n\n" + body
@@ -5668,12 +5909,20 @@ def fmt_ticket_body(body, ttype, status):
             violations.append("type: decision requires `options` with a `recommend` cell")
         elif "recommend" not in opts.lower():
             violations.append("`options` is missing a `recommend` cell (required for type: decision)")
-    if status == "done" and not "".join(key_content.get("outcome", [])).strip():
+    # T-1258: a `decision` scaffold's bare `### why|how|module|what` lines are
+    # structure, not content — they never satisfy "done requires outcome".
+    outcome_text = _DECISION_OUTCOME_HEADING_RE.sub("", "".join(key_content.get("outcome", [])))
+    if status == "done" and not outcome_text.strip():
         violations.append("status: done requires `outcome`")
 
     new_body = preamble + "".join(
         f"## {k}\n{''.join(key_content[k])}" for k in TICKET_FRAME_KEYS if k in key_content)
     return new_body, violations
+
+
+# T-1299: optional frontmatter key `request: R-NNN` — the external request
+# record a ticket serves (ntf-pm reports read request → work links from it).
+TICKET_REQUEST_RE = re.compile(r"^R-\d+$")
 
 
 def cmd_tickets_fmt(args, root):
@@ -5722,6 +5971,10 @@ def cmd_tickets_fmt(args, root):
             if not created_valid:
                 check_violations.append(f"created is missing or malformed ({created_raw!r}) — "
                                          f"cannot verify pre-frame status, checked against the frame")
+            # T-1299: optional `request:` names an external request record (R-NNN).
+            if "request" in fm and not (isinstance(fm["request"], str)
+                                        and TICKET_REQUEST_RE.match(fm["request"].strip())):
+                check_violations.append(f"request: {fm['request']!r} is not a request id (R-<digits>)")
             if check_violations:
                 any_violation = True
                 for v in check_violations:
@@ -6087,7 +6340,7 @@ def viewer_scratch_message(rel, kind):
 
 
 _VIEWER_BUNDLE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-_VIEWER_TICKET_PAGE_RE = re.compile(r"^T-\d+\.html$")
+_VIEWER_TICKET_PAGE_RE = re.compile(r"^T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+\.html$")
 
 
 def _viewer_bundle_name(name):
@@ -6281,18 +6534,43 @@ def schedule_docs_viewer_regen():
         _DOCS_WRITTEN.clear()
 
 
+# T-1303: the release notes the viewer reads — the fixed path in
+# packages/viewer/lib/collect.mjs `RELEASES_REL` (T-883; a project whose code
+# folder is not `code/` has no release-notes view yet — backlog T-1085).
+VIEWER_RELEASES_REL = "code/docs/RELEASES.md"
+
+
+def viewer_release_missing_message(ver, versions):
+    """T-1435: the one error line for a release-notes version the file lacks
+    (the `--release` form and the `path#version` form share it)."""
+    shown = " · ".join(versions[:5]) + (" …" if len(versions) > 5 else "") if versions else "없음"
+    return f"prdt viewer: {VIEWER_RELEASES_REL} 에 {ver} 절이 없어요. 있는 절: {shown}"
+
+
+def viewer_release_versions(root):
+    """The `## <version>` tokens of the viewer's RELEASES.md in file order, or
+    None when that file is missing or unreadable."""
+    try:
+        text = (Path(root) / VIEWER_RELEASES_REL).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return [v for v, _ in _parse_all_releases(text)]
+
+
 def viewer_anchor(root, target):
     """The viewer `#id` for `target` (a ticket id or a file path), or None when
     the viewer only summarizes that file (an `.html` mockup, an image, …) —
     the caller then opens the file itself. Keys mirror the page's own anchor
     table (render.mjs `buildAnchors`): ticket → its id, wiki page → its slug,
     any other document → its repo-relative path."""
-    if re.fullmatch(r"T-\d+", target):
+    if re.fullmatch(r"T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+", target):
         return target
     # T-973: a `path#section` target (the `[ctx].prd_path` form,
     # `docs/prd/PRD.md#v1.13`) names the document — the viewer opens a PRD as
     # one pane, so the section part is dropped, never read as part of a filename.
-    target = target.split("#", 1)[0] or target
+    # T-1303: RELEASES.md keeps it — `#<version>` opens that version's section.
+    target, _, frag = target.partition("#")
+    target = target or "#" + frag
     p = Path(target)
     p = (p if p.is_absolute() else Path.cwd() / p).resolve()
     try:
@@ -6302,6 +6580,12 @@ def viewer_anchor(root, target):
     # T-1104: classify by the As-Is shape (`docs/<p>/x` / `docs/_shared/x` →
     # `docs/x`); the anchor itself stays the real repo-relative path.
     real, rel = rel, docs_as_is_rel(root, rel)
+    if real == VIEWER_RELEASES_REL:
+        # T-1303: the release-notes view; a section the file does not have
+        # opens the view itself (the page has no anchor for it).
+        if not p.is_file():
+            return None
+        return f"{real}#{frag}" if frag and frag in (viewer_release_versions(root) or []) else real
     # T-973: an artifact is carried by manifest membership, any extension
     # (the page's buildAnchors keys every manifest entry); everything else
     # the viewer carries is a markdown file that must exist — a path to
@@ -6328,7 +6612,9 @@ def viewer_anchor(root, target):
         # file the caller can still open directly.
         bucket, _, art_path = rel[len("docs/artifacts/"):].partition("/")
         if art_path:
-            entries, _err, _malformed, _present = read_artifact_manifest(root)
+            # T-1218: the manifest of the product folder the path sits in.
+            prod = _product_from_docs_path(root, real, project_products(root))
+            entries, _err, _malformed, _present = read_artifact_manifest(root, prod)
             if (bucket, art_path) in entries:
                 return real
         return None
@@ -6495,7 +6781,36 @@ def cmd_viewer(args):
         if failed:
             sys.exit(f"prdt viewer: {failed}")
         return
-    if not args.targets:
+    targets, labels = list(args.targets), {}
+    release = getattr(args, "release", None)
+    if release:
+        # T-1303: `--release v1.16` = the target `code/docs/RELEASES.md#v1.16`,
+        # read from the working tree (an uncommitted draft included).
+        ver = release if release.startswith("v") else f"v{release}"
+        versions = viewer_release_versions(root)
+        if versions is None:
+            sys.exit(f"prdt viewer: {VIEWER_RELEASES_REL} 파일이 없어서 릴리스 노트 링크를 만들지 않았어요.")
+        if ver not in versions:
+            sys.exit(viewer_release_missing_message(ver, versions))
+        f = Path(root) / VIEWER_RELEASES_REL
+        t = f"{f}#{ver}"
+        targets.append(t)
+        labels[t] = str(f)
+    for t in targets:
+        # T-1435: a `RELEASES.md#<version>` target naming a section the file
+        # lacks fails like `--release` does (same message, exit 1).
+        path, _, frag = t.partition("#")
+        if frag and path:
+            pp = Path(path)
+            pp = (pp if pp.is_absolute() else Path.cwd() / pp).resolve()
+            try:
+                is_rel = pp.relative_to(Path(root).resolve()).as_posix() == VIEWER_RELEASES_REL
+            except ValueError:
+                is_rel = False
+            versions = viewer_release_versions(root) if is_rel else None
+            if versions is not None and frag not in versions:
+                sys.exit(viewer_release_missing_message(frag, versions))
+    if not targets:
         problem = viewer_scratch_problem(root)
         if problem:
             sys.exit(viewer_scratch_message(*problem))
@@ -6504,7 +6819,7 @@ def cmd_viewer(args):
             sys.exit(f"prdt viewer: 뷰어를 만들지 못했어요 — {problem}")
         print(f"[viewer](file://{file_url_path(viewer)})")
         return
-    for line in viewer_links(root, args.targets):
+    for line in viewer_links(root, targets, labels=labels):
         print(line)
 
 
@@ -6538,7 +6853,7 @@ def cmd_tickets(args):
             print(links[tid] if tid in hit else f"{tid} (not found)")
         return
     q, params = ("SELECT id, slug, type, status, assignee, version, deps, "
-                 "(SELECT also FROM ticket_also WHERE ticket_also.id = tickets.id) AS also FROM tickets"), []
+                 "(SELECT also FROM ticket_also WHERE ticket_also.id = tickets.id) AS also, path FROM tickets"), []
     conds = []
     if args.backlog:
         conds.append("(version = 'backlog' OR version LIKE '%/backlog')")
@@ -6577,7 +6892,9 @@ def cmd_tickets(args):
         also = json.loads(r[7] or "[]")
         if also:
             dep_s += f" also={','.join(also)}"
-        print(f"{r[0]} [{r[3]:>7}] {r[2]:<6} {r[5]:<8} {r[1] or ''} → {r[4] or '-'}{dep_s}")
+        # T-1276: a ticket's name is its `title` when it has one, else its slug.
+        name = (parse_frontmatter(root / r[8])[0].get("title") if r[8] else None) or r[1] or ""
+        print(f"{r[0]} [{r[3]:>7}] {r[2]:<6} {r[5]:<8} {name} → {r[4] or '-'}{dep_s}")
     if not rows:
         print("(no tickets)")
 
@@ -6747,6 +7064,341 @@ def run_claude_then_restore(cmd, env=None):
     sys.exit(rc)
 
 
+# ── decisions find (T-1257, design decision-question-design §3) ──────────────
+# The lookup the PO runs before asking the user anything: closed decision
+# tickets · wiki `decision--*` pages · user-quoted `log.md` lines, one line each.
+# Read-only; a candidate list, never a verdict (the PO judges the match).
+DECISION_KEYS = ("why", "how", "module", "what")
+_DEC_KEY_HEAD_RE = re.compile(r"^###\s+(?:(\S+)\s+)?(why|how|module|what)\s*$", re.I)
+_DEC_INLINE_RE = re.compile(r"(?<![\w#`])(why|how|module|what)\s*[:：]\s*(.+?)(?=\s+(?:why|how|module|what)\s*[:：]|$)", re.I)
+_DEC_QUOTE_RE = re.compile(r"「([^」]+)」|\*[\"“]([^*]+?)[\"”]\*")
+def _register_address():
+    """This machine's register `address` (the name the PO calls the user), '' when unset."""
+    try:
+        text = (prdt_home() / "register").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    val = ""
+    for ln in text.splitlines():
+        k, sep, v = ln.partition("=")
+        if sep and k.strip() == "address":
+            val = v.strip()
+    return val
+
+
+def _dec_user_line_re():
+    """A user-quote line opens with a marker: 사용자 · user · this machine's register address."""
+    names = ["사용자", "user"] + ([re.escape(a)] if (a := _register_address()) else [])
+    return re.compile(r"^\s*[-*]?\s*(?:\d{4}-\d{2}-\d{2}\s+)?(?:%s)(?![\w])" % "|".join(names), re.I)
+_DEC_REVERSED_RE = re.compile(r"뒤집|overturn|supersede", re.I)
+_DEC_LOG_LINE_RE = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2})\s*(.*)$")
+_DEC_LIMIT = 10
+_DEC_FIELD_MAX = 110
+
+
+def _dec_quotes(text):
+    return [(a or b).strip() for a, b in _DEC_QUOTE_RE.findall(text)]
+
+
+def _dec_clip(s, n=_DEC_FIELD_MAX):
+    s = re.sub(r"\s+", " ", s or "").strip().rstrip(".")
+    return s if len(s) <= n else s[: n - 1].rstrip() + "…"
+
+
+def _dec_section(body, name):
+    """Text of one `## name` section of a ticket/page body ('' when absent)."""
+    m = re.search(r"^##\s+%s\s*$" % re.escape(name), body, re.M | re.I)
+    if not m:
+        return ""
+    rest = body[m.end():]
+    n = re.search(r"^##\s", rest, re.M)
+    return rest[: n.start()] if n else rest
+
+
+def _dec_items(text):
+    """Outcome-shaped text → list of {label, why, how, module, what, quote, text}.
+    `### why|how|module|what` headings (optional leading item label such as `①`)
+    are the design-D6 keys; any other `###` heading starts a labelled item whose
+    bullets may carry inline `what: … how: …`. Text with no `###` is one item."""
+    blocks, cur = [], {"label": "", "head": None, "lines": []}
+    for ln in text.splitlines():
+        if ln.startswith("### "):
+            blocks.append(cur)
+            cur = {"label": ln[4:].strip(), "head": ln.strip(), "lines": []}
+        else:
+            cur["lines"].append(ln)
+    blocks.append(cur)
+    items, byl = [], {}
+    user_re = _dec_user_line_re()
+
+    def item(label):
+        if label not in byl:
+            byl[label] = {"label": label, "text": "", "quote": ""}
+            items.append(byl[label])
+        return byl[label]
+
+    for b in blocks:
+        body = "\n".join(b["lines"]).strip()
+        m = _DEC_KEY_HEAD_RE.match(b["head"] or "")
+        if m:
+            it = item(m.group(1) or "")
+            it.setdefault(m.group(2).lower(), _dec_clip(re.sub(r"^[-*]\s*", "", body.splitlines()[0]) if body else ""))
+            it["text"] += "\n" + (b["head"] or "") + "\n" + body
+            continue
+        it = item(b["label"])
+        it["text"] += "\n" + (b["head"] or "") + "\n" + body
+        for ln in b["lines"]:
+            if user_re.match(ln):
+                q = _dec_quotes(ln)
+                if q:
+                    it["quote"] = q[0]
+            for k, v in _DEC_INLINE_RE.findall(ln):
+                it.setdefault(k.lower(), _dec_clip(v))
+    return [i for i in items if i["text"].strip()]
+
+
+def _dec_user_quote(text):
+    q = ""
+    user_re = _dec_user_line_re()
+    for ln in text.splitlines():
+        if user_re.match(ln):
+            qs = _dec_quotes(ln)
+            if qs:
+                q = qs[0]
+    return q
+
+
+def _dec_matcher(words):
+    pats = []
+    for w in words:
+        w = w.strip()
+        if not w:
+            continue
+        # ASCII words match whole-word (so `land` does not hit `landing`); other
+        # scripts match as a substring (Korean has no word boundary to respect).
+        pats.append(re.compile(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(w), re.I)
+                    if w.isascii() else re.compile(re.escape(w), re.I))
+    return pats
+
+
+def _dec_hits(pats, text):
+    return sum(1 for p in pats if p.search(text))
+
+
+def _dec_sort_key(rec):
+    m = re.search(r"(\d+)$", rec["id"])
+    return (rec["date"] or "", int(m.group(1)) if m else 0)
+
+
+def _dec_term_records(root, pats):
+    """Term-dictionary entries (concept → say). Read only from schema-2 files —
+    canon discipline/wordlist/*.json and the project's .prdt/wordlist/*.json; a
+    schema-1 file (or none) contributes nothing and prints nothing (T-1262)."""
+    dirs = []
+    try:
+        cd = wordlist_canon_dir()
+        if cd:
+            dirs.append(Path(cd))
+    except Exception:
+        pass
+    dirs.append(Path(root) / ".prdt" / "wordlist")
+    out, seen = [], set()
+    for d in dirs:
+        for f in sorted(d.glob("*.json")) if d.is_dir() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict) or data.get("schema") != 2 or not isinstance(data.get("entries"), list):
+                continue
+            for e in data["entries"]:
+                if not isinstance(e, dict) or not isinstance(e.get("concept"), str):
+                    continue
+                say = e.get("say") if isinstance(e.get("say"), list) else []
+                hay = " ".join([e["concept"], *[str(s) for s in say]])
+                if pats and not _dec_hits(pats, hay):
+                    continue
+                key = (e["concept"], f.stem)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"id": f"term:{f.stem}", "date": "", "status": "term", "kind": "term",
+                            "line": f"term: {_dec_clip(e['concept'])} → {_dec_clip(' / '.join(str(s) for s in say))}"})
+    return out
+
+
+def decisions_collect(root, words, feature=None):
+    """[(record)] — every candidate, unsorted, unlimited. record = {id, date,
+    status, kind, items[{why,how,module,what,quote}], reversed_by, hits}."""
+    pats = _dec_matcher(words)
+    recs = []
+    for row, p, _ in scan_tickets(root) or []:
+        if feature and row.get("feature") != feature:
+            continue
+        try:
+            text = Path(p).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        fm, body = parse_frontmatter_text(text)
+        outcome, log = _dec_section(body, "outcome"), _dec_section(body, "log")
+        is_dec = row["type"] == "decision" or bool(_dec_user_quote(outcome + "\n" + log))
+        if not is_dec or (pats and not _dec_hits(pats, text)):
+            continue
+        items = _dec_items(outcome)
+        quote = _dec_user_quote(outcome) or _dec_user_quote(log)
+        rev = ""
+        for ln in log.splitlines():
+            if _DEC_REVERSED_RE.search(ln):
+                ids = [i for i in re.findall(r"T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+", ln) if i != row["id"]]
+                if ids:
+                    rev = ids[0]
+        recs.append({"id": row["id"], "date": row["closed"] or row["created"] or "",
+                     "status": row["status"] or "-", "kind": "ticket", "items": items,
+                     "quote": quote, "slug": row["slug"], "reversed_by": rev, "text": text,
+                     # an answer = outcome text beyond empty key headings (T-1285)
+                     "answered": any(ln.strip() and not ln.lstrip().startswith("#") for ln in outcome.splitlines())})
+    wdirs = [shared_docs_dir(root) / "wiki"] + [d for _, d in product_docs_dirs(root, "wiki")]
+    seen = set()
+    for wd in wdirs:
+        if not wd.is_dir() or wd in seen:
+            continue
+        seen.add(wd)
+        for p in sorted(wd.glob("decision--*.md")):
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            fm, body = parse_frontmatter_text(text)
+            if feature and fm.get("feature") != feature:
+                continue
+            if pats and not _dec_hits(pats, text):
+                continue
+            st = str(fm.get("status") or "-")
+            qs = _dec_quotes(body)
+            recs.append({"id": p.stem, "date": str(fm.get("date") or fm.get("closed") or fm.get("created") or ""),
+                         "status": st, "kind": "wiki", "items": _dec_items(body),
+                         "quote": qs[0] if qs else "", "slug": str(fm.get("title") or p.stem),
+                         "reversed_by": "superseded" if st == "superseded" else "", "text": text,
+                         "answered": st != "superseded"})
+    if not feature:
+        lp = shared_docs_dir(root) / "wiki" / "log.md"
+        if lp.is_file():
+            try:
+                lines = lp.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                lines = []
+            for n, ln in enumerate(lines, 1):
+                m = _DEC_LOG_LINE_RE.match(ln)
+                if not m:
+                    continue
+                qs = _dec_quotes(m.group(2))
+                if not qs or (pats and not _dec_hits(pats, ln)):
+                    continue
+                its = _dec_items(m.group(2))
+                recs.append({"id": f"log.md:{n}", "date": m.group(1), "status": "log", "kind": "log",
+                             "items": its, "quote": qs[0], "slug": m.group(2), "reversed_by": "", "text": ln,
+                             "answered": True})
+    for r in recs:
+        r["pats"] = pats
+    return recs
+
+
+def _dec_pick_item(rec):
+    """The item of a record that the line speaks for: most word hits, ties →
+    the first one that carries keys or an answer."""
+    pats = rec.get("pats") or []
+    best, score = None, -1
+    for it in rec["items"]:
+        s = _dec_hits(pats, it["text"]) if pats else 0
+        keyed = any(it.get(k) for k in DECISION_KEYS) or it.get("quote")
+        s = s * 2 + (1 if keyed else 0)
+        if s > score:
+            best, score = it, s
+    return best or {}
+
+
+def _dec_kinds(module):
+    return [k.strip() for k in re.split(r"\s+·\s+|[,;]", module or "") if k.strip()]
+
+
+def _dec_line(rec, quote_label="원문"):
+    if rec["kind"] == "term":
+        return rec["line"]
+    it = _dec_pick_item(rec)
+    what = it.get("what") or (_dec_clip(rec["slug"]) if rec["kind"] != "log" else _dec_clip(rec["slug"]))
+    parts = [rec["id"] + (f" {it['label']}" if it.get("label") and rec["kind"] == "ticket" and not _DEC_KEY_HEAD_RE.match("### " + it["label"]) else ""),
+             rec["date"] or "-", rec["status"],
+             f"why: {it.get('why') or 'none'}"]
+    if it.get("how"):
+        parts.append(f"how: {it['how']}")
+    if it.get("module"):
+        parts.append(f"module: {it['module']}")
+    parts.append(f"what: {what}")
+    q = (rec.get("quote") if rec["kind"] == "log" else it.get("quote")) or rec.get("quote")
+    if q:
+        parts.append(f"{quote_label} 「{_dec_clip(q, 80)}」")
+    if rec.get("reversed_by"):
+        parts.append(f"→ {rec['reversed_by']}")
+    return " · ".join(parts)
+
+
+def cmd_decisions(args):
+    """`prdt decisions find <words…> [--feature F] [--module [KIND]]` (T-1257)."""
+    root = require_root()
+    if args.action != "find":
+        sys.exit("prdt decisions: only `find` exists")
+    words = args.words or []
+    module = args.module
+    if not words and module is None:
+        sys.exit("prdt decisions find: give at least one word (or --module [KIND])")
+    recs = decisions_collect(root, words, args.feature)
+    if getattr(args, "json", False):
+        # T-1285: the machine form the question-check hook reads — every match, no limit
+        recs.sort(key=_dec_sort_key, reverse=True)
+        print(json.dumps([{k: r.get(k, "") for k in ("id", "kind", "status", "date", "reversed_by", "answered")}
+                          for r in recs], ensure_ascii=False))
+        return
+    if module is not None:
+        keyed = []
+        for r in recs:
+            for it in r["items"]:
+                if it.get("module"):
+                    keyed.append((r, it))
+        if not module:
+            counts = {}
+            for _, it in keyed:
+                for k in _dec_kinds(it["module"]):
+                    counts[k] = counts.get(k, 0) + 1
+            if not counts:
+                print("no module kinds recorded")
+                return
+            for k, n in sorted(counts.items()):
+                print(f"module: {k} · {n} item{'s' if n != 1 else ''}")
+            return
+        want = module.strip().lower()
+        hit = sorted([(r, it) for r, it in keyed if want in [k.lower() for k in _dec_kinds(it["module"])]],
+                     key=lambda ri: _dec_sort_key(ri[0]))
+        if not hit:
+            print(f"no recorded decision for module: {module}")
+            return
+        r0, i0 = hit[0]
+        print(f"module: {module} · principle: {i0.get('how') or 'none'} · set by {r0['id']} · {r0['date'] or '-'}")
+        for r, it in hit[1:] + ([hit[0]] if False else []):
+            print(f"  followed: {r['id']} · {r['date'] or '-'} · {r['status']} · what: {it.get('what') or _dec_clip(r['slug'])}")
+        if len(hit) == 1:
+            print("  followed: none")
+        return
+    recs.sort(key=_dec_sort_key, reverse=True)
+    quote_label = msg(load_messages(), "decisions.quote.label")
+    lines = [_dec_line(r, quote_label) for r in recs[:_DEC_LIMIT]]
+    lines += [r["line"] for r in _dec_term_records(root, _dec_matcher(words))]
+    if not lines:
+        print("no recorded decision")
+        return
+    print("\n".join(lines))
+
+
+
 def cmd_po(args):
     """Launch the PO conversation (thin exec over Claude Code)."""
     root = find_project_root()
@@ -6874,7 +7526,20 @@ def _git_repo(repo, *a):
     return subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True)
 
 
-def _remote_target_sha(code_root, timeout=2):
+def _remote_git_timeout(timeout=None):
+    """T-1100: the git network-call cap of the update-nudge readers (`remote_ahead`,
+    `releases_pending_between`, `_remote_target_sha`). Default 2 s; an explicit
+    argument wins; `PRDT_REMOTE_AHEAD_TIMEOUT_S` overrides the default (tests under load)."""
+    if timeout is not None:
+        return timeout
+    try:
+        v = float(os.environ.get("PRDT_REMOTE_AHEAD_TIMEOUT_S") or 2)
+    except ValueError:
+        return 2
+    return v if v > 0 else 2
+
+
+def _remote_target_sha(code_root, timeout=None):
     """Full SHA of `origin/<current-branch>` — the exact ref `remote_ahead` /
     `releases_pending_between` already read to compute
     the version + notes an update prompt shows. `_run_pull_install` pulls to
@@ -6886,6 +7551,7 @@ def _remote_target_sha(code_root, timeout=2):
     fetched `origin/<branch>`. Its first 7 characters are also the "new
     version" label of the no-release-notes prompt (T-749b). None on any failure —
     caller degrades the same way `ahead is None` does."""
+    timeout = _remote_git_timeout(timeout)
     try:
         branch = subprocess.run(["git", "-C", str(code_root), "rev-parse", "--abbrev-ref", "HEAD"],
                                  capture_output=True, text=True, timeout=timeout).stdout.strip()
@@ -6904,8 +7570,8 @@ def cmd_update(_args):
 
     T-749: 묻지 않고 바로 pull+install 하던 as-is를 고친다 — 설치된 버전 → 새
     버전과 그 사이 RELEASES.md 노트를 먼저 보여주고 `1. update`/`2. skip` 을
-    번호 입력으로 물은 뒤에야 pull 한다(`_prompt_update_choice`; 화살표 선택이
-    아니다 — 그 선택의 재현된 결함은 이 함수 바로 아래 주석 참고).
+    물은 뒤에야 pull 한다(`_prompt_update_choice`; T-1231: 터미널이면
+    화살표 · Enter · Esc 메뉴, 아니면 번호 입력).
 
     T-749b (QA grill finding #2): T-749 위 문단의 "묻고서만 pull" 규칙을 새
     RELEASES.md 섹션이 없는 두 경우까지 잘못 확대해, 그 두 경우엔 pull도
@@ -6917,6 +7583,17 @@ def cmd_update(_args):
     없으면(예: 아직 태그 전) — 그래도 묻는다, 다만 노트 자리에 "릴리즈 노트
     없음" 한 줄과 커밋 해시를 "새 버전" 자리에 보여준다."""
     m = load_messages()
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        # T-1281: a machine installed before the chat-language question existed is
+        # asked once here (no-op once a valid `user-lang` is stored).
+        try:
+            ask_user_lang_once()
+        except EOFError:
+            print()
+        except KeyboardInterrupt:
+            print()
+            print(msg(m, "update.cancelled"))
+            return
     repo = _resolve_prdt_repo()
     code_root = git_toplevel(repo)
     if code_root is None:
@@ -6962,7 +7639,16 @@ def cmd_update(_args):
     if not target_sha:
         sys.exit(msg(m, "update.error.offline"))
 
-    if _prompt_update_choice(m, installed or "?", new_version, sections) != "update":
+    choice = _prompt_update_choice(m, installed or "?", new_version, sections)
+    if choice == "skip":
+        # T-1231: "skip — don't ask again today" must hold: stamp the same daily
+        # slot the run-time nudge spends, so today's next prdt run stays quiet.
+        st = read_json(_update_state_path()) or {}
+        st["last_check"] = _local_day()
+        st["last_check_basis"] = "local"
+        st["known_update"] = {"new": _strip_control_chars(new_version)}
+        _write_update_state(st)
+    if choice != "update":
         return
 
     _run_pull_install(repo, target_sha=target_sha)
@@ -6978,11 +7664,12 @@ def cmd_update(_args):
 # AND the remote advertises a version above the installed one, shows the same
 # version+notes box `cmd_update` shows and asks the same plain `1`/`2` number
 # prompt (`_prompt_update_choice`, T-749). CI degrades to silence before any
-# network call; a non-tty run still checks (throttled to once a day, same as
-# always) but only PRINTS the pending version line — it never prompts, never
-# installs. Non-blocking by construction (doctrine #5). Design SoT:
+# network call; a non-tty run (hook / pipe) returns before any state read or
+# network call (T-1100) — it never prompts, installs, or consumes the day's
+# slot, which a failed/offline check leaves unspent too. Non-blocking by
+# construction (doctrine #5). Design SoT:
 # docs/tickets/v1.4/T-393.md (original UX flow) · docs/tickets/v1.11/T-749.md
-# (version+notes box, plain-number choice, non-tty line).
+# (version+notes box, plain-number choice).
 #   · state: ~/.prdt/update-state.json = {last_check(local date, last_check_basis="local")}.
 #   · pending version + RN box come from <codeRoot>/docs/RELEASES.md (T-394 parse
 #     contract: section = ^## , version = first token after '## ' = git tag verbatim).
@@ -7244,6 +7931,17 @@ def _readme_shown_stages(text):
     return tokens
 
 
+def _readme_git_timeout_s():
+    """Per-git-call budget of the README-at-tag check: 10 s (`_git`'s default),
+    or `PRDT_README_GIT_TIMEOUT_S` when set (T-1274 — the test that proves a
+    timeout is named sets it near zero)."""
+    try:
+        v = float(os.environ.get("PRDT_README_GIT_TIMEOUT_S", ""))
+        return v if v > 0 else 10
+    except ValueError:
+        return 10
+
+
 def readme_stale_at_tag_warnings(root):
     """`<codeRoot>/README.md`, evaluated against the newest `v*` tag's own
     tree — never the working tree or the diff (retro.md / patch-cycle.md
@@ -7271,10 +7969,24 @@ def readme_stale_at_tag_warnings(root):
     Degrade-never-raise, same posture as `release_notes_gap_warnings`: no git,
     no version-shaped tag, or the README/CLI source unreadable at that tag
     (either file plain absent there, or an old shape this parse can't read)
-    all fall through to `[]` — a silence, not a claim that nothing is stale."""
+    all fall through to `[]` — a silence, not a claim that nothing is stale.
+
+    T-1274: a git call that TIMES OUT is not one of those silences — git was
+    there and the answer is unknown, so the check returns `Skipped` naming the
+    timed-out call. Before, it fell into the `[]` above and a loaded machine
+    printed no stale lines for a README that had them. The budget is
+    `_readme_git_timeout_s()`."""
     cr = code_root(root)
+    budget = _readme_git_timeout_s()
+
+    def timed_out(what):
+        return Skipped(f"readme vs shipped tag: `git {what}` did not answer within {budget:g} s — "
+                       f"the machine is busy; re-run prdt doctor later")
+
     try:
-        r = _git(["tag", "--list", "v*"], cr)
+        r = _git(["tag", "--list", "v*"], cr, timeout=budget)
+    except subprocess.TimeoutExpired:
+        return timed_out("tag --list")
     except (OSError, subprocess.SubprocessError):
         return []
     if r.returncode != 0:
@@ -7285,25 +7997,35 @@ def readme_stale_at_tag_warnings(root):
         return []
     tag = keyed[-1][1]
 
+    class _ShowTimeout(Exception):
+        pass
+
     def show(path):
         try:
-            sr = _git(["show", f"{tag}:{path}"], cr)
+            sr = _git(["show", f"{tag}:{path}"], cr, timeout=budget)
+        except subprocess.TimeoutExpired:
+            raise _ShowTimeout(path)
         except (OSError, subprocess.SubprocessError):
             return None
         return sr.stdout if sr.returncode == 0 else None
 
-    readme = show("README.md")
-    if readme is None:
-        return []
-    # T-1170: the CLI body lives in prdt_cli.py behind the `prdt` launcher at
-    # tags cut after the split; older tags still hold the whole CLI in `prdt`.
-    cli_source = show("packages/core/scripts/prdt_cli.py")
-    if cli_source is None:
-        cli_source = show("packages/core/scripts/prdt")
+    try:
+        readme = show("README.md")
+        if readme is None:
+            return []
+        # T-1170: the CLI body lives in prdt_cli.py behind the `prdt` launcher at
+        # tags cut after the split; older tags still hold the whole CLI in `prdt`.
+        cli_source = show("packages/core/scripts/prdt_cli.py")
+        if cli_source is None:
+            cli_source = show("packages/core/scripts/prdt")
+    except _ShowTimeout as e:
+        return timed_out(f"show {tag}:{e.args[0]}")
     if cli_source is None:
         return []
     try:
-        lr = _git(["ls-tree", "-r", "--name-only", tag], cr)
+        lr = _git(["ls-tree", "-r", "--name-only", tag], cr, timeout=budget)
+    except subprocess.TimeoutExpired:
+        return timed_out(f"ls-tree {tag}")
     except (OSError, subprocess.SubprocessError):
         return []
     if lr.returncode != 0:
@@ -7373,7 +8095,7 @@ def readme_stale_at_tag_warnings(root):
     return []
 
 
-def releases_pending_between(code_root, installed_version, timeout=2):
+def releases_pending_between(code_root, installed_version, timeout=None):
     """(new_version, [(version, section_text), ...]) — every REMOTE RELEASES.md
     section strictly above `installed_version`, newest first; `new_version` is
     the newest of those. `(None, [])` on any fetch failure or when nothing
@@ -7385,6 +8107,7 @@ def releases_pending_between(code_root, installed_version, timeout=2):
     pre-update local one). `installed_version` unparseable/None → every
     parseable remote section qualifies (mirrors `_newer_version`'s "unreadable
     local leaves nothing to compare against" posture)."""
+    timeout = _remote_git_timeout(timeout)
     def g(*a, t=timeout):
         return subprocess.run(["git", "-C", str(code_root), *a],
                               capture_output=True, text=True, timeout=t)
@@ -7414,7 +8137,7 @@ def releases_pending_between(code_root, installed_version, timeout=2):
     return out[0][0], out
 
 
-def remote_ahead(code_root, timeout=2):
+def remote_ahead(code_root, timeout=None):
     """True only when `origin/<current-branch>` is STRICTLY AHEAD of local HEAD —
     i.e. local HEAD is an ancestor of the remote tip and the two differ, which is
     exactly the case `cmd_update`'s `pull --ff-only` can satisfy. False when equal,
@@ -7429,6 +8152,7 @@ def remote_ahead(code_root, timeout=2):
     on the dirty tree or fast-forwards to a no-op, so only `skip` ends it. The
     nudge exists to offer an update that can be taken; a non-fast-forwardable
     difference is not one."""
+    timeout = _remote_git_timeout(timeout)
     def g(*a, t=timeout):
         return subprocess.run(["git", "-C", str(code_root), *a],
                               capture_output=True, text=True, timeout=t)
@@ -7498,7 +8222,7 @@ def _strip_control_chars(s):
     return _CONTROL_CHAR_RE.sub("", s or "")
 
 
-def _render_update_notes(m, installed, new_version, sections):
+def _render_update_notes(m, installed, new_version, sections, numbered=True):
     """The version+notes box both `cmd_update` and the run-time nudge show
     (T-749). Rules-only frame (no right border) — sidesteps CJK double-width
     misalignment that a boxed layout would get wrong; each section's own body
@@ -7515,45 +8239,215 @@ def _render_update_notes(m, installed, new_version, sections):
     run through `_strip_control_chars` first; the box's own drawing (the
     rule, the catalog strings) is trusted local text and untouched."""
     rule = "─" * 64
-    print(f"\n{rule}")
+    print(rule)
     print(f"  {msg(m, 'update.version-line', installed=installed, new=_strip_control_chars(new_version))}")
     print(rule)
     if not sections:
         # T-749b: origin ahead in git but no qualifying RELEASES.md section —
         # still show the box and still ask, just with no notes to print.
         print(f"  {msg(m, 'update.no-notes')}")
-    for _version, text in sections:
+    for idx, (_version, text) in enumerate(sections):
         lines = text.splitlines()
         header = _strip_control_chars(lines[0][3:].strip() if lines else _version)
+        if idx:
+            print()                    # one blank line between sections, none before the closing rule
         print(f"  {header}")
         for line in lines[1:]:
             line = _strip_control_chars(line)
             print(f"    {line}" if line.strip() else "")
-        print()
     print(rule)
-    print(f"  {msg(m, 'update.choice1')}")
-    print(f"  {msg(m, 'update.choice2')}")
+    if numbered:                       # T-1231: the arrow menu draws its own two lines
+        print(f"  {msg(m, 'update.choice1')}")
+        print(f"  {msg(m, 'update.choice2')}")
+
+
+def _read_menu_key(fd):
+    """One key off the raw tty fd: "up" | "down" | "enter" | "esc" | "eof" |
+    "other". A lone ESC (no byte follows within 50ms) is Esc; `ESC [ A` / `ESC O A`
+    are the arrows. A truncated or over-long escape sequence never blocks: every
+    follow-up byte is waited for 50ms (timeout = Esc), parameter bytes are capped
+    at 16, and a control byte inside a sequence aborts it (ESC = Esc, else the
+    key is ignored)."""
+    import select
+
+    def more():
+        return bool(select.select([fd], [], [], 0.05)[0])
+
+    b = os.read(fd, 1)
+    if not b:
+        return "eof"
+    if b in (b"\r", b"\n"):
+        return "enter"
+    if b == b"\x04":
+        return "eof"
+    if b != b"\x1b":
+        return "other"
+    if not more():
+        return "esc"
+    nxt = os.read(fd, 1)
+    if nxt not in (b"[", b"O"):
+        return "other"
+    for _ in range(16):                # CSI: params/intermediates 0x20-0x3f, then a final byte 0x40-0x7e
+        if not more():
+            return "esc"               # truncated sequence
+        c = os.read(fd, 1)
+        if not c:
+            return "eof"
+        if 0x40 <= c[0] <= 0x7e:
+            return {b"A": "up", b"B": "down"}.get(c, "other")
+        if not 0x20 <= c[0] <= 0x3f:
+            return "esc" if c == b"\x1b" else "other"
+    return "other"                     # over-long: ignore
+
+
+def _clip(s, width):
+    """`s` cut to at most `width` display columns (CJK counts 2)."""
+    out, used = "", 0
+    for ch in s:
+        w = _display_width(ch)
+        if used + w > width:
+            break
+        out += ch
+        used += w
+    return out
+
+
+def _arrow_menu(m, items, hint_key):
+    """T-1231: arrow / Enter / Esc selection on a real terminal. `items`:
+    [(label_key, desc_key), ...]; the first cursor sits on item 0 (user T-1238:
+    reverses T-749's number-only prompt). Returns the chosen index, or None for
+    Esc / Ctrl-D / EOF (the guide line is erased first). Returns "unsupported"
+    when the terminal can't enter cbreak mode (stdin is not a real tty, termios
+    missing) so the caller falls back to the number prompt. Ctrl-C raises
+    KeyboardInterrupt after the terminal is restored. SIGTERM / SIGHUP restore
+    the terminal and cursor, then die by the signal; SIGTSTP restores, stops,
+    and re-enters on resume. Each row is clipped to the terminal width so a
+    redraw always moves up exactly len(rows)+1 physical rows. Stdlib only."""
+    try:
+        import signal, termios, tty
+        fd = sys.stdin.fileno()
+        saved = termios.tcgetattr(fd)
+    except Exception:                  # no termios, no fileno, or not a tty (pipe behind an isatty shim)
+        return "unsupported"
+    rows = [(msg(m, lk), msg(m, dk)) for lk, dk in items]
+    hint = msg(m, hint_key)
+    color = not os.environ.get("NO_COLOR")
+    bold, dim, off = ("\x1b[1m", "\x1b[2m", "\x1b[0m") if color else ("", "", "")
+    out = sys.stdout
+    cur = 0
+    first = True
+
+    def draw():
+        nonlocal first
+        width = max(shutil.get_terminal_size((80, 24)).columns - 1, 1)   # never touch the last column: no wrap
+        if not first:
+            out.write(f"\x1b[{len(rows) + 1}A\r")   # back up over the items + hint
+        first = False
+        for i, (label, desc) in enumerate(rows):
+            head = _clip(("❯ " if i == cur else "  ") + label, width)
+            room = width - _display_width(head) - 3
+            tail = f"   {dim}{_clip(desc, room)}{off}" if room > 0 else ""
+            head = f"{bold}{head}{off}" if i == cur else head
+            out.write(f"\x1b[2K{head}{tail}\n")
+        out.write(f"\x1b[2K{dim}{_clip(hint, width)}{off}\n")
+        out.flush()
+
+    def enter():
+        tty.setcbreak(fd)
+        out.write("\x1b[?25l")         # hide the caret while the menu is up
+        out.flush()
+
+    def restore(now=False):
+        try:
+            out.write("\x1b[?25h")
+            out.flush()
+        except Exception:
+            pass
+        try:
+            termios.tcsetattr(fd, termios.TCSANOW if now else termios.TCSADRAIN, saved)
+        except Exception:                # TCSANOW in signal handlers: a drain can block behind an unread pty
+            pass
+
+    def on_die(signum, _frame):
+        restore(now=True)
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    def on_stop(signum, _frame):
+        restore(now=True)
+        signal.signal(signal.SIGTSTP, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGTSTP)      # stops here; continues on SIGCONT
+        signal.signal(signal.SIGTSTP, on_stop)
+        enter()
+        draw()
+
+    old = {}
+    try:
+        for sig, h in ((signal.SIGTERM, on_die), (signal.SIGHUP, on_die), (signal.SIGTSTP, on_stop)):
+            old[sig] = signal.signal(sig, h)
+    except ValueError:                 # not the main thread — no handlers, terminal still restored on normal exits
+        pass
+    try:
+        enter()
+        draw()
+        while True:
+            key = _read_menu_key(fd)
+            if key == "enter":
+                return cur
+            if key in ("esc", "eof"):
+                out.write("\x1b[1A\r\x1b[2K")   # Esc state: the guide line goes away
+                return None
+            if key == "up":
+                cur = (cur - 1) % len(rows)
+            elif key == "down":
+                cur = (cur + 1) % len(rows)
+            else:
+                continue
+            draw()
+    finally:
+        restore()
+        for sig, h in old.items():
+            signal.signal(sig, h)
 
 
 def _prompt_update_choice(m, installed, new_version, sections):
-    """Render the version+notes box and collect a plain `1`/`2` answer — never
-    an arrow-key select. T-749 reproduced gum/fzf's arrow-select confirming its
-    PRE-HIGHLIGHTED first option (the destructive "update now") on a single bare
-    Enter with zero navigation — see the design-comment block above
-    `maybe_prompt_update` for the repro. A typed digit has no default to fall
-    into: a bare Enter (or anything else) just re-prompts. Returns "update",
-    "skip", or "cancel" — never None.
+    """Render the version+notes box and ask: update or skip. On a real terminal
+    (T-1231) that is an arrow / Enter / Esc menu with the cursor first on
+    "update"; Esc installs nothing (`update.cancelled`). Anything else (pipe,
+    `isatty()` shim with no real tty) keeps the T-749 plain `1`/`2` number
+    prompt. Returns "update", "skip", or "cancel" — never None.
 
-    T-749b (QA grill findings #3/#4): EOF on stdin reads as "skip" (never
-    installs) same as before, but now prints a fresh-line newline first — the
-    terminal never echoes one for Ctrl-D itself, so the next message used to
-    run on directly after the prompt text with no line break. Ctrl-C
-    (KeyboardInterrupt) is caught here too — it used to propagate all the way
-    out of `main()` as an uncaught traceback and, on the run-time nudge path,
-    take the ORIGINAL command down with it; caught here it prints one fresh
-    line + one catalog message and returns "cancel", never installs, and lets
-    both callers fall through normally."""
-    _render_update_notes(m, installed, new_version, sections)
+    T-749 (why the number prompt exists): gum/fzf's arrow-select confirmed its
+    PRE-HIGHLIGHTED first option on a single bare Enter. T-1231 brings the arrow
+    menu back on user decision T-1238 row 1 (first cursor on update), so a bare
+    Enter on a terminal now installs by design; the number path has no default:
+    a bare Enter (or anything else) just re-prompts.
+
+    T-749b (QA grill findings #3/#4), number path: EOF on stdin reads as "skip"
+    (never installs) with a fresh-line newline first; Ctrl-C (KeyboardInterrupt)
+    is caught — one fresh line + one catalog message, returns "cancel", never
+    installs, both callers fall through normally. The menu path treats Ctrl-C
+    the same way."""
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if interactive:
+        _render_update_notes(m, installed, new_version, sections, numbered=False)
+        try:
+            picked = _arrow_menu(
+                m, [("update.item.go", "update.item.go.d"), ("update.item.skip", "update.item.skip.d")],
+                "update.hint")
+        except KeyboardInterrupt:
+            print()
+            print(msg(m, "update.cancelled"))
+            return "cancel"
+        if picked != "unsupported":
+            if picked is None:
+                print(msg(m, "update.cancelled"))
+                return "cancel"
+            return "update" if picked == 0 else "skip"
+        print(f"  {msg(m, 'update.choice1')}")      # no real tty behind the isatty(): number prompt
+        print(f"  {msg(m, 'update.choice2')}")
+    else:
+        _render_update_notes(m, installed, new_version, sections)
     while True:
         try:
             raw = input(msg(m, "update.prompt")).strip()
@@ -7571,16 +8465,51 @@ def _prompt_update_choice(m, installed, new_version, sections):
         print(msg(m, "update.error.badchoice"))
 
 
+def _nudge_known_update_to_stderr():
+    """T-1100: print the `update.noninteractive` line to stderr when an earlier tty
+    run already recorded a pending update (state["known_update"]) that is still
+    newer than the installed version. Read-only: state and local RELEASES.md only."""
+    try:
+        known = (read_json(_update_state_path()) or {}).get("known_update")
+        new = known.get("new") if isinstance(known, dict) else None
+        if not new or not isinstance(new, str):
+            return
+        repo = prdt_repo_dir()
+        code_root = git_toplevel(repo) if repo else None
+        if code_root is None:
+            return
+        installed, _ = releases_local(code_root)
+        if installed and not _newer_version(new, installed):
+            return
+        print(msg(load_messages(), "update.noninteractive", installed=installed or "?",
+                  new=_strip_control_chars(new)), file=sys.stderr)
+    except Exception:
+        return
+
+
 def maybe_prompt_update(cmd):
     """T-393 entry — called from main() before dispatch. CI degrades to silence
-    before any network call. A non-tty run (piped / no controlling terminal)
-    still runs the once-a-day check but only PRINTS the pending version line —
-    it never prompts and never installs (T-749 acceptance). See the T-749
+    before any network call. A non-tty run (hook / piped / no controlling
+    terminal) returns before any state read or network call (T-1100): it never
+    prompts, never installs, and never consumes the day's slot. See the T-749
     design-comment block above this section for the reproduced defect the
     plain-number prompt (`_prompt_update_choice`) replaces."""
     if cmd in ("update", "preflight"):                  # never self-check the updater;
         return                                          # `preflight` emits machine-read JSON on stdout
     if os.environ.get("CI"):
+        return
+    # T-1100: only a run that could actually prompt (stdin AND stdout a tty) checks
+    # at all. A hook / pipe / no-tty run used to consume the day's slot (and print a
+    # line nobody read) before the user ever saw a prompt; now it returns before any
+    # state read or network call, so it can neither consume the slot nor cost a
+    # hook the 2s ls-remote.
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        # T-1100 (PO): a run piped inside the user's terminal (`prdt … | less`:
+        # stdout not a tty, stderr one) keeps the T-749 signal — but only from the
+        # cached state: no network call, no state write, slot not spent. A hook
+        # (stderr not a tty) stays silent.
+        if not sys.stdout.isatty() and sys.stderr.isatty():
+            _nudge_known_update_to_stderr()
         return
     # throttle — at most one check per local calendar day (T-927)
     today = _local_day()
@@ -7597,18 +8526,32 @@ def maybe_prompt_update(cmd):
     code_root = git_toplevel(repo)                      # <clone>/packages/core → <clone> (T-394 anchor)
     if code_root is None:
         return
-    # consume today's slot up front so the post-update re-exec can't loop
-    state["last_check"] = today
-    state["last_check_basis"] = "local"
-    _write_update_state(state)
+
+    def consume_slot(known=None):
+        # T-1100: the slot is spent only once the check reached a verdict (or the
+        # prompt is about to be shown) — never up front, so a failed / offline /
+        # timed-out check lets a later tty run the same day retry. Still written
+        # before the install re-exec so that re-exec cannot loop.
+        state["last_check"] = today
+        state["last_check_basis"] = "local"
+        if known:
+            state["known_update"] = {"new": known}      # read back by piped-in-terminal runs
+        else:
+            state.pop("known_update", None)
+        _write_update_state(state)
+
     ahead = remote_ahead(code_root)                     # ls-remote + ancestry gate (network, 2s)
-    if not ahead:                                       # None (degrade/offline) or False (equal / local ahead / diverged)
+    if ahead is None:                                   # offline / timeout / no remote → slot stays, a later run retries
+        return
+    if not ahead:                                       # equal / local ahead / diverged → a real verdict, slot spent
+        consume_slot()
         return
     installed, _ = releases_local(code_root)
     new_version, sections = releases_pending_between(code_root, installed)  # REMOTE RELEASES via fetch+show (T-393)
-    if not new_version:                                 # no qualifying section / fetch failed → silent degrade
+    if not new_version:                                 # no qualifying section / fetch failed → silent degrade, slot stays
         return
     if not _newer_version(new_version, installed):
+        consume_slot()
         return                                          # T-456: never advertise an equal-or-lower version
     # T-749c: captured NOW, before the prompt — the same `origin/<branch>` sha
     # the version/notes above came from. A capture failure degrades silently,
@@ -7617,17 +8560,7 @@ def maybe_prompt_update(cmd):
     if not target_sha:
         return
     m = load_messages()
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        # T-785 F3: this line used to always go to stdout — a caller piping/
-        # capturing stdout (the auto-open hook's `| head -1`, any `$(prdt …)`)
-        # got the nudge INSTEAD of the line it asked for, silently. Route to
-        # stdout only when stdout itself is still a real terminal (stdin
-        # alone came from a pipe/redirect — nothing downstream is parsing
-        # this stream); otherwise stderr, never the stdout a script reads.
-        out = sys.stdout if sys.stdout.isatty() else sys.stderr
-        print(msg(m, "update.noninteractive", installed=installed or "?", new=_strip_control_chars(new_version)),
-              file=out)
-        return
+    consume_slot(new_version)                           # the prompt is shown from here on
     choice = _prompt_update_choice(m, installed or "?", new_version, sections)
     if choice == "update":
         # T-749b: NEVER re-enter `cmd_update(None)` here — that re-ran the whole
@@ -7725,9 +8658,14 @@ def maybe_meta_backup(cmd):
         if isinstance(pair, str):
             return                                      # no PRDT_REPO / node / built bridge → silent
         node, bridge = pair
+        # T-1352: stdin=DEVNULL too. A detached node that holds the user's tty
+        # as fd 0 restores, on exit, the termios it saw at start (node
+        # ResetStdio: cooked + echo) — clobbering the raw mode of the Claude
+        # Code `prdt` launched meanwhile, so every terminal reply and mouse
+        # report then echoes as `^[…` text in its input box.
         subprocess.Popen([node, bridge, "backup", str(root)],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
     except Exception:
         return
 
@@ -10126,11 +11064,30 @@ ARTIFACT_DERIVED_KEYS = ("bucket", "path", "ticket", "kind", "status", "lang", "
 
 
 def artifacts_root(root, product=None):
-    return docs_path(root, "artifacts", product)
+    """`docs/<product>/artifacts/` — T-1218: no product = the first product, never
+    po-state's current one (`line_product`); legacy layout → `docs/artifacts/`."""
+    return docs_path(root, "artifacts", line_product(root, product))
 
 
-def artifact_manifest_path(root):
-    return artifacts_root(root) / ARTIFACT_MANIFEST_NAME
+def artifact_manifest_path(root, product=None):
+    return artifacts_root(root, product) / ARTIFACT_MANIFEST_NAME
+
+
+def artifact_products(root):
+    """Every product that owns an artifacts folder + manifest, first product first;
+    [None] in the legacy layout (the one `docs/artifacts/`)."""
+    return project_products(root) or [None]
+
+
+def _art_msg(root, product, text):
+    """T-1218: a message's As-Is `docs/artifacts/` → this product's real folder, so
+    `docs_msg` (which maps to the CURRENT product) leaves it alone. Legacy → unchanged."""
+    base = artifacts_root(root, product)
+    try:
+        real = base.relative_to(Path(root)).as_posix()
+    except ValueError:
+        return text
+    return text if real == "docs/artifacts" else text.replace("docs/artifacts/", real + "/")
 
 
 def is_artifact_bucket_name(name):
@@ -10138,10 +11095,10 @@ def is_artifact_bucket_name(name):
     return _version_id_canon(name) is not None
 
 
-def artifact_buckets(root):
+def artifact_buckets(root, product=None):
     """Home buckets `docs/artifacts/<version>/` in version order, then each
     added line's `docs/artifacts/<line>/<version>/` (T-951 = A)."""
-    base = artifacts_root(root)
+    base = artifacts_root(root, product)
     if not base.is_dir():
         return []
     out = sorted((d for d in base.iterdir() if d.is_dir() and is_artifact_bucket_name(d.name)),
@@ -10166,10 +11123,10 @@ def bucket_id(bucket):
     return bucket.name if home else f"{bucket.parent.name}/{bucket.name}"
 
 
-def legacy_bucket_manifests(root):
+def legacy_bucket_manifests(root, product=None):
     """Every `<dir>/manifest.json` directly under docs/artifacts/ — the pre-T-661
     per-bucket shape, in a version bucket or not. Sorted by directory name."""
-    base = artifacts_root(root)
+    base = artifacts_root(root, product)
     if not base.is_dir():
         return []
     return sorted((d / ARTIFACT_MANIFEST_NAME for d in base.iterdir()
@@ -10204,7 +11161,7 @@ def artifact_files(bucket):
     return out
 
 
-def stray_manifest_jsons_in_buckets(root):
+def stray_manifest_jsons_in_buckets(root, product=None):
     """Every manifest.json under a bucket at a depth OTHER than the bucket's own
     root — the root one (`<bucket>/manifest.json`) is the pre-T-661 per-bucket
     shape, already reported by `legacy_bucket_manifests` with its own remedy;
@@ -10213,7 +11170,7 @@ def stray_manifest_jsons_in_buckets(root):
     requires check/doctor to report (T-672 ⓒ) — `artifact_files` above already
     keeps `sync` from registering it."""
     out = []
-    for bucket in artifact_buckets(root):
+    for bucket in artifact_buckets(root, product):
         for p in sorted(bucket.rglob(ARTIFACT_MANIFEST_NAME), key=lambda x: x.as_posix()):
             if p.parent != bucket:
                 out.append(p)
@@ -10248,10 +11205,10 @@ def _read_manifest_file(mp, need_bucket):
     return out, None, malformed, True
 
 
-def read_artifact_manifest(root):
+def read_artifact_manifest(root, product=None):
     """The root manifest: (entries keyed by (bucket, path), error or None,
     malformed notes[], present). Absent = empty, no error."""
-    return _read_manifest_file(artifact_manifest_path(root), need_bucket=True)
+    return _read_manifest_file(artifact_manifest_path(root, product), need_bucket=True)
 
 
 def derive_artifact_kind(rel):
@@ -10312,7 +11269,7 @@ def _artifact_entry_canon(bucket, e):
     return out
 
 
-def build_artifact_manifest(root, prior=None):
+def build_artifact_manifest(root, prior=None, product=None):
     """Derive the root manifest from disk, carrying forward every hand-set field
     of a prior entry with the same (bucket, path). Entries in bucket order
     (version order), then path — a shape a static generator reads without the CLI.
@@ -10331,10 +11288,10 @@ def build_artifact_manifest(root, prior=None):
     an archive-move match is genuinely dropped — sync never re-derives it, so a
     line is returned per drop instead of the manifest changing silently."""
     if prior is None:
-        prior, _, _, _ = read_artifact_manifest(root)
+        prior, _, _, _ = read_artifact_manifest(root, product)
     entries = []
     consumed = set()
-    for bucket in artifact_buckets(root):
+    for bucket in artifact_buckets(root, product):
         files = artifact_files(bucket)
         files_set = set(files)
         for rel in files:
@@ -10368,14 +11325,14 @@ def build_artifact_manifest(root, prior=None):
             entries.append(_artifact_entry_canon(bucket_id(bucket), e))
     entries.sort(key=_artifact_entry_sort_key)
     dropped = sorted(prior.keys() - consumed, key=lambda k: (_version_id_canon(k[0]) or (), k[0], k[1]))
-    drop_lines = [f"artifact: docs/artifacts/manifest.json dropped {b}/{p} — no longer on disk"
+    drop_lines = [_art_msg(root, product, f"artifact: docs/artifacts/manifest.json dropped {b}/{p} — no longer on disk")
                   for (b, p) in dropped]
     return {"schema_v": ARTIFACT_MANIFEST_SCHEMA_V, "entries": entries}, drop_lines
 
 
-def write_artifact_manifest(root, data):
+def write_artifact_manifest(root, data, product=None):
     """True when the file changed. Atomic (temp + replace)."""
-    mp = artifact_manifest_path(root)
+    mp = artifact_manifest_path(root, product)
     want = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     if mp.is_file() and mp.read_text(encoding="utf-8") == want:
         return False
@@ -10384,12 +11341,21 @@ def write_artifact_manifest(root, data):
     return True
 
 
-def artifact_placement_warnings(root):
+def all_artifact_placement_warnings(root):
+    """T-1218: `artifact_placement_warnings` over every product's own folder."""
+    return [w for p in artifact_products(root) for w in artifact_placement_warnings(root, p)]
+
+
+def artifact_placement_warnings(root, product=None):
+    return [_art_msg(root, product, w) for w in _artifact_placement_warnings(root, product)]
+
+
+def _artifact_placement_warnings(root, product=None):
     """Every file under docs/artifacts/ is attributable to a version by its bucket,
     and registered in the ONE root manifest. Anything the rule cannot place says
     so — including the pre-T-661 shape, a manifest.json inside a bucket, so a
     project that has not migrated learns it from the tool (ntf-pm lesson, T-657)."""
-    base = artifacts_root(root)
+    base = artifacts_root(root, product)
     if not base.is_dir():
         return []
     warns = []
@@ -10410,23 +11376,23 @@ def artifact_placement_warnings(root):
         elif not is_artifact_bucket_name(p.name):
             warns.append(f"artifact: docs/artifacts/{p.name}/ is not a version bucket "
                          f"(expected a version id: v<N>, v<N>.<m> or v<N>.<m>.<p>)")
-    legacy = legacy_bucket_manifests(root)
+    legacy = legacy_bucket_manifests(root, product)
     for mp in legacy:
         warns.append(f"artifact: {mp.parent.name}/manifest.json is a per-bucket manifest — the "
                      f"one manifest is docs/artifacts/manifest.json; run `prdt artifacts migrate`")
-    for mp in stray_manifest_jsons_in_buckets(root):
+    for mp in stray_manifest_jsons_in_buckets(root, product):
         rel = mp.relative_to(base).as_posix()
         warns.append(f"artifact: {rel} is a manifest.json inside a bucket — it is never registered "
                      f"as an artifact and never a home for entries (contracts §Fixed paths); remove or "
                      f"relocate it")
-    prior, err, malformed, present = read_artifact_manifest(root)
+    prior, err, malformed, present = read_artifact_manifest(root, product)
     if err:
         warns.append(f"artifact: docs/artifacts/manifest.json {err} — run `prdt artifacts sync`")
         return warns
     for m in malformed:
         warns.append(f"artifact: docs/artifacts/manifest.json {m} — run `prdt artifacts sync`")
     next_step = "`prdt artifacts migrate`" if legacy else "`prdt artifacts sync`"
-    buckets = artifact_buckets(root)
+    buckets = artifact_buckets(root, product)
     for bucket in buckets:
         for d in sorted(bucket.iterdir(), key=lambda x: x.name):
             if d.is_dir() and d.name != "archive":
@@ -10452,23 +11418,23 @@ def artifact_placement_warnings(root):
 
 
 def _print_stray_artifact_warnings(root):
-    for w in artifact_placement_warnings(root):
+    for w in all_artifact_placement_warnings(root):
         if "sits outside" in w or "not a version bucket" in w:
             print(w)
 
 
-def artifacts_migrate(root, dry_run=False):
+def artifacts_migrate(root, dry_run=False, product=None):
     """Move every per-bucket manifest into the root one, losslessly: each entry
     lands verbatim plus `bucket` = its directory name; nothing is re-derived
     from disk here (that is `sync`, run next). All-or-nothing: a manifest the
     move cannot place (a directory that is not a version id, an unreadable
     file) stops the run before anything is written. Returns (report lines,
     exit code)."""
-    legacy = legacy_bucket_manifests(root)
+    legacy = legacy_bucket_manifests(root, product)
     lines = []
     if not legacy:
         lines.append("artifacts: nothing to migrate — no per-bucket manifest.json under docs/artifacts/")
-        return lines, 0
+        return [_art_msg(root, product, l) for l in lines], 0
     blockers = []
     staged = []  # (dir name, entries keyed by path)
     for mp in legacy:
@@ -10487,13 +11453,13 @@ def artifacts_migrate(root, dry_run=False):
     if blockers:
         lines.extend(blockers)
         lines.append(f"artifacts: migrate stopped — {len(blockers)} blocker(s), nothing written")
-        return lines, 1
-    prior, err, malformed, present = read_artifact_manifest(root)
+        return [_art_msg(root, product, l) for l in lines], 1
+    prior, err, malformed, present = read_artifact_manifest(root, product)
     if err or malformed:
         for m in ([err] if err else []) + malformed:
             lines.append(f"artifact: docs/artifacts/manifest.json {m} — fix it first")
         lines.append("artifacts: migrate stopped — the root manifest is not readable as-is, nothing written")
-        return lines, 1
+        return [_art_msg(root, product, l) for l in lines], 1
     merged = dict(prior)
     kept = []
     total = 0
@@ -10516,21 +11482,40 @@ def artifacts_migrate(root, dry_run=False):
                  f"docs/artifacts/manifest.json ({len(data['entries'])} entrie(s)"
                  f"{f', {len(prior)} already there' if present else ''})")
     if dry_run:
-        return lines, 0
-    write_artifact_manifest(root, data)
+        return [_art_msg(root, product, l) for l in lines], 0
+    write_artifact_manifest(root, data, product)
     for name, _ in staged:
-        os.remove(artifacts_root(root) / name / ARTIFACT_MANIFEST_NAME)
+        os.remove(artifacts_root(root, product) / name / ARTIFACT_MANIFEST_NAME)
     lines.append("artifacts: per-bucket manifest.json files removed — next: `prdt artifacts check`, "
                  "then `prdt artifacts sync` for files the old manifests never registered")
-    return lines, 0
+    return [_art_msg(root, product, l) for l in lines], 0
 
 
-def _artifact_bucket_path_split(root, path_arg):
+def _artifact_path_product(root, path_arg):
+    """T-1218: the product a `prdt artifacts set` path names — `docs/<p>/artifacts/…`
+    (relative or absolute) → p; any other spelling → the first product (None in
+    the legacy layout)."""
+    prods = project_products(root)
+    if not prods:
+        return None
+    p = Path(path_arg)
+    if p.is_absolute():
+        try:
+            p = p.relative_to(Path(root))
+        except ValueError:
+            return prods[0]
+    parts = p.as_posix().replace("\\", "/").lstrip("./").split("/")
+    if len(parts) >= 3 and parts[0] == "docs" and parts[1] in prods and parts[2] == "artifacts":
+        return parts[1]
+    return prods[0]
+
+
+def _artifact_bucket_path_split(root, path_arg, product=None):
     """`<bucket>, <rel>` from a `prdt artifacts set` path argument, which may
     be spelled relative to the project root (`docs/artifacts/v1.10/x.md`),
     relative to docs/artifacts/ (`v1.10/x.md`), or as an absolute path under
     either. Exits with a clear message on anything else — never a guess."""
-    base = artifacts_root(root)
+    base = artifacts_root(root, product)
     p = Path(path_arg)
     if p.is_absolute():
         try:
@@ -10539,7 +11524,7 @@ def _artifact_bucket_path_split(root, path_arg):
             sys.exit(f"prdt artifacts set: {path_arg} is not under {base}")
     else:
         s = path_arg.replace("\\", "/").lstrip("./")
-        for prefix in ("docs/artifacts/",):
+        for prefix in dict.fromkeys(("docs/artifacts/", base.relative_to(Path(root)).as_posix() + "/")):
             if s.startswith(prefix):
                 s = s[len(prefix):]
                 break
@@ -10562,20 +11547,24 @@ def artifacts_set(root, path_arg, ticket):
     writes: `build_artifact_manifest` already carries forward any prior
     entry's `ticket` key untouched (T-512 §7) whenever the key is PRESENT,
     which this command makes true by writing it."""
-    prior, err, malformed, present = read_artifact_manifest(root)
+    product = _artifact_path_product(root, path_arg)
+
+    def say(text):
+        return _art_msg(root, product, text)
+    prior, err, malformed, present = read_artifact_manifest(root, product)
     if err:
-        sys.exit(f"prdt artifacts set: docs/artifacts/manifest.json {err} — fix or remove it first")
+        sys.exit(say(f"prdt artifacts set: docs/artifacts/manifest.json {err} — fix or remove it first"))
     if not present:
-        sys.exit("prdt artifacts set: docs/artifacts/manifest.json does not exist yet — "
-                 "run `prdt artifacts sync` first")
+        sys.exit(say("prdt artifacts set: docs/artifacts/manifest.json does not exist yet — "
+                     "run `prdt artifacts sync` first"))
     if malformed:
-        sys.exit(f"prdt artifacts set: docs/artifacts/manifest.json has {len(malformed)} malformed "
-                 f"entrie(s) — fix them first (see `prdt artifacts check`)")
-    bucket, rel = _artifact_bucket_path_split(root, path_arg)
+        sys.exit(say(f"prdt artifacts set: docs/artifacts/manifest.json has {len(malformed)} malformed "
+                     f"entrie(s) — fix them first (see `prdt artifacts check`)"))
+    bucket, rel = _artifact_bucket_path_split(root, path_arg, product)
     key = (bucket, rel)
     if key not in prior:
-        sys.exit(f"prdt artifacts set: {bucket}/{rel} is not a registered entry in "
-                 f"docs/artifacts/manifest.json — run `prdt artifacts sync` first")
+        sys.exit(say(f"prdt artifacts set: {bucket}/{rel} is not a registered entry in "
+                     f"docs/artifacts/manifest.json — run `prdt artifacts sync` first"))
     tid = (ticket or "").strip()
     if not TICKET_ID_RE.match(tid):
         sys.exit(f"prdt artifacts set: --ticket {ticket!r} is not a ticket id (T-NNN)")
@@ -10589,7 +11578,7 @@ def artifacts_set(root, path_arg, ticket):
     merged[key] = _artifact_entry_canon(bucket, e)
     data = {"schema_v": ARTIFACT_MANIFEST_SCHEMA_V,
             "entries": sorted(merged.values(), key=_artifact_entry_sort_key)}
-    write_artifact_manifest(root, data)
+    write_artifact_manifest(root, data, product)
     print(f"prdt artifacts set: {bucket}/{rel} ticket → {tid}")
 
 
@@ -10604,45 +11593,75 @@ def cmd_artifacts(args):
         artifacts_set(root, args.path, args.ticket)
         return
     if args.action == "check":
-        warns = artifact_placement_warnings(root)
+        warns = all_artifact_placement_warnings(root)
         for w in warns:
             print(w)
         print(f"artifacts: {len(warns)} finding(s)")
         sys.exit(1 if warns else 0)
+    # T-1218: every product's own folder + manifest, first product first — never
+    # only po-state's current one. An added product with no artifacts folder is skipped.
+    prods = [p for i, p in enumerate(artifact_products(root))
+             if i == 0 or artifacts_root(root, p).is_dir()]
     if args.action == "migrate":
-        lines, code = artifacts_migrate(root, dry_run=getattr(args, "dry_run", False))
-        for l in lines:
-            print(l)
+        dry = getattr(args, "dry_run", False)
+        if len(prods) > 1:
+            # All-or-nothing across products too: every product is judged (a dry
+            # run) before any is written; one blocker anywhere writes nothing.
+            judged = [(prod, *artifacts_migrate(root, dry_run=True, product=prod)) for prod in prods]
+            stopped = [prod for prod, _, c in judged if c]
+            if stopped:
+                for prod, lines, c in judged:
+                    if c:
+                        for l in lines:
+                            print(l)
+                where = ", ".join(_art_msg(root, p, "docs/artifacts/") for p in stopped)
+                print(f"artifacts: migrate stopped — blocker(s) in {where}; nothing written in any product")
+                sys.exit(1)
+        code = 0
+        for prod in prods:
+            lines, c = artifacts_migrate(root, dry_run=dry, product=prod)
+            for l in lines:
+                print(l)
+            code = max(code, c)
         sys.exit(code)
     # sync — write the ONE root manifest from disk; report what sits outside a bucket.
     warn_live_dispatch("artifacts sync")
-    legacy = legacy_bucket_manifests(root)
-    if legacy:
-        for mp in legacy:
-            print(f"artifact: {mp.parent.name}/manifest.json is a per-bucket manifest")
-        sys.exit("artifacts: sync refused — re-deriving from disk would drop the values those "
-                 "files hold; run `prdt artifacts migrate` first")
-    prior, err, malformed, _ = read_artifact_manifest(root)
-    if err:
-        sys.exit(f"artifacts: sync refused — docs/artifacts/manifest.json {err}; fix or remove it first")
-    if malformed:
-        # A broken root entry (T-672 ⓑ) — e.g. one with no `bucket` — cannot be
-        # re-derived from disk (nothing on disk says which bucket it belongs to),
-        # so re-deriving anyway would drop it and its values with no report. Same
-        # posture as the two refusals above: broken input stops sync before it
-        # writes, the same way it stops on a broken file.
-        for m in malformed:
-            print(f"artifact: docs/artifacts/manifest.json {m}")
-        sys.exit(f"artifacts: sync refused — {len(malformed)} malformed entrie(s) in "
-                 f"docs/artifacts/manifest.json would be silently dropped by re-deriving; fix them "
-                 f"first (e.g. fill in the missing `bucket`)")
-    data, dropped = build_artifact_manifest(root, prior=prior)
-    for d in dropped:
-        print(d)
-    if write_artifact_manifest(root, data):
-        print(f"artifacts: docs/artifacts/manifest.json written ({len(data['entries'])} entrie(s))")
-    else:
-        print("artifacts: manifest already current")
+    # Every product's input is judged before any manifest is written: a refusal
+    # never leaves one product synced and the next not.
+    priors = []
+    for prod in prods:
+        say = (lambda t, prod=prod: _art_msg(root, prod, t))
+        legacy = legacy_bucket_manifests(root, prod)
+        if legacy:
+            for mp in legacy:
+                print(f"artifact: {mp.parent.name}/manifest.json is a per-bucket manifest")
+            sys.exit("artifacts: sync refused — re-deriving from disk would drop the values those "
+                     "files hold; run `prdt artifacts migrate` first")
+        prior, err, malformed, _ = read_artifact_manifest(root, prod)
+        if err:
+            sys.exit(say(f"artifacts: sync refused — docs/artifacts/manifest.json {err}; fix or remove it first"))
+        if malformed:
+            # A broken root entry (T-672 ⓑ) — e.g. one with no `bucket` — cannot be
+            # re-derived from disk (nothing on disk says which bucket it belongs to),
+            # so re-deriving anyway would drop it and its values with no report. Same
+            # posture as the two refusals above: broken input stops sync before it
+            # writes, the same way it stops on a broken file.
+            for m in malformed:
+                print(say(f"artifact: docs/artifacts/manifest.json {m}"))
+            sys.exit(say(f"artifacts: sync refused — {len(malformed)} malformed entrie(s) in "
+                         f"docs/artifacts/manifest.json would be silently dropped by re-deriving; fix them "
+                         f"first (e.g. fill in the missing `bucket`)"))
+        priors.append((prod, prior))
+    for prod, prior in priors:
+        data, dropped = build_artifact_manifest(root, prior=prior, product=prod)
+        for d in dropped:
+            print(d)
+        if write_artifact_manifest(root, data, prod):
+            print(_art_msg(root, prod, f"artifacts: docs/artifacts/manifest.json written ({len(data['entries'])} entrie(s))"))
+        elif len(prods) > 1:
+            print(_art_msg(root, prod, "artifacts: docs/artifacts/manifest.json already current"))
+        else:
+            print("artifacts: manifest already current")
     _print_stray_artifact_warnings(root)
 
 
@@ -10964,8 +11983,8 @@ def feature_taxonomy_warnings(cfg, vocab):
 
 
 # T-1049 (T-1055 = A): the surface keys a guide `ux[].at` may name — `<surface>.<part>` or a bare
-# `<surface>`. The viewer draws the same four surfaces (FEATURE.surfaces in
-# packages/viewer/lib/labels.mjs); a test keeps the two lists equal.
+# `<surface>`. The viewer draws the same four surfaces (`surfaces` in
+# packages/viewer/lib/labels-<lang>.mjs); a test keeps the lists equal.
 SURFACE_KEYS = {
     "terminal": ("chat", "hook"),
     "statusline": ("stage", "ticket"),
@@ -11396,6 +12415,35 @@ def ticket_frame_warnings(root, tickets):
     return Advisory(warns)
 
 
+def decision_outcome_key_warnings(root, tickets):
+    """T-1258 (L1 I2): advisory — a `type: decision` ticket closed (`status: done`)
+    and created on/after TICKET_DECISION_OUTCOME_LANDING_DATE whose `outcome`
+    lacks any of `### why` · `### how` · `### module` · `### what`. Older
+    decisions and open ones are silent; never verdict-changing (a decision is
+    a record a person completes, not a discipline↔execution mismatch)."""
+    warns = []
+    for r in sorted(tickets, key=lambda r: r["id"]):
+        if r.get("type") != "decision" or r.get("status") != "done":
+            continue
+        created_raw = r.get("created")
+        if not (isinstance(created_raw, str) and TICKET_CREATED_DATE_RE.match(created_raw)) \
+                or created_raw < TICKET_DECISION_OUTCOME_LANDING_DATE:
+            continue
+        try:
+            text = (root / r["path"]).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        _header, body = split_ticket_header_body(text)
+        outcome = "".join(fmt_ticket_body(body, "decision", "done")[0]
+                          .split("## outcome\n", 1)[1:2]).split("\n## ", 1)[0]
+        have = set(_DECISION_OUTCOME_HEADING_RE.findall(outcome))
+        missing = [k for k in TICKET_DECISION_OUTCOME_KEYS if k not in have]
+        if missing:
+            warns.append(f"decision outcome: {r['id']} ({r['path']}): `outcome` lacks "
+                         + " · ".join(f"### {k}" for k in missing))
+    return Advisory(warns)
+
+
 # ── doctor: PRD layout — one file per closed version (T-657) ──────────────────
 #
 # ONE definition of a version id, and both readers use it: this regex and the
@@ -11531,6 +12579,16 @@ def prd_line_layout_warnings(root, st):
     lines = project_line_names(root)
     if not lines:
         return []
+    if docs_layout(root) == "product":
+        # T-1218: product layout — each added product keeps its own docs/<p>/prd/ and
+        # docs/<p>/tickets/, the same shape as the first product's: the one check
+        # `prd_layout_warnings` runs on it, against that product's po-state view.
+        prods = set(project_products(root))
+        warns = []
+        for ln_name in lines:
+            if ln_name in prods:
+                warns += prd_layout_warnings(root, _line_st(st, ln_name), product=ln_name)
+        return warns
     prd_md = docs_path(root, "prd", line_product(root)) / "PRD.md"
     try:
         text = prd_md.read_text(encoding="utf-8")
@@ -11617,7 +12675,7 @@ def _resource_line(root):
     ct = st.get("current_task") if isinstance(st, dict) else None
     if isinstance(ct, dict):
         tid = ct.get("ticket_id")
-        if isinstance(tid, str) and re.match(r"^T-\d+$", tid):
+        if isinstance(tid, str) and re.match(r"^T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+$", tid):
             if prods:
                 for prod, tdir in product_docs_dirs(root, "tickets"):
                     if prod is not None and (any(tdir.glob(f"*/{tid}.md")) or (tdir / f"{tid}.md").exists()):
@@ -11719,7 +12777,7 @@ def _prd_version_file_kind(text):
     return "other"
 
 
-def prd_layout_warnings(root, st):
+def prd_layout_warnings(root, st, product=None):
     """A discipline↔execution check (FAMILY_DE): what the contract says the PRD
     tree looks like, against what is on disk.
 
@@ -11763,7 +12821,9 @@ def prd_layout_warnings(root, st):
     round itself, whose section is the open one in PRD.md (or not yet written
     between close and Define)."""
     root = Path(root)
-    home = line_product(root)   # T-1214: this check judges the first product (`st` top level)
+    # T-1214: the first product (`st` top level) unless `product` names an added one,
+    # whose `st` is then that product's view (`_line_st`).
+    home = line_product(root, product)
     prd_dir = docs_path(root, "prd", home)
     prd_md = prd_dir / "PRD.md"
     vdir = prd_dir / "versions"
@@ -11771,6 +12831,10 @@ def prd_layout_warnings(root, st):
 
     def rel(p):
         return str(p.relative_to(root))
+
+    # T-1218: messages carry the real path of THIS product's versions/ — an As-Is
+    # `docs/prd/versions/` would be rewritten to the current product by `docs_msg`.
+    vrel = rel(vdir)
 
     def read(p):
         try:
@@ -11849,7 +12913,7 @@ def prd_layout_warnings(root, st):
                     f"the round's section, it becomes the ENTIRE body of {rel(have)}, moved there "
                     f"byte-identical over what the file holds now; if {rel(have)} is right, {here} "
                     f"is not where that round is recorded")
-        return (f"its home is docs/prd/versions/{v}.md, the ENTIRE body of that file "
+        return (f"its home is {vrel}/{v}.md, the ENTIRE body of that file "
                 f"(contracts §Fixed paths); move it byte-identical")
 
     pv = st.get("version") if isinstance(st, dict) else None
@@ -11882,7 +12946,7 @@ def prd_layout_warnings(root, st):
                         # PRD.md no longer carries it — legal, and silent here.
                         _, phrase = found_phrase(on_disk[open_key][0])
                         warns.append(f"prd: `## {v}` is the OPEN section in {rel(prd_md)}:{ln} and "
-                                     f"{phrase} — docs/prd/versions/ is the CLOSED record, written at "
+                                     f"{phrase} — {vrel}/ is the CLOSED record, written at "
                                      f"close by MOVING the section out of the working file; while the "
                                      f"round is open it lives in {rel(prd_md)} alone (contracts §Fixed paths)")
                     continue
@@ -11894,7 +12958,7 @@ def prd_layout_warnings(root, st):
             warns.append(f"prd: {rel(prd_md)} holds {len(heads)} `## v` sections "
                          f"({', '.join(prd_section_ids)}) — the working file is the standing head "
                          f"+ ONE open version section; move each closed one byte-identical to "
-                         f"its own docs/prd/versions/v<N>.<m>.md (contracts §Fixed paths)")
+                         f"its own {vrel}/v<N>.<m>.md (contracts §Fixed paths)")
 
     declared_lines = set(project_line_names(root))
     for p in (sorted(prd_dir.rglob("*.md")) if prd_dir.is_dir() else []):
@@ -11930,13 +12994,13 @@ def prd_layout_warnings(root, st):
             if _version_id_canon(first_v) != own_key:
                 warns.append(f"prd: {here} opens with `## {first_v}` — a version file holds its "
                              f"own `## {own}` block and nothing else; `## {first_v}` belongs in "
-                             f"docs/prd/versions/{first_v}.md")
+                             f"{vrel}/{first_v}.md")
             elif first_ln != 1:
                 warns.append(f"prd: {here} has {first_ln - 1} line(s) above its `## {own}` heading "
                              f"— the file is that block and nothing else (no frontmatter, no head)")
             for v, ln in heads[1:]:
                 warns.append(f"prd: {here}:{ln} carries a second section `## {v}` — one version "
-                             f"per file; `## {v}` belongs in docs/prd/versions/{v}.md")
+                             f"per file; `## {v}` belongs in {vrel}/{v}.md")
             continue
         # no `## v` heading and not a snapshot → a registered-absence stub:
         # ONE line, no `## ` (the rule itself: `_prd_version_file_kind`).
@@ -11960,7 +13024,7 @@ def prd_layout_warnings(root, st):
                 continue
             if ceiling is not None and k >= ceiling:
                 continue
-            warns.append(f"prd: {rel(d)}/ has no docs/prd/versions/{d.name}.md — a closed round's "
+            warns.append(f"prd: {rel(d)}/ has no {vrel}/{d.name}.md — a closed round's "
                          f"`## {d.name}` section, or a one-line `no PRD section — <decision>` stub "
                          f"when the round was tickets-only (contracts/fixed-paths.md §PRD)")
     return warns
@@ -12281,11 +13345,14 @@ def _build_entry_date(root, line, version):
     Newest-first over the commits touching po-state: the oldest commit of the newest
     unbroken run reading (build, `version`) for this line; its committer date is the
     write's day or later (a snapshot lands at or after the write). The newest snapshot
-    not reading (build, `version`) → None (the write is not recorded yet)."""
+    not reading (build, `version`) → None (the write is not recorded yet).
+    T-1210: the committer date is read in LOCAL time (`format-local`) — ticket `created`
+    days are local, and a UTC-dated commit read as written lands a day early."""
     if root is None or not (meta_git_dir(root) / "HEAD").exists():
         return None
     try:
-        r = _meta_git(root, ["log", "--format=%H%x00%cI", "--", ".prdt/po-state.json"])
+        r = _meta_git(root, ["log", "--date=format-local:%Y-%m-%d", "--format=%H%x00%cd",
+                             "--", ".prdt/po-state.json"])
     except (OSError, subprocess.SubprocessError):
         return None
     if r.returncode != 0:
@@ -12325,15 +13392,22 @@ def _build_gate_met(root, line, ver_tickets, version):
                            f"{safe_label(str(e))}) — build gate unknown, Ship-entry signal not judged")
     if gate:
         # T-1214 (C2): a 합격선 lane with no gate ticket can never finish — name it.
+        # A lane record (T-1359) is its own gate ticket, so only table lanes reach this.
         unlinked = [safe_label(str(ln["name"])) for ln in gate if not ln.get("linked")]
         note = (f"stage: {version} 합격선 lane {', '.join(unlinked)} not linked (no gate path, or no "
                 f"{version} ticket names it) — Ship-entry signal not raised until it links") if unlinked else None
         return all(ln["finished"] for ln in gate), note
     entry = _build_entry_date(root, line, version)
     if entry:
-        slice_ = [t for t in ver_tickets if not t.get("created") or str(t["created"])[:10] <= entry]
+        # T-1210: a `created` that is not YYYY-MM-DD cannot be compared as a day — it
+        # counts inside the slice (errs toward a later signal) and doctor names it.
+        unreadable = sorted(t["id"] for t in ver_tickets
+                            if not TICKET_CREATED_DATE_RE.match(str(t.get("created") or "")))
+        slice_ = [t for t in ver_tickets if t["id"] in unreadable or str(t["created"]) <= entry]
+        note = (f"stage: {version} build-entry slice counts {', '.join(safe_label(i) for i in unreadable)} "
+                f"inside (created not YYYY-MM-DD) — fix created to judge the slice") if unreadable else None
         if slice_:
-            return not any(t["status"] == "open" for t in slice_), None
+            return not any(t["status"] == "open" for t in slice_), note
         why = f"no {version} ticket created by the build write ({entry})"
     else:
         why = "no meta-git record of the stage write to build"
@@ -12504,7 +13578,7 @@ def wiki_version_edge_warnings(root, st):
 # `parent_ticket` 20 · `related_tickets` 2 · `blocks` 1 · `revises` 1 ·
 # `related` 1) — `prd_item` is E4's reserved key name (T-663 gives it a value
 # check; this slice never flags it as an unknown relation key).
-_TICKET_KNOWN_KEYS = frozenset(TICKET_INDEX_FIELDS) | {"deps", "prd_item", "also"}
+_TICKET_KNOWN_KEYS = frozenset(TICKET_INDEX_FIELDS) | {"deps", "prd_item", "also", "request"}
 
 
 def _relation_shaped(value):
@@ -12554,11 +13628,8 @@ def artifact_ticket_edge_warnings(root, tickets):
     already report a manifest that cannot be READ at all (malformed shape);
     this is the one further question once it reads clean: does the value
     point at something real."""
-    prior, err, _malformed, present = read_artifact_manifest(root)
-    if err or not present:
-        return []
     warns = []
-    for (bucket, rel), e in sorted(prior.items()):
+    for prod, (bucket, rel), e in _all_artifact_entries(root):
         tid = e.get("ticket")
         if tid is None:
             continue
@@ -12567,6 +13638,21 @@ def artifact_ticket_edge_warnings(root, tickets):
         elif tid.strip() not in tickets:
             warns.append(f"artifact: {bucket}/{rel} ticket: {tid} does not exist in the ticket index")
     return warns
+
+
+def _all_artifact_entries(root):
+    """T-1218: [(product, (bucket, path), entry)] over every product's readable
+    manifest, first product first; an added product's bucket reads `<product>/<v>`
+    (the id shape an added line's bucket already has)."""
+    prods = artifact_products(root)
+    out = []
+    for i, prod in enumerate(prods):
+        prior, err, _malformed, present = read_artifact_manifest(root, prod)
+        if err or not present:
+            continue
+        for (bucket, rel), e in sorted(prior.items()):
+            out.append((prod, (bucket if i == 0 else f"{prod}/{bucket}", rel), e))
+    return out
 
 
 # ── doctor: P1 (prd form) · E4 (prd_item edge) — T-674 slice 2b ───────────────
@@ -12599,7 +13685,7 @@ PRD_REVERSED_NONE_ROW = "- 없음"
 # slugs (e.g. `decision--v1.10-structure-round`) resolve; a leading/trailing/
 # doubled dot still fails since the separator only sits between alnum runs.
 PRD_REVERSED_ROW_RE = re.compile(
-    r"^- (\[\[decision--[a-z0-9]+([.-][a-z0-9]+)*\]\]|T-[0-9]+) — .+$")
+    r"^- (\[\[decision--[a-z0-9]+([.-][a-z0-9]+)*\]\]|T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]+) — .+$")
 
 
 
@@ -13112,16 +14198,14 @@ def _edge_rows(root, trows, tickets, pages, st):
             k = _version_id_canon(vv)
             rows.append((pg["name"], "version", vv, 1 if k is not None and k in versions else 0))
 
-    prior, err, _malformed, present = read_artifact_manifest(root)
-    if not err and present:
-        for (bucket, relp), e in sorted(prior.items()):
-            tv = e.get("ticket")
-            if tv is None:
-                continue
-            tv_str = tv.strip() if isinstance(tv, str) else str(tv)
-            resolved = 1 if (isinstance(tv, str) and TICKET_ID_RE.match(tv_str)
-                             and tv_str in tickets) else 0
-            rows.append((f"{bucket}/{relp}", "artifact_ticket", tv_str, resolved))
+    for _prod, (bucket, relp), e in _all_artifact_entries(root):
+        tv = e.get("ticket")
+        if tv is None:
+            continue
+        tv_str = tv.strip() if isinstance(tv, str) else str(tv)
+        resolved = 1 if (isinstance(tv, str) and TICKET_ID_RE.match(tv_str)
+                         and tv_str in tickets) else 0
+        rows.append((f"{bucket}/{relp}", "artifact_ticket", tv_str, resolved))
     return rows
 
 
@@ -13191,7 +14275,14 @@ def prd_ticket_link_warnings(root):
     (outside the reversed section) · `versions/v1.9.md` citing superseded
     `decision--prd-single-file` and `decision--gui-round-v1.10`."""
     root = Path(root)
-    proj_pages = {p["name"]: p for p in scan_wiki(root)}
+    prods = project_products(root)
+    views = {}   # T-1218: a file in docs/<p>/ resolves bare names in p's view, never the current product's
+
+    def proj_view(f):
+        p = _product_from_docs_path(root, f, prods)
+        if p not in views:
+            views[p] = {pg["name"]: pg for pg in scan_wiki(root, p)}
+        return views[p]
     mach_pages = {p["name"]: p for p in scan_machine_wiki()}
     warns = []
     for f in _prd_and_ticket_files(root):
@@ -13199,6 +14290,7 @@ def prd_ticket_link_warnings(root):
             text = f.read_text(encoding="utf-8")
         except OSError:
             continue
+        proj_pages = proj_view(f)
         reversed_lines = _reversed_section_lines(text)
         rel = f.relative_to(root)
         for ln, line in _md_structural_lines(text):
@@ -13556,7 +14648,11 @@ def discipline_caps_warnings(droot):
     return warns
 
 
-# ── prdt track open | review | land (T-775, T-681 slice S4) ──────────────────
+# ── prdt track open | review | merge (T-775, T-681 slice S4) ─────────────────
+# T-1264: the command was `land` until v1.16; the user named it `merge` (it is a
+# merge with the tests in front). `land` stays an alias with identical behavior
+# through v1.16 and is removed in v1.17 (PRD v1.16). The lock file keeps its
+# old name so a `land` from an older install and a `merge` still exclude each other.
 # Design SoT: docs/artifacts/v1.11/critical-path.html, tab 「체크아웃 격리」.
 # contracts/git.md ③: a parallel track is cut from `dev` by `prdt track open`
 # (branch `track/<T-NNN>`), never Agent `isolation: "worktree"` — that fails
@@ -13570,7 +14666,7 @@ def discipline_caps_warnings(droot):
 # NO PUSH, NO REMOTE PR (T-748 A): nothing in this section names a remote, and
 # `track` is exempt from the meta backup tick too (maybe_meta_backup), so a
 # track command never pushes anything anywhere.
-TRACK_ID_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+TRACK_ID_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")  # T-1298: T-NNN or T-<PREFIX>-<n>
 TRACK_BASES = ("dev", "main")
 TRACK_LOCK = "prdt-track-land.lock"
 TRACK_LOCKFILES = ("pnpm-lock.yaml", "package-lock.json", "yarn.lock")
@@ -13638,13 +14734,13 @@ def _track_test_cmd(root, wt, override):
     return None
 
 
-def _track_run(cmd, cwd, label):
+def _track_run(cmd, cwd, label, env=None):
     """Runs under pipefail (T-813): `--test '<cmd> | tail'` must not take tail's
     exit code, or a failing test lands as a pass."""
     print(f"{label}: {cmd}", flush=True)
     bash = shutil.which("bash")
     argv = [bash, "-o", "pipefail", "-c", cmd] if bash else ["/bin/sh", "-c", f"set -o pipefail; {cmd}"]
-    r = subprocess.run(argv, cwd=str(cwd), stdout=sys.stderr, stderr=sys.stderr)
+    r = subprocess.run(argv, cwd=str(cwd), stdout=sys.stderr, stderr=sys.stderr, env=env)
     return r.returncode
 
 
@@ -13681,12 +14777,17 @@ def _no_dup_keys(pairs):
     return out
 
 
-def _track_record_path(code, tid):
+def _track_run_dir(code):
+    """$PRDT_HOME/run/tracks/<code-repo key>/ — tooling-owned, outside the repo and its worktrees."""
     r = _tgit(["rev-parse", "--git-common-dir"], code)
     gd = Path(r.stdout.strip())
     gd = (gd if gd.is_absolute() else Path(code) / gd).resolve()
     key = hashlib.sha256(str(gd).encode("utf-8")).hexdigest()[:16]
-    return prdt_home() / "run" / "tracks" / key / f"{tid}.json"
+    return prdt_home() / "run" / "tracks" / key
+
+
+def _track_record_path(code, tid):
+    return _track_run_dir(code) / f"{tid}.json"
 
 
 def _track_record_write(code, tid, branch, base):
@@ -13721,6 +14822,56 @@ def _track_record_remove(code, tid):
         pass
     except OSError as e:
         print(f"track record not removed: {e}", file=sys.stderr)
+    _track_setup_failed_clear(code, tid)
+
+
+# T-1092: a land whose setup step failed leaves the merge on the track branch
+# and possibly a half-removed node_modules; the next land skips the merge (base
+# is already an ancestor) and so would skip setup too, then run the tests on the
+# broken tree. This marker, next to the open record, remembers the failure so
+# that second land stops and names the recovery instead (T-1238 ⑤: refuse, never
+# auto-rerun). `--setup-done` on land is the user's word that setup was rerun.
+def _track_setup_failed_path(code, tid):
+    return _track_record_path(code, tid).with_name(f"{tid}.setup-failed.json")
+
+
+def _track_setup_recovery(tid, branch, wt, setup, base_flag):
+    """T-1355: what stays after a failed setup and the exact two commands that
+    make the track landable again (an install that cannot finish may empty
+    node_modules, so the tests cannot run there until setup succeeds)."""
+    again = f"prdt track merge {tid}" + (f" --base {base_flag}" if base_flag else "") + " --setup-done"
+    return (f"{branch} keeps the merge and {Path(wt) / 'node_modules'} may be emptied, so the tests cannot run "
+            f"there until setup succeeds; recover with `cd {wt} && {setup}`, then `{again}`")
+
+
+def _track_setup_failed_write(code, tid, setup):
+    p = _track_setup_failed_path(code, tid)
+    home = prdt_home()
+    home.mkdir(parents=True, exist_ok=True)
+    state_write(home, p, json.dumps({"schema": 1, "ticket": tid, "setup": setup}) + "\n")
+
+
+def _track_setup_failed_read(code, tid):
+    """The setup command that failed on an earlier land, or None. A marker that
+    cannot be read still counts (fail closed): returns '' then."""
+    p = _track_setup_failed_path(code, tid)
+    if not os.path.lexists(p):
+        return None
+    try:
+        rec = json.loads(p.read_text(encoding="utf-8"))
+        cmd = rec.get("setup") if isinstance(rec, dict) else ""
+        return cmd if isinstance(cmd, str) else ""
+    except (OSError, ValueError):
+        return ""
+
+
+def _track_setup_failed_clear(code, tid):
+    try:
+        _track_setup_failed_path(code, tid).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        print(f"setup-failed marker not removed: {e}", file=sys.stderr)
 
 
 def _track_require_open(code, wt, branch, tid):
@@ -13800,7 +14951,7 @@ def cmd_track_open(args):
     if wt.exists():
         _track_die(f"{wt} already exists — this track is open (`prdt track review {tid}`)")
     if _tgit(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], code).returncode == 0:
-        _track_die(f"branch {branch} already exists with no worktree at {wt} — land or drop it first")
+        _track_die(f"branch {branch} already exists with no worktree at {wt} — merge or drop it first")
     _track_exclude(code, root)
     wt.parent.mkdir(parents=True, exist_ok=True)
     r = _tgit(["worktree", "add", str(wt), "-b", branch, f"refs/heads/{base}"], code)
@@ -13862,7 +15013,7 @@ def cmd_track_review(args):
         base = _track_base(code, branch)
         if rec is TRACK_RECORD_BAD:
             print(f"warning: the open record for {tid} ({_track_record_path(code, tid)}) is unreadable or does "
-                  f"not match this track — comparing against {base} from git config; a bare land will refuse",
+                  f"not match this track — comparing against {base} from git config; a bare merge will refuse",
                   file=sys.stderr)
     # T-915: every git argument names the branch by its full ref — a bare
     # `dev`/`main`/`track/T-NNN` resolves refs/tags/<name> before
@@ -13916,7 +15067,7 @@ def cmd_track_review(args):
               f"{safe_label(str(d.get('dispatch_id') or '-'))} → "
               f"{safe_label(str((s or {}).get('outcome') or 'no stop row'))}")
     if recs and not any(d.get("persona") == "qa" for d, _s in recs):
-        print("   no qa dispatch recorded — a user_facing or risk_flags change needs a QA verdict before land")
+        print("   no qa dispatch recorded — a user_facing or risk_flags change needs a QA verdict before merge")
     # 5 discipline files
     disc = sorted(p for p in changed if p.startswith("packages/core/discipline/") or p.startswith("discipline/"))
     print("\n5. discipline files: " + (", ".join(disc) + " — the DoD annex's discipline extra step applies"
@@ -13954,19 +15105,436 @@ def _track_lock(code):
             except (OSError, ValueError):
                 pid = 0
             if pid and _pid_alive(pid):
-                _track_die(f"another `prdt track land` is running (pid {pid}) — land one track at a time")
+                _track_die(f"another `prdt track merge` is running (pid {pid}) — merge one track at a time")
             try:
                 lock.unlink()           # its owner is gone: the lock is this tool's own leftover
             except OSError:
                 pass
-    _track_die(f"could not take the land lock {lock}")
+    _track_die(f"could not take the merge lock {lock}")
 
 
 def _lockfile_sig(wt):
     return {n: (wt / n).read_bytes() if (wt / n).is_file() else None for n in TRACK_LOCKFILES}
 
 
-def cmd_track_land(args):
+# ── T-1268: `land` runs the RELEVANT tests by default ────────────────────────
+# contracts/definition-of-done.md: the whole suite has its own slot (ship entry);
+# a land's done-claim runs the relevant set of the merged diff against its base —
+# changed tests · `vitest related` importers (here `vitest list --changed <base>`,
+# the same module-graph query) · tests whose text names a changed file. The whole
+# suite runs only when this land closes a lane, or on `--full`; `--test <cmd>` and
+# a configured `track.test` are explicit commands and run as given.
+TRACK_VITEST_CONFIGS = ("vitest.config.ts", "vitest.config.mts", "vitest.config.js", "vitest.config.mjs")
+
+
+# T-1417: code/vitest.config.ts and code/packages/vitest.config.ts refuse a bare vitest run; they
+# are not packages. Each carries the marker in its first line; the T-1417 original first line is
+# accepted too, so a worktree cut before the marker landed is skipped as well.
+TRACK_VITEST_GUARD_MARKERS = ("prdt-vitest-guard", "// T-1417:")
+
+
+def _track_is_vitest_guard(cfg):
+    try:
+        with open(cfg, encoding="utf-8", errors="replace") as fh:
+            first = fh.readline()
+        return any(k in first for k in TRACK_VITEST_GUARD_MARKERS)
+    except OSError:
+        return False
+
+
+def _track_vitest_pkgs(wt):
+    """Directories under the worktree holding a real vitest config (node_modules and .git skipped;
+    a directory whose only config is a T-1417 guard config is not a package)."""
+    out = []
+    for d, dirs, files in os.walk(str(wt)):
+        dirs[:] = [x for x in dirs if x not in ("node_modules", ".git")]
+        if any(f in files and not _track_is_vitest_guard(os.path.join(d, f)) for f in TRACK_VITEST_CONFIGS):
+            out.append(Path(d))
+    return sorted(out)
+
+
+def _track_vitest_bin(pkg, wt):
+    for base in (pkg, wt):
+        b = Path(base) / "node_modules" / ".bin" / "vitest"
+        if b.is_file():
+            return str(b)
+    return None
+
+
+def _track_vitest_list(vbin, pkg, extra):
+    """Absolute test-file paths `vitest list --filesOnly --json [extra]` prints (banner lines skipped)."""
+    r = subprocess.run([vbin, "list", "--filesOnly", "--json", *extra], cwd=str(pkg),
+                       capture_output=True, text=True, timeout=600)
+    m = re.search(r"(?m)^\[", r.stdout)
+    if r.returncode != 0 or not m:
+        _track_die(f"could not list tests in {pkg} (`vitest list` exit {r.returncode}) — "
+                   f"nothing was merged; {(r.stderr or r.stdout).strip()[-300:]}")
+    try:
+        rows, _ = json.JSONDecoder().raw_decode(r.stdout[m.start():])
+    except ValueError:
+        _track_die(f"could not read the test list of {pkg} — nothing was merged")
+    return [x["file"] for x in rows if isinstance(x, dict) and isinstance(x.get("file"), str)]
+
+
+# A changed path may reach a test in ways its text never spells: a wrapper the test execs, or a
+# directory the test reads by readdir + pattern. This declared map (repo-relative glob → extra
+# naming strings / test files) sits beside the derivation. A file under a DECLARED directory that
+# no entry maps and no test names falls back to the package's whole test command.
+#   names  — substrings that make a test text count as naming the changed file
+#   tests  — test files (path suffix) that always join the set
+TRACK_RELEVANT_ALIASES = (
+    # the CLI runs through the `scripts/prdt` wrapper: 100+ tests exec it, none names prdt_cli.py
+    {"glob": "packages/core/scripts/prdt_cli.py", "names": ("'scripts', 'prdt'", '"scripts", "prdt"', "scripts/prdt'"), "tests": ()},
+    # session-start p<N>.sh parts: read by readdir + /^prdt-session-start-p\d+\.sh$/
+    {"glob": "packages/core/scripts/hooks/prdt-session-start-p*.sh", "names": (), "tests": ("test/scripts/session-start-parts.test.ts",)},
+    # contract annexes: readdir over discipline/contracts
+    {"glob": "packages/core/discipline/contracts/*.md", "names": (), "tests": ("test/discipline/contracts-annexes.test.ts",)},
+    # agent stubs: readdir over agents/*.md
+    {"glob": "packages/core/agents/*.md", "names": (), "tests": ("test/agents-stubs.test.ts",)},
+    # register bodies: readdir over discipline/register
+    {"glob": "packages/core/discipline/register/*.md", "names": (), "tests": ("test/scripts/audience-inject-hook.test.ts",)},
+)
+# Directories some test reads by readdir: a change here that nothing above (or any test's text) reaches
+# is treated as unknown reach — the package's whole command runs.
+TRACK_READ_DIRS = (
+    "packages/core/scripts/hooks/", "packages/core/discipline/contracts/",
+    "packages/core/agents/", "packages/core/discipline/register/",
+)
+
+
+def _track_names_of(path):
+    """Strings a test text may use to NAME a changed file: its basename, its repo path, and the
+    last two path.join pieces quoted (`'scripts', 'prdt'` — extension optional on the last)."""
+    parts = path.split("/")
+    base = parts[-1]
+    stem = base.rsplit(".", 1)[0] if "." in base else base
+    names = {base, path}
+    if len(parts) >= 2:
+        for last in {base, stem}:
+            names.add(f"'{parts[-2]}', '{last}'")
+            names.add(f'"{parts[-2]}", "{last}"')
+    for al in TRACK_RELEVANT_ALIASES:
+        if fnmatch.fnmatchcase(path, al["glob"]):
+            names.update(al["names"])
+    return names
+
+
+def _track_stem_re(path):
+    """The bare stem (basename without extension) as a whole word: `prdt_cli` in `prdt_cli.py`,
+    `definition-of-done` in a test's 'definition-of-done'. None for a stem with no extension to drop."""
+    base = path.split("/")[-1]
+    if "." not in base.lstrip("."):
+        return None
+    stem = base.rsplit(".", 1)[0]
+    if len(stem) < 5:     # `a` · `cli` · `app` read as ordinary words — those still match by basename + extension
+        return None
+    return re.compile(r"(?<![\w-])" + re.escape(stem) + r"(?![\w-])")
+
+
+# Directory scanners (T-1268): a test that lists a SOURCE directory (readdir / walk / glob) is reached by no
+# import and no name, so a change there lands green. A land whose diff touches a package ALWAYS runs that
+# package's declared scanner tests, whatever the derivation found — the list lives in this one file, kept
+# honest by test/scripts/directory-scanner-list.test.ts. Shape: {"packages": {<pkg dir, repo-relative>:
+# {"scans": [paths whose change triggers the list], "tests": [<pkg>-relative test files], "exempt": {...}}}}.
+TRACK_SCANNER_LIST = "packages/core/config/directory-scanners.json"
+
+
+def _track_scanner_list(wt):
+    """{pkg dir: {"scans": [...], "tests": [...]}} read from the merged tree; {} when the tree declares none."""
+    f = Path(wt) / TRACK_SCANNER_LIST
+    if not f.is_file():
+        return {}
+    d = read_json(f)
+    pk = d.get("packages") if isinstance(d, dict) else None
+    if not isinstance(pk, dict):
+        _track_die(f"{TRACK_SCANNER_LIST} is unreadable (no `packages` object) — nothing was merged")
+    out = {}
+    for k, v in pk.items():
+        if not (isinstance(v, dict) and isinstance(v.get("scans"), list) and isinstance(v.get("tests"), list)):
+            _track_die(f"{TRACK_SCANNER_LIST}: entry {k} needs `scans` and `tests` lists — nothing was merged")
+        out[k] = {"scans": [str(x).strip("/") for x in v["scans"]], "tests": [str(x) for x in v["tests"]]}
+    return out
+
+
+# Test-read map (T-1286): the scanner list and the aliases above are kept by hand, and a read shape
+# their regexes do not know (QA d-v115-t1268-qa3: `readdirSync(path.join(ROOT, 'config'))`) still landed
+# green. So every land's test run (relevant set or whole suite) loads this tracer into the vitest
+# workers through NODE_OPTIONS: it records, per test file, the repo paths that file's tests read
+# (f = a file read / stat / exists · d = a directory listed · t = a tree listed or copied recursively).
+# A green run merges what it saw into $PRDT_HOME/run/tracks/<repo key>/test-read-map.json, and the next
+# land adds every test whose recorded reads its diff touches. The map only ADDS to the import / name /
+# list selection: a missing, unreadable or stale map selects exactly what that selection does.
+# Not seen: reads made by a child process a test spawns (the prdt CLI, a hook script) — those stay
+# with the name / alias / list routes.
+TRACK_TEST_MAP = "test-read-map.json"
+TRACK_FS_TRACER = r"""'use strict'
+// prdt test-read trace (T-1286) — written by `prdt track land`, loaded by `--require` via NODE_OPTIONS.
+// The output dir and repo root are baked in, not read from env: turbo's strict env mode passes
+// NODE_OPTIONS to its tasks but drops undeclared variables.
+;(() => {
+  const OUT = __PRDT_TRACE_OUT__, ROOT = __PRDT_TRACE_ROOT__
+  const wt = require('worker_threads')
+  if (!process.send && wt.isMainThread) {
+    // the runner, not a test worker (vitest runs test files in forks with IPC, or threads). Hand this file
+    // to every process it forks through execArgv too: a fork wrapper may drop NODE_OPTIONS (core's own
+    // isolation rules do, when a test runs vitest inside a test).
+    const cp = require('child_process'), self = __filename, f = cp.fork
+    if (typeof f !== 'function' || f.__prdtFsTrace) return
+    const w = function (modulePath, args, options) {
+      let a = args, op = options
+      if (!Array.isArray(a)) { op = a == null ? op : a; a = [] }
+      const opts = Object.assign({}, op || {})
+      const ea = opts.execArgv || process.execArgv
+      if (!ea.includes(self)) opts.execArgv = [...ea, '--require', self]
+      return f.call(this, modulePath, a, opts)
+    }
+    w.__prdtFsTrace = true
+    cp.fork = w
+    try { require('module').syncBuiltinESMExports() } catch {}
+    return
+  }
+  const fs = require('fs'), path = require('path'), url = require('url')
+  if (fs.__prdtFsTrace) return
+  fs.__prdtFsTrace = true
+  const o = { openSync: fs.openSync, writeSync: fs.writeSync, realpathSync: fs.realpathSync }
+  let real = ROOT
+  try { real = o.realpathSync(ROOT) } catch {}
+  const roots = [...new Set([ROOT, real])].map((r) => r.replace(/\/+$/, '') + '/')
+  const rel = (abs) => { for (const r of roots) if (abs.startsWith(r)) return abs.slice(r.length); return null }
+  const seen = new Set()
+  let fd = -1
+  const note = (kind, p) => {
+    try {
+      const st = globalThis.__vitest_worker__          // vitest sets .filepath to the test file it runs
+      const tf = st && st.filepath
+      if (!tf || p == null || typeof p === 'number') return
+      const s = typeof p === 'string' ? p : p instanceof URL ? url.fileURLToPath(p) : Buffer.isBuffer(p) ? p.toString() : null
+      if (!s) return
+      const r = rel(path.resolve(s)), t = rel(tf)
+      if (!r || t == null || r === '.git' || r.startsWith('.git/') || r.includes('node_modules')) return
+      const key = t + '\0' + kind + '\0' + r
+      if (seen.has(key)) return
+      seen.add(key)
+      if (fd < 0) fd = o.openSync(path.join(OUT, process.pid + '-' + wt.threadId + '.jsonl'), 'a')
+      o.writeSync(fd, JSON.stringify([t, kind, r]) + '\n')
+    } catch {}
+  }
+  const recursive = (a) => !!(a && typeof a === 'object' && a.recursive)
+  const wrap = (obj, name, kindOf) => {
+    const f = obj && obj[name]
+    if (typeof f !== 'function') return
+    const w = function (p, a) { note(kindOf(a), p); return f.apply(this, arguments) }
+    Object.defineProperties(w, Object.getOwnPropertyDescriptors(f))
+    obj[name] = w
+  }
+  const file = () => 'f', listing = (a) => (recursive(a) ? 't' : 'd'), copy = (a) => (recursive(a) ? 't' : 'f')
+  for (const n of ['readFileSync', 'readFile', 'existsSync', 'exists', 'statSync', 'stat', 'lstatSync', 'lstat',
+    'accessSync', 'access', 'openSync', 'open', 'createReadStream', 'copyFileSync', 'copyFile', 'realpathSync', 'realpath'])
+    wrap(fs, n, file)
+  for (const n of ['readdirSync', 'readdir', 'opendirSync', 'opendir']) wrap(fs, n, listing)
+  for (const n of ['cpSync', 'cp']) wrap(fs, n, copy)
+  const pr = fs.promises
+  for (const n of ['readFile', 'stat', 'lstat', 'access', 'open', 'copyFile', 'realpath']) wrap(pr, n, file)
+  for (const n of ['readdir', 'opendir']) wrap(pr, n, listing)
+  wrap(pr, 'cp', copy)
+  try { require('module').syncBuiltinESMExports() } catch {}   // `import { readFileSync } from 'node:fs'` too
+})()
+"""
+
+
+def _track_trace_env(wt):
+    """(env, trace dir) for a traced test run: a private temp dir holding the tracer and its output."""
+    import tempfile
+    d = Path(tempfile.mkdtemp(prefix="prdt-fs-trace-"))
+    tracer = d / "prdt-fs-trace.cjs"
+    with open(tracer, "x", encoding="utf-8") as fh:
+        fh.write(TRACK_FS_TRACER.replace("__PRDT_TRACE_OUT__", json.dumps(str(d)))
+                 .replace("__PRDT_TRACE_ROOT__", json.dumps(str(Path(wt).resolve()))))
+    env = dict(os.environ)
+    env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + f' --require "{tracer}"').strip()
+    return env, d
+
+
+def _track_test_map_read(code):
+    """({test path: {"f","d","t": set}}, note). Missing or unreadable → ({}, why) — the selection is then
+    exactly the import / name / list one."""
+    p = _track_run_dir(code) / TRACK_TEST_MAP
+    if not p.is_file():
+        return {}, "none yet — tests are chosen by import, name and the declared lists"
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        tests = d["tests"] if isinstance(d, dict) and d.get("schema") == 1 else None
+        if not isinstance(tests, dict):
+            raise ValueError
+    except (OSError, ValueError, KeyError):
+        return {}, "unreadable — tests are chosen by import, name and the declared lists"
+    out = {}
+    for t, e in tests.items():
+        if isinstance(e, dict):
+            vals = [e.get(k, []) for k in ("f", "d", "t")]
+            if not all(isinstance(v, list) for v in vals):
+                return {}, "unreadable — tests are chosen by import, name and the declared lists"
+            out[t] = {k: {x for x in v if isinstance(x, str)} for k, v in zip(("f", "d", "t"), vals)}
+    return out, f"{len(out)} test file(s), updated {d.get('updated', '?')}"
+
+
+def _track_trace_hit(entry, c):
+    """A changed repo path the test was seen to reach: read it, listed its folder, or walked a tree above it."""
+    if c in entry["f"]:
+        return True
+    if "/" in c and c.rsplit("/", 1)[0] in entry["d"]:
+        return True
+    return any(c == t or c.startswith(t + "/") for t in entry["t"])
+
+
+def _track_test_map_update(code, wt, trace_dir, ran):
+    """Merge a GREEN run's trace into the map: each traced test file's entry is replaced by what it read
+    this run; a test file in `ran` with no trace line read nothing in the repo. A run that left no trace at
+    all (no vitest worker ran, or the tracer could not attach) changes nothing."""
+    try:
+        seen = {}
+        for f in sorted(Path(trace_dir).glob("*.jsonl")):
+            for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    t, k, p = json.loads(line)
+                except ValueError:
+                    continue      # a worker killed mid-write leaves a torn last line
+                if k in ("f", "d", "t") and isinstance(t, str) and isinstance(p, str):
+                    seen.setdefault(t, {"f": set(), "d": set(), "t": set()})[k].add(p)
+        if not seen:
+            print("test-read map: no file reads recorded on this run — map unchanged")
+            return
+        tests, _ = _track_test_map_read(code)
+        for t in ran:
+            tests[t] = {"f": set(), "d": set(), "t": set()}
+        tests.update(seen)
+        tests = {t: e for t, e in tests.items() if (Path(wt) / t).is_file()}
+        home = prdt_home()
+        home.mkdir(parents=True, exist_ok=True)
+        state_write(home, _track_run_dir(code) / TRACK_TEST_MAP, json.dumps({
+            "schema": 1, "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "tests": {t: {k: sorted(e[k]) for k in ("f", "d", "t")} for t, e in sorted(tests.items())},
+        }, ensure_ascii=False) + "\n")
+        print(f"test-read map: {len(seen)} test file(s) recorded this run, {len(tests)} in the map")
+    except Exception as e:     # the tests are green; a map that could not be written must not stop the land
+        print(f"test-read map: not updated ({type(e).__name__}: {e})")
+
+
+def _track_pkg_extra_steps(pkg):
+    """Commands the package's own `test` script runs besides vitest (`vitest run && node test/x.mjs`)."""
+    pj = read_json(Path(pkg) / "package.json")
+    t = pj.get("scripts", {}).get("test") if isinstance(pj, dict) and isinstance(pj.get("scripts"), dict) else None
+    if not isinstance(t, str):
+        return []
+    return [seg.strip() for seg in t.split("&&") if seg.strip() and not re.match(r"vitest(\s|$)", seg.strip())]
+
+
+def _track_relevant_set(wt, base_sha, changed, tmap=None):
+    """([(pkg, vbin, [files], extras_due)], covered, counts, has_pkgs, fallback) — the union per vitest package.
+    A package the diff touches always carries its declared directory-scanner tests (TRACK_SCANNER_LIST) in
+    `files`, and `extras_due` = a file under the package changed, so its extra test steps run even when
+    `files` is empty. `fallback` = {pkg: [changed files whose reach into that package's tests is unknown]}:
+    those packages run their whole test command. `tmap` (T-1286) = the test-read map: a test whose
+    recorded reads the diff touches joins `files` too."""
+    pkgs = _track_vitest_pkgs(wt)
+    scanners = _track_scanner_list(wt)
+    tmap = tmap or {}
+    wt_res = Path(wt).resolve()
+    plan, named_any, tot, fallback = [], set(), {"changed_tests": 0, "importers": 0, "naming": 0, "scanners": 0, "traced": 0}, {}
+    names = {c: _track_names_of(c) for c in changed}
+    stems = {c: _track_stem_re(c) for c in changed}
+    for pkg in pkgs:
+        vbin = _track_vitest_bin(pkg, wt)
+        if vbin is None:
+            _track_die(f"no vitest binary for {pkg} (node_modules missing) — run the setup step in {wt}")
+        alltests = _track_vitest_list(vbin, pkg, [])
+        changed_abs = {str((Path(wt) / c).resolve()) for c in changed}
+        rel_hits = set(_track_vitest_list(vbin, pkg, ["--changed", base_sha]))
+        own = {t for t in alltests if str(Path(t).resolve()) in changed_abs}
+        naming, named_here = set(), set()
+        for t in alltests:
+            try:
+                text = Path(t).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for c, ns in names.items():
+                if any(n in text for n in ns) or (stems[c] is not None and stems[c].search(text)):
+                    naming.add(t)
+                    named_here.add(c)
+        named_any |= named_here
+        mapped = set()
+        for c in changed:
+            for al in TRACK_RELEVANT_ALIASES:
+                if fnmatch.fnmatchcase(c, al["glob"]):
+                    mapped.add(c)
+                    for suf in al["tests"]:
+                        naming.update(t for t in alltests if Path(t).as_posix().endswith("/" + suf))
+        named_any |= mapped
+        unknown = [c for c in changed if c not in named_here and c not in mapped
+                   and any(c.startswith(d) for d in TRACK_READ_DIRS)
+                   and str((Path(wt) / c).resolve()).startswith(str(Path(pkg).resolve()) + os.sep)]
+        if unknown:
+            fallback[pkg] = unknown
+        traced = set()
+        for t in alltests:
+            try:
+                entry = tmap.get(Path(t).resolve().relative_to(wt_res).as_posix())
+            except ValueError:
+                continue
+            hits = [c for c in changed if entry and _track_trace_hit(entry, c)]
+            if hits:
+                traced.add(t)
+                named_any.update(hits)
+        importers = rel_hits - own
+        derived = (own | rel_hits | naming | traced) & set(alltests)
+        pkg_rel = pkg.relative_to(wt).as_posix() if pkg != Path(wt) else "."
+        under = lambda c, d: d == "." or c == d or c.startswith(d + "/")
+        always = set()
+        sc = scanners.get(pkg_rel)
+        if sc and any(under(c, d) for c in changed for d in sc["scans"]):
+            for t in sc["tests"]:
+                hit = [a for a in alltests if Path(a).resolve() == (pkg / t).resolve()]
+                if not hit:
+                    _track_die(f"{TRACK_SCANNER_LIST} lists {pkg_rel}/{t}, which is not a test of that package — "
+                               f"nothing was merged; fix the list on the track")
+                always.add(hit[0])
+        extras_due = any(under(c, pkg_rel) for c in changed)
+        files = sorted(derived | always)
+        tot["changed_tests"] += len(own)
+        tot["importers"] += len(importers - naming)
+        tot["naming"] += len(naming - own - rel_hits)
+        tot["traced"] += len(traced - own - rel_hits - naming)
+        tot["scanners"] += len(always - derived)
+        if files or unknown or extras_due:
+            plan.append((pkg, vbin, files, extras_due))
+    covered = {c for c in changed if c in named_any}
+    return plan, covered, tot, bool(pkgs), fallback
+
+
+def _track_closes_lane(root, tid):
+    """(closes: bool, note) — the land makes the last open impl ticket of a gate lane done.
+    Lane membership is `prdt_lanes.lanes_for` (the one computation `prdt schedule` renders)."""
+    try:
+        tickets = _schedule_tickets(Path(root))
+        row = tickets.get(tid, (None, None))[0]
+        if row is None or row["type"] != "impl" or row["status"] != "open":
+            return False, ""
+        for line in gate_lines(root):
+            for lane in lanes_for(root, line):
+                if lane.get("besteffort") or tid not in lane["tickets"]:
+                    continue
+                others = [t for t in lane["tickets"] if t != tid and tickets[t][0]["type"] == "impl"
+                          and tickets[t][0]["status"] == "open"]
+                if not others:
+                    return True, f"closes lane {lane['name']}"
+                return False, ""
+        return False, ""
+    except Exception as e:   # a broken lane read must not stop the land — say so, keep the cheap default
+        return False, f"lane check unavailable ({type(e).__name__}) — relevant set only"
+
+
+
+def cmd_track_merge(args):
     root, code, tid, wt, branch = _track_ctx(args)
     _track_require_open(code, wt, branch, tid)
     # T-784 (F1, security pass): the land target is an explicit PO flag on
@@ -13995,12 +15563,30 @@ def cmd_track_land(args):
     bref, tref = f"refs/heads/{base}", f"refs/heads/{branch}"   # T-915: never a bare name a tag can shadow
     st = _tgit(["status", "--porcelain"], wt)
     if st.returncode != 0 or st.stdout.strip():
-        _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or drop them, then land")
+        _track_die(f"{wt} has uncommitted changes — commit them on {branch} (PO) or drop them, then merge")
+    explicit = bool((isinstance(args.test, str) and args.test.strip())
+                    or isinstance(_track_cfg(root).get("test"), str) and _track_cfg(root).get("test").strip())
     test = _track_test_cmd(root, wt, args.test)
-    if test is None:
+    full = bool(getattr(args, "full", False))
+    closes, lane_note = (False, "") if explicit or full else _track_closes_lane(root, tid)
+    # No vitest package = no relevant set to derive: the whole command is all there is.
+    no_vitest = not (explicit or full or closes) and not _track_vitest_pkgs(wt)
+    whole = explicit or full or closes or no_vitest
+    if whole and test is None:
         _track_die("no test command — pass --test <cmd>, set `track.test` in .prdt/config.json, "
                    "or give package.json a test script")
+    if no_vitest:
+        lane_note = "no vitest package to derive the relevant tests from"
+    failed_setup = _track_setup_failed_read(code, tid)
+    if failed_setup is not None:
+        if getattr(args, "setup_done", False):
+            _track_setup_failed_clear(code, tid)
+        else:
+            cmd = failed_setup or _track_setup_cmd(root, wt) or "the setup command"
+            _track_die(f"the setup step failed on an earlier merge of {tid} — the tests were not run on this tree; "
+                       + _track_setup_recovery(tid, branch, wt, cmd, args.base))
     lock = _track_lock(code)
+    trace_dir = None
     try:
         old = _tgit(["rev-parse", "--verify", "--quiet", bref], code).stdout.strip()
         if not old:
@@ -14012,28 +15598,91 @@ def cmd_track_land(args):
                 un = _tgit(["diff", "--name-only", "--diff-filter=U"], wt).stdout.split()
                 _tgit(["merge", "--abort"], wt)
                 _track_die(f"merging {base} into {branch} conflicts in: {', '.join(un) or '(see git output)'} — "
-                           f"{base} is unchanged; resolve on {branch} (re-dispatch its worker), then land again")
+                           f"{base} is unchanged; resolve on {branch} (re-dispatch its worker), then merge again")
             print(f"merged {base} ({old[:12]}) into {branch}")
             if _lockfile_sig(wt) != before:
                 setup = _track_setup_cmd(root, wt)
                 if setup and _track_run(setup, wt, "setup (lockfile changed)") != 0:
-                    _track_die(f"the setup step failed on the merged tree — {base} is unchanged")
-        rc = _track_run(test, wt, "tests on the merged tree")
+                    _track_setup_failed_write(code, tid, setup)
+                    _track_die(f"the setup step failed on the merged tree — {base} is unchanged; "
+                               + _track_setup_recovery(tid, branch, wt, setup, args.base))
+        tenv, trace_dir = _track_trace_env(wt)
+        ran_rel = []    # test files the relevant run ran (a whole run's set is whatever the trace shows)
+        if whole:
+            why_whole = ("--test" if isinstance(args.test, str) and args.test.strip() else
+                         "track.test" if explicit else "--full" if full else lane_note)
+            rc = _track_run(test, wt, f"tests on the merged tree (whole suite: {why_whole})", env=tenv)
+            ran = f"tests `{test}`"
+        else:
+            if lane_note:
+                print(lane_note)
+            chg = [x for x in _tgit(["diff", "--name-only", old, "HEAD"], wt).stdout.splitlines() if x]
+            tmap, tnote = _track_test_map_read(code)
+            print(f"test-read map: {tnote}")
+            plan, covered, tot, _, fallback = _track_relevant_set(wt, old, chg, tmap)
+            n = sum(len(f) for _p, _v, f, _e in plan)
+            if not plan:
+                print(f"relevant tests: none — {len(chg)} changed file(s) against {base}, no test imports "
+                      f"or names them and no package changed; merging without a test run")
+                rc, ran = 0, "no relevant tests"
+            else:
+                if n:
+                    print(f"relevant tests: {n} file(s) in {len(plan)} package(s) — {tot['changed_tests']} changed, "
+                          f"{tot['importers']} importing, {tot['naming']} naming a changed file"
+                          f"{', ' + str(tot['traced']) + ' by recorded file reads' if tot['traced'] else ''}"
+                          f"{', ' + str(tot['scanners']) + ' always-run directory scanner(s)' if tot['scanners'] else ''}; "
+                          f"{len(chg)} changed file(s) against {base}", flush=True)
+                else:
+                    print(f"relevant tests: none by import or name — {len(chg)} changed file(s) against {base}; "
+                          f"the package's extra test steps still run", flush=True)
+                for pkg, _v, files, _e in plan:
+                    for f in files:
+                        print(f"  {pkg.relative_to(wt) if pkg != wt else '.'}: {Path(f).relative_to(pkg)}")
+                rc = 0
+                for pkg, vbin, files, extras_due in plan:
+                    label = pkg.relative_to(wt) if pkg != wt else "."
+                    if pkg in fallback:
+                        print(f"whole package {label}: {', '.join(fallback[pkg][:3])}"
+                              f"{' …' if len(fallback[pkg]) > 3 else ''} sits in a directory a test reads "
+                              f"by listing, with no declared mapping — running the package's whole test command", flush=True)
+                        steps = [" ".join([shlex.quote(vbin), "run"])]
+                    elif files:
+                        steps = [" ".join([shlex.quote(vbin), "run", *(shlex.quote(str(Path(f).relative_to(pkg))) for f in files)])]
+                    else:
+                        steps = []      # no file selected: a bare `vitest run` would be the whole suite
+                    # a gitignored build output (dist/) goes stale when src/ changed: build before the tests
+                    pj = read_json(Path(pkg) / "package.json")
+                    has_build = isinstance(pj, dict) and isinstance(pj.get("scripts"), dict) and "build" in pj["scripts"]
+                    prel = pkg.relative_to(wt).as_posix() if pkg != Path(wt) else ""
+                    src_pre = (prel + "/" if prel else "") + "src/"
+                    if has_build and any(c.startswith(src_pre) for c in chg):
+                        if _track_run("pnpm run build", pkg, f"build ({label}: src/ changed)") != 0:
+                            _track_die(f"the build of {label} failed on the merged tree — {base} is unchanged; "
+                                       f"{branch} keeps the merge, fix it there and merge again")
+                    ran_rel += [Path(f).resolve().relative_to(Path(wt).resolve()).as_posix() for f in files]
+                    for cmd in steps + (_track_pkg_extra_steps(pkg) if (extras_due or files or pkg in fallback) else []):
+                        rc = _track_run(cmd, pkg, f"relevant tests ({label})", env=tenv)
+                        if rc != 0:
+                            break
+                    if rc != 0:
+                        break
+                ran = f"relevant tests ({n} file(s))"
         if rc != 0:
             # T-835 (decision T-822 「C」): 141 = SIGPIPE — a later pipeline stage closed the pipe early.
             why = ("\nexit 141: a later pipeline stage (such as `| head`) closed the pipe, so the run was cut short "
                    "and its result is unknown — remove the `| head` or write the output to a file"
                    if rc == 141 else "")
             _track_die(f"tests failed on the merged tree — {base} is unchanged; {branch} keeps the merge, "
-                       f"fix it there and land again{why}")
+                       f"fix it there and merge again{why}")
+        _track_test_map_update(code, wt, trace_dir, ran_rel)
         dirty = _tgit(["status", "--porcelain"], wt)
         if dirty.returncode != 0 or dirty.stdout.strip():
             left = [ln[3:] if len(ln) > 3 else ln for ln in dirty.stdout.splitlines() if ln]
             _track_die(f"tests left the merged tree dirty ({', '.join(left) or '?'}) — {base} is unchanged; "
-                       f"{branch} keeps the merge, clean it up there and land again")
+                       f"{branch} keeps the merge, clean it up there and merge again")
         new = _tgit(["rev-parse", "--verify", "--quiet", tref], code).stdout.strip()
         if not new or _tgit(["merge-base", "--is-ancestor", bref, new], code).returncode != 0:
-            _track_die(f"{base} moved during the land — land again")
+            _track_die(f"{base} moved during the merge — merge again")
         holder = None
         cur = None
         for line in _tgit(["worktree", "list", "--porcelain"], code).stdout.splitlines() + [""]:
@@ -14054,6 +15703,8 @@ def cmd_track_land(args):
             lock.unlink()
         except OSError:
             pass
+        if trace_dir is not None:
+            shutil.rmtree(trace_dir, ignore_errors=True)
     r = _tgit(["worktree", "remove", str(wt)], code)
     if r.returncode == 0:
         print(f"worktree {wt} removed")
@@ -14073,8 +15724,8 @@ def cmd_track_land(args):
         r = _tgit(["branch", "-D", branch], code)
         print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
     else:
-        print(f"branch {branch} kept — not merged into {base} (unexpected after land)")
-    print(f"landed {tid} — tests `{test}` green; nothing pushed")
+        print(f"branch {branch} kept — not merged into {base} (unexpected after merge)")
+    print(f"merged {tid} — {ran}{'' if ran.startswith('no ') else ' green'}; nothing pushed")
 
 
 def cmd_track_drop(args):
@@ -14093,7 +15744,7 @@ def cmd_track_drop(args):
         on_main = _tgit(["merge-base", "--is-ancestor", tref, "refs/heads/main"], code).returncode == 0
         if not (on_dev or on_main):
             _track_die(f"branch {branch} holds commits not on dev or main — `prdt track drop {tid} --force` "
-                       f"to drop it anyway, or `prdt track land {tid}` to keep them")
+                       f"to drop it anyway, or `prdt track merge {tid}` to keep them")
     r = _tgit(["worktree", "remove", "--force", str(wt)], code)
     if r.returncode != 0:
         _track_die("git worktree remove failed: " + (r.stderr.strip() or r.stdout.strip()))
@@ -14101,7 +15752,7 @@ def cmd_track_drop(args):
     r = _tgit(["branch", "-D", branch], code)
     print(f"branch {branch} deleted" if r.returncode == 0 else f"branch -D failed: {r.stderr.strip()}")
     _track_record_remove(code, tid)
-    print(f"dropped {tid} — nothing landed, nothing pushed")
+    print(f"dropped {tid} — nothing merged, nothing pushed")
 
 
 def cmd_track(args):
@@ -14111,8 +15762,9 @@ def cmd_track(args):
         if len(args.base) > 1:
             _track_die("--base given more than once — pass it once (dev or main)", 2)
         args.base = args.base[0]
-    {"open": cmd_track_open, "review": cmd_track_review, "land": cmd_track_land,
-     "drop": cmd_track_drop}[args.action](args)
+    # T-1264: `land` = alias of `merge` through v1.16, removed in v1.17.
+    {"open": cmd_track_open, "review": cmd_track_review, "merge": cmd_track_merge,
+     "land": cmd_track_merge, "drop": cmd_track_drop}[args.action](args)
 
 
 
@@ -14371,14 +16023,215 @@ def cmd_dispatch_caps(args):
     os.execvpe("bash", ["bash", str(hook)], {**os.environ, "PRDT_GATE_CAPS_REPORT": "1", "PRDT_HOME": str(prdt_home())})
 
 
+# T-1272: one axis line of the gate's caps report — `OVER  <name>: …`, `ok    <name>: …`,
+# `?     <name>: unmeasured` (prdt-dispatch-gate.sh `$axes_text`).
+_CAPS_AXIS_RE = re.compile(r"^(OVER|ok|\?)\s+(.+?): ")
+
+
+def _dispatch_caps_over(persona=None, project_root=None):
+    """{axis name: True when over its cap} from one gate report-mode run — the gate's
+    own measurement, never re-derived; an unmeasured axis never blocks (gate rule),
+    so it reads as not over. None when the gate could not run or printed no axis.
+    T-1290: `persona` (developer/qa) + `project_root` make the gate count the T-1248
+    priority yield for that dispatch kind as OVER on the suites axis."""
+    hook = _gate_hook_path()
+    if hook is None:
+        return None
+    try:
+        env = {**os.environ, "PRDT_GATE_CAPS_REPORT": "1", "PRDT_HOME": str(prdt_home())}
+        env.pop("PRDT_GATE_PERSONA", None)
+        env.pop("PRDT_GATE_PROJECT_ROOT", None)
+        if persona in ("developer", "qa") and project_root:
+            env["PRDT_GATE_PERSONA"] = persona
+            env["PRDT_GATE_PROJECT_ROOT"] = os.path.realpath(str(project_root))
+        out = subprocess.run(["bash", str(hook)], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                             timeout=60, env=env).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    axes, last = {}, None
+    _SUITE_APPLIES.clear()
+    for ln in out.splitlines():
+        m = _CAPS_AXIS_RE.match(ln)
+        if m:
+            last = m.group(2)
+            axes[last] = m.group(1) == "OVER"
+        elif last is not None and ln.strip().startswith("applies to:") and "developer" in ln:
+            _SUITE_APPLIES.add(last)   # the gate's own `suite: true` axes (load · suites)
+    return axes or None
+
+
+_SUITE_APPLIES = set()   # T-1272: axis names the last caps report said apply to developer/qa only
+
+
+# T-1272: per-project run state, tooling-owned under `<PRDT_HOME>/run/` (contracts/runtime-writes.md:
+# `run/` is tooling-owned, a new file under it needs no carve-out) — keyed by the sha256 of the
+# physical project root, first 16 hex (the same key shape the track records use).
+# prdt-lane-check.sh computes the same key.
+def _lane_run_key(root):
+    return hashlib.sha256(os.path.realpath(str(root)).encode("utf-8")).hexdigest()[:16]
+
+
+def _lanes_paused_path(root):
+    return prdt_home() / "run" / "lanes-paused" / f"{_lane_run_key(root)}.json"
+
+
+def _lane_wait_dir(root):
+    return prdt_home() / "run" / "lane-waits" / _lane_run_key(root)
+
+
+def _read_paused(root):
+    """{"all": bool, "lanes": [name]} or None when nothing is paused."""
+    try:
+        d = json.loads(_lanes_paused_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(d, dict) or (not d.get("all") and not d.get("lanes")):
+        return None
+    return {"all": bool(d.get("all")), "lanes": [x for x in d.get("lanes") or [] if isinstance(x, str)]}
+
+
+def _project_gate_lane_names(root):
+    names = []
+    for line in gate_lines(root):
+        for ln in compute_schedule(root, line=line).get("lanes") or []:
+            if not ln.get("besteffort") and ln["name"] not in names:
+                names.append(ln["name"])
+    return names
+
+
+def _resolve_lane_args(root, wanted):
+    """A lane is named by its whole name or its first word (`L1` → `L1 결정/질문`)."""
+    known = _project_gate_lane_names(root)
+    out = []
+    for w in wanted:
+        hit = [n for n in known if n == w or (n.split() or [n])[0] == w]
+        if not hit:
+            sys.exit(f"prdt lanes: no gate lane named {safe_label(w)} — known: "
+                     + (", ".join(safe_label(n) for n in known) or "none"))
+        out += [n for n in hit if n not in out]
+    return out, known
+
+
+def cmd_lanes(args):
+    """`prdt lanes pause|resume [<lane>…]` (T-1272) — the user's stop as a recorded state, not a
+    guess from transcript text. The PO runs it the turn the user says stop / go. No lane named =
+    every lane. Read by prdt-lane-check.sh; `prdt schedule` lists what is paused."""
+    if args.action not in ("pause", "resume"):
+        sys.exit("usage: prdt lanes pause [<lane>…] | prdt lanes resume [<lane>…]")
+    root = require_root()
+    path = _lanes_paused_path(root)
+    cur = _read_paused(root) or {"all": False, "lanes": []}
+    named, known = _resolve_lane_args(root, args.lanes) if args.lanes else ([], [])
+    if args.action == "pause":
+        if not named:
+            cur = {"all": True, "lanes": []}
+        elif not cur["all"]:
+            cur["lanes"] += [n for n in named if n not in cur["lanes"]]
+    else:
+        if not named:
+            cur = {"all": False, "lanes": []}
+        elif cur["all"]:
+            cur = {"all": False, "lanes": [n for n in known if n not in named]}
+        else:
+            cur["lanes"] = [n for n in cur["lanes"] if n not in named]
+    if not cur["all"] and not cur["lanes"]:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        print("prdt lanes: nothing paused")
+        return
+    home = prdt_home()
+    home.mkdir(parents=True, exist_ok=True)
+    state_write(home, path, json.dumps({"project_root": os.path.realpath(str(root)), "all": cur["all"],
+                                        "lanes": cur["lanes"], "since": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                                       ensure_ascii=False))   # T-908: link-refusing under PRDT_HOME
+    print("prdt lanes: paused " + ("every lane" if cur["all"] else ", ".join(safe_label(n) for n in cur["lanes"])))
+
+
+def _print_paused(root):
+    p = _read_paused(root)
+    if p:
+        print("paused lanes: " + ("every lane" if p["all"] else ", ".join(safe_label(n) for n in p["lanes"]))
+              + " — `prdt lanes resume` re-enables")
+
+
+def _register_wait_marker(root):
+    """This wait's own marker: `<PRDT_HOME>/run/lane-waits/<project key>/<pid>.json`, removed on exit
+    (a SIGTERM too); prdt-lane-check.sh counts only a live marker of ITS project."""
+    import atexit, signal
+    d = _lane_wait_dir(root)
+    f = d / f"{os.getpid()}.json"
+    try:
+        home = prdt_home()
+        home.mkdir(parents=True, exist_ok=True)
+        state_write(home, f, json.dumps({"pid": os.getpid(), "project_root": os.path.realpath(str(root))}))   # T-908
+    except (OSError, StateLinkError):
+        return
+
+    def _rm(*_):
+        for x, rm in ((f, os.unlink), (d, os.rmdir)):
+            try:
+                rm(x)
+            except OSError:
+                pass
+    atexit.register(_rm)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+
+
+def cmd_dispatch_wait(args):
+    """`prdt dispatch wait [--timeout S] [--interval S]` (T-1272) — blocks until every
+    gate cap over at start (the caps that denied) clears, then exits 0 naming them.
+    Meant for the PO's Bash `run_in_background`: its exit re-invokes the PO.
+    `--persona <p>` (T-1272): only the axes that apply to that persona (developer/qa: all;
+    designer/po: not CPU load or full test suites); default = all.
+    `--timeout` passed first → exit 2. Writes only its own marker (`run/lane-waits/`), removed on exit."""
+    interval = max(1.0, float(args.interval))
+    root = find_project_root()
+    if root:
+        _register_wait_marker(root)
+    deadline = None if args.timeout is None else time.monotonic() + max(0.0, float(args.timeout))
+    persona = getattr(args, "persona", None)
+    measure = lambda: _dispatch_caps_over(persona, root)   # noqa: E731  T-1290: the yield needs persona + root
+    axes = measure()
+    if axes is None:
+        sys.exit("prdt dispatch wait: the dispatch gate's caps could not be measured "
+                 "(`prdt dispatch caps` shows why)")
+    suite_work = persona in (None, "developer", "qa")   # load · suites apply to developer/qa only (gate T-1004)
+    applies = lambda n: suite_work or n not in _SUITE_APPLIES   # noqa: E731
+    waiting = [n for n, over in axes.items() if over and applies(n)]
+    if not waiting:
+        print("prdt dispatch wait: no dispatch cap is over — dispatch now")
+        return
+    print("prdt dispatch wait: waiting for " + ", ".join(waiting), flush=True)
+    cleared = []
+    while True:
+        for n in list(waiting):
+            if not axes.get(n, False):
+                waiting.remove(n)
+                cleared.append(n)
+        if not waiting:
+            print("prdt dispatch wait: cleared " + ", ".join(cleared) + " — re-dispatch now")
+            return
+        if deadline is not None and time.monotonic() >= deadline:
+            print("prdt dispatch wait: timeout — still over: " + ", ".join(waiting)
+                  + (" · cleared: " + ", ".join(cleared) if cleared else ""))
+            sys.exit(2)
+        time.sleep(interval if deadline is None else max(0.0, min(interval, deadline - time.monotonic())))
+        axes = measure() or axes
+
+
 def cmd_dispatch(args):
     """`prdt dispatch ls [--json] [--all]` — markers under
     `<PRDT_HOME>/run/dispatches/` across every project, each with the state the
     dispatch gate assigns it. Default hides `stopped` markers; `--all` shows them."""
     if args.action == "caps":
         return cmd_dispatch_caps(args)
+    if args.action == "wait":
+        return cmd_dispatch_wait(args)
     if args.action != "ls":
-        sys.exit("usage: prdt dispatch ls [--json] [--all] | prdt dispatch caps")
+        sys.exit("usage: prdt dispatch ls [--json] [--all] | prdt dispatch caps | "
+                 "prdt dispatch wait [--persona P] [--timeout S] [--interval S]")
     d = prdt_home() / "run" / "dispatches"
     now = datetime.now(timezone.utc)
     rows, unreadable = [], []
@@ -14464,7 +16317,9 @@ def cmd_schedule(args):
             if s["cycle"] is not None:
                 sys.exit(1)
             return
-        if _render_schedule(s):
+        bad = _render_schedule(s, _schedule_stage(root, sel))
+        _print_paused(root)
+        if bad:
             sys.exit(1)
         return
     # Several lines and no --line: every line's schedule, home line first.
@@ -14472,9 +16327,15 @@ def cmd_schedule(args):
     for i, ln in enumerate([None] + names):
         if i:
             print()
-        bad = _render_schedule(compute_schedule(root, line=ln)) or bad
+        bad = _render_schedule(compute_schedule(root, line=ln), _schedule_stage(root, ln)) or bad
+    _print_paused(root)
     if bad:
         sys.exit(1)
+
+
+def _schedule_stage(root, line):
+    """One line's po-state stage (None when unreadable)."""
+    return line_state(read_json(Path(root) / ".prdt" / "po-state.json") or {}, line)[0]
 
 
 def _owner_runs(ids, owner, lab):
@@ -14512,7 +16373,7 @@ def _render_lane(ln, rows, lab):
     return " | ".join(cells)
 
 
-def _render_lanes_schedule(s, lab):
+def _render_lanes_schedule(s, lab, stage=None):
     """Lane mode (T-1184, R6/R10): one block per lane (the 자투리 lane last holds
     what `dispatch next` listed), `lanes done:`, the total line, blocked rows
     named by lane, then waiting-on-user / in-flight over every row."""
@@ -14540,6 +16401,10 @@ def _render_lanes_schedule(s, lab):
     done = [ln for ln in lanes if ln["finished"]]
     print("lanes done: " + (" · ".join(f"{lab(ln['name'])} {ln['done']}/{ln['total']}" for ln in done)
                             if done else "(none)"))
+    if stage == "build" and s.get("lanes_from") == "table":
+        # T-1365: build-entry step 4 skipped — the lanes still come from the PRD table
+        print(f"lanes: from the PRD 합격선 table, no `lane:` record in {lab(s['version'])} — "
+              f"write the records (build-entry step 4)")
     tot = s.get("totals") or {}
     print(f"total {tot.get('done', 0)}/{tot.get('total', 0)} = lanes {sum(ln['done'] for ln in lanes)}/"
           f"{sum(ln['total'] for ln in lanes)} · impl {tot.get('impl_done', 0)}/{tot.get('impl_total', 0)}")
@@ -14556,8 +16421,9 @@ def _render_lanes_schedule(s, lab):
     return False
 
 
-def _render_schedule(s):
-    """Print one line's schedule; True when it carries a dependency cycle."""
+def _render_schedule(s, stage=None):
+    """Print one line's schedule; True when it carries a dependency cycle.
+    `stage` = that line's po-state stage (T-1365: the lane-record nudge)."""
     lab = lambda v: safe_label(str(v if v is not None else "-"))
     for m in s["missing_deps"]:
         print(f"note: {lab(m['ticket'])} deps on missing {lab(m['dep'])} — ignored")
@@ -14569,7 +16435,7 @@ def _render_schedule(s):
     print(f"schedule {lab(s['version'])} — {len(rows)} open ticket(s) in the graph")
     lanes = s.get("lanes") or []
     if lanes:
-        return _render_lanes_schedule(s, lab)
+        return _render_lanes_schedule(s, lab, stage)
     if s["critical_path"]:
         print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
     else:
@@ -14614,9 +16480,9 @@ SCHEDULE_LOG = "schedule.jsonl"
 SCHEDULE_CLASSES = ("followed", "deviated", "continuation", "off-graph")
 SCHEDULE_MODEL_TIERS = ("sonnet", "opus", "haiku", "fable")
 # Same token rule as prdt-post-dispatch.sh's TICKET_TOKEN_RE (`T-682`,
-# `d-T682-…`; never the `T-4` of `GPT-4`, never `T-68` inside `T-6829`).
-SCHEDULE_TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T-?([0-9]{1,5})(?![0-9])")
-SCHEDULE_ID_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
+# `d-T682-…`, `T-RCH-002`; never the `T-4` of `GPT-4`, never `T-68` inside `T-6829`).
+SCHEDULE_TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T(?:-([BCDFGHJKLMNPQRSTVWXYZ]{1,8})-|-?)([0-9]{1,5})(?![0-9])")
+SCHEDULE_ID_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")
 SCHEDULE_REPORT_BEGIN = "<!-- prdt:schedule-report:begin — `prdt schedule report` 가 이 구간을 다시 쓴다. 손으로 고치지 않는다. -->"
 SCHEDULE_REPORT_END = "<!-- prdt:schedule-report:end -->"
 # The PO-habit clause the off-path warning quotes — a test pins it verbatim
@@ -14654,7 +16520,7 @@ def schedule_ticket_for_ctx(ctx, tickets):
         if isinstance(field, str):
             m = SCHEDULE_TICKET_TOKEN_RE.search(field)
             if m:
-                return f"T-{m.group(1)}", "token"
+                return (f"T-{m.group(1)}-{m.group(2)}" if m.group(1) else f"T-{m.group(2)}"), "token"
     return None, None
 
 
@@ -15027,6 +16893,118 @@ def schedule_report(root, version):
     p.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(p, text)
     return p, n, bad
+
+
+# ── `prdt deploy record` (T-1250): the ONE writer of a product's deployed-version record ──
+# Spec: docs/<product>/artifacts/v1.15/deployed-record-spec.md §쓰는 쪽. The record is the
+# `deployed:` one-line flow in `docs/<product>/DEPLOY.md` frontmatter; this command rewrites
+# that line and nothing else (every other byte kept, atomic write).
+
+DEPLOY_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/+-]*", re.ASCII)
+_DEPLOYED_FLOW_RE = re.compile(r"\{\s*version:\s*([^,}]*?)\s*,\s*at:\s*([^,}]*?)\s*,\s*ref:\s*([^,}]*?)\s*\}")
+
+
+def _deploy_die(msg):
+    sys.exit(f"prdt deploy record: {msg} — nothing written")
+
+
+def _deploy_split(raw):
+    """((start, end, value) of the `deployed:` line or None, offset of the closing `---`)
+    over the frontmatter of `raw` (bytes); None when there is no closed frontmatter."""
+    lines = raw.splitlines(keepends=True)
+    if not lines or lines[0].rstrip(b"\r\n") != b"---":
+        return None
+    pos, hit, close = len(lines[0]), None, None
+    for ln in lines[1:]:
+        body = ln.rstrip(b"\r\n")
+        if body == b"---":
+            close = pos
+            break
+        if hit is None and body.startswith(b"deployed:"):
+            hit = (pos, pos + len(ln), body[len(b"deployed:"):].decode("utf-8", "replace").strip())
+        pos += len(ln)
+    if close is None:
+        return None
+    return hit, close
+
+
+def _deploy_defaults(root, product, version, ref):
+    code = code_root(root)
+    if ref is None:
+        def g(a):
+            r = _tgit(a, code)
+            return r.stdout.strip() if r.returncode == 0 else ""
+        if g(["rev-parse", "--verify", "--quiet", f"refs/tags/{version}"]):
+            ref = version
+        else:
+            ref = g(["rev-parse", "--short", "refs/heads/main"])
+        if not ref:
+            _deploy_die(f"no tag {version} and no main branch in {code} to take a ref from — pass --ref")
+    return ref
+
+
+def cmd_deploy(args):
+    """`prdt deploy record [<product>] [--ref R] [--version V] [--at YYYY-MM-DD]`."""
+    root = Path(require_root())
+    prods = project_products(root)
+    slug = _resource_project_slug(root)
+    product = args.product
+    if prods:
+        if product is None:
+            product = prods[0]
+        elif product not in prods:
+            _deploy_die(f"{safe_label(product)} is not a product of this project ({', '.join(prods)})")
+    elif product is not None and product != slug:
+        _deploy_die(f"{safe_label(product)} is not a product of this project ({slug})")
+    first = (prods[0] if prods else None) == product or not prods
+    path = product_docs_dir(root, product if prods else None) / "DEPLOY.md"
+    shown = docs_rel(root, path)
+    if not path.is_file():
+        _deploy_die(f"{shown} does not exist")
+    version = args.version
+    if version is None:
+        st = read_json(root / ".prdt" / "po-state.json")
+        v = line_state(st, None if first else product)[1]
+        version = split_line_id(v)[1] if v else None
+        if not version:
+            _deploy_die(f".prdt/po-state.json has no version for {safe_label(product or slug)} — pass --version")
+    if not (isinstance(version, str) and VERSION_ID_RE.fullmatch(version)):
+        _deploy_die(f"version {safe_label(str(version))} is not a version id (v<N>[.<m>[.<p>]])")
+    at = args.at
+    if at is None:
+        at = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", at):
+            raise ValueError(at)
+        datetime.strptime(at, "%Y-%m-%d")
+    except ValueError:
+        _deploy_die(f"at {safe_label(str(at))} is not a date (YYYY-MM-DD)")
+    if args.ref is not None and not DEPLOY_REF_RE.fullmatch(args.ref):
+        _deploy_die(f"ref {safe_label(args.ref)} is not a tag or commit name")
+    raw = path.read_bytes()
+    spl = _deploy_split(raw)
+    if spl is None:
+        _deploy_die(f"{shown} has no frontmatter (a leading `---` block)")
+    hit, close = spl
+    if hit is not None and hit[2] == "":
+        _deploy_die(f"{shown} writes `deployed:` as a block, not the one-line flow")
+    ref = _deploy_defaults(root, product, version, args.ref)
+    line = f"deployed: {{version: {version}, at: {at}, ref: {ref}}}"
+    if hit is not None:
+        s0, s1, _val = hit
+        eol = raw[s0:s1][len(raw[s0:s1].rstrip(b"\r\n")):] or b"\n"
+        new = raw[:s0] + line.encode() + eol + raw[s1:]
+    else:
+        eol = b"\r\n" if raw[:close].endswith(b"\r\n") else b"\n"
+        new = raw[:close] + line.encode() + eol + raw[close:]
+    m = _DEPLOYED_FLOW_RE.fullmatch(hit[2]) if hit else None
+    before = " · ".join(m.groups()) if m else ("(없음)" if hit is None else safe_label(hit[2]))
+    if new != raw:
+        try:
+            state_write(root, path, new.decode("utf-8"), create_dirs=False)
+        except (OSError, UnicodeError, StateLinkError) as e:
+            _deploy_die(f"could not write {shown} ({e})")
+    print(f"deployed: {before} → {version} · {at} · {ref} ({shown})")
 
 
 def cmd_schedule_record(_args):
@@ -15649,6 +17627,8 @@ def cmd_doctor(_args):
         # away, not a discipline↔execution mismatch); silent on any ticket
         # created before the frame's landing date.
         ("ticket frame", FAMILY_PROJECT, lambda: ticket_frame_warnings(root, trows)),
+        # T-1258: advisory — a decision closed after landing without outcome ### why/how/module/what.
+        ("decision outcome keys", FAMILY_PROJECT, lambda: decision_outcome_key_warnings(root, trows)),
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
         ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root), root)),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
@@ -15659,7 +17639,7 @@ def cmd_doctor(_args):
         # Supersedes the referencing-ticket scan, which was never the checkable
         # condition: it missed a file naming its own ticket in its title, and it
         # cleared a file only because a LATER round's ticket happened to cite it.
-        ("artifact placement", FAMILY_PROJECT, lambda: artifact_placement_warnings(root)),
+        ("artifact placement", FAMILY_PROJECT, lambda: all_artifact_placement_warnings(root)),
         # PRD layout — one file per closed version · one open section in PRD.md ·
         # a stub for a tickets-only round · the gap a ticket dir with no record
         # leaves (T-657). Fires on the pre-migration shapes too (history.md lump,
@@ -15779,6 +17759,8 @@ def cmd_doctor(_args):
         ("bin helper modules", FAMILY_DE, lambda: bin_helper_warnings()),
         # T-977: a broken project word list is skipped by the write-time hook
         ("project word list", FAMILY_PROJECT, lambda: wordlist_project_warnings(root)),
+        # T-1304: a broken canon entry is skipped by the hook too — say so here
+        ("canon word list", FAMILY_DE, lambda: wordlist_canon_warnings()),
         # meta-cli bridge (dist/bin/meta-cli.cjs) behind packages/core/src (T-731) —
         # a BUILD staleness, not a mirror-content diff like the three checks
         # around it, but the same family: a committed fix binds nothing until
@@ -16540,18 +18522,18 @@ def layout_apply(root, plan):
         try:
             widx = shared_docs_dir(root) / "wiki" / "index.md"
             undo["wiki_index"] = widx.read_bytes() if widx.is_file() else False
-            man = artifact_manifest_path(root)
+            man = artifact_manifest_path(root, prod)
             if (root / "docs" / prod / "artifacts").is_dir():
                 undo["manifest"] = man.read_bytes() if man.is_file() else False
-                if legacy_bucket_manifests(root):
+                if legacy_bucket_manifests(root, prod):
                     raise _LayoutFail(6, "산출물 목록 · 인덱스 · 위키 index.md 를 다시 만들 수 없어요 "
                                          "(artifacts 폴더에 버킷별 manifest 가 남아 있어요)",
                                       "prdt artifacts migrate 를 먼저 실행한 뒤 다시 실행하세요.")
-                prior, merr, malformed, _ = read_artifact_manifest(root)
+                prior, merr, malformed, _ = read_artifact_manifest(root, prod)
                 if merr or malformed:
                     raise OSError(0, f"artifacts manifest 를 읽을 수 없어요: {merr or malformed[0]}")
-                data, _dropped = build_artifact_manifest(root, prior=prior)
-                write_artifact_manifest(root, data)
+                data, _dropped = build_artifact_manifest(root, prior=prior, product=prod)
+                write_artifact_manifest(root, data, prod)
                 if undo["manifest"] is False:
                     generated.append(man)
             con, _v, _pages, _m = rebuild_index(root)
@@ -16578,7 +18560,7 @@ def layout_apply(root, plan):
 
         # 8 — one meta commit
         extra = [".prdt/config.json"]
-        for cand in (artifact_manifest_path(root), shared_docs_dir(root) / "wiki" / "index.md"):
+        for cand in (artifact_manifest_path(root, prod), shared_docs_dir(root) / "wiki" / "index.md"):
             if cand.is_file():
                 extra.append(Path(cand).relative_to(root).as_posix())
         # the old paths were staged as deleted at step 4 — only what exists now is added here
@@ -16622,7 +18604,7 @@ def layout_path_warnings(root):
         tickets = {r["id"]: r for r in trows}
     except Exception:
         tickets = {}
-    for fn in (lambda: artifact_placement_warnings(root), lambda: prd_layout_warnings(root, st),
+    for fn in (lambda: all_artifact_placement_warnings(root), lambda: prd_layout_warnings(root, st),
                lambda: artifact_ticket_edge_warnings(root, tickets), lambda: meta_drift_warnings(root),
                lambda: dead_discipline_path_warnings(root)):
         try:
@@ -17762,16 +19744,30 @@ def _env_parse_values(p):
 # BCP-47 language under discipline/wordlist/ (mirrored to ~/.prdt with the rest
 # of discipline/), extended per project by `.prdt/wordlist/<lang>.json` (same
 # schema; an entry whose `word` matches a canon entry replaces it, any other is
-# appended — canon is never edited). Checked by `prdt wordlist check` and, at
+# appended — canon is never edited). T-1262: schema 2 (`concept` · `say` ·
+# `avoid[]` · `except_line` · `scope` · `cases`) is read alongside schema 1, per
+# entry; `concept` is the merge key `word` was. Checked by `prdt wordlist check` and, at
 # write time, by prdt-wordlist-check.sh (PostToolUse Write|Edit|MultiEdit) on the
 # UX-writing surfaces below. `prdt wordlist export` is the import path for a
 # product's runtime LLM prompts (patterns are kept to the Python/JS regex
 # common subset; `flags` is "i" or absent).
-WORDLIST_SURFACE_RES = (
-    re.compile(r"^docs/artifacts/.+\.(?:html?|md)$"),
-    re.compile(r"^docs/prd/PRD\.md$"),
-    re.compile(r"^docs/tickets/.+\.md$"),
+WORDLIST_SURFACES = (
+    ("artifacts", re.compile(r"^docs/artifacts/.+\.(?:html?|md)$")),
+    ("prd", re.compile(r"^docs/prd/PRD\.md$")),
+    ("ticket-body", re.compile(r"^docs/tickets/.+\.md$")),
 )
+WORDLIST_SURFACE_RES = tuple(rx for _, rx in WORDLIST_SURFACES)
+# contracts §Language surface names an entry's `scope` may list; `user-chat` has
+# no path (`prdt wordlist check --surface user-chat`).
+WORDLIST_SCOPE_NAMES = ("user-chat", "prd", "artifacts", "ticket-body")
+
+
+def wordlist_surface_of(as_is_rel):
+    """Surface name of a docs path (As-Is layout), or None."""
+    for name, rx in WORDLIST_SURFACES:
+        if rx.match(as_is_rel):
+            return name
+    return None
 _WORDLIST_HTML_SKIP = {"script", "style", "code", "pre", "del", "s", "template", "noscript"}
 _WORDLIST_HTML_ATTRS_RE = re.compile(r"""(?<![\w-])(?:title|alt|placeholder|aria-label)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
 _WORDLIST_HOOK_MAX_LINES = 15
@@ -17815,14 +19811,130 @@ def _wordlist_project_file(root, lang):
     return Path(root) / ".prdt" / "wordlist" / f"{lang}.json" if root else None
 
 
-def wordlist_entries(lang, root=None, warnings=None):
-    """Canon list for `lang` merged with the project's local one (by `word`).
-    Each returned entry carries its compiled `_re` and `_except` regexes.
+def _wordlist_str_list(v):
+    if isinstance(v, str):
+        return [v]
+    if isinstance(v, list) and v and all(isinstance(x, str) and x for x in v):
+        return list(v)
+    return None
+
+
+# T-1263 — three shapes that load fine but break later: a numbered backreference
+# (`\1`, `(?(1)…)`) changes meaning once `avoid` items are joined as
+# `(?:p1)|(?:p2)` for `export`; an inline global flag (`(?i)`) is not at the start
+# of the joined pattern, so `export` cannot compile it; a malformed `cases` makes
+# the case runner raise. Each is refused at load (project list: warning + entry
+# skipped, same as every other bad entry).
+_WORDLIST_BACKREF_RE = re.compile(r"(?<!\\)(?:\\\\)*(?:\\[1-9]|\(\?\([0-9]+\))")
+_WORDLIST_INLINE_FLAG_RE = re.compile(r"(?<!\\)(?:\\\\)*\(\?[aiLmsux]+(?:-[imsx]+)?\)")
+
+
+def _wordlist_check_joined(pairs):
+    """ValueError when several `avoid` items cannot be joined into one export pattern."""
+    if len(pairs) < 2:
+        return
+    for i, (pt, _) in enumerate(pairs, 1):
+        if _WORDLIST_BACKREF_RE.search(pt):
+            raise ValueError(f"`avoid` item {i} uses a numbered backreference; across joined `avoid` items its number changes (use one item, or a named group)")
+        if _WORDLIST_INLINE_FLAG_RE.search(pt):
+            raise ValueError(f"`avoid` item {i} has an inline global flag such as (?i); use `flags` (the joined export pattern cannot carry it)")
+    try:
+        for pt, _ in pairs:
+            re.compile(pt)
+    except re.error:
+        return   # reported per item as a bad pattern
+    try:
+        re.compile("|".join(f"(?:{pt})" for pt, _ in pairs))
+    except re.error as ex:
+        raise ValueError(f"`avoid` items cannot be joined into one export pattern: {ex}")
+
+
+def _wordlist_check_cases(cases):
+    """ValueError unless `cases` is absent or {hit?: [case…], miss?: [case…]}, a
+    case being {text: str, kind?: md|html, n?: int ≥ 1 (hit only)}."""
+    if cases is None:
+        return
+    if not isinstance(cases, dict) or not set(cases) <= {"hit", "miss"}:
+        raise ValueError("`cases` is an object with only `hit` and `miss` lists")
+    for group, items in cases.items():
+        if not isinstance(items, list):
+            raise ValueError(f"`cases.{group}` is a list")
+        for c in items:
+            if not isinstance(c, dict) or not set(c) <= {"text", "kind", "n"} or not isinstance(c.get("text"), str) or not c["text"]:
+                raise ValueError(f"every `cases.{group}` item is an object with a `text` string (and optional `kind`, `n`)")
+            if "kind" in c and c["kind"] not in ("md", "html"):
+                raise ValueError(f"`cases.{group}` `kind` is md or html")
+            if "n" in c and (group != "hit" or isinstance(c["n"], bool) or not isinstance(c["n"], int) or c["n"] < 1):
+                raise ValueError("`n` is an integer ≥ 1 and only on a `hit` case")
+
+
+def _wordlist_normalize(e):
+    """One raw entry (schema 1 or 2, told apart per entry) → the internal entry,
+    or raises ValueError(reason). The internal entry keeps the schema-1 keys
+    (`word` `pattern` `flags` `replace` `except_line` `note`) in the order a
+    schema-1 file has them, so `export` is schema 1 whichever schema it read;
+    `_avoid` = [(pattern, flags)], `_scope`, `_cases` are internal."""
+    if not isinstance(e, dict):
+        raise ValueError("entry is not an object")
+    if "concept" in e:
+        word = e["concept"]
+        replace = _wordlist_str_list(e.get("say"))
+        avoid = e.get("avoid")
+        if not isinstance(word, str) or not word or replace is None or not isinstance(avoid, list) or not avoid:
+            raise ValueError("a schema 2 entry needs `concept`, `say` and a non-empty `avoid[]`")
+        pairs = []
+        for a in avoid:
+            if not isinstance(a, dict) or not isinstance(a.get("pattern"), str) or not a["pattern"] \
+                    or not isinstance(a.get("flags") or "", str):
+                raise ValueError("every `avoid` item needs a `pattern` string")
+            pairs.append((a["pattern"], a.get("flags") or ""))
+        scope = e.get("scope")
+        if scope is not None and not (isinstance(scope, list) and scope and all(x in WORDLIST_SCOPE_NAMES for x in scope)):
+            raise ValueError(f"`scope` lists only {' · '.join(WORDLIST_SCOPE_NAMES)}")
+        _wordlist_check_joined(pairs)
+        _wordlist_check_cases(e.get("cases"))
+        out = {"word": word}
+        flagset = {f for _, f in pairs}
+        if len(pairs) == 1:
+            out["pattern"] = pairs[0][0]
+        else:
+            out["pattern"] = "|".join(f"(?:{pt})" for pt, _ in pairs)
+        if len(flagset) == 1 and "" not in flagset:
+            out["flags"] = next(iter(flagset))
+        elif len(flagset) > 1:
+            out["_mixed_flags"] = True
+        out["replace"] = replace
+        for k in ("except_line", "note"):
+            if k in e:
+                out[k] = e[k]
+        out["_avoid"] = pairs
+        out["_scope"] = scope
+        out["_cases"] = e.get("cases")
+        return out
+    if not isinstance(e.get("word"), str) or not e.get("replace"):
+        raise ValueError("every entry needs `word` and `replace` (schema 1) or `concept`, `say` and `avoid[]` (schema 2)")
+    out = dict(e)
+    out["_avoid"] = [(e.get("pattern") or re.escape(e["word"]), e.get("flags") or "")]
+    out["_scope"] = None
+    out["_cases"] = None
+    return out
+
+
+def wordlist_entries(lang, root=None, warnings=None, surface=None, lenient_canon=False):
+    """Canon list for `lang` merged with the project's local one (by `word`,
+    which is `concept` in schema 2). Each returned entry carries its compiled
+    `_res` and `_except` regexes. With a `surface`, an entry whose `scope` does
+    not list it is left out (no `scope` = every surface).
     With a `warnings` list, a broken PROJECT file or entry is reported there and
     skipped (canon still applies); without one it raises WordlistError.
+    `lenient_canon` (with a `warnings` list) treats a broken CANON file or entry
+    the same way — the write-time hook and doctor (T-1304: one bad canon entry
+    must not silence every check); `check` / `export` keep raising.
     A `lang` that is not BCP-47-shaped always raises (T-1080: no path use)."""
     if not wordlist_lang_ok(lang):
         raise WordlistError(f"prdt wordlist: {one_line(repr(lang))} is not a BCP-47 language tag (e.g. ko, en, zh-Hant)")
+    if surface is not None and surface not in WORDLIST_SCOPE_NAMES:
+        raise WordlistError(f"prdt wordlist: {one_line(repr(surface))} is not a surface ({' · '.join(WORDLIST_SCOPE_NAMES)})")
     merged, order = {}, []
     sources = []
     canon = wordlist_canon_dir()
@@ -17831,41 +19943,65 @@ def wordlist_entries(lang, root=None, warnings=None):
     proj = _wordlist_project_file(root, lang)
     if proj and proj.is_file():
         sources.append(proj)
+    def lenient(src):
+        return warnings is not None and (str(src) == str(proj) or lenient_canon)
     for src in sources:
         try:
             raw = _wordlist_read(src)
         except WordlistError as ex:
-            if warnings is None or src != proj:
+            if not lenient(src):
                 raise
-            warnings.append(f"{ex} (project list skipped, canon list still applied)")
+            warnings.append(f"{ex} (project list skipped, canon list still applied)" if src == proj
+                            else f"{ex} (canon list skipped)")
             continue
         for e in raw:
-            if not isinstance(e, dict) or not isinstance(e.get("word"), str) or not e.get("replace"):
-                msg = f"prdt wordlist: {src}: every entry needs `word` and `replace` ({e!r})"
-                if warnings is None or src != proj:
+            try:
+                n = _wordlist_normalize(e)
+            except ValueError as ex:
+                msg = f"prdt wordlist: {src}: {ex} ({e!r})"
+                if not lenient(src):
                     raise WordlistError(msg)
                 warnings.append(msg + " (entry skipped)")
                 continue
-            w = e["word"]
+            w = n["word"]
             if w not in merged:
                 order.append(w)
-            merged[w] = dict(e, _src=str(src))
+            merged[w] = dict(n, _src=str(src))
     out = []
     for w in order:
         e = merged[w]
         if isinstance(e["replace"], str):
             e["replace"] = [e["replace"]]
         try:
-            e["_re"] = re.compile(e.get("pattern") or re.escape(w), re.I if "i" in (e.get("flags") or "") else 0)
+            e["_res"] = [re.compile(pt, re.I if "i" in fl else 0) for pt, fl in e["_avoid"]]
             e["_except"] = [re.compile(x) for x in (e.get("except_line") or [])]
         except re.error as ex:
             msg = f"prdt wordlist: {e['_src']}: entry {w!r}: bad pattern: {ex}"
-            if warnings is None or e["_src"] != str(proj):
+            if not lenient(e["_src"]):
                 raise WordlistError(msg)
             warnings.append(msg + " (entry skipped)")
             continue
+        if surface is not None and e["_scope"] is not None and surface not in e["_scope"]:
+            continue
         out.append(e)
     return out
+
+
+def wordlist_run_cases(entry):
+    """Run one schema-2 entry's `cases` against that entry alone; [] = all pass,
+    else one line per failed case. `hit` cases must give `n` (default 1) hits,
+    `miss` cases none; a case without `kind` runs as md and as html."""
+    failures = []
+    cases = entry.get("_cases") or {}
+    for group in ("hit", "miss"):
+        for c in cases.get(group) or []:
+            kinds = [c["kind"]] if c.get("kind") in ("md", "html") else ["md", "html"]
+            want = int(c.get("n", 1)) if group == "hit" else 0
+            for kind in kinds:
+                got = len(wordlist_scan(c["text"], [entry], kind))
+                if got != want:
+                    failures.append(f"{entry['word']}: {group} case {c['text']!r} ({kind}): expected {want} hit(s), got {got}")
+    return failures
 
 
 def wordlist_langs(root=None):
@@ -18039,9 +20175,10 @@ def wordlist_scan(text, entries, kind="md", warnings=None):
                 raw = raw_lines[i] if i < len(raw_lines) else line
                 if any(x.search(raw) for x in e["_except"]):
                     continue
-                for m in e["_re"].finditer(line):
-                    if m.group(0).strip():
-                        part.append((i + 1, m.start(), m.end(), m.group(0), e))
+                for rx in e["_res"]:
+                    for m in rx.finditer(line):
+                        if m.group(0).strip():
+                            part.append((i + 1, m.start(), m.end(), m.group(0), e))
         except _WordlistTimeout:
             part = []
             if warnings is not None:
@@ -18091,9 +20228,9 @@ def _wordlist_repl(replace):
     return " · ".join(one_line(r) for r in replace)
 
 
-def wordlist_check_text(text, name, lang_arg, root, warnings=None):
+def wordlist_check_text(text, name, lang_arg, root, warnings=None, surface=None, lenient_canon=False):
     lang = lang_arg or wordlist_detect_lang(text, root)
-    entries = wordlist_entries(lang, root, warnings)
+    entries = wordlist_entries(lang, root, warnings, surface, lenient_canon)
     return lang, wordlist_scan(text, entries, _wordlist_kind(name), warnings)
 
 
@@ -18108,6 +20245,24 @@ def wordlist_project_warnings(root):
         w = []
         try:
             wordlist_entries(f.stem, root, w)
+        except WordlistError as ex:
+            w.append(str(ex))
+        warns.extend(f"wordlist: {x}" for x in w)
+    return warns
+
+
+def wordlist_canon_warnings():
+    """Doctor (T-1304): every canon `discipline/wordlist/<lang>.json` that is
+    unreadable, malformed or carries a bad entry — the hook skips it with a
+    warning, `check` fails on it."""
+    d = wordlist_canon_dir()
+    if not d:
+        return Skipped("no canon word list (discipline/wordlist/)")
+    warns = []
+    for f in sorted(d.glob("*.json")):
+        w = []
+        try:
+            wordlist_entries(f.stem, None, w, lenient_canon=True)
         except WordlistError as ex:
             w.append(str(ex))
         warns.extend(f"wordlist: {x}" for x in w)
@@ -18132,10 +20287,11 @@ def _wordlist_hook(root_hint):
             return
         rel = f.resolve().relative_to(root).as_posix()
         as_is = docs_as_is_rel(root, rel)   # T-1104: To-Be docs/<p>/X · docs/_shared/X match the As-Is surfaces
-        if not any(rx.match(as_is) for rx in WORDLIST_SURFACE_RES):
+        surface = wordlist_surface_of(as_is)
+        if not surface:
             return
         warns = []
-        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns)
+        lang, hits = wordlist_check_text(f.read_text(encoding="utf-8"), rel, None, root, warns, surface, lenient_canon=True)
     except Exception:
         return
     if not hits and not warns:
@@ -18161,7 +20317,11 @@ def cmd_wordlist(args):
     try:
         if args.action == "export":
             lang = args.lang or "ko"
-            entries = wordlist_entries(lang, root)
+            entries = wordlist_entries(lang, root, None, args.surface)
+            for e in entries:
+                if e.get("_mixed_flags"):
+                    raise WordlistError(f"prdt wordlist: entry {one_line(e['word'])!r} ({e['_src']}) has `avoid` items with different `flags`; "
+                                        "export carries one `flags` per entry")
             if not entries:
                 print(f"prdt wordlist: no list for {lang!r} (have: {one_line(', '.join(wordlist_langs(root))) or 'none'})", file=sys.stderr)
                 sys.exit(3)
@@ -18186,7 +20346,7 @@ def cmd_wordlist(args):
                     print(f"prdt wordlist check: cannot read {name}: {e}", file=sys.stderr)
                     sys.exit(3)
             warns = []
-            lang, hits = wordlist_check_text(text, shown, args.lang, root, warns)
+            lang, hits = wordlist_check_text(text, shown, args.lang, root, warns, args.surface)
             for w in warns:
                 print(one_line(w), file=sys.stderr)
             report.append({"path": shown, "lang": lang, "hits": hits})
@@ -19286,7 +21446,7 @@ def _cloud_ls_remote(code, ref):
     return "", None
 
 
-CLOUD_REF_RE = re.compile(r"^refs/heads/ci/T-\d+/[A-Za-z0-9._-]+$")
+CLOUD_REF_RE = re.compile(r"^refs/heads/ci/T-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+/[A-Za-z0-9._-]+$")
 
 
 def _cloud_delete_ref(code, ref):
@@ -19580,7 +21740,7 @@ def cmd_test_cloud(args):
         return
     tid = args.ticket
     if not (isinstance(tid, str) and TRACK_ID_RE.match(tid)):
-        _cloud_die("the ticket id must look like T-NNN", 2)
+        _cloud_die("the ticket id must look like T-NNN or T-<PREFIX>-<n>", 2)
     if args.shards < 1:
         _cloud_die("--shards must be 1 or more", 2)
     repo = cloud_github_repo(code)
@@ -19802,6 +21962,9 @@ def main():
                    help="T-983: install the generator's dependencies if missing and build viewer.html if absent; "
                         "silent when ready, one failure line otherwise (the PO session-start hook and `prdt update` run it)")
     p.add_argument("--refresh", action="store_true", help="with --ensure: regenerate viewer.html even when it exists")
+    p.add_argument("--release", metavar="VERSION",
+                   help="T-1303: also link the release-notes view at VERSION's section of code/docs/RELEASES.md "
+                        "(working tree, an uncommitted draft included); same as the target code/docs/RELEASES.md#VERSION")
     p.set_defaults(fn=cmd_viewer)
     p = sub.add_parser("tickets", help="list tickets (--version --feature --status --assignee --ready --backlog) "
                                        "· --link T-NNN … prints paste-ready file:// links "
@@ -19831,6 +21994,7 @@ def main():
                         "worker's run never opens regardless")
     p.add_argument("--type", choices=TICKET_TYPES, help="new: the ticket's `type` (required)")
     p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
+    p.add_argument("--title", help="new: optional human title (`title:`), free text in the project's user_lang (T-1276)")
     p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value ([<product>/]v<N>.<m>#<key>)")
     p.add_argument("--product", "--line", dest="line", metavar="PRODUCT",
                    help="new: an added product (.prdt/config.json `products`) — the ticket "
@@ -19841,6 +22005,17 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="fmt: print the diff, write nothing · new: print the would-be path and "
                                                        "frontmatter, write nothing (T-1084)")
     p.set_defaults(fn=cmd_tickets)
+    p = sub.add_parser("decisions", help="find <words…> [--feature F] [--module [KIND]] (T-1257): the recorded decisions "
+                                         "(decision tickets · wiki decision pages · user-quoted log.md lines) that match, "
+                                         "one line each — run before asking the user anything")
+    p.add_argument("action", choices=("find",))
+    p.add_argument("words", nargs="*", metavar="WORD")
+    p.add_argument("--feature", default=None, help="find: only tickets of this `feature`")
+    p.add_argument("--module", nargs="?", const="", default=None, metavar="KIND",
+                   help="find: KIND's principle and the items that followed it; bare = the kinds recorded")
+    p.add_argument("--json", action="store_true", help="find: every matching record as JSON "
+                                                      "(id · kind · status · date · reversed_by · answered) (T-1285)")
+    p.set_defaults(fn=cmd_decisions)
     p = sub.add_parser("artifacts", help="sync (write the ONE docs/artifacts/manifest.json from disk) "
                                          "| check (report artifacts the bucket rule cannot place, and a "
                                          "manifest.json inside a bucket; exit 1 on findings) "
@@ -19940,11 +22115,23 @@ def main():
     p = sub.add_parser("dispatch", help="in-flight dispatch markers, every project (T-695): "
                                         "ls [--json] [--all] — each marker with the state the dispatch gate "
                                         "gives it (live · phantom · stale · stopped); caps — every gate axis "
-                                        "with value · cap · source · remedy (T-893); read-only")
-    p.add_argument("action", choices=("ls", "caps"))
+                                        "with value · cap · source · remedy (T-893); wait — block until "
+                                        "every cap over now clears, exit 0 naming them (T-1272); read-only")
+    p.add_argument("action", choices=("ls", "caps", "wait"))
     p.add_argument("--json", action="store_true", help="machine-readable output")
     p.add_argument("--all", action="store_true", help="include stopped markers")
+    p.add_argument("--timeout", type=float, default=None,
+                   help="wait: give up after this many seconds, exit 2 (default: no limit)")
+    p.add_argument("--interval", type=float, default=30.0, help="wait: seconds between measurements (default 30)")
+    p.add_argument("--persona", choices=("po", "designer", "developer", "qa"), default=None,
+                   help="wait: only the axes that apply to this persona's dispatch (default: all)")
     p.set_defaults(fn=cmd_dispatch)
+    p = sub.add_parser("lanes", help="the user's stop as a recorded state (T-1272): pause [<lane>…] · resume "
+                                     "[<lane>…] — no lane named = every lane; prdt-lane-check.sh reads it, "
+                                     "`prdt schedule` lists what is paused")
+    p.add_argument("action", choices=("pause", "resume"))
+    p.add_argument("lanes", nargs="*", help="lane names (`L1` or the whole name); none = every lane")
+    p.set_defaults(fn=cmd_lanes)
     p = sub.add_parser("schedule", help="next dispatch order by critical path (T-772): open tickets of the "
                                         "current version ranked by slack (critical path first), then "
                                         "blocked-count, PRD H4 order, id — edges from `deps` only, every "
@@ -19961,21 +22148,29 @@ def main():
                         "the first product); default every product, first one first — `--json` the first product")
     p.set_defaults(fn=cmd_schedule)
     p = sub.add_parser("track", help="parallel track worktree (T-775): open <T-NNN> [--base dev|main] · "
-                                     "review <T-NNN> · land <T-NNN> [--base dev|main] [--test CMD] · "
+                                     "review <T-NNN> · merge <T-NNN> [--base dev|main] [--test CMD] · "
                                      "drop <T-NNN> [--force] — the worktree is <project>/tracks/<T-NNN> on "
-                                     "branch track/<T-NNN> of the code repo; land merges the base in, runs "
+                                     "branch track/<T-NNN> of the code repo; merge merges the base in, runs "
                                      "the tests on the merged tree and fast-forwards the base; drop discards "
-                                     "the worktree and branch instead; neither pushes")
-    p.add_argument("action", choices=("open", "review", "land", "drop"))
+                                     "the worktree and branch instead; neither pushes · land: alias of merge "
+                                     "(same behavior), removed in v1.17")
+    p.add_argument("action", choices=("open", "review", "merge", "land", "drop"),
+                   help="open · review · merge · drop (land: alias of merge, removed in v1.17)")
     p.add_argument("ticket", help="T-NNN")
     p.add_argument("--base", choices=TRACK_BASES, action="append",
                    help="open: the branch to cut from (default dev) · "
-                        "land: the branch to land to (default dev; landing "
+                        "merge: the branch to merge to (default dev; merging "
                         "to main takes this explicit PO flag every time — "
                         "never read from git config, worker-writable; a track "
-                        "opened with --base main refuses a land without --base)")
-    p.add_argument("--test", help="land: the test command (default: .prdt/config.json track.test, "
+                        "opened with --base main refuses a merge without --base)")
+    p.add_argument("--test", help="merge: the test command (default: .prdt/config.json track.test, "
                                   "else the package.json test script)")
+    p.add_argument("--full", action="store_true",
+                   help="merge: run the whole suite instead of the relevant tests (the default whole run is a merge "
+                        "that closes a lane)")
+    p.add_argument("--setup-done", action="store_true",
+                   help="merge: after a merge whose setup step failed, say the setup command was rerun in the "
+                        "worktree (without it the next merge refuses and names the command)")
     p.add_argument("--force", action="store_true",
                    help="drop: also discard a branch with uncommitted changes or commits not on dev or main")
     p.set_defaults(fn=cmd_track)
@@ -20011,6 +22206,17 @@ def main():
                                       "ls/register-stop take none")
     p.add_argument("--json", action="store_true", help="ls: machine-readable output")
     p.set_defaults(fn=cmd_resource)
+    p = sub.add_parser("deploy", help="deploy record [<product>] [--ref R] [--version V] [--at YYYY-MM-DD] (T-1250): "
+                                      "the only writer of a product's deployed-version record — rewrites the "
+                                      "`deployed:` line of docs/<product>/DEPLOY.md frontmatter, nothing else; "
+                                      "version = po-state, at = today (Asia/Seoul), ref = tag named like the "
+                                      "version else main's short hash")
+    p.add_argument("action", choices=("record",))
+    p.add_argument("product", nargs="?", help="product name (default: the first product)")
+    p.add_argument("--ref", help="tag or commit name to record (default: tag <version>, else main's short hash)")
+    p.add_argument("--version", help="version id to record (default: the product's po-state version)")
+    p.add_argument("--at", help="deploy date YYYY-MM-DD (default: today, Asia/Seoul)")
+    p.set_defaults(fn=cmd_deploy)
     p = sub.add_parser("preflight", help="model availability canary before a dispatch: "
                                          "prdt preflight <model> [--fallback M] [--recheck] [--clear] "
                                          "— JSON verdict on stdout (available | unavailable | inconclusive)")
@@ -20046,6 +22252,8 @@ def main():
     p.add_argument("--lang", default=None, help="BCP-47 list key (default: project wordlist.lang, else the text's script)")
     p.add_argument("--json", action="store_true")
     p.add_argument("--format", choices=("json", "lines"), default="json")
+    p.add_argument("--surface", default=None, help="contracts §Language surface (user-chat|prd|artifacts|ticket-body): "
+                                                   "only the entries whose `scope` lists it (default: every entry)")
     p.set_defaults(fn=cmd_wordlist)
     # `prdt settings -h`/`--help`: argparse's own subparser help is English
     # and bypasses the message catalog (T-750 QA grill) — answer from the

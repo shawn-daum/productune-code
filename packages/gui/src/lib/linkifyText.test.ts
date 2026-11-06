@@ -105,11 +105,8 @@ test('matchSingleLinkTarget: bare relative docs/artifacts/*.html in a code span 
   expect(target).toEqual({ label: 'foo.html', href: 'ptn:file/docs/artifacts/foo.html' })
 })
 
-test('matchSingleLinkTarget: ticket ID in a code span resolves (T-346, same scope as prose linkify)', () => {
-  expect(matchSingleLinkTarget('T-P4-114')).toEqual({
-    label: 'T-P4-114',
-    href: 'ptn:ticket/T-P4-114',
-  })
+test('matchSingleLinkTarget: ticket ID alone in a code span stays plain code (T-1157 narrows T-346)', () => {
+  expect(matchSingleLinkTarget('T-P4-114')).toBeNull()
 })
 
 test('matchSingleLinkTarget: surrounding whitespace is trimmed before matching (T-346)', () => {

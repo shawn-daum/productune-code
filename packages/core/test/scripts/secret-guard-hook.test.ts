@@ -1044,16 +1044,24 @@ describe('no prdt-project / cwd gate (T-684)', () => {
 //     heredoc 0.99× · 60 KB heredoc 1.19× · 60 KB `node -e` 1.74× · 60 KB
 //     `git commit -m` 1.82× · 1000 args 1.43×. The regressions these rows exist
 //     for were 7.8 s / 21.7 s / 1000 `tr` forks against a ~50 ms tiny hit —
-//     two orders of magnitude, so a 4× ceiling still catches each of them.
+//     two orders of magnitude, so a 4× ceiling still catches each of them
+//     (60 KB `node -e` uses 10×: see NODE_60KB_CEILING, T-1356).
 
 type Sample = () => void
 
 /** Median wall time (ms) of each named sampler, the samplers run in
  *  alternation round by round so every one of them sees the same load. */
-function interleavedMedians(samplers: Record<string, Sample>, rounds: number): Record<string, number> {
+function interleavedMedians(
+  samplers: Record<string, Sample>, rounds: number,
+  until?: { minRounds: number; deadlineMs: number },
+): Record<string, number> {
   const times: Record<string, number[]> = {}
   for (const k of Object.keys(samplers)) times[k] = []
+  const start = Date.now()
   for (let r = 0; r < rounds; r++) {
+    // T-1366: past `minRounds`, stop sampling once the wall-clock deadline is
+    // spent — fewer rounds under load, never a test-budget death.
+    if (until && r >= until.minRounds && Date.now() - start >= until.deadlineMs) break
     for (const [k, fn] of Object.entries(samplers)) {
       const t0 = process.hrtime.bigint()
       fn()
@@ -1076,10 +1084,18 @@ function bareBash(payload: unknown): void {
   expect(res.status).toBe(0)
 }
 
+// T-1366: the miss row's 200 rounds are 400 spawns — 30 s alone at load 11/14
+// (2026-11-02), past its 15 s × scale test budget once load climbs after the
+// scale was pinned. The rounds now stop at a deadline of hook-tier × ½ (= ⅓ of
+// the test budget, same scale), never below 31: the ratio is still two
+// interleaved same-run medians, only the sample count shrinks under load.
+const MISS_MIN_ROUNDS = 31
+
 describe('latency', () => {
   test('a miss (no target substring anywhere in the payload) costs no fork — median stays under 2× a bare bash reading the same stdin', () => {
     const payload = readEvent('src/index.ts')
-    const m = interleavedMedians({ hook: () => run(payload), bare: () => bareBash(payload) }, 200)
+    const m = interleavedMedians({ hook: () => run(payload), bare: () => bareBash(payload) }, 200,
+      { minRounds: MISS_MIN_ROUNDS, deadlineMs: subprocessTimeout('hook') / 2 })
     expect(m.hook / m.bare, `hook ${m.hook.toFixed(2)} ms vs bare bash ${m.bare.toFixed(2)} ms`).toBeLessThan(2)
   })
 })
@@ -1152,15 +1168,24 @@ function longSingleLine(targetBytes: number, filler: string): string {
   return out
 }
 
+// T-1356: this one row gets its own ceiling. Its linear cost (60 KB through jq
+// + perl) is the largest of the hit rows, so on a machine whose tiny hit is
+// cheap it sits above 4×: reported 4.42× / 4.48× / 4.89× (load 7.0 · 3.5 · 5.9
+// on 8 CPUs); this machine reads 1.2× (load ~23 on 14 CPUs, 2026-11-02). The
+// regression the row exists for was 21.7 s against a ~50 ms tiny hit, ~430×.
+// 10× keeps ~2× headroom over the worst reported figure and still fails any
+// return of that blowup down to ~1/40 of its size (~0.5 s on a 50 ms tiny hit).
+const NODE_60KB_CEILING = 10
+
 describe('latency — every hit path stays linear, not only heredocs (S2b-fix HIGH)', () => {
-  test('60KB single-line `node -e` argument mentioning process.env stays within 4× a tiny hit', () => {
+  test('60KB single-line `node -e` argument mentioning process.env stays within 10× a tiny hit', () => {
     const body = longSingleLine(60_000, 'const x = process.env.SOME_VAR; // padding padding padding ')
     const command = `node -e "${body.replace(/"/g, '\\"')}"`
     // node is not a printer/pattern command, so this is a jq-forking HIT
     // (`.env` inside "process.env" passes the pre-filter) that never denies —
     // pure judgment-pipeline cost. Was 21.7s pre-fix at this exact size/shape.
     const r = hitRatio(bashEvent(command), 5)
-    expect(r.ratio, r.note).toBeLessThan(LINEAR_CEILING)
+    expect(r.ratio, r.note).toBeLessThan(NODE_60KB_CEILING)
   })
 
   test('60KB single-line `git commit -m` body mentioning .env stays within 4× a tiny hit', () => {

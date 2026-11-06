@@ -235,8 +235,7 @@ while d and d != "/":
         root = d
     # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary
     if (os.path.isfile(os.path.join(d, ".git")) and os.path.basename(os.path.dirname(d)) == "tracks"
-            and os.path.basename(d)[:2] == "T-" and os.path.basename(d)[2:7].isascii()
-            and os.path.basename(d)[2:].isdigit() and len(os.path.basename(d)) <= 7):
+            and re.match(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z", os.path.basename(d))):  # T-1298: T-NNN or T-<PREFIX>-<n>
         root = None
         break
     up = os.path.dirname(d)
@@ -392,6 +391,9 @@ def _append_line(path, text):
 #                    visible on a machine whose settings.json predates the
 #                    SubagentStart registration in hook-manifest.json.
 #   SubagentStop   → `stopped_at` stamped; the file STAYS for the resume case.
+#                    T-1387: a LATER SubagentStop re-stamps it — a stop another
+#                    SubagentStop hook blocked did not end the worker (readers:
+#                    prdt_lanes._worker_past_stop).
 #   prune          → F10: THIS hook (the tooling that owns `run/`) removes
 #                    marker files from disk, at every event it handles, once
 #                    `stopped_at` — or `since`, for a marker that never saw a
@@ -448,7 +450,8 @@ def _append_line(path, text):
 MARKER_RETENTION_HOURS = 24
 # `T-682`, `d-T682-s3-…` (the PO's dispatch_id convention has no hyphen), never
 # the `T-4` inside `GPT-4` (F9: left boundary) nor `T-68` inside `T-6829`.
-TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T-?([0-9]{1,5})(?![0-9])")
+# T-1298: also `T-RCH-002` (group 1 = the consonant prefix); the leftmost id wins.
+TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T(?:-([BCDFGHJKLMNPQRSTVWXYZ]{1,8})-|-?)([0-9]{1,5})(?![0-9])")
 
 # T-774: the marker's `model` field is the TIER a dispatch runs at, never a
 # versioned model id — the Agent tool's own `model` parameter is restricted to
@@ -539,7 +542,7 @@ def ticket_by_slug(slug):
                 except Exception:
                     continue
                 tid = fm.get("id") or fn[:-3]
-                m = re.match(r"\AT-([0-9]{1,5})\Z", tid)
+                m = re.match(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?([0-9]{1,5})\Z", tid)
                 if not (m and fm.get("slug")):
                     continue
                 cand = (fm.get("status") == "open", int(m.group(1)), tid)
@@ -570,7 +573,7 @@ def ticket_from_ctx(ctx_obj):
         if isinstance(field, str):
             m = TICKET_TOKEN_RE.search(field)
             if m:
-                return dispatch_id, f"T-{m.group(1)}"
+                return dispatch_id, (f"T-{m.group(1)}-{m.group(2)}" if m.group(1) else f"T-{m.group(2)}")
     return dispatch_id, None
 
 
@@ -652,7 +655,7 @@ def po_state_ticket():
         with open(os.path.join(state_dir, "po-state.json"), encoding="utf-8") as f:
             ct = (json.load(f) or {}).get("current_task")
         tid = ct.get("ticket_id") if isinstance(ct, dict) else None
-        return tid if isinstance(tid, str) and re.match(r"\AT-[0-9]{1,5}\Z", tid) else None
+        return tid if isinstance(tid, str) and re.match(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z", tid) else None
     except Exception:
         return None
 
@@ -896,12 +899,16 @@ def marker_lock():
 
 
 def marker_stop(aid):
+    """T-1387: every SubagentStop stamps its own time, an earlier stamp included.
+    A SubagentStop another hook on the same registration blocks (prdt-return-check
+    .sh) leaves the worker running with no new SubagentStart — measured 2026-11-03,
+    d-v116-t1094-dev2 — so an earlier stamp is not the end; the LAST stop is."""
     if not aid:
         return
     try:
         with marker_lock():
             data = marker_load(aid)
-            if data is not None and not data.get("stopped_at"):
+            if data is not None:
                 data["stopped_at"] = now
                 marker_save(data)
     except Exception:

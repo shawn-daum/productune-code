@@ -47,7 +47,12 @@ test.skipIf(!hasJq())('PostToolUse carries the pre-existing Agent entry and BOTH
   // T-977: plus prdt-wordlist-check.sh as its OWN Write|Edit|MultiEdit entry, after auto-open's.
   const wordlist = entries.filter((e) => e.matcher === 'Write|Edit|MultiEdit')[1]
   expect(wordlist?.hooks?.[0]?.command).toContain('prdt-wordlist-check.sh')
-  expect(entries.length).toBe(5)
+  // T-1389: plus the question check (Bash, after auto-open's Bash entry) and the matcher-less lane check.
+  const question = entries.filter((e) => e.matcher === 'Bash')[1]
+  expect(question?.hooks?.[0]?.command).toContain('prdt-question-check.sh')
+  const lane = entries.filter((e) => e.matcher === undefined)[1]
+  expect(lane?.hooks?.[0]?.command).toContain('prdt-lane-check.sh')
+  expect(entries.length).toBe(7)
 })
 
 test.skipIf(!hasJq())('re-running install.sh is idempotent (single auto-open entry per matcher, single command each)', () => {

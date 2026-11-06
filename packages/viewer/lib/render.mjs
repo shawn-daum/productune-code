@@ -28,7 +28,6 @@ import { IDLE,
   COMMON,
   PAGE,
   HOME,
-  PROGRESS_OUT_OF_SCOPE_LABEL,
   DETAIL_FIELD_LABELS,
   TICKET,
   WIKI,
@@ -47,11 +46,13 @@ import { IDLE,
   OPTION_CARD,
   ENV,
   IDENTITY,
+  setViewerLang,
+  lang as viewerLang,
 } from './labels.mjs'
 import { mermaidBlock, hasMermaid, mermaidScript, MERMAID_CSS } from './mermaid.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
 import { HOME_STAGES, stageSegments, buildHomeGraph, layoutHomeGraph, waitLists, compareTicketIds, NODE_W, NODE_H } from './home-graph.mjs'
-import { disciplineLoadCard, DISCIPLINE_LOAD_CSS, DISCIPLINE_LOAD_SCRIPT } from './discipline-load.mjs'
+import { disciplineLoadCard, DISCIPLINE_LOAD_CSS, disciplineLoadScript } from './discipline-load.mjs'
 import { renderPrdReading, openDecisionTickets, PRD_READING_CSS, PRD_READING_SCRIPT } from './prd-reading.mjs'
 
 function escapeHtml(str) {
@@ -759,19 +760,21 @@ function fmtBytes(n) {
 // 621-627) — doctrine #2, don't re-draw what is already signed off.
 // T-880 = A: 현재 버전(home) · PRD · 티켓 · 위키 · 기능 · 아티팩트 · 용어 사전 ·
 // 릴리즈 노트 · 규율 — the discipline store (T-886) lands last, after 'release'.
-// T-1047: env has no activity-bar item — it is the last current-version sidebar item (after 결정).
-const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release', 'disc']
+// T-1227: env is an activity-bar store again (approved v1.14 screen set, env-machine-placement) — sidebar = a group per product + machine scope, one item per file.
+// T-1255: 용어 사전 left the activity bar too — it is the current-version sidebar item right under env.
+const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'env', 'release', 'disc']
 const STORE_ICON_PATHS = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
   prd: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/>',
   ticket: '<path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/>',
   wiki: '<path d="M12 7c-2-2-5-3-9-3v14c4 0 7 1 9 3 2-2 5-3 9-3V4c-4 0-7 1-9 3Z"/><path d="M12 7v14"/>',
   feature: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22V4"/>',
-  // T-883: copied from the approved mockup (define-screen-set.html 「용어 사전」 · 「릴리즈 노트」 activity buttons).
-  glossary: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m8 13 4-7 4 7"/><path d="M9.1 11h5.7"/>',
+  // T-883: copied from the approved mockup (define-screen-set.html 「릴리즈 노트」 activity button).
   release: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
   // T-886: copied from the approved screen set (define-screen-set.html 「규율」 activity button).
   disc: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+  // T-1227: copied from the approved v1.14 screen set (screen-env-viewer 「env」 activity button).
+  env: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M16 7l3 3M19 4l2 2"/>',
   artifact:
     '<path d="M21 8.5v7a1 1 0 0 1-.5.87l-8 4.62a1 1 0 0 1-1 0l-8-4.62A1 1 0 0 1 3 15.5v-7a1 1 0 0 1 .5-.87l8-4.62a1 1 0 0 1 1 0l8 4.62a1 1 0 0 1 .5.87Z"/><path d="M12 22V12"/><path d="m3.3 7 8.7 5 8.7-5"/>',
 }
@@ -808,7 +811,7 @@ export function pageIdentityOf(data) {
   const idle = stage === 'idle' || !version
   if (idle) return { project, version, stage, idle, toolVersion, card: null }
   const currentTickets = currentVersionTickets(data.tickets, version)
-  const seg = stageSegments(currentTickets).find((x) => x.stage === stage)
+  const seg = stageSegments(currentTickets, data.stageHistory).find((x) => x.stage === stage)
   const stageDone = seg ? seg.tickets.filter((t) => t.done).length : 0
   const stageTotal = seg ? seg.tickets.length : 0
   const { done, total } = versionProgressCounts(currentTickets)
@@ -861,7 +864,7 @@ function storeSection(key, { active = false, innerHtml }) {
 function versionNumericParts(id) {
   return (String(id ?? '').match(/\d+/g) || []).map(Number)
 }
-function compareVersionIdsDesc(a, b) {
+export function compareVersionIdsDesc(a, b) {
   const pa = versionNumericParts(a)
   const pb = versionNumericParts(b)
   const len = Math.max(pa.length, pb.length)
@@ -902,59 +905,102 @@ function decisionTicketsOf(tickets) {
   return tickets.filter((t) => t.frontmatter.type === 'decision')
 }
 
-/** T-1138: Home's decision group body — 질문 (decision tickets, open first) then 기록 (decision pages). No decision ticket → the pages-only table, unchanged. */
+/**
+ * T-1259: one decision ticket's record, read from its body — `## outcome`'s `### why / how / what` (T-1258 keys; each null
+ * when absent) and the answer shown on the row (the picked option letter, else the user's last verbatim reply). An open
+ * decision carries its first problem line and the 추천 line instead.
+ * @param {string} body
+ */
+export function decisionRecord(body) {
+  const text = body ?? ''
+  const sec = /^## outcome[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(text)
+  const outcome = sec ? sec[1] : ''
+  const sub = (key) => {
+    const m = new RegExp(`^### ${key}[ \\t]*\\n([\\s\\S]*?)(?=^#{2,3} |(?![\\s\\S]))`, 'm').exec(outcome)
+    const t = m ? m[1].replace(/^\s*-\s+/gm, '').trim() : ''
+    return t || null
+  }
+  // the row's short answer: the first clause of the decided answer (`A. 구현 T-1268.` → `A`)
+  const clause = (t) => {
+    if (!t) return null
+    const line = t.split('\n')[0].trim()
+    const m = /^(.+?)(?:\.(?:\s|$)|:\s)/.exec(line)
+    const c = (m ? m[1] : line).trim()
+    return c.length > 30 ? `${c.slice(0, 29)}…` : c || null
+  }
+  // a ticket answering several questions (`### ①` …): one entry per heading — its decided `what:` text, else its last verbatim reply
+  const heads = [...outcome.matchAll(/^### (.+?)[ \t]*$/gm)].filter((m) => !['why', 'how', 'module', 'what'].includes(m[1].trim()))
+  const parts = heads.map((m, i) => {
+    const end = i + 1 < heads.length ? heads[i + 1].index : outcome.length
+    const chunk = outcome.slice(m.index + m[0].length, end)
+    const w = /^-\s*what:\s*(.+?)(?=\s+how:|\s+module:|$)/m.exec(chunk)
+    const qs = [...chunk.matchAll(/\*"([^"\n]+)"\*/g)].map((x) => x[1].trim())
+    const label = m[1].trim()
+    // V4: the answer text often opens with the very question numbers its heading already shows (`⑤ ⑥ ⑧` / `⑤ ⑥ ⑧ 문구 승인`) — drop that echo
+    const nums = label.split(/\s+/).filter((x) => /^[①-⑳\d]+$/.test(x))
+    let text = w ? w[1].trim() : qs.length ? qs[qs.length - 1] : null
+    if (text && nums.length > 0) {
+      const echo = new RegExp(`^(?:(?:${nums.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s+)+`)
+      text = text.replace(echo, '').trim() || text
+    }
+    return { label, what: text }
+  })
+  // V3: a decision closed before the `### what` key existed still has its answer on record — the text after the first `→`
+  // (first sentence), else the first bullet that is not the user's verbatim line (the PO's own reading of it)
+  const recordedAnswer = () => {
+    const lines = outcome.split('\n').filter((l) => /^\s*-\s+/.test(l))
+    for (const l of lines) {
+      const a = /→\s*(.+)$/.exec(l)
+      if (a) return a[1].split(/(?<=[.。])\s+(?=\S)/)[0].trim() || null
+    }
+    const own = lines.map((l) => l.replace(/^\s*-\s+/, '').trim()).find((l) => !/^(사용자|션님|user)\b/i.test(l) && !l.includes('*"'))
+    return own || null
+  }
+  const recordedWhat = sub('what')
+  const what = recordedWhat ?? (parts.length === 0 ? recordedAnswer() : null)
+  const quotes = [...outcome.matchAll(/\*"([^"\n]+)"\*/g)].map((m) => m[1].trim())
+  const quote = quotes.length ? quotes[quotes.length - 1] : ''
+  // no recorded `what`: the picked option letter, else a short verbatim reply (never a cut-off long one)
+  const fallback = decisionChosen(text) ?? (quote.length <= 12 ? quote : null)
+  const answer = parts.length > 0 ? `${parts.length}건` : clause(recordedWhat) ?? fallback
+  const problem = /^## problem[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(text)
+  const firstProblem = problem ? (/^\s*-\s+(.+)$/m.exec(problem[1]) || [])[1] ?? null : null
+  const rec = /^-\s*추천:\s*(.+)$/m.exec(text)
+  return { why: sub('why'), how: sub('how'), what, parts, answer: answer || null, question: firstProblem, recommend: rec ? rec[1].trim() : null }
+}
+
+/** T-1259: the one 「줄」 of the decision screen — id · title · status · answer, folding to 이유 · 방식 · 답. */
+function decisionViewRow(t) {
+  const fm = t.frontmatter
+  const id = fm.id || t.rel
+  const V = HOME.decisionView
+  const open = fm.status === 'open'
+  const rec = decisionRecord(t.body)
+  const kv = (label, val, miss = V.missing) => `<div class="dv-kv"><b>${escapeHtml(label)}</b>${val ? `<span>${inlineMd(val)}</span>` : `<span class="dv-miss">${escapeHtml(miss)}</span>`}</div>`
+  const status = open ? V.waiting : fm.status === 'done' ? V.closed : ticketStatusText(fm.status)
+  const who = open ? fm.assignee || '' : rec.answer ? V.answer(rec.answer) : ''
+  const body = open
+    ? kv(V.question, rec.question) + kv(V.recommend, rec.recommend)
+    : rec.parts.length > 0
+      ? rec.parts.map((p) => kv(p.label, p.what)).join('')
+      : kv(V.why, rec.why, V.missingWhy) + kv(V.how, rec.how) + kv(V.what, rec.what)
+  return `<div class="dv-row${open ? ' dv-wait' : ''}" data-dv-id="${escapeHtml(id)}" tabindex="0" role="button" aria-expanded="false"><div class="dv-top"><span class="tid">${escapeHtml(id)}</span><span class="tt">${escapeHtml(fm.title || fm.slug || id)}</span><span class="tst${fm.status === 'done' ? ' done' : ''}">${escapeHtml(status)}</span><span class="who">${escapeHtml(who)}</span></div><div class="dv-body">${body}</div></div>\n`
+}
+
+/** T-1138 → T-1259: Home's decision group body — decision tickets as expandable rows (open first), then 기록 (decision pages) in the table. */
 function decisionRowsTable(tickets, pages) {
   if (tickets.length === 0) return wikiRowsTable(pages)
   const isOpen = (t) => t.frontmatter.status === 'open'
   const ordered = [...sortNewestFirst(tickets.filter(isOpen), (x) => x.frontmatter.created, (x) => x.frontmatter.id || x.rel), ...sortNewestFirst(tickets.filter((t) => !isOpen(t)), (x) => x.frontmatter.created, (x) => x.frontmatter.id || x.rel)]
-  const K = HOME.decisionKind
-  let html = `<div class="table-wrap"><table><thead><tr>${HOME.decisionHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
-  for (const t of ordered) {
-    const fm = t.frontmatter
-    const id = fm.id || t.rel
-    html += `<tr class="detail-row" data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}">`
-    html += `<td><span class="pill pill-type">${escapeHtml(isOpen(t) ? K.ticketOpen : fm.status === 'dropped' ? K.ticketDropped : K.ticketDone)}</span></td>`
-    html += `<td class="id-col">${escapeHtml(id)}</td>`
-    html += `<td>${escapeHtml(fm.slug || id)}</td>`
-    html += `<td><span class="pill pill-status-${statusPillClass(fm.status)}">${escapeHtml(ticketStatusText(fm.status))}</span></td>`
-    html += `<td class="num-col">${escapeHtml(t.bucket || '—')}</td></tr>\n`
-  }
-  for (const p of pages) {
-    const fm = p.frontmatter
-    const id = p.rel.split('/').pop()
-    html += `<tr class="detail-row" data-detail-kind="wiki" data-detail-id="${escapeHtml(id)}">`
-    html += `<td><span class="pill pill-type">${escapeHtml(K.page)}</span></td>`
-    html += `<td class="id-col">${escapeHtml(id)}</td>`
-    html += `<td>${escapeHtml(fm.title || id)}</td>`
-    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(wikiFeatureStatusText(fm.status))}</span></td>`
-    html += `<td class="num-col">${escapeHtml(fm.version || '—')}</td></tr>\n`
-  }
-  return html + '</tbody></table></div>\n'
+  const V = HOME.decisionView
+  let html = `<div class="dv-list">${ordered.map(decisionViewRow).join('')}<p class="dv-note">${escapeHtml(V.note)}</p></div>\n`
+  if (pages.length > 0) html += `<h4 class="dv-pages">${escapeHtml(V.pages)}</h4>${wikiRowsTable(pages)}`
+  return html
 }
 
 /** Home's artifact group — the literal bucket match home has always used (T-713 scope note in `homeSection`); shared with the anchor table (T-792). */
 function currentArtifactEntries(artifacts, currentVersion) {
   return artifacts.entries.filter((e) => e.fields.bucket === currentVersion)
-}
-
-/**
- * A ticket's `prd_item` (`"<version>#<key>"`) resolved against `currentVersion`
- * by the SAME numeric equality (T-713), rather than a literal string-prefix
- * check — a ticket written against its own bucket's directory spelling
- * (`v1.10.0#viewer`) still resolves to its PRD-item row even when that
- * spelling differs textually from po-state's version string (`v1.10`).
- * `null` when there is no `#`, or the version part is not the current
- * version — same "trailing row" fallback as before.
- * @param {string} prdItem
- * @param {string} currentVersion
- * @returns {string|null}
- */
-function prdItemKey(prdItem, currentVersion) {
-  const hashIdx = prdItem.indexOf('#')
-  if (hashIdx === -1) return null
-  const versionPart = prdItem.slice(0, hashIdx)
-  if (!sameVersion(versionPart, currentVersion)) return null
-  return prdItem.slice(hashIdx + 1)
 }
 
 function statusPillClass(status) {
@@ -987,6 +1033,11 @@ function ticketRolePill(assignee) {
 // `sortTable` reorders the rows in place. `kind` 'num' compares numbers,
 // 'text' compares text with numeric-aware collation (T-999 < T-1000).
 /** The number inside a ticket id ("T-1006" → 1006); 0 when there is none. */
+/** T-1276: a ticket's displayed name — its `title`, else its `slug`, else `fallback`. */
+function ticketName(fm, fallback = '') {
+  return fm.title || fm.slug || fallback
+}
+
 function ticketNum(id) {
   const m = /(\d+)/.exec(String(id || ''))
   return m ? Number(m[1]) : 0
@@ -1024,13 +1075,13 @@ function ticketRowsTable(tickets) {
   if (tickets.length === 0) {
     return `<p class="v-note">${TICKET.empty}</p>`
   }
-  let html = `<div class="table-wrap"><table class="sortable">${sortableThead(TICKET.tableHeaders, ['text', 'text', 'text', 'text', 'text', 'text'], 5)}<tbody>\n`
+  let html = `<div class="table-wrap"><table class="sortable tk-table">${sortableThead(TICKET.tableHeaders, ['text', 'text', 'text', 'text', 'text', 'text'], 5)}<tbody>\n`
   for (const t of sortNewestFirst(tickets, (x) => x.frontmatter.created, (x) => x.frontmatter.id || x.rel)) {
     const fm = t.frontmatter
     const id = fm.id || t.rel
     html += `<tr class="detail-row" data-detail-kind="ticket" data-detail-id="${escapeHtml(id)}" data-tie="${ticketNum(id)}">`
     html += sortTd(id, escapeHtml(id), 'id-col')
-    html += sortTd(fm.slug || '', escapeHtml(fm.slug || ''))
+    html += sortTd(ticketName(fm), escapeHtml(ticketName(fm)))
     html += sortTd(fm.type || '', `<span class="pill pill-type">${escapeHtml(fm.type || '')}</span>`)
     html += sortTd(ticketStatusText(fm.status), `<span class="pill pill-status-${statusPillClass(fm.status)}">${escapeHtml(ticketStatusText(fm.status))}</span>`)
     html += sortTd(fm.assignee || '', ticketRolePill(fm.assignee))
@@ -1141,7 +1192,7 @@ function ticketDetailEntries(tickets, repoRootHref, lineTickets = []) {
     const fm = t.frontmatter
     const id = fm.id || t.rel
     entries[id] = {
-      title: fm.slug || id,
+      title: ticketName(fm, id),
       type: fm.type || '',
       status: ticketStatusText(fm.status || ''),
       assignee: fm.assignee || '',
@@ -1155,7 +1206,7 @@ function ticketDetailEntries(tickets, repoRootHref, lineTickets = []) {
       const fm = t.frontmatter
       const id = fm.id || t.rel
       entries[id] = {
-        title: fm.slug || id,
+        title: ticketName(fm, id),
         type: fm.type || '',
         status: ticketStatusText(fm.status || ''),
         assignee: fm.assignee || '',
@@ -1246,10 +1297,10 @@ export const LINE_SECTIONED_STORES = ['home', 'prd', 'ticket', 'feature', 'artif
  */
 export function lineViews(data) {
   if (!Array.isArray(data.lines) || data.lines.length === 0) return []
-  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes }
+  const home = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, lanes: data.lanes, closedLanes: data.closedLanes, deployed: data.deployed || null, stageHistory: data.stageHistory || [] }
   return [
     home,
-    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes })),
+    ...data.lines.map((l) => ({ line: l.name, name: l.name, prefix: `${l.name}/`, currentVersion: l.version, stage: l.stage, tickets: l.tickets, prd: l.prd, lanes: l.lanes, closedLanes: l.closedLanes, deployed: l.deployed || null, stageHistory: l.stageHistory || [] })),
   ]
 }
 
@@ -1272,9 +1323,19 @@ function lineHead(v) {
   return `${v.name} ${isIdleView(v) ? lastClosedId(v) : v.currentVersion}`.trim()
 }
 
+/**
+ * T-1253: the 「제품 줄」 table of the progress header — one row per product (deployed · dev · stage), the selected one marked;
+ * [] on a single-product page. An idle product's dev cell reads 「열린 버전 없음」.
+ */
+function productRowsOf(data, selected) {
+  const views = lineViews(data)
+  if (views.length === 0) return []
+  return views.map((v) => ({ name: v.name, deployed: v.deployed ? v.deployed.version : '', dev: isIdleView(v) || !v.currentVersion ? '' : v.currentVersion, stage: v.stage, selected: v === selected || (v.line === selected.line) }))
+}
+
 /** `data` with tickets · PRD · version · stage scoped to one line. */
 function lineData(data, v) {
-  return { ...data, tickets: v.tickets, prd: v.prd, lanes: v.lanes, currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
+  return { ...data, tickets: v.tickets, prd: v.prd, lanes: v.lanes, stageHistory: v.stageHistory || [], currentVersion: v.currentVersion, poState: { ...(data.poState || {}), stage: v.stage }, dgId: v.line ? `home-dg-${v.line}` : undefined, project: v.name || data.project, deployed: v.deployed || null, productRows: productRowsOf(data, v), listPrefix: v.prefix, allLineTickets: allLineTickets(data) }
 }
 
 /** Flattens per-line `{groups, defaultKey}` into one group list: keys prefixed `<line>/` (home line bare), the first group of each line carrying the section head. `defaultKey` = the home line's default. */
@@ -1330,7 +1391,7 @@ function allLineTickets(data) {
 // its own, so it cannot guess one.
 // T-958: `alwaysButtons` keeps a one-group sidebar clickable (env: one file is
 // still a file row, never 「그룹 없음」); a group's `dim` greys its row.
-function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey, topHtml = '', alwaysButtons = false }) {
+function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', defaultKey, topHtml = '', alwaysButtons = false, noCard = false }) {
   const singleGroup = groups.length === 1 && !alwaysButtons
   const defaultIndex = defaultKey === undefined ? 0 : Math.max(0, groups.findIndex((g) => g.key === defaultKey))
   const identity = pageIdentity
@@ -1354,7 +1415,7 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', d
           const crumbAttr = g.crumb ? ` data-crumb="${escapeHtml(g.crumb)}"` : ''
           const dim = g.dim ? ' nav-dim' : ''
           // T-1165: the progress card sits right under the home store's 진행 상황 item.
-          const card = g.key === 'progress' && !cardPlaced ? ((cardPlaced = true), sidebarCardHtml(identity?.card, g.key)) : ''
+          const card = !noCard && g.key === 'progress' && !cardPlaced ? ((cardPlaced = true), sidebarCardHtml(identity?.card, g.key)) : ''
           return `${head}<button type="button" class="nav-item nav-item-clickable${dim}${active}" data-group-select="${escapeHtml(g.key)}"${crumbAttr}><span>${escapeHtml(g.label)}</span>${countHtml}</button>${card}`
         })
         .join('\n')
@@ -1363,7 +1424,7 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups, noGroupUnit = '', d
   const sidebar = `<nav class="sidebar">
 ${identity ? sidebarIdentityHtml(identity) : '<div class="sidebar-title">productune</div>'}
 <div class="sidebar-sub">${escapeHtml(sidebarSubLabel)}</div>
-${!cardPlaced && !groups.some((g) => g.key === 'progress') ? sidebarCardHtml(identity?.card) : ''}
+${!noCard && !cardPlaced && !groups.some((g) => g.key === 'progress') ? sidebarCardHtml(identity?.card) : ''}
 ${sidebarButtons}
 ${tool ? `<div class="sidebar-foot"><span class="foot-tool" title="${escapeHtml(IDENTITY.toolTitle)}">${escapeHtml(tool)}</span></div>` : ''}
 </nav>`
@@ -1484,11 +1545,11 @@ function wikiSection(pages) {
   return storeSection('wiki', { innerHtml: wikiStoreInner(pages) })
 }
 
-// ---------- glossary store (T-883) ----------
+// ---------- glossary (T-883; T-1255: a 현재 버전 group under env, no store of its own) ----------
 // Source: the wiki's `term` documents (data.wiki, type: term) — no second
 // copy; the wiki store still lists them too. Table 용어 · 분류 · 정의 (the
 // 분류 chip is the first `tags` value, the 정의 is the document's h1 after
-// its 「— 」), detail = h1 as lead, 분류 · 상태 fields, the body below the h1.
+// its first 「— 」 or 「: 」), detail = h1 as lead, 분류 · 상태 fields, the body below the h1.
 function termPages(wiki) {
   return (wiki || []).filter((p) => p.frontmatter.type === 'term')
 }
@@ -1504,17 +1565,17 @@ function termParts(p) {
   const h1 = lines.findIndex((l) => /^#\s+\S/.test(l))
   const lead = h1 === -1 ? '' : lines[h1].replace(/^#\s+/, '').trim()
   const rest = h1 === -1 ? p.body : lines.slice(h1 + 1).join('\n')
-  const def = lead.includes('—') ? lead.slice(lead.indexOf('—') + 1).trim() : lead
+  // T-1343: an h1 reads 「name — definition」 or 「name: definition」; split at the first of either.
+  const sep = /—|:\s/.exec(lead)
+  const def = sep ? lead.slice(sep.index + sep[0].length).trim() : lead
   const tags = Array.isArray(p.frontmatter.tags) ? p.frontmatter.tags : []
   return { id, name, gloss, lead, def, rest, category: tags.length ? String(tags[0]) : '' }
 }
 
-function glossaryStoreInner(wiki) {
+/** T-1255: the 현재 버전 sidebar's 용어 사전 item — the T-883 table (or its empty note) unchanged; `.gl` scopes its CSS. */
+function glossaryGroup(wiki) {
   const pages = termPages(wiki)
-  if (pages.length === 0) {
-    const groups = [{ key: 'all', label: '', count: 0, bodyHtml: `<p class="v-note">${GLOSSARY.empty}</p>` }]
-    return groupedStore({ sidebarSubLabel: GLOSSARY.sidebarLabel, crumbLabel: GLOSSARY.sidebarLabel, groups, noGroupUnit: GLOSSARY.countUnit })
-  }
+  if (pages.length === 0) return { key: 'glossary', label: STORE_LABEL.glossary, count: 0, bodyHtml: `<div class="gl"><p class="v-note">${GLOSSARY.empty}</p></div>` }
   const rows = pages.map((p) => {
     const t = termParts(p)
     const chip = t.category ? `<span class="kp kp-component">${escapeHtml(t.category)}</span>` : '—'
@@ -1523,10 +1584,9 @@ function glossaryStoreInner(wiki) {
       `<td>${chip}</td><td class="def-col">${escapeHtml(t.def)}</td></tr>\n`
   }).join('')
   const head = `<tr>${GLOSSARY.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr>`
-  const bodyHtml = `<div class="count-line section-meta"><span class="count-badge">${escapeHtml(GLOSSARY.countLabel)} <b>${pages.length}</b>${escapeHtml(GLOSSARY.countUnit)}</span></div>\n` +
-    `<div class="table-wrap"><table class="t-gl"><thead>${head}</thead><tbody>\n${rows}</tbody></table></div>\n`
-  const groups = [{ key: 'all', label: '', count: pages.length, bodyHtml }]
-  return groupedStore({ sidebarSubLabel: GLOSSARY.sidebarLabel, crumbLabel: GLOSSARY.sidebarLabel, groups, noGroupUnit: GLOSSARY.countUnit })
+  const bodyHtml = `<div class="gl"><div class="count-line section-meta"><span class="count-badge">${escapeHtml(GLOSSARY.countLabel)} <b>${pages.length}</b>${escapeHtml(GLOSSARY.countUnit)}</span></div>\n` +
+    `<div class="table-wrap"><table class="t-gl"><thead>${head}</thead><tbody>\n${rows}</tbody></table></div>\n</div>`
+  return { key: 'glossary', label: STORE_LABEL.glossary, count: pages.length, bodyHtml }
 }
 
 function glossaryDetailEntries(wiki, repoRootHref) {
@@ -1540,14 +1600,10 @@ function glossaryDetailEntries(wiki, repoRootHref) {
       '</div>'
     entries[t.id] = {
       title: t.gloss ? `${t.name} · ${t.gloss}` : t.name,
-      html: `${t.lead ? `<p class="def-lead">${escapeHtml(t.lead)}</p>` : ''}${meta}<div class="detail-doc rb">${md(t.rest, path.dirname(p.rel), repoRootHref)}</div>`,
+      html: `<div class="gl">${t.lead ? `<p class="def-lead">${escapeHtml(t.lead)}</p>` : ''}${meta}<div class="detail-doc rb">${md(t.rest, path.dirname(p.rel), repoRootHref)}</div></div>`,
     }
   }
   return entries
-}
-
-function glossarySection(wiki) {
-  return storeSection('glossary', { innerHtml: glossaryStoreInner(wiki) })
 }
 
 // ---------- release-notes store (T-883) ----------
@@ -1557,6 +1613,46 @@ function glossarySection(wiki) {
 // (a leading `>` block) as a note box, each `###` group as a heading pill.
 // Links inside a section body go through the same `md()` containment as
 // every other document (source dir `code/docs`).
+// T-1303 (decision T-1316 = A): the body is numbered group-line, the shape a
+// T-1302 approval body uses (contracts/tickets.md): group `**<g>. <label>**`,
+// line `<g>-<n>.` (`2-3`). A group is a `### ` heading or a plain label line
+// after a blank line (the RELEASES.md format's `요약` · lane groups); a line is
+// a top-level `- ` item. Continuation lines, fenced code and items before any
+// group keep no number.
+export const RELEASES_ANCHOR = 'code/docs/RELEASES.md' // = collect.mjs RELEASES_REL (render never imports collect)
+
+/** @param {string} body a release section body (opening `>` note already removed) */
+export function numberReleaseBody(body) {
+  let g = 0
+  let n = 0
+  let fence = null
+  let prevBlank = true
+  return String(body).split('\n').map((line) => {
+    const fm = /^\s*(`{3,}|~{3,})/.exec(line)
+    if (fence !== null || fm) {
+      if (fm) fence = fence === null ? fm[1][0] : (fm[1][0] === fence ? null : fence)
+      prevBlank = false
+      return line
+    }
+    const blank = line.trim() === ''
+    const wasBlank = prevBlank
+    prevBlank = blank
+    if (blank || /^\s/.test(line)) return line
+    const h = /^###\s+(.*)$/.exec(line)
+    if (h) { g += 1; n = 0; prevBlank = true; return `### ${g}. ${h[1]}` }
+    const item = /^([-*+])\s+(.*)$/.exec(line)
+    if (item) {
+      if (g === 0) return line
+      n += 1
+      return `${item[1]} ${g}-${n}. ${item[2]}`
+    }
+    if (!wasBlank || /^(#|>|\||<|\d+[.)]\s)/.test(line)) return line
+    g += 1
+    n = 0
+    return `**${g}. ${line.trim()}**`
+  }).join('\n')
+}
+
 function releaseBodyHtml(section, repoRootHref) {
   let body = section.body
   let note = ''
@@ -1566,7 +1662,7 @@ function releaseBodyHtml(section, repoRootHref) {
     note = `<div class="v-note">${inner.replace(/^<p>/, '').replace(/<\/p>\s*$/, '').replace(/\n/g, '<br>')}</div>\n`
     body = body.slice(quote[1].length)
   }
-  const html = md(body, 'code/docs', repoRootHref).replace(/<h3 class="pill pill-heading-3">/g, '<h3 class="pill pill-heading-2">')
+  const html = md(numberReleaseBody(body), 'code/docs', repoRootHref).replace(/<h3 class="pill pill-heading-3">/g, '<h3 class="pill pill-heading-2">')
   return `${note}${html}`
 }
 
@@ -1675,7 +1771,7 @@ function discSection(docs, load = null) {
 // written on one side only also shows on the other side, as a name-only
 // link (T-808 outcome). No taxonomy → the pre-T-882 spec-file list (T-901 = B);
 // no taxonomy and no spec file → the approved empty state.
-const TICKET_ID_RE = /\bT-(?:P\d+-|PATCH-)?\d+\b/g
+const TICKET_ID_RE = /\bT-(?:P\d+-|PATCH-|[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d+\b/g
 
 function ticketIdLinks(escapedText, anchors) {
   return escapedText.replace(TICKET_ID_RE, (id) =>
@@ -1890,13 +1986,14 @@ function featureEvidence(e, anchors) {
     .map((t) => {
       const id = String(t.fm.id || '')
       const mark = t.fm.status === 'open' || t.fm.status === 'dropped' ? `(${FEATURE.ticketStatus[t.fm.status]})` : ''
-      return `${ticketIdLinks(escapeHtml(id), anchors)}${escapeHtml(mark)} ${escapeHtml(t.fm.slug || '')}`.trim()
+      return `${ticketIdLinks(escapeHtml(id), anchors)}${escapeHtml(mark)} ${escapeHtml(ticketName(t.fm))}`.trim()
     })
     .join(' · ')
 }
 
 /** Detail order (T-808 outcome): definition and 「연관 기능」 first, then the spec body (spec file present) or 근거 티켓. */
 // T-883: feature keys whose detail carries a 「읽기」 field, and the store each opens.
+// T-1255: 용어 사전 is the 현재 버전 store's `glossary` group.
 const FEATURE_READ_STORE = { glossary: 'glossary', 'release-notes': 'release' }
 
 function featureReadField(data, e) {
@@ -1905,7 +2002,8 @@ function featureReadField(data, e) {
   const count = store === 'glossary' ? termPages(data.wiki).length : (data.releases || []).length
   const unit = store === 'glossary' ? GLOSSARY.countUnit : RELEASE.countUnit
   const text = readFieldValue(STORE_LABEL[store], count, unit)
-  return `<button type="button" class="area-a read-link" data-open-store="${store}">${escapeHtml(text)}</button>`
+  const target = store === 'glossary' ? 'data-open-store="home" data-open-group="glossary"' : `data-open-store="${store}"`
+  return `<button type="button" class="area-a read-link" ${target}>${escapeHtml(text)}</button>`
 }
 
 /** T-964: inline `code` spans in guide text (screen strings · commands stay code-shaped). */
@@ -2270,6 +2368,9 @@ export function buildAnchors(data) {
     const f = e.fields
     put(e.diskRel, { s: 'artifact', g: f.bucket, k: 'artifact', i: `${f.bucket}/${f.path}` })
   }
+  // T-1303: the release-notes view, and one version's section (`<path>#<version>`, the CLI's viewer_anchor).
+  put(RELEASES_ANCHOR, { s: 'release', g: 'all' })
+  for (const r of data.releases || []) put(`${RELEASES_ANCHOR}#${r.version}`, { s: 'release', g: 'all', k: 'release', i: r.version })
   // T-961: an added release line's items, under its `<line>/` group keys.
   for (const v of lineViews(data).slice(1)) {
     for (const t of currentVersionTickets(v.tickets, v.currentVersion)) {
@@ -2294,15 +2395,21 @@ export function buildAnchors(data) {
 
 /** Highest ticket number the page lists — an absent `#T-<n>` at or below it names a ticket that existed once (ids are one global counter, contracts §Tickets), i.e. moved or removed since generation: the `stale` notice rather than `unknown`. */
 export function maxTicketNumber(data) {
-  let max = 0
+  return maxTicketByPrefix(data)[''] || 0
+}
+
+/** T-1298: highest number per counter — `''` for plain `T-<n>`, `<PREFIX>` for a product's own `T-<PREFIX>-<n>` (each product numbers on its own). */
+export function maxTicketByPrefix(data) {
+  const max = {}
   const see = (id) => {
-    const m = /^T-(\d+)$/.exec(id || '')
-    if (m) max = Math.max(max, Number(m[1]))
+    const m = /^T-(?:([BCDFGHJKLMNPQRSTVWXYZ]{1,8})-)?(\d+)$/.exec(id || '')
+    if (m) { const k = m[1] || ''; max[k] = Math.max(max[k] || 0, Number(m[2])) }
   }
   for (const set of allLineTickets(data)) {
     for (const t of set.included) see(t.frontmatter.id)
     for (const b of set.omitted) for (const t of b.tickets) see(t.frontmatter.id)
   }
+  if (!('' in max)) max[''] = 0
   return max
 }
 
@@ -2310,7 +2417,7 @@ const INFO_ICON_SVG =
   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>'
 
 /** docs/design.md §8.4 Banner (no side stripe, T-756) — hidden until the page is opened at an `#id` it cannot show; the script fills in the id and the text. */
-const HASH_NOTICE_HTML = `<div class="notice" id="hash-notice" role="status" hidden>
+const hashNoticeHtml = () => `<div class="notice" id="hash-notice" role="status" hidden>
 <span class="notice-icon">${INFO_ICON_SVG}</span>
 <span class="notice-body"><b class="js-notice-id"></b>: <span class="js-notice-text"></span></span>
 <button type="button" class="notice-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 13)}</button>
@@ -2385,8 +2492,8 @@ function envSetCount(f) {
  *  file NAME only — the URL handler (packages/core/scripts/prdt_open_url.py) rebuilds the path from
  *  that project's own config, so a link can name nothing but an env file in a code folder. */
 function envActions(f, where) {
-  if (!where || !where.root || !where.absDir) return ''
-  const q = [`root=${encodeURIComponent(where.root)}`, ...(where.line ? [`line=${encodeURIComponent(where.line)}`] : []), `file=${encodeURIComponent(f.name)}`].join('&')
+  if (!where || !where.absDir || (!where.machine && !where.root)) return ''
+  const q = where.machine ? 'scope=machine' : [`root=${encodeURIComponent(where.root)}`, ...(where.line ? [`line=${encodeURIComponent(where.line)}`] : []), `file=${encodeURIComponent(f.name)}`].join('&')
   const abs = `${where.absDir}/${f.name}`
   const vscode = where.vscode ? `<a class="env-act" href="${escapeHtml(`vscode://file${abs.split('/').map(encodeURIComponent).join('/')}`)}">${ENV.openVsCode}</a>` : ''
   return `<div class="env-acts"><a class="env-act" href="${escapeHtml(`prdt://open-env?${q}`)}">${ENV.openEditor}</a>${vscode}` +
@@ -2406,24 +2513,50 @@ function envFileBody(f, dir, where) {
     `<p class="env-note">${f.sample ? ENV.sampleNote : ENV.note}</p>${envActions(f, where)}<div class="erows">${rows}</div></div>`
 }
 
-/** One current-version sidebar group per view: env = the last item (after 결정), its count = env file count (samples included). */
-function envGroup(env, emptyHead, machine, where) {
-  const machineHtml = machineEnvBody(machine)
-  if (!env || env.files.length === 0) {
-    const body = `<div class="env-nofile"><b>${escapeHtml(emptyHead)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
-    return { key: 'env', label: STORE_LABEL.env, count: 0, bodyHtml: body + machineHtml }
+/**
+ * T-1227: the env store (approved v1.14 screen set, screen-env-viewer). Sidebar = one group per
+ * product (its env files, or one dim 「env 파일 없음」 item) then the machine-scope group (`.env`, or
+ * one dim 「키 없음」 item); one item per file, its count = the file's key count; the body of an item is
+ * that file's card only.
+ */
+function envSection(data) {
+  const views = lineViews(data)
+  const single = { line: null, name: data.project || '', prefix: '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', prd: data.prd }
+  const groups = lineSectioned(views.length > 0 ? views : [single], (v) => {
+    const env = envOfView(data, v)
+    const dim = isIdleView(v)
+    const where = envWhere(data, v.line)
+    if (!env || env.files.length === 0) {
+      const body = `<div class="env-nofile"><b>${escapeHtml(views.length > 0 ? ENV.emptyHead : ENV.homeNone)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
+      return { groups: [{ key: 'none', label: ENV.noFile, dim: true, bodyHtml: body }] }
+    }
+    return { groups: env.files.map((f) => ({ key: f.name, label: f.sample ? `${f.name} · ${ENV.sample}` : f.name, count: f.keys.length, dim, bodyHtml: envFileBody(f, env.dir, where && { ...where, absDir: env.absDir }) })) }
+  })
+  // A single-product page has no LINES_SCRIPT, so no data-crumb: the crumb stays the plain item label (as after any switch).
+  if (views.length === 0) groups.forEach((g) => delete g.crumb)
+  const machine = data.machineEnv
+  if (machine) {
+    const head = { label: ENV.machineScope, stage: machine.dir }
+    if (machine.keys.length === 0) {
+      const body = `<div class="env-nofile"><b>${ENV.machineEmptyHead}</b><span>${escapeHtml(ENV.machineEmptyDetail)}</span></div>`
+      groups.push({ key: '@machine', label: ENV.machineNoKey, dim: true, ...(views.length > 0 ? { crumb: ENV.machineScope } : {}), head, bodyHtml: body })
+    } else {
+      groups.push({ key: '@machine', label: '.env', count: machine.keys.length, ...(views.length > 0 ? { crumb: `${ENV.machineScope} · .env` } : {}), head, bodyHtml: envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir, machine.absDir ? { machine: true, vscode: !!(data.editors && data.editors.vscode), absDir: machine.absDir } : null) })
+    }
   }
-  return { key: 'env', label: STORE_LABEL.env, count: env.files.length, bodyHtml: env.files.map((f) => envFileBody(f, env.dir, where && { ...where, absDir: env.absDir })).join('\n') + machineHtml }
+  // approved.png state #1: the machine-scope .env is preselected when it holds keys; no progress card in this store.
+  const defaultKey = machine && machine.keys.length > 0 ? '@machine' : undefined
+  return storeSection('env', { innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.env, crumbLabel: STORE_LABEL.env, groups, defaultKey, alwaysButtons: true, noCard: true }) })
 }
 
-/** T-1109: the machine-scope section (~/.prdt/env/.env) — names, 설정됨 / 비어 있음, 제품 코드 값이 우선; none stored → the empty card. Absent `machine` (a single-file render) → nothing. */
-function machineEnvBody(machine) {
-  if (!machine) return ''
-  const head = `<div class="env-scope">${ENV.machineScope}</div>`
-  if (machine.keys.length === 0) {
-    return `${head}<div class="env-nofile"><b>${ENV.machineEmptyHead}</b><span>${escapeHtml(ENV.machineEmptyDetail)}</span></div>`
-  }
-  return head + envFileBody({ name: '.env', sample: false, keys: machine.keys }, machine.dir)
+/** T-1397: a product's env group in the home left panel — its env files' cards (key names + set state, no open controls), or the env screen's empty text. */
+function homeEnvGroup(data, v, hasLines) {
+  const env = envOfView(data, v)
+  const files = (env && env.files) || []
+  const bodyHtml = files.length === 0
+    ? `<div class="env-nofile"><b>${escapeHtml(hasLines ? ENV.emptyHead : ENV.homeNone)}</b><span>${escapeHtml(ENV.emptyDetail((env && env.dir) || '—'))}</span></div>`
+    : files.map((f) => envFileBody(f, env.dir)).join('')
+  return { key: 'env', label: STORE_LABEL.env, count: files.length, bodyHtml }
 }
 
 // ---------- home: the in-progress version's workspace (T-666 slice 2a) ----------
@@ -2475,9 +2608,9 @@ function stageSquare(t) {
   return `<span class="stage-sq${t.done ? ' sq-done' : ''}" title="${escapeHtml(t.id)}"></span>`
 }
 
-function homeStageBar(currentTickets, stage) {
+function homeStageBar(currentTickets, stage, history = []) {
   const { done, total } = versionProgressCounts(currentTickets)
-  const segs = stageSegments(currentTickets)
+  const segs = stageSegments(currentTickets, history)
   const labelOf = (seg) => {
     const cur = seg.stage === stage
     return `<span class="sb-lab${cur ? ' sb-lab-cur' : ''}">${seg.stage}${cur ? `<span class="sb-here">${HOME.here}</span>` : ''} <span class="sb-n">${HOME.stageTickets(seg.tickets.length)}</span></span>`
@@ -2497,87 +2630,27 @@ function ticketButtonAttrs(id) {
 }
 
 /**
- * T-1180: a scope row's name — the heading label up to its colon (a colon between digits is a clock time, never a
- * split: 「05:20 …」), minus the trailing ticket refs `(T-…)` the PRD appends. Never shortened further; the full heading stays the tooltip.
+ * T-1415 (shape E, mock scope-numbers-mock-e.html): one line per lane of the version — lane name, the lane's squares, the
+ * lane's ticket number n/m. The number is the lane's own (`prdt schedule` · statusline: `done`/`total`), one basis for the block.
+ * No gate lanes → one default line holding every ticket of the version.
  */
-export function scopeItemName(label) {
-  const plain = String(label).replace(/`/g, '')
-  const m = /(?<!\d)[:：]|[:：](?!\d)/.exec(plain)
-  const head = (m ? plain.slice(0, m.index) : plain).trim()
-  const name = head.replace(/(?:\s*\(T-[^)]*\))+\s*$/, '').trim()
-  return name || head || plain.trim()
-}
-
-/** 스코프: one row per PRD item of the open section (label up to its colon; the full heading is the tooltip), then the 「PRD 항목 밖 티켓」 block (work tickets only; T-1046). */
 function homeScope(data, currentTickets) {
   const openItems = data.prd.openItems || []
-  const byItem = new Map(openItems.map((i) => [i.key, []]))
-  const outOfScope = []
-  // T-1046: a malformed `prd_item` (no `<version>#<key>` shape) is named in the definition line; decision tickets (T-1051 = A) are only counted for the note.
-  let malformed = 0
-  let decisions = 0
-  const fixCount = new Map()
-  for (const t of currentTickets) {
-    if (t.frontmatter.status !== 'open' && t.frontmatter.status !== 'done') continue
-    const raw = typeof t.frontmatter.prd_item === 'string' ? t.frontmatter.prd_item : ''
-    const key = prdItemKey(raw, data.currentVersion)
-    if (key && byItem.has(key)) byItem.get(key).push(t)
-    else if (!raw.includes('#') && byItem.has(raw)) {
-      // A bare key that is exactly an open-section key: counted under that item, flagged 「형식 고치기」 (doctor keeps warning).
-      byItem.get(raw).push(t)
-      fixCount.set(raw, (fixCount.get(raw) || 0) + 1)
-    } else {
-      // Decision tickets record user choices, not scope work — never counted outside the items.
-      if (t.frontmatter.type === 'decision') { decisions += 1; continue }
-      outOfScope.push(t)
-      if (raw !== '' && !/^[^#]+#[^#]+$/.test(raw)) malformed += 1
-    }
-  }
-  const row = (label, title, tickets, extra = '', fix = 0) => {
-    const sorted = [...tickets.filter((t) => t.frontmatter.status === 'done'), ...tickets.filter((t) => t.frontmatter.status !== 'done')]
+  const work = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
+  const byId = new Map(work.map((t) => [t.frontmatter.id, t]))
+  const lanes = Array.isArray(data.lanes) ? data.lanes : []
+  const lines = lanes.length > 0
+    ? lanes.map((l) => ({ name: l.name, tickets: l.tickets.map((id) => byId.get(id)).filter(Boolean), done: l.done, total: l.total }))
+    : [{ name: HOME.scopeDefaultLane, tickets: work, done: work.filter((t) => t.frontmatter.status === 'done').length, total: work.length }]
+  const row = (l) => {
+    const sorted = [...l.tickets.filter((t) => t.frontmatter.status === 'done'), ...l.tickets.filter((t) => t.frontmatter.status !== 'done')]
       .sort((x, y) => (x.frontmatter.status === 'done' ? 0 : 1) - (y.frontmatter.status === 'done' ? 0 : 1) || compareTicketIds(x.frontmatter.id, y.frontmatter.id))
-    const done = tickets.filter((t) => t.frontmatter.status === 'done').length
     const sq = sorted
       .map((t) => `<span class="stage-sq sc-btn${t.frontmatter.status === 'done' ? ' sq-done' : ''}" ${ticketButtonAttrs(t.frontmatter.id)} aria-label="${escapeHtml(t.frontmatter.id)}" title="${escapeHtml(t.frontmatter.id)}"></span>`)
       .join('')
-    const fixTag = fix > 0 ? `<span class="sc-fix" title="${escapeHtml(HOME.scopeFixTitle)}">${escapeHtml(HOME.scopeFixTag(fix))}</span>` : ''
-    return `<div class="sc-row${extra}"><span class="sc-lab" title="${escapeHtml(title)}">${escapeHtml(label)}</span><span class="sc-sq">${sq}${fixTag}</span><span class="mono sc-n">${done}/${tickets.length}</span></div>`
+    return `<div class="e-row"><span class="e-lab" title="${escapeHtml(l.name)}">${escapeHtml(l.name)}</span><span class="e-sq">${sq}</span><span class="mono e-n">${l.done}/${l.total}</span></div>`
   }
-  const items = openItems.map((i) => ({ key: i.key, tickets: byItem.get(i.key), html: row(scopeItemName(i.label), i.label.replace(/`/g, ''), byItem.get(i.key), '', fixCount.get(i.key) || 0) }))
-  // T-1180: under their 합격선 lane (the one lane computation: prdt_lanes) — an item goes to the lane holding most of its tickets, ties to the earlier lane.
-  // T-1184: prdt_lanes now returns the 자투리 lane too (last), so it counts like any lane; an item no lane reaches stays lane-less.
-  const lanes = Array.isArray(data.lanes) ? data.lanes : []
-  const groups = lanes.map((l) => ({ head: HOME.scopeLane(l.name), count: l.linked ? `${l.done}/${l.total}` : '', rows: [] }))
-  const loose = []
-  for (const it of items) {
-    const ids = it.tickets.map((t) => t.frontmatter.id)
-    let best = -1
-    let bestN = 0
-    lanes.forEach((l, i) => {
-      const n = ids.filter((id) => l.tickets.includes(id)).length
-      if (n > bestN) { best = i; bestN = n }
-    })
-    if (best >= 0) groups[best].rows.push(it.html)
-    else loose.push(it.html)
-  }
-  if (loose.length > 0 && groups.length > 0) groups.push({ head: HOME.scopeNoLane, count: '', rows: loose })
-  const grouped = groups.length > 0 ? groups.filter((g) => g.rows.length > 0 || g.head !== HOME.scopeNoLane) : []
-  const bodyRows = grouped.length > 0
-    ? grouped.map((g) => `<div class="sc-grp">${escapeHtml(g.head)}${g.count ? ` <span class="mono sc-n">${escapeHtml(g.count)}</span>` : ''}</div>${g.rows.join('')}`).join('')
-    : items.map((it) => it.html).join('')
-  // T-1046: its own block under a divider; the row never disappears (0 shows 「없음」).
-  const listKey = `${data.listPrefix || ''}${currentTicketBucketKey(data.tickets, data.currentVersion)}`
-  const link = (text, store, key) => `<button type="button" class="sc-why-link" data-open-store="${store}" data-open-group="${escapeHtml(key)}">${escapeHtml(text)}</button>`
-  const outRow = outOfScope.length > 0
-    ? row(PROGRESS_OUT_OF_SCOPE_LABEL, PROGRESS_OUT_OF_SCOPE_LABEL, outOfScope, ' sc-out')
-    : `<div class="sc-row sc-out"><span class="sc-lab">${escapeHtml(PROGRESS_OUT_OF_SCOPE_LABEL)}</span><span class="sc-sq"><span class="cp-empty">${escapeHtml(HOME.scopeOutEmpty)}</span></span><span class="mono sc-n">0</span></div>`
-  // T-1180: one line — why outside · decisions left out · links.
-  const whyParts = []
-  if (outOfScope.length > 0) whyParts.push(`${escapeHtml(HOME.scopeOutDef)}${malformed > 0 ? ` ${link(HOME.scopeMalformed(malformed), 'ticket', listKey)}` : ''}`)
-  if (decisions > 0) whyParts.push(`${escapeHtml(HOME.scopeDecisionNote(decisions))} · ${link(HOME.scopeDecisionLink, 'home', `${data.listPrefix || ''}decision`)}`)
-  const whyHtml = whyParts.length > 0 ? `<p class="sc-why">${whyParts.join(' · ')}</p>` : ''
-  const ruleHtml = grouped.length > 0 ? `<p class="sc-why">${escapeHtml(HOME.scopeLaneRule)}</p>` : ''
-  return `<div><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div><div class="sc-rows">${bodyRows}<div class="sc-sep"></div>${outRow}</div>${ruleHtml}${whyHtml}</div>`
+  return `<div class="sc-e"><div class="cp-h">${HOME.scope} <span class="cp-sub">${HOME.scopeSub(openItems.length)}</span></div><div class="e-rows">${lines.map(row).join('')}</div></div>`
 }
 
 /** dec · req wait lists of `data.tickets`; the sidebar card (T-1165) and Home's wait block share this one call. */
@@ -2594,7 +2667,7 @@ function homeWaits(data) {
     (list.length === 0
       ? `<p class="cp-empty">${empty}</p>`
       : `<div class="cp-wlist">${list
-          .map((fm) => `<button type="button" class="cp-went" data-detail-kind="ticket" data-detail-id="${escapeHtml(fm.id)}"><span class="mono cp-wid">${escapeHtml(fm.id)}</span><span class="cp-wslug">${escapeHtml(fm.slug || '')}</span>${ticketRolePill(fm.assignee)}</button>`)
+          .map((fm) => `<button type="button" class="cp-went" data-detail-kind="ticket" data-detail-id="${escapeHtml(fm.id)}"><span class="mono cp-wid">${escapeHtml(fm.id)}</span><span class="cp-wslug">${escapeHtml(ticketName(fm))}</span>${ticketRolePill(fm.assignee)}</button>`)
           .join('')}</div>`) +
     '</div>'
   return `<div class="sc-waits">${block(HOME.waitDec, dec, HOME.waitDecEmpty)}${block(HOME.waitReq, req, HOME.waitReqEmpty)}</div>`
@@ -2703,10 +2776,10 @@ function dependencyDiagram(graph, layout, DG_ID = 'home-dg') {
       }
       const idText = `${n.id}${n.done ? ' ✓' : ''}`
       return (
-        `<g class="dg-a dg-btn" ${ticketButtonAttrs(n.id)} aria-label="${escapeHtml(HOME.nodeOpen(n.id))}"><title>${escapeHtml(`${n.id} ${n.slug}`.trim())}</title>` +
+        `<g class="dg-a dg-btn" ${ticketButtonAttrs(n.id)} aria-label="${escapeHtml(HOME.nodeOpen(n.id))}"><title>${escapeHtml(`${n.id} ${n.name}`.trim())}</title>` +
         `<g class="${cls}"><rect class="dg-box" height="${NODE_H}" rx="8" width="${NODE_W}" x="${n.x}" y="${n.y}"></rect>` +
         `<text class="dg-id" x="${n.x + 8}" y="${n.y + 14}">${escapeHtml(idText)}</text>` +
-        `<text class="dg-t" x="${n.x + 8}" y="${n.y + 31}">${escapeHtml(fitText(n.slug, NODE_W - 16))}</text>` +
+        `<text class="dg-t" x="${n.x + 8}" y="${n.y + 31}">${escapeHtml(fitText(n.name, NODE_W - 16))}</text>` +
         `${diagramRole(n.assignee, n.x, n.y)}</g>${chips.join('')}</g>`
       )
     })
@@ -2739,11 +2812,35 @@ function homeDependency(data, currentTickets) {
   return `<div class="cp-block">${head}${notice}${dependencyDiagram(graph, layoutHomeGraph(graph), dgId)}</div>`
 }
 
+/**
+ * T-1253: the card's first block — product · 배포 · 개발 (+ date · ref, or the no-record hint), and on a multi-product
+ * page the 제품 줄 table. Read only; values come from `data.deployed` (DEPLOY.md frontmatter) and the po-state version.
+ */
+function homeDeployHead(data) {
+  const V = HOME.vh
+  const dep = data.deployed || null
+  const dev = data.poState?.stage === 'idle' ? '' : data.currentVersion || ''
+  const devHtml = dev ? `<b class="vh-v">${escapeHtml(dev)}</b>` : `<span class="vh-none">${V.noOpen}</span>`
+  const depHtml = dep ? `<b class="vh-v">${escapeHtml(dep.version)}</b>` : `<span class="vh-none">${V.none}</span>`
+  const meta = dep ? V.meta(dep.at, dep.ref) : ''
+  const name = data.project || ''
+  const head = `<div class="vh"><span class="vh-n">${escapeHtml(name || IDENTITY.tool)}</span><span class="vh-k">${V.dep}</span> ${depHtml}<span class="vh-d"><span class="vh-k">${V.dev}</span> ${devHtml}</span>${meta ? `<span class="vh-m">${escapeHtml(meta)}</span>` : ''}</div>${dep ? '' : `<p class="vh-hint">${V.hint}</p>`}`
+  const rows = data.productRows || []
+  if (rows.length === 0) return head
+  const cell = (v, none) => (v ? `<td class="ver">${escapeHtml(v)}</td>` : `<td class="ver vh-nocell">${none}</td>`)
+  const body = rows
+    .map((r) => `<tr class="${r.selected ? 'sel' : ''}"><td class="ln">${escapeHtml(r.name)}</td>${cell(r.deployed, V.none)}${cell(r.dev, V.noOpen)}<td class="stage">${escapeHtml(IDENTITY.stage[r.stage] || r.stage || '')}</td></tr>`)
+    .join('')
+  const th = V.linesHeaders.map((h) => `<th>${h}</th>`).join('')
+  return `${head}<hr class="vh-sep"><div class="vh-lines"><div class="vh-lines-h">${V.linesHead}<small>${rows.length}</small></div><table class="vh-table"><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table></div><hr class="vh-sep">`
+}
+
 function homeProgressBody(data) {
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
-${homeStageBar(currentTickets, data.poState?.stage || '?')}
+${homeDeployHead(data)}
+${homeStageBar(currentTickets, data.poState?.stage || '?', data.stageHistory)}
 <div class="sc sc-grid">${homeWaits(data)}${homeScope(data, currentTickets)}</div>
 ${homeDependency(data, currentTickets)}
 </div>`
@@ -2758,7 +2855,9 @@ function homeLineGroups(data, v, views, repoRootHref) {
   const currentArtifacts = lineArtifactEntries(data.artifacts, v, views).filter((e) => e.fields.bucket === cur)
   const currentDecisions = lineDecisionPages(data.wiki, v)
   const decisionTickets = decisionTicketsOf(idle ? homeTickets_(v) : currentTickets)
-  const idleHomeHtml = idle ? idleNotice(IDLE.homeHead(v.name), IDLE.homeDetail(v.tickets.included.filter((t) => t.bucket === 'backlog').length)) : ''
+  const idleLast = idle ? idleLastVersionHtml(v) : ''
+  const idleBacklog = v.tickets.included.filter((t) => t.bucket === 'backlog').length
+  const idleHomeHtml = idle ? idleLast + idleNotice(IDLE.homeHead(v.name), (idleLast ? IDLE.lastDetail : IDLE.homeDetail)(idleBacklog)) : ''
   // T-1108: an idle product has no open version, so its ticket pane lists every ticket it has (backlog + closed rounds).
   const homeTickets = idle ? [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))] : currentTickets
   const groups = [
@@ -2767,15 +2866,38 @@ function homeLineGroups(data, v, views, repoRootHref) {
     { key: 'prd', label: STORE_LABEL.prd, count: idle ? lastClosedId(v) : v.currentVersion, bodyHtml: idle ? idleNotice(IDLE.prdHead(v.name), IDLE.prdDetail()) : prdOpenBody(v.prd, repoRootHref, { tickets: v.tickets, currentVersion: v.currentVersion, idPrefix: v.line ? `home-prd-${v.line}` : 'home-prd', line: v.line }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: homeTickets.length, bodyHtml: ticketRowsTable(homeTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
-    envGroup(envOfView(data, v), ENV.emptyHead, v.line ? null : data.machineEnv, envWhere(data, v.line)),
+    homeEnvGroup(data, v, true),
+    glossaryGroup(data.wiki),
   ]
   return { groups, defaultKey: 'progress' }
+}
+
+/**
+ * T-1256: an idle product's last closed version as it stood at close — its id, ticket counts (the stage bar) and each
+ * lane with its gate result. '' when the product has no closed version (today's idle text alone). Lanes are the
+ * closed version's own (`closedLanes`, the one lane computation asked for that version). The lane rows size their
+ * columns to content inline (QA d-v116-t1256-qa1: at 1280px the shared `.sc-rows` 1fr column pushed the gate result to
+ * the far right); inline, so the shared stylesheet and every in-progress page stay byte-identical.
+ */
+function idleLastVersionHtml(v) {
+  const closed = lastClosedId(v)
+  if (!closed) return ''
+  const tickets = homeTickets_({ ...v, currentVersion: closed })
+  const lanes = (Array.isArray(v.closedLanes) ? v.closedLanes : []).filter((l) => l.linked)
+  const laneRows = lanes
+    .map((l) => {
+      // every row carries three cells (an empty one for a best-effort lane) so the next row's label never lands in this row's gate column
+      const gate = `<span class="sc-n">${l.besteffort ? '' : escapeHtml(l.total > 0 && l.done === l.total ? IDLE.lastGatePass : IDLE.lastGateOpen)}</span>`
+      return `<div class="sc-row"><span class="sc-lab">${escapeHtml(IDLE.lastLane(l.name))}</span><span class="mono sc-n">${l.done}/${l.total}</span>${gate}</div>`
+    })
+    .join('')
+  return `<div class="dash-card" data-last-version="${escapeHtml(closed)}"><div class="cp-h">${escapeHtml(IDLE.lastHead(closed))}</div>${homeStageBar(tickets, '')}${laneRows ? `<div class="sc-rows" style="grid-template-columns:max-content max-content 1fr">${laneRows}</div>` : ''}</div>`
 }
 
 /** T-1138: an idle product's decision tickets = those of the version its decision pages use (`idleVersion`). */
 function homeTickets_(v) {
   const version = idleVersion(v)
-  return [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t })))].filter((t) => t.bucket !== 'backlog' && sameVersion(t.bucket, version))
+  return [...v.tickets.included, ...v.tickets.omitted.flatMap((o) => o.tickets.map((t) => ({ bucket: o.bucket, ...t, ...(t.frontmatter?.type === 'decision' && o.bodies && t.rel in o.bodies ? { body: o.bodies[t.rel] } : {}) })))].filter((t) => t.bucket !== 'backlog' && sameVersion(t.bucket, version))
 }
 
 /** A decision page's `version:` is `<line>/<v>` for an added line, bare for the home line (release-lines.md one-line rule). */
@@ -2794,7 +2916,7 @@ function homeSection(data, repoRootHref) {
   const views = lineViews(data)
   if (views.length > 0) {
     const groups = lineSectioned(views, (v) => homeLineGroups(data, v, views, repoRootHref))
-    return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups, defaultKey: groups.defaultKey, topHtml: HASH_NOTICE_HTML }) })
+    return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups, defaultKey: groups.defaultKey, topHtml: hashNoticeHtml() }) })
   }
   const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
   // T-713 scope note: `e.fields.bucket` matching stays literal (never
@@ -2803,17 +2925,24 @@ function homeSection(data, repoRootHref) {
   const currentArtifacts = currentArtifactEntries(data.artifacts, data.currentVersion)
   const currentDecisions = currentDecisionPages(data.wiki, data.currentVersion)
   const decisionTickets = decisionTicketsOf(currentTickets)
+  // T-1256: an idle single-product page shows the last closed version like a multi-product idle line does (only when a closed version exists).
+  const idleView = { line: null, name: data.project || '', currentVersion: data.currentVersion, stage: data.poState?.stage || '', tickets: data.tickets, prd: data.prd, closedLanes: data.closedLanes }
+  const idleLast = idleView.stage === 'idle' && Boolean(idleView.name) && lastClosedId(idleView) !== ''
+  const progressBody = idleLast
+    ? idleLastVersionHtml(idleView) + idleNotice(IDLE.homeHead(idleView.name), IDLE.lastDetail(data.tickets.included.filter((t) => t.bucket === 'backlog').length))
+    : `<div class="dash-grid">${homeProgressBody(data)}</div>`
   const groups = [
-    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: progressBody },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref, { tickets: data.tickets, currentVersion: data.currentVersion, idPrefix: 'home-prd' }) },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'decision', label: HOME.decision, count: decisionTickets.length + currentDecisions.length, bodyHtml: decisionRowsTable(decisionTickets, currentDecisions) },
-    envGroup(data.env, ENV.homeNone, data.machineEnv, envWhere(data, null)),
+    homeEnvGroup(data, { line: null }, false),
+    glossaryGroup(data.wiki),
   ]
   // T-796: the tab and its heading name the version (「현재 버전 · v1.12」).
   const heading = `${STORE_LABEL.home} · ${data.currentVersion}`
-  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: heading, crumbLabel: heading, groups, topHtml: HASH_NOTICE_HTML }) })
+  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: heading, crumbLabel: heading, groups, topHtml: hashNoticeHtml() }) })
 }
 
 export const TEMPLATE_CSS = `
@@ -2979,6 +3108,25 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
    (docs/artifacts/v1.12/define-screen-set.html, home-progress + home-cases). ---------- */
 .dash-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-16); }
 .dash-card { border: 1px solid var(--border-item); border-radius: var(--radius-12); background: var(--bg-surface-base); padding: var(--space-20); }
+/* T-1253: progress header (screen set v1.15 viewer-head) — existing tokens only. */
+.vh { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 var(--space-12); }
+.vh-n { font-size: 15px; font-weight: 700; }
+.vh-k { font-size: 11px; color: var(--text-tertiary); }
+.vh-v { font-family: var(--font-mono); font-size: 13px; font-weight: 700; }
+.vh-d { margin-left: 2px; }
+.vh-none { font-size: 12px; color: var(--text-tertiary); border: 1px dashed var(--border-item); border-radius: 100px; padding: 0 8px; }
+.vh-m { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+.vh-hint { margin: -4px 0 var(--space-12); font-size: 12px; color: var(--text-tertiary); }
+.vh-sep { border: none; border-top: 1px solid var(--border-item); margin: 14px 0; }
+.vh-lines-h { font-size: 12px; font-weight: 600; margin-bottom: var(--space-8); }
+.vh-lines-h small { margin-left: 6px; color: var(--text-tertiary); font-weight: 400; }
+.vh-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.vh-table th { font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-align: left; padding: 0 8px 6px; border-bottom: 1px solid var(--border-item); }
+.vh-table td { padding: 8px; border-bottom: 1px solid var(--border-item); vertical-align: middle; }
+.vh-table td.ver { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); }
+.vh-table td.vh-nocell { font-family: var(--font-family); color: var(--text-tertiary); }
+.vh-table td.ln { font-weight: 600; }
+.vh-table tr.sel td { background: var(--accent-subtle); }
 .dash-card-title { font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-tertiary); margin: 0 0 var(--space-12); display: flex; align-items: center; gap: var(--space-8); }
 .sb { display: flex; align-items: center; gap: 0; margin: var(--space-4) 0 var(--space-4); flex-wrap: nowrap; min-width: 0; max-width: 100%; }
 .sb-tick { width: 2px; height: 34px; background: var(--text-secondary); border-radius: 1px; margin-right: var(--space-6); flex: 0 0 auto; }
@@ -3002,12 +3150,18 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .sc-row { display: contents; }
 .sc-lab { font-size: 12px; color: var(--text-secondary); padding: 3px 0; line-height: 1.45; word-break: keep-all; overflow-wrap: anywhere; }
 .sc-sq, .sc-n { padding: 3px 0; }
-.sc-grp { grid-column: 1 / -1; font-size: 11px; font-weight: 600; color: var(--text-tertiary); word-break: keep-all; overflow-wrap: break-word; margin: var(--space-10) 0 1px; }
-.sc-grp:first-child { margin-top: 0; }
-.sc-sep { grid-column: 1 / -1; border-top: 1px dashed var(--border-item); margin: var(--space-10) 0 var(--space-4); }
-.sc-out .sc-lab { color: var(--text-primary); font-weight: 600; }
 .sc-sq { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-width: 0; }
 .sc-n { font-size: 10.5px; color: var(--text-tertiary); }
+.sc-e .cp-h { font-size: 11px; font-weight: 600; color: var(--text-quaternary); letter-spacing: .04em; margin: 0 0 var(--space-4); }
+.sc-e .cp-sub { font-size: 11px; color: var(--text-quaternary); }
+.e-rows { border-top: 1px solid var(--border-section); }
+.e-row { display: grid; grid-template-columns: 11.5em minmax(0, 1fr) 3.4em; column-gap: var(--space-10); align-items: start; padding: var(--space-8) 0; border-bottom: 1px solid var(--border-item); }
+.e-lab { font-size: 13px; font-weight: 700; color: var(--text-primary); line-height: 1.45; word-break: keep-all; overflow-wrap: anywhere; }
+.e-sq { display: flex; flex-wrap: wrap; gap: 3px; align-content: flex-start; min-width: 0; padding: 4px 0 0; }
+.e-n { font-size: 12.5px; font-weight: 700; color: var(--text-primary); text-align: right; white-space: nowrap; line-height: 1.45; }
+.e-sq .stage-sq { cursor: pointer; }
+.stage-sq.sc-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 1px; }
+@media (max-width: 600px) { .e-row { grid-template-columns: minmax(0, 1fr) auto; } .e-row .e-sq { grid-column: 1 / -1; grid-row: 2; padding-top: 6px; } .e-row .e-n { grid-column: 2; grid-row: 1; } .e-lab { grid-column: 1; grid-row: 1; } }
 .sc-btn { cursor: pointer; }
 .sc-btn.is-open { outline: 2px solid var(--text-primary); outline-offset: 1px; }
 .sc-waits { min-width: 0; display: flex; flex-direction: column; gap: var(--space-16); border-right: 1px solid var(--border-item); padding-right: var(--space-24); }
@@ -3015,9 +3169,6 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .cp-h { font-size: 12px; font-weight: 600; color: var(--text-primary); margin: 0 0 var(--space-10); display: flex; align-items: baseline; gap: var(--space-8); flex-wrap: wrap; }
 .cp-sub { font-weight: 400; color: var(--text-tertiary); font-size: 11.5px; }
 .cp-n { font-size: 10.5px; color: var(--text-quaternary); font-weight: 400; }
-.sc-fix { font-size: 10.5px; color: var(--text-tertiary); border: 1px dashed var(--border-item); border-radius: 8px; padding: 0 6px; margin-left: var(--space-4); }
-.sc-why { font-size: 11.5px; color: var(--text-tertiary); word-break: keep-all; overflow-wrap: break-word; margin: var(--space-8) 0 0; }
-.sc-why-link { font: inherit; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
 .cp-empty { font-size: 11.5px; color: var(--text-tertiary); margin: var(--space-4) 0 0; }
 .cp-wlist { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .cp-went { font: inherit; font-size: 12px; text-align: left; display: inline-flex; align-items: center; gap: 6px; background: var(--bg-surface-base); color: var(--text-primary); border: 1px solid var(--border-inline); border-radius: var(--radius-8); padding: 4px 8px; cursor: pointer; }
@@ -3109,6 +3260,27 @@ tbody tr:hover td { background: var(--bg-state-hover); }
 th[aria-sort="ascending"] .sort-ind::after { content: '\\25B2'; opacity: 1; }
 th[aria-sort="descending"] .sort-ind::after { content: '\\25BC'; opacity: 1; }
 th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--text-secondary); }
+.dv-list { margin: 0 0 var(--space-16); background: var(--bg-surface-base); border: 1px solid var(--border-section); border-radius: 12px; padding: 4px 16px 12px; }
+.dv-row:nth-last-of-type(1) { border-bottom: 0; }
+.dv-row { border-bottom: 1px solid var(--border-item); padding: 8px 0; cursor: pointer; }
+.dv-row:hover .dv-top { background: var(--bg-state-hover); }
+.dv-top { display: grid; grid-template-columns: 56px minmax(0, 1fr) 72px minmax(0, 260px); gap: 12px; align-items: baseline; font-size: 12.5px; border-radius: 4px; padding: 2px 4px; }
+.dv-top .tid, .dv-top .who { font-family: var(--font-mono); font-size: 11px; }
+.dv-top .who { color: var(--text-tertiary); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dv-top .tst { font-size: 11px; color: var(--text-secondary); }
+.dv-top .tst.done { color: var(--status-done); }
+.dv-wait .tst { color: var(--health-warn); }
+.dv-body { display: none; margin: 8px 4px 4px 4px; padding: 10px 12px; background: var(--bg-surface-on); border-radius: 8px; font-size: 12.5px; line-height: 1.6; }
+.dv-row.open .dv-body { display: block; }
+/* T-1277 (QA d-v115-t1277-qa1): the ticket title column no longer takes its width from a long header, so it keeps a floor — at phone width the table scrolls sideways instead of one glyph a line. */
+.tk-table td:nth-child(2) { min-width: 180px; word-break: keep-all; overflow-wrap: break-word; }
+/* T-1277 (QA d-v115-t1259-qa2): a long cell name (「⑤ ⑥ ⑧ (모듈: 규율 문구 기준)」) takes up to 30% of the row and wraps between words, never one character a line. */
+.dv-kv { display: grid; grid-template-columns: fit-content(30%) minmax(0, 1fr); gap: 10px; padding: 2px 0; }
+.dv-kv b { min-width: 44px; font-size: 11px; color: var(--text-tertiary); font-weight: 600; padding-top: 2px; word-break: keep-all; overflow-wrap: break-word; }
+.dv-miss { color: var(--text-tertiary); }
+.dv-note { margin: 10px 0 0; font-size: 11.5px; color: var(--text-tertiary); }
+.dv-pages { margin: 16px 0 6px; font-size: 11px; color: var(--text-tertiary); }
+@media (max-width: 700px) { .dv-top { grid-template-columns: minmax(0, 1fr); } }
 .id-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
 .table-wrap { border: 1px solid var(--border-item); border-radius: var(--radius-8); overflow: hidden; overflow-x: auto; }
 
@@ -3291,32 +3463,32 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .store-section[data-store="feature"] .ev-text code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); }
 .store-section[data-store="feature"] .read-link { font-size: 12px; font-weight: 600; }
 /* T-883: glossary + release-notes screens (approved mockup docs/artifacts/v1.12/define-screen-set.html) */
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) table { table-layout: fixed; }
-.store-section[data-store="glossary"] table.t-gl th:nth-child(1) { width: 230px; }
-.store-section[data-store="glossary"] table.t-gl th:nth-child(2) { width: 112px; }
+:is(.gl, .store-section[data-store="release"]) table { table-layout: fixed; }
+.gl table.t-gl th:nth-child(1) { width: 230px; }
+.gl table.t-gl th:nth-child(2) { width: 112px; }
 .store-section[data-store="release"] table.t-rel th:nth-child(1) { width: 112px; }
 .store-section[data-store="release"] table.t-rel th:nth-child(3) { width: 112px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) th.num-col, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.num-col { text-align: right; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.num-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .nm { font-weight: 600; display: block; }
-.store-section[data-store="glossary"] .nm-gloss { display: block; font-size: 11.5px; color: var(--text-quaternary); margin-top: 1px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.def-col { color: var(--text-secondary); line-height: 1.5; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) td.t-title { color: var(--text-primary); font-size: 13px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .ver { font-family: var(--font-mono); font-weight: 600; font-size: 12.5px; color: var(--text-primary); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-field-value.ver { font-size: 12.5px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .count-line { display: flex; align-items: baseline; gap: var(--space-12); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row.is-open td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .def-lead { font-size: 14.5px; line-height: 1.65; color: var(--text-primary); margin: 0 0 var(--space-16); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb p { margin: 0 0 var(--space-12); font-size: 13.5px; line-height: 1.7; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb ul { margin: 0 0 var(--space-8); padding-left: 20px; }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb li { margin: 0 0 var(--space-6); font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb li b { color: var(--text-primary); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb code { background: var(--bg-surface-on); padding: 0 4px; border-radius: var(--radius-4); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill { display: block; width: max-content; max-width: 100%; margin: var(--space-24) 0 var(--space-8); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb h3.pill:first-child, :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note + h3.pill { margin-top: var(--space-16); }
-:is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .rb .v-note { font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 var(--space-4); }
-@media (prefers-reduced-motion: reduce) { :is(.store-section[data-store="glossary"], .store-section[data-store="release"]) .detail-row td { transition: none; } }
+:is(.gl, .store-section[data-store="release"]) th.num-col, :is(.gl, .store-section[data-store="release"]) td.num-col { text-align: right; }
+:is(.gl, .store-section[data-store="release"]) td.num-col { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; }
+:is(.gl, .store-section[data-store="release"]) .nm { font-weight: 600; display: block; }
+.gl .nm-gloss { display: block; font-size: 11.5px; color: var(--text-quaternary); margin-top: 1px; }
+:is(.gl, .store-section[data-store="release"]) td.def-col { color: var(--text-secondary); line-height: 1.5; }
+:is(.gl, .store-section[data-store="release"]) td.t-title { color: var(--text-primary); font-size: 13px; }
+:is(.gl, .store-section[data-store="release"]) .ver { font-family: var(--font-mono); font-weight: 600; font-size: 12.5px; color: var(--text-primary); }
+:is(.gl, .store-section[data-store="release"]) .detail-field-value.ver { font-size: 12.5px; }
+:is(.gl, .store-section[data-store="release"]) .count-line { display: flex; align-items: baseline; gap: var(--space-12); }
+:is(.gl, .store-section[data-store="release"]) .detail-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+:is(.gl, .store-section[data-store="release"]) .detail-row.is-open td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+:is(.gl, .store-section[data-store="release"]) .def-lead { font-size: 14.5px; line-height: 1.65; color: var(--text-primary); margin: 0 0 var(--space-16); }
+:is(.gl, .store-section[data-store="release"]) .rb p { margin: 0 0 var(--space-12); font-size: 13.5px; line-height: 1.7; }
+:is(.gl, .store-section[data-store="release"]) .rb ul { margin: 0 0 var(--space-8); padding-left: 20px; }
+:is(.gl, .store-section[data-store="release"]) .rb li { margin: 0 0 var(--space-6); font-size: 13.5px; line-height: 1.7; color: var(--text-secondary); }
+:is(.gl, .store-section[data-store="release"]) .rb li b { color: var(--text-primary); }
+:is(.gl, .store-section[data-store="release"]) .rb code { background: var(--bg-surface-on); padding: 0 4px; border-radius: var(--radius-4); }
+:is(.gl, .store-section[data-store="release"]) .rb h3.pill { display: block; width: max-content; max-width: 100%; margin: var(--space-24) 0 var(--space-8); }
+:is(.gl, .store-section[data-store="release"]) .rb h3.pill:first-child, :is(.gl, .store-section[data-store="release"]) .rb .v-note + h3.pill { margin-top: var(--space-16); }
+:is(.gl, .store-section[data-store="release"]) .rb .v-note { font-size: 12.5px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 var(--space-4); }
+@media (prefers-reduced-motion: reduce) { :is(.gl, .store-section[data-store="release"]) .detail-row td { transition: none; } }
 /* T-958: env screen (approved screen set docs/artifacts/v1.13/define-screen-set.html #screen-env; the Home env block left 진행 상황 in T-1191 / T-1179 C) */
 .nav-item.nav-dim:not(.active) span:first-child { color: var(--text-tertiary); }
 .env-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 4px; }
@@ -3332,7 +3504,6 @@ details.v-fold[open] summary { color: var(--text-primary); }
 .est.off { color: var(--text-tertiary); border-style: dashed; }
 .env-nofile { display: flex; flex-direction: column; gap: 4px; padding: 18px; border: 1px dashed var(--border-inline); border-radius: 10px; color: var(--text-tertiary); font-size: 12.5px; }
 .env-nofile b { color: var(--text-primary); font-size: 13px; }
-.env-scope { margin: 18px 0 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .tagw { font-family: var(--font-family); font-size: 10.5px; color: var(--text-tertiary); border: 1px solid var(--border-inline); border-radius: 100px; padding: 0 7px; margin-left: 8px; white-space: nowrap; }
 .env-card + .env-card { margin-top: 12px; }
 /* T-1191: a file card's open controls — link-styled, the same accent link look as .env-go had */
@@ -3385,6 +3556,11 @@ ${DISCIPLINE_LOAD_CSS}
   .frame-main-col { flex: 0 0 auto; min-height: 420px; overflow: visible; width: 100%; }
   .main-inner { min-width: 0; }
   .table-wrap { overflow-x: auto; }
+  /* T-1391: the fixed 230 + 112 px term/category columns left the 정의 column ~48px at 390 — one glyph a line. Phone: narrower leading columns, a table floor so 정의 keeps >= 220px (the wrap scrolls sideways), Korean wraps by phrase. */
+  .gl table.t-gl { min-width: 480px; }
+  .gl table.t-gl th:nth-child(1) { width: 150px; }
+  .gl table.t-gl th:nth-child(2) { width: 96px; }
+  .gl td.def-col { word-break: keep-all; overflow-wrap: break-word; }
   .frame-body { padding: var(--space-16) var(--space-12); overflow: visible; }
   .dash-card { padding: var(--space-12); }
   .sc-grid { grid-template-columns: 1fr; }
@@ -3422,7 +3598,7 @@ export function buildFileContent(id) {
   return `window.${BUILD_GLOBAL} = ${JSON.stringify(String(id))};\n`
 }
 
-const INTERACTION_SCRIPT = `
+const interactionScript = () => `
 (function () {
   var DETAIL_DATA = JSON.parse(document.getElementById('detail-data').textContent);
   var DETAIL_FIELD_LABELS = ${JSON.stringify(DETAIL_FIELD_LABELS)};
@@ -3739,8 +3915,9 @@ ${PRD_READING_SCRIPT}
   function showHashNotice(raw) {
     var notice = document.getElementById('hash-notice');
     if (!notice) return;
-    var m = /^T-([0-9]+)$/.exec(raw);
-    var stale = (m !== null && Number(m[1]) <= DETAIL_DATA.maxTicket) || raw.indexOf('docs/') === 0;
+    var m = /^T-(?:([BCDFGHJKLMNPQRSTVWXYZ]{1,8})-)?([0-9]+)$/.exec(raw);
+    var top = m !== null ? DETAIL_DATA.maxTicket[m[1] || ''] : undefined;
+    var stale = (top !== undefined && Number(m[2]) <= top) || raw.indexOf('docs/') === 0;
     notice.querySelector('.js-notice-id').textContent = '#' + raw;
     notice.querySelector('.js-notice-text').textContent = stale ? HASH_NOTICE.stale : HASH_NOTICE.unknown;
     notice.hidden = false;
@@ -3825,12 +4002,6 @@ ${PRD_READING_SCRIPT}
     var view = p.get('view');
     if (!view) return false;
     var group = p.get('group');
-    if (view === 'env') {
-      // T-1047: env is a current-version item now; an old ?view=env&group=<line>/<file> link lands on that line's env item.
-      var cut = group ? group.lastIndexOf('/') : -1;
-      view = 'home';
-      group = (cut === -1 ? '' : group.slice(0, cut + 1)) + 'env';
-    }
     var section = findByAttr('.store-section', 'data-store', view);
     if (!section) return false;
     clearHashMarks();
@@ -4013,6 +4184,8 @@ ${PRD_READING_SCRIPT}
   }
 
   document.addEventListener('click', function (ev) { onClick(ev); syncUrl(false); });
+  document.addEventListener('click', function (ev) { var r = ev.target.closest && ev.target.closest('.dv-row'); if (r) { r.classList.toggle('open'); r.setAttribute('aria-expanded', r.classList.contains('open') ? 'true' : 'false'); } });
+  document.addEventListener('keydown', function (ev) { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.classList && ev.target.classList.contains('dv-row')) { ev.preventDefault(); ev.target.click(); } });
 
   document.addEventListener('keydown', function (ev) {
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches && ev.target.matches('[data-card-open]')) { ev.preventDefault(); onClick(ev); syncUrl(false); return; }
@@ -4103,7 +4276,7 @@ ${PRD_READING_SCRIPT}
       document.head.appendChild(probe);
     }, ${VIEWER_AUTO_REFRESH_MS});
   }
-${DISCIPLINE_LOAD_SCRIPT}
+${disciplineLoadScript()}
 })();
 `
 
@@ -4130,15 +4303,11 @@ ${DISCIPLINE_LOAD_SCRIPT}
 // choice never flashes light first. Light unless the stored value is 'dark'.
 const THEME_HEAD_SCRIPT = `(function(){var t=null;try{t=localStorage.getItem(${JSON.stringify(THEME_STORAGE_PREFIX)}+location.pathname)}catch(e){}document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light')})();`
 const THEME_HEAD_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(THEME_HEAD_SCRIPT, 'utf8').digest('base64')
-const INTERACTION_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT, 'utf8').digest('base64')
 // T-961: a multi-line page resolves an added line's past ticket
 // (docs/tickets/<line>/<v>/T-n.md) to its own data file key `<line>--<v>`; a
-// single-line page keeps INTERACTION_SCRIPT, byte for byte.
+// single-line page keeps the interaction script, byte for byte.
 const PAST_REF_RE = /(function pastTicketRef\(fields\) \{\n\s*var parts = [^\n]*;)/
 const PAST_REF_LINE = '\n    ' + ['if', '(parts.length', '===', '5)', 'parts.splice(2,', '2,', "parts[2]", '+', "'--'", '+', 'parts[3]);'].join(' ')
-const INTERACTION_SCRIPT_LINES = INTERACTION_SCRIPT.replace(PAST_REF_RE, (head) => head + PAST_REF_LINE)
-if (INTERACTION_SCRIPT_LINES === INTERACTION_SCRIPT) throw new Error('T-961: pastTicketRef text drifted from PAST_REF_RE')
-const INTERACTION_SCRIPT_LINES_SHA256_BASE64 = crypto.createHash('sha256').update(INTERACTION_SCRIPT_LINES, 'utf8').digest('base64')
 // T-961: emitted only on a page with several release lines — a single-line
 // page's CSS, scripts and CSP stay byte-identical.
 const LINES_CSS = `
@@ -4152,21 +4321,42 @@ const LINES_CSS = `
 const LINES_SCRIPT = `(function(){function sync(){document.querySelectorAll('.store-section').forEach(function(s){var b=s.querySelector('.nav-item-clickable.active[data-crumb]');var l=s.querySelector('.js-group-label');if(b&&l)l.textContent=b.getAttribute('data-crumb');});}function later(){setTimeout(sync,0);}document.addEventListener('click',later);document.addEventListener('keydown',later);window.addEventListener('hashchange',later);later();})();`
 const LINES_SCRIPT_SHA256_BASE64 = crypto.createHash('sha256').update(LINES_SCRIPT, 'utf8').digest('base64')
 
-const CSP_CONTENT = [
-  "default-src 'none'",
-  // T-885 (T-876 = D): 'strict-dynamic' lets the hash-trusted interaction
-  // script add a past-version data file's <script src>; a parser-inserted or
-  // innerHTML-inserted script (a document body) still never runs.
-  `script-src 'sha256-${THEME_HEAD_SCRIPT_SHA256_BASE64}' 'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`,
-  "style-src 'unsafe-inline'",
-  "img-src 'self' data:",
-  // T-1010: only the side panel's sandboxed artifact iframe (a contained file:// href) loads a frame.
-  "frame-src file:",
-  "font-src data:",
-  "base-uri 'none'",
-  "form-action 'none'",
-].join('; ')
-const CSP_CONTENT_LINES = CSP_CONTENT.replace(`'sha256-${INTERACTION_SCRIPT_SHA256_BASE64}'`, `'sha256-${INTERACTION_SCRIPT_LINES_SHA256_BASE64}'`).replace("'strict-dynamic'", `'sha256-${LINES_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`)
+/**
+ * T-1277: the interaction script carries the page's labels (JSON-embedded at generation), so the script, its
+ * multi-line variant and the CSP hashes are built once per language — never at module load.
+ */
+const scriptBundles = new Map()
+function scriptBundle(lang) {
+  let b = scriptBundles.get(lang)
+  if (b) return b
+  const sha = (t) => crypto.createHash('sha256').update(t, 'utf8').digest('base64')
+  const interaction = interactionScript()
+  const interactionLines = interaction.replace(PAST_REF_RE, (head) => head + PAST_REF_LINE)
+  if (interactionLines === interaction) throw new Error('T-961: pastTicketRef text drifted from PAST_REF_RE')
+  const interactionSha = sha(interaction)
+  const csp = [
+    "default-src 'none'",
+    // T-885 (T-876 = D): 'strict-dynamic' lets the hash-trusted interaction
+    // script add a past-version data file's <script src>; a parser-inserted or
+    // innerHTML-inserted script (a document body) still never runs.
+    `script-src 'sha256-${THEME_HEAD_SCRIPT_SHA256_BASE64}' 'sha256-${interactionSha}' 'strict-dynamic'`,
+    "style-src 'unsafe-inline'",
+    "img-src 'self' data:",
+    // T-1010: only the side panel's sandboxed artifact iframe (a contained file:// href) loads a frame.
+    "frame-src file:",
+    "font-src data:",
+    "base-uri 'none'",
+    "form-action 'none'",
+  ].join('; ')
+  b = {
+    interaction,
+    interactionLines,
+    csp,
+    cspLines: csp.replace(`'sha256-${interactionSha}'`, `'sha256-${sha(interactionLines)}'`).replace("'strict-dynamic'", `'sha256-${LINES_SCRIPT_SHA256_BASE64}' 'strict-dynamic'`),
+  }
+  scriptBundles.set(lang, b)
+  return b
+}
 
 /**
  * Embeds `obj` as a same-document JSON blob. Escapes EVERY `<` as `<`
@@ -4215,6 +4405,9 @@ export function renderPage({
   // bodies never sit in this page, so the page itself cannot tell.
   pastMermaid = false,
 }) {
+  // T-1277: the chrome language is data.userLang (project user_lang, else machine user-lang; collect.mjs); unset or unknown → ko.
+  setViewerLang(data.userLang)
+  const bundle = scriptBundle(viewerLang)
   pageViewerAbsPath = viewerAbsPath
   const pageTitle = escapeHtml(pageTitleText(data.project))
   const discipline = data.discipline || []
@@ -4238,7 +4431,7 @@ export function renderPage({
     // detail-row — its body renders directly in its own sidebar group's pane
     // (prdStoreInner) — so DETAIL_DATA never needs one.
     anchors,
-    maxTicket: maxTicketNumber(data),
+    maxTicket: maxTicketByPrefix(data),
     // T-885: bucket → sibling data-file src, written by the generator only.
     pastTickets: pastTicketSrc,
     // T-803 (T-897 = B): { id, src } — this file's build id and its sibling
@@ -4253,17 +4446,17 @@ ${ticketSection(data.tickets, data.currentVersion, views)}
 ${wikiSection(data.wiki)}
 ${featuresSection(data)}
 ${artifactsSection(data.artifacts, data.currentVersion, views)}
-${glossarySection(data.wiki)}
+${envSection(data)}
 ${releaseSection(data.releases || [])}
 ${discSection(discipline, data.disciplineLoad || null)}`
   const detailScript = detailDataScript(detailData)
   // T-1049 (T-1056 = A): mermaid ships only on a page that carries a diagram block.
   const mm = pastMermaid || hasMermaid(bodyHtml, detailScript) ? mermaidScript() : null
-  const csp = views.length > 0 ? CSP_CONTENT_LINES : CSP_CONTENT
+  const csp = views.length > 0 ? bundle.cspLines : bundle.csp
   const cspMeta = mm ? csp.replace("'strict-dynamic'", `'sha256-${mm.sha256}' 'strict-dynamic'`) : csp
 
   return `<!doctype html>
-<html lang="ko">
+<html lang="${viewerLang}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${cspMeta}">
@@ -4273,7 +4466,7 @@ ${discSection(discipline, data.disciplineLoad || null)}`
 <style>
 ${fontFaceCss}
 ${TEMPLATE_CSS}
-${emitRootThemeCss(dark, light)}${views.length > 0 ? LINES_CSS : ''}${mm ? MERMAID_CSS : ''}
+${emitRootThemeCss(dark, light)}${LINES_CSS}${mm ? MERMAID_CSS : ''}
 </style>
 </head>
 <body>
@@ -4282,7 +4475,7 @@ ${emitRootThemeCss(dark, light)}${views.length > 0 ? LINES_CSS : ''}${mm ? MERMA
 ${bodyHtml}
 </div>
 ${detailScript}
-<script>${views.length > 0 ? INTERACTION_SCRIPT_LINES : INTERACTION_SCRIPT}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}${mm ? `\n<script>${mm.script}</script>` : ''}
+<script>${views.length > 0 ? bundle.interactionLines : bundle.interaction}</script>${views.length > 0 ? `\n<script>${LINES_SCRIPT}</script>` : ''}${mm ? `\n<script>${mm.script}</script>` : ''}
 </body>
 </html>
 `

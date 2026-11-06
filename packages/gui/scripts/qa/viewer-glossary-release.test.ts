@@ -8,7 +8,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { renderPage } from '@productune/viewer/lib/render.mjs'
-import { collectReleases, parseReleases } from '@productune/viewer/lib/collect.mjs'
+import { collectReleases, collectWiki, parseReleases } from '@productune/viewer/lib/collect.mjs'
+import ko from '@productune/viewer/lib/labels-ko.mjs'
+import { META_ROOT } from './meta-root'
 
 const RELEASES_MD = `# Releases
 
@@ -79,27 +81,55 @@ function section(html: string, store: string): string {
   const i = html.indexOf(`<section class="store-section" data-store="${store}"`)
   return html.slice(i, html.indexOf('</section>', i))
 }
+/** T-1255: 용어 사전 is the 현재 버전 (home) store's `glossary` group — its pane markup. */
+function glossaryPane(html: string): string {
+  const i = html.indexOf('id="store-home"')
+  const sec = html.slice(i, html.indexOf('</section>', i))
+  const start = sec.indexOf('<div class="view-pane" data-group="glossary">')
+  expect(start).toBeGreaterThan(-1)
+  return sec.slice(start).split('<div class="view-pane')[1]
+}
+function homeGroupKeys(html: string): string[] {
+  const i = html.indexOf('id="store-home"')
+  const nav = html.slice(i).split('<nav class="sidebar">')[1].split('</nav>')[0]
+  return [...nav.matchAll(/data-group-select="([^"]+)"/g)].map((m) => m[1])
+}
 
 describe('activity bar (T-880 = A)', () => {
-  it('lists the stores in the decided order with 용어 사전 and 릴리즈 노트 after 아티팩트 and 규율 last', () => {
+  it('lists the stores in the decided order with 릴리즈 노트 after 아티팩트 and 규율 last', () => {
     const html = render(data())
     const nav = html.slice(html.indexOf('<nav class="activity">'), html.indexOf('</nav>'))
     const keys = [...nav.matchAll(/data-store="([^"]+)" title="([^"]+)"/g)].map((m) => m[1])
-    expect(keys).toEqual(['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'glossary', 'release', 'disc']) // T-1047: env left the activity bar
-    expect(nav).toContain('title="용어 사전" aria-label="용어 사전"')
+    // T-1227: env is a store after 아티팩트 · T-1255: 용어 사전 lives in 현재 버전
+    expect(keys).toEqual(['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact', 'env', 'release', 'disc'])
+    expect(nav).not.toContain('용어 사전')
     expect(nav).toContain('title="릴리즈 노트" aria-label="릴리즈 노트"')
   })
 })
 
-describe('용어 사전 (T-883)', () => {
-  it('sidebar 「그룹 없음 · 전체 N개」, count badge 「용어 N개」, table 용어 · 분류 · 정의', () => {
-    const sec = section(render(data()), 'glossary')
-    expect(sec).toContain('그룹 없음 · 전체 2개')
+describe('용어 사전 (T-883 · T-1255 in 현재 버전)', () => {
+  it('sits in the 현재 버전 sidebar after the env group that follows 결정 (T-1397), and has no store of its own', () => {
+    const html = render(data())
+    const keys = homeGroupKeys(html)
+    expect(keys.slice(-3)).toEqual(['decision', 'env', 'glossary'])
+    expect(html).toContain('data-group-select="glossary"><span>용어 사전</span><span class="nav-item-count">2</span></button>')
+    expect(html).not.toContain('data-store="glossary"')
+    expect(html).not.toContain('id="store-glossary"')
+  })
+
+  it('body unchanged: count badge 「용어 N개」, table 용어 · 분류 · 정의', () => {
+    const sec = glossaryPane(render(data()))
     expect(sec).toContain('<span class="count-badge">용어 <b>2</b>개</span>')
     expect(sec).toContain('<th>용어</th><th>분류</th><th>정의</th>')
     expect(sec).toContain('<td><span class="nm">dispatch</span><span class="nm-gloss">PO → 작업 위임</span></td><td><span class="kp kp-component">concept</span></td><td class="def-col">위임</td>')
-    expect(sec).toContain('<span class="topstrip-crumb"><b>용어 사전</b></span>')
     expect(sec).not.toContain('fact--x')
+  })
+
+  it('an idle product still lists its terms after 결정 and env', () => {
+    const d = { ...data(), currentVersion: '', poState: { stage: 'idle' } }
+    const html = render(d)
+    expect(homeGroupKeys(html).slice(-3)).toEqual(['decision', 'env', 'glossary'])
+    expect(glossaryPane(html)).toContain('<span class="count-badge">용어 <b>2</b>개</span>')
   })
 
   it('detail: title 용어 · 설명, lead, 분류 · 상태 fields, body without its h1', () => {
@@ -113,12 +143,49 @@ describe('용어 사전 (T-883)', () => {
     expect(e.html).not.toContain('<h1')
   })
 
-  it('no term document → the approved two-line empty note', () => {
-    const sec = section(render(data({ terms: false })), 'glossary')
-    expect(sec).toContain('그룹 없음 · 전체 0개')
+  it('no term document → the approved two-line empty note in the new place', () => {
+    const html = render(data({ terms: false }))
+    expect(html).toContain('data-group-select="glossary"><span>용어 사전</span><span class="nav-item-count">0</span></button>')
+    const sec = glossaryPane(html)
     expect(sec).toContain('<span style="font-size:11px;">위키에 용어(term) 문서가 생기면 여기 나타나요.</span>')
     expect(sec).toContain('용어 문서가 없어요.')
-    expect(detailData(render(data({ terms: false }))).glossary).toEqual({})
+    expect(detailData(html).glossary).toEqual({})
+  })
+
+  it('the persona-side wordlist is not shown — only wiki term pages', () => {
+    const html = render(data())
+    expect(html).not.toContain('표기 사전')
+    expect(html).not.toMatch(/wordlist/i)
+  })
+})
+
+// T-1343: term documents whose h1 reads 「name: definition」 (17 installed on
+// 2026-10-28) split on ': ' as well as '—' — the 정의 column never repeats the name.
+const colonTerm = (name: string, gloss: string, def: string) => ({
+  rel: `docs/wiki/term--${name}.md`,
+  frontmatter: { title: `${name} (${gloss})`, type: 'term', status: 'live', tags: ['concept'] },
+  body: `# ${name}: ${def}\n\n본문.\n`,
+})
+const glossaryDefs = (html: string) =>
+  [...glossaryPane(html).matchAll(/<span class="nm">([^<]*)<\/span>.*?<td class="def-col">([^<]*)<\/td>/g)].map((m) => ({ name: m[1], def: m[2] }))
+
+describe('용어 사전 정의 칸 (T-1343)', () => {
+  it("splits an h1 on ': ' as well as '—'", () => {
+    const d = data()
+    d.wiki.push(colonTerm('North Star', 'major 버전의 방향 문장', 'major 버전마다 하나 두는 방향 문장') as any)
+    const rows = glossaryDefs(render(d))
+    expect(rows).toContainEqual({ name: 'North Star', def: 'major 버전마다 하나 두는 방향 문장' })
+    expect(rows).toContainEqual({ name: 'dispatch', def: '위임' })
+  })
+
+  it.skipIf(!META_ROOT)('no row over the installed term pages repeats its name in the 정의 column', () => {
+    const wiki = collectWiki(META_ROOT!)
+    const rows = glossaryDefs(render({ ...data({ terms: false }), wiki }))
+    expect(rows.length).toBe(wiki.filter((p: any) => p.frontmatter.type === 'term').length)
+    for (const r of rows) {
+      expect(r.def, r.name).not.toBe('')
+      expect(r.def.startsWith(r.name), `${r.name} → ${r.def}`).toBe(false)
+    }
   })
 })
 
@@ -139,7 +206,7 @@ describe('릴리즈 노트 (T-883)', () => {
     expect(e.html).toContain('<span class="detail-field-value ver">v1.11.1</span>')
     expect(e.html).toContain('>날짜<')
     expect(e.html).toContain('<div class="v-note">패치 릴리스입니다. T-810 을 반영합니다.<br>적용: <code>prdt update</code></div>')
-    expect(e.html).toContain('<h3 class="pill pill-heading-2">Added</h3>')
+    expect(e.html).toContain('<h3 class="pill pill-heading-2">1. Added</h3>') // T-1303: group-line numbers (T-1316)
     expect(e.html).toContain('<strong>새 기능입니다.</strong>')
   })
 
@@ -174,7 +241,8 @@ describe('릴리즈 노트 (T-883)', () => {
 describe('기능 상세 「읽기」 칸 (T-883)', () => {
   it('on 용어 사전 and 릴리즈 노트 only, after 버전, with the approved values and the store to open', () => {
     const f = detailData(render(data())).feature
-    expect(f.glossary.html).toContain('<span class="detail-field-label">읽기</span><span class="detail-field-value"><button type="button" class="area-a read-link" data-open-store="glossary">용어 사전 · 2개</button>')
+    // T-1255: 용어 사전 opens the 현재 버전 store's glossary group
+    expect(f.glossary.html).toContain('<span class="detail-field-label">읽기</span><span class="detail-field-value"><button type="button" class="area-a read-link" data-open-store="home" data-open-group="glossary">용어 사전 · 2개</button>')
     expect(f['release-notes'].html).toContain('data-open-store="release">릴리즈 노트 · 3개</button>')
     expect(f.wiki.html).not.toContain('읽기')
   })
@@ -226,5 +294,24 @@ describe('collectReleases — read path and containment (T-883)', () => {
     expect(r.map((x) => x.version)).toEqual(heads.map((h) => h.match(/^## (v\d\S*)/)![1]))
     expect(r[0].version).toMatch(/^v\d/)
     expect(r.every((x) => x.date !== '')).toBe(true)
+  })
+})
+
+// T-1343: the ko spellings the user picked (T-1341 = A) — 제품 · 결정사항 ·
+// 요청사항 · 페르소나 · 아티팩트, and the rider legend = the term page's definition.
+describe('ko labels follow the picked term spellings (T-1343)', () => {
+  it('home, discipline-load, artifact and PRD-reading labels', () => {
+    const k = ko as any
+    expect(k.HOME.vh.linesHead).toBe('제품')
+    expect(k.HOME.waitDec).toBe('결정사항')
+    expect(k.HOME.waitReq).toBe('요청사항')
+    expect(k.HOME.legendRider).toBe('메인 패스 밖에서 남는 자리에 맡기는 티켓')
+    expect(k.PRD_READING.ticketsHeading).toBe('결정사항')
+    expect(k.DISCIPLINE_LOAD.lane1.sub).toContain('페르소나가')
+    expect(k.DISCIPLINE_LOAD.menuNote).toContain('페르소나가')
+    expect(k.ARTIFACT.empty).toContain('아직 아티팩트가 없어요.')
+    expect(k.FRAME.frameTitle).toBe('아티팩트 미리보기')
+    const all = JSON.stringify(k, (_k, v) => (typeof v === 'function' ? undefined : v))
+    for (const old of ['내 결정 대기', '사용자 작업 대기', '결정 대기 티켓', 'best effort 작업', '작업자', '산출물']) expect(all, old).not.toContain(old)
   })
 })

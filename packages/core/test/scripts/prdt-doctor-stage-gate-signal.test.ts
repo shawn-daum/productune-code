@@ -12,7 +12,8 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
-import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { test, expect, describe, beforeAll, beforeEach, afterEach, afterAll } from 'vitest'
+import { cloneTree } from '../helpers/project-template'
 import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const PRDT_CLI = path.join(path.resolve(__dirname, '..', '..'), 'scripts', 'prdt')
@@ -22,11 +23,11 @@ let tmpRoot: string
 let projectDir: string
 let prdtHome: string
 
-function run(args: string[]): string {
+function run(args: string[], tier: 'cli' | 'doctor' = 'cli', extraEnv: Record<string, string> = {}): string {
   try {
     return execFileSync('python3', [PRDT_CLI, ...args], {
       cwd: projectDir, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: subprocessTimeout('cli'), env: { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en', PRDT_META_BACKUP: '0' },
+      timeout: subprocessTimeout(tier), env: { ...process.env, PRDT_HOME: prdtHome, PRDT_LANG: 'en', PRDT_META_BACKUP: '0', ...extraEnv },
     })
   } catch (e: any) {
     return (e.stdout ?? '') + (e.stderr ?? '')
@@ -60,9 +61,10 @@ function setStage(stage: string) {
   fs.writeFileSync(p, JSON.stringify(st))
 }
 
-// Snapshot po-state into the meta repo the way the meta auto-save does, dated `day`.
+// Snapshot po-state into the meta repo the way the meta auto-save does, dated `day`
+// (a bare YYYY-MM-DD → noon KST; a full ISO timestamp is used as given).
 function commitMeta(day: string) {
-  const date = `${day}T12:00:00+09:00`
+  const date = day.length === 10 ? `${day}T12:00:00+09:00` : day
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
     '--git-dir', path.join(projectDir, '.prdt', 'meta.git'), '--work-tree', projectDir,
     'commit', '-q', '-m', 'meta auto-save', '--', '.prdt/po-state.json'],
@@ -73,14 +75,29 @@ const SIGNAL = /consider Ship entry/
 const FALLBACK_NOTE = /build-entry slice unreadable .* every v0\.1 ticket/
 const SCRIPTS = path.dirname(PRDT_CLI)
 
-beforeEach(() => {
-  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-stage-gate-'))
-  projectDir = path.join(tmpRoot, 'proj')
-  prdtHome = path.join(tmpRoot, 'home')
+// T-1274: `prdt init` (~30 spawns) ran before every test with the same result — built
+// once per file (project + sandbox home together), cloned per test.
+let templateRoot: string
+
+beforeAll(() => {
+  if (!PYTHON3) return
+  templateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-stage-gate-tpl-'))
+  projectDir = path.join(templateRoot, 'proj')
+  prdtHome = path.join(templateRoot, 'home')
   fs.mkdirSync(path.join(projectDir, 'docs', 'prd'), { recursive: true })
   fs.mkdirSync(prdtHome, { recursive: true })
   run(['init', '--json', '--slug', 'proj', '--yes'])
   fs.rmSync(path.join(projectDir, 'docs', 'tickets'), { recursive: true, force: true })
+})
+
+afterAll(() => { if (templateRoot) fs.rmSync(templateRoot, { recursive: true, force: true }) })
+
+beforeEach(() => {
+  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-stage-gate-'))
+  projectDir = path.join(tmpRoot, 'proj')
+  prdtHome = path.join(tmpRoot, 'home')
+  if (PYTHON3) cloneTree(templateRoot, tmpRoot)
+  else fs.mkdirSync(projectDir, { recursive: true })
 })
 
 afterEach(() => { fs.rmSync(tmpRoot, { recursive: true, force: true }) })
@@ -92,7 +109,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — build stage signal reads the gate (T-
     writeTicket('v0.1', 'T-002', { status: 'done', gate: GATE_B })
     writeTicket('v0.1', 'T-003', {}) // 자투리, open
     setStage('build')
-    expect(run(['doctor'])).toMatch(SIGNAL)
+    expect(run(['doctor'], 'doctor')).toMatch(SIGNAL)
   })
 
   test('silent: one lane unfinished, even though the other lane and 자투리 are closed', () => {
@@ -101,14 +118,14 @@ describe.skipIf(!PYTHON3)('prdt doctor — build stage signal reads the gate (T-
     writeTicket('v0.1', 'T-002', { gate: GATE_B })
     writeTicket('v0.1', 'T-003', { status: 'done' })
     setStage('build')
-    expect(run(['doctor'])).not.toMatch(SIGNAL)
+    expect(run(['doctor'], 'doctor')).not.toMatch(SIGNAL)
   })
 
   test('silent: gate not met with zero open tickets (an unlinked lane never finishes)', () => {
     writePrd([rowA])
     writeTicket('v0.1', 'T-001', { status: 'done' }) // no ticket names GATE_A: lane A not linked
     setStage('build')
-    expect(run(['doctor'])).not.toMatch(SIGNAL)
+    expect(run(['doctor'], 'doctor')).not.toMatch(SIGNAL)
   })
 
   test('no gate line: build-entry slice all done + an open 자투리 created after the build write → fires', () => {
@@ -118,7 +135,7 @@ describe.skipIf(!PYTHON3)('prdt doctor — build stage signal reads the gate (T-
     writeTicket('v0.1', 'T-001', { status: 'done', created: '2026-10-15' })
     writeTicket('v0.1', 'T-002', { status: 'dropped', created: '2026-10-14' })
     writeTicket('v0.1', 'T-003', { status: 'open', created: '2026-10-16' }) // 자투리
-    const out = run(['doctor'])
+    const out = run(['doctor'], 'doctor')
     expect(out).toMatch(SIGNAL)
     expect(out).not.toMatch(FALLBACK_NOTE)
   })
@@ -129,19 +146,51 @@ describe.skipIf(!PYTHON3)('prdt doctor — build stage signal reads the gate (T-
     commitMeta('2026-10-15')
     writeTicket('v0.1', 'T-001', { status: 'open', created: '2026-10-15' })
     writeTicket('v0.1', 'T-002', { status: 'done', created: '2026-10-16' })
-    expect(run(['doctor'])).not.toMatch(SIGNAL)
+    expect(run(['doctor'], 'doctor')).not.toMatch(SIGNAL)
   })
 
+  // T-1210 (a): a malformed `created` compared as a string fell outside the slice
+  // ('2026-10-9' > '2026-10-15') and the signal fired with no word.
+  test('no gate line: an open ticket with a malformed created counts inside the slice, and doctor names it', () => {
+    writePrd([])
+    setStage('build')
+    commitMeta('2026-10-15')
+    writeTicket('v0.1', 'T-001', { status: 'done', created: '2026-10-15' })
+    writeTicket('v0.1', 'T-002', { status: 'open', created: '2026-10-9' })
+    const out = run(['doctor'], 'doctor')
+    expect(out).not.toMatch(SIGNAL)
+    expect(out).toMatch(/stage: v0\.1 build-entry slice counts T-002 .*created/)
+  })
+
+  // T-1210 (b): a meta commit dated in UTC (10-14 15:30Z = 10-15 00:30 KST) read as
+  // 10-14 dropped the open ticket created 10-15 from the slice.
+  test('no gate line: a UTC-dated meta commit is read in local time before taking the build-entry day', () => {
+    writePrd([])
+    setStage('build')
+    commitMeta('2026-10-14T15:30:00Z')
+    writeTicket('v0.1', 'T-001', { status: 'done', created: '2026-10-14' })
+    writeTicket('v0.1', 'T-002', { status: 'open', created: '2026-10-15' })
+    expect(run(['doctor'], 'doctor', { TZ: 'Asia/Seoul' })).not.toMatch(SIGNAL)
+  })
+
+  // T-1274: one `prdt doctor` per test — two in one test ran ~35 s under 7 concurrent
+  // runs against the 30 s per-test budget. The second state is built directly.
   test('no gate line, no meta record of the build write: every version ticket, and doctor says so', () => {
     writePrd([])
     writeTicket('v0.1', 'T-001', { status: 'done' })
     writeTicket('v0.1', 'T-002', { status: 'open', created: '2026-10-16' })
     setStage('build') // po-state written, never snapshotted: meta history still reads define
-    const out = run(['doctor'])
+    const out = run(['doctor'], 'doctor')
     expect(out).not.toMatch(SIGNAL)
     expect(out).toMatch(FALLBACK_NOTE)
+  })
+
+  test('no gate line, no meta record of the build write: every version ticket closed → fires', () => {
+    writePrd([])
+    writeTicket('v0.1', 'T-001', { status: 'done' })
     writeTicket('v0.1', 'T-002', { status: 'dropped' })
-    expect(run(['doctor'])).toMatch(SIGNAL)
+    setStage('build')
+    expect(run(['doctor'], 'doctor')).toMatch(SIGNAL)
   })
 
   test('a lane-read failure is a named warning, never read as "no gate"', () => {
@@ -164,12 +213,18 @@ describe.skipIf(!PYTHON3)('prdt doctor — build stage signal reads the gate (T-
     expect(out).not.toMatch(SIGNAL)
   })
 
-  test('ship stage unchanged: no open tickets fires, an open one is silent', () => {
+  test('ship stage unchanged: no open tickets fires', () => {
     writePrd([rowA])
     writeTicket('v0.1', 'T-001', { status: 'done', gate: GATE_A })
     setStage('ship')
-    expect(run(['doctor'])).toMatch(/stage: v0\.1 has no open tickets at stage=ship — consider Retro entry/)
+    expect(run(['doctor'], 'doctor')).toMatch(/stage: v0\.1 has no open tickets at stage=ship — consider Retro entry/)
+  })
+
+  test('ship stage unchanged: an open one is silent', () => {
+    writePrd([rowA])
+    writeTicket('v0.1', 'T-001', { status: 'done', gate: GATE_A })
     writeTicket('v0.1', 'T-002', {})
-    expect(run(['doctor'])).not.toMatch(/at stage=ship — consider Retro/)
+    setStage('ship')
+    expect(run(['doctor'], 'doctor')).not.toMatch(/at stage=ship — consider Retro/)
   })
 })

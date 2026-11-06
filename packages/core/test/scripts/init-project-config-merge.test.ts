@@ -23,17 +23,22 @@ const CORE_ROOT = path.resolve(__dirname, '..', '..')
 
 let projectDir: string
 let savedHome: string | undefined
+let ownHome: string | undefined
 
 beforeEach(() => {
   projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'init-merge-'))
   // initProject touches ~/.claude.json (trust accept) + ~/.productune — sandbox HOME
   savedHome = process.env.HOME
-  process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'init-merge-home-'))
+  ownHome = fs.mkdtempSync(path.join(os.tmpdir(), 'init-merge-home-'))
+  process.env.HOME = ownHome
 })
 
 afterEach(() => {
   fs.rmSync(projectDir, { recursive: true, force: true })
-  if (process.env.HOME) fs.rmSync(process.env.HOME, { recursive: true, force: true })
+  // T-1417: remove only the home this file made — never whatever HOME is now
+  // (a beforeEach that threw before the swap left it the ambient one).
+  if (ownHome) fs.rmSync(ownHome, { recursive: true, force: true })
+  ownHome = undefined
   process.env.HOME = savedHome
 })
 

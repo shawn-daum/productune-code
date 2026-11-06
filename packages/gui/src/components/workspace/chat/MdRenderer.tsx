@@ -330,7 +330,8 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
       return <code className={className ?? ''}>{applySyntaxHighlight(children)}</code>
     }
     // T-346: an inline code span whose ENTIRE content is one linkify-eligible
-    // token (file:// URI, docs/artifacts/*.html, ticket ID, doctrine path…)
+    // token (file:// URI, docs/artifacts/*.html, doctrine path…; never a
+    // ticket id — a `T-1157` span stays plain code, T-1157)
     // renders clickable, reusing the same ptn: routing as prose links (T-345).
     // Real PO/worker messages routinely wrap paths in backticks — linkifyText
     // correctly leaves code spans untouched (markdown semantics), so without

@@ -173,8 +173,7 @@ while d and d != "/":
         root = d
     # T-1112: a track worktree (tracks/T-NNN, .git is a file) is a project boundary
     if (os.path.isfile(os.path.join(d, ".git")) and os.path.basename(os.path.dirname(d)) == "tracks"
-            and os.path.basename(d)[:2] == "T-" and os.path.basename(d)[2:7].isascii()
-            and os.path.basename(d)[2:].isdigit() and len(os.path.basename(d)) <= 7):
+            and re.match(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z", os.path.basename(d))):  # T-1298: T-NNN or T-<PREFIX>-<n>
         root = None
         break
     up = os.path.dirname(d)
@@ -683,7 +682,10 @@ def _ctx_slug(agent_id):
         for line in content.split("\n"):
             if line.startswith("[ctx] {"):
                 slug = json.loads(line[len("[ctx] "):]).get("slug")
-                return slug if isinstance(slug, str) and re.fullmatch(r"T-[0-9]+", slug) else None
+                # T-1222 C4: a ticket id or a kebab-case slug both tag the line; a
+                # slug that could break out of `[...]` (brackets, spaces, control
+                # chars) or runs long stays untagged.
+                return slug if isinstance(slug, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", slug) else None
     except Exception:
         return None
     return None

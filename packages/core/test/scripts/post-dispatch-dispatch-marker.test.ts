@@ -274,6 +274,27 @@ describe('T-682 slice 3 — F2: a resumed worker (same agent_id) runs under its 
   })
 })
 
+describe('T-1387 — a SubagentStop that another Stop hook blocked is not the last word', () => {
+  // Measured 2026-11-03 (d-v116-t1094-dev2): the worker ended a turn to wait on its
+  // own background test run; SubagentStop fired, this hook stamped `stopped_at`, and
+  // prdt-return-check.sh (same SubagentStop registration) BLOCKED the stop — the
+  // worker kept running with no new SubagentStart. Its real end is a LATER
+  // SubagentStop, which must re-stamp, or the marker keeps the early time.
+  test('a later SubagentStop re-stamps `stopped_at` with its own time', () => {
+    const agentId = 'agent-blocked-stop'
+    const t1 = writeTranscript([{ toolUse: 'toolu_b1', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T1387-b' } }])
+    expectSilent(subagentStart({ agentId, transcriptPath: t1 }))
+    expectSilent(subagentStop({ agentId }))
+    const early = isoAgo(15 * 60 * 1000)
+    const m = readMarker(prdtHome, agentId)
+    fs.writeFileSync(markerPath(prdtHome, agentId), JSON.stringify({ ...m, stopped_at: early }))
+    expectSilent(subagentStop({ agentId }))
+    const after = readMarker(prdtHome, agentId)
+    expect(after.stopped_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
+    expect(after.stopped_at! > early).toBe(true)
+  })
+})
+
 describe('T-774 — each dispatch marker records its model', () => {
   test('SubagentStart pairs with a pending Agent call carrying `model`: the marker records that tier', () => {
     const transcript = writeTranscript([{ toolUse: 'toolu_m1', ctx: { slug: 's', goal: 'g', dispatch_id: 'd-T774-m1' }, model: 'opus' }])
@@ -640,4 +661,23 @@ describe('T-788 — _reconcile never keeps a guessed ticket', () => {
       dispatch_id: OWN.dispatch_id, ticket_id: null, tool_use_id: 'toolu_own', pairing: 'confirmed',
     })
   })
+})
+
+// T-1298 (QA d-v116-t1298-qa1 rows 2 · 4): a per-product id `T-<PREFIX>-<n>` in
+// the dispatch's `[ctx]` lands on the marker whole — never None, never a later T-NNN.
+describe('T-1298: marker ticket id from a product-prefixed id', () => {
+  beforeEach(() => { root = makeProject(); prdtHome = tmp('prdt-t1298-home-') })
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(prdtHome, { recursive: true, force: true }) })
+
+  for (const [label, ctx] of [
+    ['dispatch_id', { slug: 'nope', goal: 'g', dispatch_id: 'd-v116-T-RCH-002-dev1' }],
+    ['goal', { slug: 'nope', goal: 'work T-RCH-002', dispatch_id: 'd-v116-x' }],
+    ['goal with a later T-NNN', { slug: 'nope', goal: 'T-RCH-002 replaces T-5', dispatch_id: 'd-v116-x' }],
+  ] as const) {
+    test(`SubagentStart reads T-RCH-002 from the ${label}`, () => {
+      const t = writeTranscript([{ toolUse: 'toolu_r', ctx }])
+      expectSilent(subagentStart({ agentId: 'agent-r', transcriptPath: t }))
+      expect(readMarker(prdtHome, 'agent-r').ticket_id).toBe('T-RCH-002')
+    })
+  }
 })

@@ -57,7 +57,7 @@ const RENDER_MJS_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 // syntax is not copy). Excluding them by declaration name, not by content, so
 // this checker cannot be fooled by *wrapping* a real hard-coded label in
 // either of those two constants.
-const OPAQUE_BLOB_DECLARATIONS = new Set(['TEMPLATE_CSS', 'INTERACTION_SCRIPT', 'LINES_CSS', 'LINES_SCRIPT'])
+const OPAQUE_BLOB_DECLARATIONS = new Set(['TEMPLATE_CSS', 'INTERACTION_SCRIPT', 'interactionScript', 'LINES_CSS', 'LINES_SCRIPT'])
 
 // A dev-facing diagnostic message (`templateGuardErrors`'s own guard-failure
 // text, e.g. "template CSS contains a hex or rgb() literal") is real English
@@ -155,8 +155,8 @@ describe('viewer/lib/labels.mjs — PROGRESS_ITEM_LABEL is gone (T-795)', () => 
     expect((labels as Record<string, unknown>).PROGRESS_ITEM_LABEL).toBeUndefined()
   })
 
-  it('still exports the one label that is not PRD-derived (the out-of-scope trailing row)', () => {
-    expect(labels.PROGRESS_OUT_OF_SCOPE_LABEL).toBe('PRD 항목 밖 티켓')
+  it('T-1415: the out-of-scope trailing row label is gone with the row', () => {
+    expect((labels as Record<string, unknown>).PROGRESS_OUT_OF_SCOPE_LABEL).toBeUndefined()
   })
 })
 
@@ -339,6 +339,6 @@ describe('viewer/lib/render.mjs — T-707: an empty group shows the Designer\'s 
     const html = renderEmptyGroupFixture()
     const storeMatch = /<section[^>]*data-store="artifact"[^>]*>[\s\S]*?<\/section>/.exec(html)
     expect(storeMatch).not.toBeNull()
-    expect(storeMatch![0]).toContain('아직 산출물이 없어요')
+    expect(storeMatch![0]).toContain('아직 아티팩트가 없어요')
   })
 })

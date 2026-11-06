@@ -191,12 +191,12 @@ describe('home screen — T-796 acceptance in the generated page', () => {
   it('draws the stage bar, 스코프, both wait lists and the dependency block (named 「dependency」)', () => {
     expect(connected.home).toContain('class="sb"')
     expect(connected.home).toContain('스코프')
-    expect(connected.home).toContain('내 결정 대기')
-    expect(connected.home).toContain('사용자 작업 대기')
+    expect(connected.home).toContain('결정사항')
+    expect(connected.home).toContain('요청사항')
     expect(connected.home).toContain('dependency')
     expect(connected.home).toContain('메인 패스 · 크리티컬 패스')
   })
-  it('T-961: 내 결정 대기 · 사용자 작업 대기 sit left of 스코프, dependency stays below', () => {
+  it('T-961 (T-1343 spellings): 결정사항 · 요청사항 sit left of 스코프, dependency stays below', () => {
     const h = connected.home
     const w = h.indexOf('class="sc-waits"')
     const sc = h.indexOf('class="cp-h">스코프')
@@ -345,40 +345,16 @@ describe('home fix round 1 (T-881 grill) — what a DOM-free test can pin; width
   })
 })
 
-describe('home scope: the 「PRD 항목 밖 티켓」 block (T-981 → T-1046)', () => {
-  const scope = (tickets: ReturnType<typeof tk>[]) => /<div class="cp-h">스코프[\s\S]*?(?=<\/div><\/div><\/div>|<div class="cp-block">)/.exec(page(tickets).home)?.[0] ?? ''
-  const outside = (s: string) => /<div class="sc-sep">[\s\S]*$/.exec(s)?.[0] ?? ''
-  it('is its own block with the new label, a one-line definition, and the malformed count linking to the current-version ticket list', () => {
-    const s = scope([tk({ id: 'T-1', prd_item: 'v1.12#a' }), tk({ id: 'T-2', prd_item: 'nope' }), tk({ id: 'T-3', prd_item: 'nope2' }), tk({ id: 'T-4' }), tk({ id: 'T-5', prd_item: 'v1.12#zzz' })])
-    const o = outside(s)
-    expect(o).toContain('PRD 항목 밖 티켓')
-    expect(o).toContain('prd_item 이 비었거나 맞는 항목 없음')
-    expect(o).toContain('형식이 틀린 티켓 2건')
-    expect(o).toContain('data-open-store="ticket" data-open-group="v1.12"')
-    expect(o).toContain('0/4')
-    expect(s).not.toContain('항목 밖인 이유')
+describe('home scope: one line per lane, lane numbers only (T-1415, shape E)', () => {
+  const scope = (tickets: ReturnType<typeof tk>[]) => /<div class="sc-e"><div class="cp-h">스코프[\s\S]*?<\/div><\/div>(?=<\/div>|<div class="cp-block">)/.exec(page(tickets).home)?.[0] ?? ''
+  it('without gate lanes: one default line holding every ticket (decisions included), n/m of that line', () => {
+    const s = scope([tk({ id: 'T-1', status: 'done' }), tk({ id: 'T-2' }), tk({ id: 'T-3', type: 'decision' })])
+    expect([...s.matchAll(/class="e-row"/g)]).toHaveLength(1)
+    expect(s).toContain('1/3')
+    expect(s).toContain('data-detail-id="T-3"')
   })
-  it('a bare key equal to an open-section key counts under that item and is flagged 「형식 고치기」; any other malformed value stays outside', () => {
-    const s = scope([tk({ id: 'T-1', prd_item: 'a', status: 'done' }), tk({ id: 'T-2', prd_item: 'a' }), tk({ id: 'T-3', prd_item: 'A' })])
-    expect(s).toContain('형식 고치기 2')
-    expect(s).toContain('1/2')
-    expect(outside(s)).toContain('형식이 틀린 티켓 1건')
-  })
-  it('0 outside tickets keeps the row with 「없음」 and no definition line', () => {
-    const o = outside(scope([tk({ id: 'T-1', prd_item: 'v1.12#a' }), tk({ id: 'T-2', prd_item: 'v1.12#a' })]))
-    expect(o).toContain('PRD 항목 밖 티켓')
-    expect(o).toContain('없음')
-    expect(o).not.toContain('prd_item 이 비었거나')
-    expect(o).not.toContain('결정 ')
-  })
-  it('decision tickets are not counted outside; a note with a link to the current version 「결정」 appears only when there are any', () => {
-    const only = outside(scope([tk({ id: 'T-1', type: 'decision' }), tk({ id: 'T-2', type: 'decision', status: 'done' })]))
-    expect(only).toContain('없음')
-    expect(only).toContain('결정 2건 제외')
-    expect(only).toContain('data-open-store="home" data-open-group="decision"')
-    const mixed = outside(scope([tk({ id: 'T-1', type: 'decision' }), tk({ id: 'T-2', type: 'design' }), tk({ id: 'T-3' })]))
-    expect(mixed).toContain('0/2')
-    expect(mixed).toContain('결정 1건 제외')
-    expect(mixed).not.toContain('형식이 틀린')
+  it('drops the item rows, the 「PRD 항목 밖 티켓」 row, the decision note and every explanatory line', () => {
+    const s = scope([tk({ id: 'T-1', prd_item: 'v1.12#a' }), tk({ id: 'T-2', prd_item: 'nope' }), tk({ id: 'T-3', type: 'decision' })])
+    for (const gone of ['PRD 항목 밖 티켓', '결정 ', '형식이 틀린', '형식 고치기', '레인 숫자 =', '항목별 숫자', 'sc-why', 'sc-sep', 'sc-grp']) expect(s).not.toContain(gone)
   })
 })
