@@ -15,9 +15,10 @@
  *               the T-949 waiting-list item)
  *   compliant — replies presenting T-982 / T-984 / T-986 / T-987 / T-988 with
  *               options, and two report-only replies.
- * Which questions are asks is T-993 = B: choose, yes/no confirm and read-back
- * confirm need a ticket; offers, information requests and feedback/closing
- * questions do not. The block REASON is the user-confirmed wording (T-990 = A),
+ * Which questions are asks is T-993 = B, narrowed by T-1465: choose, approve (a body, or
+ * an action needing consent) and read-back confirm need a ticket; proceed-confirms (only
+ * whether the assistant starts its own next step), offers, information requests and
+ * feedback/closing questions do not. The block REASON is the user-confirmed wording (T-990 = A),
  * pinned here by property (tag + line numbers), never verbatim.
  */
 
@@ -302,6 +303,19 @@ describe('T-1379 — the model judge: who pays, how it fails, what is kept of it
     expect(logOf(env)).toMatch(/judge=ok asks=1 tries=1 ms=\d+/)
   })
 
+  test('T-1465 — the judge prompt keeps the proceed-confirm / consent boundary and the cited-decision rule', () => {
+    const env = fresh({ QC_FAKE_ASKS: '3' })
+    stop({}, ASK, {}, {}, env)
+    const args = fs.readFileSync(env.QC_FAKE_ARGS as string, 'utf8')
+    const prompt = args.slice(args.indexOf('You check one chat reply'))
+    expect(prompt).toContain('proceed-confirm')
+    expect(prompt).toContain('지금 v1.17 Define을 시작할까요?')
+    expect(prompt).toContain('T-1362 는 다시 묻지 않아요')
+    expect(prompt).toContain('설치할까요?') // still listed as an ask
+    expect(prompt).toMatch(/still an ask when it offers alternatives[^]*install, push, deploy, destructive git/)
+    expect(prompt).not.toContain('say whether to go ahead')
+  })
+
   test('worker and plain-session Stops never call the judge', () => {
     const env = fresh({ QC_FAKE_ASKS: '3' })
     expect(stop({}, ASK, { agent_type: 'prdt-developer' }, {}, env).out).toBe('')
@@ -511,6 +525,32 @@ describe('T-1285 — a recorded decision cited beside an ask is a re-ask (T-1313
     expect(j.reason).toContain('T-1313')
     expect(j.reason).toMatch(/ line [\d, ]+ asks again/)
     expect(j.reason).not.toContain('hook 이 막음') // never echoes the reply
+  })
+
+  // T-1465: the 2026-11-06 reply shape — no `#` heading (bold lead-ins are not headings),
+  // a done decision cited as a statement in an earlier paragraph, the read-back ask last.
+  const HEADLESS = (askIds: string) => [
+    '**답:** 정리했어요.',
+    '',
+    '**한 일:** T-1313 = A로 정했어요.',
+    '· 레인을 옮겼어요.',
+    '',
+    '**읽은 내용:** 세 방향을 모두 가져가는 것으로 읽었어요.',
+    '',
+    `**질문:** 읽은 내용이 맞나요? ${askIds}`,
+  ].join('\n')
+  const openDec = (proj: string) => record(proj, 'T-1400', { status: 'open', outcome: '', ago: 1_000 })
+
+  test('T-1465 — heading-less reply: a done decision cited in an earlier paragraph is not the ask\'s subject → no re-ask', () => {
+    const out = run((p) => { record(p, 'T-1313'); openDec(p) }, HEADLESS('(T-1400)'))
+    expect(out).toBe('')
+  })
+
+  test('T-1465 — heading-less reply: the ask paragraph itself citing a done decision → still a re-ask', () => {
+    const out = run((p) => { record(p, 'T-1313'); openDec(p) }, HEADLESS('(T-1313, T-1400)'))
+    const j = JSON.parse(out)
+    expect(j.reason.startsWith(REASK)).toBe(true)
+    expect(j.reason).toContain('T-1313')
   })
 
   test('T-1390 (T-1425 = A) — the reason is the approved wording, byte for byte, plus the Stop closing line', () => {
