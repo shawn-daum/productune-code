@@ -683,7 +683,7 @@ APPROVAL_RE = re.compile(r"승인|컨펌|approv|confirm", re.I)
 # reference to the body (이대로 · 이 문구 · 위 내용 …), then 괜찮/맞/좋 + a condition or
 # whether ending, then an answer verb + 주-, all inside one sentence. Matched on the line
 # with QUOTED_RE spans blanked; fenced and blockquoted lines are never read. It also
-# counts as an approval ask for the re-ask subject (body_end).
+# counts as an approval ask for the re-ask subject (ask_subject).
 CONFIRM_ASK_RE = re.compile(
     r"(?:이대로|이렇게|그대로|(?:이|위|아래|위의|아래의)\s*(?:문구|내용|초안|본문|문장|글|안|노트|버전|목록|표|계획))"
     r"[^.?!\n]{0,40}?(?:괜찮|맞|좋)(?:으시면|으면|다면|은지|는지|을지)"
@@ -706,19 +706,37 @@ def confirm_ask_lines(lines):
     return out
 
 
-def body_end(lines, a, i):
-    """Index of the closing line of the last closed, non-diagram fence in
-    lines[a:i]; None when there is none."""
-    open_at, last = None, None
-    for k in range(a, i):
+# T-1429: a word on the ask line saying it is about a shown body — with APPROVAL_RE and
+# CONFIRM_ASK_RE, read only when the ask's section holds a fenced body. QA re-observation
+# 2026-11-04 (2) (3): 「이 문구 그대로 확정할까요?」 and the judged line 「확인해 주시면 그때
+# 저장할게요」 above the body matched neither, so their subject fell back to the whole
+# section and T-001, cited as the body's source, read as asked again.
+BODY_ASK_RE = re.compile(r"확정|확인|괜찮|문구|초안|본문|wording|draft", re.I)
+
+
+def body_fences(lines, a, b):
+    """[(open, close)] of the closed, non-diagram fences in lines[a:b]."""
+    out, open_at = [], None
+    for k in range(a, b):
         if FENCE_RE.match(lines[k]):
             if open_at is None:
                 open_at = k
             else:
                 if not DIAGRAM_FENCE_RE.match(lines[open_at]):
-                    last = k
+                    out.append((open_at, k))
                 open_at = None
-    return last
+    return out
+
+
+def unfenced(lines, a, b):
+    """lines[a:b] without fence lines and what they enclose."""
+    out, in_fence = [], False
+    for k in range(a, b):
+        if FENCE_RE.match(lines[k]):
+            in_fence = not in_fence
+        elif not in_fence:
+            out.append(lines[k])
+    return out
 
 
 def is_item_ask(lines, i, kind):
@@ -732,9 +750,12 @@ def ask_subject(lines, i, kind, option_ref, tickets):
       item that names its own decision is a citation (a reason).
     - any other line: every decision id in its section, the ask line's own ids
       included — a ticket named on the ask line never shields a decided id cited
-      in the same section. One exception: an approval ask after a fenced body is
-      about the body and what presents it, so an id cited only between the body
-      and the ask (a source of the body) is a citation."""
+      in the same section. One exception: an ask about a fenced body in its
+      section (approval, confirm request, or a body word — BODY_ASK_RE) is about
+      the body and what presents it: the ids on the ask line, in the unfenced
+      lines before the first body, and — for an ask after a body — in the
+      unfenced lines after the ask. An id inside a body, or cited between a
+      body and the ask (a source of the body), is a citation (T-1429)."""
     a, b = ask_scope(lines, i, kind, option_ref)
     is_dec = lambda k: bool(tickets.get(k)) and tickets[k][0] == "decision"
     ids_on = lambda chunk: {m.group(1) for m in TICKET_ID_RE.finditer(chunk) if is_dec(m.group(1))}
@@ -742,10 +763,13 @@ def ask_subject(lines, i, kind, option_ref, tickets):
         own = ids_on(lines[i]) | ids_on(lines[a])
         return own or ids_on("\n".join(lines[a:b]))
     bare = QUOTED_RE.sub(" ", lines[i])
-    e = body_end(lines, a, i) if APPROVAL_RE.search(bare) or CONFIRM_ASK_RE.search(bare) else None
-    if e is None:
+    bodies = [f for f in body_fences(lines, a, b) if not f[0] <= i <= f[1]]
+    if not bodies or not (APPROVAL_RE.search(bare) or CONFIRM_ASK_RE.search(bare) or BODY_ASK_RE.search(bare)):
         return ids_on("\n".join(lines[a:b]))
-    return ids_on("\n".join(lines[a:e + 1] + lines[i:b]))
+    keep = unfenced(lines, a, min(i, bodies[0][0])) + [lines[i]]
+    if any(c < i for _, c in bodies):
+        keep += unfenced(lines, i + 1, b)
+    return ids_on("\n".join(keep))
 
 
 def reask_check(root, lines, asks, tickets, turn_start):
