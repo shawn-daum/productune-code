@@ -6540,6 +6540,13 @@ def schedule_docs_viewer_regen():
 VIEWER_RELEASES_REL = "code/docs/RELEASES.md"
 
 
+def viewer_release_missing_message(ver, versions):
+    """T-1435: the one error line for a release-notes version the file lacks
+    (the `--release` form and the `path#version` form share it)."""
+    shown = " · ".join(versions[:5]) + (" …" if len(versions) > 5 else "") if versions else "없음"
+    return f"prdt viewer: {VIEWER_RELEASES_REL} 에 {ver} 절이 없어요. 있는 절: {shown}"
+
+
 def viewer_release_versions(root):
     """The `## <version>` tokens of the viewer's RELEASES.md in file order, or
     None when that file is missing or unreadable."""
@@ -6784,12 +6791,25 @@ def cmd_viewer(args):
         if versions is None:
             sys.exit(f"prdt viewer: {VIEWER_RELEASES_REL} 파일이 없어서 릴리스 노트 링크를 만들지 않았어요.")
         if ver not in versions:
-            shown = ", ".join(versions[:5]) + (" …" if len(versions) > 5 else "") if versions else "없음"
-            sys.exit(f"prdt viewer: {VIEWER_RELEASES_REL} 에 {ver} 절이 없어요 — 있는 버전: {shown}")
+            sys.exit(viewer_release_missing_message(ver, versions))
         f = Path(root) / VIEWER_RELEASES_REL
         t = f"{f}#{ver}"
         targets.append(t)
         labels[t] = str(f)
+    for t in targets:
+        # T-1435: a `RELEASES.md#<version>` target naming a section the file
+        # lacks fails like `--release` does (same message, exit 1).
+        path, _, frag = t.partition("#")
+        if frag and path:
+            pp = Path(path)
+            pp = (pp if pp.is_absolute() else Path.cwd() / pp).resolve()
+            try:
+                is_rel = pp.relative_to(Path(root).resolve()).as_posix() == VIEWER_RELEASES_REL
+            except ValueError:
+                is_rel = False
+            versions = viewer_release_versions(root) if is_rel else None
+            if versions is not None and frag not in versions:
+                sys.exit(viewer_release_missing_message(frag, versions))
     if not targets:
         problem = viewer_scratch_problem(root)
         if problem:
