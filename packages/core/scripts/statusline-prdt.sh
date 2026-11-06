@@ -1127,6 +1127,7 @@ def lane_cap():
 # Never more than MAX_ROWS rows, lane rows included (T-1330 / T-1372 2 = A): past it the
 # trailing product + lane rows fold into one `+N more rows` row (T-1374 = A).
 out_rows = []
+running_rows = set()  # T-1442: indexes of out_rows holding a running dispatch id
 
 
 def lanes_with_running(lanes, r):
@@ -1177,9 +1178,14 @@ for k, r in enumerate(rows):
     lane_rows_k = done_more + lane_parts[k][1]
     out_rows.append((r["slug_ver"], fit(lambda lim, head=head: " | ".join(head), branch)))
     out_rows.extend((None, t) for _, t in lane_rows_k)
+    # T-1442: lane rows that carry a running dispatch id are never folded away
+    for j, (lane_x, _) in enumerate(lane_rows_k):
+        if isinstance(lane_x, dict) and lane_x.get("linked") and _ids(lane_x.get("working")):
+            running_rows.add(len(out_rows) - len(lane_rows_k) + j)
 if len(out_rows) >= MAX_ROWS:
     keep = MAX_ROWS - 2
-    out_rows = out_rows[:keep] + [(None, L("lines", n=len(out_rows) - keep))]
+    kept = out_rows[:keep] + [r_ for i, r_ in enumerate(out_rows) if i >= keep and i in running_rows]
+    out_rows = kept + [(None, L("lines", n=len(out_rows) - len(kept)))]
 out_rows.append((None, action_row()))
 
 

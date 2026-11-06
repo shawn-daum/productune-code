@@ -332,6 +332,16 @@ describe('T-1389 — PostToolUse first, Stop as the last resort', () => {
     expect(stop(p, 'T-002 는 건너뛰었어요.').decision).toBe('block')
   })
 
+  test('T-1443: a lane name counts only at a word boundary — L12 names neither L1 nor L2, XL2 is inside a longer word', () => {
+    const p = makeProject(BASE)
+    post(p)
+    expect(stop(p, 'L12 로 정리했어요.').decision).toBe('block')
+    expect(stop(p, 'XL1 · XL2 로 정리했어요.').decision).toBe('block')
+    expect(stop(p, 'T-002 건너뜀, L2 는 멈춰 두었어요.')).toBeNull()
+    expect(stop(p, 'T-002 건너뜀, L2는 멈췄어요.')).toBeNull()
+    expect(stop(p, 'T-002 건너뜀, XL2 는 멈췄어요.').decision).toBe('block')
+  })
+
   test('Stop with no report this turn blocks as before, even when the reply names the lanes', () => {
     const p = makeProject(BASE)
     expect(stop(p, 'T-002 · T-010 건너뛰었어요.').decision).toBe('block')
