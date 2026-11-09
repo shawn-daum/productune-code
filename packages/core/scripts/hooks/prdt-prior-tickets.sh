@@ -10,6 +10,8 @@
 # listing the other tickets that touched the same file, hook or feature the
 # ticket names (id · title · status) — in the same tool result, before the
 # options are written. Advisory: it never blocks or undoes the write.
+# The line opens with the literal `[prdt fix history]` (T-1472 wording, T-1473 = A;
+# pinned by test/scripts/prdt-prior-tickets.test.ts).
 #
 # PO only (`agent_type` == `prdt-po`): a worker session prints nothing. Each
 # ticket's rows print once per session; a later edit prints only new ids.

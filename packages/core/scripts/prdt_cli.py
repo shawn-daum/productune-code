@@ -7446,10 +7446,11 @@ def cmd_decisions(args):
 # a later edit of the same ticket prints only ids not listed yet (the overflow past
 # the row cap counts as listed — its tail line names the CLI), else nothing.
 
-# PLACEHOLDER wording — the Designer's confirmed draft replaces it (T-1472).
-PRIOR_TICKETS_HEAD = ("[prdt prior tickets] {tid} names {anchors}. Other tickets touched the same place "
-                      "({n}) — read them before writing options:")
-PRIOR_TICKETS_MORE = "- {k} more: prdt tickets prior {tid}"
+# Wording: T-1472's draft, confirmed by the user (T-1473 = A). 1st %s = the
+# matched file/hook/feature names, 2nd %s = the rows (`id · title · status`, `; `-joined).
+PRIOR_TICKETS_HEAD = ("[prdt fix history] prior tickets on %s: %s. "
+                      "If 2+ fixed this same defect → Triage: fix the assumption they share.")
+PRIOR_TICKETS_MORE = "+{k} more: prdt tickets prior {tid}"
 _PRIOR_HOOK_MAX_ROWS = 30
 _PRIOR_MAX_PATHS = 3
 _PRIOR_TYPES = ("impl", "decision")
@@ -7625,12 +7626,12 @@ def _prior_hook():
                 pass
     except Exception:
         return
-    lines = [PRIOR_TICKETS_HEAD.format(tid=one_line(tid), anchors=_prior_anchor_names(a), n=len(rows))]
-    lines += [_prior_row(r) for r in shown]
+    items = [_prior_row(r)[2:] for r in shown]
     if len(rows) > len(shown):
-        lines.append(PRIOR_TICKETS_MORE.format(k=len(rows) - len(shown), tid=one_line(tid)))
+        items.append(PRIOR_TICKETS_MORE.format(k=len(rows) - len(shown), tid=one_line(tid)))
+    text = PRIOR_TICKETS_HEAD % (_prior_anchor_names(a), "; ".join(items))
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
-                                             "additionalContext": "\n".join(lines)}}, ensure_ascii=False))
+                                             "additionalContext": text}}, ensure_ascii=False))
 
 
 def cmd_tickets_prior(args, root):
