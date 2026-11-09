@@ -486,6 +486,10 @@ JUDGE_SYSTEM_PROMPT = (
     "that only cites a closed decision as its ground, background or source, such as approval of a new body "
     "or plan built on the recorded answer, a new decision about something that answer did not settle, or a "
     "read-back of the user's newest words. An id cited beside an ask never makes it a re-ask by itself. "
+    "When a decision's question is only a short name, judge by the subject the recorded answer settles: an "
+    "ask about that same subject, in other words, is a re-ask. Asking the user to confirm the recorded "
+    "answer itself (「…하는 게 맞을까요?」 about what is already recorded) is a re-ask too; a read-back "
+    "that is not one is of words the user said after the decision closed. "
     "`reasks` is [] when none, or when no decisions are listed."
 )
 JUDGE_SCHEMA = ('{"type":"object","properties":{"asks":{"type":"array","items":{"type":"integer"}},'
@@ -766,6 +770,8 @@ DECISION_BRIEF_MAX = 6      # decisions per judge call, in the order the reply f
 BRIEF_QUESTION_CHARS = 900
 BRIEF_ANSWER_CHARS = 500
 BRIEF_READ_BYTES = 32768
+THIN_QUESTION_NOTE = ("(this record kept no question text, only the name above: the question it settled is "
+                      "whatever the recorded answer below answers, and the user's quoted words there show the subject)")
 
 
 def _md_section(body, name):
@@ -792,7 +798,14 @@ def decision_brief(path):
         fm, _, body = text[3:].partition("\n---")
     t = re.search(r"^title:[ \t]*(.+)$", fm, re.M) or re.search(r"^slug:[ \t]*(.+)$", fm, re.M)
     title = t.group(1).strip().strip("\"'") if t else ""
-    q = "\n".join(x for x in (title, _md_section(body, "problem"), _md_section(body, "options")) if x)
+    has_title = bool(re.search(r"^title:[ \t]*\S", fm, re.M))
+    problem, options = _md_section(body, "problem"), _md_section(body, "options")
+    q = "\n".join(x for x in (title, problem, options) if x)
+    if not has_title and not options:
+        # T-1470 QA: a thin record (slug + slug-like problem, no options) states no question,
+        # so the judge compared asks with a bare slug. Say what the record is.
+        said = re.findall(r"「([^」]+)」", _md_section(body, "outcome"))
+        q += "\n" + THIN_QUESTION_NOTE + "".join("\nthe subject, in the user's words: " + w for w in said[:2])
     a = "\n".join(ln for ln in _md_section(body, "outcome").splitlines()
                   if ln.strip() and not ln.lstrip().startswith("#"))
     return _clip(q, BRIEF_QUESTION_CHARS), _clip(a, BRIEF_ANSWER_CHARS)
