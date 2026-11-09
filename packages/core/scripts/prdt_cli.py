@@ -6842,12 +6842,18 @@ def cmd_viewer(args):
 
 
 def cmd_tickets(args):
+    if getattr(args, "action", None) == "prior" and getattr(args, "hook", False):
+        _prior_hook()   # T-1471: the PostToolUse entry; finds its own root from the payload
+        return
     root = require_root()
     if getattr(args, "action", None) == "new":
         cmd_tickets_new(args, root)
         return
     if getattr(args, "action", None) == "fmt":
         cmd_tickets_fmt(args, root)
+        return
+    if getattr(args, "action", None) == "prior":
+        cmd_tickets_prior(args, root)
         return
     # Refresh THIS command's slice, in place. Not a rebuild: the wiki slice shares
     # the file and nothing here re-fills it (T-480).
@@ -7414,6 +7420,234 @@ def cmd_decisions(args):
         print("no recorded decision")
         return
     print("\n".join(lines))
+
+
+
+# ── T-1471: prior tickets that touched the same place, at ticket-write time ────
+# WHY (T-1469): the PO wrote symptom-only options for a defect already patched
+# four times because that history was not in its input when it wrote them. On a
+# PO Write/Edit of a `type: impl|decision` ticket, prdt-prior-tickets.sh runs
+# `prdt tickets prior --hook`, which lists the OTHER tickets that touched the
+# same file, hook or feature the body names, as PostToolUse additionalContext.
+#
+# Anchors read from the written body (frontmatter `feature:` included):
+#   file     a path or basename with a code extension that `git ls-files` finds
+#            in the code repo (≤ _PRIOR_MAX_PATHS paths, so `index.ts` is no anchor);
+#   symbol   a backticked snake_case / camelCase identifier; its defining file at
+#            the code repo's HEAD (`def|function|class|const|let|var NAME`, tests
+#            excluded — HEAD, so an uncommitted edit in progress never hides it) joins the files;
+#   hook     a `[prdt <name>]` tag; the non-test code file at HEAD that prints it joins the files;
+#   feature  the ticket's `feature:` value (weakest; ranks last).
+# A ticket matches when its body names one of those anchors, cites a commit that
+# changed an anchor file, or its id is in such a commit's subject (git log of the
+# code repo — the record of who touched the file, ticket body or not). No new
+# index: the ticket md files (scan_tickets) and git are the sources.
+# Each ticket's rows print once per session (run/prior-tickets/<session>.json):
+# a later edit of the same ticket prints only ids not listed yet (the overflow past
+# the row cap counts as listed — its tail line names the CLI), else nothing.
+
+# Wording: T-1472's draft, confirmed by the user (T-1473 = A). 1st %s = the
+# matched file/hook/feature names, 2nd %s = the rows (`id · title · status`, `; `-joined).
+PRIOR_TICKETS_HEAD = ("[prdt fix history] prior tickets on %s: %s. "
+                      "If 2+ fixed this same defect → Triage: fix the assumption they share.")
+PRIOR_TICKETS_MORE = "+{k} more: prdt tickets prior {tid}"
+_PRIOR_HOOK_MAX_ROWS = 30
+_PRIOR_MAX_PATHS = 3
+_PRIOR_TYPES = ("impl", "decision")
+_PRIOR_CODE_EXT = r"(?:sh|py|ts|tsx|mts|cts|mjs|cjs|js|jsx|json|md|css|html|yml|yaml|toml|sql|swift|go|rs)"
+_PRIOR_FILE_RE = re.compile(r"(?<![\w.@/-])((?:[\w.-]+/)*([\w][\w.-]*\." + _PRIOR_CODE_EXT + r"))(?![\w-])")
+_PRIOR_SYMBOL_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{3,})`")
+_PRIOR_TAG_RE = re.compile(r"\[prdt ([a-z][a-z0-9 -]{1,40})\]")
+_PRIOR_HEX_RE = re.compile(r"(?<![0-9A-Za-z])([0-9a-f]{7,40})(?![0-9A-Za-z])")
+_PRIOR_ID_RE = re.compile(r"(?<![\w-])([A-Z][A-Z0-9]*-\d+)(?![\w-])")
+_PRIOR_GIT_TIMEOUT_S = 5
+
+
+def _prior_git(croot, args):
+    try:
+        r = subprocess.run(["git", "-C", str(croot)] + args, capture_output=True, text=True,
+                           timeout=_PRIOR_GIT_TIMEOUT_S, errors="replace")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode in (0, 1) else None
+
+
+def _prior_is_symbol(s):
+    return "_" in s.strip("_") or re.search(r"[a-z][A-Z]", s) is not None
+
+
+def prior_anchors(root, text):
+    """{'files': {basename: [code paths]}, 'symbols': [...], 'tags': [...],
+    'feature': str|None} named by a ticket's text."""
+    fm, body = parse_frontmatter_text(text)
+    feature = fm.get("feature") if isinstance(fm.get("feature"), str) and fm.get("feature") else None
+    croot = code_root(root)
+    listed = _prior_git(croot, ["ls-files"])
+    by_base = {}
+    for p in (listed or "").splitlines():
+        by_base.setdefault(p.rsplit("/", 1)[-1], []).append(p)
+    files = {}
+
+    def add_file(base, paths):
+        if paths and len(paths) <= _PRIOR_MAX_PATHS and not re.fullmatch(r"[A-Z]+-\d+\.md", base):
+            files.setdefault(base, sorted(paths))
+
+    for m in _PRIOR_FILE_RE.finditer(body):
+        full, base = m.group(1), m.group(2)
+        exact = [p for p in by_base.get(base, []) if p == full or p.endswith("/" + full)]
+        add_file(base, exact or by_base.get(base))
+    symbols = sorted({s for s in _PRIOR_SYMBOL_RE.findall(body) if _prior_is_symbol(s)})
+    tags = sorted(set(_PRIOR_TAG_RE.findall(body)))
+    if listed is not None:
+        excl = [":(exclude)*test*", ":(exclude)*.md", ":(exclude)*fixtures*"]
+        for s in symbols:
+            out = _prior_git(croot, ["grep", "-l", "-E", r"(def|function|class|const|let|var)[[:space:]]+" + s + r"([^[:alnum:]_]|$)",
+                                     "HEAD", "--"] + excl) or ""
+            for p in out.splitlines():
+                p = p.split(":", 1)[-1]
+                add_file(p.rsplit("/", 1)[-1], [p])
+        for t in tags:
+            out = [p.split(":", 1)[-1] for p in
+                   (_prior_git(croot, ["grep", "-l", "-F", f"[prdt {t}]", "HEAD", "--"] + excl) or "").splitlines()]
+            if 0 < len(out) <= _PRIOR_MAX_PATHS:
+                for p in out:
+                    add_file(p.rsplit("/", 1)[-1], [p])
+    return {"files": files, "symbols": symbols, "tags": tags, "feature": feature}
+
+
+def prior_tickets(root, tid, text):
+    """(anchors, [(id, title, status, score)]) — every OTHER ticket that touched
+    what `text` names, best first (score, then newest id). [] rows when the text
+    names nothing."""
+    a = prior_anchors(root, text)
+    if not (a["files"] or a["symbols"] or a["tags"] or a["feature"]):
+        return a, []
+    paths = sorted({p for ps in a["files"].values() for p in ps})
+    git_ids, hashes = set(), set()
+    if paths:
+        log = _prior_git(code_root(root), ["log", "--format=%H%x1f%s", "--"] + paths) or ""
+        for line in log.splitlines():
+            h, _, subj = line.partition("\x1f")
+            hashes.add(h)
+            git_ids.update(_PRIOR_ID_RE.findall(subj))
+    short = {h[:7]: h for h in hashes}
+    pats = [re.compile(r"(?<![\w.-])" + re.escape(b) + r"(?![\w-])") for b in a["files"]]
+    pats += [re.compile(r"(?<![\w])" + re.escape(s) + r"(?![\w])") for s in a["symbols"]]
+    tag_strs = [f"[prdt {t}]" for t in a["tags"]]
+    rows = []
+    for row, p, _problems in scan_tickets(root) or []:
+        oid = row["id"]
+        if oid == tid:
+            continue
+        try:
+            otext = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        ofm, obody = parse_frontmatter_text(otext)
+        score = sum(2 for rx in pats if rx.search(obody)) + sum(2 for t in tag_strs if t in obody)
+        if oid in git_ids:
+            score += 2
+        if hashes and any((h := short.get(x[:7])) and h.startswith(x) for x in _PRIOR_HEX_RE.findall(obody)):
+            score += 2
+        if a["feature"] and row["feature"] == a["feature"]:
+            score += 1
+        if score:
+            title = ofm.get("title") if isinstance(ofm.get("title"), str) and ofm.get("title") else (row["slug"] or "")
+            rows.append((oid, one_line(title)[:100], row["status"] or "-", score))
+    rows.sort(key=lambda r: (-r[3], -_prior_num(r[0]), r[0]))
+    return a, rows
+
+
+def _prior_num(tid):
+    m = re.search(r"(\d+)$", tid)
+    return int(m.group(1)) if m else 0
+
+
+def _prior_anchor_names(a):
+    names = list(a["files"]) + [f"`{s}`" for s in a["symbols"] if s not in a["files"]] + [f"[prdt {t}]" for t in a["tags"]]
+    if a["feature"]:
+        names.append(f"feature: {a['feature']}")
+    shown = ", ".join(one_line(n) for n in names[:6])
+    return shown + (f" +{len(names) - 6}" if len(names) > 6 else "")
+
+
+def _prior_row(r):
+    return f"- {r[0]} · {r[1]} · {r[2]}"
+
+
+def _prior_seen_path(session):
+    s = re.sub(r"[^A-Za-z0-9_.-]", "_", str(session or ""))[:120]
+    return prdt_home() / "run" / "prior-tickets" / f"{s}.json" if s.strip("._") else None
+
+
+def _prior_hook():
+    """PostToolUse payload on stdin → additionalContext listing the prior
+    tickets of the ticket just written, or nothing. PO only. Fails open."""
+    try:
+        ev = json.loads(sys.stdin.read() or "{}")
+        if ev.get("agent_type") != "prdt-po" or ev.get("tool_name") not in ("Write", "Edit", "MultiEdit"):
+            return
+        fp = (ev.get("tool_input") or {}).get("file_path") or ""
+        if not re.search(r"(^|/)[A-Z][A-Z0-9]*-\d+\.md$", fp):
+            return
+        f = Path(fp)
+        if not f.is_absolute():
+            f = Path(ev.get("cwd") or os.getcwd()) / f
+        root = _wordlist_project_root(f.parent)
+        if not root or not f.is_file() or "tickets" not in f.resolve().relative_to(root).parts:
+            return
+        text = f.read_text(encoding="utf-8", errors="replace")
+        fm, _ = parse_frontmatter_text(text)
+        if fm.get("type") not in _PRIOR_TYPES:
+            return
+        tid = fm.get("id") if isinstance(fm.get("id"), str) and fm.get("id") else f.stem
+        a, rows = prior_tickets(root, tid, text)
+        if not rows:
+            return
+        seen_p = _prior_seen_path(ev.get("session_id"))
+        seen = {}
+        if seen_p is not None:
+            try:
+                seen = json.loads(seen_p.read_text(encoding="utf-8"))
+                seen = seen if isinstance(seen, dict) else {}
+            except (OSError, ValueError):
+                seen = {}
+        already = set(seen.get(tid) or [])
+        rows = [r for r in rows if r[0] not in already]
+        if not rows:
+            return
+        shown = rows[:_PRIOR_HOOK_MAX_ROWS]
+        if seen_p is not None:
+            try:
+                seen[tid] = sorted(already | {r[0] for r in rows})   # the overflow too: `prdt tickets prior` lists it
+                seen_p.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_text(seen_p, json.dumps(seen))
+            except OSError:
+                pass
+    except Exception:
+        return
+    items = [_prior_row(r)[2:] for r in shown]
+    if len(rows) > len(shown):
+        items.append(PRIOR_TICKETS_MORE.format(k=len(rows) - len(shown), tid=one_line(tid)))
+    text = PRIOR_TICKETS_HEAD % (_prior_anchor_names(a), "; ".join(items))
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                             "additionalContext": text}}, ensure_ascii=False))
+
+
+def cmd_tickets_prior(args, root):
+    """`prdt tickets prior <ID>` — every row the hook would list, uncapped."""
+    if len(args.ids) != 1:
+        sys.exit("prdt tickets prior: give one ticket id")
+    tid = args.ids[0]
+    hit = next((p for row, p, _ in (scan_tickets(root) or []) if row["id"] == tid), None)
+    if hit is None:
+        sys.exit(f"prdt tickets prior: {tid} not found")
+    a, rows = prior_tickets(root, tid, hit.read_text(encoding="utf-8", errors="replace"))
+    print(f"{tid} names: {_prior_anchor_names(a) or 'nothing'}")
+    for r in rows:
+        print(_prior_row(r))
+    if not rows:
+        print("(no prior tickets)")
 
 
 
@@ -21990,9 +22224,13 @@ def main():
                                        "[--assignee --feature --prd-item --deps] scaffolds a frame ticket (T-685) "
                                        "· fmt <id…> [--check|--dry-run] normalizes/checks H2 headings against "
                                        "the frame (contracts/tickets.md annex) — binds tickets created on/after "
-                                       f"{TICKET_FRAME_LANDING_DATE} only, an older ticket is skipped untouched")
-    p.add_argument("action", nargs="?", choices=("new", "fmt"), help="omit for the plain listing")
-    p.add_argument("ids", nargs="*", metavar="ID", help="fmt: one or more ticket ids")
+                                       f"{TICKET_FRAME_LANDING_DATE} only, an older ticket is skipped untouched "
+                                       "· prior <id> lists the other tickets that touched the same file, hook or "
+                                       "feature that ticket names (T-1471)")
+    p.add_argument("action", nargs="?", choices=("new", "fmt", "prior"), help="omit for the plain listing")
+    p.add_argument("ids", nargs="*", metavar="ID", help="fmt: one or more ticket ids · prior: one ticket id")
+    p.add_argument("--hook", action="store_true",
+                   help="prior: read a PostToolUse payload on stdin — the entry prdt-prior-tickets.sh calls")
     p.add_argument("--version", help="list: filter · new: place the ticket in this version's folder "
                                      "([<product>/]vX.Y, created if absent; T-1084)")
     p.add_argument("--feature", help="list: filter · new: this ticket's `feature`")
