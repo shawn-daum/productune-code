@@ -469,7 +469,7 @@ JUDGE_SYSTEM_PROMPT = (
     "「승인해 주세요」, 「컨펌해 주세요」, \"Should I ship it?\", \"Is that right?\";\n"
     "- options laid out for the user to pick from (A / B lines with a recommendation): give the first "
     "option line;\n"
-    "- each item listed under a heading saying it waits for the user's answer.\n"
+    "- each choice or approval listed under a heading saying it waits for the user's answer.\n"
     "These are not asks:\n"
     "- asking the user for a fact or information (an address, a log, whether something works on their "
     "machine, their schedule, a version, how to do something, a name they remember): 「이름이 떠오르시면 "
@@ -523,8 +523,9 @@ JUDGE_SYSTEM_PROMPT = (
     "read-back of the user's newest words. An id cited beside an ask never makes it a re-ask by itself. "
     "When a decision's question is only a short name, judge by the subject the recorded answer settles: an "
     "ask about that same subject, in other words, is a re-ask. Asking the user to confirm the recorded "
-    "answer itself (「…하는 게 맞을까요?」 about what is already recorded) is a re-ask too; a read-back "
-    "that is not one is of words the user said after the decision closed. "
+    "answer itself (「…하는 게 맞을까요?」 about what is already recorded) is a re-ask too. Not a re-ask, even "
+    "on that subject and even when it keeps or changes the recorded answer: a read-back of the user's words "
+    "that the record does not hold (「오늘 「…」라고 하신 건, …맞을까요?」). "
     "`reasks` is [] when none, or when no decisions are listed."
 )
 JUDGE_SCHEMA = ('{"type":"object","properties":{"asks":{"type":"array","items":{"type":"integer"}},'

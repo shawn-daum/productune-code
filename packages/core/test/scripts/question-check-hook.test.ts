@@ -1258,6 +1258,48 @@ describe('T-1470 — the re-ask subject is the judge\'s reading of meaning, shar
 
   // The judgment itself (the real model on these fixtures and records) is evaluated outside the
   // unit suite, whose sandboxed HOME has no `claude` login: T-1470 §evidence holds the replay.
+
+  describe('T-1480 (wording T-1481 = A) — two false blocks of QA grill 2', () => {
+    // readback-change-t001: a read-back of new user words that would change closed T-001 (real
+    // judge before: re-ask 6/6). waiting-fact-item: a fact request listed under a waiting heading
+    // (real judge before: question check 5/5). Stubbed with the verdicts the real judge gives
+    // after T-1481 (T-1480 §evidence); the prompt sentences that produce them are pinned here.
+    const T1500 = (proj: string) => write(proj, 'T-1500', ['---', 'id: T-1500', 'type: decision', 'status: open',
+      'assignee: user', '---', '', '## problem', '', '- 앱 안 스위치 추가 읽어 주기 확인', ''], 1_000)
+    const both = (proj: string) => { T001(proj); T1500(proj) }
+
+    test('the judge prompt carries T-1481 changes 1 and 2, and not the sentences they replace', () => {
+      const e = { ...J([3], fresh()), QC_FAKE_ARGS: '' }
+      e.QC_FAKE_ARGS = path.join(e.PRDT_HOME as string, 'args')
+      const reply = fx('readback-change-t001').trimEnd()
+      stopOut(project(both, reply), reply, e)
+      const prompt = fs.readFileSync(e.QC_FAKE_ARGS, 'utf8')
+      expect(prompt).toContain("- each choice or approval listed under a heading saying it waits for the user's answer.")
+      expect(prompt).not.toContain('- each item listed under a heading')
+      expect(prompt).toContain('is a re-ask too. Not a re-ask, even on that subject and even when it keeps or changes the '
+        + "recorded answer: a read-back of the user's words that the record does not hold (「오늘 「…」라고 하신 건, …맞을까요?」). ")
+      expect(prompt).not.toContain('is of words the user said after the decision closed')
+    })
+
+    test('readback-change-t001: no re-ask named, the ask beside open decision T-1500 → silent', () => {
+      const reply = fx('readback-change-t001').trimEnd()
+      expect(stopOut(project(both, reply), reply, J([3], fresh()))).toBe('')
+    })
+
+    test('readback-change-t001: were it named a re-ask of T-001, it would still block (the check is the judge\'s call)', () => {
+      const reply = fx('readback-change-t001').trimEnd()
+      expect(stopOut(project(both, reply), reply, RA([[3, 'T-001']], J([3], fresh())))).toContain(REASK)
+    })
+
+    test('waiting-fact-item: a fact request under a waiting heading, not named an ask → silent', () => {
+      expect(stop({}, fx('waiting-fact-item'), {}, {}, J([])).out).toBe('')
+    })
+
+    test('a choice listed under the same waiting heading, named an ask → still flagged', () => {
+      const reply = fx('waiting-fact-item').trimEnd() + '\n- 판정 문안: A(문장 고치기) · B(정규식 먼저) 중 A 추천'
+      expect(blockedLines(stop({}, reply, {}, {}, J([9])).out)).toEqual([9])
+    })
+  })
 })
 
 describe('T-1477 — a durable-answer criterion; a request read-back is covered by its work ticket', () => {
