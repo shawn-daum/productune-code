@@ -114,24 +114,27 @@ describe('prdt-prior-tickets.sh', () => {
     expect(r.code).toBe(0)
     const ctx = context(r.out)
     // git log subjects (T-2, T-3), the cited commit (T-4), the body naming the file (T-6)
-    expect(ctx).toContain('- T-2 · foo check 처음 · done')
-    expect(ctx).toContain('- T-3 · foo-scope · done')
-    expect(ctx).toContain('- T-4 · 서식에 기댄 고침 · dropped')
-    expect(ctx).toContain('- T-6 · 파일을 이름으로 적은 티켓 · open')
+    expect(ctx).toContain('T-2 · foo check 처음 · done')
+    expect(ctx).toContain('T-3 · foo-scope · done')
+    expect(ctx).toContain('T-4 · 서식에 기댄 고침 · dropped')
+    expect(ctx).toContain('T-6 · 파일을 이름으로 적은 티켓 · open')
     expect(ctx).not.toContain('T-5')
-    expect(ctx).not.toMatch(/- T-10 /)
-    expect(ctx.split('\n')[0]).toContain('prdt-foo-check.sh')
+    expect(ctx).not.toMatch(/T-10 ·/)
+    // T-1472 wording (T-1473 = A), one line: names, then `; `-joined rows, then the Triage clause
+    expect(ctx).toMatch(/^\[prdt fix history\] prior tickets on [^:]*prdt-foo-check\.sh[^:]*: /)
+    expect(ctx).toMatch(/\. If 2\+ fixed this same defect → Triage: fix the assumption they share\.$/)
+    expect(ctx).not.toContain('\n')
     // the same ticket edited again in the same session: nothing new to show
     expect(run(payload(f, { tool_name: 'Edit', tool_input: { file_path: f, old_string: 'a', new_string: 'b' } })).out).toBe('')
     // another session sees it again
-    expect(context(run(payload(f, { session_id: 'sess-2' })).out)).toContain('- T-2 ')
+    expect(context(run(payload(f, { session_id: 'sess-2' })).out)).toContain('T-2 · ')
   })
 
   test('a hook tag names the file that prints it', () => {
     const f = ticket('T-11', { slug: 'tag', type: 'impl', status: 'open', assignee: 'developer' },
       '## problem\n\n`[prdt foo check]` 가 오탐한다.')
     const ctx = context(run(payload(f)).out)
-    expect(ctx).toContain('- T-3 ')
+    expect(ctx).toContain('T-3 · ')
     expect(ctx).not.toContain('T-5')
   })
 
