@@ -120,7 +120,7 @@ describe('a hook that never exits fails only its own test (T-1478)', () => {
     delete env.PRODUCTUNE_TRIPWIRE_RUN // the nested run arms its own baselines
     delete env.PRODUCTUNE_CWD_TRIPWIRE_RUN
     const t0 = Date.now()
-    const r = spawnSync(process.execPath, [VITEST_BIN, 'run', '--config', 'test/fixtures/subprocess-hang/vitest.config.ts'], {
+    const r = spawnSync(process.execPath, [VITEST_BIN, 'run', '--config', 'test/fixtures/subprocess-hang/hang.vitest.ts'], {
       cwd: CORE_ROOT, env, encoding: 'utf8', timeout: subprocessTimeout('doctor'),
     })
     const wall = Date.now() - t0
