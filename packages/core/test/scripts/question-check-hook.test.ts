@@ -15,11 +15,12 @@
  *               the T-949 waiting-list item)
  *   compliant — replies presenting T-982 / T-984 / T-986 / T-987 / T-988 with
  *               options, and two report-only replies.
- * Which questions are asks is T-993 = B, narrowed by T-1465: choose, approve (a body, or
- * an action needing consent) and read-back confirm need a ticket; proceed-confirms (only
- * whether the assistant starts its own next step), offers, information requests and
- * feedback/closing questions do not. The block REASON is the user-confirmed wording (T-990 = A),
- * pinned here by property (tag + line numbers), never verbatim.
+ * Which questions are asks is the answer's lifetime (T-1474 = A, wording T-1476 = A; it
+ * reverses T-993 = B): a choose / approve / confirm whose answer must outlive the turn needs
+ * a ticket; one serving only the work at hand, proceed-confirms, offers, information requests
+ * and feedback/closing questions do not. A request read-back is also covered by its open
+ * impl / design ticket (T-1477). The block REASON is the user-confirmed wording (T-990 = A,
+ * criterion clause T-1476 = A), pinned here by property (tag + line numbers), never verbatim.
  */
 
 import path from 'path'
@@ -316,7 +317,7 @@ describe('T-1379 — the model judge: who pays, how it fails, what is kept of it
     expect(prompt).toContain('지금 v1.17 Define을 시작할까요?')
     expect(prompt).toContain('T-1362 는 다시 묻지 않아요')
     expect(prompt).toContain('설치할까요?') // still listed as an ask
-    expect(prompt).toMatch(/still an ask when it offers alternatives[^]*install, push, deploy, destructive git/)
+    expect(prompt).toMatch(/still an ask when the action needs the user's consent \(install, push, deploy, destructive git/)
     expect(prompt).not.toContain('say whether to go ahead')
   })
 
@@ -976,11 +977,13 @@ describe('T-1389 — PostToolUse first (the reply draft of `prdt wordlist check 
   })
 })
 
-describe('T-1428 — a confirm request on a body is an ask even when the judge misses it', () => {
+describe('T-1428 (narrowed by T-1477) — a confirm request on a body goes through the durable-answer judgment', () => {
   // L1 observation (3) (decision-approval-observation.md, 재관측 2026-11-03): r3 ff50718c and
   // r3b b2007d0d asked to confirm a release-note body with no decision ticket and nothing
-  // blocked. Their confirm lines are read deterministically beside the judge: the judge is
-  // stubbed to MISS them here ([]), so only CONFIRM_ASK_RE can find them.
+  // blocked. T-1428 read their confirm lines deterministically beside the judge; T-1477 puts
+  // them through the same judgment: when the judge answers, a confirm request is an ask only
+  // if it named it (a body confirm used only for the work at hand is not). A FAILED judge
+  // (stubbed `error` here, FAIL) leaves CONFIRM_ASK_RE the only reader, as before.
   const PRDT = path.join(CORE_ROOT, 'scripts', 'prdt')
   const REASK = '[prdt re-ask check]'
   const env = (asks: number[] = [], extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
@@ -1006,6 +1009,7 @@ describe('T-1428 — a confirm request on a body is an ask even when the judge m
     return out
   }
   const none = () => {}
+  const FAIL: NodeJS.ProcessEnv = { QC_FAKE_MODE: 'error' }
   const T001 = (p: string) => decision(p, 'T-001', 'done', 86_400_000)
   const lineOf = (reply: string, needle: string) => reply.split('\n').findIndex(l => l.includes(needle)) + 1
 
@@ -1014,9 +1018,18 @@ describe('T-1428 — a confirm request on a body is an ask even when the judge m
     ['approval-r3b-which-lines', '이 문구로 괜찮은지, 고칠 줄이 있는지 알려 주세요'],
   ]
   for (const [name, needle] of observed) {
-    test(`${name}: 「${needle}」, no decision ticket, judge missed it → flagged on that line`, () => {
+    test(`${name}: 「${needle}」, no decision ticket, judge failed → flagged on that line`, () => {
       const reply = fx(name)
-      expect(blockedLines(run(reply, none, env()))).toEqual([lineOf(reply, needle)])
+      expect(blockedLines(run(reply, none, env([], FAIL)))).toEqual([lineOf(reply, needle)])
+    })
+
+    test(`${name}: the judge answered without naming it (work at hand only) → silent`, () => {
+      expect(run(fx(name), none, env())).toBe('')
+    })
+
+    test(`${name}: the judge names it (durable: what real users will see) → flagged on that line`, () => {
+      const reply = fx(name)
+      expect(blockedLines(run(reply, none, env([lineOf(reply, needle)])))).toEqual([lineOf(reply, needle)])
     })
 
     test(`${name}: T-001 (answered) cited as the body's source → question check, never re-ask`, () => {
@@ -1028,7 +1041,7 @@ describe('T-1428 — a confirm request on a body is an ask even when the judge m
 
     test(`${name}: an open decision id cited beside the confirm request → silent`, () => {
       const reply = fx(name).replace(needle, `${needle} (T-002)`)
-      expect(run(reply, (p) => { T001(p); decision(p, 'T-002', 'open', 86_400_000) }, env())).toBe('')
+      expect(run(reply, (p) => { T001(p); decision(p, 'T-002', 'open', 86_400_000) }, env([], FAIL))).toBe('')
     })
   }
 
@@ -1037,9 +1050,10 @@ describe('T-1428 — a confirm request on a body is an ask even when the judge m
     '아래 내용이 맞는지 답해 주세요.',
     '이 초안으로 좋으면 승인해 주세요.',
     '위 문구가 괜찮으시면 알려 주세요.',
-  ])('other confirm-request forms are asks: %s', (ask) => {
+  ])('other confirm-request forms are asks when the judge failed: %s', (ask) => {
     const reply = ['초안이에요.', '```', '- 한 줄', '```', ask].join('\n')
-    expect(blockedLines(run(reply, none, env()))).toEqual([5])
+    expect(blockedLines(run(reply, none, env([], FAIL)))).toEqual([5])
+    expect(run(reply, none, env())).toBe('')
   })
 
   test.each([
@@ -1051,7 +1065,7 @@ describe('T-1428 — a confirm request on a body is an ask even when the judge m
     ['no answer asked', '이대로 괜찮으면 따로 답하지 않으셔도 돼요.'],
     ['a look-and-report', '화면이 괜찮은지 직접 봐 주세요.'],
   ])('not a confirm request: %s', (_label, text) => {
-    expect(run(['보고예요.', '', text].join('\n'), none, env())).toBe('')
+    expect(run(['보고예요.', '', text].join('\n'), none, env([], FAIL))).toBe('')
   })
 
   test('the judge failing does not drop a deterministic confirm request', () => {
@@ -1060,16 +1074,17 @@ describe('T-1428 — a confirm request on a body is an ask even when the judge m
     expect(blockedLines(out)).toEqual([lineOf(reply, '이대로 괜찮으면')])
   })
 
-  test('no existing fixture gains a confirm-request line the judge stubs did not name', () => {
-    // replay: every pre-T-1428 fixture, judge stubbed to [] — only approval-r3 holds such a line
+  const oldFixtures = () => fs.readdirSync(FIXTURES)
+    .filter(f => f.endsWith('.md') && !f.startsWith('approval-r3-') && !f.startsWith('approval-r3b-'))
+
+  test('no existing fixture gains a confirm-request line on a failed judge', () => {
+    // replay: every pre-T-1428 fixture, judge failed — only approval-r3 holds such a line
     // (13, already judged an ask in the L1 replay above); every other one stays silent.
-    const old = fs.readdirSync(FIXTURES).filter(f => f.endsWith('.md') && !f.startsWith('approval-r3-') && !f.startsWith('approval-r3b-'))
-    const hit: string[] = []
-    for (const f of old) {
-      const reply = fx(f.slice(0, -3))
-      if (run(reply, none, env())) hit.push(f)
-    }
-    expect(hit).toEqual(['approval-r3.md'])
+    expect(oldFixtures().filter(f => run(fx(f.slice(0, -3)), none, env([], FAIL)))).toEqual(['approval-r3.md'])
+  })
+
+  test('with the judge answering [], no existing fixture blocks: CONFIRM_ASK_RE adds nothing past the judgment', () => {
+    expect(oldFixtures().filter(f => run(fx(f.slice(0, -3)), none, env()))).toEqual([])
   })
 })
 
@@ -1083,10 +1098,10 @@ describe('T-1429 — a confirm request on a new body that cites a done decision 
   // the real judge gave on these replies (question-check.log, QA and this ticket's replay).
   const PRDT = path.join(CORE_ROOT, 'scripts', 'prdt')
   const REASK = '[prdt re-ask check]'
-  const env = (asks: number[]): NodeJS.ProcessEnv => {
+  const env = (asks: number[], extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-t1429-'))
     roots.push(home)
-    return J(asks, { ...ON, PRDT_HOME: home, PRDT_BIN: PRDT })
+    return J(asks, { ...ON, PRDT_HOME: home, PRDT_BIN: PRDT, ...extra })
   }
   function T001(proj: string) {
     const p = path.join(proj, 'docs', 'tickets', 'v1.13', 'T-001.md')
@@ -1097,13 +1112,13 @@ describe('T-1429 — a confirm request on a new body that cites a done decision 
     fs.utimesSync(p, DAY_AGO, DAY_AGO)
   }
   // T-1470: `reasks` = what the judge is stubbed to name as re-asks of T-001
-  function reasonOf(reply: string, asks: number[], reasks: number[] = []): string {
+  function reasonOf(reply: string, asks: number[], reasks: number[] = [], extra: NodeJS.ProcessEnv = {}): string {
     const { root, proj } = makeProject({})
     T001(proj)
     const out = runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
-    }, RA(reasks.map(n => [n, 'T-001'] as [number, string]), env(asks)))
+    }, RA(reasks.map(n => [n, 'T-001'] as [number, string]), env(asks, extra)))
     return out ? (JSON.parse(out).reason as string) : ''
   }
 
@@ -1116,8 +1131,8 @@ describe('T-1429 — a confirm request on a new body that cites a done decision 
     expect(reason.startsWith(`${TAG} line ${shown} asks`)).toBe(true)
   })
 
-  test('the deterministic confirm line alone (judge missed every line) → question check, no re-ask', () => {
-    const reason = reasonOf(fx('approval-r3-cited-t001-2'), [])
+  test('the deterministic confirm line alone (judge failed) → question check, no re-ask', () => {
+    const reason = reasonOf(fx('approval-r3-cited-t001-2'), [], [], { QC_FAKE_MODE: 'error' })
     expect(reason).not.toContain(REASK)
     expect(reason.startsWith(`${TAG} line 17 asks`)).toBe(true)
   })
@@ -1243,4 +1258,70 @@ describe('T-1470 — the re-ask subject is the judge\'s reading of meaning, shar
 
   // The judgment itself (the real model on these fixtures and records) is evaluated outside the
   // unit suite, whose sandboxed HOME has no `claude` login: T-1470 §evidence holds the replay.
+})
+
+describe('T-1477 — a durable-answer criterion; a request read-back is covered by its work ticket', () => {
+  // T-1474 = A, wording T-1476 = A: only an ask whose answer must outlive the turn needs a
+  // decision ticket — which lines those are is the judge's call (stubbed here). A request
+  // read-back is confirmed into its impl / design ticket's `### 확인` (PO habit Triage), so
+  // that open work ticket's id beside the ask covers it while the confirm is still pending.
+  const READBACK = ['요청을 이렇게 이해했어요 (T-010).', '', '- 결정 티켓은 답이 턴 뒤에도 남는 질문에만', '', '이렇게 이해한 게 맞나요?'].join('\n')
+  const READBACK_LIST = ['## 확인', '', '- 요청 이해가 맞는지 답해 주세요 (T-010)'].join('\n')
+  const PENDING = ['## problem', '', '*"사소한 질문마다 결정 티켓을 만들어"*', '', '### 목적', '', '*"분류를 잘해야겠는데"*', '', '### 확인', '', '## acceptance', '']
+  const CONFIRMED = ['## problem', '', '*"사소한 질문마다 결정 티켓을 만들어"*', '', '### 목적', '', '*"분류를 잘해야겠는데"*', '', '### 확인', '', '*"a"*', '', '## acceptance', '']
+  const PO_ONLY = ['## problem', '', 'PO 가 찾은 결함.', '', '### 확인', '', '## acceptance', '']
+  function run(type: string, status: string, body: string[], reply: string, asks: number[]) {
+    const { root, proj } = makeProject({})
+    const p = path.join(proj, 'docs', 'tickets', 'v1.13', 'T-010.md')
+    fs.writeFileSync(p, ['---', 'id: T-010', `type: ${type}`, `status: ${status}`, 'assignee: po', '---', '', ...body].join('\n'))
+    fs.utimesSync(p, DAY_AGO, DAY_AGO)
+    return runHook({
+      hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+      cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
+    }, J(asks))
+  }
+
+  test.each(['impl', 'design'])('a read-back beside an open %s ticket awaiting its confirm → silent', (type) => {
+    expect(run(type, 'open', PENDING, READBACK, [5])).toBe('')
+    expect(run(type, 'open', PENDING, READBACK_LIST, [3])).toBe('')
+  })
+
+  test.each([
+    ['already confirmed', 'impl', 'open', CONFIRMED],
+    ['never user-started', 'impl', 'open', PO_ONLY],
+    ['done', 'impl', 'done', PENDING],
+    ['another type', 'ops', 'open', PENDING],
+  ])('a work ticket %s does not cover it', (_label, type, status, body) => {
+    expect(blockedLines(run(type, status, body, READBACK, [5]))).toEqual([5])
+  })
+
+  test('a work ticket never covers an option set or a pick naming an option', () => {
+    const reply = ['T-010 진행 방식이에요.', '', '- A 훅으로 강제', '- B 지시 + 측정', '', 'A 와 B 중 골라 주세요.'].join('\n')
+    expect(blockedLines(run('impl', 'open', PENDING, reply, [3, 6]))).toEqual([3, 6])
+  })
+
+  test('the replayed fixtures keep their blocks: a consent or standing-rule ask beside a work ticket', () => {
+    // flagged-install-after-qa (29: install beside T-479 impl) and flagged-t949-waiting-item
+    // (24: T-949 design as canon) — work tickets there carry no pending read-back.
+    expect(blockedLines(stop({ 'T-974': DEC(), 'T-479': IMPL(), 'T-938': IMPL() }, fx('flagged-install-after-qa'), {}, {}, J([28, 29])).out)).toEqual([29])
+  })
+
+  test('a pick the judge does not name (an answer for the work at hand only) → silent, options included', () => {
+    // ntf-pm T-1068: the Slack copy's date after a day off — a value, easy to change, no ticket.
+    const reply = ['다음 영업일 기준으로 보낼게요. 권장: A.', '', '- A 다음 영업일', '- B 오늘',
+      '', '휴가 다음 날 Slack 복사본 날짜를 다음 영업일로 할까요, 오늘로 할까요?'].join('\n')
+    expect(stop({}, reply, {}, {}, J([])).out).toBe('')
+  })
+
+  test('the judge prompt carries the durable-answer criterion; the reason names it', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-t1477-'))
+    roots.push(home)
+    const args = path.join(home, 'args')
+    const { out } = stop({}, '범위를 v1.17 로 미룰까요?', {}, {}, J([1], { ...ON, PRDT_HOME: home, QC_FAKE_ARGS: args }))
+    const prompt = fs.readFileSync(args, 'utf8')
+    expect(prompt).toContain('whose answer must outlive this turn (see DURABLE ANSWERS)')
+    expect(prompt).toContain('DURABLE ANSWERS. A line that chooses, approves or confirms is an ask only when')
+    expect(prompt).toContain('is judged by DURABLE ANSWERS;')
+    expect(JSON.parse(out).reason).toContain('a decision whose answer must outlive the turn')
+  })
 })
