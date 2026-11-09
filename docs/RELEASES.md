@@ -25,6 +25,16 @@ Version-by-version release notes for this project.
 > - Every line is checked against the closed tickets' outcome lines, not the PRD To-Be.
 > - Everything above the first `## ` line is preamble and is ignored by the parser.
 
+## v1.16.2 — 재질문 판정 · 이전 고침 이력 · 결정 티켓 · 읽어 주기 · 시험 실행 (2026-11-09)
+
+1. 요약
+
+- 1-1 재질문 판정: 기록된 결정을 근거로 인용만 한 확인이 재질문으로 막히던 문제를 고쳤어요
+- 1-2 이전 고침 이력: 같은 곳을 여러 번 고친 결함은 이전 고침 티켓을 보고 공통 원인을 고치게 했어요
+- 1-3 결정 티켓: 답이 턴 뒤에도 남아야 하는 질문만 결정 티켓을 요구하게 바꿨어요
+- 1-4 읽어 주기: 새 말 읽어 주기와 「답 기다리는 것」 아래 사실 요청이 막히던 문제를 고쳤어요 (기록을 뒤집는 읽어 주기는 다음 버전에서 고쳐요)
+- 1-5 시험 실행: 멈춘 프로세스 하나 때문에 전체 시험과 트랙 merge 가 멈추던 문제를 고쳤어요
+
 ## v1.16.1 — 상태줄 · 레인 검사 · 뷰어 버전 · 시험 환경 (2026-11-06)
 
 1. 요약
