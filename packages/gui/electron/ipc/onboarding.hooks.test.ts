@@ -152,6 +152,8 @@ function cliHooksBlock(home: string): any {
       { matcher: 'Bash', hooks: [h('prdt-auto-open.sh')] },
       // T-977: prdt-wordlist-check.sh — its own Write|Edit|MultiEdit entry.
       { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-wordlist-check.sh')] },
+      // T-1471: prdt-prior-tickets.sh — its own Write|Edit|MultiEdit entry, after the word list's.
+      { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-prior-tickets.sh')] },
       // T-1025: prdt-user-prompt.sh's matcher-less PostToolUse entry (form=outline hot line).
       { hooks: [h('prdt-user-prompt.sh')] },
       // T-1389: the question check (Bash: the reply draft of `prdt wordlist check -`) and

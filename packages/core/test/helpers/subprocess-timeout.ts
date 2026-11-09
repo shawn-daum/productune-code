@@ -9,6 +9,12 @@
  * `PRDT_TEST_TIMEOUT_SCALE`-fixed) factor. This file is a typed doorway to
  * that module and nothing more — no second copy of a budget lives here.
  *
+ * T-1478: a launch that passes NO `timeout:` is not unbounded — the run's shim
+ * (scripts/vitest-subprocess-timeout-shim.cjs) gives it the enclosing test's own
+ * timeout (outside a test body: the `doctor` tier), and an explicit opt-out
+ * (`timeout: 0` · `Infinity`) throws `UntimedSubprocess`. Pass a tier from here
+ * when the child's budget should differ from the test's.
+ *
  * Tiers name what the child IS, not how long it is allowed to take:
  *   quick   hang guard (the assertion is `signal === null`)
  *   hook    one Claude Code hook script

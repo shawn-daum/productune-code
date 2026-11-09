@@ -158,6 +158,7 @@ const ALLOW: Record<string, number> = {
   // T-1286: the test-read tracer, created O_EXCL ('x') in a fresh mkdtemp dir of its own — outside any project / state dir
   'core/scripts/prdt::_track_trace_env': 1,
   'core/scripts/prdt::main': 1,
+  'core/scripts/prdt::_prior_hook': 1, // T-1471: $PRDT_HOME/run/prior-tickets/<session>.json (tooling-owned home run/, never .prdt/) — ids already shown per ticket
   // hook / status-line shell: `>` `>>` redirects (temp files, stderr captures, per-session stamps) — not audited for .prdt targets; hooks write project state through prdt_safe_fs.py
   'core/scripts/hooks/prdt-audience-inject.sh': 2,
   'core/scripts/hooks/prdt-auto-open.sh': 1,
