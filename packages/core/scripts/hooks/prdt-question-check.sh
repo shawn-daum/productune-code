@@ -16,20 +16,28 @@
 # Stop stays the last resort: it judges the FINAL reply as before and blocks only
 # when that reply still breaks a check — a reply that complies is never blocked.
 #
-# WHY. PO habit says a 2+-path fork becomes a `type: decision` ticket the moment
-# it is raised, but nothing noticed when a PO asked the user to choose or confirm
-# without one: the user's answer then never shows in the statusline `dec` and
+# WHY. PO habit says an ask whose answer outlives the turn becomes a `type:
+# decision` ticket the moment it is raised, but nothing noticed when a PO asked
+# the user one without it: the user's answer then never shows in the statusline `dec` and
 # gets lost (T-985 §problem, the same class as T-869). The UserPromptSubmit
 # register check is a next-turn notice; this one acts at Stop, so the PO opens
 # or cites the ticket and re-replies before the turn ends.
 #
 # WHAT IT DOES. On the PO's final reply of a turn it finds the ASKS — the places
-# that ask the user to choose, approve or confirm — and blocks the stop ONCE when
-# an ask has no decision ticket behind it. Which questions are asks is T-993 = B:
-# a choice between options, a yes/no confirmation and a read-back confirmation
-# need a ticket; an offer (`열어 드릴까요?`), an information request (`알려
-# 주시겠어요?`, a `…되나요?` fact question) and a feedback or closing question
-# (`어떠셨어요?`) do not.
+# that ask the user to choose, approve or confirm something whose answer must
+# outlive the turn — and blocks the stop ONCE when an ask has no ticket behind it.
+# The criterion is the answer's lifetime, not the sentence's shape (T-1474 = A,
+# wording T-1476 = A, reversing T-993 = B): scope, direction, a standing rule, a
+# choice costly to reverse, approving what real users will see or injected
+# instruction text, reversing a recorded decision, an action needing the user's
+# consent (install, push, deploy, delete) and a read-back of the user's request
+# need a ticket. A pick, approval or confirm whose answer serves only the work at
+# hand (one value such as a date or a name, how to carry out a settled direction,
+# an easily reversed pick, a confirm only to continue) does not, options and a
+# recommendation included (ntf-pm T-1068's 「Slack 복사본 날짜」 pick). Neither do
+# a proceed-confirm (T-1465: `지금 Define을 시작할까요?`), an offer (`열어 드릴까요?`),
+# an information request (`알려 주시겠어요?`, a `…되나요?` fact question) or a
+# feedback or closing question (`어떠셨어요?`).
 #
 # A MODEL JUDGES WHICH LINES ARE ASKS (T-1379, decision T-1380 = D). Three rounds
 # of sentence patterns traded missed asks for false blocks (「팀장님이 어떻게 할지
@@ -48,9 +56,11 @@
 # drops every other Stop before python3 starts, and a PO Stop after a decision
 # ticket changed this turn calls it only when the reply cites a ticket the
 # re-ask or batch-ask check could act on (judge_needed).
-# ONE DETERMINISTIC FORM BESIDE THE JUDGE (T-1428): a confirm request on a body
-# (CONFIRM_ASK_RE: 「이대로 괜찮으면 … 답해 주세요」, 「이 문구로 괜찮은지 … 알려 주세요」)
-# is an ask line whatever the judge answers, a failed judge included.
+# ONE DETERMINISTIC FORM BESIDE THE JUDGE (T-1428, narrowed by T-1477): a confirm
+# request on a body (CONFIRM_ASK_RE: 「이대로 괜찮으면 … 답해 주세요」, 「이 문구로
+# 괜찮은지 … 알려 주세요」) goes through the same durable-answer judgment: when the
+# judge answers, it is an ask only if the judge named it (a body confirm used only
+# for the work at hand is not). Only a failed judge leaves it an ask on its own.
 # THE JUDGE FAILS OPEN, VISIBLY. No `claude` on PATH, a timeout (JUDGE_TIMEOUT_S),
 # a non-zero exit, an error result (no auth) or an unreadable answer → no asks,
 # no block, and one line in $PRDT_HOME/run/question-check.log (also stderr,
@@ -65,6 +75,12 @@
 #     the item next to it that cites nothing (fixture: the 「이 기기에 설치」 reply);
 #   any other line → an id in its section (heading to next heading).
 # A waiting item also counts an open `assignee: user` ticket (statusline `req`).
+# A non-option ask also counts, in the same scope, an open `type: impl` / `design`
+# ticket still awaiting its request read-back (T-1477): user-started (a user quote
+# in `## problem`) with no quote under `### 확인` yet — the places the dispatch gate
+# reads. The answer is recorded there, so no separate decision ticket. A work
+# ticket already confirmed, or never user-started, covers nothing: an install
+# question or a standing-rule pick beside it still needs a decision ticket.
 # Nothing is checked when a `type: decision` ticket file was created or modified
 # during the turn (mtime at or after the turn's user prompt, read from the
 # transcript) — T-985 acceptance, literally.
@@ -75,6 +91,19 @@
 # `**N. title (T-nnn)**` above its option items); an id cited with no ask beside
 # it is not counted — is blocked once, so the PO asks one screen-changing item
 # at a time.
+#
+# RE-ASK (T-1285; subject by meaning, T-1470 = T-1469 A). Also before that
+# exemption, an ask that asks the user again a decision already answered is
+# blocked once. WHICH decision an ask is about is the judge's call, never the
+# position of an id: when the reply cites decision tickets closed before this
+# turn whose answer `prdt decisions find` holds (answered, not reversed), the
+# same judge call also gets each one's question (title, `## problem`,
+# `## options`) and recorded answer (`## outcome`) and names, per ask line, the
+# decision it asks again, if any. A citation alone never blocks: a proceed-
+# confirm, a new body or a new decision that only cites a record as its ground
+# passes (the id-position scope rules of T-1377 / T-1429 / T-1465 are gone —
+# each false positive had added one more markdown-layout exception). A failed
+# judge names no re-ask.
 #
 # ONE BLOCK, NEVER TWO. `stop_hook_active` is the harness's own loop guard:
 # false on the first Stop, true on the Stop that follows a block. On true this
@@ -195,11 +224,11 @@ def tickets_homes(root):
             + [(None, os.path.join(root, "docs", "_shared", "tickets"))])
 
 
-# Wording: T-990 = A (2026-10-06); re-send clause T-1302 (inject-edit).
+# Wording: T-990 = A (2026-10-06); re-send clause T-1302 (inject-edit); criterion clause T-1476 = A (draft 3).
 # %s = the uncovered asks' line numbers ("3, 12").
 QUESTION_CHECK_REASON = (
-    "[prdt question check] line %s asks the user to choose or confirm (a pick, an A/B option set, an item "
-    "under a waiting-for-your-answer heading) with no open `type: decision` id beside it. Open one per ask "
+    "[prdt question check] line %s asks the user a decision whose answer must outlive the turn (PO habit "
+    "Triage) with no open `type: decision` id beside it. Open one per ask "
     "(a waiting item: `assignee: user` counts; a body to confirm goes in it, numbered) and cite its id beside the ask."
 )
 # T-1116: the language clause (since T-1390 inside SENT_TAIL, Stop only; wording settled
@@ -256,11 +285,12 @@ DECISIONS_FIND_TIMEOUT_S = 3
 # What counts as a citable record id, and where its files live (T-996 = C:
 # decisions later get their own `D-NNN` records — add "D" and its dir here).
 DECISION_ID_PREFIXES = ("T",)
+# T-1477: the work tickets whose id covers a read-back confirm of the request they record.
+WORK_TICKET_TYPES = ("impl", "design")
 _PFX = "|".join(re.escape(p) for p in DECISION_ID_PREFIXES)
 TICKET_ID_RE = re.compile(r"(?<![A-Za-z0-9])((?:%s)-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6})(?!\d)" % _PFX)
 TICKET_FILE_RE = re.compile(r"^(?:%s)-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?\d{1,6}\.md$" % _PFX)
 FENCE_RE = re.compile(r"^\s*(?:`{3,}|~{3,})")
-DIAGRAM_FENCE_RE = re.compile(r"^\s*(?:`{3,}|~{3,})\s*(?:mermaid|dot|graphviz|plantuml|puml|d2)\b", re.I)
 HEADING_RE = re.compile(r"^\s*(?:#{1,6}\s+\S|\*\*[^*].*\*\*\s*:?\s*$)")
 WAITING_HEADING_RE = re.compile(
     r"답\s*(?:을\s*)?기다리|결정\s*대기|waiting\s+(?:on|for)\s+(?:you|your)", re.I)
@@ -390,9 +420,9 @@ def scan_transcript(path):
 
 def ticket_index(root):
     """({id: (type, status, assignee, mtime)}, {ids whose file was unreadable or
-    not a regular file}) over tickets_homes (md is SoT); None when a tickets dir
-    that exists cannot be listed (fail open)."""
-    out, unknown, broken = {}, set(), []
+    not a regular file}, {id: path}) over tickets_homes (md is SoT); None when a
+    tickets dir that exists cannot be listed (fail open)."""
+    out, unknown, broken, paths = {}, set(), [], {}
     for _prod, base in tickets_homes(root):   # T-1104: docs/tickets or every product's
         if not os.path.lexists(base):
             continue
@@ -418,18 +448,20 @@ def ticket_index(root):
                 fm = head.split("\n---", 1)[0] if head.startswith("---") else ""
                 g = lambda k: (re.search(r"^%s:\s*(\S+)" % k, fm, re.M) or [None, None])[1]
                 out[fn[:-3]] = (g("type"), g("status"), g("assignee"), st.st_mtime)
+                paths[fn[:-3]] = p
     if broken:
         return None
-    return out, unknown
+    return out, unknown, paths
 
 
 # T-1379 (T-1380 = D): the judge. Model-facing text for a separate `claude -p`
-# call, never injected into the PO's input.
+# call, never injected into the PO's input. First line, Boundary and DURABLE
+# ANSWERS: T-1476 = A draft 2, verbatim (T-1477).
 JUDGE_SYSTEM_PROMPT = (
     "You check one chat reply that an AI product owner is about to send to its user, the person it "
-    "works for. Find every line where the reply asks THAT USER to decide something: choose between "
-    "options, approve or confirm a plan, draft, wording or action, say whether to go ahead, or confirm "
-    "a read-back the assistant needs before it continues.\n"
+    "works for. Find every line where the reply asks THAT USER to decide something whose answer must outlive "
+    "this turn (see DURABLE ANSWERS): choose between options, approve a plan, draft, wording or an action "
+    "that needs the user's consent, or confirm a read-back the assistant needs before it continues.\n"
     "These are asks, whatever their wording and even when what is decided is meant for other people "
     "(a screen users will see, a mail customers will get):\n"
     "- a question or request whose answer is the user's own choice or approval: 「A 와 B 중 어느 쪽으로 "
@@ -437,7 +469,7 @@ JUDGE_SYSTEM_PROMPT = (
     "「승인해 주세요」, 「컨펌해 주세요」, \"Should I ship it?\", \"Is that right?\";\n"
     "- options laid out for the user to pick from (A / B lines with a recommendation): give the first "
     "option line;\n"
-    "- each item listed under a heading saying it waits for the user's answer.\n"
+    "- each choice or approval listed under a heading saying it waits for the user's answer.\n"
     "These are not asks:\n"
     "- asking the user for a fact or information (an address, a log, whether something works on their "
     "machine, their schedule, a version, how to do something, a name they remember): 「이름이 떠오르시면 "
@@ -448,6 +480,14 @@ JUDGE_SYSTEM_PROMPT = (
     "실행해 주세요」;\n"
     "- asking what someone else (a manager, another team, a customer) decided or will decide, or asking "
     "the user to ask, tell or reply to someone else;\n"
+    "- a proceed-confirm: a line only asking whether the assistant should start or continue its OWN next "
+    "step inside the work already agreed (「지금 v1.17 Define을 시작할까요?」, 「진행할까요?」, 「이어서 "
+    "할까요?」, \"Shall I start the next step?\"). No alternatives are offered and nothing needs the "
+    "user's consent. Boundary: it is still an ask when the action needs the user's consent (install, push, "
+    "deploy, destructive git, deleting, sending to other people, spending money); one that offers "
+    "alternatives or asks approval of a drafted body is judged by DURABLE ANSWERS;\n"
+    "- a statement that cites an earlier decision or ticket id (T-1362) to say it is settled, kept, or "
+    "will not be asked again (「T-1362 는 다시 묻지 않아요」): it asks nothing, even beside an id;\n"
     "- offers (「열어 드릴까요?」, \"Would you like me to...\"), feedback or closing questions "
     "(「어떠셨어요?」), rhetorical questions;\n"
     "- a question or request that is quoted, reported, given as an example, inside code or a "
@@ -455,9 +495,42 @@ JUDGE_SYSTEM_PROMPT = (
     "- a status table, report or status line, and what the assistant says it will do or show next "
     "(「다음에 보여 드릴게요」);\n"
     "- an empty line.\n"
-    "Lines come as `N| text`. Answer with the ask line numbers; [] when there is none."
+    "DURABLE ANSWERS. A line that chooses, approves or confirms is an ask only when later work or a later "
+    "session relies on its answer:\n"
+    "- scope: what a version or task includes or leaves out, or entering a stage (「v2.6 Build 로 들어갈까요?」);\n"
+    "- direction: which approach the product or project takes from here (「커밋 규약을 훅으로 강제할지, 지시 + "
+    "측정으로 갈지 골라 주세요」);\n"
+    "- a standing rule: a convention, policy or instruction line that governs future work;\n"
+    "- a choice costly to reverse: deleting, migrating data, publishing, sending to other people, spending "
+    "money, renaming what users already know;\n"
+    "- approving what real users will see before it ships (screens, messages, product terms) or a change to "
+    "injected instruction text; reversing a recorded decision;\n"
+    "- an action that needs the user's consent, and a read-back of the user's request the assistant needs "
+    "confirmed before it starts.\n"
+    "Any other choose, approve or confirm line is not an ask, options and a recommendation included: its "
+    "answer serves only the work at hand and is easy to change later — one value (a date, a name, a number, "
+    "a label), how to carry out a direction already settled, a small fix the next step can change, a confirm "
+    "only to continue the current task (「휴가 다음 날 Slack 복사본 날짜를 다음 영업일로 할까요, 오늘로 할까요?」, "
+    "「테스트를 지금 돌릴까요, 커밋 뒤에 돌릴까요?」, 「파일 이름은 report.html 로 할게요, 괜찮으세요?」). Unsure "
+    "whether later work relies on the answer → it is an ask.\n"
+    "Lines come as `N| text`. Answer `asks` with the ask line numbers; [] when there is none.\n"
+    "RE-ASKS. After the reply the input may list closed decisions the reply cites, each with the question "
+    "it settled and the user's recorded answer. For each ask line, decide by meaning whether it asks the "
+    "user that same question again: the same choice between the same options, the same yes/no, or whether "
+    "to keep or change the recorded answer. Each one goes in `reasks` as {line, id}. Not a re-ask: an ask "
+    "that only cites a closed decision as its ground, background or source, such as approval of a new body "
+    "or plan built on the recorded answer, a new decision about something that answer did not settle, or a "
+    "read-back of the user's newest words. An id cited beside an ask never makes it a re-ask by itself. "
+    "When a decision's question is only a short name, judge by the subject the recorded answer settles: an "
+    "ask about that same subject, in other words, is a re-ask. Asking the user to confirm the recorded "
+    "answer itself (「…하는 게 맞을까요?」 about what is already recorded) is a re-ask too. Not a re-ask, even "
+    "on that subject and even when it keeps or changes the recorded answer: a read-back of the user's words "
+    "that the record does not hold (「오늘 「…」라고 하신 건, …맞을까요?」). "
+    "`reasks` is [] when none, or when no decisions are listed."
 )
-JUDGE_SCHEMA = '{"type":"object","properties":{"asks":{"type":"array","items":{"type":"integer"}}},"required":["asks"]}'
+JUDGE_SCHEMA = ('{"type":"object","properties":{"asks":{"type":"array","items":{"type":"integer"}},'
+                '"reasks":{"type":"array","items":{"type":"object","properties":{"line":{"type":"integer"},'
+                '"id":{"type":"string"}},"required":["line","id"]}}},"required":["asks","reasks"]}')
 JUDGE_MODEL = "haiku"
 JUDGE_TIMEOUT_S = 25
 JUDGE_HEAD_CHARS = 4000     # a longer reply is sent as its head + tail, line numbers kept
@@ -490,9 +563,24 @@ def judge_log(msg):
         pass
 
 
-def judge_input(lines):
+def judge_input(lines, briefs=None):
     """The reply as `N| text` lines; past JUDGE_HEAD_CHARS + JUDGE_TAIL_CHARS the
-    middle is left out (one `…` line), every kept line keeps its own number."""
+    middle is left out (one `…` line), every kept line keeps its own number.
+    T-1470: `briefs` ({id: (question, answer)}) follow the reply, unnumbered."""
+    return reply_input(lines) + decisions_input(briefs)
+
+
+def decisions_input(briefs):
+    if not briefs:
+        return ""
+    ind = lambda t: "\n".join("    " + ln for ln in t.splitlines() if ln.strip()) or "    (none)"
+    out = ["", "", "---- closed decisions this reply cites (not part of the reply) ----"]
+    for k, (q, a) in briefs.items():
+        out += ["[%s]" % k, "  question:", ind(q), "  recorded answer:", ind(a)]
+    return "\n".join(out)
+
+
+def reply_input(lines):
     numbered = ["%d| %s" % (k + 1, ln) for k, ln in enumerate(lines)]
     if sum(len(x) + 1 for x in numbered) <= JUDGE_HEAD_CHARS + JUDGE_TAIL_CHARS:
         return "\n".join(numbered)
@@ -512,7 +600,9 @@ def judge_input(lines):
 
 
 def _judge_once(cmd, env, text, timeout, cwd):
-    """(result dict | None, failure reason | None, exit code)."""
+    """((asks, reasks) | None, failure reason | None, exit code). `reasks` =
+    [(line, id)] as the model gave them; a missing or malformed `reasks` reads
+    as [] (no re-ask), never as a failed judge."""
     try:
         r = subprocess.run(cmd, input=text, capture_output=True, text=True, env=env, timeout=timeout, cwd=cwd)
     except subprocess.TimeoutExpired:
@@ -528,16 +618,21 @@ def _judge_once(cmd, env, text, timeout, cwd):
         nums = so.get("asks") if isinstance(so, dict) else None
         if not isinstance(nums, list) or not all(isinstance(n, int) and not isinstance(n, bool) for n in nums):
             raise ValueError("no-asks-list")
+        raw = so.get("reasks")
+        reasks = [(x["line"], x["id"].strip()) for x in (raw if isinstance(raw, list) else [])
+                  if isinstance(x, dict) and isinstance(x.get("line"), int) and not isinstance(x.get("line"), bool)
+                  and isinstance(x.get("id"), str)]
     except Exception as e:
         why = str(e) if isinstance(e, ValueError) and str(e) in ("error-result", "no-asks-list") else "unreadable"
         if isinstance(out, dict):   # the CLI's own status fields, never the reply or a credential
             why += " subtype=%s api_status=%s" % (str(out.get("subtype"))[:40], str(out.get("api_error_status"))[:40])
         return None, why, r.returncode
-    return nums, None, r.returncode
+    return (nums, reasks), None, r.returncode
 
 
-def judge_asks(lines):
-    """The 0-based indexes of the lines the model judges asks; None when the
+def judge_asks(lines, briefs=None):
+    """(0-based indexes of the lines the model judges asks, [(0-based line, id)]
+    of the asks it judges re-asks of a decision in `briefs`); None when the
     judge could not answer (fails open, logged). An error result (seen as an
     intermittent `Not logged in`) is tried once more inside the same
     JUDGE_TIMEOUT_S. The call runs from an empty dir (the CLI lists its cwd)
@@ -551,7 +646,7 @@ def judge_asks(lines):
            "--no-session-persistence", "--disable-slash-commands", "--output-format", "json",
            "--json-schema", JUDGE_SCHEMA, "--system-prompt", JUDGE_SYSTEM_PROMPT]
     env = dict(os.environ, PRDT_QUESTION_CHECK="off", CMUX_CLAUDE_HOOKS_DISABLED="1")
-    text = judge_input(lines)
+    text = judge_input(lines, briefs)
     t0 = time.monotonic()
     ms = lambda: int((time.monotonic() - t0) * 1000)
     try:
@@ -564,7 +659,7 @@ def judge_asks(lines):
         while True:
             tries += 1
             left = JUDGE_TIMEOUT_S - (time.monotonic() - t0)
-            nums, why, rc = _judge_once(cmd, env, text, left, cwd)
+            got, why, rc = _judge_once(cmd, env, text, left, cwd)
             if why and why.startswith("error-result") and tries < 2 and JUDGE_TIMEOUT_S - (time.monotonic() - t0) > 3:
                 continue
             break
@@ -573,9 +668,12 @@ def judge_asks(lines):
     if why:
         judge_log("judge=fail reason=%s exit=%s tries=%d ms=%d" % (why, rc, tries, ms()))
         return None
+    nums, reasks = got
     idx = sorted({n - 1 for n in nums if 1 <= n <= len(lines)})
-    judge_log("judge=ok asks=%d tries=%d ms=%d" % (len(idx), tries, ms()))
-    return idx
+    briefs = briefs or {}
+    re_idx = sorted({(n - 1, k) for n, k in reasks if 1 <= n <= len(lines) and k in briefs})
+    judge_log("judge=ok asks=%d tries=%d ms=%d decisions=%d reasks=%d" % (len(idx), tries, ms(), len(briefs), len(re_idx)))
+    return idx, re_idx
 
 
 def ask_kinds(lines, idx):
@@ -675,15 +773,12 @@ def recorded_decisions(root, ids):
             and x.get("status") == "done" and x.get("answered") is True and not x.get("reversed_by")}
 
 
-# T-1377: an ask approving a body shown above it in its section (a fenced draft).
-APPROVAL_RE = re.compile(r"승인|컨펌|approv|confirm", re.I)
 # T-1428: a confirm request on a body, read deterministically beside the judge — the
 # L1 observation (3) sentences 「이대로 괜찮으면 이 메시지에 답해 주세요」 · 「이 문구로
 # 괜찮은지, 고칠 줄이 있는지 알려 주세요」 went unasked when the model missed them. A
 # reference to the body (이대로 · 이 문구 · 위 내용 …), then 괜찮/맞/좋 + a condition or
 # whether ending, then an answer verb + 주-, all inside one sentence. Matched on the line
-# with QUOTED_RE spans blanked; fenced and blockquoted lines are never read. It also
-# counts as an approval ask for the re-ask subject (ask_subject).
+# with QUOTED_RE spans blanked; fenced and blockquoted lines are never read.
 CONFIRM_ASK_RE = re.compile(
     r"(?:이대로|이렇게|그대로|(?:이|위|아래|위의|아래의)\s*(?:문구|내용|초안|본문|문장|글|안|노트|버전|목록|표|계획))"
     r"[^.?!\n]{0,40}?(?:괜찮|맞|좋)(?:으시면|으면|다면|은지|는지|을지)"
@@ -706,92 +801,92 @@ def confirm_ask_lines(lines):
     return out
 
 
-# T-1429: a word on the ask line saying it is about a shown body — with APPROVAL_RE and
-# CONFIRM_ASK_RE, read only when the ask's section holds a fenced body. QA re-observation
-# 2026-11-04 (2) (3): 「이 문구 그대로 확정할까요?」 and the judged line 「확인해 주시면 그때
-# 저장할게요」 above the body matched neither, so their subject fell back to the whole
-# section and T-001, cited as the body's source, read as asked again.
-BODY_ASK_RE = re.compile(r"확정|확인|괜찮|문구|초안|본문|wording|draft", re.I)
+# T-1470: what the judge is told about each closed decision the reply cites.
+DECISION_BRIEF_MAX = 6      # decisions per judge call, in the order the reply first cites them
+BRIEF_QUESTION_CHARS = 900
+BRIEF_ANSWER_CHARS = 500
+BRIEF_READ_BYTES = 32768
+THIN_QUESTION_NOTE = ("(this record kept no question text, only the name above: the question it settled is "
+                      "whatever the recorded answer below answers, and the user's quoted words there show the subject)")
 
 
-def body_fences(lines, a, b):
-    """[(open, close)] of the closed, non-diagram fences in lines[a:b]."""
-    out, open_at = [], None
-    for k in range(a, b):
-        if FENCE_RE.match(lines[k]):
-            if open_at is None:
-                open_at = k
-            else:
-                if not DIAGRAM_FENCE_RE.match(lines[open_at]):
-                    out.append((open_at, k))
-                open_at = None
+def _md_section(body, name):
+    m = re.search(r"^##[ \t]+%s[ \t]*$(.*?)(?=^##[ \t]|\Z)" % re.escape(name), body, re.M | re.S)
+    return m.group(1).strip() if m else ""
+
+
+def _clip(text, n):
+    return text if len(text) <= n else text[:n - 1].rstrip() + "…"
+
+
+def decision_brief(path):
+    """(question, recorded answer) of a decision ticket: question = title +
+    `## problem` + `## options`, answer = `## outcome` without its empty key
+    headings. None when the file cannot be read (that decision is then not
+    offered to the judge)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read(BRIEF_READ_BYTES)
+    except (OSError, TypeError):
+        return None
+    fm, body = "", text
+    if text.startswith("---"):
+        fm, _, body = text[3:].partition("\n---")
+    t = re.search(r"^title:[ \t]*(.+)$", fm, re.M) or re.search(r"^slug:[ \t]*(.+)$", fm, re.M)
+    title = t.group(1).strip().strip("\"'") if t else ""
+    has_title = bool(re.search(r"^title:[ \t]*\S", fm, re.M))
+    problem, options = _md_section(body, "problem"), _md_section(body, "options")
+    q = "\n".join(x for x in (title, problem, options) if x)
+    if not has_title and not options:
+        # T-1470 QA: a thin record (slug + slug-like problem, no options) states no question,
+        # so the judge compared asks with a bare slug. Say what the record is.
+        said = re.findall(r"「([^」]+)」", _md_section(body, "outcome"))
+        q += "\n" + THIN_QUESTION_NOTE + "".join("\nthe subject, in the user's words: " + w for w in said[:2])
+    a = "\n".join(ln for ln in _md_section(body, "outcome").splitlines()
+                  if ln.strip() and not ln.lstrip().startswith("#"))
+    return _clip(q, BRIEF_QUESTION_CHARS), _clip(a, BRIEF_ANSWER_CHARS)
+
+
+def closed_briefs(root, reply, tickets, paths, turn_start):
+    """T-1470: {id: (question, answer)} of the decision tickets the reply cites
+    that closed before this turn with an answer on record (`prdt decisions
+    find`: answered, not reversed) — what the judge compares each ask with.
+    {} when none, or when the record cannot be read (fails open)."""
+    order = []
+    for m in TICKET_ID_RE.finditer(reply):
+        k = m.group(1)
+        t = tickets.get(k)
+        if k not in order and t and t[0] == "decision" and t[1] == "done" and t[3] < turn_start - 1:
+            order.append(k)
+    if not order:
+        return {}
+    rec = recorded_decisions(root, set(order))
+    out = {}
+    for k in order:
+        if k in rec and len(out) < DECISION_BRIEF_MAX:
+            b = decision_brief(paths.get(k))
+            if b:
+                out[k] = b
     return out
 
 
-def unfenced(lines, a, b):
-    """lines[a:b] without fence lines and what they enclose."""
-    out, in_fence = [], False
-    for k in range(a, b):
-        if FENCE_RE.match(lines[k]):
-            in_fence = not in_fence
-        elif not in_fence:
-            out.append(lines[k])
-    return out
-
-
-def is_item_ask(lines, i, kind):
-    return kind == "waiting" or bool(LIST_ITEM_RE.match(lines[i])) or lines[i][:1].isspace()
-
-
-def ask_subject(lines, i, kind, option_ref, tickets):
-    """T-1377: the decision ids an ask is ABOUT.
-    - a list item: the decision ids on the ask's line and the item's first line;
-      none there → every id in the item. An id on an item's sub-line beside an
-      item that names its own decision is a citation (a reason).
-    - any other line: every decision id in its section, the ask line's own ids
-      included — a ticket named on the ask line never shields a decided id cited
-      in the same section. One exception: an ask about a fenced body in its
-      section (approval, confirm request, or a body word — BODY_ASK_RE) is about
-      the body and what presents it: the ids on the ask line, in the unfenced
-      lines before the first body, and — for an ask after a body — in the
-      unfenced lines after the ask. An id inside a body, or cited between a
-      body and the ask (a source of the body), is a citation (T-1429)."""
-    a, b = ask_scope(lines, i, kind, option_ref)
-    is_dec = lambda k: bool(tickets.get(k)) and tickets[k][0] == "decision"
-    ids_on = lambda chunk: {m.group(1) for m in TICKET_ID_RE.finditer(chunk) if is_dec(m.group(1))}
-    if is_item_ask(lines, i, kind):
-        own = ids_on(lines[i]) | ids_on(lines[a])
-        return own or ids_on("\n".join(lines[a:b]))
-    bare = QUOTED_RE.sub(" ", lines[i])
-    bodies = [f for f in body_fences(lines, a, b) if not f[0] <= i <= f[1]]
-    if not bodies or not (APPROVAL_RE.search(bare) or CONFIRM_ASK_RE.search(bare) or BODY_ASK_RE.search(bare)):
-        return ids_on("\n".join(lines[a:b]))
-    keep = unfenced(lines, a, min(i, bodies[0][0])) + [lines[i]]
-    if any(c < i for _, c in bodies):
-        keep += unfenced(lines, i + 1, b)
-    return ids_on("\n".join(keep))
-
-
-def reask_check(root, lines, asks, tickets, turn_start):
-    """T-1285: (block reason, asked line numbers) when an ask is about (ask_subject,
-    T-1377) a decision ticket closed before this turn whose answer is on record;
-    else (None, set()). Runs before the decision-changed-this-turn exemption:
-    opening a new decision ticket for an answered question is the re-ask itself
-    (T-1239 observation 4)."""
+def reask_check(lines, asks, reasks):
+    """T-1285 / T-1470: (block reason, asked line numbers, ids) for the ask lines
+    the judge named as asking again a recorded decision (`reasks`, already
+    limited to the decisions it was given); else (None, set(), []). A judged
+    re-ask on a line that is not an ask is dropped. Runs before the
+    decision-changed-this-turn exemption: opening a new decision ticket for an
+    answered question is the re-ask itself (T-1239 observation 4)."""
+    ask_lines = {i for i, _, _ in asks}
     hits = {}
-    for i, kind, option_ref in asks:
-        for k in ask_subject(lines, i, kind, option_ref, tickets):
-            t = tickets[k]
-            if t[1] == "done" and t[3] < turn_start - 1:
-                hits.setdefault(k, set()).add(i + 1)
+    for i, k in reasks:
+        if i in ask_lines:
+            hits.setdefault(k, set()).add(i + 1)
     if not hits:
         return None, set(), []
-    rec = recorded_decisions(root, set(hits))
-    if not rec:
-        return None, set(), []
-    ln = sorted({n for k in rec for n in hits[k]})
+    ln = sorted({n for k in hits for n in hits[k]})
     shown = ", ".join(str(n) for n in ln[:LIST_CAP]) + (", +%d more" % (len(ln) - LIST_CAP) if LIST_CAP < len(ln) else "")
-    ids = sorted(rec)
+    ids = sorted(hits)
     return REASK_REASON % (shown, ", ".join(ids[:LIST_CAP])), set(ln), ids
 
 
@@ -832,24 +927,31 @@ def findings(root, reply, turn_start):
     idx = ticket_index(root)
     if idx is None:
         return []
-    tickets, unknown = idx
+    tickets, unknown, paths = idx
     if not judge_needed(reply, tickets, turn_start):
         return []
     lines = reply.split("\n")
-    # T-1428: the deterministic confirm requests join the judged lines, judge failed or not.
-    judged = sorted(set(judge_asks(lines) or []) | set(confirm_ask_lines(lines)))
+    # T-1470: the recorded decisions the reply cites go to the same judge call, which
+    # names the asks that ask one of them again. A failed judge → no asks, no re-asks.
+    briefs = closed_briefs(root, reply, tickets, paths, turn_start)
+    judged = judge_asks(lines, briefs)
+    if judged is None:
+        # T-1428 / T-1477: a failed judge leaves only the deterministic confirm requests. When the
+        # judge answered, a confirm request is an ask only if it named it (DURABLE ANSWERS).
+        judged = sorted(confirm_ask_lines(lines)), []
+    judged, reasks = judged
     if not judged:
         return []
     asks = ask_kinds(lines, judged)
     # T-1377: every check that applies speaks in the one block, none hides another.
     out = []
-    reask, reasked, reask_ids = reask_check(root, lines, asks, tickets, turn_start)
+    reask, reasked, reask_ids = reask_check(lines, asks, reasks)
     if reask:
         out.append(("reask:" + ",".join(reask_ids), reask))
     batch, batch_ids = batch_check(lines, asks, tickets)
     if batch:
         out.append(("batch:" + ",".join(batch_ids), batch))
-    question = question_check(lines, asks, tickets, unknown, turn_start, reply, reasked)
+    question = question_check(lines, asks, tickets, unknown, turn_start, reply, reasked, paths)
     if question:
         out.append(("question", question))
     return out
@@ -992,7 +1094,49 @@ def reasked_section(lines, i, reasked):
     return any(a < n <= b for n in reasked)
 
 
-def question_check(lines, asks, tickets, unknown, turn_start, reply, reasked):
+def ids_in_text(text):
+    return {m.group(1) for m in TICKET_ID_RE.finditer(text)}
+
+
+# T-1477: the places the dispatch gate reads (prdt-dispatch-gate.sh T-1151): a user quote
+# anywhere in `## problem` makes the ticket user-started; a quote under `### 확인` /
+# `### confirm` is the user's reply to the read-back.
+USER_QUOTE_RE = re.compile(r"\*\"[^\"\n]+\"\*|“[^”\n]+”")
+ANY_QUOTE_RE = re.compile(r"\*\"[^\"\n]+\"\*|“[^”\n]+”|「[^」\n]+」")
+
+
+def awaits_readback(path):
+    """True when a work ticket is user-started and its `### 확인` holds no quote yet —
+    the request read-back its dispatch waits for. False when unreadable."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read(BRIEF_READ_BYTES)
+    except (OSError, TypeError):
+        return False
+    in_prob = in_fence = in_confirm = False
+    started = confirmed = False
+    for ln in text.split("\n"):
+        if FENCE_RE.match(ln):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if re.match(r"^##[ \t]", ln):
+            in_prob = bool(re.match(r"^##[ \t]+(?:problem|문제)", ln, re.I))
+            in_confirm = False
+            continue
+        if not in_prob:
+            continue
+        if re.match(r"^###[ \t]", ln):
+            in_confirm = bool(re.match(r"^###[ \t]+(?:확인|confirm)(?![^\s(])", ln, re.I))
+            continue
+        bare = re.sub(r"`[^`\n]*`", " ", ln)
+        started = started or bool(USER_QUOTE_RE.search(bare))
+        confirmed = confirmed or (in_confirm and bool(ANY_QUOTE_RE.search(bare)))
+    return started and not confirmed
+
+
+def question_check(lines, asks, tickets, unknown, turn_start, reply, reasked, paths=None):
     """T-985: the reason when an ask has no open decision ticket beside it; else
     None. An ask the re-ask check already holds (`reasked` line numbers), or one
     in the same section as such an ask, is left to it: the recorded answer, not a
@@ -1001,6 +1145,12 @@ def question_check(lines, asks, tickets, unknown, turn_start, reply, reasked):
         return None
     open_dec = {k for k, (t, s, _, _) in tickets.items() if t == "decision" and s == "open"}
     open_req = {k for k, (t, s, a, _) in tickets.items() if t != "decision" and s == "open" and a == "user"}
+    # T-1477: a read-back of the user's request is recorded under that work ticket's `### 확인`
+    # (PO habit Triage), so an open impl / design ticket still awaiting that confirm, cited
+    # beside a non-option ask, covers it.
+    paths = paths or {}
+    open_work = {k for k in ids_in_text(reply) if k in tickets and tickets[k][0] in WORK_TICKET_TYPES
+                 and tickets[k][1] == "open" and awaits_readback(paths.get(k))}
     # an id whose file could not be read counts as covering (fails open)
     open_dec |= unknown
     open_req |= unknown
@@ -1016,7 +1166,7 @@ def question_check(lines, asks, tickets, unknown, turn_start, reply, reasked):
             else:
                 a, b = section_bounds(lines, i)
             found = ids_in("\n".join(lines[a:b]))
-            ok = bool(found & (open_dec | open_req if kind == "waiting" else open_dec))
+            ok = bool(found & (open_dec | open_work | (open_req if kind == "waiting" else set())))
         if not ok and not reasked_section(lines, i, reasked):
             uncovered.append(i + 1)
     if not uncovered:
