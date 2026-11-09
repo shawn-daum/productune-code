@@ -1220,6 +1220,27 @@ describe('T-1470 — the re-ask subject is the judge\'s reading of meaning, shar
     expect(decs).not.toMatch(/### why/)
   })
 
+  test('a thin record (slug only, no title, no options) reaches the judge with a note that the answer names the subject (QA fail row)', () => {
+    const e = J([3], fresh())
+    stopOut(project(T001, fx('reask-thin-y2')), fx('reask-thin-y2'), e)
+    const decs = fs.readFileSync(e.QC_FAKE_INPUT as string, 'utf8').split('---- closed decisions this reply cites')[1]
+    expect(decs).toContain('kept no question text')
+    expect(decs).toContain('폰 설정 따라가면 돼')
+  })
+
+  test('a record with a title and options carries no thin-record note', () => {
+    const e = J([20], fresh())
+    stopOut(project(T1466, fx('proceed-t1466-cited')), fx('proceed-t1466-cited'), e)
+    expect(fs.readFileSync(e.QC_FAKE_INPUT as string, 'utf8')).not.toContain('kept no question text')
+  })
+
+  test.each([['reask-thin-y1', 3], ['reask-thin-y2', 3], ['reask-thin-l3', 1]] as Array<[string, number]>)(
+    '%s: a same-choice re-ask of the thin T-001 is blocked as a re-ask when the judge names it', (name, line) => {
+      const reply = fx(name).trimEnd()
+      const reason = stopOut(project(T001, reply), reply, RA([[line, 'T-001']], J([line], fresh())))
+      expect(reason).toContain(REASK)
+    })
+
   // The judgment itself (the real model on these fixtures and records) is evaluated outside the
   // unit suite, whose sandboxed HOME has no `claude` login: T-1470 §evidence holds the replay.
 })
