@@ -133,6 +133,8 @@ export const CASES: readonly Case[] = [
             { matcher: 'Bash', hooks: [h('prdt-auto-open.sh')] },
             // T-977: prdt-wordlist-check.sh — its own Write|Edit|MultiEdit entry.
             { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-wordlist-check.sh')] },
+            // T-1471: prdt-prior-tickets.sh — its own Write|Edit|MultiEdit entry, after the word list's.
+            { matcher: 'Write|Edit|MultiEdit', hooks: [h('prdt-prior-tickets.sh')] },
           ],
           UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
           PostToolBatch: [{ hooks: [h('prdt-call-governor.sh')] }],
