@@ -244,11 +244,57 @@ export function buildHomeGraph({ tickets, gatePath = '', riderKey = 'riders' }) 
       sp: spine.has(id),
       cp: cp.has(id) && (!cpIsSpine || spine.has(id)),
       rider: key === riderKey && !spine.has(id),
-      // a ticket the user must answer or do: an open decision, or open assignee: user
-      waits: fm.status === 'open' && (fm.type === 'decision' || fm.assignee === 'user'),
+      // a ticket the user must answer or do: an open decision, open assignee: user, or a work ticket whose options fork is unanswered (T-1491)
+      waits: fm.status === 'open' && (fm.type === 'decision' || fm.assignee === 'user' || workTicketWaitsOnOptions(fm.type, byId.get(id).body)),
     }
   })
   return { connected, nodes, edges, spine, cp, cpIsSpine, empty: open.length === 0 }
+}
+
+// ---------- work ticket waiting on options (T-1491) ----------
+// JS twin of prdt_lanes.ticket_body_waits_on_options (the schedule's rule, the statusline's too):
+// a design|impl|qa ticket whose `## options` holds a filled option row and no user quote in that
+// section's own `### 확인` / `### confirm` slice waits on the user. Quote shapes are the dispatch
+// gate's (`*"…"*`, curly quotes, 「…」), backticked spans ignored.
+const WORK_TICKET_TYPES = new Set(['design', 'impl', 'qa'])
+const OPT_H2_RE = /^##[ \t]+(options|대안)[ \t]*$/i
+const CONFIRM_H3_RE = /^###[ \t]+(확인|confirm)([ \t(:,./?-]|$)/i
+const SEP_CELL_RE = /^:?-+:?$/
+const QUOTE_RE = /\x01[^\x01\x02]*[^ \t\x01\x02][^\x01\x02]*\x02|\x03[^\x03\x04]*[^ \t\x03\x04][^\x03\x04]*\x04/
+
+function lineHoldsUserQuote(line) {
+  const l = line
+    .replace(/`[^`]*`/g, ' ')
+    .replaceAll('*"', '\x01').replaceAll('"*', '\x02').replaceAll('\u201c', '\x01').replaceAll('\u201d', '\x02')
+    .replaceAll('\u300c', '\x03').replaceAll('\u300d', '\x04')
+  return QUOTE_RE.test(l)
+}
+
+export function ticketBodyWaitsOnOptions(body) {
+  let inFence = false, inOptions = false, inConfirm = false, seenSep = false, pending = null, filled = false, quoted = false
+  // `pending` = the last table row, not yet known to be a header (a separator right after makes it one)
+  const flush = () => { if (pending && seenSep && pending.some(Boolean)) filled = true; pending = null }
+  for (const ln of String(body || '').split(/\r?\n/)) {
+    if (/^[ \t]*(```|~~~)/.test(ln)) { inFence = !inFence; continue }
+    if (inFence) continue
+    if (/^##[ \t]/.test(ln)) { flush(); inOptions = OPT_H2_RE.test(ln.trimEnd()); inConfirm = false; seenSep = false; continue }
+    if (/^###[ \t]/.test(ln)) { flush(); inConfirm = CONFIRM_H3_RE.test(ln); continue }
+    if (ln.startsWith('#')) continue
+    if (inOptions && inConfirm && lineHoldsUserQuote(ln)) quoted = true
+    if (inOptions && ln.trimStart().startsWith('|')) {
+      const cells = ln.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim())
+      if (cells.filter(Boolean).every((c) => SEP_CELL_RE.test(c)) && cells.some(Boolean)) { pending = null; seenSep = true; continue }
+      flush()
+      pending = cells
+    } else if (inOptions) flush()
+  }
+  flush()
+  return filled && !quoted
+}
+
+/** An open work ticket (design|impl|qa) whose options fork is unanswered; `body` = the ticket's markdown body. */
+export function workTicketWaitsOnOptions(type, body) {
+  return WORK_TICKET_TYPES.has(type) && typeof body === 'string' && ticketBodyWaitsOnOptions(body)
 }
 
 // ---------- layout ----------
@@ -408,7 +454,9 @@ export function layoutHomeGraph(graph) {
  * open `assignee: user` ticket that is not a decision and whose `deps` name no
  * open ticket (blocked ones are hidden) — across every version
  * directory, not only the current one (backlog is not a version directory).
- * `rows` is `[{ bucket, fm }]` for every ticket of every bucket. `allRows`
+ * T-1491: `req` also holds an open design|impl|qa ticket whose `## options` waits on the user
+ * (`row.body` = its markdown body, read only for those types; a row with no body never waits).
+ * `rows` is `[{ bucket, fm, body? }]` for every ticket of every bucket. `allRows`
  * (default `rows`) is the same shape over EVERY release line: a dep that is an
  * open ticket in another line's folder blocks too (T-961, as the statusline's
  * `tid_status` spans all lines).
@@ -420,6 +468,8 @@ export function waitLists(rows, allRows = rows) {
   const openIds = new Set(allRows.filter((r) => r.bucket !== 'backlog' && r.fm.status === 'open').map((r) => r.fm.id))
   return {
     dec: pick((fm) => fm.type === 'decision'),
-    req: pick((fm) => fm.assignee === 'user' && fm.type !== 'decision' && !ticketDeps(fm).some((d) => openIds.has(d))),
+    req: open
+      .filter((r) => r.fm.type !== 'decision' && (r.fm.assignee === 'user' || workTicketWaitsOnOptions(r.fm.type, r.body)) && !ticketDeps(r.fm).some((d) => openIds.has(d)))
+      .map((r) => r.fm).sort((a, b) => compareTicketIds(a.id, b.id)),
   }
 }
