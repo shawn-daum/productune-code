@@ -802,6 +802,10 @@ def docs_msg(root, text):
         head = m.group(1)
         if head == DOCS_SHARED or head in prods or head in DOCS_MSG_CODE_SIDE:
             return m.group(0)
+        # `docs/<name>/tickets/…` is a product folder whatever its name (an added product whose
+        # docs/<name>/ is not created yet): an As-Is path never has a segment before `tickets`.
+        if text.startswith("/tickets/", m.end()) and head not in PRODUCT_DOCS_KINDS:
+            return m.group(0)
         if head in PRODUCT_DOCS_KINDS or (head == "wiki" and text.startswith("/retro--v", m.end())):
             return f"docs/{p}/{head}"
         return f"docs/{DOCS_SHARED}/{head}"
@@ -6076,7 +6080,7 @@ def place_decision_check(root, place, version_id):
     """Does `version_id` hold a closed decision ticket for the fixed `place`?
     → {ok, place, version, missing, ticket, status, dir, fact}. `missing` (when not ok) is the
     first thing absent on the best candidate: no-ticket · not-closed · no-quote · (deploy only)
-    no-pointer · no-section. `fact` = that, as one sentence (placeholder wording)."""
+    no-pointer · no-section. `fact` = that, in the confirmed T-1492 4-5 wording: none there · <id> still open · <id> `outcome` holds no user quote · <id> body cites no `RELEASES.md` `## <version>`."""
     root = Path(root)
     tdir = _place_tickets_dir(root, version_id)
     try:
@@ -6108,13 +6112,14 @@ def place_decision_check(root, place, version_id):
         if _PLACE_RANK[miss] >= _PLACE_RANK[best[0]]:
             best = (miss, tid, status)
     miss, tid, status = best
+    bare = split_line_id(version_id)[1]
     fact = {
-        "no-ticket": f"{rel} holds no `type: decision` ticket with `place: {place}`",
-        "not-closed": f"{tid} (`place: {place}`) is not closed (status: {status or 'unset'})",
-        "no-quote": f"{tid} (`place: {place}`) is closed but its `## outcome` holds no user quote line",
-        "no-pointer": f"{tid} (`place: deploy`) does not point to {split_line_id(version_id)[1]}'s RELEASES.md section "
-                      f"(a line naming `RELEASES.md#{split_line_id(version_id)[1]}`)",
-        "no-section": f"RELEASES.md has no `## {split_line_id(version_id)[1]}` section for {tid} to point to",
+        "no-ticket": "none there",
+        "not-closed": f"{tid} still open",
+        "no-quote": f"{tid} `outcome` holds no user quote",
+        "no-pointer": f"{tid} body cites no `RELEASES.md` `## {bare}`",
+        # no confirmed form for "the section itself is absent" — nearest is norel (reported to the PO)
+        "no-section": f"{tid} body cites no `RELEASES.md` `## {bare}`",
     }[miss]
     return {"ok": False, "place": place, "version": version_id, "missing": miss, "ticket": tid,
             "status": status, "dir": rel, "fact": fact}
@@ -17417,11 +17422,12 @@ def cmd_deploy(args):
     # T-1497: a deploy is recorded only when the user's own answer to "deploy this version" is
     # on file — a closed `place: deploy` decision of that version pointing at its RELEASES.md
     # section. The first product's tickets sit under its bare version; an added product's under
-    # `<product>/<version>`. Placeholder wording (a designer replaces it).
+    # `<product>/<version>`. Wording: T-1492 4-3.
     chk = place_decision_check(root, "deploy", version if first else f"{product}/{version}")
     if not chk["ok"]:
-        _deploy_die(f"deploy decision missing for {version}: {chk['fact']}. Close a `place: deploy` decision with the "
-                    f"user's quote that points to RELEASES.md#{version}, then re-run")
+        sys.exit(f"prdt deploy record: {version} needs, in {chk['dir']}, a `type: decision` ticket with `place: deploy`, `status: done`, "
+                    f"user quote in `outcome`, body citing `RELEASES.md` `## {version}`; {chk['fact']} — nothing written. "
+                    f"Next: put deploy of {version} to the user on that ticket, reply verbatim → `outcome`, close, re-run.")
     raw = path.read_bytes()
     spl = _deploy_split(raw)
     if spl is None:

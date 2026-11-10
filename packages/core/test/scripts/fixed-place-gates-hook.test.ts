@@ -71,24 +71,23 @@ describe.skipIf(!PY)('T-1497 Build entry gate — po-state stage → build', () 
   test('non-patch version, no decision ticket → denied naming version and what is missing; nothing written by the hook', () => {
     const why = reason(writeState({ stage: 'build', version: 'v1.2' }))
     expect(why).toContain('[prdt build-entry guard]')
-    expect(why).toContain('stage → build for v1.2')
-    expect(why).toContain('docs/p/tickets/v1.2 holds no `type: decision` ticket with `place: build-entry`')
+    expect(why).toBe('[prdt build-entry guard] denied po-state write: stage → `build` for v1.2 needs, in docs/p/tickets/v1.2, a `type: decision` ticket with `place: build-entry`, `status: done`, user quote in `outcome`; none there. Next: put Build entry to the user on that ticket, reply verbatim → `outcome`, close, re-run.')
   }, T)
 
   test('a major-only version (v2) is gated like v<N>.<m>', () => {
     mk({ stage: 'define', version: 'v2' })
-    expect(reason(writeState({ stage: 'build', version: 'v2' }))).toContain('for v2')
+    expect(reason(writeState({ stage: 'build', version: 'v2' }))).toContain('for v2 needs')
   }, T)
 
   test('open ticket → not closed; closed without a user quote → no quote; wrong place / other version do not count', () => {
     decision('v1.2', 'build-entry', { status: 'open', id: 'T-1' })
-    expect(reason(writeState({ stage: 'build', version: 'v1.2' }))).toContain('T-1 (`place: build-entry`) is not closed (status: open)')
+    expect(reason(writeState({ stage: 'build', version: 'v1.2' }))).toContain('; T-1 still open. Next:')
     mk()
     decision('v1.2', 'build-entry', { quote: false, id: 'T-2' })
-    expect(reason(writeState({ stage: 'build', version: 'v1.2' }))).toContain('closed but its `## outcome` holds no user quote line')
+    expect(reason(writeState({ stage: 'build', version: 'v1.2' }))).toContain('; T-2 `outcome` holds no user quote. Next:')
     mk()
     decision('v1.2', 'deploy'); decision('v1.3', 'build-entry')
-    expect(reason(writeState({ stage: 'build', version: 'v1.2' }))).toContain('holds no `type: decision` ticket with `place: build-entry`')
+    expect(reason(writeState({ stage: 'build', version: 'v1.2' }))).toContain('; none there. Next:')
   }, T)
 
   test('a closed build-entry decision with a user quote lets Write, Edit and MultiEdit through', () => {
@@ -101,7 +100,7 @@ describe.skipIf(!PY)('T-1497 Build entry gate — po-state stage → build', () 
 
   test('Edit and MultiEdit are judged on the file AFTER the replacement', () => {
     const edit = { file_path: state, old_string: '"stage": "define"', new_string: '"stage": "build"' }
-    expect(reason(run('Edit', edit))).toContain('stage → build for v1.2')
+    expect(reason(run('Edit', edit))).toContain('stage → `build` for v1.2 needs')
     expect(reason(run('MultiEdit', { file_path: state, edits: [{ old_string: '"v1.2"', new_string: '"v1.3"' }, { old_string: '"define"', new_string: '"build"' }] })))
       .toContain('for v1.3')
     // an edit that does not move the stage is silent, and one that cannot apply is the tool's own failure
@@ -128,14 +127,21 @@ describe.skipIf(!PY)('T-1497 Build entry gate — po-state stage → build', () 
     mk({ stage: 'build', version: 'v1.2', products: { arc: { stage: 'define', version: 'v3' } } }, { slug: 'p', products: [{ name: 'arc' }] })
     put('docs/arc/prd/PRD.md', '# PRD\n')
     const next = { stage: 'build', version: 'v1.2', products: { arc: { stage: 'build', version: 'v3' } } }
-    expect(reason(writeState(next))).toContain('stage → build for arc/v3')
+    expect(reason(writeState(next))).toContain('stage → `build` for arc/v3 needs, in docs/arc/tickets/v3,')
     decision('v3', 'build-entry', { product: 'arc' })
     expect(writeState(next)).toBe('')
   }, T)
 
+  test('an added product with no docs/<p>/ folder yet is told its real search dir docs/<p>/tickets/<v>', () => {
+    mk({ stage: 'build', version: 'v1.2', products: { zed: { stage: 'define', version: 'v3' } } }, { slug: 'p' })
+    const why = reason(writeState({ stage: 'build', version: 'v1.2', products: { zed: { stage: 'build', version: 'v3' } } }))
+    expect(why).toContain('for zed/v3 needs, in docs/zed/tickets/v3,')
+    expect(why).not.toContain('_shared')
+  }, T)
+
   test('a worker is held to it too and told to return blocked', () => {
     const why = reason(writeState({ stage: 'build', version: 'v1.2' }, 'prdt-developer'))
-    expect(why).toContain('return `blocked`')
+    expect(why).toContain('Next: return `blocked` naming this write; the PO asks Build entry.')
   }, T)
 
   test('fails OPEN when the prdt CLI is unusable (explicit PRDT_BIN missing)', () => {
@@ -155,8 +161,7 @@ describe.skipIf(!PY)('T-1497 deploy decision gate — push main · tag push at s
     for (const c of ['git push origin main', 'git push origin v1.2', 'git push --tags', 'vercel --prod', 'gh pr merge 3 --merge']) {
       const why = reason(bash(c))
       expect(why, c).toContain('[prdt deploy guard]')
-      expect(why, c).toContain('no deploy decision for v1.2')
-      expect(why, c).toContain('docs/p/tickets/v1.2 holds no `type: decision` ticket with `place: deploy`')
+      expect(why, c).toContain('v1.2 needs, in docs/p/tickets/v1.2, a `type: decision` ticket with `place: deploy`, `status: done`, user quote in `outcome`, body citing `RELEASES.md` `## v1.2`; none there. Next: put deploy of v1.2 + its release notes to the user on that ticket, reply verbatim → `outcome`, close, re-run.')
     }
   }, T)
 
@@ -167,24 +172,24 @@ describe.skipIf(!PY)('T-1497 deploy decision gate — push main · tag push at s
 
   test('missing pieces: not closed · no quote · no pointer · pointer to another version · no section', () => {
     decision('v1.2', 'deploy', { status: 'open', id: 'T-1', pointer: 'RELEASES.md#v1.2' }); releases('v1.2')
-    expect(reason(bash('git push origin main'))).toContain('T-1 (`place: deploy`) is not closed')
+    expect(reason(bash('git push origin main'))).toContain('; T-1 still open. Next:')
     mk({ stage: 'ship', version: 'v1.2' }); releases('v1.2')
     decision('v1.2', 'deploy', { quote: false, id: 'T-2', pointer: 'RELEASES.md#v1.2' })
-    expect(reason(bash('git push origin main'))).toContain('holds no user quote line')
+    expect(reason(bash('git push origin main'))).toContain('; T-2 `outcome` holds no user quote. Next:')
     mk({ stage: 'ship', version: 'v1.2' }); releases('v1.2')
     decision('v1.2', 'deploy', { id: 'T-3' })
-    expect(reason(bash('git push origin main'))).toContain("does not point to v1.2's RELEASES.md section")
+    expect(reason(bash('git push origin main'))).toContain('; T-3 body cites no `RELEASES.md` `## v1.2`. Next:')
     mk({ stage: 'ship', version: 'v1.2' }); releases('v1.2')
     decision('v1.2', 'deploy', { id: 'T-4', pointer: 'RELEASES.md#v1.20' })
-    expect(reason(bash('git push origin main'))).toContain("does not point to v1.2's RELEASES.md section")
+    expect(reason(bash('git push origin main'))).toContain('; T-4 body cites no `RELEASES.md` `## v1.2`. Next:')
     mk({ stage: 'ship', version: 'v1.2' })
     decision('v1.2', 'deploy', { id: 'T-5', pointer: 'RELEASES.md#v1.2' })
-    expect(reason(bash('git push origin main'))).toContain('RELEASES.md has no `## v1.2` section')
+    expect(reason(bash('git push origin main'))).toContain('; T-5 body cites no `RELEASES.md` `## v1.2`. Next:')
   }, T)
 
   test('a patch version is gated on deploy', () => {
     mk({ stage: 'ship', version: 'v1.2.1' })
-    expect(reason(bash('git push origin main'))).toContain('no deploy decision for v1.2.1')
+    expect(reason(bash('git push origin main'))).toContain('v1.2.1 needs, in docs/p/tickets/v1.2.1,')
   }, T)
 
   test('silent: dry runs, non-main pushes, a local merge into main (promotion), prose, stages idle and retro', () => {
@@ -198,7 +203,7 @@ describe.skipIf(!PY)('T-1497 deploy decision gate — push main · tag push at s
     setState({ stage: 'build', version: 'v1.2' })
     expect(reason(bash('git push origin main'))).toContain('a deploy runs only at stage=ship')
     fs.appendFileSync(path.join(root, 'docs', '_shared', 'wiki', 'log.md'), '- readiness v1.2 N/A-skip (patch)\n')
-    expect(reason(bash('git push origin main'))).toContain('no deploy decision for v1.2')
+    expect(reason(bash('git push origin main'))).toContain('v1.2 needs, in docs/p/tickets/v1.2,')
     decision('v1.2', 'deploy', { pointer: 'RELEASES.md#v1.2' }); releases('v1.2')
     expect(bash('git push origin main')).toBe('')
   }, T)
@@ -206,13 +211,13 @@ describe.skipIf(!PY)('T-1497 deploy decision gate — push main · tag push at s
   test('an added product at ship is checked under <product>/<version>; the current task picks the product', () => {
     mk({ stage: 'idle', version: 'v1.2', current_task: { ticket_id: 'T-9', slug: 's', assignee: 'developer', product: 'arc' }, products: { arc: { stage: 'ship', version: 'v3' } } },
       { slug: 'p', products: [{ name: 'arc' }] })
-    expect(reason(bash('git push origin main'))).toContain('no deploy decision for arc/v3')
+    expect(reason(bash('git push origin main'))).toContain('arc/v3 needs, in docs/arc/tickets/v3,')
     decision('v3', 'deploy', { product: 'arc', pointer: 'RELEASES.md#v3' }); releases('v3')
     expect(bash('git push origin main')).toBe('')
   }, T)
 
   test('a worker is told to return blocked; an unusable CLI fails open', () => {
-    expect(reason(bash('git push origin main', 'prdt-developer'))).toContain('return `blocked`')
+    expect(reason(bash('git push origin main', 'prdt-developer'))).toContain('Next: return `blocked` naming this deploy; the PO asks the deploy decision.')
     expect(run('Bash', { command: 'git push origin main' }, 'main', { PRDT_BIN: '/nonexistent/prdt' })).toBe('')
   }, T)
 })
