@@ -864,12 +864,13 @@ def deploy_decision_gate(start):
 
 
 def deny_deploy_decision(vid, res, how):
-    msg = (f"[prdt deploy guard] denied {how}: no deploy decision for {vid}: {res.get('fact') or res.get('missing')}. ")
+    bare = vid.split("/")[-1]
+    msg = (f"[prdt deploy guard] denied {how}: {vid} needs, in {res.get('dir')}, a `type: decision` ticket with `place: deploy`, "
+           f"`status: done`, user quote in `outcome`, body citing `RELEASES.md` `## {bare}`; {res.get('fact')}. ")
     if not is_main:
-        msg += "Next: return `blocked` naming this deploy; the PO closes the deploy decision."
+        msg += "Next: return `blocked` naming this deploy; the PO asks the deploy decision."
     else:
-        msg += (f"Next: close a `place: deploy` decision ticket for {vid} (`prdt tickets new --type decision --place deploy`) "
-                f"— the user's quote in `## outcome`, its body pointing to RELEASES.md#{vid.split('/')[-1]} — then re-run.")
+        msg += f"Next: put deploy of {vid} + its release notes to the user on that ticket, reply verbatim → `outcome`, close, re-run."
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "deny",
                                              "permissionDecisionReason": msg}}))
@@ -952,13 +953,12 @@ def build_entry_gate(target):
 
 
 def deny_build_entry(vid, res):
-    msg = (f"[prdt build-entry guard] denied po-state write: stage → build for {vid}: no build-entry decision: "
-           f"{res.get('fact') or res.get('missing')}. ")
+    msg = (f"[prdt build-entry guard] denied po-state write: stage → `build` for {vid} needs, in {res.get('dir')}, a `type: decision` "
+           f"ticket with `place: build-entry`, `status: done`, user quote in `outcome`; {res.get('fact')}. ")
     if is_worker:
-        msg += "Next: return `blocked` naming this stage write; the PO closes the build-entry decision."
+        msg += "Next: return `blocked` naming this write; the PO asks Build entry."
     else:
-        msg += (f"Next: close a `place: build-entry` decision ticket for {vid} (`prdt tickets new --type decision "
-                f"--place build-entry`) with the user's quote in `## outcome`, then re-write the stage.")
+        msg += "Next: put Build entry to the user on that ticket, reply verbatim → `outcome`, close, re-run."
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "deny",
                                              "permissionDecisionReason": msg}}))

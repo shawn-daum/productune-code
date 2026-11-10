@@ -173,39 +173,38 @@ describe('prdt deploy record', () => {
     }
     test('no decision ticket → refused, writing nothing, naming the version and what is missing', () => {
       const err = fail(project({ seed: false }))
-      expect(err).toContain('deploy decision missing for v1.2')
-      expect(err).toContain('docs/home/tickets/v1.2 holds no `type: decision` ticket with `place: deploy`')
+      expect(err.trim()).toBe('prdt deploy record: v1.2 needs, in docs/home/tickets/v1.2, a `type: decision` ticket with `place: deploy`, `status: done`, user quote in `outcome`, body citing `RELEASES.md` `## v1.2`; none there — nothing written. Next: put deploy of v1.2 to the user on that ticket, reply verbatim → `outcome`, close, re-run.')
     }, T)
     test('a decision of another place, or another version, does not count', () => {
       const p = project({ seed: false })
       seedDeploy(p.root, 'v1.2', 'home', { place: 'build-entry' })
-      expect(fail(p)).toContain('holds no `type: decision` ticket with `place: deploy`')
+      expect(fail(p)).toContain('; none there — nothing written. Next:')
       seedDeploy(p.root, 'v1.3')
-      expect(fail(p)).toContain('holds no `type: decision` ticket with `place: deploy`')
+      expect(fail(p)).toContain('; none there — nothing written. Next:')
     }, T)
     test('open / dropped ticket → not closed', () => {
       for (const status of ['open', 'dropped']) {
         const p = project({ seed: false })
         seedDeploy(p.root, 'v1.2', 'home', { status })
-        expect(fail(p)).toContain(`is not closed (status: ${status})`)
+        expect(fail(p)).toContain('; T-912 still open — nothing written.')
       }
     }, T)
     test('closed without a user quote → refused', () => {
       const p = project({ seed: false })
       seedDeploy(p.root, 'v1.2', 'home', { quote: false })
-      expect(fail(p)).toContain('holds no user quote line')
+      expect(fail(p)).toContain('`outcome` holds no user quote — nothing written.')
     }, T)
     test('closed with a quote but no pointer to RELEASES.md#<version> → refused; a pointer to another version does not count', () => {
       const p = project({ seed: false })
       seedDeploy(p.root, 'v1.2', 'home', { pointer: null })
-      expect(fail(p)).toContain("does not point to v1.2's RELEASES.md section")
+      expect(fail(p)).toContain('body cites no `RELEASES.md` `## v1.2` — nothing written.')
       seedDeploy(p.root, 'v1.2', 'home', { pointer: 'Release notes: RELEASES.md#v1.2.1' })
-      expect(fail(p)).toContain("does not point to v1.2's RELEASES.md section")
+      expect(fail(p)).toContain('body cites no `RELEASES.md` `## v1.2` — nothing written.')
     }, T)
     test('pointer present but RELEASES.md has no such section → refused', () => {
       const p = project({ seed: false })
       seedDeploy(p.root, 'v1.2', 'home', { section: false })
-      expect(fail(p)).toContain('RELEASES.md has no `## v1.2` section')
+      expect(fail(p)).toContain('body cites no `RELEASES.md` `## v1.2` — nothing written.')
     }, T)
     test('the pointer may sit on a table line with the version and RELEASES.md', () => {
       const p = project({ seed: false })
@@ -214,7 +213,7 @@ describe('prdt deploy record', () => {
     }, T)
     test('a patch version is gated too (no patch exemption on deploy)', () => {
       const p = project({ version: 'v1.2.1', seed: false })
-      expect(fail(p)).toContain('deploy decision missing for v1.2.1')
+      expect(fail(p)).toContain('prdt deploy record: v1.2.1 needs, in docs/home/tickets/v1.2.1,')
       seedDeploy(p.root, 'v1.2.1')
       expect(cli(p.root, p.home, ['deploy', 'record', '--ref', 'abc1234']).code).toBe(0)
     }, T)
@@ -227,7 +226,7 @@ describe('prdt deploy record', () => {
       put(p.root, 'docs/arc/DEPLOY.md', FM('') + BODY)
       const r = cli(p.root, p.home, ['deploy', 'record', 'arc', '--ref', 'abc'])
       expect(r.code).not.toBe(0)
-      expect(r.err).toContain('docs/arc/tickets/v3 holds no')
+      expect(r.err).toContain('v3 needs, in docs/arc/tickets/v3, a `type: decision`')
     }, T)
   })
 })
