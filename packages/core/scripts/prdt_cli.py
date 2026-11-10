@@ -5959,7 +5959,7 @@ def cmd_tickets_options(args, root):
             new_body = body + ("" if body.endswith("\n\n") else "\n" if body.endswith("\n") else "\n\n") + frame
         else:
             new_body = body[:at] + frame + body[at:]
-        atomic_write_text(path, header + new_body)
+        state_write(root, path, header + new_body, create_dirs=False)
         print(f"{tid}: options frame added")
     if failed:
         sys.exit(1)
