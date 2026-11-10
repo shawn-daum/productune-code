@@ -51,7 +51,8 @@ function run(who: Who, tool: string, input: Record<string, unknown>, cwd = root,
   else if (who === 'typed-only') ev.agent_type = 'probe'
   else if (who !== 'main-bare') { ev.agent_id = 'agent-x'; ev.agent_type = who }
   Object.assign(ev, { hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, tool_use_id: 't1' })
-  const env = { ...process.env, HOME: home, ...extraEnv }
+  // T-1497: these rules predate the decision gates; an unusable PRDT_BIN keeps the gates open (the CLI is the matcher)
+  const env = { ...process.env, HOME: home, PRDT_BIN: '/nonexistent/prdt', ...extraEnv }
   delete env.PRDT_HOME
   const r = spawnSync('bash', [HOOK], { input: JSON.stringify(ev), encoding: 'utf8', env })
   expect(r.status).toBe(0)

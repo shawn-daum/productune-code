@@ -12,6 +12,12 @@ from pathlib import Path
 
 TICKET_TYPES = ("design", "impl", "qa", "ops", "decision")
 
+# T-1497: the closed list of fixed places a `type: decision` ticket may name in its
+# `place:` frontmatter key (`gate` is already the lane gate-ticket key). Two of them are
+# enforced by command (`build-entry`, `deploy`); the other two name a place no command
+# can carry (T-1495 outcome) and exist so such a decision can still be found by place.
+TICKET_PLACES = ("define-direction", "build-entry", "deploy", "prod-access")
+
 
 TICKET_STATUS = ("open", "done", "dropped")
 
