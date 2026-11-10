@@ -21,6 +21,12 @@
  * and feedback/closing questions do not. A request read-back is also covered by its open
  * impl / design ticket (T-1477). The block REASON is the user-confirmed wording (T-990 = A,
  * criterion clause T-1476 = A), pinned here by property (tag + line numbers), never verbatim.
+ *
+ * T-1495 (T-1494 = B): whether an ask needs a decision ticket is decided by BODY SHAPE in
+ * code (2+ numbered groups, one with 2+ numbered lines, an ask sentence, no open decision id
+ * cited), never by the judge. The judge is called only for the re-ask and batch-ask checks, and
+ * its `asks` are no longer a ticket-need verdict. The tests below that pinned the old verdict
+ * (a judged ask with no ticket blocks) are rewritten to the shape rule; each is marked T-1495.
  */
 
 import path from 'path'
@@ -142,33 +148,44 @@ function blockedLines(out: string): number[] {
 
 const fx = (name: string) => fs.readFileSync(path.join(FIXTURES, `${name}.md`), 'utf8')
 
+// T-1495: a body in the numbered convention (two groups, group 1 with two lines) and an ask
+// sentence on line 10 — the shape the question check blocks when no open decision id is cited.
+const SHAPED = ['본문이에요.', '', '**1. 요약**', '1-1. 첫째', '1-2. 둘째', '', '**2. 고침**', '2-1. 셋째', '', '이대로 확정할까요?'].join('\n')
+const SHAPED_ASK_LINE = 10
+/** A closed decision cited in a reply: the judge call's trigger (re-ask brief). */
+const CLOSED = (proj: string, id = 'T-001') => {
+  const p = path.join(proj, 'docs', 'tickets', 'v1.13', `${id}.md`)
+  fs.writeFileSync(p, ['---', `id: ${id}`, 'slug: s', 'type: decision', 'status: done', 'assignee: user', '---', '', '## problem', '', '- x', '',
+    '## outcome', '', 'A — 사용자 「A」', ''].join('\n'))
+  fs.utimesSync(p, DAY_AGO, DAY_AGO)
+}
+
 // Ticket stores as they stood when each reply was sent (2026-10-06).
 const IMPL = (status = 'open'): Ticket => ({ type: 'impl', status })
 const DEC = (status = 'open'): Ticket => ({ type: 'decision', status, assignee: 'user' })
 
-describe('flagged — real ticketless asks of 2026-10-06', () => {
-  // [fixture, store, judged ask lines, blocked lines]
-  const cases: Array<[string, Store, number[], number[]]> = [
-    // two questions in the 답 기다리는 것 list, no ticket cited; T-982 open elsewhere doesn't count
-    ['flagged-statusline-two-rows', { 'T-975': IMPL(), 'T-982': DEC() }, [12, 13], [12, 13]],
-    // the 「이 기기에 설치할까요?」 heading + two uncited waiting items; T-974 (open decision)
-    // cited in the SAME list covers only its own item
-    ['flagged-install-on-this-machine', { 'T-974': DEC(), 'T-479': IMPL('done') }, [22, 33, 34, 35], [22, 33, 35]],
-    // 「정본으로 넣을까요?」 — T-949 is cited in the reply but is a design ticket
-    ['flagged-t949-canon', { 'T-949': { type: 'design', status: 'open' } }, [26], [26]],
-    ['flagged-install-after-qa', { 'T-974': DEC(), 'T-479': IMPL(), 'T-938': IMPL() }, [28, 29], [29]],
-    ['flagged-t949-waiting-item', { 'T-949': { type: 'design', status: 'open' }, 'T-960': IMPL(), 'T-975': IMPL() }, [24], [24]],
+describe('T-1495 — the 2026-10-06 ticketless asks (judge-named) no longer block; the shape rule does', () => {
+  // [fixture, store, judged ask lines] — each one blocked before T-1495 on the judge's ticket-need
+  // verdict; none has a numbered body, so none blocks now, whatever the judge names.
+  const cases: Array<[string, Store, number[]]> = [
+    ['flagged-statusline-two-rows', { 'T-975': IMPL(), 'T-982': DEC() }, [12, 13]],
+    ['flagged-install-on-this-machine', { 'T-974': DEC(), 'T-479': IMPL('done') }, [22, 33, 34, 35]],
+    ['flagged-t949-canon', { 'T-949': { type: 'design', status: 'open' } }, [26]],
+    ['flagged-install-after-qa', { 'T-974': DEC(), 'T-479': IMPL(), 'T-938': IMPL() }, [28, 29]],
+    ['flagged-t949-waiting-item', { 'T-949': { type: 'design', status: 'open' }, 'T-960': IMPL(), 'T-975': IMPL() }, [24]],
   ]
-  for (const [name, store, judged, lines] of cases) {
-    test(`${name} → blocked once, lines ${lines.join(',')}`, () => {
-      const { out } = stop(store, fx(name), {}, {}, J(judged))
-      expect(blockedLines(out)).toEqual(lines)
+  for (const [name, store, judged] of cases) {
+    test(`${name} → silent (the judge's verdict on lines ${judged.join(',')} is not acted on)`, () => {
+      expect(stop(store, fx(name), {}, {}, J(judged)).out).toBe('')
     })
   }
 
+  test('a numbered body with an ask sentence and no open decision id → blocked once, on the ask line', () => {
+    expect(blockedLines(stop({}, SHAPED, {}, {}, J([])).out)).toEqual([SHAPED_ASK_LINE])
+  })
+
   test('the reason never echoes the reply text', () => {
-    const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, J([22, 33, 34, 35]))
-    expect(JSON.parse(out).reason).not.toContain('설치')
+    expect(JSON.parse(stop({}, SHAPED, {}, {}, J([])).out).reason).not.toContain('확정')
   })
 })
 
@@ -178,23 +195,23 @@ describe('T-1116 — the language clause', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-lang-'))
     roots.push(home)
     if (userLang) fs.writeFileSync(path.join(home, 'user-lang'), userLang + '\n')
-    return J([22, 33, 34, 35], { ...ON, HOME: home, PRDT_HOME: home, LC_ALL: '', LC_MESSAGES: '', LANG: 'C' })
+    return J([], { ...ON, HOME: home, PRDT_HOME: home, LC_ALL: '', LC_MESSAGES: '', LANG: 'C' })
   }
   test('a stored language names itself in the reason', () => {
-    const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, langEnv('ko'))
+    const { out } = stop({}, SHAPED, {}, {}, langEnv('ko'))
     const r = JSON.parse(out).reason
     // T-1390 (T-1425 = A): the language rides the one Stop closing line, the sent reply stays
     expect(r.endsWith('\nThe sent reply stays: send only the fix in lang=ko, never the reply again.')).toBe(true)
-    expect(r).toContain('a body to confirm goes in it, numbered')
+    expect(r).toContain('Cite the decision holding this body')
   })
   test('no language known → the T-990 reason, no clause', () => {
-    const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, langEnv())
+    const { out } = stop({}, SHAPED, {}, {}, langEnv())
     const r = JSON.parse(out).reason
     expect(r.endsWith('\nThe sent reply stays: send only the fix, never the reply again.')).toBe(true)
     expect(r).not.toContain('lang=')
   })
   test('device language only (en-OS, nothing stored) → no clause (T-1281)', () => {
-    const { out } = stop({ 'T-974': DEC() }, fx('flagged-install-on-this-machine'), {}, {}, { ...langEnv(), LANG: 'en_US.UTF-8' })
+    const { out } = stop({}, SHAPED, {}, {}, { ...langEnv(), LANG: 'en_US.UTF-8' })
     expect(JSON.parse(out).reason).not.toContain('lang=')
   })
 })
@@ -220,21 +237,26 @@ describe('compliant — asks backed by an open decision ticket, and reports', ()
     })
   }
 
-  test('the same options reply is blocked once its ticket is no longer open — the citation is what covers it', () => {
-    const { out } = stop({ 'T-984': DEC('done') }, fx('compliant-t984-options'), {}, {}, J([6, 26]))
-    expect(blockedLines(out).length).toBeGreaterThan(0)
+  test('T-1495 — the same options reply without a numbered body is not blocked once its ticket is closed (no shape)', () => {
+    expect(stop({ 'T-984': DEC('done') }, fx('compliant-t984-options'), {}, {}, J([6, 26])).out).toBe('')
   })
 
-  test('an English ask the judge names, with no ticket → flagged', () => {
-    const { out } = stop({}, 'Tests are green.\n\nShould I install it on this machine now?', {}, {}, J([3]))
-    expect(blockedLines(out)).toEqual([3])
+  test('T-1495 — an English ask the judge names, with no ticket and no numbered body → silent', () => {
+    expect(stop({}, 'Tests are green.\n\nShould I install it on this machine now?', {}, {}, J([3])).out).toBe('')
+  })
+
+  test('T-1495 — the shaped reply is covered once it cites an OPEN decision; a closed one or a work ticket does not cover it', () => {
+    const cited = (id: string) => SHAPED.replace('이대로 확정할까요?', `이대로 확정할까요? (${id})`)
+    expect(stop({ 'T-301': DEC() }, cited('T-301'), {}, {}, J([])).out).toBe('')
+    expect(blockedLines(stop({ 'T-301': DEC('done') }, cited('T-301'), {}, {}, J([])).out)).toEqual([SHAPED_ASK_LINE])
+    expect(blockedLines(stop({ 'T-301': IMPL() }, cited('T-301'), {}, {}, J([])).out)).toEqual([SHAPED_ASK_LINE])
   })
 })
 
 describe('gating', () => {
-  const flagged = () => fx('flagged-t949-canon')
+  const flagged = () => SHAPED   // T-1495: the shape rule's reply (ask on line 10)
   const store: Store = { 'T-949': { type: 'design', status: 'open' } }
-  const G = J([26])
+  const G = J([])
 
   test('default ON (T-1260): unset blocks; `off` alone disables', () => {
     const { root, proj } = makeProject(store)
@@ -244,7 +266,7 @@ describe('gating', () => {
     })
     const { PRDT_QUESTION_CHECK: _drop, ...bare } = G
     for (const env of [bare, { ...bare, PRDT_QUESTION_CHECK: 'on' }]) {
-      expect(blockedLines(execFileSync('bash', [HOOK], { input: event, encoding: 'utf8', env }))).toEqual([26])
+      expect(blockedLines(execFileSync('bash', [HOOK], { input: event, encoding: 'utf8', env }))).toEqual([SHAPED_ASK_LINE])
     }
     expect(execFileSync('bash', [HOOK], { input: event, encoding: 'utf8', env: { ...bare, PRDT_QUESTION_CHECK: 'off' } })).toBe('')
   })
@@ -258,7 +280,7 @@ describe('gating', () => {
     expect(stop(store, flagged(), { agent_type: undefined }, {}, G).out).toBe('')
   })
 
-  test('a decision ticket created this turn → no block', () => {
+  test('T-1495 — a decision ticket created this turn, not cited → STILL blocked (the shape rule has no turn exemption)', () => {
     const { root, proj } = makeProject(store)
     fs.writeFileSync(path.join(proj, 'docs', 'tickets', 'v1.13', 'T-990.md'),
       '---\nid: T-990\ntype: decision\nstatus: open\nassignee: user\n---\n')
@@ -267,12 +289,12 @@ describe('gating', () => {
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
     }, G)
-    expect(out).toBe('')
+    expect(blockedLines(out)).toEqual([SHAPED_ASK_LINE])
   })
 
   test('falls back to the transcript when the event has no last_assistant_message', () => {
     const { out } = stop(store, flagged(), { last_assistant_message: undefined }, {}, G)
-    expect(blockedLines(out)).toEqual([26])
+    expect(blockedLines(out)).toEqual([SHAPED_ASK_LINE])
   })
 
   test('outside a prdt project, or with no readable transcript → silent (fails open)', () => {
@@ -283,7 +305,13 @@ describe('gating', () => {
 })
 
 describe('T-1379 — the model judge: who pays, how it fails, what is kept of its answer', () => {
-  const ASK = '테스트 통과했어요.\n\n사용자가 볼 화면을 A 와 B 중 어느 쪽으로 할지 알려 주세요.'
+  // T-1495: the judge is called only when a re-ask or batch-ask could act on it — here the
+  // reply cites a closed decision (T-001), the re-ask brief's trigger. Its asks alone block nothing.
+  const ASK = '테스트 통과했어요. (T-001)\n\n사용자가 볼 화면을 A 와 B 중 어느 쪽으로 할지 알려 주세요.'
+  const ST: Store = { 'T-001': DEC('done') }
+  const ASK_PLAIN = '테스트 통과했어요.\n\n사용자가 볼 화면을 A 와 B 중 어느 쪽으로 할지 알려 주세요.'
+  const D4: Store = Object.fromEntries(['T-201', 'T-202', 'T-203', 'T-204'].map(id => [id, DEC()]))
+  const BATCH = '[prdt batch-ask check]'
   const logOf = (env: NodeJS.ProcessEnv) => {
     const p = path.join(env.PRDT_HOME as string, 'run', 'question-check.log')
     return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : ''
@@ -298,7 +326,7 @@ describe('T-1379 — the model judge: who pays, how it fails, what is kept of it
 
   test('a PO Stop asks the judge once — no tools, no settings, no session record — and logs the outcome', () => {
     const env = fresh({ QC_FAKE_ASKS: '3' })
-    expect(blockedLines(stop({}, ASK, {}, {}, env).out)).toEqual([3])
+    expect(stop(ST, ASK, {}, {}, env).out).toBe('')   // T-1495: an ask the judge names blocks nothing by itself
     expect(calls(env)).toBe(1)
     const args = fs.readFileSync(env.QC_FAKE_ARGS as string, 'utf8').split('\n')
     expect(args.slice(0, 3)).toEqual(['-p', '--model', 'haiku'])
@@ -310,34 +338,58 @@ describe('T-1379 — the model judge: who pays, how it fails, what is kept of it
 
   test('T-1465 — the judge prompt keeps the proceed-confirm / consent boundary and the cited-decision rule', () => {
     const env = fresh({ QC_FAKE_ASKS: '3' })
-    stop({}, ASK, {}, {}, env)
+    stop(ST, ASK, {}, {}, env)
     const args = fs.readFileSync(env.QC_FAKE_ARGS as string, 'utf8')
     const prompt = args.slice(args.indexOf('You check one chat reply'))
     expect(prompt).toContain('proceed-confirm')
-    expect(prompt).toContain('지금 v1.17 Define을 시작할까요?')
-    expect(prompt).toContain('T-1362 는 다시 묻지 않아요')
-    expect(prompt).toContain('설치할까요?') // still listed as an ask
-    expect(prompt).toMatch(/still an ask when the action needs the user's consent \(install, push, deploy, destructive git/)
+    expect(prompt).toContain('proceed-confirm: whether assistant starts or continues its own next step in agreed work, no alternatives, no consent-needing action;')
+    expect(prompt).toContain('statement that earlier decision or ticket id is settled, kept or not asked again;')
+    expect(prompt).toContain('confirm of action needing user\'s consent: install, push, deploy, destructive git, delete, send to other people, spend money.')
     expect(prompt).not.toContain('say whether to go ahead')
   })
 
   test('worker and plain-session Stops never call the judge', () => {
     const env = fresh({ QC_FAKE_ASKS: '3' })
-    expect(stop({}, ASK, { agent_type: 'prdt-developer' }, {}, env).out).toBe('')
-    expect(stop({}, ASK, { agent_type: undefined }, {}, env).out).toBe('')
-    expect(stop({}, ASK, { stop_hook_active: true }, {}, env).out).toBe('')
+    expect(stop(ST, ASK, { agent_type: 'prdt-developer' }, {}, env).out).toBe('')
+    expect(stop(ST, ASK, { agent_type: undefined }, {}, env).out).toBe('')
+    expect(stop(ST, ASK, { stop_hook_active: true }, {}, env).out).toBe('')
     expect(calls(env)).toBe(0)
   })
 
-  test('a decision ticket changed this turn and no decision cited → nothing could block, no judge call', () => {
+  test('T-1495 — no decision cited → no judge call, whatever the reply asks', () => {
     const env = fresh({ QC_FAKE_ASKS: '3' })
-    const { root, proj } = makeProject({})
+    expect(stop({}, ASK_PLAIN, {}, {}, env).out).toBe('')
+    expect(stop({ 'T-201': DEC() }, ASK_PLAIN + ' (T-201)', {}, {}, env).out).toBe('')   // one open decision: no batch possible
+    expect(calls(env)).toBe(0)
+  })
+
+  test('T-1495 — the numbered-body block comes from code: zero judge calls, the fake judge naming nothing', () => {
+    const env = fresh({ QC_FAKE_ASKS: '' })
+    expect(blockedLines(stop({}, SHAPED, {}, {}, env).out)).toEqual([SHAPED_ASK_LINE])
+    expect(calls(env)).toBe(0)
+  })
+
+  test('T-1495 — the judge is called once for a cited closed decision or for 4+ cited open decisions, not before', () => {
+    const e1 = fresh({ QC_FAKE_ASKS: '' })
+    stop(ST, ASK, {}, {}, e1)
+    expect(calls(e1)).toBe(1)
+    const e2 = fresh({ QC_FAKE_ASKS: '' })
+    stop(D4, '- T-201 · T-202 · T-203 · T-204 를 올렸어요.', {}, {}, e2)
+    expect(calls(e2)).toBe(1)
+    const e3 = fresh({ QC_FAKE_ASKS: '' })
+    stop(D4, '- T-201 · T-202 · T-203 를 올렸어요.', {}, {}, e3)
+    expect(calls(e3)).toBe(0)
+  })
+
+  test('T-1495 — a decision ticket changed this turn no longer skips the judge when a closed decision is cited', () => {
+    const env = fresh({ QC_FAKE_ASKS: '3' })
+    const { root, proj } = makeProject(ST)
     fs.writeFileSync(path.join(proj, 'docs', 'tickets', 'v1.13', 'T-990.md'), '---\nid: T-990\ntype: decision\nstatus: open\nassignee: user\n---\n')
-    expect(runHook({
+    runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, ASK), last_assistant_message: ASK,
-    }, env)).toBe('')
-    expect(calls(env)).toBe(0)
+    }, env)
+    expect(calls(env)).toBe(1)
   })
 
   const failing: Array<[string, NodeJS.ProcessEnv, RegExp]> = [
@@ -348,24 +400,24 @@ describe('T-1379 — the model judge: who pays, how it fails, what is kept of it
   for (const [label, extra, line] of failing) {
     test(`${label} → fails open (no block), with a log line`, () => {
       const env = fresh(extra)
-      expect(stop({}, ASK, {}, {}, env).out).toBe('')
+      expect(stop(ST, ASK, {}, {}, env).out).toBe('')
       expect(logOf(env)).toMatch(line)
     })
   }
 
   test('an error result is retried once, never more; an unreadable answer is not retried', () => {
     const e1 = fresh({ QC_FAKE_MODE: 'error', QC_FAKE_ASKS: '3' })
-    stop({}, ASK, {}, {}, e1)
+    stop(ST, ASK, {}, {}, e1)
     expect(calls(e1)).toBe(2)
     const e2 = fresh({ QC_FAKE_MODE: 'garbage', QC_FAKE_ASKS: '3' })
-    stop({}, ASK, {}, {}, e2)
+    stop(ST, ASK, {}, {}, e2)
     expect(calls(e2)).toBe(1)
   })
 
   test('the judge runs from an empty dir, removed after, with cmux hooks off', () => {
     const env = fresh({ QC_FAKE_ASKS: '3' })
     env.QC_FAKE_WHERE = path.join(env.PRDT_HOME as string, 'where')
-    stop({}, ASK, {}, {}, env)
+    stop(ST, ASK, {}, {}, env)
     const w = fs.readFileSync(env.QC_FAKE_WHERE, 'utf8')
     expect(w).toContain('cmux=1')
     expect(w).toContain('entries=0')
@@ -374,37 +426,42 @@ describe('T-1379 — the model judge: who pays, how it fails, what is kept of it
     expect(fs.existsSync(cwd)).toBe(false)
   })
 
+  // T-1495: what the judge's ask lines still feed is the batch-ask check, whose scope each ask's kind
+  // sets (a list item → its item; an option line or other line → its section).
+  const waiting = (items: string[]) => ['## 답 기다리는 것', '', ...items].join('\n')
+  const ITEMS = ['- T-201 가, A 로 할까요?', '- T-202 나, A 로 할까요?', '- T-203 다, A 로 할까요?']
+
   test('an empty line the judge names is never an ask line', () => {
-    expect(stop({}, ASK, {}, {}, J([2])).out).toBe('')
-    expect(blockedLines(stop({}, ASK, {}, {}, J([2, 3])).out)).toEqual([3])
+    const reply = waiting([...ITEMS, '', '- T-204 라, A 로 할까요?'])
+    expect(stop(D4, reply, {}, {}, J([2, 3, 4, 5])).out).toBe('')                         // 3 ids + an empty line
+    expect(stop(D4, reply, {}, {}, J([3, 4, 5, 7])).out).toContain(BATCH)                 // the 4th ask is a real line
   })
 
   test('judged lines out of range are ignored; none left → silent', () => {
-    expect(stop({}, ASK, {}, {}, J([0, 99])).out).toBe('')
+    expect(stop(D4, waiting([...ITEMS, '- T-204 라, A 로 할까요?']), {}, {}, J([0, 99])).out).toBe('')
   })
 
   test('a judged line inside a code fence or a blockquote is dropped; a fenced option line is kept', () => {
-    const reply = ['예시예요.', '```', '이 문구로 괜찮은지 알려 주세요.', '```', '> 진행할지 알려 주세요.', '', '```', 'A  초안대로 ← 추천', 'B  고쳐서', '```'].join('\n')
-    expect(blockedLines(stop({}, reply, {}, {}, J([3, 5, 8])).out)).toEqual([8])
+    const fenced = waiting([...ITEMS, '```', 'T-204 라, 진행할지 알려 주세요.', '```'])
+    expect(stop(D4, fenced, {}, {}, J([3, 4, 5, 7])).out).toBe('')
+    const quoted = waiting([...ITEMS, '> T-204 라, 진행할지 알려 주세요.'])
+    expect(stop(D4, quoted, {}, {}, J([3, 4, 5, 6])).out).toBe('')
+    const option = waiting([...ITEMS, '```', 'A  초안대로 T-204', '```'])
+    expect(stop(D4, option, {}, {}, J([3, 4, 5, 7])).out).toContain(BATCH)
   })
 
-  test('kind comes from structure: an option line or option-letter ask is covered by any open decision in the reply', () => {
-    const reply = ['## 화면', '', '| 안 | 내용 |', '|---|---|', '| A. 탭바 | 시안대로 |', '| B. 지금 구조 | 작아요 |', '',
-      '## 근거', '', 'T-301 에 올렸어요.'].join('\n')
-    expect(stop({ 'T-301': DEC() }, reply, {}, {}, J([5])).out).toBe('')
-    expect(blockedLines(stop({}, reply, {}, {}, J([5])).out)).toEqual([5])
-  })
-
-  test('a waiting item is covered by an open assignee:user ticket in its own item', () => {
-    const reply = ['## 답 기다리는 것', '', '- T-302 배포 계정 만들어 주시기', '- 화면 문구 확인']
-      .join('\n')
-    expect(blockedLines(stop({ 'T-302': { type: 'impl', status: 'open', assignee: 'user' } }, reply, {}, {}, J([3, 4])).out)).toEqual([4])
+  test('kind comes from structure: an option line speaks for its whole section, a list item only for itself', () => {
+    const table = ['## 화면', '', '| A. 탭바 | T-201 |', '| B. 지금 구조 | T-202 |', '', 'T-203 · T-204 도 같은 화면이에요.'].join('\n')
+    expect(stop(D4, table, {}, {}, J([3])).out).toContain(BATCH)
+    const item = ['## 화면', '', '- A 로 할까요? (T-201)', '- 메모', '', 'T-202 · T-203 · T-204 도 같은 화면이에요.'].join('\n')
+    expect(stop(D4, item, {}, {}, J([3])).out).toBe('')
   })
 })
 
 describe('fails open on unreadable inputs, never hangs', () => {
-  const ask = '- [T-977] 이 기기에 설치할까요?'
-  const A1 = J([1])
+  // T-1495: the shape rule's reply; T-977 (the unreadable ticket) is cited on its ask line
+  const ask = SHAPED.replace('이대로 확정할까요?', '이대로 확정할까요? (T-977)')
+  const A1 = J([])
 
   test('a cited ticket that cannot be read → silent', () => {
     const { root, proj } = makeProject({ 'T-977': DEC() })
@@ -451,7 +508,7 @@ describe('fails open on unreadable inputs, never hangs', () => {
 
   test('more than the scan budget after the turn prompt → the last message is still checked', () => {
     const { root, proj } = makeProject({})
-    const reply = '테스트 통과했어요. 이 기기에 설치할까요?'
+    const reply = SHAPED
     const p = writeTranscript(root, reply)
     const recs = fs.readFileSync(p, 'utf8').trimEnd().split('\n')
     const last = recs.pop() as string
@@ -466,7 +523,7 @@ describe('fails open on unreadable inputs, never hangs', () => {
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: p, last_assistant_message: reply,
     }, A1)
-    expect(blockedLines(out)).toEqual([1])
+    expect(blockedLines(out)).toEqual([SHAPED_ASK_LINE])
   })
 })
 
@@ -570,9 +627,9 @@ describe('T-1285 — an ask the judge names as asking a recorded decision again 
 
   test('T-1390 (T-1425 = A) — the reason is the approved wording, byte for byte, plus the Stop closing line', () => {
     // docs/productune/artifacts/v1.16/t1390-wording-draft.md §2 (337 B) + §4 SENT_TAIL (65 B)
-    const TO_BE = '[prdt re-ask check] line %s asks again a decision already answered: %s (`prdt decisions find <id>`). Act on the recorded answer and cite it; a ticket opened this turn for that ask → `dropped` naming the record. Ask again only when the record is stale or conflicting, its state changed, or a consent gate needs live words — say which.'
+    const TO_BE = '[prdt re-ask check] line %s asks again a decision already answered: %s (`prdt decisions find <id>`). Act on the recorded answer and cite it; a ticket opened this turn for that ask → `dropped` naming the record. Ask again only when the record is stale or conflicting, its state changed, or a consent gate needs live words — beside the ask: which, + what record lacks.'
     const SENT = 'The sent reply stays: send only the fix%s, never the reply again.'
-    expect(Buffer.byteLength(TO_BE)).toBe(337)
+    expect(Buffer.byteLength(TO_BE)).toBe(370)
     expect(Buffer.byteLength(SENT)).toBe(65)
     const reason = JSON.parse(run(both, REASK_REPLY, [[12, 'T-1313']])).reason as string
     const parts = ['12', 'T-1313']
@@ -601,10 +658,16 @@ describe('T-1285 — an ask the judge names as asking a recorded decision again 
     expect(judgeInput(e)).not.toContain(DECS)
   })
 
-  test('no decision cited → the judge input is the numbered reply alone', () => {
+  test('T-1495 — no decision cited → no judge call at all (was: the judge input is the numbered reply alone)', () => {
     const e = env()
     run((p) => record(p, 'T-1313'), '배포를 오늘 할까요?', [], e)
-    expect(judgeInput(e)).toBe('1| 배포를 오늘 할까요?')
+    expect(judgeInput(e)).toBe('')
+  })
+
+  test('a closed decision cited → the judge input is the numbered reply, then the record', () => {
+    const e = env()
+    run((p) => record(p, 'T-1313'), '배포를 오늘 할까요? (T-1313)', [], e)
+    expect(judgeInput(e).startsWith('1| 배포를 오늘 할까요? (T-1313)\n\n---- closed decisions this reply cites')).toBe(true)
   })
 
   test('a waiting item the judge names a re-ask → blocked', () => {
@@ -798,23 +861,21 @@ describe('T-1377 — L1 replays: a re-ask never hides batch-ask or question chec
     expect(reason).toContain('10 open decisions')
   })
 
-  test('(3) r3 — approval of a release-note body with no decision ticket, T-001 cited as a source → question check, no re-ask block', () => {
-    const reason = replay('approval-r3', T001)
-    expect(reason).not.toContain(REASK)
-    expect(reason.startsWith(TAG)).toBe(true)
+  test('T-1495 (3) r3 — approval of a single-group release-note body, no decision ticket, T-001 cited as a source → no re-ask, and no question check (release notes are enforced at the deploy place, T-1495 outcome B)', () => {
+    expect(replay('approval-r3', T001)).toBe('')
   })
 
   test('several checks applying in one Stop → the reason carries each, none dropped', () => {
-    // r1's re-ask of T-001 + r3's ticketless approval in one reply, in separate sections
-    const head = fx('reask-r1') + '\n## 릴리스 노트\n\n'
-    const reply = head + fx('approval-r3')
+    // r1's re-ask of T-001 + a ticketless numbered body (T-1495: the shape rule) in one reply, in separate sections
+    const head = fx('reask-r1') + '\n## 본문\n\n'
+    const reply = head + SHAPED
     const off = head.split('\n').length - 1
     const { root, proj } = makeProject({})
     T001(proj)
     const out = runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
-    }, RA([[5, 'T-001']], J([5, off + 13], env())))
+    }, RA([[5, 'T-001']], J([5, off + SHAPED_ASK_LINE], env())))
     const both = JSON.parse(out).reason as string
     expect(both.startsWith(REASK)).toBe(true)
     expect(both).toContain('\n\n' + TAG)
@@ -835,18 +896,21 @@ describe('T-1377 — L1 replays: a re-ask never hides batch-ask or question chec
   }
   const DECIDED = '다크모드는 T-001 에서 폰 설정을 따르기로 정하셨어요.'
   const DRAFT = ['```', '설정 > 화면 테마: 시스템 따라가기 / 밝게 / 어둡게', '```']
+  // T-1495: the question check is a shape rule now, so these replies carry a numbered body (no heading,
+  // so the body and the ask are one section with the re-asked line)
+  const BODY = ['', '1-1. 설정 화면에 테마 항목을 둔다', '1-2. 기본값은 시스템 따라가기', '2-1. 어두운 화면 색을 새로 정한다', '']
   const cases: [string, string, boolean][] = [
     ['d — a new ticket named on the ask line', [DECIDED, '', '앱 안 토글을 둘지 다시 골라 주세요 (T-012).'].join('\n'), true],
     ['d2 — a new ticket heading the ask line', [DECIDED, '', 'T-012: 앱 안 토글을 둘까요?'].join('\n'), true],
     ['c3 — a fenced draft re-deciding T-001, approval naming the new ticket',
       [DECIDED, '', ...DRAFT, '', '이 초안(T-012)대로 앱 안 테마 설정을 넣는 걸 승인해 주실까요?'].join('\n'), true],
     ['c — a fenced draft re-deciding T-001, approval with no new id',
-      [DECIDED, '', ...DRAFT, '', '이 초안대로 앱 안 테마 설정을 넣는 걸 승인해 주실까요?'].join('\n'), false],
-    ['c2 — the same, an imperative approval', [DECIDED, '', ...DRAFT, '', '이 초안대로 넣어도 되는지 승인해 주세요.'].join('\n'), false],
+      [DECIDED, '', ...DRAFT, ...BODY, '이 초안대로 앱 안 테마 설정을 넣는 걸 승인해 주실까요?'].join('\n'), false],
+    ['c2 — the same, an imperative confirm request', [DECIDED, '', ...DRAFT, ...BODY, '이 초안대로 넣어도 되는지 확인해 주세요.'].join('\n'), false],
     ['c4 — a fenced draft re-deciding T-001, 컨펌 ask naming the new ticket',
       [DECIDED, '', ...DRAFT, '', '이 초안(T-012)대로 앱 안 테마 설정을 넣는 걸 컨펌해 주세요.'].join('\n'), true],
-    ['c5 — the same, 컨펌 ask with no new id', [DECIDED, '', ...DRAFT, '', '이 초안대로 넣어도 되는지 컨펌해 주세요.'].join('\n'), false],
-    ['c6 — the same, an English confirm ask', [DECIDED, '', ...DRAFT, '', 'Can you confirm this draft?'].join('\n'), false],
+    ['c5 — the same, 컨펌 ask with no new id', [DECIDED, '', ...DRAFT, ...BODY, '이 초안대로 넣어도 되는지 컨펌해 주세요.'].join('\n'), false],
+    ['c6 — the same, an English confirm ask', [DECIDED, '', ...DRAFT, ...BODY, '컨펌해 주실래요? Can you confirm this draft?'].join('\n'), false],
   ]
   for (const [label, reply, withT012] of cases) {
     test(`${label} → re-ask on T-001 only`, () => {
@@ -856,9 +920,21 @@ describe('T-1377 — L1 replays: a re-ask never hides batch-ask or question chec
       expect(reason).not.toContain(TAG)
     })
   }
+  // the suppression is what holds the question check back: with no re-ask named, the same replies are shaped asks
+  for (const [label, reply, withT012] of cases.filter(c => !c[2])) {
+    test(`${label} → were no re-ask named, the question check fires (the replies are shaped)`, () => {
+      const { root, proj } = makeProject({})
+      T001(proj)
+      const out = runHook({
+        hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+        cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
+      }, J(QJ(reply), env()))
+      expect(JSON.parse(out).reason as string).toContain(TAG)
+    })
+  }
 
   test('re-ask and question check on the same decision in one section → re-ask only', () => {
-    const reply = ['## 화면 테마', '', DECIDED, '', '- 앱 안 토글, 이번에 넣을까요?', '', '이대로 갈까요, 아니면 바꿀까요?'].join('\n')
+    const reply = ['## 화면 테마', '', DECIDED, '', '- 앱 안 토글, 이번에 넣을까요?', '1-1. 토글을 둔다', '1-2. 기본은 끈다', '2-1. 색을 정한다', '', '이대로 확정할까요, 아니면 바꿀까요?'].join('\n')
     const reason = inline(reply, false)
     expect(reason.startsWith(REASK)).toBe(true)
     expect(reason).not.toContain(TAG)
@@ -977,40 +1053,28 @@ describe('T-1389 — PostToolUse first (the reply draft of `prdt wordlist check 
   })
 })
 
-describe('T-1428 (narrowed by T-1477) — a confirm request on a body goes through the durable-answer judgment', () => {
-  // L1 observation (3) (decision-approval-observation.md, 재관측 2026-11-03): r3 ff50718c and
-  // r3b b2007d0d asked to confirm a release-note body with no decision ticket and nothing
-  // blocked. T-1428 read their confirm lines deterministically beside the judge; T-1477 puts
-  // them through the same judgment: when the judge answers, a confirm request is an ask only
-  // if it named it (a body confirm used only for the work at hand is not). A FAILED judge
-  // (stubbed `error` here, FAIL) leaves CONFIRM_ASK_RE the only reader, as before.
+describe('T-1495 (replaces T-1428 / T-1477) — a confirm request on a body is no longer a ticket-need verdict', () => {
+  // L1 observation (3): r3 ff50718c and r3b b2007d0d asked to confirm a release-note body with no
+  // decision ticket. T-1428 / T-1477 blocked them through CONFIRM_ASK_RE and the judge's
+  // durable-answer verdict. T-1495 (outcome B) drops both: the question check is the numbered-body
+  // shape only, and release notes are enforced at the deploy place later. These replays pin that
+  // neither the judge nor the confirm sentence blocks them any more.
   const PRDT = path.join(CORE_ROOT, 'scripts', 'prdt')
-  const REASK = '[prdt re-ask check]'
   const env = (asks: number[] = [], extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-t1428-'))
     roots.push(home)
     return J(asks, { ...ON, PRDT_HOME: home, PRDT_BIN: PRDT, ...extra })
   }
-  function decision(proj: string, id: string, status: string, ago: number) {
-    const p = path.join(proj, 'docs', 'tickets', 'v1.13', `${id}.md`)
-    fs.writeFileSync(p, ['---', `id: ${id}`, `slug: s-${id.toLowerCase()}`, 'type: decision', `status: ${status}`, 'assignee: user',
-      'created: 2026-11-01', '---', '', '## problem', '', '- x', '', '## outcome', '',
-      status === 'done' ? '폰 설정을 따른다 — 사용자 「폰 설정 따라가면 돼」' : '', '', '## log', '', ''].join('\n'))
-    const t = (Date.now() - ago) / 1000
-    fs.utimesSync(p, t, t)
-  }
   function run(reply: string, fill: (proj: string) => void, e: NodeJS.ProcessEnv) {
     const { root, proj } = makeProject({})
     fill(proj)
-    const out = runHook({
+    return runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
       cwd: proj, transcript_path: writeTranscript(root, reply), last_assistant_message: reply,
     }, e)
-    return out
   }
   const none = () => {}
   const FAIL: NodeJS.ProcessEnv = { QC_FAKE_MODE: 'error' }
-  const T001 = (p: string) => decision(p, 'T-001', 'done', 86_400_000)
   const lineOf = (reply: string, needle: string) => reply.split('\n').findIndex(l => l.includes(needle)) + 1
 
   const observed: Array<[string, string]> = [
@@ -1018,30 +1082,16 @@ describe('T-1428 (narrowed by T-1477) — a confirm request on a body goes throu
     ['approval-r3b-which-lines', '이 문구로 괜찮은지, 고칠 줄이 있는지 알려 주세요'],
   ]
   for (const [name, needle] of observed) {
-    test(`${name}: 「${needle}」, no decision ticket, judge failed → flagged on that line`, () => {
+    test(`${name}: 「${needle}」 → silent whether the judge failed, named nothing, or named the line`, () => {
       const reply = fx(name)
-      expect(blockedLines(run(reply, none, env([], FAIL)))).toEqual([lineOf(reply, needle)])
+      expect(run(reply, none, env([], FAIL))).toBe('')
+      expect(run(reply, none, env())).toBe('')
+      expect(run(reply, none, env([lineOf(reply, needle)]))).toBe('')
     })
 
-    test(`${name}: the judge answered without naming it (work at hand only) → silent`, () => {
-      expect(run(fx(name), none, env())).toBe('')
-    })
-
-    test(`${name}: the judge names it (durable: what real users will see) → flagged on that line`, () => {
+    test(`${name}: T-001 (answered) cited as the body's source → silent: no question check, no re-ask`, () => {
       const reply = fx(name)
-      expect(blockedLines(run(reply, none, env([lineOf(reply, needle)])))).toEqual([lineOf(reply, needle)])
-    })
-
-    test(`${name}: T-001 (answered) cited as the body's source → question check, never re-ask`, () => {
-      const reply = fx(name)
-      const reason = JSON.parse(run(reply, T001, env([lineOf(reply, needle)]))).reason as string
-      expect(reason.startsWith(TAG)).toBe(true)
-      expect(reason).not.toContain(REASK)
-    })
-
-    test(`${name}: an open decision id cited beside the confirm request → silent`, () => {
-      const reply = fx(name).replace(needle, `${needle} (T-002)`)
-      expect(run(reply, (p) => { T001(p); decision(p, 'T-002', 'open', 86_400_000) }, env([], FAIL))).toBe('')
+      expect(run(reply, (p) => CLOSED(p), env([lineOf(reply, needle)]))).toBe('')
     })
   }
 
@@ -1050,40 +1100,17 @@ describe('T-1428 (narrowed by T-1477) — a confirm request on a body goes throu
     '아래 내용이 맞는지 답해 주세요.',
     '이 초안으로 좋으면 승인해 주세요.',
     '위 문구가 괜찮으시면 알려 주세요.',
-  ])('other confirm-request forms are asks when the judge failed: %s', (ask) => {
+  ])('a confirm request with a judge that failed or named nothing → silent: %s', (ask) => {
     const reply = ['초안이에요.', '```', '- 한 줄', '```', ask].join('\n')
-    expect(blockedLines(run(reply, none, env([], FAIL)))).toEqual([5])
+    expect(run(reply, none, env([], FAIL))).toBe('')
     expect(run(reply, none, env())).toBe('')
-  })
-
-  test.each([
-    ['quoted', '지난번에 「이대로 괜찮으면 이 메시지에 답해 주세요」 로 물었는데 막히지 않았어요.'],
-    ['a blockquote', '> 이대로 괜찮으면 이 메시지에 답해 주세요.'],
-    ['inside a fence', '```\n이대로 괜찮으면 이 메시지에 답해 주세요.\n```'],
-    ['inline code', '문구 `이대로 괜찮으면 답해 주세요` 를 판정해요.'],
-    ['an information request', '이 경로가 맞는지 알려 주세요.'],
-    ['no answer asked', '이대로 괜찮으면 따로 답하지 않으셔도 돼요.'],
-    ['a look-and-report', '화면이 괜찮은지 직접 봐 주세요.'],
-  ])('not a confirm request: %s', (_label, text) => {
-    expect(run(['보고예요.', '', text].join('\n'), none, env([], FAIL))).toBe('')
-  })
-
-  test('the judge failing does not drop a deterministic confirm request', () => {
-    const reply = fx('approval-r3-reply')
-    const out = run(reply, none, env([], { QC_FAKE_MODE: 'error' }))
-    expect(blockedLines(out)).toEqual([lineOf(reply, '이대로 괜찮으면')])
   })
 
   const oldFixtures = () => fs.readdirSync(FIXTURES)
     .filter(f => f.endsWith('.md') && !f.startsWith('approval-r3-') && !f.startsWith('approval-r3b-'))
 
-  test('no existing fixture gains a confirm-request line on a failed judge', () => {
-    // replay: every pre-T-1428 fixture, judge failed — only approval-r3 holds such a line
-    // (13, already judged an ask in the L1 replay above); every other one stays silent.
-    expect(oldFixtures().filter(f => run(fx(f.slice(0, -3)), none, env([], FAIL)))).toEqual(['approval-r3.md'])
-  })
-
-  test('with the judge answering [], no existing fixture blocks: CONFIRM_ASK_RE adds nothing past the judgment', () => {
+  test('no existing fixture blocks on a failed judge or a judge naming nothing: none has a numbered-body shape', () => {
+    expect(oldFixtures().filter(f => run(fx(f.slice(0, -3)), none, env([], FAIL)))).toEqual([])
     expect(oldFixtures().filter(f => run(fx(f.slice(0, -3)), none, env()))).toEqual([])
   })
 })
@@ -1123,18 +1150,14 @@ describe('T-1429 — a confirm request on a new body that cites a done decision 
   }
 
   test.each([
-    ['approval-r3-cited-t001-1', [18], '18'],   // 「이 문구 그대로 확정할까요?」, T-001 cited in a note after the body
-    ['approval-r3-cited-t001-2', [1, 17], '1, 17'],   // 「확인해 주시면」 above the body + 「이대로 괜찮으면 알려 주세요」, T-001 inside the body
-  ] as Array<[string, number[], string]>)('%s: real-judge asks %j → question check on those lines, no re-ask', (name, asks, shown) => {
-    const reason = reasonOf(fx(name), asks)
-    expect(reason).not.toContain(REASK)
-    expect(reason.startsWith(`${TAG} line ${shown} asks`)).toBe(true)
+    ['approval-r3-cited-t001-1', [18]],   // 「이 문구 그대로 확정할까요?」, T-001 cited in a note after the body
+    ['approval-r3-cited-t001-2', [1, 17]],   // 「확인해 주시면」 above the body + 「이대로 괜찮으면 알려 주세요」, T-001 inside the body
+  ] as Array<[string, number[]]>)('T-1495 %s: real-judge asks %j → silent (no re-ask; the single-group body has no shape)', (name, asks) => {
+    expect(reasonOf(fx(name), asks)).toBe('')
   })
 
-  test('the deterministic confirm line alone (judge failed) → question check, no re-ask', () => {
-    const reason = reasonOf(fx('approval-r3-cited-t001-2'), [], [], { QC_FAKE_MODE: 'error' })
-    expect(reason).not.toContain(REASK)
-    expect(reason.startsWith(`${TAG} line 17 asks`)).toBe(true)
+  test('T-1495 — the deterministic confirm line alone (judge failed) → silent', () => {
+    expect(reasonOf(fx('approval-r3-cited-t001-2'), [], [], { QC_FAKE_MODE: 'error' })).toBe('')
   })
 
   test.each([
@@ -1274,10 +1297,10 @@ describe('T-1470 — the re-ask subject is the judge\'s reading of meaning, shar
       const reply = fx('readback-change-t001').trimEnd()
       stopOut(project(both, reply), reply, e)
       const prompt = fs.readFileSync(e.QC_FAKE_ARGS, 'utf8')
-      expect(prompt).toContain("- each choice or approval listed under a heading saying it waits for the user's answer.")
+      expect(prompt).toContain("- each choice or approval listed under heading saying it waits for user's answer;")
       expect(prompt).not.toContain('- each item listed under a heading')
-      expect(prompt).toContain('is a re-ask too. Not a re-ask, even on that subject and even when it keeps or changes the '
-        + "recorded answer: a read-back of the user's words that the record does not hold (「오늘 「…」라고 하신 건, …맞을까요?」). ")
+      expect(prompt).toContain('- ask whose stated ground is something record lacks — user words after record, or instance or '
+        + 'observation newer than record — even same subject, even keeping or changing recorded answer;')
       expect(prompt).not.toContain('is of words the user said after the decision closed')
     })
 
@@ -1295,27 +1318,23 @@ describe('T-1470 — the re-ask subject is the judge\'s reading of meaning, shar
       expect(stop({}, fx('waiting-fact-item'), {}, {}, J([])).out).toBe('')
     })
 
-    test('a choice listed under the same waiting heading, named an ask → still flagged', () => {
+    test('T-1495 — a choice listed under the same waiting heading, named an ask → silent (the verdict is not acted on)', () => {
       const reply = fx('waiting-fact-item').trimEnd() + '\n- 판정 문안: A(문장 고치기) · B(정규식 먼저) 중 A 추천'
-      expect(blockedLines(stop({}, reply, {}, {}, J([9])).out)).toEqual([9])
+      expect(stop({}, reply, {}, {}, J([9])).out).toBe('')
     })
   })
 })
 
-describe('T-1477 — a durable-answer criterion; a request read-back is covered by its work ticket', () => {
-  // T-1474 = A, wording T-1476 = A: only an ask whose answer must outlive the turn needs a
-  // decision ticket — which lines those are is the judge's call (stubbed here). A request
-  // read-back is confirmed into its impl / design ticket's `### 확인` (PO habit Triage), so
-  // that open work ticket's id beside the ask covers it while the confirm is still pending.
+describe('T-1495 (replaces T-1477) — a read-back, a pick or a consent ask is not a ticket-need verdict', () => {
+  // T-1477 covered a request read-back with its open impl / design ticket and judged which asks
+  // outlive the turn. T-1495: neither exists any more — the question check reads the numbered-body
+  // shape only — so these asks pass whatever tickets stand and whatever the judge names.
   const READBACK = ['요청을 이렇게 이해했어요 (T-010).', '', '- 결정 티켓은 답이 턴 뒤에도 남는 질문에만', '', '이렇게 이해한 게 맞나요?'].join('\n')
-  const READBACK_LIST = ['## 확인', '', '- 요청 이해가 맞는지 답해 주세요 (T-010)'].join('\n')
-  const PENDING = ['## problem', '', '*"사소한 질문마다 결정 티켓을 만들어"*', '', '### 목적', '', '*"분류를 잘해야겠는데"*', '', '### 확인', '', '## acceptance', '']
-  const CONFIRMED = ['## problem', '', '*"사소한 질문마다 결정 티켓을 만들어"*', '', '### 목적', '', '*"분류를 잘해야겠는데"*', '', '### 확인', '', '*"a"*', '', '## acceptance', '']
-  const PO_ONLY = ['## problem', '', 'PO 가 찾은 결함.', '', '### 확인', '', '## acceptance', '']
-  function run(type: string, status: string, body: string[], reply: string, asks: number[]) {
+  const PENDING = ['## problem', '', '*"사소한 질문마다 결정 티켓을 만들어"*', '', '### 확인', '', '## acceptance', '']
+  function run(type: string, status: string, reply: string, asks: number[]) {
     const { root, proj } = makeProject({})
     const p = path.join(proj, 'docs', 'tickets', 'v1.13', 'T-010.md')
-    fs.writeFileSync(p, ['---', 'id: T-010', `type: ${type}`, `status: ${status}`, 'assignee: po', '---', '', ...body].join('\n'))
+    fs.writeFileSync(p, ['---', 'id: T-010', `type: ${type}`, `status: ${status}`, 'assignee: po', '---', '', ...PENDING].join('\n'))
     fs.utimesSync(p, DAY_AGO, DAY_AGO)
     return runHook({
       hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
@@ -1323,47 +1342,141 @@ describe('T-1477 — a durable-answer criterion; a request read-back is covered 
     }, J(asks))
   }
 
-  test.each(['impl', 'design'])('a read-back beside an open %s ticket awaiting its confirm → silent', (type) => {
-    expect(run(type, 'open', PENDING, READBACK, [5])).toBe('')
-    expect(run(type, 'open', PENDING, READBACK_LIST, [3])).toBe('')
+  test.each([['impl', 'open'], ['design', 'open'], ['impl', 'done'], ['ops', 'open']])('a read-back beside a %s ticket (%s) → silent', (type, status) => {
+    expect(run(type, status, READBACK, [5])).toBe('')
   })
 
-  test.each([
-    ['already confirmed', 'impl', 'open', CONFIRMED],
-    ['never user-started', 'impl', 'open', PO_ONLY],
-    ['done', 'impl', 'done', PENDING],
-    ['another type', 'ops', 'open', PENDING],
-  ])('a work ticket %s does not cover it', (_label, type, status, body) => {
-    expect(blockedLines(run(type, status, body, READBACK, [5]))).toEqual([5])
-  })
-
-  test('a work ticket never covers an option set or a pick naming an option', () => {
+  test('an option set and a pick naming an option, a consent ask, a pick of a value → silent, the judge naming them', () => {
     const reply = ['T-010 진행 방식이에요.', '', '- A 훅으로 강제', '- B 지시 + 측정', '', 'A 와 B 중 골라 주세요.'].join('\n')
-    expect(blockedLines(run('impl', 'open', PENDING, reply, [3, 6]))).toEqual([3, 6])
-  })
-
-  test('the replayed fixtures keep their blocks: a consent or standing-rule ask beside a work ticket', () => {
-    // flagged-install-after-qa (29: install beside T-479 impl) and flagged-t949-waiting-item
-    // (24: T-949 design as canon) — work tickets there carry no pending read-back.
-    expect(blockedLines(stop({ 'T-974': DEC(), 'T-479': IMPL(), 'T-938': IMPL() }, fx('flagged-install-after-qa'), {}, {}, J([28, 29])).out)).toEqual([29])
-  })
-
-  test('a pick the judge does not name (an answer for the work at hand only) → silent, options included', () => {
-    // ntf-pm T-1068: the Slack copy's date after a day off — a value, easy to change, no ticket.
-    const reply = ['다음 영업일 기준으로 보낼게요. 권장: A.', '', '- A 다음 영업일', '- B 오늘',
+    expect(run('impl', 'open', reply, [3, 6])).toBe('')
+    expect(stop({}, '테스트 통과했어요. 이 기기에 설치할까요?', {}, {}, J([1])).out).toBe('')
+    const value = ['다음 영업일 기준으로 보낼게요. 권장: A.', '', '- A 다음 영업일', '- B 오늘',
       '', '휴가 다음 날 Slack 복사본 날짜를 다음 영업일로 할까요, 오늘로 할까요?'].join('\n')
-    expect(stop({}, reply, {}, {}, J([])).out).toBe('')
+    expect(stop({}, value, {}, {}, J([3, 6])).out).toBe('')
   })
 
-  test('the judge prompt carries the durable-answer criterion; the reason names it', () => {
+  test('the judge prompt text is the T-1492 wording; the block reason keeps its approved text', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-t1477-'))
     roots.push(home)
     const args = path.join(home, 'args')
-    const { out } = stop({}, '범위를 v1.17 로 미룰까요?', {}, {}, J([1], { ...ON, PRDT_HOME: home, QC_FAKE_ARGS: args }))
+    stop({ 'T-001': DEC('done') }, '범위를 v1.17 로 미룰까요? (T-001)', {}, {}, J([1], { ...ON, PRDT_HOME: home, QC_FAKE_ARGS: args }))
     const prompt = fs.readFileSync(args, 'utf8')
-    expect(prompt).toContain('whose answer must outlive this turn (see DURABLE ANSWERS)')
-    expect(prompt).toContain('DURABLE ANSWERS. A line that chooses, approves or confirms is an ask only when')
-    expect(prompt).toContain('is judged by DURABLE ANSWERS;')
-    expect(JSON.parse(out).reason).toContain('a decision whose answer must outlive the turn')
+    expect(prompt).toContain('`asks` = numbers of lines asking THAT USER to choose, approve or confirm, whatever wording, whoever the outcome is for:')
+    expect(prompt).toContain('RE-ASKS. After reply, input may list closed decisions reply cites')
+    expect(prompt).not.toContain('DURABLE ANSWERS')
+    const reason = JSON.parse(stop({}, SHAPED, {}, {}, J([])).out).reason as string
+    expect(reason).toContain('[prdt question check] line 10 asks to confirm a body of 2 numbered groups (3 lines) with no open `type: decision` id in the reply. Cite the decision holding this body; none open → open one, body under its `### 본문`.')
+  })
+})
+
+describe('T-1495 — the numbered-body shape rule (R4), no model', () => {
+  const SHAPE_FIXTURE = path.join(CORE_ROOT, 'test', 'fixtures', 'question-check-shape', 'cases.json')
+  type Case = { n: number; label: string; rule: string; type: string; text: string }
+  const cases: Case[] = JSON.parse(fs.readFileSync(SHAPE_FIXTURE, 'utf8'))
+  // the fake judge names NOTHING (QC_FAKE_ASKS empty): a block can only come from the shape rule
+  const NOTHING = J([])
+  const blocks = (reply: string, extra: Record<string, unknown> = {}, env = NOTHING) => {
+    const out = stop({}, reply, extra, {}, env).out
+    return out ? JSON.parse(out).decision === 'block' : false
+  }
+
+  test('the fixture holds the 55 replayed inputs, with no home path or account name left in it', () => {
+    expect(cases.length).toBe(55)
+    expect(cases.filter(c => c.rule === 'R4').map(c => c.label)).toEqual(['T-906', 'T-1448', 'T-1453', 'T-1456', 'T-1457', 'T-1476'])
+    const raw = fs.readFileSync(SHAPE_FIXTURE, 'utf8')
+    expect(raw).not.toMatch(/shawn|션님|\/Users\/(?!USER\b)/i)
+  })
+
+  test('replay, empty tickets dir, fake judge naming nothing: 44 R2·R3 cases 0 blocks, 5 two-group R4 cases blocked, T-1453 and R1 not; identical over 3 runs', () => {
+    const { root, proj } = makeProject({})
+    const transcript_path = writeTranscript(root, 'x')
+    const run = (c: Case) => {
+      const out = runHook({
+        session_id: 's', hook_event_name: 'Stop', agent_type: 'prdt-po', stop_hook_active: false,
+        cwd: proj, transcript_path, last_assistant_message: c.text,
+      }, NOTHING)
+      return out ? JSON.parse(out).decision === 'block' : false
+    }
+    const runs = [0, 1, 2].map(() => cases.map(run))
+    expect(runs[1]).toEqual(runs[0])
+    expect(runs[2]).toEqual(runs[0])
+    const blocked = cases.filter((_, k) => runs[0][k])
+    expect(blocked.map(c => c.label)).toEqual(['T-906', 'T-1448', 'T-1456', 'T-1457', 'T-1476'])
+    expect(cases.filter((c, k) => runs[0][k] && c.rule !== 'R4')).toEqual([])
+    expect(cases.filter(c => c.rule === 'R2R3' || c.rule === 'R3').length).toBe(44)
+    expect(runs[0][cases.findIndex(c => c.label === 'T-1453')]).toBe(false)
+  }, 240_000)
+
+  test('a draft with the shape is flagged on PostToolUse once per turn, with no model call', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-t1495-'))
+    roots.push(home)
+    const env = J([], { ...ON, PRDT_HOME: home, QC_FAKE_CALLS: path.join(home, 'calls') })
+    const { root, proj } = makeProject({})
+    const transcript_path = writeTranscript(root, 'x')
+    const post = () => runHook({
+      session_id: 's1', prompt_id: 'p1', hook_event_name: 'PostToolUse', agent_type: 'prdt-po', tool_name: 'Bash',
+      tool_input: { command: `prdt wordlist check --lang ko - <<'EOF'\n${SHAPED}\nEOF` }, tool_response: { stdout: '' },
+      cwd: proj, transcript_path,
+    }, env)
+    const first = JSON.parse(post()).hookSpecificOutput.additionalContext as string
+    expect(first.startsWith(`${TAG} line ${SHAPED_ASK_LINE} asks`)).toBe(true)
+    expect(first.endsWith('\nFix the draft before you send it.')).toBe(true)
+    expect(post()).toBe('')
+    expect(fs.existsSync(env.QC_FAKE_CALLS as string)).toBe(false)
+  })
+
+  const variants: Array<[string, string, boolean]> = [
+    ['the shape + an ask sentence', SHAPED, true],
+    ['no ask sentence (a report after the confirm)', SHAPED.replace('이대로 확정할까요?', '이대로 확정했어요.'), false],
+    ['one group only, many lines (single-group release notes, T-1453 shape)', ['릴리스 노트예요.', '1-1. 가', '1-2. 나', '1-3. 다', '이대로 확정할까요?'].join('\n'), false],
+    ['two groups, one line each', ['**1. 가**', '1-1. 가', '**2. 나**', '2-1. 나', '이대로 확정할까요?'].join('\n'), false],
+    ['a range 1-1~2-3 spans two groups with 2+ lines in the first', ['본문 1-1~1-3 과 2-1 이에요.', '이대로 확정할까요?'].join('\n'), true],
+    ['dates and versions only', '11-04 데일리, v1.16-2 빌드, PR 2-3 개 남음. 진행할까요?', false],
+    ['the body inside a fence', ['```', '**1. 가**', '1-1. 가', '1-2. 나', '**2. 나**', '2-1. 다', '```', '이대로 확정할까요?'].join('\n'), false],
+    ['the body inside a blockquote', ['> **1. 가**', '> 1-1. 가', '> 1-2. 나', '> **2. 나**', '> 2-1. 다', '이대로 확정할까요?'].join('\n'), false],
+    ['the ask sentence only inside a quote or inline code', SHAPED.replace('이대로 확정할까요?', '`이대로 확정할까요?` 라고 묻지 않아요.'), false],
+    ['option rows are alternatives of one line, not two lines', ['**1. 방식**', '| A. 1-1 으로 | 가 |', '| B. 1-2 로 | 나 |', '**2. 이름**', '2-1 은 그대로예요.', '골라 주세요.'].join('\n'), false],
+  ]
+  for (const [label, reply, want] of variants) {
+    test(`${label} → ${want ? 'blocked' : 'silent'}`, () => {
+      expect(blocks(reply)).toBe(want)
+    })
+  }
+
+  // QA d-v1163-t1495-qa1 (2): no body is being confirmed in these
+  const falsePositives: Array<[string, string]> = [
+    ['a numbered report ending with a rhetorical question', ['**1. 한 일**', '1-1. 훅을 고쳤어요', '1-2. 테스트를 늘렸어요', '**2. 남은 일**', '2-1. 문서를 맞춰요', '2-2. 확인해요', '', '이 정도면 충분하지 않을까요?'].join('\n')],
+    ['a numbered report ending with a next-step ask naming a group line', ['**1. 한 일**', '1-1. 훅을 고쳤어요', '1-2. 테스트를 늘렸어요', '**2. 남은 일**', '2-1. 문서를 맞춰요', '2-2. 확인해요', '', '다음으로 2-1 진행할까요?'].join('\n')],
+    ['bold group heads, a cross-reference to another ticket\'s numbering, an A/B pick citing a closed ticket', ['**1. 배경**', '**2. 방식**', '', 'T-1453 의 1-1 ~ 1-4 에서 이미 다뤘어요.', '', 'A 와 B 중 어느 쪽인가요? (T-1495)'].join('\n')],
+  ]
+  for (const [label, reply] of falsePositives) {
+    test(`${label} → silent`, () => {
+      expect(blocks(reply)).toBe(false)
+    })
+  }
+
+  // QA d-v1163-t1495-qa2 + PO decision: a phrase that asks the user to confirm the body counts
+  const BODY = ['**1. 한 일**', '1-1. 훅을 고쳤어요', '1-2. 테스트를 늘렸어요', '**2. 남은 일**', '2-1. 문서를 맞춰요', ''].join('\n')
+  test.each([
+    '이대로 괜찮을까요?', '반영할까요?', 'OK 주시면 반영할게요.', 'Please confirm.', '승인해 주세요.',
+    '이대로 진행해도 될까요?', '컨펌 부탁드려요.', '확정이면 말씀 주세요.', '동의하시나요?', 'Do you approve?',
+    '이대로 갈게요, 이견 있으면 말해 주세요.', '진행해도 되겠습니까?', '괜찮으시죠?', '답 주세요.',
+  ])('confirm phrasing after a numbered body: %s → blocked', (ask) => {
+    expect(blocks(BODY + ask)).toBe(true)
+  })
+  test.each(['1-1 과 2-1 중 뭘 먼저 할까요?', '1-1 은 이대로 확정할까요?', '다음으로 2-1 진행할까요?', '이 정도면 충분하지 않을까요?'])(
+    'a g-n token in the ask sentence, or a rhetorical question: %s → silent', (ask) => {
+      expect(blocks(BODY + ask)).toBe(false)
+    })
+
+  test('g-n tokens tied to another ticket or document are not this reply\'s groups; the same tokens untied are', () => {
+    expect(blocks(['**1. 가**', 'T-1453 의 1-1 ~ 1-4 와 PRD.md 의 2-1, 2-2 를 봤어요.', '이대로 확정할까요?'].join('\n'))).toBe(false)
+    expect(blocks(['**1. 가**', '1-1 ~ 1-4 와 2-1, 2-2 를 봤어요.', '이대로 확정할까요?'].join('\n'))).toBe(true)
+  })
+
+  test('an open decision id anywhere in the reply, even far from the ask, covers it; a closed one does not', () => {
+    const far = ['T-301 은 열려 있어요.', '', SHAPED].join('\n')
+    expect(stop({ 'T-301': DEC() }, far, {}, {}, NOTHING).out).toBe('')
+    expect(blockedLines(stop({ 'T-301': DEC('done') }, far, {}, {}, NOTHING).out)).toEqual([SHAPED_ASK_LINE + 2])
   })
 })
