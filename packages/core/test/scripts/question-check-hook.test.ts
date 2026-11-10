@@ -202,7 +202,7 @@ describe('T-1116 — the language clause', () => {
     const r = JSON.parse(out).reason
     // T-1390 (T-1425 = A): the language rides the one Stop closing line, the sent reply stays
     expect(r.endsWith('\nThe sent reply stays: send only the fix in lang=ko, never the reply again.')).toBe(true)
-    expect(r).toContain('a body to confirm goes in it, numbered')
+    expect(r).toContain('Cite the decision holding this body')
   })
   test('no language known → the T-990 reason, no clause', () => {
     const { out } = stop({}, SHAPED, {}, {}, langEnv())
@@ -342,10 +342,9 @@ describe('T-1379 — the model judge: who pays, how it fails, what is kept of it
     const args = fs.readFileSync(env.QC_FAKE_ARGS as string, 'utf8')
     const prompt = args.slice(args.indexOf('You check one chat reply'))
     expect(prompt).toContain('proceed-confirm')
-    expect(prompt).toContain('지금 v1.17 Define을 시작할까요?')
-    expect(prompt).toContain('T-1362 는 다시 묻지 않아요')
-    expect(prompt).toContain('설치할까요?') // still listed as an ask
-    expect(prompt).toMatch(/still an ask when the action needs the user's consent \(install, push, deploy, destructive git/)
+    expect(prompt).toContain('proceed-confirm: whether assistant starts or continues its own next step in agreed work, no alternatives, no consent-needing action;')
+    expect(prompt).toContain('statement that earlier decision or ticket id is settled, kept or not asked again;')
+    expect(prompt).toContain('confirm of action needing user\'s consent: install, push, deploy, destructive git, delete, send to other people, spend money.')
     expect(prompt).not.toContain('say whether to go ahead')
   })
 
@@ -628,9 +627,9 @@ describe('T-1285 — an ask the judge names as asking a recorded decision again 
 
   test('T-1390 (T-1425 = A) — the reason is the approved wording, byte for byte, plus the Stop closing line', () => {
     // docs/productune/artifacts/v1.16/t1390-wording-draft.md §2 (337 B) + §4 SENT_TAIL (65 B)
-    const TO_BE = '[prdt re-ask check] line %s asks again a decision already answered: %s (`prdt decisions find <id>`). Act on the recorded answer and cite it; a ticket opened this turn for that ask → `dropped` naming the record. Ask again only when the record is stale or conflicting, its state changed, or a consent gate needs live words — say which.'
+    const TO_BE = '[prdt re-ask check] line %s asks again a decision already answered: %s (`prdt decisions find <id>`). Act on the recorded answer and cite it; a ticket opened this turn for that ask → `dropped` naming the record. Ask again only when the record is stale or conflicting, its state changed, or a consent gate needs live words — beside the ask: which, + what record lacks.'
     const SENT = 'The sent reply stays: send only the fix%s, never the reply again.'
-    expect(Buffer.byteLength(TO_BE)).toBe(337)
+    expect(Buffer.byteLength(TO_BE)).toBe(370)
     expect(Buffer.byteLength(SENT)).toBe(65)
     const reason = JSON.parse(run(both, REASK_REPLY, [[12, 'T-1313']])).reason as string
     const parts = ['12', 'T-1313']
@@ -1298,10 +1297,10 @@ describe('T-1470 — the re-ask subject is the judge\'s reading of meaning, shar
       const reply = fx('readback-change-t001').trimEnd()
       stopOut(project(both, reply), reply, e)
       const prompt = fs.readFileSync(e.QC_FAKE_ARGS, 'utf8')
-      expect(prompt).toContain("- each choice or approval listed under a heading saying it waits for the user's answer.")
+      expect(prompt).toContain("- each choice or approval listed under heading saying it waits for user's answer;")
       expect(prompt).not.toContain('- each item listed under a heading')
-      expect(prompt).toContain('is a re-ask too. Not a re-ask, even on that subject and even when it keeps or changes the '
-        + "recorded answer: a read-back of the user's words that the record does not hold (「오늘 「…」라고 하신 건, …맞을까요?」). ")
+      expect(prompt).toContain('- ask whose stated ground is something record lacks — user words after record, or instance or '
+        + 'observation newer than record — even same subject, even keeping or changing recorded answer;')
       expect(prompt).not.toContain('is of words the user said after the decision closed')
     })
 
@@ -1356,17 +1355,17 @@ describe('T-1495 (replaces T-1477) — a read-back, a pick or a consent ask is n
     expect(stop({}, value, {}, {}, J([3, 6])).out).toBe('')
   })
 
-  test('the judge prompt text is byte-identical to before T-1495 (the designer owns its wording); the block reason keeps its approved text', () => {
+  test('the judge prompt text is the T-1492 wording; the block reason keeps its approved text', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'qc-t1477-'))
     roots.push(home)
     const args = path.join(home, 'args')
     stop({ 'T-001': DEC('done') }, '범위를 v1.17 로 미룰까요? (T-001)', {}, {}, J([1], { ...ON, PRDT_HOME: home, QC_FAKE_ARGS: args }))
     const prompt = fs.readFileSync(args, 'utf8')
-    expect(prompt).toContain('whose answer must outlive this turn (see DURABLE ANSWERS)')
-    expect(prompt).toContain('DURABLE ANSWERS. A line that chooses, approves or confirms is an ask only when')
-    expect(prompt).toContain('is judged by DURABLE ANSWERS;')
+    expect(prompt).toContain('`asks` = numbers of lines asking THAT USER to choose, approve or confirm, whatever wording, whoever the outcome is for:')
+    expect(prompt).toContain('RE-ASKS. After reply, input may list closed decisions reply cites')
+    expect(prompt).not.toContain('DURABLE ANSWERS')
     const reason = JSON.parse(stop({}, SHAPED, {}, {}, J([])).out).reason as string
-    expect(reason).toContain('[prdt question check] line 10 asks the user a decision whose answer must outlive the turn (PO habit Triage) with no open `type: decision` id beside it. Open one per ask (a waiting item: `assignee: user` counts; a body to confirm goes in it, numbered) and cite its id beside the ask.')
+    expect(reason).toContain('[prdt question check] line 10 asks to confirm a body of 2 numbered groups (3 lines) with no open `type: decision` id in the reply. Cite the decision holding this body; none open → open one, body under its `### 본문`.')
   })
 })
 

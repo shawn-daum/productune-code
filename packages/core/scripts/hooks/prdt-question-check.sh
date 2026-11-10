@@ -240,11 +240,9 @@ def tickets_homes(root):
 
 
 # Wording: T-990 = A (2026-10-06); re-send clause T-1302 (inject-edit); criterion clause T-1476 = A (draft 3).
-# %s = the uncovered asks' line numbers ("3, 12").
+# %s = the uncovered asks' line numbers ("3, 12"); %d = group count; %d = numbered-line count.
 QUESTION_CHECK_REASON = (
-    "[prdt question check] line %s asks the user a decision whose answer must outlive the turn (PO habit "
-    "Triage) with no open `type: decision` id beside it. Open one per ask "
-    "(a waiting item: `assignee: user` counts; a body to confirm goes in it, numbered) and cite its id beside the ask."
+    "[prdt question check] line %s asks to confirm a body of %d numbered groups (%d lines) with no open `type: decision` id in the reply. Cite the decision holding this body; none open → open one, body under its `### 본문`."
 )
 # T-1116: the language clause (since T-1390 inside SENT_TAIL, Stop only; wording settled
 # under the discipline-wording module, T-1245). %s = the stored chat language; empty when none is known.
@@ -282,10 +280,7 @@ RUN_BUDGET_S = 5
 # docs/productune/artifacts/v1.16/lane-records-build-entry-step.md §B To-Be).
 # %s = line numbers, record ids, language clause.
 REASK_REASON = (
-    "[prdt re-ask check] line %s asks again a decision already answered: %s (`prdt decisions find <id>`). "
-    "Act on the recorded answer and cite it; a ticket opened this turn for that ask → `dropped` naming the "
-    "record. Ask again only when the record is stale or conflicting, its state changed, or a consent gate "
-    "needs live words — say which."
+    "[prdt re-ask check] line %s asks again a decision already answered: %s (`prdt decisions find <id>`). Act on the recorded answer and cite it; a ticket opened this turn for that ask → `dropped` naming the record. Ask again only when the record is stale or conflicting, its state changed, or a consent gate needs live words — beside the ask: which, + what record lacks."
 )
 # T-1285 (2) / T-1364 = C: one reply whose asks carry this many distinct OPEN
 # decision ids (each id inside an ask's own item or section) is blocked once.
@@ -519,8 +514,8 @@ def _gl_val(x):
 
 
 def numbered_shape(vis):
-    """True when the visible lines carry 2+ numbered groups and at least one group
-    has 2+ numbered lines. Lines of one group that are split one per option row
+    """(groups, numbered lines) when the visible lines carry 2+ numbered groups and at
+    least one group has 2+ numbered lines; else None. Lines of one group that are split one per option row
     (`A.` · `| A.` …) are alternatives to pick from, so that group counts as one line."""
     groups, members, per_option = set(), {}, []
 
@@ -555,7 +550,9 @@ def numbered_shape(vis):
         rows = [r for r in rows if r]
         if len(rows) >= 2 and len(set(rows)) >= 2 and all(len(r) == 1 for r in rows):
             members[g] = {"variant"}
-    return len(groups) >= 2 and any(len(ls) >= 2 for ls in members.values())
+    if len(groups) >= 2 and any(len(ls) >= 2 for ls in members.values()):
+        return len(groups), sum(len(ls) for ls in members.values())
+    return None
 
 
 def is_body_ask(text):
@@ -584,7 +581,8 @@ def shape_check(lines, tickets, unknown, reasked=frozenset()):
     an ask sentence, and cites no open `type: decision` id anywhere; else None.
     The reason names the ask-sentence lines. No model, no turn exemption."""
     vis = visible_lines(lines)
-    if not numbered_shape(vis):
+    shape = numbered_shape(vis)
+    if not shape:
         return None
     asked = [i + 1 for i, _, ln in vis
              if ASK_SENTENCE_RE.search(ln) and is_body_ask(ln) and not reasked_section(lines, i, reasked)]
@@ -596,82 +594,37 @@ def shape_check(lines, tickets, unknown, reasked=frozenset()):
     shown = ", ".join(str(n) for n in asked[:LIST_CAP])
     if LIST_CAP < len(asked):
         shown += ", +%d more" % (len(asked) - LIST_CAP)
-    return QUESTION_CHECK_REASON % shown
+    return QUESTION_CHECK_REASON % ((shown,) + shape)
 
 
 # T-1379 (T-1380 = D): the judge. Model-facing text for a separate `claude -p`
 # call, never injected into the PO's input. First line, Boundary and DURABLE
 # ANSWERS: T-1476 = A draft 2, verbatim (T-1477).
 JUDGE_SYSTEM_PROMPT = (
-    "You check one chat reply that an AI product owner is about to send to its user, the person it "
-    "works for. Find every line where the reply asks THAT USER to decide something whose answer must outlive "
-    "this turn (see DURABLE ANSWERS): choose between options, approve a plan, draft, wording or an action "
-    "that needs the user's consent, or confirm a read-back the assistant needs before it continues.\n"
-    "These are asks, whatever their wording and even when what is decided is meant for other people "
-    "(a screen users will see, a mail customers will get):\n"
-    "- a question or request whose answer is the user's own choice or approval: 「A 와 B 중 어느 쪽으로 "
-    "할지 알려 주세요」, 「이 문구로 괜찮은지 알려 주세요」, 「이대로 괜찮으면 답해 주세요」, 「설치할까요?」, "
-    "「승인해 주세요」, 「컨펌해 주세요」, \"Should I ship it?\", \"Is that right?\";\n"
-    "- options laid out for the user to pick from (A / B lines with a recommendation): give the first "
-    "option line;\n"
-    "- each choice or approval listed under a heading saying it waits for the user's answer.\n"
-    "These are not asks:\n"
-    "- asking the user for a fact or information (an address, a log, whether something works on their "
-    "machine, their schedule, a version, how to do something, a name they remember): 「이름이 떠오르시면 "
-    "알려 주세요」, 「에러 메시지를 알려 주세요」;\n"
-    "- asking the user to look at, try or check something and report what they see: 「화면에 버튼이 "
-    "보이는지 봐 주세요」, 「다시 열어서 확인해 주세요」;\n"
-    "- telling the user how to do a step: 「거기서 Submit 만 눌러 주시면 돼요」, 「터미널에서 이 명령을 "
-    "실행해 주세요」;\n"
-    "- asking what someone else (a manager, another team, a customer) decided or will decide, or asking "
-    "the user to ask, tell or reply to someone else;\n"
-    "- a proceed-confirm: a line only asking whether the assistant should start or continue its OWN next "
-    "step inside the work already agreed (「지금 v1.17 Define을 시작할까요?」, 「진행할까요?」, 「이어서 "
-    "할까요?」, \"Shall I start the next step?\"). No alternatives are offered and nothing needs the "
-    "user's consent. Boundary: it is still an ask when the action needs the user's consent (install, push, "
-    "deploy, destructive git, deleting, sending to other people, spending money); one that offers "
-    "alternatives or asks approval of a drafted body is judged by DURABLE ANSWERS;\n"
-    "- a statement that cites an earlier decision or ticket id (T-1362) to say it is settled, kept, or "
-    "will not be asked again (「T-1362 는 다시 묻지 않아요」): it asks nothing, even beside an id;\n"
-    "- offers (「열어 드릴까요?」, \"Would you like me to...\"), feedback or closing questions "
-    "(「어떠셨어요?」), rhetorical questions;\n"
-    "- a question or request that is quoted, reported, given as an example, inside code or a "
-    "blockquote;\n"
-    "- a status table, report or status line, and what the assistant says it will do or show next "
-    "(「다음에 보여 드릴게요」);\n"
-    "- an empty line.\n"
-    "DURABLE ANSWERS. A line that chooses, approves or confirms is an ask only when later work or a later "
-    "session relies on its answer:\n"
-    "- scope: what a version or task includes or leaves out, or entering a stage (「v2.6 Build 로 들어갈까요?」);\n"
-    "- direction: which approach the product or project takes from here (「커밋 규약을 훅으로 강제할지, 지시 + "
-    "측정으로 갈지 골라 주세요」);\n"
-    "- a standing rule: a convention, policy or instruction line that governs future work;\n"
-    "- a choice costly to reverse: deleting, migrating data, publishing, sending to other people, spending "
-    "money, renaming what users already know;\n"
-    "- approving what real users will see before it ships (screens, messages, product terms) or a change to "
-    "injected instruction text; reversing a recorded decision;\n"
-    "- an action that needs the user's consent, and a read-back of the user's request the assistant needs "
-    "confirmed before it starts.\n"
-    "Any other choose, approve or confirm line is not an ask, options and a recommendation included: its "
-    "answer serves only the work at hand and is easy to change later — one value (a date, a name, a number, "
-    "a label), how to carry out a direction already settled, a small fix the next step can change, a confirm "
-    "only to continue the current task (「휴가 다음 날 Slack 복사본 날짜를 다음 영업일로 할까요, 오늘로 할까요?」, "
-    "「테스트를 지금 돌릴까요, 커밋 뒤에 돌릴까요?」, 「파일 이름은 report.html 로 할게요, 괜찮으세요?」). Unsure "
-    "whether later work relies on the answer → it is an ask.\n"
-    "Lines come as `N| text`. Answer `asks` with the ask line numbers; [] when there is none.\n"
-    "RE-ASKS. After the reply the input may list closed decisions the reply cites, each with the question "
-    "it settled and the user's recorded answer. For each ask line, decide by meaning whether it asks the "
-    "user that same question again: the same choice between the same options, the same yes/no, or whether "
-    "to keep or change the recorded answer. Each one goes in `reasks` as {line, id}. Not a re-ask: an ask "
-    "that only cites a closed decision as its ground, background or source, such as approval of a new body "
-    "or plan built on the recorded answer, a new decision about something that answer did not settle, or a "
-    "read-back of the user's newest words. An id cited beside an ask never makes it a re-ask by itself. "
-    "When a decision's question is only a short name, judge by the subject the recorded answer settles: an "
-    "ask about that same subject, in other words, is a re-ask. Asking the user to confirm the recorded "
-    "answer itself (「…하는 게 맞을까요?」 about what is already recorded) is a re-ask too. Not a re-ask, even "
-    "on that subject and even when it keeps or changes the recorded answer: a read-back of the user's words "
-    "that the record does not hold (「오늘 「…」라고 하신 건, …맞을까요?」). "
-    "`reasks` is [] when none, or when no decisions are listed."
+    "You check one chat reply an AI product owner is about to send to its user, the person it works for. Lines come as `N| text`.\n"
+    "`asks` = numbers of lines asking THAT USER to choose, approve or confirm, whatever wording, whoever the outcome is for:\n"
+    "- question or request whose answer is user's own choice or approval: option, plan, draft, wording, action;\n"
+    "- options laid out to pick from (lettered lines, recommendation): first option line;\n"
+    "- each choice or approval listed under heading saying it waits for user's answer;\n"
+    "- confirm of action needing user's consent: install, push, deploy, destructive git, delete, send to other people, spend money.\n"
+    "Outside `asks`:\n"
+    "- request for fact or information;\n"
+    "- request to look, try or check and report;\n"
+    "- how to do a step;\n"
+    "- what someone else decided or will decide; request to ask, tell or reply to someone else;\n"
+    "- proceed-confirm: whether assistant starts or continues its own next step in agreed work, no alternatives, no consent-needing action;\n"
+    "- statement that earlier decision or ticket id is settled, kept or not asked again;\n"
+    "- offer, feedback or closing question, rhetorical question;\n"
+    "- quoted, reported or example text, code, blockquote;\n"
+    "- status table, report, status line, what assistant will do or show next;\n"
+    "- empty line.\n"
+    "`asks` = [] when none.\n"
+    "RE-ASKS. After reply, input may list closed decisions reply cites, each with question it settled and user's recorded answer. Ask line asking user same question again → `reasks` {line, id}: same choice between same options, same yes/no, keep or change recorded answer, confirm recorded answer itself. Decision's question only short name → judge by subject recorded answer settles; same subject, other words → re-ask.\n"
+    "Outside `reasks`:\n"
+    "- ask citing closed decision as ground, background or source: approval of new body or plan built on recorded answer, new decision on what answer left open;\n"
+    "- ask whose stated ground is something record lacks — user words after record, or instance or observation newer than record — even same subject, even keeping or changing recorded answer;\n"
+    "- id cited beside ask, by itself.\n"
+    "`reasks` = [] when none, or when no decisions listed."
 )
 JUDGE_SCHEMA = ('{"type":"object","properties":{"asks":{"type":"array","items":{"type":"integer"}},'
                 '"reasks":{"type":"array","items":{"type":"object","properties":{"line":{"type":"integer"},'
