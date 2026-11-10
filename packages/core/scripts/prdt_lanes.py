@@ -1097,8 +1097,8 @@ def _lane_fill(lane, ids, tickets, in_flight, pos):
             continue
         if r["type"] == "decision":
             lane["blockers"].append({"id": t, "kind": "decision"})
-        elif r["assignee"] == "user":
-            lane["blockers"].append({"id": t, "kind": "request"})
+        elif r["assignee"] == "user" or work_ticket_waits_on_options(r["type"], tickets[t][1]):
+            lane["blockers"].append({"id": t, "kind": "request"})  # T-1491: options fork waits on the user too
 
     def satisfied(d):
         return d not in tickets or tickets[d][0]["status"] in ("done", "dropped")
@@ -1106,7 +1106,7 @@ def _lane_fill(lane, ids, tickets, in_flight, pos):
     # `next` stays the dispatch-gate-facing value (T-1147): only when nothing is running.
     ready = [t for t in ids if tickets[t][0]["status"] == "open"
              and tickets[t][0]["type"] != "decision" and tickets[t][0]["assignee"] != "user"
-             and t not in in_flight and all(satisfied(d) for d in tickets[t][0]["deps"])]
+             and t not in in_flight and not work_ticket_waits_on_options(tickets[t][0]["type"], tickets[t][1]) and all(satisfied(d) for d in tickets[t][0]["deps"])]
     lane["ready"] = sorted(ready, key=lambda t: (pos.get(t, math.inf), _ticket_num_key(t)))
     lane["ready_owner"] = {t: tickets[t][0]["assignee"] for t in lane["ready"]}
     if not lane["working"]:
@@ -1256,6 +1256,91 @@ def _resource_project_slug(root):
 SCHEDULE_DISPATCHABLE = ("designer", "developer", "qa")
 
 
+# T-1491 (T-1490 rule R2): an ask laying out alternatives during work keeps its options
+# table in the work ticket's `## options` and the user's answer in a `### 확인` slice
+# INSIDE that section (the request read-back under `## problem` is not the answer). A work
+# ticket (design|impl|qa) holding a filled option row and no user quote in that slice waits on
+# the user, so the ask stays in the "waiting on user" list. Quote shapes and the
+# `### 확인` / `### confirm` label are the dispatch gate's own (prdt-dispatch-gate.sh).
+WORK_TICKET_TYPES = ("design", "impl", "qa")
+_OPT_H2_RE = re.compile(r"^##[ \t]+(options|대안)[ \t]*$", re.I)
+_CONFIRM_H3_RE = re.compile(r"^###[ \t]+(확인|confirm)([ \t(:,./?-]|$)", re.I)
+_TABLE_SEP_CELL_RE = re.compile(r"^:?-+:?$")
+_QUOTE_RE = re.compile("\x01[^\x01\x02]*[^ \t\x01\x02][^\x01\x02]*\x02"
+                       "|\x03[^\x03\x04]*[^ \t\x03\x04][^\x03\x04]*\x04")
+
+
+def _line_holds_user_quote(line):
+    l = re.sub(r"`[^`]*`", " ", line)
+    l = l.replace('*"', "\x01").replace('"*', "\x02").replace("\u201c", "\x01").replace("\u201d", "\x02")
+    l = l.replace("\u300c", "\x03").replace("\u300d", "\x04")
+    return bool(_QUOTE_RE.search(l))
+
+
+def ticket_body_waits_on_options(text):
+    """True when the ticket text has a filled option row under `## options` and no
+    user quote inside that section's own `### 확인` / `### confirm` slice. The
+    `## problem` → `### 확인` (the request read-back) is never read here (T-1491)."""
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        text = text[end + 4:] if end >= 0 else text
+    in_fence = False
+    in_options = False
+    in_confirm = False
+    seen_sep = False
+    pending = None   # last table row, not yet known to be a header (a separator right after makes it one)
+    filled = False
+    quoted = False
+
+    def flush():
+        nonlocal pending, filled
+        if pending is not None and seen_sep and any(pending):
+            filled = True
+        pending = None
+    for ln in text.splitlines():
+        if re.match(r"^[ \t]*(```|~~~)", ln):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if re.match(r"^##[ \t]", ln):
+            flush()
+            in_options = bool(_OPT_H2_RE.match(ln.rstrip()))
+            in_confirm = False
+            seen_sep = False
+            continue
+        if re.match(r"^###[ \t]", ln):
+            flush()
+            in_confirm = bool(_CONFIRM_H3_RE.match(ln))
+            continue
+        if ln.startswith("#"):
+            continue
+        if in_options and in_confirm and _line_holds_user_quote(ln):
+            quoted = True
+        if in_options and ln.lstrip().startswith("|"):
+            cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+            if all(_TABLE_SEP_CELL_RE.match(c) for c in cells if c) and any(cells):
+                pending = None   # the row above was a header
+                seen_sep = True
+                continue
+            flush()
+            pending = cells
+        elif in_options:
+            flush()
+    flush()
+    return filled and not quoted
+
+
+def work_ticket_waits_on_options(ttype, path):
+    """The schedule's read of `ticket_body_waits_on_options` for one ticket file."""
+    if ttype not in WORK_TICKET_TYPES:
+        return False
+    try:
+        return ticket_body_waits_on_options(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
 def compute_schedule(root, tickets=None, line=None):
     """The schedule as one dict (the `--json` shape; text renders from it).
     `tickets` = a `_schedule_tickets()` result the caller already holds."""
@@ -1334,7 +1419,8 @@ def compute_schedule(root, tickets=None, line=None):
         prd_order = (h4.get(m.group(2)) if m and open_vkey is not None and m_line == line
                      and _version_id_canon(m_ver) == open_vkey else None)
         waits = sorted(preds[t], key=_ticket_num_key)
-        if r["type"] == "decision" or r["assignee"] == "user":
+        if (r["type"] == "decision" or r["assignee"] == "user"
+                or work_ticket_waits_on_options(r["type"], p)):
             state = "waiting-user"
         elif r["assignee"] not in SCHEDULE_DISPATCHABLE:
             state = "po"

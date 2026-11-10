@@ -37,6 +37,7 @@ from prdt_lanes import (
     DOCS_SHARED,
     DocsLayoutError,
     LANE_GATE_PATH_RE,
+    work_ticket_waits_on_options,
     LANE_HEADING_RE,
     LANE_NAME_RE,
     LEGACY_ASSIGNEE_RE,
@@ -5762,9 +5763,11 @@ def cmd_tickets_new(args, root):
     # regardless of type. A `decision` ticket's `options` is seeded with the
     # annex's empty table shape (TICKET_OPTIONS_TABLE_SCAFFOLD), not a bare
     # heading — the PO fills cells, never recalls the shape from memory.
-    body_keys = [k for k in TICKET_FRAME_KEYS if k != "options" or ttype == "decision"]
+    # T-1491: `--options` seeds the same table on a work ticket (R2 of T-1490).
+    with_options = ttype == "decision" or bool(getattr(args, "options", False))
+    body_keys = [k for k in TICKET_FRAME_KEYS if k != "options" or with_options]
     def _section(k):
-        if k == "options" and ttype == "decision":
+        if k == "options" and with_options:
             return f"## options\n\n{TICKET_OPTIONS_TABLE_SCAFFOLD}\n"
         if k == "outcome" and ttype == "decision":
             return f"## outcome\n\n{TICKET_DECISION_OUTCOME_SCAFFOLD}"
@@ -5923,6 +5926,43 @@ def fmt_ticket_body(body, ttype, status):
 # T-1299: optional frontmatter key `request: R-NNN` — the external request
 # record a ticket serves (ntf-pm reports read request → work links from it).
 TICKET_REQUEST_RE = re.compile(r"^R-\d+$")
+
+
+def cmd_tickets_options(args, root):
+    """`prdt tickets options <id…>` (T-1491) — put the `## options` table frame into
+    an existing ticket, between `problem` and the next frame key. A ticket that
+    already has an `options` key is left untouched."""
+    con = open_db(root)
+    reindex_tickets(root, con)
+    if not args.ids:
+        sys.exit("usage: prdt tickets options <id…>")
+    hit = dict(con.execute(
+        "SELECT id, path FROM tickets WHERE id IN (%s)" % ",".join("?" * len(args.ids)),
+        args.ids).fetchall())
+    failed = False
+    after = TICKET_FRAME_KEYS[TICKET_FRAME_KEYS.index("options") + 1:]
+    for tid in args.ids:
+        if tid not in hit:
+            print(f"{tid} (not found)")
+            failed = True
+            continue
+        path = root / hit[tid]
+        text = path.read_text(encoding="utf-8")
+        header, body = split_ticket_header_body(text)
+        spans = [(m.start(), resolve_frame_heading(m.group(1))[0]) for m in H2_RE.finditer(body)]
+        if any(k == "options" for _, k in spans):
+            print(f"{tid}: already has options")
+            continue
+        frame = f"## options\n\n{TICKET_OPTIONS_TABLE_SCAFFOLD}\n"
+        at = next((pos for pos, k in spans if k in after), None)
+        if at is None:
+            new_body = body + ("" if body.endswith("\n\n") else "\n" if body.endswith("\n") else "\n\n") + frame
+        else:
+            new_body = body[:at] + frame + body[at:]
+        atomic_write_text(path, header + new_body)
+        print(f"{tid}: options frame added")
+    if failed:
+        sys.exit(1)
 
 
 def cmd_tickets_fmt(args, root):
@@ -6852,6 +6892,9 @@ def cmd_tickets(args):
     if getattr(args, "action", None) == "fmt":
         cmd_tickets_fmt(args, root)
         return
+    if getattr(args, "action", None) == "options":
+        cmd_tickets_options(args, root)
+        return
     if getattr(args, "action", None) == "prior":
         cmd_tickets_prior(args, root)
         return
@@ -6910,6 +6953,9 @@ def cmd_tickets(args):
         all_ids = {r[0] for r in con.execute("SELECT id FROM tickets")}
         rows = [r for r in rows if r[3] == "open" and
                 all(d in done or d not in all_ids for d in json.loads(r[6] or "[]"))]
+    if getattr(args, "waiting", False):  # T-1491: one list of what waits on the user
+        rows = [r for r in rows if r[3] == "open" and (
+            r[2] == "decision" or r[4] == "user" or (r[8] and work_ticket_waits_on_options(r[2], root / r[8])))]
     for r in rows:
         deps = json.loads(r[6] or "[]")
         dep_s = f" deps={','.join(deps)}" if deps else ""
@@ -22225,9 +22271,10 @@ def main():
                                        "· fmt <id…> [--check|--dry-run] normalizes/checks H2 headings against "
                                        "the frame (contracts/tickets.md annex) — binds tickets created on/after "
                                        f"{TICKET_FRAME_LANDING_DATE} only, an older ticket is skipped untouched "
+                                       "· options <id…> adds the `## options` table frame to an existing ticket (T-1491) "
                                        "· prior <id> lists the other tickets that touched the same file, hook or "
                                        "feature that ticket names (T-1471)")
-    p.add_argument("action", nargs="?", choices=("new", "fmt", "prior"), help="omit for the plain listing")
+    p.add_argument("action", nargs="?", choices=("new", "fmt", "prior", "options"), help="omit for the plain listing")
     p.add_argument("ids", nargs="*", metavar="ID", help="fmt: one or more ticket ids · prior: one ticket id")
     p.add_argument("--hook", action="store_true",
                    help="prior: read a PostToolUse payload on stdin — the entry prdt-prior-tickets.sh calls")
@@ -22239,6 +22286,11 @@ def main():
                    help="list: filter by assignee (legacy `pdt-` frontmatter normalizes on index, so one value "
                         "matches both spellings) · new: this ticket's `assignee` (default `po`; `decision` "
                         "always forces `user`)")
+    p.add_argument("--waiting", action="store_true",
+                   help="list: open tickets that wait on the user — decision, `assignee: user`, and a design|impl|qa "
+                        "ticket whose `## options` holds a filled row with no user quote under `### 확인` (T-1491)")
+    p.add_argument("--options", action="store_true",
+                   help="new: seed the `## options` table frame on a work ticket too (decision always has it) (T-1491)")
     p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true",
                    help="list: backlog only · new: place the ticket in backlog/ (T-1084)")
     p.add_argument("--link", nargs="+", metavar="ID",

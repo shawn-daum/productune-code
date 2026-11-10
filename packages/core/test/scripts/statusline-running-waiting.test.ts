@@ -86,7 +86,7 @@ function writeMarker(opts: { agentId: string; ticketId: string; persona?: string
  *  the defaults (a single `type`/`assignee` key each — never a duplicate
  *  frontmatter line, which the statusline's `re.search` would resolve to
  *  whichever occurrence comes first, not the one this fixture meant to set). */
-function writeTicket(id: string, extra: Record<string, string> = {}, status = 'open', version = VERSION): void {
+function writeTicket(id: string, extra: Record<string, string> = {}, status = 'open', version = VERSION, body = 'body'): void {
   const dir = path.join(root, 'docs', 'tickets', version)
   fs.mkdirSync(dir, { recursive: true })
   const fm: Record<string, string> = {
@@ -94,7 +94,7 @@ function writeTicket(id: string, extra: Record<string, string> = {}, status = 'o
     assignee: 'developer', created: '2026-01-01', ...extra,
   }
   const lines = Object.entries(fm).map(([k, v]) => `${k}: ${v}`).join('\n')
-  fs.writeFileSync(path.join(dir, `${id}.md`), `---\n${lines}\n---\n\nbody\n`)
+  fs.writeFileSync(path.join(dir, `${id}.md`), `---\n${lines}\n---\n\n${body}\n`)
 }
 
 /** Hand-built `.prdt/index.db` (T-674 shape): `tickets.path` for OSC 8 link
@@ -533,6 +533,22 @@ describe.skipIf(!PYTHON3)('T-682 slice 2 — statusline running/waiting footer s
     expect(segment(out, 'req')).toBe('T-678')
     expect(out).not.toContain('T-832')
     expect(out).not.toMatch(/\b(waiting|CP)\b/)
+  })
+
+  test('T-1491: dec/req count a design|impl|qa ticket whose `## options` waits on the user; a user quote in that section, a quote only under problem, or a decision do not change the other rows', () => {
+    const tbl = '| 선택지 | pros | cons | trade-off | recommend |\n|---|---|---|---|---|\n| A | x | y | - | yes |\n'
+    const empty = '| 선택지 | pros | cons | trade-off | recommend |\n|---|---|---|---|---|\n| | | | | |\n'
+    const problemQuote = '## problem\n\n### 확인\n\n*"진행해"*\n\n'
+    writeTicket('T-901', {}, 'open', VERSION, `${problemQuote}## options\n\n${tbl}`) // problem 확인 filled before the table — waits
+    writeTicket('T-902', { type: 'design' }, 'open', 'v9.8', `## options\n\n${tbl}\n### 확인\n\n*"A"*\n`) // answered inside options
+    writeTicket('T-903', {}, 'open', VERSION, `## options\n\n${empty}`) // scaffold only
+    writeTicket('T-904', {}, 'open', VERSION, 'no options') // plain
+    writeTicket('T-905', { type: 'decision' }, 'open', VERSION, `## options\n\n${tbl}`) // decision stays dec only
+    writeTicket('T-906', { assignee: 'user' }, 'open', VERSION, `## options\n\n${tbl}`) // user assignee counted once
+    writeTicket('T-907', {}, 'open', 'backlog', `## options\n\n${tbl}`) // backlog is no version dir
+    const out = runStatusline()
+    expect(segment(out, 'dec')).toBe('T-905')
+    expect(segment(out, 'req')).toBe('T-901 T-906')
   })
 
   test('T-922: `<slug> <version>` is ONE OSC 8 link to viewer.html when it exists, plain text when it does not; full layout with empty lists', () => {

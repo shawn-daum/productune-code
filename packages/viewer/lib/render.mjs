@@ -1780,8 +1780,10 @@ function ticketIdLinks(escapedText, anchors) {
 }
 
 function allTicketRows(tickets) {
-  const rows = tickets.included.map((t) => ({ bucket: t.bucket, fm: t.frontmatter }))
-  for (const b of tickets.omitted) for (const t of b.tickets) rows.push({ bucket: b.bucket, fm: t.frontmatter })
+  // T-1491: `body` rides on open work tickets only (the options-wait rule reads it).
+  const bodyOf = (fm, body) => (fm.status === 'open' && (fm.type === 'design' || fm.type === 'impl' || fm.type === 'qa') ? body : undefined)
+  const rows = tickets.included.map((t) => ({ bucket: t.bucket, fm: t.frontmatter, body: bodyOf(t.frontmatter, t.body) }))
+  for (const b of tickets.omitted) for (const t of b.tickets) rows.push({ bucket: b.bucket, fm: t.frontmatter, body: bodyOf(t.frontmatter, b.bodies?.[t.rel]) })
   return rows
 }
 

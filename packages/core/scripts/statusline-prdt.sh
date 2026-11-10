@@ -518,7 +518,8 @@ row_by_line = {r["line"]: r for r in rows}
 # LINE_NAME_RE), so no `../` and no `<withheld>` ever reaches os.listdir/join.
 # T-849 `dec` / `req`: open `type: decision` tickets, and open `assignee: user`
 # tickets that are not decisions, over EVERY version directory of EVERY line
-# (backlog excluded) — the same rule as the viewer Home (`waitLists`).
+# (backlog excluded) — the same rule as the viewer Home (`waitLists`). T-1491: `req` also
+# holds a design|impl|qa ticket whose `## options` waits on the user (prdt_lanes rule).
 dec = []
 req = []
 req_deps = {}   # req candidate id -> its `deps` ids
@@ -592,6 +593,17 @@ def scan(base, row):
             elif tassignee == "user":
                 req.append(tid)
                 req_deps[tid] = _fm_deps(head)
+            elif _pl is not None and ttype in ("design", "impl", "qa"):
+                # T-1491: a work ticket with a filled `## options` row and no user quote in
+                # that section waits on the user — `prdt_lanes`' one rule (the schedule's).
+                # A module that lacks the rule (or throws) never costs the statusline: not counted.
+                try:
+                    _wait = _pl.work_ticket_waits_on_options(ttype, os.path.join(dpath, fn))
+                except Exception:
+                    _wait = False
+                if _wait:
+                    req.append(tid)
+                    req_deps[tid] = _fm_deps(head)
 
 
 for r in rows:
