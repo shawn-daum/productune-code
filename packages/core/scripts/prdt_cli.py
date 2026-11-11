@@ -6173,7 +6173,7 @@ def ticket_place_problems(fm):
 # test never mix with behavior, contracts §Git). Any git failure → no scope from that repo; a check
 # with no scope and a failure is "not checked" and never refuses (a wrong refusal blocks ordinary closes).
 # Spec: docs/productune/artifacts/v1.16.4/effect-check-duty-draft.md §2 group 5 · §3.
-EFFECT_CHECK_LANDING_DATE = "2026-11-12"   # contracts/tickets.md names the same date (test-pinned)
+EFFECT_CHECK_LANDING_DATE = "2026-11-11"   # contracts/tickets.md names the same date (test-pinned)
 EFFECT_TAG = "[prdt effect check]"
 EFFECT_CLASSES = ("discipline", "agent stub", "hook", "hook text", "override")
 EFFECT_CLI_PATH = "packages/core/scripts/prdt_cli.py"

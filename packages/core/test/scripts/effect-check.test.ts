@@ -121,7 +121,7 @@ function guard(tool: string, input: Record<string, unknown>, who: Who = 'main', 
   if (who === 'main') ev.agent_type = 'prdt-po'
   else { ev.agent_type = who; ev.agent_id = 'agent-x' }
   // the gate's "today" is injected, never the wall clock (default: the day before the landing date)
-  const e: NodeJS.ProcessEnv = { ...process.env, HOME: home, PRDT_BIN: CLI, PRDT_EFFECT_TODAY: '2026-11-11', ...env }
+  const e: NodeJS.ProcessEnv = { ...process.env, HOME: home, PRDT_BIN: CLI, PRDT_EFFECT_TODAY: '2026-11-10', ...env }
   delete e.PRDT_HOME
   const r = spawnSync('bash', [GUARD], { cwd: root, input: JSON.stringify(ev), encoding: 'utf8', env: e, timeout: subprocessTimeout('cli') * 2 })
   expect(r.status).toBe(0)
@@ -352,14 +352,14 @@ describe.skipIf(!PY)('T-1440 close refusal — prdt-worktree-guard.sh', () => {
     ticket('T-20', { status: 'open', created: '2026-11-06' })   // no `closed:` key, created before the landing date
     expect(denyOf(guard('Edit', statusOnly, 'main', TODAY))).toContain('close of T-20 refused: it edits discipline')
     // the injected clock decides: the day before the landing date the stored-date rule applies (skipped)
-    expect(guard('Edit', statusOnly, 'main', { PRDT_EFFECT_TODAY: '2026-11-11' })).toBe('')
+    expect(guard('Edit', statusOnly, 'main', { PRDT_EFFECT_TODAY: '2026-11-10' })).toBe('')
     // a valid line closes
     const withLine = { old_string: '## evidence\n', new_string: `## evidence\n\n- replay: ${PROBLEM} · before 3/3 · after 0/3\n` }
     expect(guard('MultiEdit', { file_path: tpath('T-20'), edits: [{ old_string: 'status: open', new_string: 'status: done' }, withLine] }, 'main', TODAY)).toBe('')
     // an earlier `closed:` date written on the landing date: the write is the close
     expect(denyOf(guard('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'done', created: '2026-11-06', closed: '2026-11-01' }) }, 'main', TODAY)))
       .toContain('close of T-20 refused')
-    expect(guard('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'done', created: '2026-11-06', closed: '2026-11-01' }) }, 'main', { PRDT_EFFECT_TODAY: '2026-11-11' })).toBe('')
+    expect(guard('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'done', created: '2026-11-06', closed: '2026-11-01' }) }, 'main', { PRDT_EFFECT_TODAY: '2026-11-10' })).toBe('')
     // the frame cutoff still skips
     ticket('T-20', { status: 'open', created: '2026-09-23' })
     expect(guard('Edit', { file_path: tpath('T-20'), ...closeEdit }, 'main', TODAY)).toBe('')
@@ -426,7 +426,7 @@ describe.skipIf(!PY)('T-1440 tickets fmt --check · doctor', () => {
   test('the same finding lines; skipped before the landing date, when open, out of scope', () => {
     ticket('T-20', { status: 'done', closed: '2026-11-12' })
     ticket('T-21', { status: 'done', closed: '2026-11-13', evidence: `- replay: 다른 사례 · before 3/3 · after 0/3` })
-    ticket('T-22', { status: 'done', closed: '2026-11-11' })           // closed before the landing date
+    ticket('T-22', { status: 'done', closed: '2026-11-10' })           // closed before the landing date
     ticket('T-25', { status: 'open' })
     ticket('T-28', { status: 'done', closed: '2026-11-12' })           // out of scope
     ticket('T-29', { status: 'done', created: '2026-11-12' })          // no `closed:` → created on/after landing → checked
@@ -488,6 +488,12 @@ describe.skipIf(!PY)('T-1440 tickets fmt --check · doctor', () => {
     const doc = cli(['doctor']).out.split('\n').filter((l) => l.includes('effect check: '))
     for (const [id, , want] of cases) expect(doc.some((l) => l.includes(`effect check: ${id} `)), `doctor ${id}`).toBe(want)
     for (const [id] of cases) fs.rmSync(tpath(id), { force: true })
+  }, T * 2)
+
+  test('a close outside the gate (content written directly, closed: install day) is named by fmt --check and doctor', () => {
+    ticket('T-20', { status: 'done', closed: '2026-11-11' })   // as a Bash python edit leaves it: no hook saw it
+    expect(cli(['tickets', 'fmt', 'T-20', '--check']).out).toContain('T-20: effect check — it edits discipline')
+    expect(cli(['doctor']).out).toContain('effect check: T-20 (docs/tickets/v1.0/T-20.md)')
   }, T * 2)
 
   test('contracts/tickets.md names the landing date the CLI uses', () => {
