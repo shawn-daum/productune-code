@@ -163,6 +163,18 @@
 #   decision pointing to its RELEASES.md section. The matcher is the CLI's (one implementation, shared
 #   with `prdt deploy record`); no CLI, or an old one, → open.
 #
+# EFFECT CHECK (T-1440): EVERY session. A Write/Edit/MultiEdit that moves a ticket
+#   (`docs/**/tickets/**/<ID>.md` of the project) from any status to `status: done` — judged on the file
+#   AFTER the write, like BUILD ENTRY — is denied when the ticket's own commits changed discipline, an
+#   agent stub, a hook script, a CLI `[prdt …]` line or a project override and its `evidence` lacks a
+#   valid `- replay: …` / `- effect not shown: … · user 「…」` line (E2 · E4 · E5 · E6). The judge is the
+#   CLI's (`prdt tickets effect-check --gate`, the reader `tickets fmt --check` and doctor share). A ticket
+#   created before the frame landing (2026-09-24) is skipped; a ticket already `done` is not a close.
+#   Fails OPEN with a `[prdt effect check] … not checked` additionalContext line when the CLI, git or the
+#   ticket cannot be read: a wrong refusal would block the PO from closing ordinary work. No CLI at all →
+#   silent. A Bash write of a ticket is an accepted gap (`fmt --check` · doctor name it later).
+#   Helpers sit ABOVE `if tool != "Bash":` — that branch exits before later definitions run.
+#
 # Fails OPEN everywhere: python3 missing, unparsable JSON, no project, an
 # unreadable config — exit 0, no output.
 
@@ -186,6 +198,12 @@ if [ "$route" = 0 ]; then
   case "$EV" in
     *'"tool_name":"Bash"'*|*'"tool_name": "Bash"'*)
       case "$EV" in *push*|*merge*|*vercel*|*netlify*) route=1 ;; esac ;;
+  esac
+fi
+# T-1440: a write naming a ticket path and `status: done` may be a close (the effect check).
+if [ "$route" = 0 ]; then
+  case "$EV" in
+    *'/tickets/'*'status: done'*|*'status: done'*'/tickets/'*) route=1 ;;
   esac
 fi
 if [ "$route" = 0 ]; then
@@ -965,6 +983,88 @@ def deny_build_entry(vid, res):
     sys.exit(0)
 
 
+_TICKET_FILE_RE = re.compile(r"^[A-Z][A-Z0-9]*-\d+\.md$")
+_FM_STATUS_RE = re.compile(r"^status:[ \t]*['\"]?([A-Za-z_-]+)", re.M)
+# Placeholder wording (designer `inject-edit` owns it); the CLI's EFFECT_NOT_CHECKED is the same template.
+EFFECT_NOT_CHECKED = "[prdt effect check] close of {tid} not checked ({why}); it goes through. Check it after: `prdt tickets fmt {tid} --check`."
+
+
+def _fm_status(text):
+    """The frontmatter `status` value of a ticket text, else None."""
+    if not isinstance(text, str) or not text.startswith("---\n"):
+        return None
+    end = text.find("\n---", 4)
+    m = _FM_STATUS_RE.search(text[4:end]) if end >= 0 else None
+    return m.group(1) if m else None
+
+
+def effect_not_checked(tid, why):
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                             "additionalContext": EFFECT_NOT_CHECKED.format(tid=tid, why=why)}}))
+    sys.exit(0)
+
+
+def effect_close_gate(target):
+    """T-1440: a Write/Edit/MultiEdit that moves a ticket of THE project to `status: done` → the CLI judges the
+    ticket AFTER the write (`prdt tickets effect-check --gate`); its deny is printed, its notice rides
+    additionalContext. A failure to read the ticket or run the judge never refuses (notice only)."""
+    if not isinstance(target, str) or not target:
+        return
+    tp = os.path.expanduser(target)
+    rp = os.path.realpath(tp if tp.startswith("/") else os.path.join(cwd or "", tp))
+    if not _TICKET_FILE_RE.match(os.path.basename(rp)):
+        return
+    proot = find_root(os.path.dirname(rp))
+    if not proot:
+        return
+    parts = os.path.relpath(rp, proot).split(os.sep)
+    if parts[0] != "docs" or "tickets" not in parts[1:-1]:
+        return
+    tid = os.path.basename(rp)[:-3]
+    try:
+        with open(rp, encoding="utf-8") as f:
+            old_text = f.read()
+    except FileNotFoundError:
+        old_text = ""
+    except Exception:
+        if tool == "Write" and _fm_status(tin.get("content")) == "done":
+            effect_not_checked(tid, "the ticket file is unreadable")
+        return
+    if tool == "Write":
+        new_text = tin.get("content")
+    elif tool == "Edit":
+        new_text = _apply_edits(old_text, [tin])
+    else:
+        new_text = _apply_edits(old_text, tin.get("edits") if isinstance(tin.get("edits"), list) else [])
+    if not isinstance(new_text, str) or _fm_status(new_text) != "done" or _fm_status(old_text) == "done":
+        return
+    cli = prdt_cli_bin()
+    if not cli:
+        return
+    try:
+        env = dict(os.environ)
+        env["PRDT_META_BACKUP"] = "0"  # a gate lookup never triggers the meta backup tick
+        r = subprocess.run([cli, "tickets", "effect-check", "--gate"], cwd=proot, capture_output=True, text=True,
+                           timeout=30, env=env,
+                           input=json.dumps({"root": proot, "path": rp, "content": new_text, "worker": is_worker}))
+        res = json.loads(r.stdout)
+        if not isinstance(res, dict):
+            raise ValueError("not an object")
+    except subprocess.TimeoutExpired:
+        effect_not_checked(tid, "the check timed out")
+    except Exception:
+        effect_not_checked(tid, "the check did not run")
+    if isinstance(res.get("deny"), str) and res["deny"]:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                                 "permissionDecision": "deny",
+                                                 "permissionDecisionReason": res["deny"]}}))
+        sys.exit(0)
+    if isinstance(res.get("notice"), str) and res["notice"]:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                                 "additionalContext": res["notice"]}}))
+        sys.exit(0)
+
+
 if tool != "Bash":
     target = tin.get("notebook_path") if tool == "NotebookEdit" else tin.get("file_path")
     rp = tracks_target(target, cwd, ENV0) if is_worker else None
@@ -981,6 +1081,7 @@ if tool != "Bash":
         deny(rp, tool)
     if tool in ("Write", "Edit", "MultiEdit"):
         build_entry_gate(target)  # T-1497
+        effect_close_gate(target)  # T-1440
     out_open()
 
 # ── Bash ─────────────────────────────────────────────────────────────────────
