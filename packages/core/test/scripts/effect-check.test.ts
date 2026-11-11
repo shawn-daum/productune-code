@@ -207,14 +207,14 @@ describe.skipIf(!PY)('T-1440 close refusal — prdt-worktree-guard.sh', () => {
   }, T)
 
   test('Edit and MultiEdit are judged on the file AFTER the write: line + done in one Edit closes', () => {
-    ticket('T-20', { status: 'open' })
+    ticket('T-20', { status: 'open', created: '2026-11-12' })   // a status-only Edit writes no `closed:` → judged by `created`
     expect(denyOf(guard('Edit', { file_path: tpath('T-20'), ...closeEdit }))).toContain('close of T-20 refused: it edits discipline')
     const both = { file_path: tpath('T-20'), old_string: 'status: open\n', new_string: 'status: done\n' }
     const withLine = { old_string: '## evidence\n', new_string: `## evidence\n\n- replay: ${PROBLEM} · before 3/3 · after 0/3\n` }
     expect(guard('MultiEdit', { file_path: tpath('T-20'), edits: [both, withLine] })).toBe('')
     expect(denyOf(guard('MultiEdit', { file_path: tpath('T-20'), edits: [both] }))).toContain('close of T-20 refused')
     // one Edit whose replacement spans the status line and the evidence line
-    fs.writeFileSync(tpath('T-20'), text('T-20').replace('## acceptance', '## acceptance'))
+    fs.writeFileSync(tpath('T-20'), text('T-20', { created: '2026-11-12' }))
     const body = fs.readFileSync(tpath('T-20'), 'utf8')
     const from = body.slice(body.indexOf('status: open'), body.indexOf('## evidence') + '## evidence\n'.length)
     const to = from.replace('status: open', 'status: done').replace('## evidence\n', `## evidence\n\n- replay: ${PROBLEM} · before 3/3 · after 1/3\n`)
@@ -246,12 +246,27 @@ describe.skipIf(!PY)('T-1440 close refusal — prdt-worktree-guard.sh', () => {
       .toBe(`[prdt effect check] close of T-20 refused: it edits discipline (${hash['T-20']}) and \`evidence\` has no \`- replay: <case from problem> · before k/n · after k/n\` (n≥3, live, no stub) or \`- effect not shown: <reason> · user 「<reply>」\` line. Next: return \`blocked\` naming this close.`)
   }, T)
 
-  test('overrides: a meta commit naming the ticket · the uncommitted override when the body names an override', () => {
+  test('overrides: a meta COMMIT naming the ticket refuses; an uncommitted override change never does', () => {
     expect(denyOf(close('T-30'))).toContain(`it edits override (${hash['T-30']})`)
     put('.prdt/overrides/po.md', '# PO overrides\n- a line\n- uncommitted\n', root)
     try {
-      expect(denyOf(close('T-31', { problem: 'PO 오버라이드 한 줄이 안 먹힌다' }))).toContain('it edits override (uncommitted overrides)')
+      // another ticket's uncommitted override edit, this ticket merely mentions overrides → closes
+      expect(close('T-31', { problem: 'PO 오버라이드 한 줄이 안 먹힌다', evidence: 'override 문구 확인' })).toBe('')
       expect(close('T-32', { problem: '관계없는 티켓' })).toBe('')
+      // committed in-scope work still refuses while the uncommitted change is there
+      expect(denyOf(close('T-30'))).toContain('it edits override')
+    } finally {
+      put('.prdt/overrides/po.md', '# PO overrides\n- a line\n', root)
+    }
+  }, T)
+
+  test('row 2 → E1: the uncommitted override change is a notice at the close, whoever made it', () => {
+    const f = ticket('T-33', { status: 'done', closed: '2026-11-12', problem: '오버라이드를 다룬다' })
+    put('.prdt/overrides/po.md', '# PO overrides\n- a line\n- uncommitted\n', root)
+    try {
+      expect(JSON.parse(prior(f, closeEdit, 'sess-ov')).hookSpecificOutput.additionalContext).toBe(
+        '[prdt effect check] T-33 closed while the meta repo has uncommitted override changes and no commit names T-33: ' +
+        'if they are its work, reopen, commit with (T-33), close again.')
     } finally {
       put('.prdt/overrides/po.md', '# PO overrides\n- a line\n', root)
     }
@@ -285,22 +300,104 @@ describe.skipIf(!PY)('T-1440 close refusal — prdt-worktree-guard.sh', () => {
     for (const def of ['def effect_close_gate(', 'def _fm_status(', 'def effect_not_checked(', 'def prdt_cli_bin(', 'def _apply_edits('])
       expect(src.indexOf(def), def).toBeGreaterThan(0), expect(src.indexOf(def), def).toBeLessThan(branch)
     expect(src.slice(branch)).toMatch(/if tool in \("Write", "Edit", "MultiEdit"\):\n\s+build_entry_gate\(target\)[^\n]*\n\s+effect_close_gate\(target\)/)
-    expect(denyOf(guard('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'done' }) }))).toContain('[prdt effect check] close of T-20 refused:')
+    expect(denyOf(guard('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'done', closed: '2026-11-12' }) }))).toContain('[prdt effect check] close of T-20 refused:')
   }, T)
 
-  test('fork-0 pre-filter: a main-session write reaches python only when it names /tickets/ and `status: done`', () => {
+  test('fork-0 pre-filter: a main-session write reaches python when its TARGET is a ticket file, whatever the text', () => {
     const marker = path.join(sb, 'py-ran')
     const d = path.join(fakeBin, 'py')
     fs.mkdirSync(d, { recursive: true })
     fs.writeFileSync(path.join(d, 'python3'), `#!/bin/sh\ntouch '${marker}'\nexit 0\n`)
     fs.chmodSync(path.join(d, 'python3'), 0o755)
     const env = { PATH: `${d}:${process.env.PATH}` }
-    guard('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'open' }) }, 'main', env)
-    guard('Write', { file_path: path.join(root, 'docs', 'note.md'), content: 'status: done' }, 'main', env)
-    expect(fs.existsSync(marker)).toBe(false)
-    guard('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'done' }) }, 'main', env)
-    expect(fs.existsSync(marker)).toBe(true)
+    const ran = (tool: string, input: Record<string, unknown>) => {
+      fs.rmSync(marker, { force: true })
+      guard(tool, input, 'main', env)
+      return fs.existsSync(marker)
+    }
+    // not a ticket file → no python, even with `status: done` and `/tickets/` in the text
+    expect(ran('Write', { file_path: path.join(root, 'docs', 'note.md'), content: 'status: done' })).toBe(false)
+    expect(ran('Write', { file_path: path.join(root, 'docs', 'note.md'), content: 'docs/tickets/v1.0/T-20.md status: done' })).toBe(false)
+    expect(ran('Write', { file_path: path.join(root, 'src', 'a.ts'), content: 'x' })).toBe(false)
+    // a ticket file → python, spelled however
+    expect(ran('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'open' }) })).toBe(true)
+    expect(ran('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'done' }) })).toBe(true)
+    expect(ran('Edit', { file_path: tpath('T-20'), old_string: 'open\nassignee', new_string: 'done\nassignee' })).toBe(true)
   }, T)
+
+  test('row 1: a close is judged however `status: done` is spelled', () => {
+    const spell = (v: string) => text('T-20', { status: 'done', closed: '2026-11-12' }).replace('status: done', v)
+    for (const v of ['status: "done"', "status: 'done'", 'status:done', 'status:  done', 'status:\tdone'])
+      expect(denyOf(guard('Write', { file_path: tpath('T-20'), content: spell(v) })), v).toContain('close of T-20 refused')
+    // the word change alone, no `status:` key in the payload
+    ticket('T-20', { status: 'open', created: '2026-11-12' })
+    expect(denyOf(guard('Edit', { file_path: tpath('T-20'), old_string: 'open\nassignee', new_string: 'done\nassignee' })))
+      .toContain('close of T-20 refused')
+    expect(denyOf(guard('MultiEdit', { file_path: tpath('T-20'), edits: [{ old_string: 'open\nassignee', new_string: '"done"\nassignee' }] })))
+      .toContain('close of T-20 refused')
+    // the same spellings with a valid line close; an already-`done` quoted ticket is not a close
+    const line = `- replay: ${PROBLEM} · before 3/3 · after 0/3`
+    expect(guard('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'done', closed: '2026-11-12', evidence: line }).replace('status: done', 'status: "done"') })).toBe('')
+    fs.writeFileSync(tpath('T-20'), spell('status: "done"'))
+    expect(guard('Edit', { file_path: tpath('T-20'), old_string: '끝', new_string: '끝.' })).toBe('')
+    // not a close: `open` spelled oddly, `done` only in the body
+    ticket('T-20', { status: 'open' })
+    expect(guard('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'open' }).replace('status: open', 'status:"open"') })).toBe('')
+  }, T)
+
+  test('row 4: k > n in a replay line refuses (same class as n < 3)', () => {
+    const d = denyOf(close('T-20', { evidence: `- replay: ${PROBLEM} · before 9/3 · after 0/3` }))
+    expect(d).toContain(`replay \`${PROBLEM}\` has k > n (before 9/3 · after 0/3)`)
+    expect(d).toMatch(/Next: re-run to n ≥ 3/)
+    expect(denyOf(close('T-20', { evidence: `- replay: ${PROBLEM} · before 3/3 · after 4/3` }))).toContain('has k > n')
+    expect(cli(['tickets', 'fmt', 'T-20', '--check']).out).not.toContain('k > n')   // T-20 on disk is still `open`
+    fs.writeFileSync(tpath('T-20'), text('T-20', { status: 'done', closed: '2026-11-12', evidence: `- replay: ${PROBLEM} · before 9/3 · after 0/3` }))
+    expect(cli(['tickets', 'fmt', 'T-20', '--check']).out).toContain('has k > n (before 9/3 · after 0/3)')
+  }, T)
+
+  test('row 5: nested hook scripts and hook .py count; `(T-001a)` is not T-001', () => {
+    commit('T-70', 'fix: nested hook (T-70)', { 'packages/core/scripts/hooks/lib/helper.sh': 'echo "[prdt h] y"\n' })
+    commit('T-71', 'fix: hook python (T-71)', { 'packages/core/scripts/hooks/prdt-z.py': 'x = 1\n' })
+    commit('T-72', 'fix: deep hook data (T-72)', { 'packages/core/scripts/hooks/lib/deep/data.json': '{}\n' })
+    commit('T-001a', 'feat: lettered id (T-001a)', { 'packages/core/discipline/contracts/b.md': '# b\n' })
+    expect(denyOf(close('T-70'))).toContain(`it edits hook (${hash['T-70']})`)
+    expect(denyOf(close('T-71'))).toContain(`it edits hook (${hash['T-71']})`)
+    expect(denyOf(close('T-72'))).toContain(`it edits hook (${hash['T-72']})`)
+    expect(close('T-001')).toBe('')
+    expect(close('T-00')).toBe('')
+  }, T)
+
+  test('non-ticket writes: stdout byte-identical to dev\'s guard (and empty)', () => {
+    let devSrc = ''
+    try { devSrc = execFileSync('git', ['-C', CORE, 'show', 'dev:packages/core/scripts/hooks/prdt-worktree-guard.sh'], { encoding: 'utf-8' }) } catch { /* no dev ref here */ }
+    const devGuard = path.join(sb, 'dev-guard.sh')
+    if (devSrc) fs.writeFileSync(devGuard, devSrc)
+    const run = (script: string, tool: string, input: Record<string, unknown>, who: Who) => {
+      const ev: Record<string, unknown> = { session_id: 's', cwd: root, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input,
+        agent_type: who === 'main' ? 'prdt-po' : who, ...(who === 'main' ? {} : { agent_id: 'agent-x' }) }
+      const e: NodeJS.ProcessEnv = { ...process.env, HOME: home, PRDT_BIN: CLI }
+      delete e.PRDT_HOME
+      return spawnSync('bash', [script], { cwd: root, input: JSON.stringify(ev), encoding: 'utf8', env: e, timeout: subprocessTimeout('cli') * 2 }).stdout
+    }
+    const payloads: Array<[string, Record<string, unknown>]> = [
+      ['Write', { file_path: path.join(root, 'docs', 'note.md'), content: 'status: done' }],
+      ['Write', { file_path: path.join(root, 'docs', 'note.md'), content: 'docs/tickets/v1.0/T-20.md status: "done"' }],
+      ['Write', { file_path: path.join(root, 'docs', 'tickets', 'README.txt'), content: 'status: done' }],
+      ['Write', { file_path: path.join(code, 'src', 'a.ts'), content: 'export {}' }],
+      ['Edit', { file_path: path.join(code, 'src', 'app.ts'), old_string: 'export {}', new_string: 'export const z = 1' }],
+      ['MultiEdit', { file_path: path.join(code, 'src', 'app.ts'), edits: [{ old_string: 'export {}', new_string: 'export {} // x' }] }],
+      ['Write', { file_path: path.join(root, 'docs', 'wiki', 'w.md'), content: 'w' }],
+      ['Write', { file_path: path.join(sb, 'outside.txt'), content: 'o' }],
+      ['Bash', { command: 'ls -la' }],
+      ['Bash', { command: 'git status' }],
+    ]
+    for (const who of ['main', 'prdt-developer'] as Who[])
+      for (const [tool, input] of payloads) {
+        const mine = run(GUARD, tool, input, who)
+        if (devSrc) expect(mine, `${who} ${tool} ${JSON.stringify(input)}`).toBe(run(devGuard, tool, input, who))
+        expect(mine, `${who} ${tool}`).not.toContain('effect check')
+      }
+  }, T * 2)
 })
 
 // ── fmt --check and doctor: one reader ─────────────────────────────────────────
@@ -345,6 +442,33 @@ describe.skipIf(!PY)('T-1440 tickets fmt --check · doctor', () => {
     expect(r.out).toContain('T-28: ok')
     expect(r.code).toBe(0)
   }, T)
+
+  test('row 3: the close gate, fmt --check and doctor judge the same tickets by the one landing date', () => {
+    const src = fs.readFileSync(path.join(CORE, 'scripts', 'prdt_cli.py'), 'utf8')
+    const D = /^EFFECT_CHECK_LANDING_DATE = "(\d{4}-\d{2}-\d{2})"/m.exec(src)![1]
+    const shift = (n: number) => new Date(Date.parse(`${D}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10)
+    // five in-scope ids, each a way to sit on one side of the date
+    const cases: Array<[string, Tk, boolean]> = [
+      ['T-20', { closed: shift(-1) }, false],                       // closed the day before
+      ['T-21', { closed: D }, true],                                // the day of
+      ['T-22', { closed: shift(1) }, true],                         // the day after
+      ['T-25', { created: shift(-1) }, false],                      // no `closed:`, created before
+      ['T-27', { created: D }, true],                               // no `closed:`, created on the date
+    ]
+    const hit = (o: string, id: string) => o.includes(`effect check — it edits`) && o.includes(id)
+    const gate: Record<string, boolean> = {}, fmt: Record<string, boolean> = {}
+    for (const [id, o, want] of cases) {
+      fs.writeFileSync(tpath(id), text(id, { ...o, status: 'open', created: o.created ?? '2026-10-01' }))
+      gate[id] = guard('Write', { file_path: tpath(id), content: text(id, { ...o, status: 'done', created: o.created ?? '2026-10-01' }) }).includes('close of ' + id + ' refused')
+      fs.writeFileSync(tpath(id), text(id, { ...o, status: 'done', created: o.created ?? '2026-10-01' }))
+      fmt[id] = hit(cli(['tickets', 'fmt', id, '--check']).out, id)
+      expect(gate[id], `gate ${id}`).toBe(want)
+      expect(fmt[id], `fmt ${id}`).toBe(want)
+    }
+    const doc = cli(['doctor']).out.split('\n').filter((l) => l.includes('effect check: '))
+    for (const [id, , want] of cases) expect(doc.some((l) => l.includes(`effect check: ${id} `)), `doctor ${id}`).toBe(want)
+    for (const [id] of cases) fs.rmSync(tpath(id), { force: true })
+  }, T * 2)
 
   test('contracts/tickets.md names the landing date the CLI uses', () => {
     const src = fs.readFileSync(path.join(CORE, 'scripts', 'prdt_cli.py'), 'utf8')

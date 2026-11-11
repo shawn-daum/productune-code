@@ -6182,7 +6182,7 @@ EFFECT_CODE_PATHS = ("packages/core/discipline", "packages/core/doctrine.md", "p
 _EFFECT_PATH_CLASS = (
     (re.compile(r"^packages/core/(?:discipline/.+|doctrine\.md)$"), "discipline"),
     (re.compile(r"^packages/core/agents/[^/]+\.md$"), "agent stub"),
-    (re.compile(r"^packages/core/scripts/hooks/[^/]+\.sh$"), "hook"),
+    (re.compile(r"^packages/core/scripts/hooks/.+$"), "hook"),   # any depth, any extension (lib/*.sh · *.py)
 )
 _EFFECT_COMMIT_TYPES = ("feat", "fix", "docs", "chore", "perf")
 _EFFECT_TRAIL_RE = re.compile(r"\(([^()]*)\)\s*$")
@@ -6242,13 +6242,12 @@ def _effect_order(cls):
     return [c for c in EFFECT_CLASSES if c in cls]
 
 
-def effect_scope(root, tid, body=None):
-    """(classes, ref, errors) of ticket `tid`: the classes of scope text its own commits changed (code repo:
-    every ref, merges excluded; meta repo: `.prdt/overrides`), `ref` = the newest such commit's short hash
-    (or `uncommitted overrides`), `errors` = one line per repo git could not read. `body` given (the close
-    gate) → the meta work tree's uncommitted override changes count too when that body names an override:
-    the close autosave commits them under this ticket's id."""
-    idre = re.compile(r"(?<![\w-])" + re.escape(tid) + r"(?!\d)")
+def effect_scope(root, tid):
+    """(classes, ref, errors) of ticket `tid`: the classes of scope text its own COMMITS changed (code repo:
+    every ref, merges excluded; meta repo: `.prdt/overrides`), `ref` = the newest such commit's short hash,
+    `errors` = one line per repo git could not read. An uncommitted change is never scope (whoever's it is):
+    it is the E1 notice (`effect_uncommitted_classes`)."""
+    idre = re.compile(r"(?<![\w-])" + re.escape(tid) + r"(?![\w-])")   # `(T-001a)` is not T-001
     cls, ref, errors = set(), None, []
     croot = code_root(root)
     if (croot / ".git").exists():
@@ -6291,24 +6290,36 @@ def effect_scope(root, tid, body=None):
                     if idre.search(subj) and any(f.startswith(".prdt/overrides/") for f in files.splitlines()):
                         cls.add("override")
                         ref = ref or h
-                if body is not None and re.search(r"override|오버라이드", body, re.I):
-                    st = _effect_git([*META_GIT_HARDEN, "--git-dir", str(gd), "--work-tree", str(root),
-                                      "status", "--porcelain", "--", ".prdt/overrides"], root)
-                    if st.strip():
-                        cls.add("override")
-                        ref = ref or "uncommitted overrides"
             except _EffectGitError as e:
                 errors.append(f"meta repo: {e}")
     return _effect_order(cls), ref, errors
 
 
+def effect_uncommitted_overrides(root):
+    """True when the meta work tree holds an uncommitted `.prdt/overrides` change. A meta repo that is absent
+    or untrusted → False; a git failure raises _EffectGitError."""
+    gd = meta_git_dir(root)
+    if not gd.is_dir():
+        return False
+    try:
+        if meta_git_trust_problem(root):
+            return False
+    except Exception:
+        return False
+    return bool(_effect_git([*META_GIT_HARDEN, "--git-dir", str(gd), "--work-tree", str(root),
+                             "status", "--porcelain", "--", ".prdt/overrides"], root).strip())
+
+
 def effect_uncommitted_classes(root):
-    """Classes of scope paths with uncommitted changes in the code repo (the E1 notice); a CLI change
-    counts only when it adds a `[prdt …]` line. Raises _EffectGitError."""
+    """Classes of scope paths with uncommitted changes (the E1 notice): the code repo's, and `override` when
+    the meta work tree holds an uncommitted override change. A CLI change counts only when it adds a
+    `[prdt …]` line. Raises _EffectGitError."""
+    cls = set()
+    if effect_uncommitted_overrides(root):
+        cls.add("override")
     croot = code_root(root)
     if not (croot / ".git").exists():
-        return []
-    cls = set()
+        return _effect_order(cls)
     for line in _effect_git(["-C", str(croot), "status", "--porcelain", "--", *EFFECT_CODE_PATHS], croot).splitlines():
         p = line[3:].split(" -> ")[-1].strip().strip('"')
         cls |= _effect_path_classes(p)
@@ -6346,6 +6357,8 @@ def effect_line_findings(body):
             out.append({"code": "E3", "case": case})
         if nb < 3 or na < 3:
             out.append({"code": "E4", "case": case})
+        if kb > nb or ka > na:   # k > n is not a count of n runs
+            out.append({"code": "E4", "case": case, "k_over_n": f"before {kb}/{nb} · after {ka}/{na}"})
         if not (kb >= 1 and ka < kb) and not EFFECT_QUOTE_RE.search(m.group("tail")):
             out.append({"code": "E5", "case": case, "kb": kb, "ka": ka})
     for m in nos:
@@ -6354,10 +6367,10 @@ def effect_line_findings(body):
     return out
 
 
-def effect_check_problems(root, fm, body, tid, at_close=False):
+def effect_check_problems(root, fm, body, tid):
     """T-1440: the one effect check → {classes, ref, findings, errors}. `findings` is empty for a ticket
-    out of scope. `at_close` (the close gate) adds the meta work tree's uncommitted overrides."""
-    cls, ref, errors = effect_scope(root, tid, body if at_close else None)
+    out of scope."""
+    cls, ref, errors = effect_scope(root, tid)
     return {"classes": cls, "ref": ref, "findings": effect_line_findings(body) if cls else [], "errors": errors}
 
 
@@ -6371,6 +6384,8 @@ def effect_finding_text(f, res):
     if c == "E3":
         return f"replay case `{case}` is not a string from problem"
     if c == "E4":
+        if f.get("k_over_n"):
+            return f"replay `{case}` has k > n ({f['k_over_n']})"
         return f"replay `{case}` has n < 3 per arm"
     if c == "E5":
         return f"replay `{case}` shows no effect (before {f['kb']}, after {f['ka']}) and has no `· user 「<reply>」`"
@@ -6392,7 +6407,7 @@ def effect_deny_text(tid, res, worker=False):
 
 
 def effect_check_due(fm):
-    """`fmt --check` · doctor bind a `done` ticket closed on/after EFFECT_CHECK_LANDING_DATE. No `closed:` →
+    """The ONE date rule — `fmt --check` · doctor · the close gate all call it. Binds a `done` ticket closed on/after EFFECT_CHECK_LANDING_DATE. No `closed:` →
     judged by `created` (a ticket is closed after it is created); a malformed `closed:` is checked, never read
     as old (T-715). Pre-frame tickets (created before TICKET_FRAME_LANDING_DATE) are skipped like `fmt`."""
     if fm.get("status") != "done":
@@ -6433,10 +6448,9 @@ def cmd_tickets_effect_gate():
             raise ValueError("bad request")
         fm, _ = parse_frontmatter_text(content)
         tid = fm["id"] if isinstance(fm.get("id"), str) and fm.get("id") else tid
-        created = fm.get("created")
-        if not (isinstance(created, str) and TICKET_CREATED_DATE_RE.match(created) and created < TICKET_FRAME_LANDING_DATE):
+        if effect_check_due(fm):   # the date rule `fmt --check` · doctor apply (EFFECT_CHECK_LANDING_DATE)
             _hdr, body = split_ticket_header_body(content)
-            res = effect_check_problems(root, fm, body, tid, at_close=True)
+            res = effect_check_problems(root, fm, body, tid)
             out["deny"] = effect_deny_text(tid, res, worker=bool(req.get("worker")))
             if not res["classes"] and res["errors"]:
                 out["notice"] = EFFECT_NOT_CHECKED.format(tid=one_line(tid), why=one_line("; ".join(res["errors"])))
@@ -6473,7 +6487,13 @@ def _effect_notice_lines(root, ev, tid, text, fm):
         if not res["classes"] and not res["errors"]:
             u = effect_uncommitted_classes(root)
             if u:
-                lines.append(f"{EFFECT_TAG} {t} closed while the code repo has uncommitted {' · '.join(u)} changes and no "
+                code_u = [c for c in u if c != "override"]
+                where = []
+                if code_u:
+                    where.append(f"the code repo has uncommitted {' · '.join(code_u)} changes")
+                if "override" in u:
+                    where.append("the meta repo has uncommitted override changes")
+                lines.append(f"{EFFECT_TAG} {t} closed while {' and '.join(where)} and no "
                              f"commit names {t}: if they are its work, reopen, commit with ({t}), close again.")
         if not lines:
             return []

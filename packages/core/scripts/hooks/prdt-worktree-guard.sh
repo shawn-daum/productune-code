@@ -200,10 +200,13 @@ if [ "$route" = 0 ]; then
       case "$EV" in *push*|*merge*|*vercel*|*netlify*) route=1 ;; esac ;;
   esac
 fi
-# T-1440: a write naming a ticket path and `status: done` may be a close (the effect check).
+# T-1440: a write whose target is a ticket file (`…/tickets/…/<ID>.md`) may be a close (the effect check):
+# routed on the PATH, never on the payload text — a close spelled `status: "done"` · `status:done` · an Edit
+# carrying only the word change holds no fixed text to match. Python re-checks the path and decides from the
+# post-write frontmatter with the CLI's own parser.
 if [ "$route" = 0 ]; then
   case "$EV" in
-    *'/tickets/'*'status: done'*|*'status: done'*'/tickets/'*) route=1 ;;
+    *'"file_path":'*'/tickets/'*'.md"'*) route=1 ;;
   esac
 fi
 if [ "$route" = 0 ]; then
@@ -984,18 +987,45 @@ def deny_build_entry(vid, res):
 
 
 _TICKET_FILE_RE = re.compile(r"^[A-Z][A-Z0-9]*-\d+\.md$")
-_FM_STATUS_RE = re.compile(r"^status:[ \t]*['\"]?([A-Za-z_-]+)", re.M)
+_LANES = []   # [module or None] once loaded
 # Placeholder wording (designer `inject-edit` owns it); the CLI's EFFECT_NOT_CHECKED is the same template.
 EFFECT_NOT_CHECKED = "[prdt effect check] close of {tid} not checked ({why}); it goes through. Check it after: `prdt tickets fmt {tid} --check`."
 
 
-def _fm_status(text):
-    """The frontmatter `status` value of a ticket text, else None."""
-    if not isinstance(text, str) or not text.startswith("---\n"):
+def _frontmatter_parser(cli):
+    """The CLI's own `parse_frontmatter_text` (prdt_lanes.py, the sibling of the CLI body), or None when it
+    cannot be loaded — this python runs `-I` and imports nothing of the CLI by name."""
+    if not _LANES:
+        mod = None
+        try:
+            import importlib.util
+            src = os.path.join(os.path.dirname(os.path.realpath(cli)), "prdt_lanes.py")
+            spec = importlib.util.spec_from_file_location("prdt_lanes", src)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        except Exception:
+            mod = None
+        _LANES.append(mod)
+    return getattr(_LANES[0], "parse_frontmatter_text", None)
+
+
+def _fm_status(text, cli):
+    """The frontmatter `status` value of a ticket text as the CLI reads it (quotes · spacing · any spelling
+    the parser takes), else None. No parser → a conservative read of the same line."""
+    if not isinstance(text, str):
+        return None
+    parse = _frontmatter_parser(cli)
+    if parse is not None:
+        try:
+            v = parse(text)[0].get("status")
+            return v if isinstance(v, str) else None
+        except Exception:
+            return None
+    if not text.startswith("---\n"):
         return None
     end = text.find("\n---", 4)
-    m = _FM_STATUS_RE.search(text[4:end]) if end >= 0 else None
-    return m.group(1) if m else None
+    m = re.search(r"^status:\s*(.*)$", text[4:end], re.M) if end >= 0 else None
+    return m.group(1).strip().strip("'\"") if m else None
 
 
 def effect_not_checked(tid, why):
@@ -1021,13 +1051,16 @@ def effect_close_gate(target):
     if parts[0] != "docs" or "tickets" not in parts[1:-1]:
         return
     tid = os.path.basename(rp)[:-3]
+    cli = prdt_cli_bin()
+    if not cli:
+        return   # no CLI at all → silent
     try:
         with open(rp, encoding="utf-8") as f:
             old_text = f.read()
     except FileNotFoundError:
         old_text = ""
     except Exception:
-        if tool == "Write" and _fm_status(tin.get("content")) == "done":
+        if tool == "Write" and _fm_status(tin.get("content"), cli) == "done":
             effect_not_checked(tid, "the ticket file is unreadable")
         return
     if tool == "Write":
@@ -1036,10 +1069,7 @@ def effect_close_gate(target):
         new_text = _apply_edits(old_text, [tin])
     else:
         new_text = _apply_edits(old_text, tin.get("edits") if isinstance(tin.get("edits"), list) else [])
-    if not isinstance(new_text, str) or _fm_status(new_text) != "done" or _fm_status(old_text) == "done":
-        return
-    cli = prdt_cli_bin()
-    if not cli:
+    if not isinstance(new_text, str) or _fm_status(new_text, cli) != "done" or _fm_status(old_text, cli) == "done":
         return
     try:
         env = dict(os.environ)
