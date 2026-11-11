@@ -269,11 +269,122 @@ describe('real-home tripwire: reported external writes are a notice, everything 
     expect(v.report).toContain(ledger())
   })
 
+  test('a test write of the same shape with no session transcript record still fails', async () => {
+    const page = path.join(decoy, '.prdt', 'wiki', 'runbook--x.md')
+    const v = await fixtureRun([{ cmd: 'sh', args: ['-c', `echo x > "${page}.tmp" && mv "${page}.tmp" "${page}"`] }])
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(page)
+  })
+
   test('a reported write that creates its directories is noticed whole', async () => {
     const target = path.join(decoy, '.prdt', 'overrides', 'playbooks', 'implement.md')
     const v = await fixtureRun([], () => outside(reportedAppend(target, 'line\n')))
     expect(v.report).toBe('')
     expect(v.ok).toBe(true)
     expect(v.notice).toContain(target)
+  })
+})
+
+/**
+ * T-1522: another session's AGENT tool write (Claude Edit / Write) — no `prdt`, no
+ * self-report. The harness writes the file (rename-replace, or a new file) and then
+ * records a tool result naming it in that session's transcript under the REAL
+ * home's `~/.claude/projects/`. That record is the attribution.
+ */
+describe('real-home tripwire: another session\'s agent tool write is a notice (T-1522)', () => {
+  const wiki = (n: string) => path.join(decoy, '.prdt', 'wiki', n)
+  const transcript = () => path.join(decoy, '.claude', 'projects', '-Users-x-dev-other-project', 'sess-1.jsonl')
+
+  /** The harness's own transcript line for a finished Write/Edit (shape read from a live transcript). */
+  function recordToolResult(filePath: string, kind: 'create' | 'update' | 'edit', at = Date.now()) {
+    const result =
+      kind === 'edit'
+        ? { filePath, oldString: 'a', newString: 'b', originalFile: 'a', structuredPatch: [], userModified: false, replaceAll: false }
+        : { type: kind, filePath, content: 'x', structuredPatch: [], originalFile: kind === 'create' ? null : 'old', userModified: false }
+    const line = {
+      type: 'user',
+      timestamp: new Date(at).toISOString(),
+      sessionId: 'sess-1',
+      cwd: '/Users/x/dev/other-project',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }] },
+      toolUseResult: result,
+    }
+    fs.mkdirSync(path.dirname(transcript()), { recursive: true })
+    fs.appendFileSync(transcript(), JSON.stringify(line) + '\n')
+  }
+
+  /** Claude's write: temp file beside the target, then rename over it. */
+  function agentWrite(target: string, text: string, kind: 'create' | 'update' | 'edit') {
+    const tmp = `${target}.tmp.${process.pid}.${Date.now()}`
+    fs.writeFileSync(tmp, text)
+    fs.renameSync(tmp, target)
+    recordToolResult(target, kind)
+  }
+
+  beforeEach(() => {
+    fs.writeFileSync(wiki('runbook--existing.md'), 'old body\n')
+  })
+
+  test('rename-replace of an existing page and a new page mid-run: notice, run passes', async () => {
+    const v = await fixtureRun([], () => {
+      agentWrite(wiki('runbook--existing.md'), 'new, longer body\n', 'edit')
+      agentWrite(wiki('runbook--new.md'), 'a new page\n', 'create')
+    })
+    expect(v.report).toBe('')
+    expect(v.ok).toBe(true)
+    expect(v.notice).toContain(wiki('runbook--existing.md'))
+    expect(v.notice).toContain(wiki('runbook--new.md'))
+  })
+
+  test('mixed: the agent-written page is noticed, a test write beside it fails', async () => {
+    const mine = wiki('mine.md')
+    const v = await fixtureRun([{ cmd: 'sh', args: ['-c', `echo x > "${mine}"`] }], () =>
+      agentWrite(wiki('runbook--new.md'), 'a new page\n', 'create'),
+    )
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(mine)
+    expect(v.report.split('T-450 notice')[0]).not.toContain(wiki('runbook--new.md'))
+    expect(v.notice).toContain(wiki('runbook--new.md'))
+  })
+
+  test('a transcript record stamped before the run does not cover a write during it', async () => {
+    recordToolResult(wiki('runbook--existing.md'), 'update', Date.now() - 60_000)
+    const v = await fixtureRun([], () => fs.appendFileSync(wiki('runbook--existing.md'), 'unrecorded, during the run\n'))
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(wiki('runbook--existing.md'))
+  })
+
+  test('a transcript line that is not a write tool result (a Read naming the path) earns nothing', async () => {
+    const v = await fixtureRun([], () => {
+      fs.appendFileSync(wiki('runbook--existing.md'), 'unrecorded, during the run\n')
+      fs.mkdirSync(path.dirname(transcript()), { recursive: true })
+      fs.appendFileSync(
+        transcript(),
+        JSON.stringify({
+          type: 'user',
+          timestamp: new Date().toISOString(),
+          toolUseResult: { type: 'text', filePath: wiki('runbook--existing.md'), file: { filePath: wiki('runbook--existing.md') } },
+        }) + '\n',
+      )
+    })
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(wiki('runbook--existing.md'))
+  })
+
+  test('a transcript outside the real home (a test-run session under its sandbox HOME) earns nothing', async () => {
+    const page = wiki('runbook--existing.md')
+    const sandboxTranscript = path.join(sandbox, '.claude', 'projects', 'p', 's.jsonl')
+    const v = await fixtureRun([
+      {
+        cmd: 'sh',
+        args: [
+          '-c',
+          `echo changed >> "${page}" && mkdir -p "${path.dirname(sandboxTranscript)}" && ` +
+            `printf '%s\\n' '${JSON.stringify({ type: 'user', timestamp: new Date(Date.now() + 1000).toISOString(), toolUseResult: { filePath: page, structuredPatch: [] } })}' >> "${sandboxTranscript}"`,
+        ],
+      },
+    ])
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(page)
   })
 })

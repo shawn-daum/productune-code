@@ -298,11 +298,22 @@
  *   stamped inside this run's window, carries no tripwire run id, and has a
  *   complete parent chain that does NOT contain this run's root pid. A test that
  *   calls `prdt` against the real home is a descendant of the root and fails.
- *   Path ownership by any other route (shell, node, python, Edit tool) gets no
+ *   Path ownership by any other route (shell, node, python) gets no
  *   report and fails, as before. KNOWN BOUNDARY: a test process that detaches
  *   from the run (reparented to launchd — the isolation rules refuse
  *   `detached: true`) AND drops the run id, then calls `prdt`, or one that
  *   forges a log line by hand, is read as another session.
+ *
+ * ANOTHER SESSION'S AGENT TOOL WRITE — a notice, not a failure (T-1522)
+ *
+ *   T-1134 rested on "every writer outside the run self-reports", and an agent's
+ *   Edit/Write tool does not: another session editing `~/.prdt/wiki/` pages turned
+ *   three green `prdt track merge` runs red (2026-11-11). Those writes are not
+ *   self-reported either — the harness already records every finished write tool
+ *   call in its session transcript, and `agentToolWritePaths()` reads that record.
+ *   A drift path an agent tool wrote in the window gets the same coverage as a
+ *   reported one. Writes by any process (shell, node, python) still fail unless
+ *   `prdt` reported them; see `agentToolWritePaths()` for why a test cannot earn it.
  */
 
 'use strict'
@@ -795,7 +806,9 @@ function verifyTripwire(options = {}) {
   // T-1134: the default stays T-450's — every drift fails. A drift line is moved
   // to the notice only when a writer OUTSIDE this run reported that path in the
   // machine's external-write log before writing it (see externalWritePaths()).
-  const reported = externalWritePaths(before)
+  // T-1522: plus every path an agent session's Edit/Write tool wrote during the
+  // window, read from the harness's own transcripts (see agentToolWritePaths()).
+  const reported = new Set([...externalWritePaths(before), ...agentToolWritePaths(before)])
   const drift = []
   const external = []
   for (const d of allDrift) {
@@ -876,6 +889,75 @@ function externalWritePaths(before) {
 }
 
 /**
+ * T-1522: the containment keys of every file an AGENT TOOL (Claude Code's Edit /
+ * Write / MultiEdit) wrote during the run's window, on any session of this machine.
+ *
+ * No writer reports here. The record is the harness's own transcript, which it
+ * keeps for every tool call whatever the tool or the session: after a write tool
+ * finishes, `~/.claude/projects/<project>/<session>.jsonl` (subagents under
+ * `<session>/subagents/`) gains one line whose `toolUseResult` carries `filePath`
+ * and `structuredPatch` — a key only the write tools' results have (a Read's
+ * result names its path under `file`, never at the top level with a patch).
+ *
+ * Why this cannot excuse a write made BY the run: an agent tool write is made by
+ * the Claude Code process itself, never by a descendant of the run's root — a
+ * test process can run a shell, python or node, but it cannot make a session's
+ * Edit tool fire. A `claude` started BY a test runs under the sandbox HOME the
+ * isolation rules give every test, so its transcript lands there and not under
+ * `realHome()/.claude/projects` — the only directory read here, deliberately not
+ * one an environment variable can repoint. KNOWN BOUNDARY, the same class as
+ * T-1134's forged log line: a test that hand-writes a transcript line into the
+ * real `~/.claude` (outside the covered surfaces) is read as another session.
+ *
+ * Only transcripts modified inside the window are opened, and only lines naming
+ * `structuredPatch` are parsed. Stamped before the window → earns nothing.
+ */
+function agentToolWritePaths(before) {
+  const out = new Set()
+  const since = before.takenAt - REPORT_SLACK_MS
+  const files = []
+  const walk = (dir) => {
+    let entries
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name)
+      if (e.isDirectory()) walk(full)
+      else if (e.isFile() && e.name.endsWith('.jsonl')) files.push(full)
+    }
+  }
+  walk(path.join(realHome(), '.claude', 'projects'))
+  for (const f of files) {
+    let text
+    try {
+      if (fs.statSync(f).mtimeMs < since) continue
+      text = fs.readFileSync(f, 'utf-8')
+    } catch {
+      continue
+    }
+    for (const line of text.split('\n')) {
+      if (!line.includes('"structuredPatch"')) continue
+      let e
+      try {
+        e = JSON.parse(line)
+      } catch {
+        continue
+      }
+      const r = e && e.toolUseResult
+      if (!r || typeof r !== 'object' || typeof r.filePath !== 'string' || !path.isAbsolute(r.filePath)) continue
+      if (!('structuredPatch' in r)) continue
+      const ts = Date.parse(e.timestamp)
+      if (!Number.isFinite(ts) || ts < since) continue
+      out.add(containmentKey(r.filePath, true))
+    }
+  }
+  return out
+}
+
+/**
  * Is a drifted path covered by a report? Its own path was reported, or it is a
  * directory on the way to a reported path whose line changed only because that
  * write landed inside it: the reported path's DIRECT parent (an atomic rename's
@@ -900,7 +982,8 @@ function formatExternalNotice(external) {
   if (paths.length === 0) return ''
   return (
     '\nT-450 notice: the real home changed during this run, written by a process OUTSIDE\n' +
-    'this run that reported the write (prdt external-write log) — another session. NOT a failure:\n' +
+    'this run — another session: `prdt` reported the write (external-write log), or an agent\n' +
+    'Edit/Write tool made it (Claude session transcript). NOT a failure:\n' +
     [...new Set(paths)].slice(0, 20).map((p) => `  ~ ${p}\n`).join('') +
     (paths.length > 20 ? `  … ${paths.length - 20} more\n` : '') +
     '\n'
