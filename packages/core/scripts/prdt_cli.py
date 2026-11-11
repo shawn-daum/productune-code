@@ -6275,7 +6275,10 @@ def effect_scope(root, tid, body=None):
             errors.append(f"code repo: {e}")
     gd = meta_git_dir(root)
     if gd.is_dir():
-        prob = meta_git_trust_problem(root)
+        try:
+            prob = meta_git_trust_problem(root)
+        except Exception as e:   # its own `git config --file` read can hang or fail like any git run
+            prob = f"trust check failed: {e.__class__.__name__}"
         if prob:
             errors.append(f"meta repo: {prob}")
         else:
@@ -6488,9 +6491,8 @@ def _effect_notice_lines(root, ev, tid, text, fm):
         if new and seen_p is not None:
             try:
                 seen[key] = sorted(already | set(new))
-                seen_p.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(seen_p, json.dumps(seen))
-            except OSError:
+                state_write(prdt_home(), seen_p, json.dumps(seen))   # link-refusing; creates run/prior-tickets
+            except (OSError, StateLinkError):
                 pass
         return new
     except Exception:
