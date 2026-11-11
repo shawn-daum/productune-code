@@ -452,11 +452,49 @@ describe('real-home tripwire: another session\'s agent tool write is a notice (T
     expect(v.report).toContain(edited)
   })
 
-  test('an Edit record with no originalFile and nothing earlier to derive from fails closed', async () => {
-    const edited = wiki('runbook--existing.md')
-    const v = await fixtureRun([], () => agentWrite(edited, 'new, longer body\n', 'edit', { nullOriginal: true }))
+  /** Edit with originalFile=null: the record names only oldString → newString (the live shape). */
+  function nullOriginalEdit(target: string, oldString: string, newString: string, writeTo?: string) {
+    const original = fs.readFileSync(target, 'utf-8')
+    fs.writeFileSync(target, writeTo ?? original.replace(oldString, newString))
+    recordToolResult(target, {
+      oldString,
+      newString,
+      originalFile: null,
+      structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-' + oldString, '+' + newString] }],
+      userModified: false,
+      replaceAll: false,
+      contentNotInModelContext: true,
+    })
+  }
+
+  test('an Edit record with no originalFile and nothing earlier to derive from: file holds newString, not oldString → notice', async () => {
+    const page = wiki('runbook--existing.md')
+    fs.writeFileSync(page, 'intro\nold body\noutro\n')
+    const v = await fixtureRun([], () => nullOriginalEdit(page, 'old body', 'new, longer body'))
+    expect(v.report).toBe('')
+    expect(v.ok).toBe(true)
+    expect(v.notice).toContain(page)
+  })
+
+  test('an Edit record with no originalFile whose newString is not in the file fails', async () => {
+    const page = wiki('runbook--existing.md')
+    const v = await fixtureRun([], () => nullOriginalEdit(page, 'old body', 'new, longer body', 'something else entirely\n'))
     expect(v.ok).toBe(false)
-    expect(v.report).toContain(edited)
+    expect(v.report).toContain(page)
+  })
+
+  test('an Edit record with no originalFile whose oldString is still in the file fails', async () => {
+    const page = wiki('runbook--existing.md')
+    const v = await fixtureRun([], () => nullOriginalEdit(page, 'old body', 'new body', 'old body\nnew body\n'))
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(page)
+  })
+
+  test('a test deleting a page covered by an Edit record with no originalFile fails', async () => {
+    const page = wiki('runbook--existing.md')
+    const v = await fixtureRun([{ cmd: 'rm', args: [page] }], () => nullOriginalEdit(page, 'old body', 'new, longer body'))
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(page)
   })
 
   test('an Edit record with no originalFile after an in-window Write of the same page derives from it: notice', async () => {

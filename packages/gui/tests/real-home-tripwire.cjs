@@ -916,9 +916,17 @@ function externalWritePaths(before) {
  *     `originalFile` with `oldString` → `newString`, 74/74.
  *   - An Edit whose `originalFile` is null (the harness omits it on many records)
  *     derives from the previous in-window record for the same path, when that one
- *     derived; otherwise nothing is derived.
- * Nothing derived → the path is not covered and its drift stays a failure. A
- * removed file is never covered (Edit/Write never delete).
+ *     derived and the patch applies to it.
+ *   - Otherwise such an Edit gets a WEAKER check: the file must contain the
+ *     record's `newString` and — when `oldString` is non-empty and not a substring
+ *     of `newString` — no longer contain `oldString`. PO decision (T-1522 dev3):
+ *     one of the pages that turned 2026-11-11's merges red was written by exactly
+ *     such a record, so failing closed would bring that red back. ACCEPTED NARROW
+ *     GAP: a test that appends to (or otherwise edits outside the replaced text
+ *     of) that same page in the same window passes. A record with neither shape
+ *     (no strings) earns nothing.
+ * Nothing derived and no weak check → the path is not covered and its drift stays
+ * a failure. A removed file is never covered (Edit/Write never delete).
  *
  * Why this cannot excuse a write made BY the run: an agent tool write is made by
  * the Claude Code process itself, never by a descendant of the run's root — a
@@ -978,19 +986,25 @@ function agentToolWritePaths(before) {
   }
   // Oldest first, so each path ends on its latest record. Equal stamps keep read order.
   records.sort((a, b) => a.ts - b.ts || a.seq - b.seq)
-  const written = new Map() // key → { filePath, content: string | undefined }
+  // key → { filePath, content: string | undefined, weak: { oldString, newString } | undefined }
+  const written = new Map()
   for (const { r } of records) {
     const key = containmentKey(r.filePath, true)
     const prev = written.get(key)
     let content
+    let weak
     if (typeof r.content === 'string' && (r.type === 'create' || r.type === 'update')) content = r.content
     else if (typeof r.originalFile === 'string') content = applyStructuredPatch(r.originalFile, r.structuredPatch)
-    else if (prev && typeof prev.content === 'string') content = applyStructuredPatch(prev.content, r.structuredPatch)
-    written.set(key, { filePath: r.filePath, content })
+    else {
+      if (prev && typeof prev.content === 'string') content = applyStructuredPatch(prev.content, r.structuredPatch)
+      if (content === undefined && r.originalFile === null && typeof r.oldString === 'string' && typeof r.newString === 'string')
+        weak = { oldString: r.oldString, newString: r.newString }
+    }
+    written.set(key, { filePath: r.filePath, content, weak })
   }
   const out = new Set()
   for (const [key, w] of written) {
-    if (typeof w.content !== 'string') continue
+    if (typeof w.content !== 'string' && !w.weak) continue
     let now
     try {
       if (!fs.statSync(w.filePath).isFile()) continue
@@ -998,7 +1012,15 @@ function agentToolWritePaths(before) {
     } catch {
       continue // removed (or unreadable): Edit/Write never delete — stays drift
     }
-    if (now.equals(Buffer.from(w.content, 'utf-8'))) out.add(key)
+    if (typeof w.content === 'string') {
+      if (now.equals(Buffer.from(w.content, 'utf-8'))) out.add(key)
+      continue
+    }
+    const text = now.toString('utf-8')
+    const { oldString, newString } = w.weak
+    if (!text.includes(newString)) continue
+    if (oldString !== '' && !newString.includes(oldString) && text.includes(oldString)) continue
+    out.add(key)
   }
   return out
 }
