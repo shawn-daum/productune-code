@@ -301,13 +301,15 @@ describe.skipIf(!PYTHON3)('prdt schedule lanes', () => {
     expect(a.working).toEqual([])
   })
 
-  test('no 합격선 table: no lanes, text output has no lane lines and keeps the critical path', () => {
+  test('no 합격선 table, no record: one 기본 레인 line, the rank list and critical path stay', () => {
     writePrd([])
     writeTicket('v0.1', 'T-001', {})
-    expect(lanes()).toEqual([])
+    // T-1513: the default lane is the only lane — `besteffort` + `default`, every open+done ticket
+    expect(lanes()).toMatchObject([{ name: '기본 레인', besteffort: true, default: true, done: 0, total: 1, tickets: ['T-001'] }])
     const t = run(['schedule']).out
     expect(t).toContain('critical path (1): T-001')
-    expect(t).not.toMatch(/^lane /m)
+    expect(t).toMatch(/^lane 기본 레인 0\/1 — no lane record in v0\.1$/m)
+    expect(t.match(/^lane /gm)).toHaveLength(1)
     expect(t).not.toContain('outside the lanes')
   })
 

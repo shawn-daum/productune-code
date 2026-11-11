@@ -280,7 +280,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
       const r = rows()
       expect(r, s).toHaveLength(3)
       expect(r[0], s).not.toContain('working')
-      expect(r[1], s).toBe('lane: 자투리  0/2 | working T-001(developer) | next T-002(developer)')
+      expect(r[1], s).toBe('lane: 기본 레인  0/2 | working T-001(developer) | next T-002(developer)')
       expect(r[2], s).toBe('decision 0 | request 0')
     }
   })
@@ -294,7 +294,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     const without = rows()
     expect(withLane).toHaveLength(without.length)
     expect(withLane[1]).toBe('lane: A  0/1 | next T-001(developer)')
-    expect(without[1]).toBe('lane: 자투리  0/1 | next T-001(developer)')
+    expect(without[1]).toBe('lane: 기본 레인  0/1 | next T-001(developer)')
     expect(withLane[0]).toBe(without[0])
     expect(withLane[withLane.length - 1]).toBe(without[without.length - 1])
   })
@@ -367,7 +367,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     expect(rows()[1]).toBe('lane: A  0/1 | next T-001(developer)')
     // a heading the lane regex rejects (`### 합격선표`) shows no gate lane — the default lane only (T-1330)
     fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('###  합격선', '### 합격선표'))
-    expect(rows()).toEqual([expect.stringMatching(/^proj /), 'lane: 자투리  0/1 | next T-001(developer)', 'decision 0 | request 0'])
+    expect(rows()).toEqual([expect.stringMatching(/^proj /), 'lane: 기본 레인  0/1 | next T-001(developer)', 'decision 0 | request 0'])
   })
 
   test('QA 3: lane rendering that throws → the default lane row only (running work kept), rest of the statusline intact', () => {
@@ -388,7 +388,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     })).replace(/\n$/, '').split('\n')
     expect(out).toHaveLength(3)
     expect(out[0]).not.toContain('working')
-    expect(out[1]).toBe('lane: 자투리  0/2 | working T-001(developer) T-009(developer)')
+    expect(out[1]).toBe('lane: 기본 레인  0/2 | working T-001(developer) T-009(developer)')
     expect(out[2]).toBe('decision 0 | request 0')
   })
 
@@ -425,7 +425,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows from lane records (T-1359)', () 
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, 'T-001.md'), ['---', 'id: T-001', 'slug: s', 'type: impl', 'status: open', 'assignee: developer', 'created: 2026-10-15', '---', '', 'lane: not a record', ''].join('\n'))
     setStage('build')
-    expect(rows()).toEqual([expect.stringMatching(/^proj /), 'lane: 자투리  0/1 | next T-001(developer)', 'decision 0 | request 0'])
+    expect(rows()).toEqual([expect.stringMatching(/^proj /), 'lane: 기본 레인  0/1 | next T-001(developer)', 'decision 0 | request 0'])
   })
 
   test('T-1330: a lane record draws its lane row in stage define too', () => {
