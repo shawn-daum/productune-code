@@ -1198,7 +1198,21 @@ else:
 # `+N`. Empty → `none`; a failed walk → `?` (so "nothing waiting" and "could not
 # compute" stay distinguishable). A missing `docs/tickets` is "no tickets", not a
 # failure. Source is the markdown files, not `.prdt/index.db` (derived, can be stale).
+def _load_lanes():
+    here = os.environ.get("PRDT_HOOK_DIR") or ""
+    for c in (os.path.join(here, "..", "bin"), os.path.join(here, "..")):
+        if os.path.isfile(os.path.join(c, "prdt_lanes.py")):
+            sys.path.insert(0, os.path.realpath(c))
+            import prdt_lanes
+            return prdt_lanes
+    return None
+
+
 def waiting_lists(root):
+    try:
+        _pl = _load_lanes()
+    except Exception:
+        _pl = None
     dec, req = set(), set()
     dpaths = []
     for _prod, tickets_root in tickets_homes(root):   # T-1104: docs/tickets or every product's
@@ -1226,6 +1240,14 @@ def waiting_lists(root):
                 dec.add(tid)
             elif ma and ma.group(1) == "user":
                 req.add(tid)
+            elif _pl is not None and re.search(r"^type:\s*(design|impl|qa)\s*$", head, re.M):
+                # T-1491: a work ticket whose `## options` waits on the user — the statusline's
+                # rule (`prdt_lanes`); the module missing or throwing never costs the list.
+                try:
+                    if _pl.work_ticket_waits_on_options(re.search(r"^type:\s*(\S+)", head, re.M).group(1), os.path.join(dpath, fn)):
+                        req.add(tid)
+                except Exception:
+                    pass
     key = lambda t: (t.rpartition("-")[0], int(t.rpartition("-")[2]))   # T-1298: T-NNN, then T-<PREFIX>-<n>
     return sorted(dec, key=key), sorted(req, key=key)
 

@@ -152,6 +152,17 @@
 #   closed). Replaces the prompt-wording
 #   tripwire prdt-user-prompt.sh used to print (S30).
 #
+# BUILD ENTRY + DEPLOY DECISIONS (T-1497): EVERY session. (1) A Write/Edit/MultiEdit of
+#   `.prdt/po-state.json` that moves a stage (top-level or `products.<p>`) into `build` for a
+#   non-patch version is denied unless `prdt tickets check-place --place build-entry` finds the
+#   version's closed `place: build-entry` decision (a patch `v<N>.<m>.<p>` is not gated; a write that
+#   keeps stage and version is not an entry). A Bash write of po-state is an accepted gap.
+#   (2) A deploy-shaped command that ships (push main · tag push · gh pr merge · vercel/netlify prod; a
+#   local `git merge` into main only promotes and is not gated) at po-state stage ship — or define/build
+#   with the version's N/A-skip line — is denied unless the version holds a closed `place: deploy`
+#   decision pointing to its RELEASES.md section. The matcher is the CLI's (one implementation, shared
+#   with `prdt deploy record`); no CLI, or an old one, → open.
+#
 # Fails OPEN everywhere: python3 missing, unparsable JSON, no project, an
 # unreadable config — exit 0, no output.
 
@@ -184,7 +195,7 @@ fi
 command -v python3 >/dev/null 2>&1 || exit 0
 
 PRDT_EVENT_JSON="$EV" python3 -I - <<'PYEOF'
-import hashlib, json, os, re, shlex, sys
+import hashlib, json, os, re, shlex, shutil, subprocess, sys
 
 def out_open():
     sys.exit(0)
@@ -708,6 +719,252 @@ def deny(rp, how):
     sys.exit(0)
 
 
+_stage_cache = {}
+
+
+def _log_skips(log, version):
+    """True when the wiki log holds an `N/A-skip` line naming `version`."""
+    vre = re.compile(re.escape(version) + r"(?![0-9.]*[0-9])")
+    try:
+        with open(log, encoding="utf-8", errors="replace") as f:
+            return any("N/A-skip" in line and vre.search(line) for line in f)
+    except Exception:
+        return False
+
+
+def first_product_names(proot):
+    """Names po-state `current_task.product` may give the first product: the
+    config `slug` and its `docs/<kebab>/` folder form. A spelling this misses
+    (a reserved slug's `<name>-product`) only widens the gate to every product."""
+    try:
+        with open(os.path.join(proot, ".prdt", "config.json"), encoding="utf-8") as f:
+            slug = json.load(f).get("slug")
+    except Exception:
+        return ()
+    if not isinstance(slug, str) or not slug:
+        return ()
+    return (slug, re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-"))
+
+
+def _deploy_cands(proot):
+    """([(stage, version, product-or-None)], the log path) for a deploy from `proot`
+    (T-1222 C7 rules below), or None when po-state is unreadable."""
+    try:
+        with open(os.path.join(proot, ".prdt", "po-state.json"), encoding="utf-8") as f:
+            st = json.load(f)
+        st = st if isinstance(st, dict) else {}
+        # T-1222 C7: top-level stage · version = the first product; an added
+        # product's live in `products.<p>` (pre-v1.14 `lines`). The deploy's
+        # product = current_task's `product` (pre-v1.14 `line`); absent or
+        # naming the first product → the top level; naming an added product →
+        # its entry. Anything else — no current task, a name the guard cannot
+        # place — fails closed: the top level and every product are checked.
+        top = (st.get("stage"), st.get("version"), None)
+        pk = "products" if "products" in st or "lines" not in st else "lines"
+        prods = st.get(pk) if isinstance(st.get(pk), dict) else {}
+        every = [top] + [(e.get("stage"), e.get("version"), n) for n, e in sorted(prods.items()) if isinstance(e, dict)]
+        cands = every
+        ct = st.get("current_task")
+        if isinstance(ct, dict):
+            p = ct.get("product") if "product" in ct else ct.get("line")
+            if p is None or p == "" or p in first_product_names(proot):
+                cands = [top]
+            elif isinstance(p, str) and isinstance(prods.get(p), dict):
+                cands = [(prods[p].get("stage"), prods[p].get("version"), p)]
+        shared_dir = os.path.join(proot, "docs", "_shared")
+        log = os.path.join(shared_dir if os.path.isdir(shared_dir) else os.path.join(proot, "docs"),
+                           "wiki", "log.md")
+        return cands, log
+    except Exception:
+        return None
+
+
+_VER_RE = r"v[0-9]+(?:\.[0-9]+){0,2}"
+
+
+def deploy_gate(start):
+    """(stage, version) when a deploy from `start` must wait for ship entry,
+    else None. Cached per project root."""
+    proot = find_root(start) if start else None
+    if not proot:
+        return None
+    if proot in _stage_cache:
+        return _stage_cache[proot]
+    res = None
+    got = _deploy_cands(proot)
+    if got:
+        cands, log = got
+        for stage, version, _p in cands:
+            if stage not in ("define", "build"):
+                continue
+            v = version if isinstance(version, str) else ""
+            if v and re.fullmatch(_VER_RE, v) and _log_skips(log, v):
+                continue
+            res = (stage, v)
+            break
+    _stage_cache[proot] = res
+    return res
+
+
+def prdt_cli_bin():
+    """PRDT_BIN when set (an explicit choice: unusable → None, no fallback), else the installed
+    `$PRDT_HOME/bin/prdt`, else `prdt` on PATH."""
+    p = os.environ.get("PRDT_BIN")
+    if p:
+        return p if os.path.isfile(p) and os.access(p, os.X_OK) else None
+    p = os.path.join(prdt_home, "bin", "prdt")
+    if os.path.isfile(p) and os.access(p, os.X_OK):
+        return p
+    return shutil.which("prdt")
+
+
+def place_check(proot, place, version_id):
+    """T-1497: `prdt tickets check-place --json` → its result dict ({ok, missing, ticket, fact, …}),
+    or None when the CLI is absent, too old for the subcommand, or fails — the hook fails OPEN
+    (the one matcher lives in the CLI, shared with `prdt deploy record`)."""
+    cli = prdt_cli_bin()
+    if not cli:
+        return None
+    try:
+        env = dict(os.environ)
+        env["PRDT_META_BACKUP"] = "0"  # a gate lookup never triggers the meta backup tick
+        r = subprocess.run([cli, "tickets", "check-place", "--place", place, "--version", version_id, "--json"],
+                           cwd=proot, capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL, env=env)
+        res = json.loads(r.stdout)
+        return res if isinstance(res, dict) and isinstance(res.get("ok"), bool) else None
+    except Exception:
+        return None
+
+
+# a deploy-shaped command that only moves a LOCAL ref (promotion): shipped on the confirm-gated push
+_LOCAL_ONLY_SHAPES = ("Bash git merge into main",)
+
+
+def deploy_decision_gate(start):
+    """T-1497: (version-id, place-check result) when a deploy from `start` lacks the closed
+    `place: deploy` decision of the version being shipped, else None. Applies to a candidate
+    at stage ship, or define/build with the N/A-skip line (the deploy then runs without ship entry);
+    a candidate with no usable version, or any other stage, is left open."""
+    proot = find_root(start) if start else None
+    got = _deploy_cands(proot) if proot else None
+    if not got:
+        return None
+    cands, log = got
+    for stage, version, pname in cands:
+        v = version.strip() if isinstance(version, str) else ""
+        if not (v and re.fullmatch(_VER_RE, v)):
+            continue
+        if not (stage == "ship" or (stage in ("define", "build") and _log_skips(log, v))):
+            continue
+        vid = f"{pname}/{v}" if pname else v
+        res = place_check(proot, "deploy", vid)
+        if res is not None and not res["ok"]:
+            return vid, res
+    return None
+
+
+def deny_deploy_decision(vid, res, how):
+    bare = vid.split("/")[-1]
+    msg = (f"[prdt deploy guard] denied {how}: {vid} needs, in {res.get('dir')}, a `type: decision` ticket with `place: deploy`, "
+           f"`status: done`, user quote in `outcome`, body citing `RELEASES.md` `## {bare}`; {res.get('fact')}. ")
+    if not is_main:
+        msg += "Next: return `blocked` naming this deploy; the PO asks the deploy decision."
+    else:
+        msg += f"Next: put deploy of {vid} + its release notes to the user on that ticket, reply verbatim → `outcome`, close, re-run."
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                             "permissionDecision": "deny",
+                                             "permissionDecisionReason": msg}}))
+    sys.exit(0)
+
+
+def _apply_edits(text, edits):
+    """`text` after Edit-shaped replacements (old_string, new_string, replace_all) the way the tool applies them;
+    None when one cannot be applied (the tool itself will fail — nothing for this guard to judge)."""
+    for e in edits:
+        if not isinstance(e, dict) or not isinstance(e.get("old_string"), str) or not isinstance(e.get("new_string"), str):
+            return None
+        o, n = e["old_string"], e["new_string"]
+        c = text.count(o) if o else 0
+        if c == 0 or (c > 1 and not e.get("replace_all")):
+            return None
+        text = text.replace(o, n) if e.get("replace_all") else text.replace(o, n, 1)
+    return text
+
+
+def _stage_rows(st):
+    """{product-or-None: (stage, version)} of a po-state dict."""
+    out = {None: (st.get("stage"), st.get("version"))}
+    pk = "products" if "products" in st or "lines" not in st else "lines"
+    prods = st.get(pk) if isinstance(st.get(pk), dict) else {}
+    for n, e in prods.items():
+        if isinstance(e, dict):
+            out[n] = (e.get("stage"), e.get("version"))
+    return out
+
+
+def build_entry_gate(target):
+    """T-1497: a Write/Edit/MultiEdit of THE project's `.prdt/po-state.json` that moves a stage (top-level or
+    `products.<p>`) into `build` for a non-patch version (`v<N>` · `v<N>.<m>`) is denied unless that version's
+    tickets dir holds a closed `place: build-entry` decision. A patch version (`v<N>.<m>.<p>`) is not gated, a
+    write that leaves stage and version as they were is not an entry. Bash writes of the file are an accepted gap."""
+    if not isinstance(target, str) or not target:
+        return
+    tp = os.path.expanduser(target)
+    rp = os.path.realpath(tp if tp.startswith("/") else os.path.join(cwd or "", tp))
+    if os.path.basename(rp) != "po-state.json" or os.path.basename(os.path.dirname(rp)) != ".prdt":
+        return
+    proot = os.path.dirname(os.path.dirname(rp))
+    if find_root(proot) != proot:
+        return
+    try:
+        with open(rp, encoding="utf-8") as f:
+            old_text = f.read()
+    except Exception:
+        old_text = ""
+    if tool == "Write":
+        new_text = tin.get("content")
+    elif tool == "Edit":
+        new_text = _apply_edits(old_text, [tin])
+    else:
+        new_text = _apply_edits(old_text, tin.get("edits") if isinstance(tin.get("edits"), list) else [])
+    try:
+        new = json.loads(new_text)
+        new = new if isinstance(new, dict) else None
+    except Exception:
+        new = None
+    if new is None:
+        return
+    try:
+        old = json.loads(old_text)
+        old = old if isinstance(old, dict) else {}
+    except Exception:
+        old = {}
+    old_rows = _stage_rows(old)
+    for pname, (stage, version) in _stage_rows(new).items():
+        v = version.strip() if isinstance(version, str) else ""
+        if stage != "build" or not re.fullmatch(_VER_RE, v) or v.count(".") == 2:
+            continue
+        if old_rows.get(pname) == (stage, version):
+            continue  # already in build for this version: not an entry
+        vid = f"{pname}/{v}" if pname else v
+        res = place_check(proot, "build-entry", vid)
+        if res is not None and not res["ok"]:
+            deny_build_entry(vid, res)
+
+
+def deny_build_entry(vid, res):
+    msg = (f"[prdt build-entry guard] denied po-state write: stage → `build` for {vid} needs, in {res.get('dir')}, a `type: decision` "
+           f"ticket with `place: build-entry`, `status: done`, user quote in `outcome`; {res.get('fact')}. ")
+    if is_worker:
+        msg += "Next: return `blocked` naming this write; the PO asks Build entry."
+    else:
+        msg += "Next: put Build entry to the user on that ticket, reply verbatim → `outcome`, close, re-run."
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                             "permissionDecision": "deny",
+                                             "permissionDecisionReason": msg}}))
+    sys.exit(0)
+
+
 if tool != "Bash":
     target = tin.get("notebook_path") if tool == "NotebookEdit" else tin.get("file_path")
     rp = tracks_target(target, cwd, ENV0) if is_worker else None
@@ -722,6 +979,8 @@ if tool != "Bash":
     rp = shared(target, cwd)
     if rp:
         deny(rp, tool)
+    if tool in ("Write", "Edit", "MultiEdit"):
+        build_entry_gate(target)  # T-1497
     out_open()
 
 # ── Bash ─────────────────────────────────────────────────────────────────────
@@ -992,7 +1251,6 @@ def sub_var(path, lv):
 # the merge endpoint instead of `gh pr merge`.
 PROD_BRANCH = "main"
 PUSH_VALUE_FLAGS = {"--repo", "-o", "--push-option", "--receive-pack", "--exec"}
-_stage_cache = {}
 
 
 def git_head_branch(repo):
@@ -1020,78 +1278,6 @@ def git_head_branch(repo):
         except Exception:
             return None
     return None
-
-
-def _log_skips(log, version):
-    """True when the wiki log holds an `N/A-skip` line naming `version`."""
-    vre = re.compile(re.escape(version) + r"(?![0-9.]*[0-9])")
-    try:
-        with open(log, encoding="utf-8", errors="replace") as f:
-            return any("N/A-skip" in line and vre.search(line) for line in f)
-    except Exception:
-        return False
-
-
-def first_product_names(proot):
-    """Names po-state `current_task.product` may give the first product: the
-    config `slug` and its `docs/<kebab>/` folder form. A spelling this misses
-    (a reserved slug's `<name>-product`) only widens the gate to every product."""
-    try:
-        with open(os.path.join(proot, ".prdt", "config.json"), encoding="utf-8") as f:
-            slug = json.load(f).get("slug")
-    except Exception:
-        return ()
-    if not isinstance(slug, str) or not slug:
-        return ()
-    return (slug, re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-"))
-
-
-def deploy_gate(start):
-    """(stage, version) when a deploy from `start` must wait for ship entry,
-    else None. Cached per project root."""
-    proot = find_root(start) if start else None
-    if not proot:
-        return None
-    if proot in _stage_cache:
-        return _stage_cache[proot]
-    res = None
-    try:
-        with open(os.path.join(proot, ".prdt", "po-state.json"), encoding="utf-8") as f:
-            st = json.load(f)
-        st = st if isinstance(st, dict) else {}
-        # T-1222 C7: top-level stage · version = the first product; an added
-        # product's live in `products.<p>` (pre-v1.14 `lines`). The deploy's
-        # product = current_task's `product` (pre-v1.14 `line`); absent or
-        # naming the first product → the top level; naming an added product →
-        # its entry. Anything else — no current task, a name the guard cannot
-        # place — fails closed: the top level and every product are checked.
-        top = (st.get("stage"), st.get("version"))
-        pk = "products" if "products" in st or "lines" not in st else "lines"
-        prods = st.get(pk) if isinstance(st.get(pk), dict) else {}
-        every = [top] + [(e.get("stage"), e.get("version")) for _, e in sorted(prods.items()) if isinstance(e, dict)]
-        cands = every
-        ct = st.get("current_task")
-        if isinstance(ct, dict):
-            p = ct.get("product") if "product" in ct else ct.get("line")
-            if p is None or p == "" or p in first_product_names(proot):
-                cands = [top]
-            elif isinstance(p, str) and isinstance(prods.get(p), dict):
-                cands = [(prods[p].get("stage"), prods[p].get("version"))]
-        shared_dir = os.path.join(proot, "docs", "_shared")
-        log = os.path.join(shared_dir if os.path.isdir(shared_dir) else os.path.join(proot, "docs"),
-                           "wiki", "log.md")
-        for stage, version in cands:
-            if stage not in ("define", "build"):
-                continue
-            v = version if isinstance(version, str) else ""
-            if v and re.fullmatch(r"v[0-9]+(?:\.[0-9]+){0,2}", v) and _log_skips(log, v):
-                continue
-            res = (stage, v)
-            break
-    except Exception:
-        pass
-    _stage_cache[proot] = res
-    return res
 
 
 def deny_deploy(gate, how):
@@ -1539,6 +1725,10 @@ def run_command(raw_cmd, base_cwd, depth, sh, ch, lv=None):
             gate = deploy_gate(dep[0] or cwd)
             if gate:
                 deny_deploy(gate, dep[1])
+            if dep[1] not in _LOCAL_ONLY_SHAPES:
+                dg = deploy_decision_gate(dep[0] or cwd)
+                if dg:
+                    deny_deploy_decision(dg[0], dg[1], dep[1])
         if name == "tee":
             for a in ops:
                 check(a, "Bash tee")

@@ -37,6 +37,7 @@ from prdt_lanes import (
     DOCS_SHARED,
     DocsLayoutError,
     LANE_GATE_PATH_RE,
+    work_ticket_waits_on_options,
     LANE_HEADING_RE,
     LANE_NAME_RE,
     LEGACY_ASSIGNEE_RE,
@@ -51,6 +52,7 @@ from prdt_lanes import (
     PRODUCT_DOCS_KINDS,
     SCHEDULE_DISPATCHABLE,
     TICKET_INDEX_FIELDS,
+    TICKET_PLACES,
     TICKET_STATUS,
     TICKET_TYPES,
     VERSION_ID_RE,
@@ -799,6 +801,10 @@ def docs_msg(root, text):
     def one(m):
         head = m.group(1)
         if head == DOCS_SHARED or head in prods or head in DOCS_MSG_CODE_SIDE:
+            return m.group(0)
+        # `docs/<name>/tickets/…` is a product folder whatever its name (an added product whose
+        # docs/<name>/ is not created yet): an As-Is path never has a segment before `tickets`.
+        if text.startswith("/tickets/", m.end()) and head not in PRODUCT_DOCS_KINDS:
             return m.group(0)
         if head in PRODUCT_DOCS_KINDS or (head == "wiki" and text.startswith("/retro--v", m.end())):
             return f"docs/{p}/{head}"
@@ -5651,7 +5657,7 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # `tickets new`'s frontmatter-key order (contracts §Tickets): id · slug · type ·
 # status · assignee · feature? · prd_item? · deps? · created · closed? — a
 # fresh ticket never carries `closed`.
-TICKET_FRONTMATTER_ORDER = ("id", "slug", "title", "type", "stage", "status", "assignee", "feature",
+TICKET_FRONTMATTER_ORDER = ("id", "slug", "title", "type", "stage", "status", "assignee", "place", "feature",
                             "prd_item", "deps", "created")
 
 
@@ -5682,6 +5688,10 @@ def cmd_tickets_new(args, root):
     if not args.slug or not SLUG_RE.match(args.slug):
         sys.exit("prdt tickets new: --slug is required and must be kebab-case (a-z0-9, hyphen-separated)")
     ttype = args.type
+    # T-1497: `--place` names the fixed place a decision ticket answers (closed list).
+    place = getattr(args, "place", None)
+    if place is not None and ttype != "decision":
+        sys.exit("prdt tickets new: --place is for `--type decision` only — no ticket written")
     # T-1276: `title` is optional free text in the project's user_lang — any
     # language, never matched against a script or wordlist; only the
     # frontmatter's one-line shape is enforced.
@@ -5746,7 +5756,7 @@ def cmd_tickets_new(args, root):
     # CLI choice, the same way the frame itself is never a per-ticket choice.
     assignee = "user" if ttype == "decision" else (args.assignee or "po")
     fm = {"id": tid, "slug": args.slug, "title": title, "type": ttype, "stage": stage_now, "status": "open", "assignee": assignee,
-          "feature": args.feature, "prd_item": args.prd_item,
+          "place": place, "feature": args.feature, "prd_item": args.prd_item,
           "deps": "[" + ", ".join(args.deps) + "]" if args.deps else None,
           # The MACHINE's local date, not UTC (T-685 fix — PO-observed at
           # 2026-09-24 KST: a scaffold landed `created: 2026-09-23` because
@@ -5762,9 +5772,11 @@ def cmd_tickets_new(args, root):
     # regardless of type. A `decision` ticket's `options` is seeded with the
     # annex's empty table shape (TICKET_OPTIONS_TABLE_SCAFFOLD), not a bare
     # heading — the PO fills cells, never recalls the shape from memory.
-    body_keys = [k for k in TICKET_FRAME_KEYS if k != "options" or ttype == "decision"]
+    # T-1491: `--options` seeds the same table on a work ticket (R2 of T-1490).
+    with_options = ttype == "decision" or bool(getattr(args, "options", False))
+    body_keys = [k for k in TICKET_FRAME_KEYS if k != "options" or with_options]
     def _section(k):
-        if k == "options" and ttype == "decision":
+        if k == "options" and with_options:
             return f"## options\n\n{TICKET_OPTIONS_TABLE_SCAFFOLD}\n"
         if k == "outcome" and ttype == "decision":
             return f"## outcome\n\n{TICKET_DECISION_OUTCOME_SCAFFOLD}"
@@ -5925,6 +5937,43 @@ def fmt_ticket_body(body, ttype, status):
 TICKET_REQUEST_RE = re.compile(r"^R-\d+$")
 
 
+def cmd_tickets_options(args, root):
+    """`prdt tickets options <id…>` (T-1491) — put the `## options` table frame into
+    an existing ticket, between `problem` and the next frame key. A ticket that
+    already has an `options` key is left untouched."""
+    con = open_db(root)
+    reindex_tickets(root, con)
+    if not args.ids:
+        sys.exit("usage: prdt tickets options <id…>")
+    hit = dict(con.execute(
+        "SELECT id, path FROM tickets WHERE id IN (%s)" % ",".join("?" * len(args.ids)),
+        args.ids).fetchall())
+    failed = False
+    after = TICKET_FRAME_KEYS[TICKET_FRAME_KEYS.index("options") + 1:]
+    for tid in args.ids:
+        if tid not in hit:
+            print(f"{tid} (not found)")
+            failed = True
+            continue
+        path = root / hit[tid]
+        text = path.read_text(encoding="utf-8")
+        header, body = split_ticket_header_body(text)
+        spans = [(m.start(), resolve_frame_heading(m.group(1))[0]) for m in H2_RE.finditer(body)]
+        if any(k == "options" for _, k in spans):
+            print(f"{tid}: already has options")
+            continue
+        frame = f"## options\n\n{TICKET_OPTIONS_TABLE_SCAFFOLD}\n"
+        at = next((pos for pos, k in spans if k in after), None)
+        if at is None:
+            new_body = body + ("" if body.endswith("\n\n") else "\n" if body.endswith("\n") else "\n\n") + frame
+        else:
+            new_body = body[:at] + frame + body[at:]
+        state_write(root, path, header + new_body, create_dirs=False)
+        print(f"{tid}: options frame added")
+    if failed:
+        sys.exit(1)
+
+
 def cmd_tickets_fmt(args, root):
     """`prdt tickets fmt <id…>` — normalize H2 headings to the frame (plain),
     report violations without writing (`--check`, non-zero exit on any), or
@@ -5975,6 +6024,7 @@ def cmd_tickets_fmt(args, root):
             if "request" in fm and not (isinstance(fm["request"], str)
                                         and TICKET_REQUEST_RE.match(fm["request"].strip())):
                 check_violations.append(f"request: {fm['request']!r} is not a request id (R-<digits>)")
+            check_violations += ticket_place_problems(fm)  # T-1497
             if check_violations:
                 any_violation = True
                 for v in check_violations:
@@ -5989,6 +6039,120 @@ def cmd_tickets_fmt(args, root):
             print(f"{tid}: already formatted")
     if any_violation:
         sys.exit(1)
+
+
+# ── T-1497: fixed-place decision gates ───────────────────────────────────────
+# A fixed place (Build entry · deploy) needs the user's own recorded answer first
+# (T-1494 = B: code, not the judge model, asks "does this need a decision ticket").
+# The ticket is matched to the place by its frontmatter `place:` key — never by slug or
+# title words — and to the version by the folder it sits in. Closed = `type: decision` ·
+# `status: done` · a user quote line in `## outcome` (`_dec_user_quote`, the reader
+# `prdt decisions find` uses). The deploy place also needs the ticket body to point at the
+# version's RELEASES.md section (the release-notes confirm is enforced there, T-1495 = B).
+# Callers: `prdt deploy record` (`cmd_deploy`), and prdt-worktree-guard.sh (po-state stage →
+# build, push main · tag push) through `prdt tickets check-place --json`.
+PLACE_GATED = ("build-entry", "deploy")
+# progress order of a candidate ticket's first failure (higher = nearer to passing)
+_PLACE_RANK = {"no-ticket": 0, "not-closed": 1, "no-quote": 2, "no-pointer": 3, "no-section": 4}
+
+
+def _place_tickets_dir(root, version_id):
+    """Ticket folder of one version id: `v1.2` → the FIRST product's `tickets/v1.2`
+    (never the current-task product — a gate asks about a named version);
+    `<p>/v1.2` → product p; legacy layout → `docs/tickets/<id>`."""
+    root = Path(root)
+    pref, bare = split_line_id(version_id)
+    prods = project_products(root)
+    if prods:
+        return root / "docs" / (pref or prods[0]) / "tickets" / bare
+    return root / "docs" / "tickets" / version_id
+
+
+def _releases_pointer(text, version_id):
+    """True when one line of `text` names `RELEASES.md` and this exact version token
+    (`RELEASES.md#v1.16.3`, or a table cell with both) — `v1.16` is not `v1.16.3`."""
+    tok = re.escape(split_line_id(version_id)[1])
+    pat = re.compile(r"(?<![\w.])" + tok + r"(?![\w]|\.\d)")
+    return any("RELEASES.md" in ln and pat.search(ln) for ln in text.splitlines())
+
+
+def place_decision_check(root, place, version_id):
+    """Does `version_id` hold a closed decision ticket for the fixed `place`?
+    → {ok, place, version, missing, ticket, status, dir, fact}. `missing` (when not ok) is the
+    first thing absent on the best candidate: no-ticket · not-closed · no-quote · (deploy only)
+    no-pointer · no-section. `fact` = that, in the confirmed T-1492 4-5 wording: none there · <id> still open · <id> `outcome` holds no user quote · <id> body cites no `RELEASES.md` `## <version>`."""
+    root = Path(root)
+    tdir = _place_tickets_dir(root, version_id)
+    try:
+        rel = str(tdir.relative_to(root))
+    except ValueError:
+        rel = str(tdir)
+    best = ("no-ticket", None, None)
+    for p in sorted(tdir.glob("T-*.md")) if tdir.is_dir() else []:
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        fm, body = parse_frontmatter_text(text)
+        if fm.get("type") != "decision" or fm.get("place") != place:
+            continue
+        tid = fm.get("id") if isinstance(fm.get("id"), str) else p.stem
+        status = fm.get("status") if isinstance(fm.get("status"), str) else None
+        if status != "done":
+            miss = "not-closed"
+        elif not _dec_user_quote(_dec_section(body, "outcome")):
+            miss = "no-quote"
+        elif place == "deploy" and not _releases_pointer(body, version_id):
+            miss = "no-pointer"
+        elif place == "deploy" and split_line_id(version_id)[1] not in _releases_sections(code_root(root)):
+            miss = "no-section"
+        else:
+            return {"ok": True, "place": place, "version": version_id, "missing": None, "ticket": tid,
+                    "status": status, "dir": rel, "fact": ""}
+        if _PLACE_RANK[miss] >= _PLACE_RANK[best[0]]:
+            best = (miss, tid, status)
+    miss, tid, status = best
+    bare = split_line_id(version_id)[1]
+    fact = {
+        "no-ticket": "none there",
+        "not-closed": f"{tid} still open",
+        "no-quote": f"{tid} `outcome` holds no user quote",
+        "no-pointer": f"{tid} body cites no `RELEASES.md` `## {bare}`",
+        # no confirmed form for "the section itself is absent" — nearest is norel (reported to the PO)
+        "no-section": f"{tid} body cites no `RELEASES.md` `## {bare}`",
+    }[miss]
+    return {"ok": False, "place": place, "version": version_id, "missing": miss, "ticket": tid,
+            "status": status, "dir": rel, "fact": fact}
+
+
+def cmd_tickets_check_place(args, root):
+    """`prdt tickets check-place --place P --version V [--json]` — exit 0 when `V` holds a closed
+    decision for place P, else 1 with the missing fact (the caller's gate message)."""
+    place, version = getattr(args, "place", None), getattr(args, "version", None)
+    if not place or not version:
+        sys.exit("usage: prdt tickets check-place --place <place> --version [<product>/]v<N>.<m>[.<p>] [--json]")
+    if not VERSION_ID_RE.fullmatch(split_line_id(version)[1]):
+        sys.exit(f"prdt tickets check-place: version {safe_label(version)} is not a version id (v<N>[.<m>[.<p>]])")
+    res = place_decision_check(root, place, version)
+    if getattr(args, "json", False):
+        print(json.dumps(res, ensure_ascii=False))
+    elif res["ok"]:
+        print(f"{res['ticket']}: {place} decision closed for {version}")
+    else:
+        print(res["fact"])
+    if not res["ok"]:
+        sys.exit(1)
+
+
+def ticket_place_problems(fm):
+    """A `type: decision` ticket's `place:` outside the closed list → one finding; none otherwise.
+    Only decisions are read (a `place:` on any other type is not this check's concern)."""
+    if fm.get("type") != "decision" or "place" not in fm:
+        return []
+    v = fm.get("place")
+    if isinstance(v, str) and v.strip() in TICKET_PLACES:
+        return []
+    return [f"place: {v!r} is not one of {' · '.join(TICKET_PLACES)}"]
 
 
 # ── T-746: hand-offs open the static viewer at the item ──────────────────────
@@ -6852,8 +7016,14 @@ def cmd_tickets(args):
     if getattr(args, "action", None) == "fmt":
         cmd_tickets_fmt(args, root)
         return
+    if getattr(args, "action", None) == "options":
+        cmd_tickets_options(args, root)
+        return
     if getattr(args, "action", None) == "prior":
         cmd_tickets_prior(args, root)
+        return
+    if getattr(args, "action", None) == "check-place":
+        cmd_tickets_check_place(args, root)
         return
     # Refresh THIS command's slice, in place. Not a rebuild: the wiki slice shares
     # the file and nothing here re-fills it (T-480).
@@ -6910,6 +7080,9 @@ def cmd_tickets(args):
         all_ids = {r[0] for r in con.execute("SELECT id FROM tickets")}
         rows = [r for r in rows if r[3] == "open" and
                 all(d in done or d not in all_ids for d in json.loads(r[6] or "[]"))]
+    if getattr(args, "waiting", False):  # T-1491: one list of what waits on the user
+        rows = [r for r in rows if r[3] == "open" and (
+            r[2] == "decision" or r[4] == "user" or (r[8] and work_ticket_waits_on_options(r[2], root / r[8])))]
     for r in rows:
         deps = json.loads(r[6] or "[]")
         dep_s = f" deps={','.join(deps)}" if deps else ""
@@ -12667,6 +12840,19 @@ def ticket_frame_warnings(root, tickets):
     return Advisory(warns)
 
 
+def decision_place_warnings(root, tickets):
+    """T-1497: advisory — a `type: decision` ticket whose `place:` is outside the closed list
+    (`TICKET_PLACES`). A misspelt place would let the Build-entry or deploy gate miss the ticket."""
+    warns = []
+    for r in sorted(tickets, key=lambda r: r["id"]):
+        if r.get("type") != "decision":
+            continue
+        fm, _ = parse_frontmatter(root / r["path"])
+        for v in ticket_place_problems(fm):
+            warns.append(f"decision place: {r['id']} ({r['path']}): {v}")
+    return Advisory(warns)
+
+
 def decision_outcome_key_warnings(root, tickets):
     """T-1258 (L1 I2): advisory — a `type: decision` ticket closed (`status: done`)
     and created on/after TICKET_DECISION_OUTCOME_LANDING_DATE whose `outcome`
@@ -17233,6 +17419,15 @@ def cmd_deploy(args):
         _deploy_die(f"at {safe_label(str(at))} is not a date (YYYY-MM-DD)")
     if args.ref is not None and not DEPLOY_REF_RE.fullmatch(args.ref):
         _deploy_die(f"ref {safe_label(args.ref)} is not a tag or commit name")
+    # T-1497: a deploy is recorded only when the user's own answer to "deploy this version" is
+    # on file — a closed `place: deploy` decision of that version pointing at its RELEASES.md
+    # section. The first product's tickets sit under its bare version; an added product's under
+    # `<product>/<version>`. Wording: T-1492 4-3.
+    chk = place_decision_check(root, "deploy", version if first else f"{product}/{version}")
+    if not chk["ok"]:
+        sys.exit(f"prdt deploy record: {version} needs, in {chk['dir']}, a `type: decision` ticket with `place: deploy`, `status: done`, "
+                    f"user quote in `outcome`, body citing `RELEASES.md` `## {version}`; {chk['fact']} — nothing written. "
+                    f"Next: put deploy of {version} to the user on that ticket, reply verbatim → `outcome`, close, re-run.")
     raw = path.read_bytes()
     spl = _deploy_split(raw)
     if spl is None:
@@ -17881,6 +18076,7 @@ def cmd_doctor(_args):
         ("ticket frame", FAMILY_PROJECT, lambda: ticket_frame_warnings(root, trows)),
         # T-1258: advisory — a decision closed after landing without outcome ### why/how/module/what.
         ("decision outcome keys", FAMILY_PROJECT, lambda: decision_outcome_key_warnings(root, trows)),
+        ("decision place (T-1497)", FAMILY_PROJECT, lambda: decision_place_warnings(root, trows)),
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
         ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root), root)),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
@@ -22225,9 +22421,12 @@ def main():
                                        "· fmt <id…> [--check|--dry-run] normalizes/checks H2 headings against "
                                        "the frame (contracts/tickets.md annex) — binds tickets created on/after "
                                        f"{TICKET_FRAME_LANDING_DATE} only, an older ticket is skipped untouched "
+                                       "· options <id…> adds the `## options` table frame to an existing ticket (T-1491) "
                                        "· prior <id> lists the other tickets that touched the same file, hook or "
-                                       "feature that ticket names (T-1471)")
-    p.add_argument("action", nargs="?", choices=("new", "fmt", "prior"), help="omit for the plain listing")
+                                       "feature that ticket names (T-1471) "
+                                       "· check-place --place <place> --version <v> [--json]: does that version hold a closed "
+                                       "`type: decision` ticket for the fixed place (T-1497; the build-entry and deploy gates read it)")
+    p.add_argument("action", nargs="?", choices=("new", "fmt", "prior", "options", "check-place"), help="omit for the plain listing")
     p.add_argument("ids", nargs="*", metavar="ID", help="fmt: one or more ticket ids · prior: one ticket id")
     p.add_argument("--hook", action="store_true",
                    help="prior: read a PostToolUse payload on stdin — the entry prdt-prior-tickets.sh calls")
@@ -22239,6 +22438,11 @@ def main():
                    help="list: filter by assignee (legacy `pdt-` frontmatter normalizes on index, so one value "
                         "matches both spellings) · new: this ticket's `assignee` (default `po`; `decision` "
                         "always forces `user`)")
+    p.add_argument("--waiting", action="store_true",
+                   help="list: open tickets that wait on the user — decision, `assignee: user`, and a design|impl|qa "
+                        "ticket whose `## options` holds a filled row with no user quote under `### 확인` (T-1491)")
+    p.add_argument("--options", action="store_true",
+                   help="new: seed the `## options` table frame on a work ticket too (decision always has it) (T-1491)")
     p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true",
                    help="list: backlog only · new: place the ticket in backlog/ (T-1084)")
     p.add_argument("--link", nargs="+", metavar="ID",
@@ -22252,12 +22456,16 @@ def main():
     p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
     p.add_argument("--title", help="new: optional human title (`title:`), free text in the project's user_lang (T-1276)")
     p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value ([<product>/]v<N>.<m>#<key>)")
+    p.add_argument("--place", choices=TICKET_PLACES,
+                   help="new (`--type decision`): the fixed place the decision answers — `place:` frontmatter (T-1497) "
+                        "· check-place: the place to look for")
     p.add_argument("--product", "--line", dest="line", metavar="PRODUCT",
                    help="new: an added product (.prdt/config.json `products`) — the ticket "
                         "lands in that product's tickets/<its version>/; default the first product")
     p.add_argument("--deps", nargs="+", metavar="ID", help="new: `deps` ticket ids")
     p.add_argument("--check", action="store_true",
                    help="fmt: report violations and exit non-zero instead of writing")
+    p.add_argument("--json", action="store_true", help="check-place: the result as one JSON object (T-1497)")
     p.add_argument("--dry-run", action="store_true", help="fmt: print the diff, write nothing · new: print the would-be path and "
                                                        "frontmatter, write nothing (T-1084)")
     p.set_defaults(fn=cmd_tickets)
