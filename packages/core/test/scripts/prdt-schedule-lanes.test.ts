@@ -577,16 +577,19 @@ describe.skipIf(!PYTHON3)('자투리 record and the 기본 레인 rest (T-1514)'
     expect(t).toMatch(/^total 1\/4 = lanes 1\/4 · impl 1\/3$/m)
   })
 
-  test('a 자투리 record alone (no gate record, no table): lane mode over 자투리 + 기본 레인, from `records`', () => {
+  test('a 자투리 record alone (no gate record, no table): no lane mode — rank list kept, 자투리 + 기본 레인 rows, `records`', () => {
     writePrd([])
     jat(); chosenAndRest()
     const s = sched()
     expect(s.lanes.map((l: any) => [l.name, l.done, l.total])).toEqual([['자투리', 1, 2], ['기본 레인', 1, 2]])
     expect(s.lanes_from).toBe('records')
     const t = run(['schedule']).out
-    expect(t).toMatch(/^lane 자투리 1\/2 \| next T-021 \(developer\)$/m)
-    expect(t).not.toMatch(/^dispatch next:/m)
+    expect(t).toMatch(/^lane 자투리 1\/2 — 자투리 record, no gate lane in v0\.1$/m)
+    expect(t).toMatch(/^lane 기본 레인 1\/2 — tickets in no 자투리 record, no gate lane in v0\.1$/m)
+    expect(t).toMatch(/^critical path/m)
+    expect(t).toMatch(/^dispatch next:/m)
     expect(t).not.toContain('no lane record in v0.1')
+    expect(t).not.toMatch(/^lanes done:/m)
   })
 
   test('a 자투리 record leaves the 합격선 table in charge (`table`), and a ticket the gate holds stays in the gate lane', () => {

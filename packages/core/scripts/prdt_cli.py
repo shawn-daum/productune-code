@@ -16899,7 +16899,14 @@ def _render_schedule(s, stage=None):
     if real_lanes(lanes):
         return _render_lanes_schedule(s, lab, stage)
     for ln in lanes:   # T-1513: the default 기본 레인 — one line, the rank list below stays
-        print(f"lane {lab(ln['name'])} {ln['done']}/{ln['total']} — no lane record in {lab(s['version'])}")
+        if len(lanes) == 1 and ln.get("default") is True:
+            print(f"lane {lab(ln['name'])} {ln['done']}/{ln['total']} — no lane record in {lab(s['version'])}")
+        else:   # T-1514: a 자투리 record and no gate lane — its row (and the 기본 레인 rest) above the same rank list
+            print(f"lane {lab(ln['name'])} {ln['done']}/{ln['total']} — "
+                  + ("tickets in no 자투리 record" if ln.get("default") is True else "자투리 record")
+                  + f", no gate lane in {lab(s['version'])}")
+            if ln["warning"]:
+                print(f"note: {lab(ln['warning'])}")
     if s["critical_path"]:
         print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
     else:

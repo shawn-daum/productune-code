@@ -188,8 +188,23 @@ STAGES = ("define", "build", "ship", "retro", "idle")
 ASSIGNEES = ("po", "designer", "developer", "qa", "user")
 VERSION_RE = re.compile(r"\Av[0-9]{1,4}(?:\.[0-9]{1,4}){0,2}\Z")
 TICKET_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")
-# T-1514: a `lane: 자투리` frontmatter line — the 자투리 record (prdt_lanes.is_jatturi_record)
-JATTURI_RECORD_RE = re.compile(r"^lane:[ \t]*(['\"]?)자투리\1[ \t]*$", re.M)
+# T-1514: the 자투리 record (`lane: 자투리`) — the rule is stated once in prdt_lanes.py
+# (`is_jatturi_record`), implemented here without that module: key `lane` exact at column 0,
+# the LAST `lane:` line wins, value = trim whitespace (ASCII + Unicode space separators), cut a
+# trailing `# comment`, trim, drop every leading/trailing quote char, trim; == 자투리.
+LANE_LINE_RE = re.compile(r"^lane:(.*)$", re.M)
+LANE_WS = " \t\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000"
+LANE_COMMENT_RE = re.compile(r"(?:^|[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000])#.*$")
+
+
+def jatturi_record_text(fm_text):
+    """True when the frontmatter text (between the `---` fences) holds the 자투리 record."""
+    hits = LANE_LINE_RE.findall(fm_text)
+    if not hits:
+        return False
+    v = hits[-1].strip(LANE_WS)
+    v = LANE_COMMENT_RE.sub("", v).strip(LANE_WS)
+    return v.strip("'\"").strip(LANE_WS) == "자투리"
 
 
 def token(raw, ok, absent=""):
@@ -575,7 +590,7 @@ def scan(base, row):
             if s not in ("done", "open"):
                 continue
             # T-1514: the `lane: 자투리` record is no work — never in the version or stage counts
-            if is_current and not JATTURI_RECORD_RE.search(head.split("\n---", 1)[0]):
+            if is_current and not jatturi_record_text(head.split("\n---", 1)[0]):
                 row["vtotal"] += 1
                 row["vdone"] += s == "done"
                 stg = ticket_stage_of(row, head)

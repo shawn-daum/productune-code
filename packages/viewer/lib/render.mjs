@@ -2594,10 +2594,19 @@ function homeEnvGroup(data, v, hasLines) {
  * @param {Array} currentTickets current-version tickets (any status)
  * @returns {{done: number, total: number}}
  */
-/** T-1514: the 자투리 lane record (`lane: 자투리`, prdt_lanes.is_jatturi_record) — its `deps` are the 자투리 tickets; it is no work itself. */
+/** T-1514: the 자투리 lane record — the rule is stated once in prdt_lanes.py (`is_jatturi_record`); this is its
+ *  JS twin: key `lane` exact (frontmatter.mjs, last duplicate wins), value = trim whitespace (ASCII + Unicode
+ *  space separators), cut a trailing `# comment`, trim, drop every leading/trailing quote char, trim; === 자투리.
+ *  Its `deps` are the 자투리 tickets; it is no work itself. */
+const LANE_WS = ' \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000'
+const LANE_TRIM_RE = new RegExp(`^[${LANE_WS}]+|[${LANE_WS}]+$`, 'g')
+const LANE_COMMENT_RE = new RegExp(`(?:^|[${LANE_WS}])#.*$`)
 export function isJatturiRecord(t) {
   const lane = t && t.frontmatter ? t.frontmatter.lane : undefined
-  return typeof lane === 'string' && lane.trim() === '자투리'
+  if (typeof lane !== 'string') return false
+  const trim = (v) => v.replace(LANE_TRIM_RE, '')
+  const v = trim(trim(lane).replace(LANE_COMMENT_RE, '')).replace(/^['"]+|['"]+$/g, '')
+  return trim(v) === '자투리'
 }
 
 export function versionProgressCounts(currentTickets) {

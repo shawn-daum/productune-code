@@ -50,7 +50,7 @@ describe('T-1415: scope block, one line per lane', () => {
 
   it('collectLanes returns the prdt_lanes computation (no second copy)', () => {
     const lanes = collectLanes(root)
-    expect(lanes.map((l) => [l.name, l.linked, l.tickets])).toEqual([['A', true, ['T-1', 'T-2']], ['B', true, ['T-3', 'T-5']], ['자투리', true, ['T-4', 'T-6']]])
+    expect(lanes.map((l) => [l.name, l.linked, l.tickets])).toEqual([['A', true, ['T-1', 'T-2']], ['B', true, ['T-3', 'T-5']], ['기본 레인', true, ['T-4', 'T-6']]])
   })
 
   it('one line per lane, in lane order, with the lane\'s own n/m (= prdt schedule lane numbers)', () => {

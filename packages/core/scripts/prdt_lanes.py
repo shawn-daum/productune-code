@@ -1048,16 +1048,40 @@ def _lane_records(tickets, version):
     recs = [t for t, (r, _p) in tickets.items()
             if r["version"] == version and r["status"] in ("open", "done")
             and isinstance(r.get("lane"), str) and r["lane"].strip()]
-    return [(tickets[t][0]["lane"].strip(), (tickets[t][0].get("gate") or "").strip() or None, t)
+    # T-1514: a record that is 자투리 under the rule is named 자투리, whatever its spelling
+    return [(LANE_BESTEFFORT_NAME if is_jatturi_record(tickets[t][0]) else tickets[t][0]["lane"].strip(),
+             (tickets[t][0].get("gate") or "").strip() or None, t)
             for t in sorted(recs, key=_ticket_num_key)]
 
 
+# THE 자투리-RECORD RULE (T-1514) — stated here once; three readers implement it identically:
+# this function, `JATTURI_RECORD_RE`/`jatturi_record_text` in statusline-prdt.sh (it runs without
+# this module) and `isJatturiRecord` in viewer/lib/render.mjs. gui/scripts/qa/jatturi-record-parity
+# .test.ts drives all three over one table (jatturi-record-table.json).
+#   1. The key is exactly `lane` (lowercase, column 0, `lane:`); `Lane:` is another key.
+#   2. Duplicate `lane:` keys: the LAST one wins (an empty or list-valued last one = no record).
+#   3. Value: trim whitespace (ASCII space/tab + NBSP and the other Unicode space separators),
+#      cut a trailing comment (a `#` at the start or after whitespace, to the line end), trim,
+#      drop every leading/trailing quote char (`'` or `"`, matched or not), trim.
+#   4. The result equals 자투리 → the 자투리 record. Never a gate, never work: no schedule
+#      row, no lane cell, no version total counts it, under any spelling that passes 1–4.
+_LANE_WS = " \t               　"
+
+
+def jatturi_lane_value(v):
+    """Rule steps 3 of the 자투리-record rule: a `lane:` value's comparable text."""
+    if not isinstance(v, str):
+        return None
+    v = v.strip(_LANE_WS)
+    v = re.sub(r"(?:^|[ \t   -   　])#.*$", "", v).strip(_LANE_WS)
+    return v.strip("'\"").strip(_LANE_WS)
+
+
 def is_jatturi_record(row):
-    """T-1514 (T-1508 = C): a `lane: 자투리` ticket is the 자투리 lane record — its `deps`
-    are the tickets the user chose as 자투리. Never a gate, never work: no schedule row,
-    no lane cell, no version total counts it."""
+    """T-1514 (T-1508 = C): a `lane: 자투리` ticket is the 자투리 lane record (rule above) —
+    its `deps` are the tickets the user chose as 자투리."""
     lane = row.get("lane") if isinstance(row, dict) else None
-    return isinstance(lane, str) and lane.strip() == LANE_BESTEFFORT_NAME
+    return jatturi_lane_value(lane) == LANE_BESTEFFORT_NAME
 
 
 def _lane_longest_ending_at(ids, preds):
@@ -1245,11 +1269,12 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None, close
 
 
 def real_lanes(lanes):
-    """T-1513: [] when the lanes are only the default 기본 레인 (a version with no lane record and
-    no 합격선 row has no lane mode — the rank list stays the schedule); else `lanes` whole
-    (T-1514: the 기본 레인 beside lane records is a lane row like 자투리)."""
+    """Lane mode needs at least one gate lane (T-1514). [] when every lane is besteffort — the
+    default 기본 레인 and/or the 자투리 lane (a version with no gate record and no 합격선 row keeps
+    its rank list and the critical-path warning); else `lanes` whole (the 자투리 and 기본 레인 rows
+    beside gate lanes are lane rows)."""
     lanes = [x for x in (lanes or []) if isinstance(x, dict)]
-    return [] if all(x.get("default") is True for x in lanes) else lanes
+    return [] if all(x.get("besteffort") is True for x in lanes) else lanes
 
 
 def lanes_for(root, line=None, version=None):
