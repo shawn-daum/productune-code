@@ -48,6 +48,7 @@ import { IDLE,
   IDENTITY,
   setViewerLang,
   lang as viewerLang,
+  JATTURI_LANE_RECORD,
 } from './labels.mjs'
 import { mermaidBlock, hasMermaid, mermaidScript, MERMAID_CSS } from './mermaid.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
@@ -2606,7 +2607,7 @@ export function isJatturiRecord(t) {
   if (typeof lane !== 'string') return false
   const trim = (v) => v.replace(LANE_TRIM_RE, '')
   const v = trim(trim(lane).replace(LANE_COMMENT_RE, '')).replace(/^['"]+|['"]+$/g, '')
-  return trim(v) === '자투리'
+  return trim(v) === JATTURI_LANE_RECORD
 }
 
 export function versionProgressCounts(currentTickets) {

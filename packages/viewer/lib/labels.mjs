@@ -11,6 +11,11 @@ import en from './labels-en.mjs'
 export const CATALOGS = { ko, en }
 export const DEFAULT_LANG = 'ko'
 
+/** T-1514: the 자투리 lane's fixed record value (`lane: 자투리`) — a frontmatter value matched, never shown; the
+ *  same in every language. Lives here so render.mjs holds no Hangul literal (viewer-labels.test.ts). Twin of
+ *  LANE_BESTEFFORT_NAME in prdt_lanes.py. */
+export const JATTURI_LANE_RECORD = '자투리'
+
 /** `ko-KR` / `EN` / `en_US` → the catalog key, or null when this viewer has no such catalog. */
 export function catalogKey(lang) {
   const k = String(lang ?? '').trim().toLowerCase().split(/[-_]/)[0]
