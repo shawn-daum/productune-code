@@ -314,9 +314,12 @@
  *   A drift path an agent tool wrote in the window gets the same coverage as a
  *   reported one — but only while the file still holds exactly what the latest
  *   record says was written (QA grill, d8daf5ca): a path-only match let a test
- *   append to, or delete, the very page another session had edited. Writes by any
- *   process (shell, node, python) still fail unless `prdt` reported them; see
- *   `agentToolWritePaths()` for why a test cannot earn it.
+ *   append to, or delete, the very page another session had edited. A SHELL write
+ *   by another session (python heredoc, sed, rm) is covered when that session's
+ *   Bash command, issued or returning in the window, named the path (dev4, user
+ *   decision B; content unchecked — see `agentShellWritePaths()`). Any other
+ *   write (shell, node, python) still fails unless `prdt` reported it; see
+ *   `agentToolWritePaths()` for why a test cannot earn either.
  */
 
 'use strict'
@@ -812,7 +815,15 @@ function verifyTripwire(options = {}) {
   // T-1522: plus every path an agent session's Edit/Write tool wrote during the
   // window, read from the harness's own transcripts, while the file still holds
   // what that write left (see agentToolWritePaths()).
-  const reported = new Set([...externalWritePaths(before), ...agentToolWritePaths(before)])
+  // T-1522 dev4: plus every drift path under `~/.prdt` that another session's Bash
+  // tool_use command named in the window (see agentShellWritePaths()) — content
+  // unchecked, since a shell write leaves only its command text.
+  const candidates = allDrift.flatMap((d) => [...d.added, ...d.removed].map((l) => l.split('\t')[0]))
+  const reported = new Set([
+    ...externalWritePaths(before),
+    ...agentToolWritePaths(before),
+    ...agentShellWritePaths(before, candidates),
+  ])
   const drift = []
   const external = []
   for (const d of allDrift) {
@@ -921,10 +932,17 @@ function externalWritePaths(before) {
  *     record's `newString` and — when `oldString` is non-empty and not a substring
  *     of `newString` — no longer contain `oldString`. PO decision (T-1522 dev3):
  *     one of the pages that turned 2026-11-11's merges red was written by exactly
- *     such a record, so failing closed would bring that red back. ACCEPTED NARROW
- *     GAP: a test that appends to (or otherwise edits outside the replaced text
- *     of) that same page in the same window passes. A record with neither shape
- *     (no strings) earns nothing.
+ *     such a record, so failing closed would bring that red back. Tightened (QA
+ *     qa2 P10 · P11, dev4): an empty `newString` earns nothing (every file
+ *     "contains" it, so an emptied page passed); when the file's size at the
+ *     baseline is known and every weak record since is a single replacement
+ *     stamped after the baseline, the file must now be exactly that size plus
+ *     each record's byte delta (catches truncation, whole rewrites and appends);
+ *     when that size is not known, a file that now holds nothing but `newString`
+ *     (its old text gone wholesale) earns nothing. ACCEPTED NARROW GAP: a test
+ *     that rewrites text outside the replaced span of that same page in the same
+ *     window, keeping the byte length, passes. A record with neither shape (no
+ *     strings) earns nothing.
  * Nothing derived and no weak check → the path is not covered and its drift stays
  * a failure. A removed file is never covered (Edit/Write never delete).
  *
@@ -942,8 +960,12 @@ function externalWritePaths(before) {
  * Only transcripts modified inside the window are opened, and only lines naming
  * `structuredPatch` are parsed. Stamped before the window → earns nothing.
  */
-function agentToolWritePaths(before) {
-  const since = before.takenAt - REPORT_SLACK_MS
+/**
+ * Every session transcript (`*.jsonl`, subagents' included) under the REAL home's
+ * `~/.claude/projects` modified at or after `since` — the only directory read, by
+ * design not one an environment variable can repoint.
+ */
+function transcriptFiles(since) {
   const files = []
   const walk = (dir) => {
     let entries
@@ -955,15 +977,25 @@ function agentToolWritePaths(before) {
     for (const e of entries) {
       const full = path.join(dir, e.name)
       if (e.isDirectory()) walk(full)
-      else if (e.isFile() && e.name.endsWith('.jsonl')) files.push(full)
+      else if (e.isFile() && e.name.endsWith('.jsonl')) {
+        try {
+          if (fs.statSync(full).mtimeMs >= since) files.push(full)
+        } catch {
+          /* raced away */
+        }
+      }
     }
   }
   walk(path.join(realHome(), '.claude', 'projects'))
+  return files
+}
+
+function agentToolWritePaths(before) {
+  const since = before.takenAt - REPORT_SLACK_MS
   const records = []
-  for (const f of files) {
+  for (const f of transcriptFiles(since)) {
     let text
     try {
-      if (fs.statSync(f).mtimeMs < since) continue
       text = fs.readFileSync(f, 'utf-8')
     } catch {
       continue
@@ -986,21 +1018,31 @@ function agentToolWritePaths(before) {
   }
   // Oldest first, so each path ends on its latest record. Equal stamps keep read order.
   records.sort((a, b) => a.ts - b.ts || a.seq - b.seq)
-  // key → { filePath, content: string | undefined, weak: { oldString, newString } | undefined }
+  // key → { filePath, content: string | undefined, weak: { oldString, newString } | undefined,
+  //         size: number | undefined (the byte length the records say the file has now) }
   const written = new Map()
-  for (const { r } of records) {
+  for (const { ts, r } of records) {
     const key = containmentKey(r.filePath, true)
     const prev = written.get(key)
     let content
     let weak
+    let size
     if (typeof r.content === 'string' && (r.type === 'create' || r.type === 'update')) content = r.content
     else if (typeof r.originalFile === 'string') content = applyStructuredPatch(r.originalFile, r.structuredPatch)
     else {
       if (prev && typeof prev.content === 'string') content = applyStructuredPatch(prev.content, r.structuredPatch)
-      if (content === undefined && r.originalFile === null && typeof r.oldString === 'string' && typeof r.newString === 'string')
+      if (content === undefined && r.originalFile === null && typeof r.oldString === 'string' && typeof r.newString === 'string') {
         weak = { oldString: r.oldString, newString: r.newString }
+        // Expected size: the previous record's, else the baseline's — only for a
+        // single replacement stamped after the baseline walk ended (a record in
+        // the slack may already be inside the baseline's size).
+        const base = prev ? prev.size : baselineSize(before, r.filePath)
+        if (Number.isInteger(base) && r.replaceAll !== true && ts >= before.takenAt)
+          size = base + Buffer.byteLength(r.newString, 'utf-8') - Buffer.byteLength(r.oldString, 'utf-8')
+      }
     }
-    written.set(key, { filePath: r.filePath, content, weak })
+    if (typeof content === 'string') size = Buffer.byteLength(content, 'utf-8')
+    written.set(key, { filePath: r.filePath, content, weak, size })
   }
   const out = new Set()
   for (const [key, w] of written) {
@@ -1018,9 +1060,170 @@ function agentToolWritePaths(before) {
     }
     const text = now.toString('utf-8')
     const { oldString, newString } = w.weak
+    if (newString === '') continue // every file contains '' — an emptied page must not pass
     if (!text.includes(newString)) continue
     if (oldString !== '' && !newString.includes(oldString) && text.includes(oldString)) continue
+    if (Number.isInteger(w.size)) {
+      if (now.length !== w.size) continue
+    } else if (oldString !== '' && text.trim() === newString.trim()) continue // whole page replaced by newString
     out.add(key)
+  }
+  return out
+}
+
+/** A file's byte size in the baseline fingerprint, or undefined (absent, name-only, a directory). */
+function baselineSize(before, filePath) {
+  const line = before.detail.find((l) => l.startsWith(`${filePath}\t`))
+  if (!line) return undefined
+  const f = line.split('\t')
+  return f.length === 3 && /^\d+$/.test(f[1]) ? Number(f[1]) : undefined
+}
+
+/**
+ * T-1522 dev4 (user decision B): the containment keys of the drift `candidates`
+ * under the real `~/.prdt` that another session's SHELL command named in the
+ * window. A shell write (a python heredoc, `sed -i`, `rm`, `mv`) leaves no tool
+ * result naming its path — only the command text in the session transcript's
+ * Bash `tool_use` line. QA qa2 observed it on the real machine: session aac6c0dc
+ * rewrote three wiki pages and removed a fourth from one `python3 - <<EOF` call.
+ *
+ * CONTENT UNCHECKED — the command text cannot say what the file now holds, and a
+ * shell may delete or move, so a removed path is covered too. ACCEPTED GAP (the
+ * same class as the agent-write one): a test touching a path another session's
+ * command named in the same window passes.
+ *
+ * Which command text names a path. A mention is `~/.prdt`, `$HOME/.prdt`,
+ * `${HOME}/.prdt` or `<real home>/.prdt` — not preceded by a path character —
+ * followed by the longest run of path characters (a quote, whitespace, a shell
+ * metacharacter or a glob character ends it). `~` and `$HOME` are reliable here:
+ * only transcripts under the REAL home are read, and those sessions' shells run
+ * with the real HOME. NOT recognised: `$PRDT_HOME`, `Path.home() / ".prdt"`, a
+ * path assembled from pieces with no `.prdt` mention, a glob (`wiki/*.md`).
+ * A drift path is covered when:
+ *   - a mention names it exactly (trailing `/` ignored), or
+ *   - a mention names a directory above it AND the rest of its path below that
+ *     directory appears in the same command as a whole token (between quotes,
+ *     slashes, whitespace…). That is how aac6c0dc's heredoc named its files:
+ *     `W=os.path.expanduser('~/.prdt/wiki/')` then `W+'fact--kc-request-channels.md'`;
+ *     a `cd ~/.prdt/wiki && … 'x.md'` reads the same way.
+ * A directory mention ALONE covers nothing under it: `ls ~/.prdt`, `grep -rn …
+ * ~/.prdt` are the commonest read-only commands other sessions run, and letting
+ * them cover the whole subtree would excuse any test write there. So a bulk
+ * shell rewrite through a glob (`sed -i … ~/.prdt/wiki/*.md`) or `rm -rf` of a
+ * directory still fails for the files it does not name.
+ *
+ * The window. A Bash `tool_use` line is stamped when the command is ISSUED, its
+ * `tool_result` when it returns; the writes happen between. A command counts when
+ * either stamp is inside the window (issued before the baseline but still running
+ * into it, or issued during the run). A command still running at verify time
+ * with no result yet counts only if issued inside the window. `until` (ms) bounds
+ * the window's end for a replay of a past run; a live verdict leaves it open.
+ *
+ * Why a test cannot earn it: the same as agentToolWritePaths() — only
+ * `realHome()/.claude/projects` is read, and a `claude` started by a test writes
+ * its transcript under the sandbox HOME. Forging a line into the real `~/.claude`
+ * is the same known boundary.
+ */
+function agentShellWritePaths(before, candidates, until = Infinity) {
+  const out = new Set()
+  const prdt = path.join(realHome(), '.prdt')
+  const prdtKey = containmentKey(prdt, true)
+  // Drift paths under ~/.prdt: { key, segs } — `segs` are the path's own
+  // segments below ~/.prdt as walked (true case; the key may be case-folded).
+  const wanted = []
+  for (const c of candidates) {
+    const key = containmentKey(c, true)
+    if (key !== prdtKey && !key.startsWith(prdtKey + path.sep)) continue
+    const segs = c.startsWith(prdt + path.sep) ? c.slice(prdt.length + 1).normalize('NFC').split(path.sep) : []
+    wanted.push({ key, segs })
+  }
+  if (wanted.length === 0) return out
+  const since = before.takenAt - REPORT_SLACK_MS
+  const commands = []
+  for (const f of transcriptFiles(since)) {
+    let text
+    try {
+      text = fs.readFileSync(f, 'utf-8')
+    } catch {
+      continue
+    }
+    const issued = new Map() // tool_use id → { ts, command }
+    const lines = text.split('\n')
+    for (const line of lines) {
+      if (!line.includes('"tool_use"') || !line.includes('"Bash"') || !line.includes('.prdt')) continue
+      let e
+      try {
+        e = JSON.parse(line)
+      } catch {
+        continue
+      }
+      const content = e && e.message && Array.isArray(e.message.content) ? e.message.content : []
+      const ts = Date.parse(e.timestamp)
+      if (!Number.isFinite(ts) || ts > until) continue
+      for (const b of content) {
+        if (!b || b.type !== 'tool_use' || b.name !== 'Bash' || !b.input || typeof b.input.command !== 'string') continue
+        if (!b.input.command.includes('.prdt')) continue
+        issued.set(b.id, { ts, command: b.input.command })
+      }
+    }
+    if (issued.size === 0) continue
+    const pending = [...issued].filter(([, u]) => u.ts < since)
+    const returned = new Map()
+    if (pending.length) {
+      for (const line of lines) {
+        if (!line.includes('"tool_result"')) continue
+        const m = /"tool_use_id":\s*"([^"]+)"/.exec(line)
+        if (!m || !issued.has(m[1])) continue
+        try {
+          const ts = Date.parse(JSON.parse(line).timestamp)
+          if (Number.isFinite(ts)) returned.set(m[1], ts)
+        } catch {
+          /* malformed — earns nothing */
+        }
+      }
+    }
+    for (const [id, u] of issued) {
+      const r = returned.get(id)
+      if (u.ts >= since || (r !== undefined && r >= since && u.ts <= until)) commands.push(u.command.normalize('NFC'))
+    }
+  }
+  if (commands.length === 0) return out
+  const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const homeForms = new Set([realHome()])
+  try {
+    homeForms.add(fs.realpathSync(realHome()))
+  } catch {
+    /* absent home — the literal form only */
+  }
+  const homes = ['~', '\\$HOME', '\\$\\{HOME\\}', ...[...homeForms].map((h) => esc(h.normalize('NFC')))]
+  const STOP = "\\s'\"`;|&<>(){}$*?\\[\\]\\\\,"
+  const mentionRe = new RegExp(`(?<![\\w./-])(?:${homes.join('|')})/\\.prdt(?=$|/|[${STOP}])((?:/[^${STOP}]*)?)`, 'g')
+  const BOUND_L = "(?:^|[\\s'\"`/=(])"
+  const BOUND_R = "(?=$|[\\s'\"`/);,:|&<>])"
+  for (const cmd of commands) {
+    const named = new Set()
+    for (const m of cmd.matchAll(mentionRe)) {
+      const k = containmentKey(path.join(prdt, ...m[1].split('/').filter(Boolean)), true)
+      if (k === prdtKey || k.startsWith(prdtKey + path.sep)) named.add(k) // `..` out of ~/.prdt names nothing
+    }
+    for (const w of wanted) {
+      if (out.has(w.key)) continue
+      for (const n of named) {
+        if (w.key === n) {
+          out.add(w.key)
+          break
+        }
+        if (!w.key.startsWith(n + path.sep)) continue
+        // The rest of the drift path below the named directory, in its true case.
+        const depth = w.key.slice(n.length + 1).split(path.sep).length
+        if (depth > w.segs.length) continue
+        const rest = w.segs.slice(-depth).join('/')
+        if (new RegExp(BOUND_L + esc(rest) + BOUND_R).test(cmd)) {
+          out.add(w.key)
+          break
+        }
+      }
+    }
   }
   return out
 }
@@ -1092,8 +1295,9 @@ function formatExternalNotice(external) {
   if (paths.length === 0) return ''
   return (
     '\nT-450 notice: the real home changed during this run, written by a process OUTSIDE\n' +
-    'this run — another session: `prdt` reported the write (external-write log), or an agent\n' +
-    'Edit/Write tool made it (Claude session transcript). NOT a failure:\n' +
+    'this run — another session: `prdt` reported the write (external-write log), an agent\n' +
+    'Edit/Write tool made it, or a shell write — another session\'s Bash command named the\n' +
+    'path (Claude session transcript; content unchecked). NOT a failure:\n' +
     [...new Set(paths)].slice(0, 20).map((p) => `  ~ ${p}\n`).join('') +
     (paths.length > 20 ? `  … ${paths.length - 20} more\n` : '') +
     '\n'
@@ -1134,4 +1338,6 @@ module.exports = {
   armTripwire,
   verifyTripwire,
   assertTripwireClean,
+  // T-1522 dev4: exported for replaying a past run's window against real transcripts.
+  agentShellWritePaths,
 }

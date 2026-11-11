@@ -544,6 +544,190 @@ describe('real-home tripwire: another session\'s agent tool write is a notice (T
     expect(v.report).toContain(page)
   })
 
+
+  // ── QA qa2 P10 · P11 (dev4): the weak check no longer excuses emptying or a whole rewrite ──
+
+  test('an Edit record with no originalFile and an empty newString covers nothing: an emptied page fails', async () => {
+    const page = wiki('runbook--existing.md')
+    const v = await fixtureRun([], () => nullOriginalEdit(page, 'old body\n', '', ''))
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(page)
+  })
+
+  test('an Edit record with no originalFile, page now holding only newString (old text longer, gone): fails', async () => {
+    const page = wiki('runbook--existing.md')
+    fs.writeFileSync(page, 'intro\nold body that was much longer\noutro\n')
+    const v = await fixtureRun([], () => nullOriginalEdit(page, 'old body that was much longer', 'new', 'new\n'))
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(page)
+  })
+
+  test('the same whole rewrite with no baseline size to check (replaceAll record) still fails', async () => {
+    const page = wiki('runbook--existing.md')
+    fs.writeFileSync(page, 'intro\nold body that was much longer\noutro\n')
+    const v = await fixtureRun([], () => {
+      fs.writeFileSync(page, 'new\n')
+      recordToolResult(page, {
+        oldString: 'old body that was much longer',
+        newString: 'new',
+        originalFile: null,
+        structuredPatch: [],
+        userModified: false,
+        replaceAll: true,
+      })
+    })
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(page)
+  })
+
+  test('a test appending to a page an outside Edit with no originalFile changed fails (size check)', async () => {
+    const page = wiki('runbook--existing.md')
+    fs.writeFileSync(page, 'intro\nold body\noutro\n')
+    const v = await fixtureRun([{ cmd: 'sh', args: ['-c', `echo test-append >> "${page}"`] }], () =>
+      nullOriginalEdit(page, 'old body', 'new, longer body'),
+    )
+    expect(v.ok).toBe(false)
+    expect(v.report.split('T-450 notice')[0]).toContain(page)
+  })
+
+})
+
+
+/**
+ * T-1522 dev4 (user decision B): another session's SHELL write. Nothing records
+ * the written path except the command text in that session's Bash `tool_use` line.
+ * Shape copied from session aac6c0dc (2026-11-11 06:14Z), which rewrote wiki pages
+ * and removed one from a single python heredoc.
+ */
+describe('real-home tripwire: a path another session\'s Bash command named is a notice (T-1522 dev4)', () => {
+  const wiki = (n: string) => path.join(decoy, '.prdt', 'wiki', n)
+  const transcript = (root = decoy) => path.join(root, '.claude', 'projects', '-Users-x-dev-other-project', 'sess-2.jsonl')
+  let seq = 0
+
+  /** The harness's transcript lines for one Bash call: tool_use when issued, tool_result when it returns. */
+  function recordBash(command: string, opts: { issuedAt?: number; returnedAt?: number | null; root?: string } = {}) {
+    const id = `toolu_bash_${++seq}`
+    const file = transcript(opts.root)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    const issuedAt = opts.issuedAt ?? Date.now()
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: new Date(issuedAt).toISOString(),
+        sessionId: 'sess-2',
+        message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command, description: 'x' } }] },
+      }) + '\n',
+    )
+    if (opts.returnedAt === null) return
+    fs.appendFileSync(
+      file,
+      JSON.stringify({
+        type: 'user',
+        timestamp: new Date(opts.returnedAt ?? issuedAt).toISOString(),
+        sessionId: 'sess-2',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] },
+      }) + '\n',
+    )
+  }
+
+  const HEREDOC =
+    "cd /Users/x/dev/other-project; python3 - <<'EOF'\nimport os\nW=os.path.expanduser('~/.prdt/wiki/')\n" +
+    "s=open(W+'runbook--existing.md').read()\nopen(W+'runbook--existing.md','w').write(s+'merged\\n')\n" +
+    "os.remove(W+'fact--gone.md')\nEOF\ngrep -rn gone ~/.prdt/wiki | cut -c1-90"
+
+  beforeEach(() => {
+    fs.writeFileSync(wiki('runbook--existing.md'), 'old body\n')
+    fs.writeFileSync(wiki('fact--gone.md'), 'to be merged away\n')
+  })
+
+  test('a python heredoc rewriting one page and removing another: both noticed as shell writes, run passes', async () => {
+    const v = await fixtureRun([], () => {
+      fs.appendFileSync(wiki('runbook--existing.md'), 'merged\n')
+      fs.rmSync(wiki('fact--gone.md'))
+      recordBash(HEREDOC)
+    })
+    expect(v.report).toBe('')
+    expect(v.ok).toBe(true)
+    expect(v.notice).toContain(wiki('runbook--existing.md'))
+    expect(v.notice).toContain(wiki('fact--gone.md'))
+    expect(v.notice).toContain('shell write')
+  })
+
+  test('absolute, $HOME and ${HOME} forms each name their path', async () => {
+    const pages = ['a.md', 'b.md', 'c.md'].map(wiki)
+    const v = await fixtureRun([], () => {
+      for (const p of pages) fs.writeFileSync(p, 'new\n')
+      recordBash(`echo new > "${pages[0]}"; echo new > "$HOME/.prdt/wiki/b.md"; echo new > \${HOME}/.prdt/wiki/c.md`)
+    })
+    expect(v.report).toBe('')
+    expect(v.ok).toBe(true)
+    for (const p of pages) expect(v.notice).toContain(p)
+  })
+
+  test('a command issued before the run that returned inside it counts; one that returned before it does not', async () => {
+    const early = wiki('early.md')
+    const v = await fixtureRun([], () => {
+      fs.writeFileSync(wiki('long.md'), 'x\n')
+      recordBash(`sleep 60; echo x > ~/.prdt/wiki/long.md`, { issuedAt: Date.now() - 60_000, returnedAt: Date.now() })
+      fs.writeFileSync(early, 'x\n')
+      recordBash(`echo x > ~/.prdt/wiki/early.md`, { issuedAt: Date.now() - 60_000, returnedAt: Date.now() - 59_000 })
+    })
+    expect(v.ok).toBe(false)
+    expect(v.report.split('T-450 notice')[0]).toContain(early)
+    expect(v.notice).toContain(wiki('long.md'))
+  })
+
+  test('a directory named alone (ls / grep -rn of ~/.prdt) does not cover a test write under it', async () => {
+    const mine = wiki('mine.md')
+    const v = await fixtureRun([{ cmd: 'sh', args: ['-c', `echo x > "${mine}"`] }], () =>
+      recordBash('ls ~/.prdt/wiki; grep -rn foo ~/.prdt | head; cat ~/.prdt/wiki/*.md'),
+    )
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(mine)
+  })
+
+  test('a test write no outside record names fails beside a covered shell write', async () => {
+    const mine = wiki('mine.md')
+    const v = await fixtureRun([{ cmd: 'sh', args: ['-c', `echo x > "${mine}"`] }], () => {
+      fs.appendFileSync(wiki('runbook--existing.md'), 'merged\n')
+      fs.rmSync(wiki('fact--gone.md'))
+      recordBash(HEREDOC)
+    })
+    expect(v.ok).toBe(false)
+    const failed = v.report.split('T-450 notice')[0]
+    expect(failed).toContain(mine)
+    expect(failed).not.toContain(wiki('runbook--existing.md'))
+    expect(v.notice).toContain(wiki('runbook--existing.md'))
+  })
+
+  test('a Bash record in a transcript under the sandbox HOME (a test-run session) earns nothing', async () => {
+    const page = wiki('runbook--existing.md')
+    const sandboxTranscript = transcript(sandbox)
+    const line = JSON.stringify({
+      type: 'assistant',
+      timestamp: new Date(Date.now() + 1000).toISOString(),
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 't', name: 'Bash', input: { command: `echo changed >> ${page}` } }] },
+    })
+    const v = await fixtureRun([
+      {
+        cmd: 'sh',
+        args: ['-c', `echo changed >> "${page}" && mkdir -p "${path.dirname(sandboxTranscript)}" && printf '%s\\n' '${line}' >> "${sandboxTranscript}"`],
+      },
+    ])
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(page)
+  })
+
+  test('a mention escaping ~/.prdt with `..`, or a bare name with no ~/.prdt mention, covers nothing', async () => {
+    const page = wiki('runbook--existing.md')
+    const v = await fixtureRun([], () => {
+      fs.appendFileSync(page, 'x\n')
+      recordBash(`cd ~/.prdt/../elsewhere && echo x >> .prdt/wiki/runbook--existing.md; sed -i '' s/a/b/ runbook--existing.md`)
+    })
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(page)
+  })
 })
 
 /**
