@@ -972,6 +972,9 @@ LANE_NAME_RE = re.compile(r"^레인\s+([^\s·].*?)\s*·")
 
 # R7/R11: the 자투리 lane's fixed name (statusline label `statusline.lane.besteffort`).
 LANE_BESTEFFORT_NAME = "자투리"
+# T-1513: the one lane of a version with no lane record and no PRD 합격선 row — every
+# open+done ticket of the version. `besteffort: true` (never a gate) + `default: true`.
+LANE_DEFAULT_NAME = "기본 레인"
 
 
 LANE_HEADING_RE = re.compile(r"^###\s+합격선(\s|$)")
@@ -1140,7 +1143,16 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None, close
     records = _lane_records(tickets, version)
     rows = [(n, g, True) for n, g, _t in records] if records else _lane_gate_rows(root, st, line, version if closed else None)
     if not rows:
-        return []
+        if closed:
+            return []
+        # T-1513: no record, no 합격선 row — one 기본 레인 over the version's open+done tickets
+        every = [t for t, (r, _p) in tickets.items() if r["version"] == version and r["status"] in ("open", "done")]
+        if not every:
+            return []
+        lane = _lane_new(LANE_DEFAULT_NAME, None, True, version, besteffort=True)
+        lane["default"] = True
+        _lane_fill(lane, every, tickets, in_flight, {t: i for i, t in enumerate(order or [])})
+        return [lane]
     pos = {t: i for i, t in enumerate(order or [])}
     cache = {}
 
@@ -1201,6 +1213,12 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None, close
         _lane_fill(lane, rest, tickets, in_flight, pos)
         lanes.append(lane)
     return lanes
+
+
+def real_lanes(lanes):
+    """T-1513: `lanes` without the default 기본 레인 (a version with no lane record and no
+    합격선 row has no lane mode — the rank list stays the schedule)."""
+    return [x for x in (lanes or []) if not (isinstance(x, dict) and x.get("default") is True)]
 
 
 def lanes_for(root, line=None, version=None):
@@ -1463,7 +1481,8 @@ def compute_schedule(root, tickets=None, line=None):
     out["lanes"] = compute_lanes(root, tickets, st, line, version, in_flight, [r["id"] for r in rows])
     if out["lanes"]:
         # T-1365: where the lanes came from — `records` (gate tickets' `lane:`) or the PRD `table`
-        out["lanes_from"] = "records" if _lane_records(tickets, version) else "table"
+        out["lanes_from"] = ("records" if _lane_records(tickets, version)
+                             else "default" if all(x.get("default") for x in out["lanes"]) else "table")
         # T-1184 R10: the version total the lane sums must equal (text `total` line)
         here = [r for r, _p in tickets.values() if r["version"] == version and r["status"] in ("open", "done")]
         impl = [r for r in here if r["type"] == "impl"]

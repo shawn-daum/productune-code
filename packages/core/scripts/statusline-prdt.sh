@@ -913,7 +913,7 @@ links = {}  # ticket_id -> resolved viewer link target (T-805), filled in as seg
 # import keeps python's bytecode cache (spawning the 20k-line `prdt` recompiled it on
 # every render). Read-only: nothing is written. A missing/stale module or any failure =
 # no lane rows (degrade silently). T-1330: read in every stage; a version with no gate
-# lane gets one default 자투리 lane over its open+done tickets (the module's own fill).
+# lane gets the module's own default 기본 레인 (T-1513) — no second computation here.
 
 
 def read_lanes():
@@ -934,13 +934,6 @@ def read_lanes():
             sched = prdt_lanes.compute_schedule(root, tickets=tickets, line=ln)
             lanes = [x for x in (sched.get("lanes") if isinstance(sched.get("lanes"), list) else [])
                      if isinstance(x, dict)]
-            if not lanes:
-                ver = sched.get("version")
-                rest = [t for t, (rr, _p) in tickets.items() if rr["version"] == ver and rr["status"] in ("open", "done")]
-                lane = prdt_lanes._lane_new(prdt_lanes.LANE_BESTEFFORT_NAME, None, True, ver, besteffort=True)
-                prdt_lanes._lane_fill(lane, rest, tickets, in_flight,
-                                      {x.get("id"): i for i, x in enumerate(sched.get("rows") or [])})
-                lanes = [lane]
         except Exception:
             continue
         out[ln] = lanes
@@ -1026,6 +1019,8 @@ def fit(build, tail=""):
 
 def lane_name(lane):
     """R11: the 합격선 name whole (words included); the 자투리 lane's fixed label."""
+    if lane.get("default") is True:
+        return L("lane.default")
     return L("lane.besteffort") if lane.get("besteffort") is True else (clean(lane.get("name"), cap=10**6) or "?")
 
 
@@ -1146,10 +1141,10 @@ def lanes_with_running(lanes, r):
     """T-1330: the product row has no `working` cell — every running dispatch of the
     product sits on a lane row. One no lane row holds (another version's ticket, a
     finished lane, a lane read that failed) joins the 자투리 lane, made when absent;
-    a failed lane read leaves one default 자투리 lane over the version's counts."""
+    a failed lane read leaves one default 기본 레인 over the version's counts."""
     lanes = [dict(x) for x in lanes]
     if not lanes:
-        lanes = [{"besteffort": True, "linked": True, "done": r["vdone"], "total": r["vtotal"], "working": []}]
+        lanes = [{"besteffort": True, "default": True, "linked": True, "done": r["vdone"], "total": r["vtotal"], "working": []}]
     held = {t for x in lanes if x.get("linked") and not (x.get("finished") is True and x.get("besteffort") is not True)
             for t in _ids(x.get("working"))}
     extra = [tid for tid, _ in running if line_of(tid) == r["line"] and tid not in held]

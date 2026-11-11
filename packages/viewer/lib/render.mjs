@@ -2641,9 +2641,8 @@ function homeScope(data, currentTickets) {
   const work = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
   const byId = new Map(work.map((t) => [t.frontmatter.id, t]))
   const lanes = Array.isArray(data.lanes) ? data.lanes : []
-  const lines = lanes.length > 0
-    ? lanes.map((l) => ({ name: l.name, tickets: l.tickets.map((id) => byId.get(id)).filter(Boolean), done: l.done, total: l.total }))
-    : [{ name: HOME.scopeDefaultLane, tickets: work, done: work.filter((t) => t.frontmatter.status === 'done').length, total: work.length }]
+  // T-1513: a version with no lane record and no 합격선 row arrives as one computed 「기본 레인」 — no fallback line here.
+  const lines = lanes.map((l) => ({ name: l.name, tickets: l.tickets.map((id) => byId.get(id)).filter(Boolean), done: l.done, total: l.total }))
   const row = (l) => {
     const sorted = [...l.tickets.filter((t) => t.frontmatter.status === 'done'), ...l.tickets.filter((t) => t.frontmatter.status !== 'done')]
       .sort((x, y) => (x.frontmatter.status === 'done' ? 0 : 1) - (y.frontmatter.status === 'done' ? 0 : 1) || compareTicketIds(x.frontmatter.id, y.frontmatter.id))

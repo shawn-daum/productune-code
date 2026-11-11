@@ -44,6 +44,7 @@ from prdt_lanes import (
     LINE_NAME_RE,
     PRODUCT_RESERVED_NAMES,
     lanes_for,
+    real_lanes,
     line_product,
     PRD_H4_RE,
     PRD_ITEM_KEY_RE,
@@ -16872,8 +16873,10 @@ def _render_schedule(s, stage=None):
     rows = s["rows"]
     print(f"schedule {lab(s['version'])} — {len(rows)} open ticket(s) in the graph")
     lanes = s.get("lanes") or []
-    if lanes:
+    if real_lanes(lanes):
         return _render_lanes_schedule(s, lab, stage)
+    for ln in lanes:   # T-1513: the default 기본 레인 — one line, the rank list below stays
+        print(f"lane {lab(ln['name'])} {ln['done']}/{ln['total']} — no lane record in {lab(s['version'])}")
     if s["critical_path"]:
         print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
     else:
@@ -17188,6 +17191,7 @@ def schedule_record(ev, now=None):
     tline = split_line_id(tickets[ticket][0]["version"])[0] if ticket in tickets else None
     if tline is not None and tline in project_line_names(root):
         lanes = compute_schedule(root, tickets, line=tline).get("lanes")
+    lanes = real_lanes(lanes)   # T-1513: the default 기본 레인 is no lane mode
     if lanes:
         # T-1145 / R6: with lanes the critical-path deviation warning does not apply
         # (riders run beside the lanes by rule) — warn only when an out-of-lane ticket is
