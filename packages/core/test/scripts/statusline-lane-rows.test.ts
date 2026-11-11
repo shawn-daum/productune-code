@@ -98,19 +98,19 @@ beforeEach(() => {
 afterEach(() => { fs.rmSync(tmpRoot, { recursive: true, force: true }) })
 
 describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
-  test('R3/R7: a working lane and the 자투리 row — lane tickets leave the product `working`', () => {
+  test('R3/R7: a working lane and the 기본 레인 row (T-1514: no 자투리 record) — lane tickets leave the product `working`', () => {
     writePrd([rowA])
     ticket('T-001', { status: 'done' })
     ticket('T-002', { deps: '[T-001]', gate: GATE_A })
-    ticket('T-003', { deps: '[T-002]' }) // depends on the gate ticket, not in its closure: 자투리
-    ticket('T-009') // in no gate lane: 자투리
+    ticket('T-003', { deps: '[T-002]' }) // depends on the gate ticket, not in its closure: 기본 레인
+    ticket('T-009') // in no gate lane: 기본 레인
     setStage('build')
     marker('T-002', 'developer')
     marker('T-009', 'qa')
     const r = rows()
     expect(r).toHaveLength(4)
     expect(r[1]).toBe('lane: A  1/2 | working T-002(developer)')
-    expect(r[2]).toBe('lane: 자투리  0/2 | working T-009(qa)')
+    expect(r[2]).toBe('lane: 기본 레인  0/2 | working T-009(qa)')
     expect(r[3]).toBe('decision 0 | request 0')
     expect(r[0]).not.toContain('working') // T-1330: the product row has no `working` cell
     expect(r[0]).toContain('total tickets 1/4')
@@ -121,8 +121,8 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     ticket('T-001', { gate: GATE_A })
     ticket('T-002')
     setStage('build')
-    expect(rows().slice(1, 3)).toEqual(['lane: 여러 제품 관측  0/1 | next T-001(developer)', 'lane: 자투리  0/1 | next T-002(developer)'])
-    expect(rows({ PRDT_LANG: 'ko' }).slice(1, 3)).toEqual(['레인: 여러 제품 관측  0/1 | 다음 T-001(developer)', '레인: 자투리  0/1 | 다음 T-002(developer)'])
+    expect(rows().slice(1, 3)).toEqual(['lane: 여러 제품 관측  0/1 | next T-001(developer)', 'lane: 기본 레인  0/1 | next T-002(developer)'])
+    expect(rows({ PRDT_LANG: 'ko' }).slice(1, 3)).toEqual(['레인: 여러 제품 관측  0/1 | 다음 T-001(developer)', '레인: 기본 레인  0/1 | 다음 T-002(developer)'])
   })
 
   test('R12: `next` is the head of the lane queue only (schedule order), shown beside `working`', () => {
@@ -194,13 +194,13 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     ticket('T-001', { status: 'done', gate: GATE_A })
     ticket('T-002', { gate: GATE_B })
     ticket('T-003', { status: 'done', gate: 'docs/artifacts/v0.1/c.md' })
-    ticket('T-004', { status: 'done' }) // 자투리, finished too — still its own lane row
+    ticket('T-004', { status: 'done' }) // 기본 레인, finished too — still its own lane row
     setStage('build')
     const r = rows()
     expect(r).toHaveLength(4)
     expect(r[0]).toMatch(/^proj v0\.1 \| stage: build \d+\/\d+ \| total tickets \d+\/\d+ \| done lanes: A 1\/1 · C 1\/1$/)
     expect(r[1]).toBe('lane: B  0/1 | next T-002(developer)')
-    expect(r[2]).toMatch(/^lane: 자투리 +1\/1/)
+    expect(r[2]).toMatch(/^lane: 기본 레인 +1\/1/)
     expect(r[3]).toBe('decision 0 | request 0')
     expect(rows({ PRDT_LANG: 'ko' })[0]).toMatch(/\| 총 티켓 \d+\/\d+ \| 완료된 레인: A 1\/1 · C 1\/1$/)
   })
@@ -346,7 +346,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     expect(r[0]).not.toContain('working')
   })
 
-  test('QA 1a (T-1330): QA running on a done ticket of a finished lane shows on a 자투리 lane row', () => {
+  test('QA 1a (T-1330): QA running on a done ticket of a finished lane shows on a 기본 레인 row (T-1514: nobody placed it)', () => {
     writePrd([rowA])
     ticket('T-001', { status: 'done', gate: GATE_A })
     setStage('build')
@@ -354,7 +354,7 @@ describe.skipIf(!PYTHON3)('statusline lane rows (T-1147)', () => {
     const r = rows()
     expect(r[0]).toContain('done lanes: A 1/1')
     expect(r[0]).not.toContain('working')
-    expect(r[1]).toBe('lane: 자투리  0/0 | working T-001(qa)')
+    expect(r[1]).toBe('lane: 기본 레인  0/0 | working T-001(qa)')
     expect(r).toHaveLength(3)
   })
 
@@ -434,5 +434,44 @@ describe.skipIf(!PYTHON3)('statusline lane rows from lane records (T-1359)', () 
     ticket('T-002', { status: 'done' })
     setStage('define')
     expect(rows()[1]).toMatch(/^lane: R1 기록  1\/2/)
+  })
+})
+
+// T-1514 (T-1508 = C): the `lane: 자투리` record's deps are the 자투리 row; tickets in no record are 기본 레인, last.
+// The record ticket itself is in no row and no count (total tickets / stage).
+describe.skipIf(!PYTHON3)('statusline: 자투리 record and the 기본 레인 rest (T-1514)', () => {
+  const lane = (name: string) => [`lane: ${name}`]
+  test('both, ko and en: gate lane, 자투리, 기본 레인 last; the record counted nowhere', () => {
+    writePrd([])
+    ticket('T-010', { type: 'ops', assignee: 'po', deps: '[T-011]', extra: lane('L1 묶음') })
+    ticket('T-011')
+    ticket('T-020', { type: 'ops', assignee: 'po', deps: '[T-021, T-022]', extra: lane('자투리') })
+    ticket('T-021')
+    ticket('T-022', { status: 'done' })
+    ticket('T-030')
+    setStage('build')
+    const en = rows()
+    expect(en.slice(1, 4)).toEqual(['lane: L1 묶음  0/2 | next T-011(developer)', 'lane: 자투리  1/2 | next T-021(developer)',
+      'lane: 기본 레인  0/1 | next T-030(developer)'])
+    expect(en[0]).toContain('total tickets 1/5')
+    expect(en.join('\n')).not.toContain('T-020')
+    const ko = rows({ PRDT_LANG: 'ko' })
+    expect(ko.slice(1, 4)).toEqual(['레인: L1 묶음  0/2 | 다음 T-011(developer)', '레인: 자투리  1/2 | 다음 T-021(developer)',
+      '레인: 기본 레인  0/1 | 다음 T-030(developer)'])
+  })
+  test('records, no 자투리 record: the rest is 기본 레인, never 자투리; a 자투리 record and nothing outside: no 기본 레인 row', () => {
+    writePrd([])
+    ticket('T-010', { type: 'ops', assignee: 'po', deps: '[T-011]', extra: lane('L1') })
+    ticket('T-011')
+    ticket('T-021')
+    setStage('build')
+    let r = rows()
+    expect(r[2]).toBe('lane: 기본 레인  0/1 | next T-021(developer)')
+    expect(r.join('\n')).not.toContain('자투리')
+    ticket('T-020', { type: 'ops', assignee: 'po', deps: '[T-021]', extra: lane('자투리') })
+    r = rows()
+    expect(r[2]).toBe('lane: 자투리  0/1 | next T-021(developer)')
+    expect(r.join('\n')).not.toContain('기본 레인')
+    expect(r[0]).toContain('total tickets 0/3')
   })
 })

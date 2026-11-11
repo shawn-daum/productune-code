@@ -45,6 +45,7 @@ from prdt_lanes import (
     PRODUCT_RESERVED_NAMES,
     lanes_for,
     real_lanes,
+    is_jatturi_record,
     line_product,
     PRD_H4_RE,
     PRD_ITEM_KEY_RE,
@@ -12765,6 +12766,20 @@ def feature_seam_warnings(root, tickets):
     return warns
 
 
+def jatturi_record_warnings(trows):
+    """T-1514 (T-1508 = C): a version holding two or more open+done `lane: 자투리`
+    records — the 자투리 lane is the union of their `deps`, and which list the user
+    chose is no longer one place. Takes the scan_tickets rows."""
+    by_v = {}
+    for r in trows:
+        if r.get("status") in ("open", "done") and is_jatturi_record(r):
+            by_v.setdefault(r.get("version") or "?", []).append(r["id"])
+    return [f"lane: {safe_label(str(v))} has {len(ids)} 자투리 lane records "
+            f"({', '.join(safe_label(t) for t in sorted(ids, key=_ticket_num_key))}) — keep one, "
+            f"move the other's deps into it"
+            for v, ids in sorted(by_v.items()) if len(ids) > 1]
+
+
 def duplicate_ticket_id_warnings(tickets):
     """Standard doctor warnings — non-blocking, never a gate.
 
@@ -13859,7 +13874,8 @@ def _stage_signal_one(stage, version, tickets, root=None, line=None):
     warns = []
     next_stage = {"build": "Ship", "ship": "Retro"}.get(stage)
     if next_stage and version:
-        ver_tickets = [t for t in tickets.values() if t["version"] == version]
+        # T-1514: the `lane: 자투리` record stays open until close and is no work — never holds a signal back
+        ver_tickets = [t for t in tickets.values() if t["version"] == version and not is_jatturi_record(t)]
         if stage == "build":
             if ver_tickets:
                 met, note = _build_gate_met(root, line, ver_tickets, version)
@@ -13874,7 +13890,7 @@ def _stage_signal_one(stage, version, tickets, root=None, line=None):
     # build-entry signal (T-430): stage=build but the version's ticket dir has
     # 0 open+done tickets yet → scope likely wasn't sliced on Build entry.
     if stage == "build" and version:
-        ver_tickets = [t for t in tickets.values() if t["version"] == version]
+        ver_tickets = [t for t in tickets.values() if t["version"] == version and not is_jatturi_record(t)]
         if not any(t["status"] in ("open", "done") for t in ver_tickets):
             warns.append(f"stage: {version} has 0 open+done tickets at stage=build — "
                          f"consider build-entry scope slicing")
@@ -16813,8 +16829,8 @@ def _render_lane(ln, rows, lab):
 
 
 def _render_lanes_schedule(s, lab, stage=None):
-    """Lane mode (T-1184, R6/R10): one block per lane (the 자투리 lane last holds
-    what `dispatch next` listed), `lanes done:`, the total line, blocked rows
+    """Lane mode (T-1184, R6/R10): one block per lane (the 자투리 lane, then the 기본
+    레인 last — T-1514 — hold what `dispatch next` listed), `lanes done:`, the total line, blocked rows
     named by lane, then waiting-on-user / in-flight over every row."""
     rows, lanes = s["rows"], s["lanes"]
     lane_of = {}
@@ -16826,12 +16842,19 @@ def _render_lanes_schedule(s, lab, stage=None):
               f"blocks {first['blocks']}")
     if s["critical_path"]:
         print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
+    row_ids = {r["id"] for r in rows}
     for ln in lanes:
         print(_render_lane(ln, rows, lab))
         if ln.get("unnamed"):
             print(f"note: lane {lab(ln['name'])} has no name")
         if ln["warning"]:
             print(f"note: {lab(ln['warning'])}")
+        if ln.get("default") is True:
+            # T-1514: open tickets nobody placed — in no lane record and not in the 자투리 record
+            unplaced = [t for t in ln["tickets"] if t in row_ids]
+            if unplaced:
+                print(f"note: {lab(ln['name'])} {len(unplaced)} open ticket(s) in no lane record and not in "
+                      f"자투리: " + " ".join(lab(t) for t in unplaced))
         for t in ln["tickets"]:
             lane_of.setdefault(t, ln["name"])
     outside = [r for r in rows if r["id"] not in lane_of]
@@ -18071,6 +18094,8 @@ def cmd_doctor(_args):
         # for the same reason: the id-keyed map is *defined* by collapsing an id,
         # so it is the one input in which this violation cannot be seen.
         ("duplicate ticket id", FAMILY_PROJECT, lambda: duplicate_ticket_id_warnings(trows)),
+        # T-1514: one 자투리 lane record per version — two hide which list the user chose.
+        ("jatturi lane record", FAMILY_PROJECT, lambda: jatturi_record_warnings(trows)),
         # T-1126: carve-out (2) switched off by a post-read check, or a result ref left undeleted.
         ("cloud tests", FAMILY_PROJECT, lambda: cloud_test_doctor_warnings(root)),
         # T-685: same `fmt_ticket_body` transform `tickets fmt --check` reads —

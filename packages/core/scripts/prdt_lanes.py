@@ -1043,12 +1043,21 @@ def _lane_gate_rows(root, st, line, closed_version=None):
 def _lane_records(tickets, version):
     """[(name, gate_path_or_None, gate_ticket)] — T-1359 (design v1.16
     lane-records-design §1): this version's open+done tickets carrying a
-    `lane:` frontmatter record, in ticket-number order. [] → the 합격선 table."""
+    `lane:` frontmatter record, in ticket-number order. [] → the 합격선 table.
+    `lane: 자투리` records (T-1514) are in this list too; `is_jatturi_record` tells them."""
     recs = [t for t, (r, _p) in tickets.items()
             if r["version"] == version and r["status"] in ("open", "done")
             and isinstance(r.get("lane"), str) and r["lane"].strip()]
     return [(tickets[t][0]["lane"].strip(), (tickets[t][0].get("gate") or "").strip() or None, t)
             for t in sorted(recs, key=_ticket_num_key)]
+
+
+def is_jatturi_record(row):
+    """T-1514 (T-1508 = C): a `lane: 자투리` ticket is the 자투리 lane record — its `deps`
+    are the tickets the user chose as 자투리. Never a gate, never work: no schedule row,
+    no lane cell, no version total counts it."""
+    lane = row.get("lane") if isinstance(row, dict) else None
+    return isinstance(lane, str) and lane.strip() == LANE_BESTEFFORT_NAME
 
 
 def _lane_longest_ending_at(ids, preds):
@@ -1110,7 +1119,7 @@ def _lane_fill(lane, ids, tickets, in_flight, pos):
             lane["blockers"].append({"id": t, "kind": "request"})  # T-1491: options fork waits on the user too
 
     def satisfied(d):
-        return d not in tickets or tickets[d][0]["status"] in ("done", "dropped")
+        return d not in tickets or tickets[d][0]["status"] in ("done", "dropped") or is_jatturi_record(tickets[d][0])
     # T-1158 = B: `ready` = R3's 다음 criteria, shown even while the lane has work running.
     # `next` stays the dispatch-gate-facing value (T-1147): only when nothing is running.
     ready = [t for t in ids if tickets[t][0]["status"] == "open"
@@ -1138,11 +1147,15 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None, close
     {name, gate_path, gate_ticket, linked, done, total, finished, tickets,
     working, next, ready, blockers:[{id, kind: decision|request}], warning,
     unnamed, besteffort}. A ticket belongs to ONE lane: the earliest row whose
-    gate ticket's deps closure holds it (R8); this version's open+done tickets
-    in no row's closure are the 자투리 lane (R7), present only when non-empty."""
+    gate ticket's deps closure holds it (R8). T-1514 (T-1508 = C): the `lane: 자투리`
+    record's deps closure not held by a gate lane is the 자투리 lane (never a gate,
+    the record ticket itself never counted); this version's open+done tickets in no
+    lane are the 기본 레인 (`besteffort` + `default`), last, present only when non-empty."""
     records = _lane_records(tickets, version)
+    jat = [r for r in records if is_jatturi_record(tickets[r[2]][0])]
+    records = [r for r in records if not is_jatturi_record(tickets[r[2]][0])]
     rows = [(n, g, True) for n, g, _t in records] if records else _lane_gate_rows(root, st, line, version if closed else None)
-    if not rows:
+    if not rows and not jat:
         if closed:
             return []
         # T-1513: no record, no 합격선 row — one 기본 레인 over the version's open+done tickets
@@ -1174,7 +1187,7 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None, close
                 continue
             seen.add(t)
             stack.extend(tickets[t][0]["deps"])
-        members = [t for t in seen if t not in claimed]
+        members = [t for t in seen if t not in claimed and not is_jatturi_record(tickets[t][0])]
         claimed.update(seen)
         return members
 
@@ -1206,19 +1219,37 @@ def compute_lanes(root, tickets, st, line, version, in_flight, order=None, close
             elif gate is not None:
                 members = link(lane, gate)
         _lane_fill(lane, members, tickets, in_flight, pos)
-    rest = [t for t, (r, _p) in tickets.items()
-            if r["version"] == version and r["status"] in ("open", "done") and t not in claimed]
-    if rest:
+    if jat:
+        # T-1514: after every gate lane (a ticket a gate lane holds stays there, R8); two
+        # records in one version → one 자투리 lane over both, a warning, `prdt doctor` names them.
         lane = _lane_new(LANE_BESTEFFORT_NAME, None, True, version, besteffort=True)
+        members = []
+        for _n, _g, rec in jat:
+            members += link(lane, rec)
+        lane["gate_ticket"] = None
+        if len(jat) > 1:
+            lane["warning"] = (f"lane {LANE_BESTEFFORT_NAME}: {len(jat)} 자투리 records in {version} "
+                               f"({', '.join(r[2] for r in jat)}) — one lane over all of them")
+        _lane_fill(lane, sorted(set(members), key=_ticket_num_key), tickets, in_flight, pos)
+        lanes.append(lane)
+    rest = [t for t, (r, _p) in tickets.items()
+            if r["version"] == version and r["status"] in ("open", "done") and t not in claimed
+            and not is_jatturi_record(r)]
+    if rest:
+        # T-1514: no lane holds these and the user did not put them in 자투리 — 기본 레인
+        lane = _lane_new(LANE_DEFAULT_NAME, None, True, version, besteffort=True)
+        lane["default"] = True
         _lane_fill(lane, rest, tickets, in_flight, pos)
         lanes.append(lane)
     return lanes
 
 
 def real_lanes(lanes):
-    """T-1513: `lanes` without the default 기본 레인 (a version with no lane record and no
-    합격선 row has no lane mode — the rank list stays the schedule)."""
-    return [x for x in (lanes or []) if not (isinstance(x, dict) and x.get("default") is True)]
+    """T-1513: [] when the lanes are only the default 기본 레인 (a version with no lane record and
+    no 합격선 row has no lane mode — the rank list stays the schedule); else `lanes` whole
+    (T-1514: the 기본 레인 beside lane records is a lane row like 자투리)."""
+    lanes = [x for x in (lanes or []) if isinstance(x, dict)]
+    return [] if all(x.get("default") is True for x in lanes) else lanes
 
 
 def lanes_for(root, line=None, version=None):
@@ -1384,8 +1415,9 @@ def compute_schedule(root, tickets=None, line=None):
         out["product"] = line or _resource_project_slug(root)
 
     # node set: current version's open tickets, then open deps wherever they live
+    # T-1514: a `lane: 자투리` record is no work — never a node, nor a dep anyone waits on
     nodes, stack = {}, [t for t, (r, _) in tickets.items()
-                        if r["status"] == "open" and r["version"] == version]
+                        if r["status"] == "open" and r["version"] == version and not is_jatturi_record(r)]
     while stack:
         tid = stack.pop()
         if tid in nodes:
@@ -1394,7 +1426,7 @@ def compute_schedule(root, tickets=None, line=None):
         for d in nodes[tid][0]["deps"]:
             if d not in tickets:
                 out["missing_deps"].append({"ticket": tid, "dep": d})
-            elif tickets[d][0]["status"] == "open" and d not in nodes:
+            elif tickets[d][0]["status"] == "open" and d not in nodes and not is_jatturi_record(tickets[d][0]):
                 stack.append(d)
     out["missing_deps"].sort(key=lambda m: (_ticket_num_key(m["ticket"]), _ticket_num_key(m["dep"])))
     preds = {t: sorted({d for d in r["deps"] if d in nodes and d != t} | ({t} if t in r["deps"] else set()))
@@ -1481,10 +1513,14 @@ def compute_schedule(root, tickets=None, line=None):
     out["lanes"] = compute_lanes(root, tickets, st, line, version, in_flight, [r["id"] for r in rows])
     if out["lanes"]:
         # T-1365: where the lanes came from — `records` (gate tickets' `lane:`) or the PRD `table`
-        out["lanes_from"] = ("records" if _lane_records(tickets, version)
-                             else "default" if all(x.get("default") for x in out["lanes"]) else "table")
-        # T-1184 R10: the version total the lane sums must equal (text `total` line)
-        here = [r for r, _p in tickets.values() if r["version"] == version and r["status"] in ("open", "done")]
+        # T-1514: a 자투리 record alone leaves a 합격선 table in charge (`table`); with no table either → `records`
+        recs = _lane_records(tickets, version)
+        out["lanes_from"] = ("records" if any(not is_jatturi_record(tickets[t][0]) for _n, _g, t in recs)
+                             else "default" if all(x.get("default") for x in out["lanes"])
+                             else "table" if any(not x.get("besteffort") for x in out["lanes"]) else "records")
+        # T-1184 R10: the version total the lane sums must equal (text `total` line); never the 자투리 record
+        here = [r for r, _p in tickets.values() if r["version"] == version and r["status"] in ("open", "done")
+                and not is_jatturi_record(r)]
         impl = [r for r in here if r["type"] == "impl"]
         out["totals"] = {"done": sum(r["status"] == "done" for r in here), "total": len(here),
                          "impl_done": sum(r["status"] == "done" for r in impl), "impl_total": len(impl)}

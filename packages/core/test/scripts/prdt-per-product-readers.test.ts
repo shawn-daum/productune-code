@@ -93,14 +93,14 @@ const LANES = `print(json.dumps({k: [l["name"] for l in m.compute_schedule(root,
 
 describe.skipIf(!PYTHON3)('T-1214 per-product readers', () => {
   test('(a) compute_schedule(line=arch) reads the arch PRD — its lane, not []', () => {
-    expect(py(LANES)).toEqual({ home: ['H'], arch: ['R', '자투리'] })
+    expect(py(LANES)).toEqual({ home: ['H'], arch: ['R', '기본 레인'] })
   })
 
   test('(b) current_task.product = arch does not move the home product\'s lanes', () => {
     state('arch')
-    expect(py(LANES)).toEqual({ home: ['H'], arch: ['R', '자투리'] })
+    expect(py(LANES)).toEqual({ home: ['H'], arch: ['R', '기본 레인'] })
     state('home')
-    expect(py(LANES)).toEqual({ home: ['H'], arch: ['R', '자투리'] })
+    expect(py(LANES)).toEqual({ home: ['H'], arch: ['R', '기본 레인'] })
   })
 
   test('(c) prd_layout_warnings compares the home PRD with the home version whatever the current product', () => {

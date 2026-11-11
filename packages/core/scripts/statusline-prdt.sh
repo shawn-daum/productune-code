@@ -188,6 +188,8 @@ STAGES = ("define", "build", "ship", "retro", "idle")
 ASSIGNEES = ("po", "designer", "developer", "qa", "user")
 VERSION_RE = re.compile(r"\Av[0-9]{1,4}(?:\.[0-9]{1,4}){0,2}\Z")
 TICKET_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")
+# T-1514: a `lane: 자투리` frontmatter line — the 자투리 record (prdt_lanes.is_jatturi_record)
+JATTURI_RECORD_RE = re.compile(r"^lane:[ \t]*(['\"]?)자투리\1[ \t]*$", re.M)
 
 
 def token(raw, ok, absent=""):
@@ -572,7 +574,8 @@ def scan(base, row):
                 tid_status.setdefault(fn[:-3], s)
             if s not in ("done", "open"):
                 continue
-            if is_current:
+            # T-1514: the `lane: 자투리` record is no work — never in the version or stage counts
+            if is_current and not JATTURI_RECORD_RE.search(head.split("\n---", 1)[0]):
                 row["vtotal"] += 1
                 row["vdone"] += s == "done"
                 stg = ticket_stage_of(row, head)
@@ -1083,9 +1086,9 @@ def lane_text(lane, cap):
 
 def lane_block(lanes, cap):
     """([finished entries], [(lane, text)]) for one product: T-1202 = B — every
-    finished gate lane (never 자투리) is an `NAME d/t` entry the product's FIRST
+    finished gate lane (never 자투리 · 기본 레인) is an `NAME d/t` entry the product's FIRST
     row carries as `done lanes: …`, table order; then one row per other lane,
-    자투리 last. The row cap (MAX_ROWS) counts these rows too (T-1330)."""
+    자투리 then 기본 레인 last (T-1514). The row cap (MAX_ROWS) counts these rows too (T-1330)."""
     done = [x for x in lanes if x.get("finished") is True and x.get("besteffort") is not True]
     ents = [clean(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}", cap=10**6) for x in done]
     out = [(x, lane_text(x, cap)) for x in lanes if not (x.get("finished") is True and x.get("besteffort") is not True)]
@@ -1140,8 +1143,9 @@ running_rows = set()  # T-1442: indexes of out_rows holding a running dispatch i
 def lanes_with_running(lanes, r):
     """T-1330: the product row has no `working` cell — every running dispatch of the
     product sits on a lane row. One no lane row holds (another version's ticket, a
-    finished lane, a lane read that failed) joins the 자투리 lane, made when absent;
-    a failed lane read leaves one default 기본 레인 over the version's counts."""
+    finished lane, a lane read that failed) joins the 기본 레인 (T-1514: nobody placed
+    it — never the user's 자투리), made when absent; a failed lane read leaves one
+    default 기본 레인 over the version's counts."""
     lanes = [dict(x) for x in lanes]
     if not lanes:
         lanes = [{"besteffort": True, "default": True, "linked": True, "done": r["vdone"], "total": r["vtotal"], "working": []}]
@@ -1149,9 +1153,9 @@ def lanes_with_running(lanes, r):
             for t in _ids(x.get("working"))}
     extra = [tid for tid, _ in running if line_of(tid) == r["line"] and tid not in held]
     if extra:
-        be = next((x for x in lanes if x.get("besteffort") is True), None)
+        be = next((x for x in lanes if x.get("default") is True), None)
         if be is None:
-            be = {"besteffort": True, "linked": True, "done": 0, "total": 0, "working": []}
+            be = {"besteffort": True, "default": True, "linked": True, "done": 0, "total": 0, "working": []}
             lanes.append(be)
         be["working"] = _ids(be.get("working")) + extra
     return lanes

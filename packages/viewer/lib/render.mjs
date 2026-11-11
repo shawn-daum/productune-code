@@ -810,7 +810,7 @@ export function pageIdentityOf(data) {
   const toolVersion = data.toolVersion || ''
   const idle = stage === 'idle' || !version
   if (idle) return { project, version, stage, idle, toolVersion, card: null }
-  const currentTickets = currentVersionTickets(data.tickets, version)
+  const currentTickets = currentVersionTickets(data.tickets, version).filter((t) => !isJatturiRecord(t))
   const seg = stageSegments(currentTickets, data.stageHistory).find((x) => x.stage === stage)
   const stageDone = seg ? seg.tickets.filter((t) => t.done).length : 0
   const stageTotal = seg ? seg.tickets.length : 0
@@ -2594,6 +2594,12 @@ function homeEnvGroup(data, v, hasLines) {
  * @param {Array} currentTickets current-version tickets (any status)
  * @returns {{done: number, total: number}}
  */
+/** T-1514: the 자투리 lane record (`lane: 자투리`, prdt_lanes.is_jatturi_record) — its `deps` are the 자투리 tickets; it is no work itself. */
+export function isJatturiRecord(t) {
+  const lane = t && t.frontmatter ? t.frontmatter.lane : undefined
+  return typeof lane === 'string' && lane.trim() === '자투리'
+}
+
 export function versionProgressCounts(currentTickets) {
   const counted = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
   const done = counted.filter((t) => t.frontmatter.status === 'done').length
@@ -2837,7 +2843,8 @@ function homeDeployHead(data) {
 }
 
 function homeProgressBody(data) {
-  const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
+  // T-1514: the `lane: 자투리` record is no work — never a square, a count or a graph node
+  const currentTickets = currentVersionTickets(data.tickets, data.currentVersion).filter((t) => !isJatturiRecord(t))
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
 ${homeDeployHead(data)}
