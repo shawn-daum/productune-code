@@ -6424,6 +6424,24 @@ def effect_check_due(fm):
     return True
 
 
+def effect_today():
+    """The day a close write happens: PRDT_EFFECT_TODAY (YYYY-MM-DD, a test's injected clock) else the local date."""
+    v = os.environ.get("PRDT_EFFECT_TODAY", "")
+    return v if TICKET_CREATED_DATE_RE.match(v) else datetime.now().strftime("%Y-%m-%d")
+
+
+def effect_gate_due(fm):
+    """The close gate sees the MOMENT: a write moving a ticket to done on/after EFFECT_CHECK_LANDING_DATE is
+    the close, whatever `closed:` it carries or lacks (the write dates it). Frame-cutoff tickets stay skipped.
+    Before the landing date the stored-date rule (`effect_check_due`) applies, as for fmt · doctor."""
+    if fm.get("status") != "done":
+        return False
+    created = fm.get("created")
+    if isinstance(created, str) and TICKET_CREATED_DATE_RE.match(created) and created < TICKET_FRAME_LANDING_DATE:
+        return False
+    return effect_today() >= EFFECT_CHECK_LANDING_DATE or effect_check_due(fm)
+
+
 def effect_report(root, fm, body, tid):
     """(problems, notes) for `fmt --check` · doctor: one `effect check — …` line per finding, and a
     `not run` note when no scope could be read (never counted as a violation)."""
@@ -6448,7 +6466,7 @@ def cmd_tickets_effect_gate():
             raise ValueError("bad request")
         fm, _ = parse_frontmatter_text(content)
         tid = fm["id"] if isinstance(fm.get("id"), str) and fm.get("id") else tid
-        if effect_check_due(fm):   # the date rule `fmt --check` · doctor apply (EFFECT_CHECK_LANDING_DATE)
+        if effect_gate_due(fm):
             _hdr, body = split_ticket_header_body(content)
             res = effect_check_problems(root, fm, body, tid)
             out["deny"] = effect_deny_text(tid, res, worker=bool(req.get("worker")))
@@ -6457,6 +6475,10 @@ def cmd_tickets_effect_gate():
     except Exception as e:
         out = {"deny": None, "notice": EFFECT_NOT_CHECKED.format(tid=one_line(tid), why=f"check failed: {e.__class__.__name__}")}
     print(json.dumps(out, ensure_ascii=False))
+
+
+# a write that says done in any spelling: `status: "done"` · `status:done` · a bare `done` line of an Edit
+_EFFECT_DONE_RE = re.compile(r"^[ \t]*(?:status:[ \t]*)?['\"]?done['\"]?[ \t]*$", re.M)
 
 
 def _effect_written_text(ev):
@@ -6475,7 +6497,7 @@ def _effect_notice_lines(root, ev, tid, text, fm):
     key `effect:<tid>`). Any failure → no line."""
     try:
         created = fm.get("created")
-        if fm.get("status") != "done" or "status: done" not in _effect_written_text(ev):
+        if fm.get("status") != "done" or not _EFFECT_DONE_RE.search(_effect_written_text(ev)):
             return []
         if isinstance(created, str) and TICKET_CREATED_DATE_RE.match(created) and created < TICKET_FRAME_LANDING_DATE:
             return []

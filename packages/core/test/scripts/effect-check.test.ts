@@ -120,7 +120,8 @@ function guard(tool: string, input: Record<string, unknown>, who: Who = 'main', 
     hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, tool_use_id: 't' }
   if (who === 'main') ev.agent_type = 'prdt-po'
   else { ev.agent_type = who; ev.agent_id = 'agent-x' }
-  const e: NodeJS.ProcessEnv = { ...process.env, HOME: home, PRDT_BIN: CLI, ...env }
+  // the gate's "today" is injected, never the wall clock (default: the day before the landing date)
+  const e: NodeJS.ProcessEnv = { ...process.env, HOME: home, PRDT_BIN: CLI, PRDT_EFFECT_TODAY: '2026-11-11', ...env }
   delete e.PRDT_HOME
   const r = spawnSync('bash', [GUARD], { cwd: root, input: JSON.stringify(ev), encoding: 'utf8', env: e, timeout: subprocessTimeout('cli') * 2 })
   expect(r.status).toBe(0)
@@ -345,6 +346,25 @@ describe.skipIf(!PY)('T-1440 close refusal — prdt-worktree-guard.sh', () => {
     expect(guard('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'open' }).replace('status: open', 'status:"open"') })).toBe('')
   }, T)
 
+  test('the gate sees the moment: a close written on/after the landing date is judged whatever `closed:` says or lacks', () => {
+    const TODAY = { PRDT_EFFECT_TODAY: '2026-11-12' }
+    const statusOnly = { file_path: tpath('T-20'), ...closeEdit }
+    ticket('T-20', { status: 'open', created: '2026-11-06' })   // no `closed:` key, created before the landing date
+    expect(denyOf(guard('Edit', statusOnly, 'main', TODAY))).toContain('close of T-20 refused: it edits discipline')
+    // the injected clock decides: the day before the landing date the stored-date rule applies (skipped)
+    expect(guard('Edit', statusOnly, 'main', { PRDT_EFFECT_TODAY: '2026-11-11' })).toBe('')
+    // a valid line closes
+    const withLine = { old_string: '## evidence\n', new_string: `## evidence\n\n- replay: ${PROBLEM} · before 3/3 · after 0/3\n` }
+    expect(guard('MultiEdit', { file_path: tpath('T-20'), edits: [{ old_string: 'status: open', new_string: 'status: done' }, withLine] }, 'main', TODAY)).toBe('')
+    // an earlier `closed:` date written on the landing date: the write is the close
+    expect(denyOf(guard('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'done', created: '2026-11-06', closed: '2026-11-01' }) }, 'main', TODAY)))
+      .toContain('close of T-20 refused')
+    expect(guard('Write', { file_path: tpath('T-20'), content: text('T-20', { status: 'done', created: '2026-11-06', closed: '2026-11-01' }) }, 'main', { PRDT_EFFECT_TODAY: '2026-11-11' })).toBe('')
+    // the frame cutoff still skips
+    ticket('T-20', { status: 'open', created: '2026-09-23' })
+    expect(guard('Edit', { file_path: tpath('T-20'), ...closeEdit }, 'main', TODAY)).toBe('')
+  }, T)
+
   test('row 4: k > n in a replay line refuses (same class as n < 3)', () => {
     const d = denyOf(close('T-20', { evidence: `- replay: ${PROBLEM} · before 9/3 · after 0/3` }))
     expect(d).toContain(`replay \`${PROBLEM}\` has k > n (before 9/3 · after 0/3)`)
@@ -459,7 +479,7 @@ describe.skipIf(!PY)('T-1440 tickets fmt --check · doctor', () => {
     const gate: Record<string, boolean> = {}, fmt: Record<string, boolean> = {}
     for (const [id, o, want] of cases) {
       fs.writeFileSync(tpath(id), text(id, { ...o, status: 'open', created: o.created ?? '2026-10-01' }))
-      gate[id] = guard('Write', { file_path: tpath(id), content: text(id, { ...o, status: 'done', created: o.created ?? '2026-10-01' }) }).includes('close of ' + id + ' refused')
+      gate[id] = guard('Write', { file_path: tpath(id), content: text(id, { ...o, status: 'done', created: o.created ?? '2026-10-01' }) }, 'main', { PRDT_EFFECT_TODAY: shift(-1) }).includes('close of ' + id + ' refused')
       fs.writeFileSync(tpath(id), text(id, { ...o, status: 'done', created: o.created ?? '2026-10-01' }))
       fmt[id] = hit(cli(['tickets', 'fmt', id, '--check']).out, id)
       expect(gate[id], `gate ${id}`).toBe(want)
@@ -489,6 +509,14 @@ describe.skipIf(!PY)('T-1440 notices after the close — prdt-prior-tickets.sh',
     expect(prior(f, closeEdit)).toBe('')
     expect(JSON.parse(prior(f, closeEdit, 'sess-2')).hookSpecificOutput.additionalContext).toBe(want)
     expect(prior(f, { old_string: '끝', new_string: '끝.' }, 'sess-3')).toBe('')
+  }, T)
+
+  test('E3 notice for a quoted-done close and a bare word-change Edit', () => {
+    const f = ticket('T-21', { status: 'done', closed: '2026-11-12', evidence: '- replay: 다른 사례 · before 3/3 · after 0/3' })
+    const want = '[prdt effect check] T-21: replay case `다른 사례` is not a string from problem; copy it from there.'
+    expect(JSON.parse(prior(f, { old_string: 'status: open', new_string: 'status: "done"' }, 'sess-q1')).hookSpecificOutput.additionalContext).toBe(want)
+    expect(JSON.parse(prior(f, { old_string: 'status: open', new_string: 'status:done' }, 'sess-q2')).hookSpecificOutput.additionalContext).toBe(want)
+    expect(JSON.parse(prior(f, { old_string: 'open\nassignee', new_string: '"done"\nassignee' }, 'sess-q3')).hookSpecificOutput.additionalContext).toBe(want)
   }, T)
 
   test('E1: closed with no commit naming it while the code repo has uncommitted scope changes', () => {
