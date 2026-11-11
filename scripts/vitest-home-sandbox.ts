@@ -152,6 +152,12 @@ process.env.HOME = sandbox
 // The real-home tripwire watches the inherited value separately
 // (isolation-rules.cjs ambientPrdtHome()).
 delete process.env.PRDT_HOME
+// T-1522: Claude Code reads $CLAUDE_CONFIG_DIR before $HOME/.claude, so an exported
+// one would let a `claude` started by a test write its session transcript into the
+// real `~/.claude/projects` — the record the real-home tripwire reads as ANOTHER
+// session's agent write (real-home-tripwire.cjs agentToolWritePaths()). Unset for
+// the same reason as PRDT_HOME: the fallback is the sandbox HOME.
+delete process.env.CLAUDE_CONFIG_DIR
 
 process.on('exit', () => {
   try { fs.rmSync(sandbox, { recursive: true, force: true }) } catch { /* the sweep gets it next run */ }

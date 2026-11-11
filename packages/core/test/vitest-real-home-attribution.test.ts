@@ -295,30 +295,55 @@ describe('real-home tripwire: another session\'s agent tool write is a notice (T
   const wiki = (n: string) => path.join(decoy, '.prdt', 'wiki', n)
   const transcript = () => path.join(decoy, '.claude', 'projects', '-Users-x-dev-other-project', 'sess-1.jsonl')
 
-  /** The harness's own transcript line for a finished Write/Edit (shape read from a live transcript). */
-  function recordToolResult(filePath: string, kind: 'create' | 'update' | 'edit', at = Date.now()) {
-    const result =
-      kind === 'edit'
-        ? { filePath, oldString: 'a', newString: 'b', originalFile: 'a', structuredPatch: [], userModified: false, replaceAll: false }
-        : { type: kind, filePath, content: 'x', structuredPatch: [], originalFile: kind === 'create' ? null : 'old', userModified: false }
+  type Hunk = { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }
+
+  /** One whole-file hunk, jsdiff shape (texts end in '\n'). */
+  function wholeFileHunk(before: string, after: string): Hunk[] {
+    const ls = (t: string) => (t === '' ? [] : t.replace(/\n$/, '').split('\n'))
+    const o = ls(before)
+    const n = ls(after)
+    return [{ oldStart: 1, oldLines: o.length, newStart: 1, newLines: n.length, lines: [...o.map((l) => '-' + l), ...n.map((l) => '+' + l)] }]
+  }
+
+  /** The harness's own transcript line for a finished Write/Edit (shape read from live transcripts). */
+  function recordToolResult(
+    filePath: string,
+    result: Record<string, unknown>,
+    at = Date.now(),
+  ) {
     const line = {
       type: 'user',
       timestamp: new Date(at).toISOString(),
       sessionId: 'sess-1',
       cwd: '/Users/x/dev/other-project',
       message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }] },
-      toolUseResult: result,
+      toolUseResult: { filePath, ...result },
     }
     fs.mkdirSync(path.dirname(transcript()), { recursive: true })
     fs.appendFileSync(transcript(), JSON.stringify(line) + '\n')
   }
 
-  /** Claude's write: temp file beside the target, then rename over it. */
-  function agentWrite(target: string, text: string, kind: 'create' | 'update' | 'edit') {
+  /**
+   * Claude's write: temp file beside the target, then rename over it, then the
+   * transcript record. `edit` records originalFile + structuredPatch (Edit's shape);
+   * `create` / `update` record the whole `content` (Write's shape). `nullOriginal`
+   * is the Edit record the harness writes with `originalFile: null`.
+   */
+  function agentWrite(target: string, text: string, kind: 'create' | 'update' | 'edit', opts: { nullOriginal?: boolean } = {}) {
+    const original = fs.existsSync(target) ? fs.readFileSync(target, 'utf-8') : null
     const tmp = `${target}.tmp.${process.pid}.${Date.now()}`
     fs.writeFileSync(tmp, text)
     fs.renameSync(tmp, target)
-    recordToolResult(target, kind)
+    if (kind === 'edit')
+      recordToolResult(target, {
+        oldString: original ?? '',
+        newString: text,
+        originalFile: opts.nullOriginal ? null : original,
+        structuredPatch: wholeFileHunk(original ?? '', text),
+        userModified: false,
+        replaceAll: false,
+      })
+    else recordToolResult(target, { type: kind, content: text, structuredPatch: [], originalFile: original, userModified: false })
   }
 
   beforeEach(() => {
@@ -348,7 +373,7 @@ describe('real-home tripwire: another session\'s agent tool write is a notice (T
   })
 
   test('a transcript record stamped before the run does not cover a write during it', async () => {
-    recordToolResult(wiki('runbook--existing.md'), 'update', Date.now() - 60_000)
+    recordToolResult(wiki('runbook--existing.md'), { type: 'update', content: 'old body\n', structuredPatch: [], originalFile: 'old body\n' }, Date.now() - 60_000)
     const v = await fixtureRun([], () => fs.appendFileSync(wiki('runbook--existing.md'), 'unrecorded, during the run\n'))
     expect(v.ok).toBe(false)
     expect(v.report).toContain(wiki('runbook--existing.md'))
@@ -386,5 +411,121 @@ describe('real-home tripwire: another session\'s agent tool write is a notice (T
     ])
     expect(v.ok).toBe(false)
     expect(v.report).toContain(page)
+  })
+
+  // ── QA grill on d8daf5ca: a path match must not excuse what else happened to it ──
+
+  test('a test appending to a page an outside agent just wrote (Edit and Write) fails', async () => {
+    const edited = wiki('runbook--existing.md')
+    const created = wiki('runbook--new.md')
+    const v = await fixtureRun(
+      [{ cmd: 'sh', args: ['-c', `echo test-append >> "${edited}" && echo test-append >> "${created}"`] }],
+      () => {
+        agentWrite(edited, 'new, longer body\n', 'edit')
+        agentWrite(created, 'a new page\n', 'create')
+      },
+    )
+    expect(v.ok).toBe(false)
+    const failed = v.report.split('T-450 notice')[0]
+    expect(failed).toContain(edited)
+    expect(failed).toContain(created)
+  })
+
+  test('a test deleting a page an outside agent just wrote fails', async () => {
+    const edited = wiki('runbook--existing.md')
+    const created = wiki('runbook--new.md')
+    const v = await fixtureRun([{ cmd: 'rm', args: [edited, created] }], () => {
+      agentWrite(edited, 'new, longer body\n', 'edit')
+      agentWrite(created, 'a new page\n', 'create')
+    })
+    expect(v.ok).toBe(false)
+    expect(v.report.split('T-450 notice')[0]).toContain(edited)
+  })
+
+  test('a same-length rewrite by a test after an agent edit fails (content, not size)', async () => {
+    const edited = wiki('runbook--existing.md')
+    const v = await fixtureRun(
+      [{ cmd: process.execPath, args: ['-e', `require('fs').writeFileSync(${JSON.stringify(edited)}, 'NEW, LONGER BODY\\n')`] }],
+      () => agentWrite(edited, 'new, longer body\n', 'edit'),
+    )
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(edited)
+  })
+
+  test('an Edit record with no originalFile and nothing earlier to derive from fails closed', async () => {
+    const edited = wiki('runbook--existing.md')
+    const v = await fixtureRun([], () => agentWrite(edited, 'new, longer body\n', 'edit', { nullOriginal: true }))
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(edited)
+  })
+
+  test('an Edit record with no originalFile after an in-window Write of the same page derives from it: notice', async () => {
+    const page = wiki('runbook--new.md')
+    const v = await fixtureRun([], () => {
+      agentWrite(page, 'line one\nline two\n', 'create')
+      agentWrite(page, 'line one\nline 2, edited\n', 'edit', { nullOriginal: true })
+    })
+    expect(v.report).toBe('')
+    expect(v.ok).toBe(true)
+    expect(v.notice).toContain(page)
+  })
+
+  test('an Edit with context lines (the live shape) is applied hunk by hunk: notice', async () => {
+    const page = wiki('runbook--existing.md')
+    fs.writeFileSync(page, 'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\n')
+    const v = await fixtureRun([], () => {
+      const original = fs.readFileSync(page, 'utf-8')
+      fs.writeFileSync(page, 'l1\nl2\nl3\nL4 edited\nextra\nl5\nl6\nl7\nl8\n')
+      recordToolResult(page, {
+        oldString: 'l4',
+        newString: 'L4 edited\nextra',
+        originalFile: original,
+        structuredPatch: [{ oldStart: 1, oldLines: 7, newStart: 1, newLines: 8, lines: [' l1', ' l2', ' l3', '-l4', '+L4 edited', '+extra', ' l5', ' l6', ' l7'] }],
+        userModified: false,
+        replaceAll: false,
+      })
+    })
+    expect(v.report).toBe('')
+    expect(v.ok).toBe(true)
+  })
+
+  test('an Edit record whose patch does not apply to its originalFile derives nothing: fails', async () => {
+    const page = wiki('runbook--existing.md')
+    const v = await fixtureRun([], () => {
+      fs.writeFileSync(page, 'new, longer body\n')
+      recordToolResult(page, {
+        oldString: 'x',
+        newString: 'y',
+        originalFile: 'old body\n',
+        structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-not the original', '+new, longer body'] }],
+        userModified: false,
+        replaceAll: false,
+      })
+    })
+    expect(v.ok).toBe(false)
+    expect(v.report).toContain(page)
+  })
+
+})
+
+/**
+ * T-1522 grill: Claude Code reads $CLAUDE_CONFIG_DIR before $HOME/.claude. The
+ * vitest home sandbox clears it, so a `claude` spawned by a test writes its
+ * transcript under the sandbox HOME, never into the real `~/.claude/projects`.
+ */
+describe('vitest home sandbox clears CLAUDE_CONFIG_DIR (T-1522)', () => {
+  test('an inherited CLAUDE_CONFIG_DIR is unset once the sandbox setup file has run', () => {
+    const SANDBOX_TS = path.resolve(__dirname, '../../../scripts/vitest-home-sandbox.ts')
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: sandbox, CLAUDE_CONFIG_DIR: path.join(decoy, '.claude') }
+    delete env.NODE_OPTIONS
+    const r = spawnSync(
+      process.execPath,
+      ['--experimental-strip-types', '--no-warnings', '--import', SANDBOX_TS, '-e', 'process.stdout.write(String(process.env.CLAUDE_CONFIG_DIR) + " " + process.env.HOME)'],
+      { env, cwd: scratch, encoding: 'utf-8' },
+    )
+    expect(r.status, r.stderr).toBe(0)
+    const [cfg, home] = r.stdout.split(' ')
+    expect(cfg).toBe('undefined')
+    expect(home).not.toBe(sandbox) // HOME was repointed by the same file — proves it ran
   })
 })

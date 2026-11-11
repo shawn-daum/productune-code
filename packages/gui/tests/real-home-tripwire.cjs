@@ -312,8 +312,11 @@
  *   self-reported either — the harness already records every finished write tool
  *   call in its session transcript, and `agentToolWritePaths()` reads that record.
  *   A drift path an agent tool wrote in the window gets the same coverage as a
- *   reported one. Writes by any process (shell, node, python) still fail unless
- *   `prdt` reported them; see `agentToolWritePaths()` for why a test cannot earn it.
+ *   reported one — but only while the file still holds exactly what the latest
+ *   record says was written (QA grill, d8daf5ca): a path-only match let a test
+ *   append to, or delete, the very page another session had edited. Writes by any
+ *   process (shell, node, python) still fail unless `prdt` reported them; see
+ *   `agentToolWritePaths()` for why a test cannot earn it.
  */
 
 'use strict'
@@ -807,7 +810,8 @@ function verifyTripwire(options = {}) {
   // to the notice only when a writer OUTSIDE this run reported that path in the
   // machine's external-write log before writing it (see externalWritePaths()).
   // T-1522: plus every path an agent session's Edit/Write tool wrote during the
-  // window, read from the harness's own transcripts (see agentToolWritePaths()).
+  // window, read from the harness's own transcripts, while the file still holds
+  // what that write left (see agentToolWritePaths()).
   const reported = new Set([...externalWritePaths(before), ...agentToolWritePaths(before)])
   const drift = []
   const external = []
@@ -890,7 +894,8 @@ function externalWritePaths(before) {
 
 /**
  * T-1522: the containment keys of every file an AGENT TOOL (Claude Code's Edit /
- * Write / MultiEdit) wrote during the run's window, on any session of this machine.
+ * Write / MultiEdit) wrote during the run's window, on any session of this machine,
+ * AND that still holds exactly what the latest such write left.
  *
  * No writer reports here. The record is the harness's own transcript, which it
  * keeps for every tool call whatever the tool or the session: after a write tool
@@ -899,11 +904,28 @@ function externalWritePaths(before) {
  * and `structuredPatch` — a key only the write tools' results have (a Read's
  * result names its path under `file`, never at the top level with a patch).
  *
+ * CONTENT, NOT PATH (QA grill on d8daf5ca). A path match alone excused whatever
+ * else happened to that path in the window: a test appending to the page another
+ * session had just edited, or deleting it, passed. So a path is covered only when
+ * the file exists now and its bytes equal the content the LATEST in-window record
+ * for it says was written. That content is derived from the record itself:
+ *   - Write: `content` is the whole file.
+ *   - Edit / MultiEdit: `originalFile` with `structuredPatch` applied
+ *     (applyStructuredPatch(); every context and removed line must match, else
+ *     nothing is derived). Measured on 74 live Edit records: the result equals
+ *     `originalFile` with `oldString` → `newString`, 74/74.
+ *   - An Edit whose `originalFile` is null (the harness omits it on many records)
+ *     derives from the previous in-window record for the same path, when that one
+ *     derived; otherwise nothing is derived.
+ * Nothing derived → the path is not covered and its drift stays a failure. A
+ * removed file is never covered (Edit/Write never delete).
+ *
  * Why this cannot excuse a write made BY the run: an agent tool write is made by
  * the Claude Code process itself, never by a descendant of the run's root — a
  * test process can run a shell, python or node, but it cannot make a session's
  * Edit tool fire. A `claude` started BY a test runs under the sandbox HOME the
- * isolation rules give every test, so its transcript lands there and not under
+ * isolation rules give every test (and with CLAUDE_CONFIG_DIR cleared by the
+ * vitest home sandbox), so its transcript lands there and not under
  * `realHome()/.claude/projects` — the only directory read here, deliberately not
  * one an environment variable can repoint. KNOWN BOUNDARY, the same class as
  * T-1134's forged log line: a test that hand-writes a transcript line into the
@@ -913,7 +935,6 @@ function externalWritePaths(before) {
  * `structuredPatch` are parsed. Stamped before the window → earns nothing.
  */
 function agentToolWritePaths(before) {
-  const out = new Set()
   const since = before.takenAt - REPORT_SLACK_MS
   const files = []
   const walk = (dir) => {
@@ -930,6 +951,7 @@ function agentToolWritePaths(before) {
     }
   }
   walk(path.join(realHome(), '.claude', 'projects'))
+  const records = []
   for (const f of files) {
     let text
     try {
@@ -951,10 +973,76 @@ function agentToolWritePaths(before) {
       if (!('structuredPatch' in r)) continue
       const ts = Date.parse(e.timestamp)
       if (!Number.isFinite(ts) || ts < since) continue
-      out.add(containmentKey(r.filePath, true))
+      records.push({ ts, seq: records.length, r })
     }
   }
+  // Oldest first, so each path ends on its latest record. Equal stamps keep read order.
+  records.sort((a, b) => a.ts - b.ts || a.seq - b.seq)
+  const written = new Map() // key → { filePath, content: string | undefined }
+  for (const { r } of records) {
+    const key = containmentKey(r.filePath, true)
+    const prev = written.get(key)
+    let content
+    if (typeof r.content === 'string' && (r.type === 'create' || r.type === 'update')) content = r.content
+    else if (typeof r.originalFile === 'string') content = applyStructuredPatch(r.originalFile, r.structuredPatch)
+    else if (prev && typeof prev.content === 'string') content = applyStructuredPatch(prev.content, r.structuredPatch)
+    written.set(key, { filePath: r.filePath, content })
+  }
+  const out = new Set()
+  for (const [key, w] of written) {
+    if (typeof w.content !== 'string') continue
+    let now
+    try {
+      if (!fs.statSync(w.filePath).isFile()) continue
+      now = fs.readFileSync(w.filePath)
+    } catch {
+      continue // removed (or unreadable): Edit/Write never delete — stays drift
+    }
+    if (now.equals(Buffer.from(w.content, 'utf-8'))) out.add(key)
+  }
   return out
+}
+
+/**
+ * The file text a Claude Edit/MultiEdit left: `original` with the tool result's
+ * `structuredPatch` hunks (jsdiff shape: `oldStart` 1-based, `lines` tagged ' ',
+ * '-', '+', '\\'). Every context and removed line must match `original` at the
+ * hunk's place, else `undefined` — a patch that does not apply derives nothing.
+ */
+function applyStructuredPatch(original, hunks) {
+  if (typeof original !== 'string' || !Array.isArray(hunks)) return undefined
+  const orig = original.match(/[^\n]*\n|[^\n]+$/g) || []
+  const body = (l) => (l.endsWith('\n') ? l.slice(0, -1) : l)
+  const out = []
+  let pos = 0
+  for (const h of hunks) {
+    if (!h || !Array.isArray(h.lines) || !Number.isInteger(h.oldStart)) return undefined
+    const at = (start) => {
+      if (start < pos || start > orig.length) return null
+      const o = []
+      let p = start
+      for (let i = 0; i < h.lines.length; i++) {
+        const l = h.lines[i]
+        if (typeof l !== 'string' || l.length === 0) return null
+        const text = l.slice(1)
+        if (l[0] === ' ' || l[0] === '-') {
+          if (p >= orig.length || body(orig[p]) !== text) return null
+          if (l[0] === ' ') o.push(orig[p])
+          p++
+        } else if (l[0] === '+') o.push(text + '\n')
+        else if (l[0] === '\\') {
+          if (h.lines[i - 1] && h.lines[i - 1][0] === '+') o[o.length - 1] = o[o.length - 1].slice(0, -1)
+        } else return null
+      }
+      return { start, o, p }
+    }
+    const r = at(h.oldStart - 1) ?? (h.oldLines === 0 ? at(h.oldStart) : null)
+    if (!r) return undefined
+    out.push(...orig.slice(pos, r.start), ...r.o)
+    pos = r.p
+  }
+  out.push(...orig.slice(pos))
+  return out.join('')
 }
 
 /**
