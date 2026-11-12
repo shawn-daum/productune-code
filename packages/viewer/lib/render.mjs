@@ -2658,7 +2658,10 @@ function homeScope(data, currentTickets) {
   const byId = new Map(work.map((t) => [t.frontmatter.id, t]))
   const lanes = Array.isArray(data.lanes) ? data.lanes : []
   // T-1513: a version with no lane record and no 합격선 row arrives as one computed 「기본 레인」 — no fallback line here.
-  const lines = lanes.map((l) => ({ name: l.name, tickets: l.tickets.map((id) => byId.get(id)).filter(Boolean), done: l.done, total: l.total }))
+  // T-1524: an empty lane list while the version has work = the lane read failed — one 기본 레인 over every ticket (the statusline's fallback, same d/t)
+  const lines = lanes.length === 0 && work.length > 0
+    ? [{ name: HOME.laneDefault, tickets: work, done: work.filter((t) => t.frontmatter.status === 'done').length, total: work.length }]
+    : lanes.map((l) => ({ name: l.name, tickets: l.tickets.map((id) => byId.get(id)).filter(Boolean), done: l.done, total: l.total }))
   const row = (l) => {
     const sorted = [...l.tickets.filter((t) => t.frontmatter.status === 'done'), ...l.tickets.filter((t) => t.frontmatter.status !== 'done')]
       .sort((x, y) => (x.frontmatter.status === 'done' ? 0 : 1) - (y.frontmatter.status === 'done' ? 0 : 1) || compareTicketIds(x.frontmatter.id, y.frontmatter.id))
@@ -2900,7 +2903,8 @@ function homeLineGroups(data, v, views, repoRootHref) {
 function idleLastVersionHtml(v) {
   const closed = lastClosedId(v)
   if (!closed) return ''
-  const tickets = homeTickets_({ ...v, currentVersion: closed })
+  // T-1524: the `lane: 자투리` record is no work — not in this card's count either
+  const tickets = homeTickets_({ ...v, currentVersion: closed }).filter((t) => !isJatturiRecord(t))
   const lanes = (Array.isArray(v.closedLanes) ? v.closedLanes : []).filter((l) => l.linked)
   const laneRows = lanes
     .map((l) => {
