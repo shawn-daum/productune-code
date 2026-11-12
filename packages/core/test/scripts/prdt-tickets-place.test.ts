@@ -86,4 +86,23 @@ describe('prdt tickets --place (T-1497)', () => {
     expect(JSON.parse(r1.out)).toMatchObject({ ok: true, ticket: 'T-7', missing: null })
     expect(cli(p, ['tickets', 'check-place', '--place', 'build-entry', '--version', 'banana']).code).not.toBe(0)
   }, T)
+
+  test('T-1528: check-place --place deploy for `<product>/v<N>.<m>` reads that product\'s own code.dir RELEASES.md', () => {
+    const p = project()
+    p.put('.prdt/config.json', JSON.stringify({ slug: 'home', code: { dir: 'code' }, products: [{ name: 'arc', code: { dir: 'arc' } }] }) + '\n')
+    p.put('docs/arc/prd/PRD.md', '# PRD\n')
+    p.put('docs/arc/tickets/v1.6/T-8.md', '---\nid: T-8\nslug: dep\ntype: decision\nstatus: done\nassignee: user\nplace: deploy\ncreated: 2026-11-13\n---\n\n## outcome\n\n사용자 「배포해」\nNotes: arc/docs/RELEASES.md#v1.6\n')
+    p.put('code/docs/RELEASES.md', '# Releases\n\n## v1.6 — x\n')
+    const miss = cli(p, ['tickets', 'check-place', '--place', 'deploy', '--version', 'arc/v1.6', '--json'])
+    expect(miss.code).toBe(1)
+    expect(JSON.parse(miss.out)).toMatchObject({ ok: false, missing: 'no-section', ticket: 'T-8', dir: 'docs/arc/tickets/v1.6',
+      fact: 'T-8 cites `RELEASES.md` `## v1.6`, but arc/docs/RELEASES.md has no `## v1.6`' })
+    p.put('arc/docs/RELEASES.md', '# Releases\n\n## v1.6 — x\n')
+    const ok = cli(p, ['tickets', 'check-place', '--place', 'deploy', '--version', 'arc/v1.6', '--json'])
+    expect(ok.code).toBe(0)
+    expect(JSON.parse(ok.out)).toMatchObject({ ok: true, ticket: 'T-8' })
+    // an added product without its own code.dir shares the project code repo
+    p.put('.prdt/config.json', JSON.stringify({ slug: 'home', code: { dir: 'code' }, products: [{ name: 'arc' }] }) + '\n')
+    expect(cli(p, ['tickets', 'check-place', '--place', 'deploy', '--version', 'arc/v1.6', '--json']).code).toBe(0)
+  }, T)
 })

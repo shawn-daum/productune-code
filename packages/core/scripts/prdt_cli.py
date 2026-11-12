@@ -1255,6 +1255,31 @@ def code_root(root):
     return Path(root) / d if d else Path(root)
 
 
+def _safe_code_dir(d):
+    """A config `code.dir` value as a relative folder name, or None (absent, empty, absolute, `..`)."""
+    if not (isinstance(d, str) and d.strip()):
+        return None
+    t = d.strip()
+    return None if os.path.isabs(t) or ".." in re.split(r"[/\\]+", t) else t
+
+
+def product_code_root(root, product=None):
+    """T-1528: the code repo of `product` — the one product → code-repo resolver.
+    No product / the first product / legacy layout → `code_root(root)`; an added product
+    (`.prdt/config.json` `products[]`, pre-v1.14 `lines`) with its own `code.dir` →
+    `<projectRoot>/<that dir>`; an added product without one shares the project code repo."""
+    prods = project_products(root)
+    if not product or not prods or product == prods[0]:
+        return code_root(root)
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    ents = cfg.get(_products_key(cfg)) if isinstance(cfg, dict) else None
+    for e in ents if isinstance(ents, list) else []:
+        if isinstance(e, dict) and e.get("name") == product:
+            d = _safe_code_dir(e["code"].get("dir")) if isinstance(e.get("code"), dict) else None
+            return Path(root) / d if d else code_root(root)
+    return code_root(root)
+
+
 def is_physically_split(root):
     """True when config carries a code.dir (physical split); drives meta staging."""
     return code_dir_name(root) is not None
@@ -6086,13 +6111,21 @@ def place_decision_check(root, place, version_id):
     """Does `version_id` hold a closed decision ticket for the fixed `place`?
     → {ok, place, version, missing, ticket, status, dir, fact}. `missing` (when not ok) is the
     first thing absent on the best candidate: no-ticket · not-closed · no-quote · (deploy only)
-    no-pointer · no-section. `fact` = that, in the confirmed T-1492 4-5 wording: none there · <id> still open · <id> `outcome` holds no user quote · <id> body cites no `RELEASES.md` `## <version>`."""
+    no-pointer · no-section. `fact` = that, in the confirmed T-1492 4-5 wording: none there · <id> still open · <id> `outcome` holds no user quote · <id> body cites no `RELEASES.md` `## <version>`;
+    no-section (T-1528): <id> cites `RELEASES.md` `## <version>`, but <path read> has no `## <version>`."""
     root = Path(root)
     tdir = _place_tickets_dir(root, version_id)
     try:
         rel = str(tdir.relative_to(root))
     except ValueError:
         rel = str(tdir)
+    # T-1528: the RELEASES.md of the version's own product (`<p>/v…` → p's code.dir), never always the first's
+    rel_root = product_code_root(root, split_line_id(version_id)[0])
+    rel_file = rel_root / "docs" / "RELEASES.md"
+    try:
+        rel_shown = str(rel_file.relative_to(root))
+    except ValueError:
+        rel_shown = str(rel_file)
     best = ("no-ticket", None, None)
     for p in sorted(tdir.glob("T-*.md")) if tdir.is_dir() else []:
         try:
@@ -6110,7 +6143,7 @@ def place_decision_check(root, place, version_id):
             miss = "no-quote"
         elif place == "deploy" and not _releases_pointer(body, version_id):
             miss = "no-pointer"
-        elif place == "deploy" and split_line_id(version_id)[1] not in _releases_sections(code_root(root)):
+        elif place == "deploy" and split_line_id(version_id)[1] not in _releases_sections(rel_root):
             miss = "no-section"
         else:
             return {"ok": True, "place": place, "version": version_id, "missing": None, "ticket": tid,
@@ -6124,8 +6157,8 @@ def place_decision_check(root, place, version_id):
         "not-closed": f"{tid} still open",
         "no-quote": f"{tid} `outcome` holds no user quote",
         "no-pointer": f"{tid} body cites no `RELEASES.md` `## {bare}`",
-        # no confirmed form for "the section itself is absent" — nearest is norel (reported to the PO)
-        "no-section": f"{tid} body cites no `RELEASES.md` `## {bare}`",
+        # T-1528: its own wording (≠ no-pointer), naming the file read
+        "no-section": f"{tid} cites `RELEASES.md` `## {bare}`, but {rel_shown} has no `## {bare}`",
     }[miss]
     return {"ok": False, "place": place, "version": version_id, "missing": miss, "ticket": tid,
             "status": status, "dir": rel, "fact": fact}
@@ -17821,7 +17854,7 @@ def _deploy_split(raw):
 
 
 def _deploy_defaults(root, product, version, ref):
-    code = code_root(root)
+    code = product_code_root(root, product)   # T-1528: the tag / main of THIS product's code repo
     if ref is None:
         def g(a):
             r = _tgit(a, code)
