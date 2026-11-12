@@ -813,3 +813,89 @@ describe('vitest home sandbox clears CLAUDE_CONFIG_DIR (T-1522)', () => {
     expect(home).not.toBe(sandbox) // HOME was repointed by the same file — proves it ran
   })
 })
+
+/**
+ * T-1523 C5: the Playwright runner clears CLAUDE_CONFIG_DIR as the vitest sandbox
+ * does. Loads the real playwright.config.ts through the Playwright CLI (`--list`
+ * executes no test) from a probe config that prints the variable after the real
+ * config's module scope ran.
+ */
+describe('playwright config clears CLAUDE_CONFIG_DIR (T-1523)', () => {
+  test('an inherited CLAUDE_CONFIG_DIR is unset once playwright.config.ts has loaded', () => {
+    const GUI = path.resolve(__dirname, '../../gui')
+    const probe = path.join(scratch, 'probe.config.ts')
+    fs.writeFileSync(
+      probe,
+      `import base from ${JSON.stringify(path.join(GUI, 'playwright.config'))}\n` +
+        `console.log('CFG=' + String(process.env.CLAUDE_CONFIG_DIR))\n` +
+        `export default { ...base, testDir: ${JSON.stringify(path.join(GUI, 'tests'))}, globalTeardown: undefined, reporter: [['list']] }\n`,
+    )
+    const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_CONFIG_DIR: path.join(decoy, '.claude'), PRODUCTUNE_REAL_HOME: decoy }
+    delete env.NODE_OPTIONS
+    delete env.PRODUCTUNE_TRIPWIRE_RUN
+    const r = spawnSync('npx', ['playwright', 'test', '--list', `--config=${probe}`], { env, cwd: GUI, encoding: 'utf-8', timeout: 90_000 })
+    expect(r.stdout + r.stderr).toContain('CFG=undefined')
+  })
+})
+
+/**
+ * T-1523 L2: transcript records naming files outside the drift candidates are never
+ * opened. Observed by wrapping fs in a child that calls agentToolWritePaths directly.
+ */
+describe('agentToolWritePaths opens only drift candidates (T-1523)', () => {
+  test('a record naming an unrelated file is never stat\'ed or read; a candidate\'s still is', () => {
+    const unrelated = path.join(scratch, 'unrelated-user-file.md')
+    const cand = path.join(decoy, '.prdt', 'wiki', 'cand.md')
+    fs.writeFileSync(unrelated, 'private\n')
+    fs.writeFileSync(cand, 'new\n')
+    const t = path.join(decoy, '.claude', 'projects', '-p', 's.jsonl')
+    fs.mkdirSync(path.dirname(t), { recursive: true })
+    const rec = (filePath: string) =>
+      JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), toolUseResult: { filePath, type: 'update', content: 'new\n', structuredPatch: [], originalFile: null } }) + '\n'
+    fs.writeFileSync(t, rec(unrelated) + rec(cand))
+    const script = `
+      const fs = require('fs'), seen = []
+      for (const n of ['statSync', 'readFileSync', 'openSync', 'lstatSync']) {
+        const o = fs[n]; fs[n] = function (p, ...a) { seen.push(String(p)); return o.call(this, p, ...a) }
+      }
+      const tw = require(${JSON.stringify(TRIPWIRE)})
+      const out = tw.agentToolWritePaths({ takenAt: Date.now() - 60000, detail: [] }, Infinity, [process.argv[1]])
+      process.stdout.write(JSON.stringify({ out: [...out], seen }))
+    `
+    const env: NodeJS.ProcessEnv = { ...process.env, PRODUCTUNE_REAL_HOME: decoy }
+    delete env.NODE_OPTIONS
+    const r = spawnSync(process.execPath, ['-e', script, cand], { env, cwd: scratch, encoding: 'utf-8' })
+    expect(r.status, r.stderr).toBe(0)
+    const { out, seen } = JSON.parse(r.stdout)
+    expect(seen).not.toContain(unrelated)
+    expect(seen).toContain(cand)
+    expect(out.length).toBe(1)
+  })
+})
+
+/** T-1523 L1: the shell-command matcher stays linear on one very long line. */
+describe('shell matcher on a 150 KB single-line command (T-1523)', () => {
+  test('finishes under 200 ms and still names the page', () => {
+    const page = path.join(decoy, '.prdt', 'wiki', 'runbook--existing.md')
+    fs.writeFileSync(page, 'x\n')
+    const t = path.join(decoy, '.claude', 'projects', '-p', 's.jsonl')
+    fs.mkdirSync(path.dirname(t), { recursive: true })
+    // `(a=` repeated, then a separator: every `(` restarts the assignment regex (measured ~4.7 s at 150 KB uncapped).
+    const command = '(a='.repeat(50_000) + '; ~/.prdt/wiki/runbook--existing.md'
+    const now = new Date().toISOString()
+    fs.writeFileSync(t, JSON.stringify({ type: 'assistant', timestamp: now, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'a', name: 'Bash', input: { command } }] } }) + '\n')
+    const script = `
+      const tw = require(${JSON.stringify(TRIPWIRE)})
+      const t0 = process.hrtime.bigint()
+      const out = tw.agentShellWritePaths({ takenAt: Date.now() - 60000, detail: [] }, [process.argv[1]], Infinity)
+      process.stdout.write(JSON.stringify({ ms: Number(process.hrtime.bigint() - t0) / 1e6, n: out.size }))
+    `
+    const env: NodeJS.ProcessEnv = { ...process.env, PRODUCTUNE_REAL_HOME: decoy }
+    delete env.NODE_OPTIONS
+    const r = spawnSync(process.execPath, ['-e', script, page], { env, cwd: scratch, encoding: 'utf-8' })
+    expect(r.status, r.stderr).toBe(0)
+    const { ms, n } = JSON.parse(r.stdout)
+    expect(n).toBe(1)
+    expect(ms).toBeLessThan(200)
+  })
+})

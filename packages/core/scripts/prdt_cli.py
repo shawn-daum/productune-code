@@ -6255,18 +6255,45 @@ def _effect_git(args, cwd):
     return r.stdout
 
 
-def _effect_tag_net_added(diff):
-    """True when a diff adds a `[prdt …]` line more often than it removes the same line — a move of
-    unchanged text (T-1170's file split) adds nothing."""
-    plus, minus = {}, {}
-    for line in diff.splitlines():
-        if line.startswith(("+++ ", "--- ")) or "[prdt " not in line:
-            continue
-        if line[:1] == "+":
-            plus[line[1:].strip()] = plus.get(line[1:].strip(), 0) + 1
-        elif line[:1] == "-":
-            minus[line[1:].strip()] = minus.get(line[1:].strip(), 0) + 1
-    return any(n > minus.get(t, 0) for t, n in plus.items())
+def _effect_tag_strings(src):
+    """{string constant: count} of the `[prdt …]` string constants a Python source holds, docstrings and
+    bare string statements excluded (never printed); comments are not in the AST. None when it does not parse."""
+    import ast
+    try:
+        tree = ast.parse(src)
+    except (SyntaxError, ValueError):
+        return None
+    skip = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)}
+    out = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in skip and "[prdt " in n.value:
+            out[n.value] = out.get(n.value, 0) + 1
+    return out
+
+
+def _effect_tag_net_added(old_src, new_src):
+    """True when the CLI source after a change holds a printed `[prdt …]` string constant more often than before:
+    a comment or docstring line, and a move of unchanged text (T-1170's file split), add nothing. A source that
+    does not parse falls back to added non-comment lines naming `[prdt `."""
+    old, new = _effect_tag_strings(old_src), _effect_tag_strings(new_src)
+    if old is None or new is None:
+        def lines(src):
+            d = {}
+            for ln in src.splitlines():
+                t = ln.strip()
+                if "[prdt " in t and not t.startswith("#"):
+                    d[t] = d.get(t, 0) + 1
+            return d
+        old, new = lines(old_src), lines(new_src)
+    return any(n > old.get(t, 0) for t, n in new.items())
+
+
+def _effect_show_or_empty(croot, spec):
+    """`git show <spec>` text; empty when the path did not exist there (a new file · a root commit)."""
+    try:
+        return _effect_git(["-C", str(croot), "show", spec], croot)
+    except _EffectGitError:
+        return ""
 
 
 def _effect_path_classes(p):
@@ -6300,7 +6327,8 @@ def effect_scope(root, tid):
                 fl = [f for f in files.splitlines() if f]
                 got = set().union(*(_effect_path_classes(f) for f in fl)) if fl else set()
                 if EFFECT_CLI_PATH in fl and _effect_tag_net_added(
-                        _effect_git(["-C", str(croot), "show", "--format=", h, "--", EFFECT_CLI_PATH], croot)):
+                        _effect_show_or_empty(croot, f"{h}^:{EFFECT_CLI_PATH}"),
+                        _effect_show_or_empty(croot, f"{h}:{EFFECT_CLI_PATH}")):
                     got.add("hook text")
                 if got:
                     cls |= got
@@ -6359,7 +6387,9 @@ def effect_uncommitted_classes(root):
         p = line[3:].split(" -> ")[-1].strip().strip('"')
         cls |= _effect_path_classes(p)
         if p == EFFECT_CLI_PATH and _effect_tag_net_added(
-                _effect_git(["-C", str(croot), "diff", "HEAD", "--", EFFECT_CLI_PATH], croot)):
+                _effect_show_or_empty(croot, f"HEAD:{EFFECT_CLI_PATH}"),
+                (croot / EFFECT_CLI_PATH).read_text(encoding="utf-8", errors="replace")
+                if (croot / EFFECT_CLI_PATH).is_file() else ""):
             cls.add("hook text")
     return _effect_order(cls)
 
