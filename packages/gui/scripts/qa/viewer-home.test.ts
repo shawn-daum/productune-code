@@ -356,8 +356,11 @@ describe('home scope: one line per lane, lane numbers only (T-1415, shape E)', (
     expect(s).toContain('1/3')
     expect(s).toContain('data-detail-id="T-3"')
   })
-  it('no lanes at all (no tickets, or a failed read) draws no row — no 0/0 fallback line (T-1513)', () => {
-    expect([...scope([tk({ id: 'T-1' })]).matchAll(/class="e-row"/g)]).toHaveLength(0)
+  it('no lanes and no tickets draws no row — no 0/0 line (T-1513); a failed read with tickets draws one 기본 레인 row (T-1524)', () => {
+    expect([...scope([]).matchAll(/class="e-row"/g)]).toHaveLength(0)
+    const s = scope([tk({ id: 'T-1' })])
+    expect([...s.matchAll(/class="e-row"/g)]).toHaveLength(1)
+    expect(s).toContain('title="기본 레인"')
   })
   it('drops the item rows, the 「PRD 항목 밖 티켓」 row, the decision note and every explanatory line', () => {
     const s = scope([tk({ id: 'T-1', prd_item: 'v1.12#a' }), tk({ id: 'T-2', prd_item: 'nope' }), tk({ id: 'T-3', type: 'decision' })])
