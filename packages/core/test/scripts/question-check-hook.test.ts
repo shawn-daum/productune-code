@@ -1112,7 +1112,8 @@ describe('T-1495 (replaces T-1428 / T-1477) — a confirm request on a body is n
   test('no existing fixture blocks on a failed judge or a judge naming nothing: none has a numbered-body shape', () => {
     expect(oldFixtures().filter(f => run(fx(f.slice(0, -3)), none, env([], FAIL)))).toEqual([])
     expect(oldFixtures().filter(f => run(fx(f.slice(0, -3)), none, env()))).toEqual([])
-  })
+    // T-1523: two hook spawns per fixture; measured ~29 s at load 9.6 (default budget 30 s) — 4x headroom.
+  }, 120_000)
 })
 
 describe('T-1429 — a confirm request on a new body that cites a done decision only as its basis is never a re-ask', () => {

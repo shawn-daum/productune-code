@@ -38,6 +38,10 @@ process.env.PRODUCTUNE_REAL_HOME ??= os.homedir()
 
 fs.mkdirSync(DEFAULT_SANDBOX_HOME, { recursive: true })
 process.env.HOME = DEFAULT_SANDBOX_HOME
+// T-1523 C5: Claude Code reads $CLAUDE_CONFIG_DIR before $HOME/.claude, so an
+// inherited value would still send a `claude` started by a test to the real
+// config directory. The vitest home sandbox clears it for the same reason.
+delete process.env.CLAUDE_CONFIG_DIR
 
 // ── T-442 F-A / T-450: prevention, one layer among several ───────────────────
 //

@@ -823,7 +823,7 @@ function verifyTripwire(options = {}) {
   const verifiedAt = Date.now()
   const reported = new Set([
     ...externalWritePaths(before),
-    ...agentToolWritePaths(before, verifiedAt),
+    ...agentToolWritePaths(before, verifiedAt, candidates),
     ...agentShellWritePaths(before, candidates, verifiedAt),
   ])
   const drift = []
@@ -992,8 +992,17 @@ function transcriptFiles(since) {
   return files
 }
 
-function agentToolWritePaths(before, until = Infinity) {
+function agentToolWritePaths(before, until = Infinity, candidates) {
   const since = before.takenAt - REPORT_SLACK_MS
+  // T-1523 L2: only a record naming a drift candidate (or a file inside / directly
+  // under one — the shapes coveredByReport() accepts) can cover anything, so no
+  // other record's file is ever stat'ed or read. `candidates` undefined = no filter.
+  const candidateKeys = Array.isArray(candidates) ? candidates.map((c) => containmentKey(c, true)) : undefined
+  const mayCover = (filePath) => {
+    if (!candidateKeys) return true
+    const k = containmentKey(filePath, true)
+    return candidateKeys.some((c) => k === c || path.dirname(k) === c || k.startsWith(c + path.sep))
+  }
   const records = []
   for (const f of transcriptFiles(since)) {
     let text
@@ -1015,6 +1024,7 @@ function agentToolWritePaths(before, until = Infinity) {
       if (!('structuredPatch' in r)) continue
       const ts = Date.parse(e.timestamp)
       if (!Number.isFinite(ts) || ts < since || ts > until) continue
+      if (!mayCover(r.filePath)) continue
       records.push({ ts, seq: records.length, r })
     }
   }
@@ -1213,6 +1223,7 @@ function agentShellWritePaths(before, candidates, until = Infinity) {
   const BOUND_R = "(?=$|[\\s'\"`/);,:|&<>])"
   // `W=…<mention>` / `W = os.path.expanduser('<mention>`: the text before the
   // mention on its line ends in an assignment with no space, `;`, `&` or `|` after `=`.
+  const ASSIGN_SCAN_MAX = 1024
   const assignRe = /(?:^|[\s;&|(])(?:export\s+|local\s+|readonly\s+)?([A-Za-z_]\w*)\s*=\s*[^\s;&|]*$/
   for (const cmd of commands) {
     const named = new Set()
@@ -1221,7 +1232,12 @@ function agentShellWritePaths(before, candidates, until = Infinity) {
       const k = containmentKey(path.join(prdt, ...m[1].split('/').filter(Boolean)), true)
       if (k !== prdtKey && !k.startsWith(prdtKey + path.sep)) continue // `..` out of ~/.prdt names nothing
       named.add(k)
-      const a = assignRe.exec(cmd.slice(cmd.lastIndexOf('\n', m.index) + 1, m.index))
+      // T-1523 L1: assignRe is unanchored at the start, so on a long line with no
+      // whitespace it retries from every offset (quadratic: ~4 s at 150 KB). Only the
+      // tail of the line before the mention can hold its assignment; a '#' stands in
+      // for the cut so no variable name can start mid-identifier at the boundary.
+      const lineHead = cmd.slice(cmd.lastIndexOf('\n', m.index) + 1, m.index)
+      const a = assignRe.exec(lineHead.length > ASSIGN_SCAN_MAX ? '#' + lineHead.slice(-ASSIGN_SCAN_MAX) : lineHead)
       if (a) vars.set(k, new Set([...(vars.get(k) || []), a[1]]))
     }
     for (const w of wanted) {
@@ -1359,4 +1375,6 @@ module.exports = {
   assertTripwireClean,
   // T-1522 dev4: exported for replaying a past run's window against real transcripts.
   agentShellWritePaths,
+  // T-1523: exported so a test can observe which transcript-named files it opens.
+  agentToolWritePaths,
 }
