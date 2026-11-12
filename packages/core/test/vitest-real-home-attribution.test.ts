@@ -719,6 +719,68 @@ describe('real-home tripwire: a path another session\'s Bash command named is a 
     expect(v.report).toContain(page)
   })
 
+  // QA qa3 F1: the rest token found inside another tree's path (this repo mirrors
+  // wiki/, hooks/, discipline/) or a URL, beside a directory-only mention.
+  test.each([
+    ['index.md', 'ls ~/.prdt/wiki; cat docs/_shared/wiki/index.md'],
+    ['index.md', 'grep -rn foo ~/.prdt docs/_shared/wiki/index.md | head'],
+    ['x.md', 'ls ~/.prdt/wiki && open https://h/x.md'],
+    ['../hooks/h.sh', 'diff -r ~/.prdt packages/core/hooks/h.sh'],
+  ])('a directory mention plus %s inside another path (%s) covers nothing', async (name, command) => {
+    const page = wiki(name)
+    fs.mkdirSync(path.dirname(page), { recursive: true })
+    fs.writeFileSync(page, 'body\n')
+    const v = await fixtureRun([], () => {
+      fs.appendFileSync(page, 'test damage\n')
+      recordBash(command)
+    })
+    expect(v.ok).toBe(false)
+    expect(v.report.split('T-450 notice')[0]).toContain(path.normalize(page))
+  })
+
+  test('a variable assigned the directory on one line, then "$W/<name>" on the next, names that page', async () => {
+    const pages = ['a.md', 'b.md'].map(wiki)
+    const v = await fixtureRun([], () => {
+      for (const p of pages) fs.appendFileSync(p, 'x\n')
+      recordBash('W=~/.prdt/wiki\ncat "$W/a.md" >> "${W}/b.md"')
+    })
+    expect(v.report).toBe('')
+    expect(v.ok).toBe(true)
+    for (const p of pages) expect(v.notice).toContain(p)
+  })
+
+  test('"$V/<name>" for a variable not assigned the named directory covers nothing', async () => {
+    const page = wiki('a.md')
+    const v = await fixtureRun([], () => {
+      fs.appendFileSync(page, 'x\n')
+      recordBash('ls ~/.prdt/wiki; V=/tmp/other; echo x >> "$V/a.md"; echo y >> "$HOME/a.md"')
+    })
+    expect(v.ok).toBe(false)
+    expect(v.report.split('T-450 notice')[0]).toContain(page)
+  })
+
+  test('a Bash or Write record stamped after the verify time (a future stamp) covers nothing', async () => {
+    const shellPage = wiki('runbook--existing.md')
+    const toolPage = wiki('fact--gone.md')
+    const future = Date.now() + 86_400_000
+    const v = await fixtureRun([], () => {
+      fs.appendFileSync(shellPage, 'x\n')
+      recordBash(`echo x >> ~/.prdt/wiki/runbook--existing.md`, { issuedAt: future })
+      fs.writeFileSync(toolPage, 'written\n')
+      const line = {
+        type: 'user',
+        timestamp: new Date(future).toISOString(),
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] },
+        toolUseResult: { filePath: toolPage, type: 'update', content: 'written\n', structuredPatch: [], originalFile: 'to be merged away\n' },
+      }
+      fs.appendFileSync(transcript(), JSON.stringify(line) + '\n')
+    })
+    expect(v.ok).toBe(false)
+    const failed = v.report.split('T-450 notice')[0]
+    expect(failed).toContain(shellPage)
+    expect(failed).toContain(toolPage)
+  })
+
   test('a mention escaping ~/.prdt with `..`, or a bare name with no ~/.prdt mention, covers nothing', async () => {
     const page = wiki('runbook--existing.md')
     const v = await fixtureRun([], () => {

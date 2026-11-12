@@ -819,10 +819,12 @@ function verifyTripwire(options = {}) {
   // tool_use command named in the window (see agentShellWritePaths()) — content
   // unchecked, since a shell write leaves only its command text.
   const candidates = allDrift.flatMap((d) => [...d.added, ...d.removed].map((l) => l.split('\t')[0]))
+  // A transcript record stamped after this moment (a future stamp) earns nothing.
+  const verifiedAt = Date.now()
   const reported = new Set([
     ...externalWritePaths(before),
-    ...agentToolWritePaths(before),
-    ...agentShellWritePaths(before, candidates),
+    ...agentToolWritePaths(before, verifiedAt),
+    ...agentShellWritePaths(before, candidates, verifiedAt),
   ])
   const drift = []
   const external = []
@@ -990,7 +992,7 @@ function transcriptFiles(since) {
   return files
 }
 
-function agentToolWritePaths(before) {
+function agentToolWritePaths(before, until = Infinity) {
   const since = before.takenAt - REPORT_SLACK_MS
   const records = []
   for (const f of transcriptFiles(since)) {
@@ -1012,7 +1014,7 @@ function agentToolWritePaths(before) {
       if (!r || typeof r !== 'object' || typeof r.filePath !== 'string' || !path.isAbsolute(r.filePath)) continue
       if (!('structuredPatch' in r)) continue
       const ts = Date.parse(e.timestamp)
-      if (!Number.isFinite(ts) || ts < since) continue
+      if (!Number.isFinite(ts) || ts < since || ts > until) continue
       records.push({ ts, seq: records.length, r })
     }
   }
@@ -1102,10 +1104,15 @@ function baselineSize(before, filePath) {
  * A drift path is covered when:
  *   - a mention names it exactly (trailing `/` ignored), or
  *   - a mention names a directory above it AND the rest of its path below that
- *     directory appears in the same command as a whole token (between quotes,
- *     slashes, whitespace…). That is how aac6c0dc's heredoc named its files:
+ *     directory appears in the same command as a token starting a word (after a
+ *     quote, whitespace, `=` or `(`). That is how aac6c0dc's heredoc named its files:
  *     `W=os.path.expanduser('~/.prdt/wiki/')` then `W+'fact--kc-request-channels.md'`;
- *     a `cd ~/.prdt/wiki && … 'x.md'` reads the same way.
+ *     a `cd ~/.prdt/wiki && … 'x.md'` reads the same way. A token right after a
+ *     `/` is part of ANOTHER path (`ls ~/.prdt/wiki; cat docs/_shared/wiki/index.md`
+ *     — this repo mirrors `wiki/`, `hooks/`, `discipline/` trees — or a URL) and
+ *     names nothing, unless the `/` follows `$W`, `${W}` or `{W}` for a variable
+ *     W assigned that directory's mention on the mention's own line
+ *     (`W=~/.prdt/wiki` … `"$W/a.md"`).
  * A directory mention ALONE covers nothing under it: `ls ~/.prdt`, `grep -rn …
  * ~/.prdt` are the commonest read-only commands other sessions run, and letting
  * them cover the whole subtree would excuse any test write there. So a bulk
@@ -1117,7 +1124,8 @@ function baselineSize(before, filePath) {
  * either stamp is inside the window (issued before the baseline but still running
  * into it, or issued during the run). A command still running at verify time
  * with no result yet counts only if issued inside the window. `until` (ms) bounds
- * the window's end for a replay of a past run; a live verdict leaves it open.
+ * the window's end: the verify time for a live verdict (a stamp after it — a
+ * future stamp — earns nothing), the run's end for a replay of a past run.
  *
  * Why a test cannot earn it: the same as agentToolWritePaths() — only
  * `realHome()/.claude/projects` is read, and a `claude` started by a test writes
@@ -1184,7 +1192,7 @@ function agentShellWritePaths(before, candidates, until = Infinity) {
     }
     for (const [id, u] of issued) {
       const r = returned.get(id)
-      if (u.ts >= since || (r !== undefined && r >= since && u.ts <= until)) commands.push(u.command.normalize('NFC'))
+      if (u.ts >= since || (r !== undefined && r >= since && r <= until)) commands.push(u.command.normalize('NFC'))
     }
   }
   if (commands.length === 0) return out
@@ -1198,13 +1206,23 @@ function agentShellWritePaths(before, candidates, until = Infinity) {
   const homes = ['~', '\\$HOME', '\\$\\{HOME\\}', ...[...homeForms].map((h) => esc(h.normalize('NFC')))]
   const STOP = "\\s'\"`;|&<>(){}$*?\\[\\]\\\\,"
   const mentionRe = new RegExp(`(?<![\\w./-])(?:${homes.join('|')})/\\.prdt(?=$|/|[${STOP}])((?:/[^${STOP}]*)?)`, 'g')
-  const BOUND_L = "(?:^|[\\s'\"`/=(])"
+  // A rest token starts a word: never right after a `/` (another path's segment
+  // sits in front of it: `docs/_shared/wiki/index.md`, `https://h/x.md`) — except
+  // `$W/`, `${W}/` or `{W}/` where W was assigned a mention of the named directory.
+  const BOUND_L = "(?:^|[\\s'\"`=(])"
   const BOUND_R = "(?=$|[\\s'\"`/);,:|&<>])"
+  // `W=…<mention>` / `W = os.path.expanduser('<mention>`: the text before the
+  // mention on its line ends in an assignment with no space, `;`, `&` or `|` after `=`.
+  const assignRe = /(?:^|[\s;&|(])(?:export\s+|local\s+|readonly\s+)?([A-Za-z_]\w*)\s*=\s*[^\s;&|]*$/
   for (const cmd of commands) {
     const named = new Set()
+    const vars = new Map() // named directory key → names of variables assigned it
     for (const m of cmd.matchAll(mentionRe)) {
       const k = containmentKey(path.join(prdt, ...m[1].split('/').filter(Boolean)), true)
-      if (k === prdtKey || k.startsWith(prdtKey + path.sep)) named.add(k) // `..` out of ~/.prdt names nothing
+      if (k !== prdtKey && !k.startsWith(prdtKey + path.sep)) continue // `..` out of ~/.prdt names nothing
+      named.add(k)
+      const a = assignRe.exec(cmd.slice(cmd.lastIndexOf('\n', m.index) + 1, m.index))
+      if (a) vars.set(k, new Set([...(vars.get(k) || []), a[1]]))
     }
     for (const w of wanted) {
       if (out.has(w.key)) continue
@@ -1218,7 +1236,8 @@ function agentShellWritePaths(before, candidates, until = Infinity) {
         const depth = w.key.slice(n.length + 1).split(path.sep).length
         if (depth > w.segs.length) continue
         const rest = w.segs.slice(-depth).join('/')
-        if (new RegExp(BOUND_L + esc(rest) + BOUND_R).test(cmd)) {
+        const viaVar = [...(vars.get(n) || [])].map((v) => `(?:\\$${v}|\\$?\\{${v}\\})/`)
+        if (new RegExp(`(?:${[BOUND_L, ...viaVar].join('|')})` + esc(rest) + BOUND_R).test(cmd)) {
           out.add(w.key)
           break
         }
