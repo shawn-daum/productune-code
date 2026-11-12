@@ -93,6 +93,11 @@ beforeAll(() => {
   commit('T-27', 'feat: new tag (T-27)', { 'packages/core/scripts/prdt_cli.py': '# moved\nX = "[prdt old tag] a"\nY = "[prdt new tag] b"\n' })
   commit('T-28', 'feat: app (T-28)', { 'src/app.ts': 'export const a = 1\n' })
   commit('T-29', 'feat: agent stub (T-29)', { 'packages/core/agents/prdt-po.md': '# po\n' })
+  // T-1525: a comment · docstring that names `[prdt …]` is not hook text; an added printed string is
+  const CLI_PY = 'packages/core/scripts/prdt_cli.py'
+  const base27 = '# moved\nX = "[prdt old tag] a"\nY = "[prdt new tag] b"\n'
+  commit('T-1570', 'docs: comment only (T-1570)', { [CLI_PY]: base27 + '# the [prdt note] line is printed elsewhere\ndef f():\n    \"\"\"Prints [prdt docstring] text.\"\"\"\n    return 1\n' })
+  commit('T-1571', 'feat: printed string (T-1571)', { [CLI_PY]: base27 + '# the [prdt note] line is printed elsewhere\ndef f():\n    \"\"\"Prints [prdt docstring] text.\"\"\"\n    return "[prdt printed] z"\n' })
 
   // the meta repo: an override committed under T-30's close autosave
   git(['init', '-q', '--bare', path.join(root, '.prdt', 'meta.git')], root)
@@ -181,6 +186,11 @@ describe.skipIf(!PY)('T-1440 close refusal — prdt-worktree-guard.sh', () => {
     // both ids in the trailing `(…)` group are each its own work
     expect(denyOf(close('T-21'))).toContain(`it edits hook (${hash['T-21']})`)
     expect(denyOf(close('T-22'))).toContain(`it edits hook (${hash['T-21']})`)
+  }, T)
+
+  test('T-1525: comment or docstring lines naming `[prdt ` are not scope; an added printed string is', () => {
+    expect(close('T-1570')).toBe('')
+    expect(denyOf(close('T-1571'))).toContain(`it edits hook text (${hash['T-1571']})`)
   }, T)
 
   test('E4 · E5 · E6 are denied with their draft text and next act', () => {
