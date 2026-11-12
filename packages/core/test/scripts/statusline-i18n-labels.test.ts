@@ -107,7 +107,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     const rows = run({}).split('\n')
     expect(rows).toEqual([
       'proj v1.13 | 단계: 개발 1/3 | 총 티켓 1/4',
-      '레인: 자투리  1/4 | 작업 T-1(designer) T-2(developer+QA) | 블로커 T-3(결정사항) T-4(요청사항)',
+      '레인: 기본 레인  1/4 | 작업 T-1(designer) T-2(developer+QA) | 블로커 T-3(결정사항) T-4(요청사항)',
       '결정사항 T-3 | 요청사항 T-4',
     ])
   })
@@ -116,7 +116,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     seedFull()
     expect(run({ PRDT_LANG: 'en' }).split('\n')).toEqual([
       'proj v1.13 | stage: build 1/3 | total tickets 1/4',
-      'lane: 자투리  1/4 | working T-1(designer) T-2(developer+qa) | blocker T-3(decision) T-4(request)',
+      'lane: 기본 레인  1/4 | working T-1(designer) T-2(developer+qa) | blocker T-3(decision) T-4(request)',
       'decision T-3 | request T-4',
     ])
   })
@@ -136,8 +136,8 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
   ])('stage %s → ko %s / en %s', (stage, ko, en) => {
     fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify({ schema_version: 1, stage, version: 'v1.13' }))
     // T-1330: no `working` cell on the product row; the default lane row shows in every stage
-    expect(run({ PRDT_LANG: 'ko' }).split('\n').slice(0, 2)).toEqual([`proj v1.13 | 단계: ${ko} 0/0`, '레인: 자투리  0/0 | 작업 0'])
-    expect(run({ PRDT_LANG: 'en' }).split('\n').slice(0, 2)).toEqual([`proj v1.13 | stage: ${en} 0/0`, 'lane: 자투리  0/0 | working 0'])
+    expect(run({ PRDT_LANG: 'ko' }).split('\n').slice(0, 2)).toEqual([`proj v1.13 | 단계: ${ko} 0/0`, '레인: 기본 레인  0/0 | 작업 0'])
+    expect(run({ PRDT_LANG: 'en' }).split('\n').slice(0, 2)).toEqual([`proj v1.13 | stage: ${en} 0/0`, 'lane: 기본 레인  0/0 | working 0'])
   })
 
   test('persona labels: po / user in both languages; branch label with the branch name kept', () => {
@@ -147,8 +147,8 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     marker('T-6', 'user', 50_000)
     execFileSync('git', ['init', '-q', '-b', 'dev'], { cwd: root })
     execFileSync('git', ['-c', 'user.email=u@test', '-c', 'user.name=u', 'commit', '-q', '--allow-empty', '-m', 'i'], { cwd: root })
-    expect(run({ PRDT_LANG: 'ko' }).split('\n').slice(0, 2)).toEqual(['proj v1.13 | 단계: 개발 0/2 | 총 티켓 0/2 | 브랜치: dev', '레인: 자투리  0/2 | 작업 T-5(PO) T-6(user)'])
-    expect(run({ PRDT_LANG: 'en' }).split('\n').slice(0, 2)).toEqual(['proj v1.13 | stage: build 0/2 | total tickets 0/2 | branch: dev', 'lane: 자투리  0/2 | working T-5(po) T-6(user)'])
+    expect(run({ PRDT_LANG: 'ko' }).split('\n').slice(0, 2)).toEqual(['proj v1.13 | 단계: 개발 0/2 | 총 티켓 0/2 | 브랜치: dev', '레인: 기본 레인  0/2 | 작업 T-5(PO) T-6(user)'])
+    expect(run({ PRDT_LANG: 'en' }).split('\n').slice(0, 2)).toEqual(['proj v1.13 | stage: build 0/2 | total tickets 0/2 | branch: dev', 'lane: 기본 레인  0/2 | working T-5(po) T-6(user)'])
   })
 
   test('T-1019: no ` | ` follows a Hangul character or `—` in any ko row; separator stays one-space; empty = 0', () => {
@@ -168,7 +168,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     expect(fixtures[1].split('\n')[0]).toContain('단계: 유휴 0/0 | ')
     const idleEn = run({ PRDT_LANG: 'en' }).split('\n')
     expect(idleEn[0]).toContain('stage: idle 0/0 | total tickets 1/4 | branch: dev')
-    expect(idleEn[1]).toContain('lane: 자투리  1/4 | working T-1(designer) T-2')
+    expect(idleEn[1]).toContain('lane: 기본 레인  1/4 | working T-1(designer) T-2')
   })
 
   test('T-1017: a long branch stays whole and last when the working segment has to give way', () => {
@@ -235,7 +235,7 @@ describe.skipIf(!READY)('statusline label language (T-1015)', () => {
     for (const r of en) expect(cols(r)).toBeLessThanOrEqual(200)
     // T-1330: the running ids left the product row for the lane row, which shows no successors
     expect(ko[0]).not.toMatch(/T-75\d|T-900\d/)
-    expect(ko[1]).toMatch(/^레인: 자투리 {2}0\/3 \| 작업 T-750\(\S+\) T-751\(\S+\) T-752\(\S+\)$/)
+    expect(ko[1]).toMatch(/^레인: 기본 레인 {2}0\/3 \| 작업 T-750\(\S+\) T-751\(\S+\) T-752\(\S+\)$/)
     expect(ko[1]).not.toContain('T-9001')
     expect(ko[0].length).toBeLessThan(cols(ko[0]))
   })

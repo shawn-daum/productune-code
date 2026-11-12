@@ -48,6 +48,7 @@ import { IDLE,
   IDENTITY,
   setViewerLang,
   lang as viewerLang,
+  JATTURI_LANE_RECORD,
 } from './labels.mjs'
 import { mermaidBlock, hasMermaid, mermaidScript, MERMAID_CSS } from './mermaid.mjs'
 import { buildDisciplineIndex, linkDisciplineText, linkDisciplineCode } from './discipline-links.mjs'
@@ -810,7 +811,7 @@ export function pageIdentityOf(data) {
   const toolVersion = data.toolVersion || ''
   const idle = stage === 'idle' || !version
   if (idle) return { project, version, stage, idle, toolVersion, card: null }
-  const currentTickets = currentVersionTickets(data.tickets, version)
+  const currentTickets = currentVersionTickets(data.tickets, version).filter((t) => !isJatturiRecord(t))
   const seg = stageSegments(currentTickets, data.stageHistory).find((x) => x.stage === stage)
   const stageDone = seg ? seg.tickets.filter((t) => t.done).length : 0
   const stageTotal = seg ? seg.tickets.length : 0
@@ -2594,6 +2595,21 @@ function homeEnvGroup(data, v, hasLines) {
  * @param {Array} currentTickets current-version tickets (any status)
  * @returns {{done: number, total: number}}
  */
+/** T-1514: the 자투리 lane record — the rule is stated once in prdt_lanes.py (`is_jatturi_record`); this is its
+ *  JS twin: key `lane` exact (frontmatter.mjs, last duplicate wins), value = trim whitespace (ASCII + Unicode
+ *  space separators), cut a trailing `# comment`, trim, drop every leading/trailing quote char, trim; === 자투리.
+ *  Its `deps` are the 자투리 tickets; it is no work itself. */
+const LANE_WS = ' \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000'
+const LANE_TRIM_RE = new RegExp(`^[${LANE_WS}]+|[${LANE_WS}]+$`, 'g')
+const LANE_COMMENT_RE = new RegExp(`(?:^|[${LANE_WS}])#.*$`)
+export function isJatturiRecord(t) {
+  const lane = t && t.frontmatter ? t.frontmatter.lane : undefined
+  if (typeof lane !== 'string') return false
+  const trim = (v) => v.replace(LANE_TRIM_RE, '')
+  const v = trim(trim(lane).replace(LANE_COMMENT_RE, '')).replace(/^['"]+|['"]+$/g, '')
+  return trim(v) === JATTURI_LANE_RECORD
+}
+
 export function versionProgressCounts(currentTickets) {
   const counted = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
   const done = counted.filter((t) => t.frontmatter.status === 'done').length
@@ -2641,9 +2657,8 @@ function homeScope(data, currentTickets) {
   const work = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
   const byId = new Map(work.map((t) => [t.frontmatter.id, t]))
   const lanes = Array.isArray(data.lanes) ? data.lanes : []
-  const lines = lanes.length > 0
-    ? lanes.map((l) => ({ name: l.name, tickets: l.tickets.map((id) => byId.get(id)).filter(Boolean), done: l.done, total: l.total }))
-    : [{ name: HOME.scopeDefaultLane, tickets: work, done: work.filter((t) => t.frontmatter.status === 'done').length, total: work.length }]
+  // T-1513: a version with no lane record and no 합격선 row arrives as one computed 「기본 레인」 — no fallback line here.
+  const lines = lanes.map((l) => ({ name: l.name, tickets: l.tickets.map((id) => byId.get(id)).filter(Boolean), done: l.done, total: l.total }))
   const row = (l) => {
     const sorted = [...l.tickets.filter((t) => t.frontmatter.status === 'done'), ...l.tickets.filter((t) => t.frontmatter.status !== 'done')]
       .sort((x, y) => (x.frontmatter.status === 'done' ? 0 : 1) - (y.frontmatter.status === 'done' ? 0 : 1) || compareTicketIds(x.frontmatter.id, y.frontmatter.id))
@@ -2838,7 +2853,8 @@ function homeDeployHead(data) {
 }
 
 function homeProgressBody(data) {
-  const currentTickets = currentVersionTickets(data.tickets, data.currentVersion)
+  // T-1514: the `lane: 자투리` record is no work — never a square, a count or a graph node
+  const currentTickets = currentVersionTickets(data.tickets, data.currentVersion).filter((t) => !isJatturiRecord(t))
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
 ${homeDeployHead(data)}

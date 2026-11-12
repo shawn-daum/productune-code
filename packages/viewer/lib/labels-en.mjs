@@ -65,7 +65,6 @@ const HOME = {
   stageDone: (done, total) => `Tickets done ${done}/${total}`,
   scope: 'Scope',
   scopeSub: (n) => `${n} PRD items this version`,
-  scopeDefaultLane: 'This version',
   waitDec: 'Waiting for my decision',
   waitDecEmpty: 'No decision is waiting.',
   waitReq: 'Waiting for user work',

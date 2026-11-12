@@ -32,7 +32,7 @@ afterEach(() => {
   while (roots.length) fs.rmSync(roots.pop() as string, { recursive: true, force: true })
 })
 
-type T = { id: string; type?: string; status?: string; assignee?: string; deps?: string[]; body?: string }
+type T = { id: string; type?: string; status?: string; assignee?: string; deps?: string[]; body?: string; lane?: string }
 
 function makeProject(tickets: T[]) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t1272-')))
@@ -50,7 +50,7 @@ function makeProject(tickets: T[]) {
   for (const t of tickets) {
     fs.writeFileSync(path.join(proj, 'docs', 'tickets', 'v0.1', `${t.id}.md`), ['---', `id: ${t.id}`, `slug: s-${t.id.toLowerCase()}`,
       `type: ${t.type ?? 'impl'}`, `status: ${t.status ?? 'open'}`, `assignee: ${t.assignee ?? 'developer'}`,
-      ...(t.deps?.length ? [`deps: [${t.deps.join(', ')}]`] : []), 'created: 2026-10-26', '---', '', t.body ?? 'x', ''].join('\n'))
+      ...(t.deps?.length ? [`deps: [${t.deps.join(', ')}]`] : []), ...(t.lane ? [`lane: ${t.lane}`] : []), 'created: 2026-10-26', '---', '', t.body ?? 'x', ''].join('\n'))
   }
   stubPs(bin, '')
   return { root, proj, home, bin }
@@ -283,6 +283,26 @@ describe('prdt-lane-check.sh', () => {
     const m = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'))
     const regs = m.registrations.filter((r: any) => r.hooks.includes('prdt-lane-check.sh'))
     expect(regs).toEqual([{ event: 'Stop', hooks: ['prdt-lane-check.sh'] }, { event: 'PostToolUse', hooks: ['prdt-lane-check.sh'] }])
+  })
+})
+
+// T-1514: 기본 레인 and the `lane: 자투리` record lane are never gates — the hook's output is unchanged by them.
+describe('prdt-lane-check.sh with a 자투리 record and the 기본 레인 rest (T-1514)', () => {
+  const JAT: T[] = [
+    { id: 'T-020', type: 'ops', assignee: 'po', deps: ['T-021'], lane: '자투리' },
+    { id: 'T-021' }, // 자투리, ready
+    { id: 'T-030' }, // 기본 레인, ready
+  ]
+  test('idle gate lanes block with the same reason as without them; 자투리 / 기본 레인 tickets never named', () => {
+    const plain = JSON.parse(runHook(makeProject(BASE)))
+    const j = JSON.parse(runHook(makeProject([...BASE, ...JAT])))
+    expect(j.decision).toBe('block')
+    expect(j.reason).toBe(plain.reason)
+    expect(j.reason).not.toMatch(/자투리|기본 레인|T-021|T-030/)
+  })
+  test('every gate lane finished: ready 자투리 and 기본 레인 tickets never block', () => {
+    const p = makeProject([{ id: 'T-001', status: 'done', body: `\`${GATE}\`` }, { id: 'T-010', status: 'done', body: `\`${GATE2}\`` }, ...JAT])
+    expect(runHook(p)).toBe('')
   })
 })
 

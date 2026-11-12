@@ -1,0 +1,152 @@
+[
+ {
+  "name": "bare",
+  "fm": "lane: 자투리",
+  "record": true
+ },
+ {
+  "name": "dq",
+  "fm": "lane: \"자투리\"",
+  "record": true
+ },
+ {
+  "name": "sq",
+  "fm": "lane: '자투리'",
+  "record": true
+ },
+ {
+  "name": "no space",
+  "fm": "lane:자투리",
+  "record": true
+ },
+ {
+  "name": "trailing spaces",
+  "fm": "lane: 자투리   ",
+  "record": true
+ },
+ {
+  "name": "tab",
+  "fm": "lane: 자투리\t",
+  "record": true
+ },
+ {
+  "name": "mismatched quotes",
+  "fm": "lane: '자투리\"",
+  "record": true
+ },
+ {
+  "name": "mismatched quotes rev",
+  "fm": "lane: \"자투리'",
+  "record": true
+ },
+ {
+  "name": "leading dq only",
+  "fm": "lane: \"자투리",
+  "record": true
+ },
+ {
+  "name": "trailing dq only",
+  "fm": "lane: 자투리\"",
+  "record": true
+ },
+ {
+  "name": "nbsp lead",
+  "fm": "lane: 자투리",
+  "record": true
+ },
+ {
+  "name": "nbsp both",
+  "fm": "lane: 자투리 ",
+  "record": true
+ },
+ {
+  "name": "ideographic space",
+  "fm": "lane: 　자투리　",
+  "record": true
+ },
+ {
+  "name": "comment",
+  "fm": "lane: 자투리 # 사용자가 고름",
+  "record": true
+ },
+ {
+  "name": "comment quoted",
+  "fm": "lane: \"자투리\" # c",
+  "record": true
+ },
+ {
+  "name": "comment no space after hash",
+  "fm": "lane: 자투리 #c",
+  "record": true
+ },
+ {
+  "name": "comment after nbsp",
+  "fm": "lane: 자투리 # c",
+  "record": true
+ },
+ {
+  "name": "duplicate jatturi first",
+  "fm": "lane: 자투리\nlane: 묶음 B",
+  "record": false
+ },
+ {
+  "name": "duplicate jatturi last",
+  "fm": "lane: 묶음 B\nlane: 자투리",
+  "record": true
+ },
+ {
+  "name": "duplicate jatturi then empty",
+  "fm": "lane: 자투리\nlane:",
+  "record": false
+ },
+ {
+  "name": "key case",
+  "fm": "Lane: 자투리",
+  "record": false
+ },
+ {
+  "name": "key upper",
+  "fm": "LANE: 자투리",
+  "record": false
+ },
+ {
+  "name": "other name",
+  "fm": "lane: 묶음 B",
+  "record": false
+ },
+ {
+  "name": "other name with hash",
+  "fm": "lane: 묶음 B # 자투리",
+  "record": false
+ },
+ {
+  "name": "jatturi inside text",
+  "fm": "lane: 자투리 묶음",
+  "record": false
+ },
+ {
+  "name": "empty",
+  "fm": "lane:",
+  "record": false
+ },
+ {
+  "name": "comment only",
+  "fm": "lane: # 자투리",
+  "record": false
+ },
+ {
+  "name": "list value",
+  "fm": "lane: [자투리]",
+  "record": false
+ },
+ {
+  "name": "indented key",
+  "fm": "  lane: 자투리",
+  "record": false
+ },
+ {
+  "name": "key with space before colon",
+  "fm": "lane : 자투리",
+  "record": false
+ }
+]

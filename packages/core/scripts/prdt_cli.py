@@ -44,6 +44,8 @@ from prdt_lanes import (
     LINE_NAME_RE,
     PRODUCT_RESERVED_NAMES,
     lanes_for,
+    real_lanes,
+    is_jatturi_record,
     line_product,
     PRD_H4_RE,
     PRD_ITEM_KEY_RE,
@@ -6025,6 +6027,10 @@ def cmd_tickets_fmt(args, root):
                                         and TICKET_REQUEST_RE.match(fm["request"].strip())):
                 check_violations.append(f"request: {fm['request']!r} is not a request id (R-<digits>)")
             check_violations += ticket_place_problems(fm)  # T-1497
+            effect_probs, effect_notes = effect_report(root, fm, body, fm.get("id") or tid)  # T-1440
+            check_violations += effect_probs
+            for v in effect_notes:
+                print(f"{tid}: {v}")
             if check_violations:
                 any_violation = True
                 for v in check_violations:
@@ -6153,6 +6159,388 @@ def ticket_place_problems(fm):
     if isinstance(v, str) and v.strip() in TICKET_PLACES:
         return []
     return [f"place: {v!r} is not one of {' · '.join(TICKET_PLACES)}"]
+
+
+# ── T-1440: effect check — closing discipline · hook · override work needs its replay line ──
+# WHY: rules were closed on "the text is in and the tests pass" while the problem they targeted stayed
+# (T-1072's `[prdt reply]` line, then 0/9 → 0/9 in T-1431; T-1428 passed on a stubbed judge, T-1429).
+# contracts/definition-of-done.md: a ticket whose OWN commits changed discipline, an agent stub, a hook
+# script, a `[prdt …]` line of this CLI or a project override closes only with an `evidence` line
+# `- replay: <case> · before k/n · after k/n` (n ≥ 3) or `- effect not shown: <reason> · user 「…」`.
+# One reader (`effect_check_problems`), every output: `tickets fmt --check`, `doctor` (advisory),
+# the close refusal in prdt-worktree-guard.sh (through `prdt tickets effect-check --gate`, the hook's
+# python runs `-I` and cannot import this file), and the PostToolUse notices E3 · E1 (`tickets prior
+# --hook`). Scope = commits whose subject's TRAILING `(…)` group names the ticket (an id mentioned
+# mid-subject is another ticket's reference) and whose type is feat|fix|docs|chore|perf (refactor and
+# test never mix with behavior, contracts §Git). Any git failure → no scope from that repo; a check
+# with no scope and a failure is "not checked" and never refuses (a wrong refusal blocks ordinary closes).
+# Spec: docs/productune/artifacts/v1.16.4/effect-check-duty-draft.md §2 group 5 · §3.
+EFFECT_CHECK_LANDING_DATE = "2026-11-11"   # contracts/tickets.md names the same date (test-pinned)
+EFFECT_TAG = "[prdt effect check]"
+EFFECT_CLASSES = ("discipline", "agent stub", "hook", "hook text", "override")
+EFFECT_CLI_PATH = "packages/core/scripts/prdt_cli.py"
+EFFECT_CODE_PATHS = ("packages/core/discipline", "packages/core/doctrine.md", "packages/core/agents",
+                     "packages/core/scripts/hooks", EFFECT_CLI_PATH)
+_EFFECT_PATH_CLASS = (
+    (re.compile(r"^packages/core/(?:discipline/.+|doctrine\.md)$"), "discipline"),
+    (re.compile(r"^packages/core/agents/[^/]+\.md$"), "agent stub"),
+    (re.compile(r"^packages/core/scripts/hooks/.+$"), "hook"),   # any depth, any extension (lib/*.sh · *.py)
+)
+_EFFECT_COMMIT_TYPES = ("feat", "fix", "docs", "chore", "perf")
+_EFFECT_TRAIL_RE = re.compile(r"\(([^()]*)\)\s*$")
+EFFECT_REPLAY_RE = re.compile(r"^- replay: (?P<case>.+?) · before (?P<kb>\d+)/(?P<nb>\d+) · after (?P<ka>\d+)/(?P<na>\d+)(?P<tail>.*)$", re.M)
+EFFECT_NOSHOW_RE = re.compile(r"^- effect not shown: (?P<reason>.+)$", re.M)
+EFFECT_QUOTE_RE = re.compile(r"「[^」]+」|\*\"[^\"]+\"\*|“[^”]+”")
+EFFECT_REFUSING = ("E2", "E4", "E5", "E6")
+_EFFECT_ACTS = {
+    "E2": "copy the worker's replay line into `evidence`, else dispatch the replay, else put the result "
+          "to the user and write the not-shown line with their reply",
+    "E4": "re-run to n ≥ 3, or write the not-shown line with the user's reply",
+    "E5": "put the result to the user and append their reply",
+    "E6": "ask the user and append their reply",
+}
+_EFFECT_GIT_TIMEOUT_S = 5
+# Placeholder wording (designer `inject-edit` owns it): the gate could not run, the close goes through.
+EFFECT_NOT_CHECKED = "[prdt effect check] close of {tid} not checked ({why}); it goes through. Check it after: `prdt tickets fmt {tid} --check`."
+
+
+class _EffectGitError(Exception):
+    pass
+
+
+def _effect_git(args, cwd):
+    """stdout of one git run, else _EffectGitError (spawn failure · timeout · non-zero exit)."""
+    try:
+        r = subprocess.run(["git", *args], cwd=str(cwd), env=_scrubbed_git_env(), capture_output=True, text=True,
+                           errors="replace", timeout=_EFFECT_GIT_TIMEOUT_S, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        raise _EffectGitError(f"git timed out after {_EFFECT_GIT_TIMEOUT_S} s")
+    except (OSError, subprocess.SubprocessError) as e:
+        raise _EffectGitError(f"git did not run: {e.__class__.__name__}")
+    if r.returncode != 0:
+        raise _EffectGitError(f"git exit {r.returncode}")
+    return r.stdout
+
+
+def _effect_tag_net_added(diff):
+    """True when a diff adds a `[prdt …]` line more often than it removes the same line — a move of
+    unchanged text (T-1170's file split) adds nothing."""
+    plus, minus = {}, {}
+    for line in diff.splitlines():
+        if line.startswith(("+++ ", "--- ")) or "[prdt " not in line:
+            continue
+        if line[:1] == "+":
+            plus[line[1:].strip()] = plus.get(line[1:].strip(), 0) + 1
+        elif line[:1] == "-":
+            minus[line[1:].strip()] = minus.get(line[1:].strip(), 0) + 1
+    return any(n > minus.get(t, 0) for t, n in plus.items())
+
+
+def _effect_path_classes(p):
+    return {c for rx, c in _EFFECT_PATH_CLASS if rx.match(p)}
+
+
+def _effect_order(cls):
+    return [c for c in EFFECT_CLASSES if c in cls]
+
+
+def effect_scope(root, tid):
+    """(classes, ref, errors) of ticket `tid`: the classes of scope text its own COMMITS changed (code repo:
+    every ref, merges excluded; meta repo: `.prdt/overrides`), `ref` = the newest such commit's short hash,
+    `errors` = one line per repo git could not read. An uncommitted change is never scope (whoever's it is):
+    it is the E1 notice (`effect_uncommitted_classes`)."""
+    idre = re.compile(r"(?<![\w-])" + re.escape(tid) + r"(?![\w-])")   # `(T-001a)` is not T-001
+    cls, ref, errors = set(), None, []
+    croot = code_root(root)
+    if (croot / ".git").exists():
+        try:
+            out = _effect_git(["-C", str(croot), "log", "--no-merges", "--all", "-F", "--grep", tid,
+                               "--format=%x1e%h%x1f%s", "--name-only"], croot)
+            for rec in out.split("\x1e")[1:]:
+                head, _, files = rec.partition("\n")
+                h, _, subj = head.partition("\x1f")
+                trail = _EFFECT_TRAIL_RE.search(subj)
+                if not trail or not idre.search(trail.group(1)):
+                    continue
+                if subj.split(":")[0].split("(")[0].strip() not in _EFFECT_COMMIT_TYPES:
+                    continue
+                fl = [f for f in files.splitlines() if f]
+                got = set().union(*(_effect_path_classes(f) for f in fl)) if fl else set()
+                if EFFECT_CLI_PATH in fl and _effect_tag_net_added(
+                        _effect_git(["-C", str(croot), "show", "--format=", h, "--", EFFECT_CLI_PATH], croot)):
+                    got.add("hook text")
+                if got:
+                    cls |= got
+                    ref = ref or h
+        except _EffectGitError as e:
+            errors.append(f"code repo: {e}")
+    gd = meta_git_dir(root)
+    if gd.is_dir():
+        try:
+            prob = meta_git_trust_problem(root)
+        except Exception as e:   # its own `git config --file` read can hang or fail like any git run
+            prob = f"trust check failed: {e.__class__.__name__}"
+        if prob:
+            errors.append(f"meta repo: {prob}")
+        else:
+            try:
+                out = _effect_git([*META_GIT_HARDEN, "--git-dir", str(gd), "log", "-F", "--grep", tid,
+                                   "--format=%x1e%h%x1f%s", "--name-only", "--", ".prdt/overrides"], root)
+                for rec in out.split("\x1e")[1:]:
+                    head, _, files = rec.partition("\n")
+                    h, _, subj = head.partition("\x1f")
+                    if idre.search(subj) and any(f.startswith(".prdt/overrides/") for f in files.splitlines()):
+                        cls.add("override")
+                        ref = ref or h
+            except _EffectGitError as e:
+                errors.append(f"meta repo: {e}")
+    return _effect_order(cls), ref, errors
+
+
+def effect_uncommitted_overrides(root):
+    """True when the meta work tree holds an uncommitted `.prdt/overrides` change. A meta repo that is absent
+    or untrusted → False; a git failure raises _EffectGitError."""
+    gd = meta_git_dir(root)
+    if not gd.is_dir():
+        return False
+    try:
+        if meta_git_trust_problem(root):
+            return False
+    except Exception:
+        return False
+    return bool(_effect_git([*META_GIT_HARDEN, "--git-dir", str(gd), "--work-tree", str(root),
+                             "status", "--porcelain", "--", ".prdt/overrides"], root).strip())
+
+
+def effect_uncommitted_classes(root):
+    """Classes of scope paths with uncommitted changes (the E1 notice): the code repo's, and `override` when
+    the meta work tree holds an uncommitted override change. A CLI change counts only when it adds a
+    `[prdt …]` line. Raises _EffectGitError."""
+    cls = set()
+    if effect_uncommitted_overrides(root):
+        cls.add("override")
+    croot = code_root(root)
+    if not (croot / ".git").exists():
+        return _effect_order(cls)
+    for line in _effect_git(["-C", str(croot), "status", "--porcelain", "--", *EFFECT_CODE_PATHS], croot).splitlines():
+        p = line[3:].split(" -> ")[-1].strip().strip('"')
+        cls |= _effect_path_classes(p)
+        if p == EFFECT_CLI_PATH and _effect_tag_net_added(
+                _effect_git(["-C", str(croot), "diff", "HEAD", "--", EFFECT_CLI_PATH], croot)):
+            cls.add("hook text")
+    return _effect_order(cls)
+
+
+def _ticket_frame_sections(body):
+    """{frame key: section text} of a ticket body (aliases resolved, e.g. `근거` → evidence)."""
+    out = {}
+    ms = list(H2_RE.finditer(body))
+    for i, m in enumerate(ms):
+        key, _exact = resolve_frame_heading(m.group(1))
+        if key:
+            end = ms[i + 1].start() if i + 1 < len(ms) else len(body)
+            out[key] = out.get(key, "") + body[m.end():end]
+    return out
+
+
+def effect_line_findings(body):
+    """The closed finding list over the `evidence` lines (scope not judged here):
+    E2 no line · E3 case not in `problem` · E4 n < 3 · E5 no effect, no user quote · E6 not shown, no quote."""
+    sec = _ticket_frame_sections(body)
+    ev, prob = sec.get("evidence", ""), sec.get("problem", "")
+    reps, nos = list(EFFECT_REPLAY_RE.finditer(ev)), list(EFFECT_NOSHOW_RE.finditer(ev))
+    if not reps and not nos:
+        return [{"code": "E2"}]
+    out = []
+    for m in reps:
+        case = m.group("case")
+        kb, nb, ka, na = (int(m.group(k)) for k in ("kb", "nb", "ka", "na"))
+        if case not in prob:
+            out.append({"code": "E3", "case": case})
+        if nb < 3 or na < 3:
+            out.append({"code": "E4", "case": case})
+        if kb > nb or ka > na:   # k > n is not a count of n runs
+            out.append({"code": "E4", "case": case, "k_over_n": f"before {kb}/{nb} · after {ka}/{na}"})
+        if not (kb >= 1 and ka < kb) and not EFFECT_QUOTE_RE.search(m.group("tail")):
+            out.append({"code": "E5", "case": case, "kb": kb, "ka": ka})
+    for m in nos:
+        if not EFFECT_QUOTE_RE.search(m.group("reason")):
+            out.append({"code": "E6"})
+    return out
+
+
+def effect_check_problems(root, fm, body, tid):
+    """T-1440: the one effect check → {classes, ref, findings, errors}. `findings` is empty for a ticket
+    out of scope."""
+    cls, ref, errors = effect_scope(root, tid)
+    return {"classes": cls, "ref": ref, "findings": effect_line_findings(body) if cls else [], "errors": errors}
+
+
+def effect_finding_text(f, res):
+    c = f["code"]
+    case = one_line(f.get("case", ""))
+    if c == "E2":
+        return (f"it edits {' · '.join(res['classes'])} ({res['ref']}) and `evidence` has no "
+                "`- replay: <case from problem> · before k/n · after k/n` (n≥3, live, no stub) or "
+                "`- effect not shown: <reason> · user 「<reply>」` line")
+    if c == "E3":
+        return f"replay case `{case}` is not a string from problem"
+    if c == "E4":
+        if f.get("k_over_n"):
+            return f"replay `{case}` has k > n ({f['k_over_n']})"
+        return f"replay `{case}` has n < 3 per arm"
+    if c == "E5":
+        return f"replay `{case}` shows no effect (before {f['kb']}, after {f['ka']}) and has no `· user 「<reply>」`"
+    return "`effect not shown` has no `· user 「<reply>」`"
+
+
+def effect_deny_text(tid, res, worker=False):
+    """The close refusal (E2 · E4 · E5 · E6), or None."""
+    refs = [f for f in res["findings"] if f["code"] in EFFECT_REFUSING]
+    if not refs:
+        return None
+    finding = "; ".join(effect_finding_text(f, res) for f in refs)
+    if worker:
+        nxt = "return `blocked` naming this close."
+    else:
+        acts = list(dict.fromkeys(_EFFECT_ACTS[f["code"]] for f in refs))
+        nxt = "; ".join(acts) + "; then close again."
+    return f"{EFFECT_TAG} close of {one_line(tid)} refused: {finding}. Next: {nxt}"
+
+
+def effect_check_due(fm):
+    """The ONE date rule — `fmt --check` · doctor · the close gate all call it. Binds a `done` ticket closed on/after EFFECT_CHECK_LANDING_DATE. No `closed:` →
+    judged by `created` (a ticket is closed after it is created); a malformed `closed:` is checked, never read
+    as old (T-715). Pre-frame tickets (created before TICKET_FRAME_LANDING_DATE) are skipped like `fmt`."""
+    if fm.get("status") != "done":
+        return False
+    created = fm.get("created")
+    cv = isinstance(created, str) and bool(TICKET_CREATED_DATE_RE.match(created))
+    if cv and created < TICKET_FRAME_LANDING_DATE:
+        return False
+    closed = fm.get("closed")
+    if isinstance(closed, str) and TICKET_CREATED_DATE_RE.match(closed):
+        return closed >= EFFECT_CHECK_LANDING_DATE
+    if closed in (None, ""):
+        return not cv or created >= EFFECT_CHECK_LANDING_DATE
+    return True
+
+
+def effect_today():
+    """The day a close write happens: PRDT_EFFECT_TODAY (YYYY-MM-DD, a test's injected clock) else the local date."""
+    v = os.environ.get("PRDT_EFFECT_TODAY", "")
+    return v if TICKET_CREATED_DATE_RE.match(v) else datetime.now().strftime("%Y-%m-%d")
+
+
+def effect_gate_due(fm):
+    """The close gate sees the MOMENT: a write moving a ticket to done on/after EFFECT_CHECK_LANDING_DATE is
+    the close, whatever `closed:` it carries or lacks (the write dates it). Frame-cutoff tickets stay skipped.
+    Before the landing date the stored-date rule (`effect_check_due`) applies, as for fmt · doctor."""
+    if fm.get("status") != "done":
+        return False
+    created = fm.get("created")
+    if isinstance(created, str) and TICKET_CREATED_DATE_RE.match(created) and created < TICKET_FRAME_LANDING_DATE:
+        return False
+    return effect_today() >= EFFECT_CHECK_LANDING_DATE or effect_check_due(fm)
+
+
+def effect_report(root, fm, body, tid):
+    """(problems, notes) for `fmt --check` · doctor: one `effect check — …` line per finding, and a
+    `not run` note when no scope could be read (never counted as a violation)."""
+    if not effect_check_due(fm):
+        return [], []
+    res = effect_check_problems(root, fm, body, tid)
+    probs = [f"effect check — {effect_finding_text(f, res)}" for f in res["findings"]]
+    notes = [f"effect check not run — {e}" for e in res["errors"]] if not res["classes"] else []
+    return probs, notes
+
+
+def cmd_tickets_effect_gate():
+    """`prdt tickets effect-check --gate` — prdt-worktree-guard.sh's close refusal. stdin JSON
+    {root, path, content (the ticket AFTER the write), worker} → stdout JSON {deny, notice}. Exits 0 always;
+    any failure is a `notice` (not checked), never a deny."""
+    out, tid = {"deny": None, "notice": None}, "?"
+    try:
+        req = json.loads(sys.stdin.read() or "{}")
+        root, path, content = Path(req["root"]), Path(req["path"]), req["content"]
+        tid = path.stem
+        if not isinstance(content, str) or not (root / ".prdt").is_dir():
+            raise ValueError("bad request")
+        fm, _ = parse_frontmatter_text(content)
+        tid = fm["id"] if isinstance(fm.get("id"), str) and fm.get("id") else tid
+        if effect_gate_due(fm):
+            _hdr, body = split_ticket_header_body(content)
+            res = effect_check_problems(root, fm, body, tid)
+            out["deny"] = effect_deny_text(tid, res, worker=bool(req.get("worker")))
+            if not res["classes"] and res["errors"]:
+                out["notice"] = EFFECT_NOT_CHECKED.format(tid=one_line(tid), why=one_line("; ".join(res["errors"])))
+    except Exception as e:
+        out = {"deny": None, "notice": EFFECT_NOT_CHECKED.format(tid=one_line(tid), why=f"check failed: {e.__class__.__name__}")}
+    print(json.dumps(out, ensure_ascii=False))
+
+
+# a write that says done in any spelling: `status: "done"` · `status:done` · a bare `done` line of an Edit
+_EFFECT_DONE_RE = re.compile(r"^[ \t]*(?:status:[ \t]*)?['\"]?done['\"]?[ \t]*$", re.M)
+
+
+def _effect_written_text(ev):
+    tin = ev.get("tool_input") or {}
+    if ev.get("tool_name") == "Write":
+        return tin.get("content") or ""
+    if ev.get("tool_name") == "Edit":
+        return tin.get("new_string") or ""
+    return "\n".join(e.get("new_string") or "" for e in (tin.get("edits") or []) if isinstance(e, dict))
+
+
+def _effect_notice_lines(root, ev, tid, text, fm):
+    """T-1440 PostToolUse notices after a close write (the write's own text sets `status: done`):
+    E3 (replay case not copied from `problem`) and E1 (no commit names the ticket while the code repo holds
+    uncommitted scope changes). Each line once per ticket per session (run/prior-tickets/<session>.json,
+    key `effect:<tid>`). Any failure → no line."""
+    try:
+        created = fm.get("created")
+        if fm.get("status") != "done" or not _EFFECT_DONE_RE.search(_effect_written_text(ev)):
+            return []
+        if isinstance(created, str) and TICKET_CREATED_DATE_RE.match(created) and created < TICKET_FRAME_LANDING_DATE:
+            return []
+        _hdr, body = split_ticket_header_body(text)
+        res = effect_check_problems(root, fm, body, tid)
+        t = one_line(tid)
+        lines = [f"{EFFECT_TAG} {t}: replay case `{one_line(f['case'])}` is not a string from problem; copy it from there."
+                 for f in res["findings"] if f["code"] == "E3"]
+        if not res["classes"] and not res["errors"]:
+            u = effect_uncommitted_classes(root)
+            if u:
+                code_u = [c for c in u if c != "override"]
+                where = []
+                if code_u:
+                    where.append(f"the code repo has uncommitted {' · '.join(code_u)} changes")
+                if "override" in u:
+                    where.append("the meta repo has uncommitted override changes")
+                lines.append(f"{EFFECT_TAG} {t} closed while {' and '.join(where)} and no "
+                             f"commit names {t}: if they are its work, reopen, commit with ({t}), close again.")
+        if not lines:
+            return []
+        seen_p = _prior_seen_path(ev.get("session_id"))
+        seen = {}
+        if seen_p is not None:
+            try:
+                seen = json.loads(seen_p.read_text(encoding="utf-8"))
+                seen = seen if isinstance(seen, dict) else {}
+            except (OSError, ValueError):
+                seen = {}
+        key = f"effect:{tid}"
+        already = set(seen.get(key) or [])
+        new = [ln for ln in lines if ln not in already]
+        if new and seen_p is not None:
+            try:
+                seen[key] = sorted(already | set(new))
+                state_write(prdt_home(), seen_p, json.dumps(seen))   # link-refusing; creates run/prior-tickets
+            except (OSError, StateLinkError):
+                pass
+        return new
+    except Exception:
+        return []
 
 
 # ── T-746: hand-offs open the static viewer at the item ──────────────────────
@@ -7009,6 +7397,12 @@ def cmd_tickets(args):
     if getattr(args, "action", None) == "prior" and getattr(args, "hook", False):
         _prior_hook()   # T-1471: the PostToolUse entry; finds its own root from the payload
         return
+    if getattr(args, "action", None) == "effect-check":
+        if not getattr(args, "gate", False):
+            sys.exit("usage: prdt tickets effect-check --gate  (stdin JSON; prdt-worktree-guard.sh's close refusal — "
+                     "a ticket's own report: `prdt tickets fmt <id> --check`)")
+        cmd_tickets_effect_gate()   # T-1440: root comes in the request
+        return
     root = require_root()
     if getattr(args, "action", None) == "new":
         cmd_tickets_new(args, root)
@@ -7756,6 +8150,7 @@ def _prior_seen_path(session):
 def _prior_hook():
     """PostToolUse payload on stdin → additionalContext listing the prior
     tickets of the ticket just written, or nothing. PO only. Fails open."""
+    notes = []
     try:
         ev = json.loads(sys.stdin.read() or "{}")
         if ev.get("agent_type") != "prdt-po" or ev.get("tool_name") not in ("Write", "Edit", "MultiEdit"):
@@ -7771,12 +8166,13 @@ def _prior_hook():
             return
         text = f.read_text(encoding="utf-8", errors="replace")
         fm, _ = parse_frontmatter_text(text)
-        if fm.get("type") not in _PRIOR_TYPES:
-            return
         tid = fm.get("id") if isinstance(fm.get("id"), str) and fm.get("id") else f.stem
+        notes = _effect_notice_lines(root, ev, tid, text, fm)   # T-1440: before the type filter (any type)
+        if fm.get("type") not in _PRIOR_TYPES:
+            return _prior_emit(notes)
         a, rows = prior_tickets(root, tid, text)
         if not rows:
-            return
+            return _prior_emit(notes)
         seen_p = _prior_seen_path(ev.get("session_id"))
         seen = {}
         if seen_p is not None:
@@ -7788,7 +8184,7 @@ def _prior_hook():
         already = set(seen.get(tid) or [])
         rows = [r for r in rows if r[0] not in already]
         if not rows:
-            return
+            return _prior_emit(notes)
         shown = rows[:_PRIOR_HOOK_MAX_ROWS]
         if seen_p is not None:
             try:
@@ -7798,13 +8194,19 @@ def _prior_hook():
             except OSError:
                 pass
     except Exception:
-        return
+        return _prior_emit(notes)
     items = [_prior_row(r)[2:] for r in shown]
     if len(rows) > len(shown):
         items.append(PRIOR_TICKETS_MORE.format(k=len(rows) - len(shown), tid=one_line(tid)))
     text = PRIOR_TICKETS_HEAD % (_prior_anchor_names(a), "; ".join(items))
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
-                                             "additionalContext": text}}, ensure_ascii=False))
+    _prior_emit([text] + notes)
+
+
+def _prior_emit(lines):
+    """One PostToolUse additionalContext of `lines` joined by line breaks; nothing when empty."""
+    if lines:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                                 "additionalContext": "\n".join(lines)}}, ensure_ascii=False))
 
 
 def cmd_tickets_prior(args, root):
@@ -12764,6 +13166,20 @@ def feature_seam_warnings(root, tickets):
     return warns
 
 
+def jatturi_record_warnings(trows):
+    """T-1514 (T-1508 = C): a version holding two or more open+done `lane: 자투리`
+    records — the 자투리 lane is the union of their `deps`, and which list the user
+    chose is no longer one place. Takes the scan_tickets rows."""
+    by_v = {}
+    for r in trows:
+        if r.get("status") in ("open", "done") and is_jatturi_record(r):
+            by_v.setdefault(r.get("version") or "?", []).append(r["id"])
+    return [f"lane: {safe_label(str(v))} has {len(ids)} 자투리 lane records "
+            f"({', '.join(safe_label(t) for t in sorted(ids, key=_ticket_num_key))}) — keep one, "
+            f"move the other's deps into it"
+            for v, ids in sorted(by_v.items()) if len(ids) > 1]
+
+
 def duplicate_ticket_id_warnings(tickets):
     """Standard doctor warnings — non-blocking, never a gate.
 
@@ -12837,6 +13253,26 @@ def ticket_frame_warnings(root, tickets):
             violations = list(violations) + [f"created is missing or malformed ({created_raw!r})"]
         for v in violations:
             warns.append(f"ticket frame: {r['id']} ({r['path']}): {v}")
+    return Advisory(warns)
+
+
+def effect_check_warnings(root, tickets):
+    """T-1440: advisory — a closed discipline/hook/override ticket with no valid replay line
+    (`effect_report`, the lines `tickets fmt --check` prints)."""
+    warns = []
+    for r in sorted(tickets, key=lambda r: r["id"]):
+        path = root / r["path"]
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        fm, _ = parse_frontmatter_text(text)
+        if fm.get("status") != "done":
+            continue
+        _header, body = split_ticket_header_body(text)
+        probs, notes = effect_report(root, fm, body, r["id"])
+        for v in probs + notes:
+            warns.append(f"effect check: {r['id']} ({r['path']}): {v}")
     return Advisory(warns)
 
 
@@ -13858,7 +14294,8 @@ def _stage_signal_one(stage, version, tickets, root=None, line=None):
     warns = []
     next_stage = {"build": "Ship", "ship": "Retro"}.get(stage)
     if next_stage and version:
-        ver_tickets = [t for t in tickets.values() if t["version"] == version]
+        # T-1514: the `lane: 자투리` record stays open until close and is no work — never holds a signal back
+        ver_tickets = [t for t in tickets.values() if t["version"] == version and not is_jatturi_record(t)]
         if stage == "build":
             if ver_tickets:
                 met, note = _build_gate_met(root, line, ver_tickets, version)
@@ -13873,7 +14310,7 @@ def _stage_signal_one(stage, version, tickets, root=None, line=None):
     # build-entry signal (T-430): stage=build but the version's ticket dir has
     # 0 open+done tickets yet → scope likely wasn't sliced on Build entry.
     if stage == "build" and version:
-        ver_tickets = [t for t in tickets.values() if t["version"] == version]
+        ver_tickets = [t for t in tickets.values() if t["version"] == version and not is_jatturi_record(t)]
         if not any(t["status"] in ("open", "done") for t in ver_tickets):
             warns.append(f"stage: {version} has 0 open+done tickets at stage=build — "
                          f"consider build-entry scope slicing")
@@ -16812,8 +17249,8 @@ def _render_lane(ln, rows, lab):
 
 
 def _render_lanes_schedule(s, lab, stage=None):
-    """Lane mode (T-1184, R6/R10): one block per lane (the 자투리 lane last holds
-    what `dispatch next` listed), `lanes done:`, the total line, blocked rows
+    """Lane mode (T-1184, R6/R10): one block per lane (the 자투리 lane, then the 기본
+    레인 last — T-1514 — hold what `dispatch next` listed), `lanes done:`, the total line, blocked rows
     named by lane, then waiting-on-user / in-flight over every row."""
     rows, lanes = s["rows"], s["lanes"]
     lane_of = {}
@@ -16825,12 +17262,19 @@ def _render_lanes_schedule(s, lab, stage=None):
               f"blocks {first['blocks']}")
     if s["critical_path"]:
         print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
+    row_ids = {r["id"] for r in rows}
     for ln in lanes:
         print(_render_lane(ln, rows, lab))
         if ln.get("unnamed"):
             print(f"note: lane {lab(ln['name'])} has no name")
         if ln["warning"]:
             print(f"note: {lab(ln['warning'])}")
+        if ln.get("default") is True:
+            # T-1514: open tickets nobody placed — in no lane record and not in the 자투리 record
+            unplaced = [t for t in ln["tickets"] if t in row_ids]
+            if unplaced:
+                print(f"note: {lab(ln['name'])} {len(unplaced)} open ticket(s) in no lane record and not in "
+                      f"자투리: " + " ".join(lab(t) for t in unplaced))
         for t in ln["tickets"]:
             lane_of.setdefault(t, ln["name"])
     outside = [r for r in rows if r["id"] not in lane_of]
@@ -16872,8 +17316,17 @@ def _render_schedule(s, stage=None):
     rows = s["rows"]
     print(f"schedule {lab(s['version'])} — {len(rows)} open ticket(s) in the graph")
     lanes = s.get("lanes") or []
-    if lanes:
+    if real_lanes(lanes):
         return _render_lanes_schedule(s, lab, stage)
+    for ln in lanes:   # T-1513: the default 기본 레인 — one line, the rank list below stays
+        if len(lanes) == 1 and ln.get("default") is True:
+            print(f"lane {lab(ln['name'])} {ln['done']}/{ln['total']} — no lane record in {lab(s['version'])}")
+        else:   # T-1514: a 자투리 record and no gate lane — its row (and the 기본 레인 rest) above the same rank list
+            print(f"lane {lab(ln['name'])} {ln['done']}/{ln['total']} — "
+                  + ("tickets in no 자투리 record" if ln.get("default") is True else "자투리 record")
+                  + f", no gate lane in {lab(s['version'])}")
+            if ln["warning"]:
+                print(f"note: {lab(ln['warning'])}")
     if s["critical_path"]:
         print(f"critical path ({s['cp_length']}): " + " → ".join(lab(t) for t in s["critical_path"]))
     else:
@@ -17188,6 +17641,7 @@ def schedule_record(ev, now=None):
     tline = split_line_id(tickets[ticket][0]["version"])[0] if ticket in tickets else None
     if tline is not None and tline in project_line_names(root):
         lanes = compute_schedule(root, tickets, line=tline).get("lanes")
+    lanes = real_lanes(lanes)   # T-1513: the default 기본 레인 is no lane mode
     if lanes:
         # T-1145 / R6: with lanes the critical-path deviation warning does not apply
         # (riders run beside the lanes by rule) — warn only when an out-of-lane ticket is
@@ -18067,6 +18521,8 @@ def cmd_doctor(_args):
         # for the same reason: the id-keyed map is *defined* by collapsing an id,
         # so it is the one input in which this violation cannot be seen.
         ("duplicate ticket id", FAMILY_PROJECT, lambda: duplicate_ticket_id_warnings(trows)),
+        # T-1514: one 자투리 lane record per version — two hide which list the user chose.
+        ("jatturi lane record", FAMILY_PROJECT, lambda: jatturi_record_warnings(trows)),
         # T-1126: carve-out (2) switched off by a post-read check, or a result ref left undeleted.
         ("cloud tests", FAMILY_PROJECT, lambda: cloud_test_doctor_warnings(root)),
         # T-685: same `fmt_ticket_body` transform `tickets fmt --check` reads —
@@ -18077,6 +18533,8 @@ def cmd_doctor(_args):
         # T-1258: advisory — a decision closed after landing without outcome ### why/how/module/what.
         ("decision outcome keys", FAMILY_PROJECT, lambda: decision_outcome_key_warnings(root, trows)),
         ("decision place (T-1497)", FAMILY_PROJECT, lambda: decision_place_warnings(root, trows)),
+        # T-1440: same `effect_report` `tickets fmt --check` prints — advisory (the close refusal is the gate).
+        ("effect check", FAMILY_PROJECT, lambda: effect_check_warnings(root, trows)),
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
         ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets, project_line_names(root), root)),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
@@ -22425,11 +22883,16 @@ def main():
                                        "· prior <id> lists the other tickets that touched the same file, hook or "
                                        "feature that ticket names (T-1471) "
                                        "· check-place --place <place> --version <v> [--json]: does that version hold a closed "
-                                       "`type: decision` ticket for the fixed place (T-1497; the build-entry and deploy gates read it)")
-    p.add_argument("action", nargs="?", choices=("new", "fmt", "prior", "options", "check-place"), help="omit for the plain listing")
+                                       "`type: decision` ticket for the fixed place (T-1497; the build-entry and deploy gates read it) "
+                                       "· effect-check --gate: the close refusal's judge (T-1440; hook entry)")
+    p.add_argument("action", nargs="?", choices=("new", "fmt", "prior", "options", "check-place", "effect-check"),
+                   help="omit for the plain listing")
     p.add_argument("ids", nargs="*", metavar="ID", help="fmt: one or more ticket ids · prior: one ticket id")
     p.add_argument("--hook", action="store_true",
                    help="prior: read a PostToolUse payload on stdin — the entry prdt-prior-tickets.sh calls")
+    p.add_argument("--gate", action="store_true",
+                   help="effect-check: judge one close write (stdin JSON {root, path, content, worker}) → JSON "
+                        "{deny, notice}; the entry prdt-worktree-guard.sh calls (T-1440)")
     p.add_argument("--version", help="list: filter · new: place the ticket in this version's folder "
                                      "([<product>/]vX.Y, created if absent; T-1084)")
     p.add_argument("--feature", help="list: filter · new: this ticket's `feature`")

@@ -106,7 +106,7 @@ describe.skipIf(!READY)('statusline — T-984 layout, single line', () => {
     seed({ slug: 'productune' }, { stage: 'build', version: 'v1.13' })
     ticket('v1.13', 'T-1', { status: 'done' })
     ticket('v1.13', 'T-2')
-    expect(rows()).toEqual(['productune v1.13 | stage: build 1/2 | total tickets 1/2', 'lane: 자투리  1/2 | next T-2(developer)', 'decision 0 | request 0'])
+    expect(rows()).toEqual(['productune v1.13 | stage: build 1/2 | total tickets 1/2', 'lane: 기본 레인  1/2 | next T-2(developer)', 'decision 0 | request 0'])
   })
 
   test('either list has an entry → listed on the same last row', () => {
@@ -116,7 +116,7 @@ describe.skipIf(!READY)('statusline — T-984 layout, single line', () => {
     marker('T-985', 'qa')
     expect(rows()).toEqual([
       'productune v1.13 | stage: define 0/1 | total tickets 0/2',
-      'lane: 자투리  0/2 | working T-985(qa) | blocker T-984(decision) T-985(request)',
+      'lane: 기본 레인  0/2 | working T-985(qa) | blocker T-984(decision) T-985(request)',
       'decision T-984 | request T-985',
     ])
   })
@@ -155,7 +155,7 @@ describe.skipIf(!READY)('statusline — stage ticket count (T-923)', () => {
     ticket('v1.0', 'T-1', { status: 'done' })
     ticket('v1.0', 'T-2')
     seed({ slug: 'p' }, { stage: 'retro', version: 'v1.0', checks: { retro: ['a'] } })
-    expect(rows().slice(0, 2)).toEqual(['p v1.0 | stage: retro 0/0 | total tickets 1/2', 'lane: 자투리  1/2 | next T-2(developer)'])
+    expect(rows().slice(0, 2)).toEqual(['p v1.0 | stage: retro 0/0 | total tickets 1/2', 'lane: 기본 레인  1/2 | next T-2(developer)'])
     seed({ slug: 'p' }, { stage: 'idle', version: 'v1.0', checks: { idle: ['x'] } })
     expect(stageSeg()).toBe('stage: idle 0/0')
   })
@@ -177,9 +177,9 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     marker('T-764')
     expect(rows()).toEqual([
       'ntf-pm v2.2 | stage: define 0/1 | total tickets 1/2',
-      'lane: 자투리  1/2 | blocker T-760(decision)',
+      'lane: 기본 레인  1/2 | blocker T-760(decision)',
       'ntf-archive v1.2 | stage: build 0/2 | total tickets 0/2',
-      'lane: 자투리  0/2 | working T-764(developer) | blocker T-767(request)',
+      'lane: 기본 레인  0/2 | working T-764(developer) | blocker T-767(request)',
       'decision T-760 | request T-767',
     ])
   })
@@ -189,11 +189,11 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
       { stage: 'ship', version: 'v3.4', products: { android: { stage: 'build', version: 'v2.1' }, ios: { stage: 'define', version: 'v2.1' } } })
     expect(rows()).toEqual([
       'shop v3.4 | stage: ship 0/0',
-      'lane: 자투리  0/0 | working 0',
+      'lane: 기본 레인  0/0 | working 0',
       'android v2.1 | stage: build 0/0',
-      'lane: 자투리  0/0 | working 0',
+      'lane: 기본 레인  0/0 | working 0',
       'ios v2.1 | stage: define 0/0',
-      'lane: 자투리  0/0 | working 0',
+      'lane: 기본 레인  0/0 | working 0',
       'decision 0 | request 0',
     ])
   })
@@ -203,7 +203,7 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     seed({ slug: 'ntf-pm', lines: [{ name: 'ntf-archive' }, { name: 'v2-bad' }, { name: 'ntf-pm' }, { name: 'ntf-archive' }] },
       { stage: 'build', version: 'v2.2', lines: { ghost: { stage: 'ship', version: 'v9.9' } } })
     const r = rows()
-    expect(r).toEqual(['ntf-pm v2.2 | stage: build 0/0', 'lane: 자투리  0/0 | working 0', 'ntf-archive | stage: ? 0/0', 'lane: 자투리  0/0 | working 0', 'decision 0 | request 0'])
+    expect(r).toEqual(['ntf-pm v2.2 | stage: build 0/0', 'lane: 기본 레인  0/0 | working 0', 'ntf-archive | stage: ? 0/0', 'lane: 기본 레인  0/0 | working 0', 'decision 0 | request 0'])
     expect(r.join('\n')).not.toContain('ghost')
   })
 
@@ -228,9 +228,9 @@ describe.skipIf(!READY)('statusline — release lines (T-961)', () => {
     expect(r).toHaveLength(17)
     // 21 products x (product row + default lane row) = 42 body rows; 15 shown, 27 folded
     expect(r[0]).toBe('big v1.0 | stage: build 0/0')
-    expect(r[1]).toBe('lane: 자투리  0/0 | working 0')
+    expect(r[1]).toBe('lane: 기본 레인  0/0 | working 0')
     expect(r[14]).toBe('line-7 v1.0 | stage: build 0/0')
-    expect(r.filter((x) => x === 'lane: 자투리  0/0 | working 0')).toHaveLength(7)
+    expect(r.filter((x) => x === 'lane: 기본 레인  0/0 | working 0')).toHaveLength(7)
     expect(r[15]).toBe('+27 more rows')
     expect(r[16]).toBe('decision 0 | request 0')
   })
