@@ -298,11 +298,28 @@
  *   stamped inside this run's window, carries no tripwire run id, and has a
  *   complete parent chain that does NOT contain this run's root pid. A test that
  *   calls `prdt` against the real home is a descendant of the root and fails.
- *   Path ownership by any other route (shell, node, python, Edit tool) gets no
+ *   Path ownership by any other route (shell, node, python) gets no
  *   report and fails, as before. KNOWN BOUNDARY: a test process that detaches
  *   from the run (reparented to launchd — the isolation rules refuse
  *   `detached: true`) AND drops the run id, then calls `prdt`, or one that
  *   forges a log line by hand, is read as another session.
+ *
+ * ANOTHER SESSION'S AGENT TOOL WRITE — a notice, not a failure (T-1522)
+ *
+ *   T-1134 rested on "every writer outside the run self-reports", and an agent's
+ *   Edit/Write tool does not: another session editing `~/.prdt/wiki/` pages turned
+ *   three green `prdt track merge` runs red (2026-11-11). Those writes are not
+ *   self-reported either — the harness already records every finished write tool
+ *   call in its session transcript, and `agentToolWritePaths()` reads that record.
+ *   A drift path an agent tool wrote in the window gets the same coverage as a
+ *   reported one — but only while the file still holds exactly what the latest
+ *   record says was written (QA grill, d8daf5ca): a path-only match let a test
+ *   append to, or delete, the very page another session had edited. A SHELL write
+ *   by another session (python heredoc, sed, rm) is covered when that session's
+ *   Bash command, issued or returning in the window, named the path (dev4, user
+ *   decision B; content unchecked — see `agentShellWritePaths()`). Any other
+ *   write (shell, node, python) still fails unless `prdt` reported it; see
+ *   `agentToolWritePaths()` for why a test cannot earn either.
  */
 
 'use strict'
@@ -795,7 +812,20 @@ function verifyTripwire(options = {}) {
   // T-1134: the default stays T-450's — every drift fails. A drift line is moved
   // to the notice only when a writer OUTSIDE this run reported that path in the
   // machine's external-write log before writing it (see externalWritePaths()).
-  const reported = externalWritePaths(before)
+  // T-1522: plus every path an agent session's Edit/Write tool wrote during the
+  // window, read from the harness's own transcripts, while the file still holds
+  // what that write left (see agentToolWritePaths()).
+  // T-1522 dev4: plus every drift path under `~/.prdt` that another session's Bash
+  // tool_use command named in the window (see agentShellWritePaths()) — content
+  // unchecked, since a shell write leaves only its command text.
+  const candidates = allDrift.flatMap((d) => [...d.added, ...d.removed].map((l) => l.split('\t')[0]))
+  // A transcript record stamped after this moment (a future stamp) earns nothing.
+  const verifiedAt = Date.now()
+  const reported = new Set([
+    ...externalWritePaths(before),
+    ...agentToolWritePaths(before, verifiedAt, candidates),
+    ...agentShellWritePaths(before, candidates, verifiedAt),
+  ])
   const drift = []
   const external = []
   for (const d of allDrift) {
@@ -876,6 +906,406 @@ function externalWritePaths(before) {
 }
 
 /**
+ * T-1522: the containment keys of every file an AGENT TOOL (Claude Code's Edit /
+ * Write / MultiEdit) wrote during the run's window, on any session of this machine,
+ * AND that still holds exactly what the latest such write left.
+ *
+ * No writer reports here. The record is the harness's own transcript, which it
+ * keeps for every tool call whatever the tool or the session: after a write tool
+ * finishes, `~/.claude/projects/<project>/<session>.jsonl` (subagents under
+ * `<session>/subagents/`) gains one line whose `toolUseResult` carries `filePath`
+ * and `structuredPatch` — a key only the write tools' results have (a Read's
+ * result names its path under `file`, never at the top level with a patch).
+ *
+ * CONTENT, NOT PATH (QA grill on d8daf5ca). A path match alone excused whatever
+ * else happened to that path in the window: a test appending to the page another
+ * session had just edited, or deleting it, passed. So a path is covered only when
+ * the file exists now and its bytes equal the content the LATEST in-window record
+ * for it says was written. That content is derived from the record itself:
+ *   - Write: `content` is the whole file.
+ *   - Edit / MultiEdit: `originalFile` with `structuredPatch` applied
+ *     (applyStructuredPatch(); every context and removed line must match, else
+ *     nothing is derived). Measured on 74 live Edit records: the result equals
+ *     `originalFile` with `oldString` → `newString`, 74/74.
+ *   - An Edit whose `originalFile` is null (the harness omits it on many records)
+ *     derives from the previous in-window record for the same path, when that one
+ *     derived and the patch applies to it.
+ *   - Otherwise such an Edit gets a WEAKER check: the file must contain the
+ *     record's `newString` and — when `oldString` is non-empty and not a substring
+ *     of `newString` — no longer contain `oldString`. PO decision (T-1522 dev3):
+ *     one of the pages that turned 2026-11-11's merges red was written by exactly
+ *     such a record, so failing closed would bring that red back. Tightened (QA
+ *     qa2 P10 · P11, dev4): an empty `newString` earns nothing (every file
+ *     "contains" it, so an emptied page passed); when the file's size at the
+ *     baseline is known and every weak record since is a single replacement
+ *     stamped after the baseline, the file must now be exactly that size plus
+ *     each record's byte delta (catches truncation, whole rewrites and appends);
+ *     when that size is not known, a file that now holds nothing but `newString`
+ *     (its old text gone wholesale) earns nothing. ACCEPTED NARROW GAP: a test
+ *     that rewrites text outside the replaced span of that same page in the same
+ *     window, keeping the byte length, passes. A record with neither shape (no
+ *     strings) earns nothing.
+ * Nothing derived and no weak check → the path is not covered and its drift stays
+ * a failure. A removed file is never covered (Edit/Write never delete).
+ *
+ * Why this cannot excuse a write made BY the run: an agent tool write is made by
+ * the Claude Code process itself, never by a descendant of the run's root — a
+ * test process can run a shell, python or node, but it cannot make a session's
+ * Edit tool fire. A `claude` started BY a test runs under the sandbox HOME the
+ * isolation rules give every test (and with CLAUDE_CONFIG_DIR cleared by the
+ * vitest home sandbox), so its transcript lands there and not under
+ * `realHome()/.claude/projects` — the only directory read here, deliberately not
+ * one an environment variable can repoint. KNOWN BOUNDARY, the same class as
+ * T-1134's forged log line: a test that hand-writes a transcript line into the
+ * real `~/.claude` (outside the covered surfaces) is read as another session.
+ *
+ * Only transcripts modified inside the window are opened, and only lines naming
+ * `structuredPatch` are parsed. Stamped before the window → earns nothing.
+ */
+/**
+ * Every session transcript (`*.jsonl`, subagents' included) under the REAL home's
+ * `~/.claude/projects` modified at or after `since` — the only directory read, by
+ * design not one an environment variable can repoint.
+ */
+function transcriptFiles(since) {
+  const files = []
+  const walk = (dir) => {
+    let entries
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name)
+      if (e.isDirectory()) walk(full)
+      else if (e.isFile() && e.name.endsWith('.jsonl')) {
+        try {
+          if (fs.statSync(full).mtimeMs >= since) files.push(full)
+        } catch {
+          /* raced away */
+        }
+      }
+    }
+  }
+  walk(path.join(realHome(), '.claude', 'projects'))
+  return files
+}
+
+function agentToolWritePaths(before, until = Infinity, candidates) {
+  const since = before.takenAt - REPORT_SLACK_MS
+  // T-1523 L2: only a record naming a drift candidate (or a file inside / directly
+  // under one — the shapes coveredByReport() accepts) can cover anything, so no
+  // other record's file is ever stat'ed or read. `candidates` undefined = no filter.
+  const candidateKeys = Array.isArray(candidates) ? candidates.map((c) => containmentKey(c, true)) : undefined
+  const mayCover = (filePath) => {
+    if (!candidateKeys) return true
+    const k = containmentKey(filePath, true)
+    return candidateKeys.some((c) => k === c || path.dirname(k) === c || k.startsWith(c + path.sep))
+  }
+  const records = []
+  for (const f of transcriptFiles(since)) {
+    let text
+    try {
+      text = fs.readFileSync(f, 'utf-8')
+    } catch {
+      continue
+    }
+    for (const line of text.split('\n')) {
+      if (!line.includes('"structuredPatch"')) continue
+      let e
+      try {
+        e = JSON.parse(line)
+      } catch {
+        continue
+      }
+      const r = e && e.toolUseResult
+      if (!r || typeof r !== 'object' || typeof r.filePath !== 'string' || !path.isAbsolute(r.filePath)) continue
+      if (!('structuredPatch' in r)) continue
+      const ts = Date.parse(e.timestamp)
+      if (!Number.isFinite(ts) || ts < since || ts > until) continue
+      if (!mayCover(r.filePath)) continue
+      records.push({ ts, seq: records.length, r })
+    }
+  }
+  // Oldest first, so each path ends on its latest record. Equal stamps keep read order.
+  records.sort((a, b) => a.ts - b.ts || a.seq - b.seq)
+  // key → { filePath, content: string | undefined, weak: { oldString, newString } | undefined,
+  //         size: number | undefined (the byte length the records say the file has now) }
+  const written = new Map()
+  for (const { ts, r } of records) {
+    const key = containmentKey(r.filePath, true)
+    const prev = written.get(key)
+    let content
+    let weak
+    let size
+    if (typeof r.content === 'string' && (r.type === 'create' || r.type === 'update')) content = r.content
+    else if (typeof r.originalFile === 'string') content = applyStructuredPatch(r.originalFile, r.structuredPatch)
+    else {
+      if (prev && typeof prev.content === 'string') content = applyStructuredPatch(prev.content, r.structuredPatch)
+      if (content === undefined && r.originalFile === null && typeof r.oldString === 'string' && typeof r.newString === 'string') {
+        weak = { oldString: r.oldString, newString: r.newString }
+        // Expected size: the previous record's, else the baseline's — only for a
+        // single replacement stamped after the baseline walk ended (a record in
+        // the slack may already be inside the baseline's size).
+        const base = prev ? prev.size : baselineSize(before, r.filePath)
+        if (Number.isInteger(base) && r.replaceAll !== true && ts >= before.takenAt)
+          size = base + Buffer.byteLength(r.newString, 'utf-8') - Buffer.byteLength(r.oldString, 'utf-8')
+      }
+    }
+    if (typeof content === 'string') size = Buffer.byteLength(content, 'utf-8')
+    written.set(key, { filePath: r.filePath, content, weak, size })
+  }
+  const out = new Set()
+  for (const [key, w] of written) {
+    if (typeof w.content !== 'string' && !w.weak) continue
+    let now
+    try {
+      if (!fs.statSync(w.filePath).isFile()) continue
+      now = fs.readFileSync(w.filePath)
+    } catch {
+      continue // removed (or unreadable): Edit/Write never delete — stays drift
+    }
+    if (typeof w.content === 'string') {
+      if (now.equals(Buffer.from(w.content, 'utf-8'))) out.add(key)
+      continue
+    }
+    const text = now.toString('utf-8')
+    const { oldString, newString } = w.weak
+    if (newString === '') continue // every file contains '' — an emptied page must not pass
+    if (!text.includes(newString)) continue
+    if (oldString !== '' && !newString.includes(oldString) && text.includes(oldString)) continue
+    if (Number.isInteger(w.size)) {
+      if (now.length !== w.size) continue
+    } else if (oldString !== '' && text.trim() === newString.trim()) continue // whole page replaced by newString
+    out.add(key)
+  }
+  return out
+}
+
+/** A file's byte size in the baseline fingerprint, or undefined (absent, name-only, a directory). */
+function baselineSize(before, filePath) {
+  const line = before.detail.find((l) => l.startsWith(`${filePath}\t`))
+  if (!line) return undefined
+  const f = line.split('\t')
+  return f.length === 3 && /^\d+$/.test(f[1]) ? Number(f[1]) : undefined
+}
+
+/**
+ * T-1522 dev4 (user decision B): the containment keys of the drift `candidates`
+ * under the real `~/.prdt` that another session's SHELL command named in the
+ * window. A shell write (a python heredoc, `sed -i`, `rm`, `mv`) leaves no tool
+ * result naming its path — only the command text in the session transcript's
+ * Bash `tool_use` line. QA qa2 observed it on the real machine: session aac6c0dc
+ * rewrote three wiki pages and removed a fourth from one `python3 - <<EOF` call.
+ *
+ * CONTENT UNCHECKED — the command text cannot say what the file now holds, and a
+ * shell may delete or move, so a removed path is covered too. ACCEPTED GAP (the
+ * same class as the agent-write one): a test touching a path another session's
+ * command named in the same window passes.
+ *
+ * Which command text names a path. A mention is `~/.prdt`, `$HOME/.prdt`,
+ * `${HOME}/.prdt` or `<real home>/.prdt` — not preceded by a path character —
+ * followed by the longest run of path characters (a quote, whitespace, a shell
+ * metacharacter or a glob character ends it). `~` and `$HOME` are reliable here:
+ * only transcripts under the REAL home are read, and those sessions' shells run
+ * with the real HOME. NOT recognised: `$PRDT_HOME`, `Path.home() / ".prdt"`, a
+ * path assembled from pieces with no `.prdt` mention, a glob (`wiki/*.md`).
+ * A drift path is covered when:
+ *   - a mention names it exactly (trailing `/` ignored), or
+ *   - a mention names a directory above it AND the rest of its path below that
+ *     directory appears in the same command as a token starting a word (after a
+ *     quote, whitespace, `=` or `(`). That is how aac6c0dc's heredoc named its files:
+ *     `W=os.path.expanduser('~/.prdt/wiki/')` then `W+'fact--kc-request-channels.md'`;
+ *     a `cd ~/.prdt/wiki && … 'x.md'` reads the same way. A token right after a
+ *     `/` is part of ANOTHER path (`ls ~/.prdt/wiki; cat docs/_shared/wiki/index.md`
+ *     — this repo mirrors `wiki/`, `hooks/`, `discipline/` trees — or a URL) and
+ *     names nothing, unless the `/` follows `$W`, `${W}` or `{W}` for a variable
+ *     W assigned that directory's mention on the mention's own line
+ *     (`W=~/.prdt/wiki` … `"$W/a.md"`).
+ * A directory mention ALONE covers nothing under it: `ls ~/.prdt`, `grep -rn …
+ * ~/.prdt` are the commonest read-only commands other sessions run, and letting
+ * them cover the whole subtree would excuse any test write there. So a bulk
+ * shell rewrite through a glob (`sed -i … ~/.prdt/wiki/*.md`) or `rm -rf` of a
+ * directory still fails for the files it does not name.
+ *
+ * The window. A Bash `tool_use` line is stamped when the command is ISSUED, its
+ * `tool_result` when it returns; the writes happen between. A command counts when
+ * either stamp is inside the window (issued before the baseline but still running
+ * into it, or issued during the run). A command still running at verify time
+ * with no result yet counts only if issued inside the window. `until` (ms) bounds
+ * the window's end: the verify time for a live verdict (a stamp after it — a
+ * future stamp — earns nothing), the run's end for a replay of a past run.
+ *
+ * Why a test cannot earn it: the same as agentToolWritePaths() — only
+ * `realHome()/.claude/projects` is read, and a `claude` started by a test writes
+ * its transcript under the sandbox HOME. Forging a line into the real `~/.claude`
+ * is the same known boundary.
+ */
+function agentShellWritePaths(before, candidates, until = Infinity) {
+  const out = new Set()
+  const prdt = path.join(realHome(), '.prdt')
+  const prdtKey = containmentKey(prdt, true)
+  // Drift paths under ~/.prdt: { key, segs } — `segs` are the path's own
+  // segments below ~/.prdt as walked (true case; the key may be case-folded).
+  const wanted = []
+  for (const c of candidates) {
+    const key = containmentKey(c, true)
+    if (key !== prdtKey && !key.startsWith(prdtKey + path.sep)) continue
+    const segs = c.startsWith(prdt + path.sep) ? c.slice(prdt.length + 1).normalize('NFC').split(path.sep) : []
+    wanted.push({ key, segs })
+  }
+  if (wanted.length === 0) return out
+  const since = before.takenAt - REPORT_SLACK_MS
+  const commands = []
+  for (const f of transcriptFiles(since)) {
+    let text
+    try {
+      text = fs.readFileSync(f, 'utf-8')
+    } catch {
+      continue
+    }
+    const issued = new Map() // tool_use id → { ts, command }
+    const lines = text.split('\n')
+    for (const line of lines) {
+      if (!line.includes('"tool_use"') || !line.includes('"Bash"') || !line.includes('.prdt')) continue
+      let e
+      try {
+        e = JSON.parse(line)
+      } catch {
+        continue
+      }
+      const content = e && e.message && Array.isArray(e.message.content) ? e.message.content : []
+      const ts = Date.parse(e.timestamp)
+      if (!Number.isFinite(ts) || ts > until) continue
+      for (const b of content) {
+        if (!b || b.type !== 'tool_use' || b.name !== 'Bash' || !b.input || typeof b.input.command !== 'string') continue
+        if (!b.input.command.includes('.prdt')) continue
+        issued.set(b.id, { ts, command: b.input.command })
+      }
+    }
+    if (issued.size === 0) continue
+    const pending = [...issued].filter(([, u]) => u.ts < since)
+    const returned = new Map()
+    if (pending.length) {
+      for (const line of lines) {
+        if (!line.includes('"tool_result"')) continue
+        const m = /"tool_use_id":\s*"([^"]+)"/.exec(line)
+        if (!m || !issued.has(m[1])) continue
+        try {
+          const ts = Date.parse(JSON.parse(line).timestamp)
+          if (Number.isFinite(ts)) returned.set(m[1], ts)
+        } catch {
+          /* malformed — earns nothing */
+        }
+      }
+    }
+    for (const [id, u] of issued) {
+      const r = returned.get(id)
+      if (u.ts >= since || (r !== undefined && r >= since && r <= until)) commands.push(u.command.normalize('NFC'))
+    }
+  }
+  if (commands.length === 0) return out
+  const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const homeForms = new Set([realHome()])
+  try {
+    homeForms.add(fs.realpathSync(realHome()))
+  } catch {
+    /* absent home — the literal form only */
+  }
+  const homes = ['~', '\\$HOME', '\\$\\{HOME\\}', ...[...homeForms].map((h) => esc(h.normalize('NFC')))]
+  const STOP = "\\s'\"`;|&<>(){}$*?\\[\\]\\\\,"
+  const mentionRe = new RegExp(`(?<![\\w./-])(?:${homes.join('|')})/\\.prdt(?=$|/|[${STOP}])((?:/[^${STOP}]*)?)`, 'g')
+  // A rest token starts a word: never right after a `/` (another path's segment
+  // sits in front of it: `docs/_shared/wiki/index.md`, `https://h/x.md`) — except
+  // `$W/`, `${W}/` or `{W}/` where W was assigned a mention of the named directory.
+  const BOUND_L = "(?:^|[\\s'\"`=(])"
+  const BOUND_R = "(?=$|[\\s'\"`/);,:|&<>])"
+  // `W=…<mention>` / `W = os.path.expanduser('<mention>`: the text before the
+  // mention on its line ends in an assignment with no space, `;`, `&` or `|` after `=`.
+  const ASSIGN_SCAN_MAX = 1024
+  const assignRe = /(?:^|[\s;&|(])(?:export\s+|local\s+|readonly\s+)?([A-Za-z_]\w*)\s*=\s*[^\s;&|]*$/
+  for (const cmd of commands) {
+    const named = new Set()
+    const vars = new Map() // named directory key → names of variables assigned it
+    for (const m of cmd.matchAll(mentionRe)) {
+      const k = containmentKey(path.join(prdt, ...m[1].split('/').filter(Boolean)), true)
+      if (k !== prdtKey && !k.startsWith(prdtKey + path.sep)) continue // `..` out of ~/.prdt names nothing
+      named.add(k)
+      // T-1523 L1: assignRe is unanchored at the start, so on a long line with no
+      // whitespace it retries from every offset (quadratic: ~4 s at 150 KB). Only the
+      // tail of the line before the mention can hold its assignment; a '#' stands in
+      // for the cut so no variable name can start mid-identifier at the boundary.
+      const lineHead = cmd.slice(cmd.lastIndexOf('\n', m.index) + 1, m.index)
+      const a = assignRe.exec(lineHead.length > ASSIGN_SCAN_MAX ? '#' + lineHead.slice(-ASSIGN_SCAN_MAX) : lineHead)
+      if (a) vars.set(k, new Set([...(vars.get(k) || []), a[1]]))
+    }
+    for (const w of wanted) {
+      if (out.has(w.key)) continue
+      for (const n of named) {
+        if (w.key === n) {
+          out.add(w.key)
+          break
+        }
+        if (!w.key.startsWith(n + path.sep)) continue
+        // The rest of the drift path below the named directory, in its true case.
+        const depth = w.key.slice(n.length + 1).split(path.sep).length
+        if (depth > w.segs.length) continue
+        const rest = w.segs.slice(-depth).join('/')
+        const viaVar = [...(vars.get(n) || [])].map((v) => `(?:\\$${v}|\\$?\\{${v}\\})/`)
+        if (new RegExp(`(?:${[BOUND_L, ...viaVar].join('|')})` + esc(rest) + BOUND_R).test(cmd)) {
+          out.add(w.key)
+          break
+        }
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * The file text a Claude Edit/MultiEdit left: `original` with the tool result's
+ * `structuredPatch` hunks (jsdiff shape: `oldStart` 1-based, `lines` tagged ' ',
+ * '-', '+', '\\'). Every context and removed line must match `original` at the
+ * hunk's place, else `undefined` — a patch that does not apply derives nothing.
+ */
+function applyStructuredPatch(original, hunks) {
+  if (typeof original !== 'string' || !Array.isArray(hunks)) return undefined
+  const orig = original.match(/[^\n]*\n|[^\n]+$/g) || []
+  const body = (l) => (l.endsWith('\n') ? l.slice(0, -1) : l)
+  const out = []
+  let pos = 0
+  for (const h of hunks) {
+    if (!h || !Array.isArray(h.lines) || !Number.isInteger(h.oldStart)) return undefined
+    const at = (start) => {
+      if (start < pos || start > orig.length) return null
+      const o = []
+      let p = start
+      for (let i = 0; i < h.lines.length; i++) {
+        const l = h.lines[i]
+        if (typeof l !== 'string' || l.length === 0) return null
+        const text = l.slice(1)
+        if (l[0] === ' ' || l[0] === '-') {
+          if (p >= orig.length || body(orig[p]) !== text) return null
+          if (l[0] === ' ') o.push(orig[p])
+          p++
+        } else if (l[0] === '+') o.push(text + '\n')
+        else if (l[0] === '\\') {
+          if (h.lines[i - 1] && h.lines[i - 1][0] === '+') o[o.length - 1] = o[o.length - 1].slice(0, -1)
+        } else return null
+      }
+      return { start, o, p }
+    }
+    const r = at(h.oldStart - 1) ?? (h.oldLines === 0 ? at(h.oldStart) : null)
+    if (!r) return undefined
+    out.push(...orig.slice(pos, r.start), ...r.o)
+    pos = r.p
+  }
+  out.push(...orig.slice(pos))
+  return out.join('')
+}
+
+/**
  * Is a drifted path covered by a report? Its own path was reported, or it is a
  * directory on the way to a reported path whose line changed only because that
  * write landed inside it: the reported path's DIRECT parent (an atomic rename's
@@ -900,7 +1330,9 @@ function formatExternalNotice(external) {
   if (paths.length === 0) return ''
   return (
     '\nT-450 notice: the real home changed during this run, written by a process OUTSIDE\n' +
-    'this run that reported the write (prdt external-write log) — another session. NOT a failure:\n' +
+    'this run — another session: `prdt` reported the write (external-write log), an agent\n' +
+    'Edit/Write tool made it, or a shell write — another session\'s Bash command named the\n' +
+    'path (Claude session transcript; content unchecked). NOT a failure:\n' +
     [...new Set(paths)].slice(0, 20).map((p) => `  ~ ${p}\n`).join('') +
     (paths.length > 20 ? `  … ${paths.length - 20} more\n` : '') +
     '\n'
@@ -941,4 +1373,8 @@ module.exports = {
   armTripwire,
   verifyTripwire,
   assertTripwireClean,
+  // T-1522 dev4: exported for replaying a past run's window against real transcripts.
+  agentShellWritePaths,
+  // T-1523: exported so a test can observe which transcript-named files it opens.
+  agentToolWritePaths,
 }

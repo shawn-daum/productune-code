@@ -1,7 +1,7 @@
 ---
 name: definition-of-done
 section: Definition of Done
-when: "choosing the tests a done-claim runs · the change you are handing back edits a discipline file"
+when: "choosing the tests a done-claim runs · the change you are handing back edits discipline, agent stub, hook or override text"
 ---
 # Contracts §Definition of Done — annex
 
@@ -14,5 +14,9 @@ Continues `contracts.md` §Definition of Done; binds every persona the same way,
 - A red file re-runs alone before it is reported: an assertion red alone = a failure · green alone, or a timeout in either run = contention, reported with the run it failed in and the host load.
 - The whole suite has one slot — ship entry, the PO's `readiness-dispatch` — and a done-claim never waits on it. It counts green only when run after commit + mirror sync, in a detached worktree of that commit; a worker barred from committing reports its relevant set and `whole suite: unmeasured (uncommitted)`, never whole-suite green.
 
-## Discipline-file changes
+## Discipline · hook · override changes
 - A discipline-file change is never done on a clean check alone: committed/applied ≠ effective — `discipline_root()` prefers `~/.prdt/discipline` over the repo, so it binds no persona until that mirror is resynced; verify effective with `prdt doctor`'s mirror-drift warning, not by re-reading the diff (T-507).
+- Scope: the change edits `discipline/**` · `doctrine.md` · `agents/*.md` · `scripts/hooks/*.sh` · a `[prdt …]` line of `scripts/prdt_cli.py` · `.prdt/overrides/**` · `~/.prdt/overrides/**`. Done only with one ticket `evidence` line per observed case it targets:
+- `- replay: <case> · before <k>/<n> · after <k>/<n>` — `<case>` = a string copied from `problem` · k = runs showing the problem · old text then new, same input · real path: every model call live (stubbed model or judge = no replay) · n ≥ 3 per arm.
+- Effect shown = before k ≥ 1 and after k < before k. Else the line ends `· user 「<reply>」`: the PO puts the result to the user before close; the reply decides adoption. No replay run → `- effect not shown: <reason> · user 「<reply>」`.
+- Worker: the line rides `results[]` `evidence`; the PO copies it into the ticket. A close write without it is refused (`[prdt effect check]`); `prdt tickets fmt --check` names it too.

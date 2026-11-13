@@ -204,7 +204,7 @@ describe('prdt deploy record', () => {
     test('pointer present but RELEASES.md has no such section → refused', () => {
       const p = project({ seed: false })
       seedDeploy(p.root, 'v1.2', 'home', { section: false })
-      expect(fail(p)).toContain('body cites no `RELEASES.md` `## v1.2` — nothing written.')
+      expect(fail(p)).toContain('cites `RELEASES.md` `## v1.2`, but docs/RELEASES.md has no `## v1.2` — nothing written.')
     }, T)
     test('the pointer may sit on a table line with the version and RELEASES.md', () => {
       const p = project({ seed: false })

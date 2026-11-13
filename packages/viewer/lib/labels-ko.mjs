@@ -98,8 +98,8 @@ const HOME = {
   },
   stageDone: (done, total) => `티켓 완료 ${done}/${total}`,
   scope: '스코프',
+  laneDefault: '기본 레인', // same name prdt_lanes.LANE_DEFAULT_NAME gives it (a lane name is data, not translated)
   scopeSub: (n) => `이번 버전 PRD ${n}항목`,
-  scopeDefaultLane: '이번 버전',
   waitDec: '결정사항',
   waitDecEmpty: '기다리는 결정이 없어요.',
   waitReq: '요청사항',

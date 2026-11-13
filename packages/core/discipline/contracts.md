@@ -41,7 +41,7 @@
 - Writing or reading any ticket key or frontmatter (an `acceptance` line included), raising a user fork, splitting or carrying over a ticket: `contracts/tickets.md` first; an `assignee: user` body: `contracts/user-tickets.md`.
 
 ## Definition of Done
-- Not done until: build green · lint clean · typecheck clean · relevant tests green · acceptance verified against the ticket. `relevant` derives from the changed files — the derivation, and the discipline-file extra step: `contracts/definition-of-done.md`.
+- Not done until: build green · lint clean · typecheck clean · relevant tests green · acceptance verified against the ticket. `relevant` derives from the changed files — derivation, and the discipline/hook/override step: `contracts/definition-of-done.md`.
 
 ## Git
 - No version branches. `dev` is the residence: daily work (code + docs) commits here. `main` is the deploy branch, reached ONLY by promoting `dev → main`; promotion path · version boundary · patch rolls · remote default branch · isolation triggers: `contracts/git.md`.

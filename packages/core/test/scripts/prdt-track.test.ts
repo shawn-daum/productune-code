@@ -1020,6 +1020,23 @@ describe('T-1268: land runs the relevant test set by default', () => {
     expect(ran().trim()).toBe('test/a.test.ts')
   })
 
+  // T-1514: 기본 레인 and the 자투리 record lane are never gate lanes — landing their last open impl ticket closes no lane.
+  for (const jat of [false, true]) {
+    test(`T-1514: the last open impl ticket of ${jat ? 'the 자투리 record lane' : 'the 기본 레인'} is not lane-closing`, () => {
+      ticket('T-5', { gate: 'docs/artifacts/g.md' }) // gate lane A, open, holds only T-5
+      ticket('T-1')
+      if (jat) {
+        fs.writeFileSync(path.join(proj, 'docs', 'tickets', 'v1.11', 'T-8.md'), ['---', 'id: T-8', 'slug: s-t-8', 'type: ops',
+          'status: open', 'assignee: po', 'deps: [T-1]', 'lane: 자투리', 'created: 2026-10-15', '---', '', 'x', ''].join('\n'))
+      }
+      editA()
+      const r = cli('track', 'land', 'T-1')
+      expect(r.status, r.err).toBe(0)
+      expect(r.out).not.toContain('whole suite')
+      expect(ran().trim()).toBe('test/a.test.ts')
+    })
+  }
+
   test('explicit --full runs the whole suite even when the land closes no lane', () => {
     ticket('T-1')
     editA()

@@ -156,10 +156,11 @@ describe('findGateTicket — the real gate survives later tickets that merely me
   })
 })
 
-function page(tickets: ReturnType<typeof tk>[], opts: { gatePath?: string; stage?: string } = {}) {
+function page(tickets: ReturnType<typeof tk>[], opts: { gatePath?: string; stage?: string; lanes?: unknown[] } = {}) {
   const data = {
     poState: { stage: opts.stage ?? 'build', version: 'v1.12', current_task: null },
     currentVersion: 'v1.12',
+    lanes: opts.lanes,
     prd: { current: { body: '', rel: 'docs/prd/PRD.md', frontmatter: {} }, closed: [], openItems: [{ key: 'a', label: '기능 화면: 영역 사이드바' }], gatePath: opts.gatePath ?? '' },
     tickets: { included: tickets, omitted: [{ bucket: 'v1.11', count: 1, bytes: 1, tickets: [{ rel: 'docs/tickets/v1.11/T-3.md', frontmatter: { id: 'T-3', slug: 'old-decision', type: 'decision', status: 'open', assignee: 'user' } }], bodies: {} }] },
     wiki: [],
@@ -346,12 +347,20 @@ describe('home fix round 1 (T-881 grill) — what a DOM-free test can pin; width
 })
 
 describe('home scope: one line per lane, lane numbers only (T-1415, shape E)', () => {
-  const scope = (tickets: ReturnType<typeof tk>[]) => /<div class="sc-e"><div class="cp-h">스코프[\s\S]*?<\/div><\/div>(?=<\/div>|<div class="cp-block">)/.exec(page(tickets).home)?.[0] ?? ''
-  it('without gate lanes: one default line holding every ticket (decisions included), n/m of that line', () => {
-    const s = scope([tk({ id: 'T-1', status: 'done' }), tk({ id: 'T-2' }), tk({ id: 'T-3', type: 'decision' })])
+  const scope = (tickets: ReturnType<typeof tk>[], lanes?: unknown[]) => /<div class="sc-e"><div class="cp-h">스코프[\s\S]*?<\/div><\/div>(?=<\/div>|<div class="cp-block">)/.exec(page(tickets, { lanes }).home)?.[0] ?? ''
+  it('no lane record and no 합격선 row (T-1513): the computed 「기본 레인」 draws one line holding every ticket (decisions included), n/m of that line', () => {
+    const tickets = [tk({ id: 'T-1', status: 'done' }), tk({ id: 'T-2' }), tk({ id: 'T-3', type: 'decision' })]
+    const s = scope(tickets, [{ name: '기본 레인', besteffort: true, linked: true, done: 1, total: 3, tickets: ['T-1', 'T-2', 'T-3'] }])
     expect([...s.matchAll(/class="e-row"/g)]).toHaveLength(1)
+    expect(s).toContain('기본 레인')
     expect(s).toContain('1/3')
     expect(s).toContain('data-detail-id="T-3"')
+  })
+  it('no lanes and no tickets draws no row — no 0/0 line (T-1513); a failed read with tickets draws one 기본 레인 row (T-1524)', () => {
+    expect([...scope([]).matchAll(/class="e-row"/g)]).toHaveLength(0)
+    const s = scope([tk({ id: 'T-1' })])
+    expect([...s.matchAll(/class="e-row"/g)]).toHaveLength(1)
+    expect(s).toContain('title="기본 레인"')
   })
   it('drops the item rows, the 「PRD 항목 밖 티켓」 row, the decision note and every explanatory line', () => {
     const s = scope([tk({ id: 'T-1', prd_item: 'v1.12#a' }), tk({ id: 'T-2', prd_item: 'nope' }), tk({ id: 'T-3', type: 'decision' })])

@@ -91,7 +91,8 @@ describe('rendered page', () => {
   })
   it('en: no Hangul outside the embedded document data', () => {
     const chrome = visible(en)
-    const hits = [...chrome.matchAll(/[가-힣]+/g)].map((m) => m[0])
+    // 「기본 레인」 is the default lane's name from prdt_lanes (the one name of all three screens, T-1513), like any lane name
+    const hits = [...chrome.replace(/기본 레인/g, '').matchAll(/[가-힣]+/g)].map((m) => m[0])
     expect([...new Set(hits)]).toEqual([])
   })
   it('ko default: Korean chrome, header renamed', () => {

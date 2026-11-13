@@ -64,8 +64,8 @@ const HOME = {
   },
   stageDone: (done, total) => `Tickets done ${done}/${total}`,
   scope: 'Scope',
+  laneDefault: '기본 레인', // same name prdt_lanes.LANE_DEFAULT_NAME gives it (a lane name is data, not translated)
   scopeSub: (n) => `${n} PRD items this version`,
-  scopeDefaultLane: 'This version',
   waitDec: 'Waiting for my decision',
   waitDecEmpty: 'No decision is waiting.',
   waitReq: 'Waiting for user work',

@@ -21,6 +21,10 @@
 # (anchors, ticket scan, git log of the named files) is `prdt tickets prior
 # --hook`, the same code `prdt tickets prior <id>` runs. Any failure fails
 # OPEN: exit 0, no output.
+#
+# T-1440: the same entry carries the effect-check notices E3 · E1 after a close write of ANY ticket type
+# (`_effect_notice_lines`, run before the impl|decision filter); with prior rows they share one
+# additionalContext, one line each.
 payload="$(cat 2>/dev/null)" || exit 0
 case "$payload" in
   *'prdt-po'*) ;;

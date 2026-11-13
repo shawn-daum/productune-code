@@ -184,7 +184,7 @@ describe.skipIf(!PY)('T-1497 deploy decision gate — push main · tag push at s
     expect(reason(bash('git push origin main'))).toContain('; T-4 body cites no `RELEASES.md` `## v1.2`. Next:')
     mk({ stage: 'ship', version: 'v1.2' })
     decision('v1.2', 'deploy', { id: 'T-5', pointer: 'RELEASES.md#v1.2' })
-    expect(reason(bash('git push origin main'))).toContain('; T-5 body cites no `RELEASES.md` `## v1.2`. Next:')
+    expect(reason(bash('git push origin main'))).toContain('; T-5 cites `RELEASES.md` `## v1.2`, but docs/RELEASES.md has no `## v1.2`. Next:')
   }, T)
 
   test('a patch version is gated on deploy', () => {
@@ -213,6 +213,29 @@ describe.skipIf(!PY)('T-1497 deploy decision gate — push main · tag push at s
       { slug: 'p', products: [{ name: 'arc' }] })
     expect(reason(bash('git push origin main'))).toContain('arc/v3 needs, in docs/arc/tickets/v3,')
     decision('v3', 'deploy', { product: 'arc', pointer: 'RELEASES.md#v3' }); releases('v3')
+    expect(bash('git push origin main')).toBe('')
+  }, T)
+
+  test('T-1528: an added product with its own code.dir is checked against ITS RELEASES.md (the NTF Archive shape)', () => {
+    const st = { stage: 'idle', version: 'v1.2', current_task: { ticket_id: 'T-9', slug: 's', assignee: 'developer', product: 'arc' }, products: { arc: { stage: 'ship', version: 'v1.6' } } }
+    const cfg = { slug: 'p', code: { dir: 'code' }, products: [{ name: 'arc', code: { dir: 'arc' } }] }
+    mk(st, cfg)
+    decision('v1.6', 'deploy', { product: 'arc', id: 'T-8', pointer: 'Notes: arc/docs/RELEASES.md#v1.6' })
+    put('arc/docs/RELEASES.md', '# Releases\n\n## v1.6 — x (2026-11-13)\n\n1. 요약\n')
+    for (const c of ['git push origin v1.6', 'gh pr merge 3 --merge', 'git push origin main']) expect(bash(c), c).toBe('')
+    // the section only in the FIRST product's repo does not count for arc — and the message names the file it read
+    mk(st, cfg)
+    decision('v1.6', 'deploy', { product: 'arc', id: 'T-8', pointer: 'Notes: arc/docs/RELEASES.md#v1.6' })
+    put('code/docs/RELEASES.md', '# Releases\n\n## v1.6 — x (2026-11-13)\n\n1. 요약\n')
+    expect(reason(bash('git push origin v1.6'))).toContain('arc/v1.6 needs, in docs/arc/tickets/v1.6, a `type: decision` ticket with `place: deploy`, `status: done`, user quote in `outcome`, body citing `RELEASES.md` `## v1.6`; T-8 cites `RELEASES.md` `## v1.6`, but arc/docs/RELEASES.md has no `## v1.6`. Next:')
+  }, T)
+
+  test('T-1528: the first product still reads the project code.dir RELEASES.md', () => {
+    mk({ stage: 'ship', version: 'v1.2' }, { slug: 'p', code: { dir: 'code' }, products: [{ name: 'arc', code: { dir: 'arc' } }] })
+    decision('v1.2', 'deploy', { id: 'T-6', pointer: 'RELEASES.md#v1.2' })
+    put('arc/docs/RELEASES.md', '# Releases\n\n## v1.2 — x\n')
+    expect(reason(bash('git push origin main'))).toContain('; T-6 cites `RELEASES.md` `## v1.2`, but code/docs/RELEASES.md has no `## v1.2`. Next:')
+    put('code/docs/RELEASES.md', '# Releases\n\n## v1.2 — x\n')
     expect(bash('git push origin main')).toBe('')
   }, T)
 

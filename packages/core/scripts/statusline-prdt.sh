@@ -188,6 +188,23 @@ STAGES = ("define", "build", "ship", "retro", "idle")
 ASSIGNEES = ("po", "designer", "developer", "qa", "user")
 VERSION_RE = re.compile(r"\Av[0-9]{1,4}(?:\.[0-9]{1,4}){0,2}\Z")
 TICKET_RE = re.compile(r"\AT-(?:[BCDFGHJKLMNPQRSTVWXYZ]{1,8}-)?[0-9]{1,5}\Z")
+# T-1514: the 자투리 record (`lane: 자투리`) — the rule is stated once in prdt_lanes.py
+# (`is_jatturi_record`), implemented here without that module: key `lane` exact at column 0,
+# the LAST `lane:` line wins, value = trim whitespace (ASCII + Unicode space separators), cut a
+# trailing `# comment`, trim, drop every leading/trailing quote char, trim; == 자투리.
+LANE_LINE_RE = re.compile(r"^lane:(.*)$", re.M)
+LANE_WS = " \t\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000"
+LANE_COMMENT_RE = re.compile(r"(?:^|[ \t\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000])#.*$")
+
+
+def jatturi_record_text(fm_text):
+    """True when the frontmatter text (between the `---` fences) holds the 자투리 record."""
+    hits = LANE_LINE_RE.findall(fm_text)
+    if not hits:
+        return False
+    v = hits[-1].strip(LANE_WS)
+    v = LANE_COMMENT_RE.sub("", v).strip(LANE_WS)
+    return v.strip("'\"").strip(LANE_WS) == "자투리"
 
 
 def token(raw, ok, absent=""):
@@ -572,7 +589,8 @@ def scan(base, row):
                 tid_status.setdefault(fn[:-3], s)
             if s not in ("done", "open"):
                 continue
-            if is_current:
+            # T-1514: the `lane: 자투리` record is no work — never in the version or stage counts
+            if is_current and not jatturi_record_text(head.split("\n---", 1)[0]):
                 row["vtotal"] += 1
                 row["vdone"] += s == "done"
                 stg = ticket_stage_of(row, head)
@@ -913,7 +931,7 @@ links = {}  # ticket_id -> resolved viewer link target (T-805), filled in as seg
 # import keeps python's bytecode cache (spawning the 20k-line `prdt` recompiled it on
 # every render). Read-only: nothing is written. A missing/stale module or any failure =
 # no lane rows (degrade silently). T-1330: read in every stage; a version with no gate
-# lane gets one default 자투리 lane over its open+done tickets (the module's own fill).
+# lane gets the module's own default 기본 레인 (T-1513) — no second computation here.
 
 
 def read_lanes():
@@ -934,13 +952,6 @@ def read_lanes():
             sched = prdt_lanes.compute_schedule(root, tickets=tickets, line=ln)
             lanes = [x for x in (sched.get("lanes") if isinstance(sched.get("lanes"), list) else [])
                      if isinstance(x, dict)]
-            if not lanes:
-                ver = sched.get("version")
-                rest = [t for t, (rr, _p) in tickets.items() if rr["version"] == ver and rr["status"] in ("open", "done")]
-                lane = prdt_lanes._lane_new(prdt_lanes.LANE_BESTEFFORT_NAME, None, True, ver, besteffort=True)
-                prdt_lanes._lane_fill(lane, rest, tickets, in_flight,
-                                      {x.get("id"): i for i, x in enumerate(sched.get("rows") or [])})
-                lanes = [lane]
         except Exception:
             continue
         out[ln] = lanes
@@ -1026,6 +1037,8 @@ def fit(build, tail=""):
 
 def lane_name(lane):
     """R11: the 합격선 name whole (words included); the 자투리 lane's fixed label."""
+    if lane.get("default") is True:
+        return L("lane.default")
     return L("lane.besteffort") if lane.get("besteffort") is True else (clean(lane.get("name"), cap=10**6) or "?")
 
 
@@ -1088,9 +1101,9 @@ def lane_text(lane, cap):
 
 def lane_block(lanes, cap):
     """([finished entries], [(lane, text)]) for one product: T-1202 = B — every
-    finished gate lane (never 자투리) is an `NAME d/t` entry the product's FIRST
+    finished gate lane (never 자투리 · 기본 레인) is an `NAME d/t` entry the product's FIRST
     row carries as `done lanes: …`, table order; then one row per other lane,
-    자투리 last. The row cap (MAX_ROWS) counts these rows too (T-1330)."""
+    자투리 then 기본 레인 last (T-1514). The row cap (MAX_ROWS) counts these rows too (T-1330)."""
     done = [x for x in lanes if x.get("finished") is True and x.get("besteffort") is not True]
     ents = [clean(f"{lane_name(x)} {int(x.get('done') or 0)}/{int(x.get('total') or 0)}", cap=10**6) for x in done]
     out = [(x, lane_text(x, cap)) for x in lanes if not (x.get("finished") is True and x.get("besteffort") is not True)]
@@ -1145,18 +1158,19 @@ running_rows = set()  # T-1442: indexes of out_rows holding a running dispatch i
 def lanes_with_running(lanes, r):
     """T-1330: the product row has no `working` cell — every running dispatch of the
     product sits on a lane row. One no lane row holds (another version's ticket, a
-    finished lane, a lane read that failed) joins the 자투리 lane, made when absent;
-    a failed lane read leaves one default 자투리 lane over the version's counts."""
+    finished lane, a lane read that failed) joins the 기본 레인 (T-1514: nobody placed
+    it — never the user's 자투리), made when absent; a failed lane read leaves one
+    default 기본 레인 over the version's counts."""
     lanes = [dict(x) for x in lanes]
     if not lanes:
-        lanes = [{"besteffort": True, "linked": True, "done": r["vdone"], "total": r["vtotal"], "working": []}]
+        lanes = [{"besteffort": True, "default": True, "linked": True, "done": r["vdone"], "total": r["vtotal"], "working": []}]
     held = {t for x in lanes if x.get("linked") and not (x.get("finished") is True and x.get("besteffort") is not True)
             for t in _ids(x.get("working"))}
     extra = [tid for tid, _ in running if line_of(tid) == r["line"] and tid not in held]
     if extra:
-        be = next((x for x in lanes if x.get("besteffort") is True), None)
+        be = next((x for x in lanes if x.get("default") is True), None)
         if be is None:
-            be = {"besteffort": True, "linked": True, "done": 0, "total": 0, "working": []}
+            be = {"besteffort": True, "default": True, "linked": True, "done": 0, "total": 0, "working": []}
             lanes.append(be)
         be["working"] = _ids(be.get("working")) + extra
     return lanes

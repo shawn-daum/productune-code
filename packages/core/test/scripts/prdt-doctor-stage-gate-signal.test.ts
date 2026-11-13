@@ -228,3 +228,43 @@ describe.skipIf(!PYTHON3)('prdt doctor — build stage signal reads the gate (T-
     expect(run(['doctor'], 'doctor')).not.toMatch(/at stage=ship — consider Retro/)
   })
 })
+
+// T-1514: 기본 레인 and the `lane: 자투리` record are never a gate lane — the signal reads gate lanes only,
+// and the record (open until close) never holds the no-gate slice back.
+describe.skipIf(!PYTHON3)('build stage signal with a 자투리 record and the 기본 레인 rest (T-1514)', () => {
+  function recTicket(id: string, lane: string, deps: string, status = 'open') {
+    const dir = path.join(projectDir, 'docs', 'tickets', 'v0.1')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, `${id}.md`), ['---', `id: ${id}`, `slug: s-${id.toLowerCase()}`, 'type: ops', `status: ${status}`,
+      'assignee: po', `deps: ${deps}`, `lane: ${lane}`, 'created: 2026-10-15', '---', '', 'x', ''].join('\n'))
+  }
+  test('fires: the gate record lane finished; 자투리 and 기본 레인 tickets open, the 자투리 record open', () => {
+    writePrd([])
+    recTicket('T-010', 'L1', '[T-011]', 'done')
+    writeTicket('v0.1', 'T-011', { status: 'done' })
+    recTicket('T-020', '자투리', '[T-021]')
+    writeTicket('v0.1', 'T-021', {})
+    writeTicket('v0.1', 'T-030', {}) // 기본 레인
+    setStage('build')
+    expect(run(['doctor'], 'doctor')).toMatch(SIGNAL)
+  })
+  test('silent: the gate record lane unfinished, while 자투리 and 기본 레인 are all done', () => {
+    writePrd([])
+    recTicket('T-010', 'L1', '[T-011]')
+    writeTicket('v0.1', 'T-011', { status: 'done' })
+    recTicket('T-020', '자투리', '[T-021]')
+    writeTicket('v0.1', 'T-021', { status: 'done' })
+    writeTicket('v0.1', 'T-030', { status: 'done' })
+    setStage('build')
+    expect(run(['doctor'], 'doctor')).not.toMatch(SIGNAL)
+  })
+  test('a 자투리 record alone is no gate: the no-gate slice reads the work tickets, never the open record', () => {
+    writePrd([])
+    recTicket('T-020', '자투리', '[T-021]')
+    writeTicket('v0.1', 'T-021', { status: 'done' })
+    writeTicket('v0.1', 'T-030', { status: 'done' })
+    setStage('build')
+    const out = run(['doctor'], 'doctor')
+    expect(out).toMatch(SIGNAL) // the record T-020 is open: counted as work, this would stay silent
+  })
+})
